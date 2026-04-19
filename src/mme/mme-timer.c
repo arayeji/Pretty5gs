@@ -50,6 +50,12 @@ static mme_timer_cfg_t g_mme_timer_cfg[MAX_NUM_OF_MME_TIMER] = {
     [MME_TIMER_T3489] =
         { .have = true, .max_count = 2, .duration = ogs_time_from_sec(4) },
 
+    /* DEACTIVATE EPS BEARER CONTEXT REQUEST sent, waiting for
+     * Deactivate Accept from the UE. max_count=1 means: on expiry we
+     * give up, no retransmission. */
+    [MME_TIMER_NAS_DEACTIVATE_BEARER] =
+        { .have = true, .max_count = 1, .duration = ogs_time_from_sec(5) },
+
     [MME_TIMER_SGS_CLI_CONN_TO_SRV] =
         { .have = true, .duration = ogs_time_from_sec(3) },
 
@@ -90,6 +96,8 @@ const char *mme_timer_get_name(mme_timer_e id)
         return "MME_TIMER_T3470";
     case MME_TIMER_T3489:
         return "MME_TIMER_T3489";
+    case MME_TIMER_NAS_DEACTIVATE_BEARER:
+        return "MME_TIMER_NAS_DEACTIVATE_BEARER";
     case MME_TIMER_MOBILE_REACHABLE:
         return "MME_TIMER_MOBILE_REACHABLE";
     case MME_TIMER_IMPLICIT_DETACH:
@@ -192,6 +200,11 @@ static void esm_timer_event_send(mme_timer_e timer_id, void *data)
 void mme_timer_t3489_expire(void *data)
 {
     esm_timer_event_send(MME_TIMER_T3489, data);
+}
+
+void mme_timer_nas_deactivate_bearer_expire(void *data)
+{
+    esm_timer_event_send(MME_TIMER_NAS_DEACTIVATE_BEARER, data);
 }
 
 void mme_timer_sgs_cli_conn_to_srv(void *data)

@@ -18,6 +18,7 @@
  */
 
 #include "nudm-handler.h"
+#include "radius-path.h"
 #include "sbi-path.h"
 
 bool smf_nudm_sdm_handle_get(smf_sess_t *sess, ogs_sbi_stream_t *stream,
@@ -346,6 +347,28 @@ bool smf_nudm_sdm_handle_get(smf_sess_t *sess, ogs_sbi_stream_t *stream,
         return false;
     }
 
+    if (smf_self()->radius.enabled) {
+        memset(&sess->session.ue_ip, 0, sizeof(sess->session.ue_ip));
+        r = smf_radius_authorize_for_session(sess);
+        if (r != OGS_OK) {
+            strerror = ogs_msprintf("[%s:%d] RADIUS authentication failed",
+                    smf_ue->supi, sess->psi);
+            ogs_assert(strerror);
+
+            n1smbuf = gsm_build_pdu_session_establishment_reject(sess,
+                    OGS_5GSM_CAUSE_USER_AUTHENTICATION_OR_AUTHORIZATION_FAILED);
+            ogs_assert(n1smbuf);
+
+            ogs_error("%s", strerror);
+            smf_sbi_send_sm_context_create_error(stream,
+                    OGS_SBI_HTTP_STATUS_FORBIDDEN,
+                    OGS_SBI_APP_ERRNO_NULL, strerror, NULL, n1smbuf);
+            ogs_free(strerror);
+
+            return false;
+        }
+    }
+
     /* Set UE IP Address to the Default DL PDR */
     cause_value = smf_sess_set_ue_ip(sess);
 
@@ -369,6 +392,7 @@ bool smf_nudm_sdm_handle_get(smf_sess_t *sess, ogs_sbi_stream_t *stream,
 
     ogs_assert(cause_value == OGS_PFCP_CAUSE_REQUEST_ACCEPTED);
 
+    smf_radius_accounting_session_started(sess);
 
     r = smf_sbi_discover_and_send(OGS_SBI_SERVICE_TYPE_NUDM_SDM, NULL,
             smf_nudm_sdm_build_subscription, sess, stream, 0,

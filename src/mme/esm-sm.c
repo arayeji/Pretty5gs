@@ -366,6 +366,7 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
                     "context accept");
             ogs_debug("    IMSI[%s] PTI[%d] EBI[%d]",
                     mme_ue->imsi_bcd, sess->pti, bearer->ebi);
+            CLEAR_BEARER_TIMER(bearer->t_nas_deactivate);
             ogs_assert(OGS_OK ==
                 mme_gtp_send_delete_bearer_response(
                     bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED));
@@ -386,8 +387,55 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
                     enb_ue, bearer, message);
             break;
         default:
-            ogs_error("Unknown message(type:%d)", 
+            ogs_error("Unknown message(type:%d)",
                     message->esm.h.message_type);
+            break;
+        }
+        break;
+    case MME_EVENT_ESM_TIMER:
+        switch (e->timer_id) {
+        case MME_TIMER_NAS_DEACTIVATE_BEARER:
+            /*
+             * The UE never answered our DEACTIVATE EPS BEARER CONTEXT
+             * REQUEST. Give up and send the Delete Bearer Response to
+             * SGW/SMF so the network side can complete the teardown.
+             * This unblocks PGW-initiated bearer deactivation (e.g.
+             * RADIUS Packet of Disconnect) when the UE is unreachable.
+             *
+             * We use REQUEST_ACCEPTED so the SMF drives the normal
+             * PFCP-session-deletion chain - the bearer IS being
+             * deactivated on the core side regardless of what the UE
+             * thinks. The UE context will be released by the regular
+             * inactivity / implicit-detach mechanisms.
+             */
+            ogs_warn("[%s] NAS-Deactivate watchdog fired "
+                    "(EBI=%d, PTI=%d): UE did not acknowledge "
+                    "DEACTIVATE EPS BEARER CONTEXT REQUEST",
+                    mme_ue->imsi_bcd, bearer->ebi, sess->pti);
+
+            /*
+             * Only synthesize a Delete Bearer Response when the
+             * Deactivate procedure was started by a PGW-initiated
+             * Delete Bearer Request (i.e. there is a pending GTP
+             * transaction on bearer->delete.xact_id). For other
+             * code paths (e.g. internal bearer cleanup) we just
+             * give up waiting and transition the bearer FSM.
+             */
+            if (bearer->delete.xact_id >= OGS_MIN_POOL_ID &&
+                    bearer->delete.xact_id <= OGS_MAX_POOL_ID) {
+                ogs_warn("[%s] sending synthetic Delete Bearer "
+                        "Response to SGW/SMF (xact_id=%d) to unblock "
+                        "network-initiated teardown",
+                        mme_ue->imsi_bcd, (int)bearer->delete.xact_id);
+                ogs_assert(OGS_OK ==
+                    mme_gtp_send_delete_bearer_response(
+                        bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED));
+            }
+            OGS_FSM_TRAN(s, esm_state_bearer_deactivated);
+            break;
+        default:
+            ogs_error("Unknown timer[%s:%d]",
+                    mme_timer_get_name(e->timer_id), e->timer_id);
             break;
         }
         break;
@@ -440,6 +488,7 @@ void esm_state_pdn_will_disconnect(ogs_fsm_t *s, mme_event_t *e)
                     "context accept");
             ogs_debug("    IMSI[%s] PTI[%d] EBI[%d]",
                     mme_ue->imsi_bcd, sess->pti, bearer->ebi);
+            CLEAR_BEARER_TIMER(bearer->t_nas_deactivate);
             OGS_FSM_TRAN(s, esm_state_pdn_did_disconnect);
             break;
         case OGS_NAS_EPS_PDN_CONNECTIVITY_REQUEST:
@@ -459,6 +508,28 @@ void esm_state_pdn_will_disconnect(ogs_fsm_t *s, mme_event_t *e)
         default:
             ogs_error("Unknown message(type:%d)", 
                     message->esm.h.message_type);
+            break;
+        }
+        break;
+
+    case MME_EVENT_ESM_TIMER:
+        switch (e->timer_id) {
+        case MME_TIMER_NAS_DEACTIVATE_BEARER:
+            /*
+             * UE never acknowledged NAS Deactivate during UE-initiated
+             * PDN Disconnect. The SGW/SMF is already being torn down
+             * via the normal Delete Session path, so we don't need to
+             * synthesize a Delete Bearer Response here - just move on.
+             */
+            ogs_warn("[%s] NAS-Deactivate watchdog fired in "
+                    "pdn_will_disconnect (EBI=%d): UE did not ack; "
+                    "proceeding with local bearer cleanup",
+                    mme_ue->imsi_bcd, bearer->ebi);
+            OGS_FSM_TRAN(s, esm_state_pdn_did_disconnect);
+            break;
+        default:
+            ogs_error("Unknown timer[%s:%d]",
+                    mme_timer_get_name(e->timer_id), e->timer_id);
             break;
         }
         break;

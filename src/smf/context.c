@@ -18,6 +18,7 @@
  */
 
 #include "context.h"
+#include "radius-path.h"
 #include "gtp-path.h"
 #include "pfcp-path.h"
 
@@ -165,6 +166,22 @@ static int smf_context_prepare(void)
     self.diam_config->cnf_port = DIAMETER_PORT;
     self.diam_config->cnf_port_tls = DIAMETER_SECURE_PORT;
 
+    self.radius.enabled = false;
+    self.radius.server = NULL;
+    self.radius.auth_port = 1812;
+    self.radius.acct_port = 1813;
+    self.radius.secret = NULL;
+    self.radius.nas_id = NULL;
+    self.radius.nas_ip = NULL;
+    self.radius.timeout_ms = 3000;
+    self.radius.retry = 3;
+    self.radius.acct_interim_interval = 0;
+    self.radius.pod_enabled = false;
+    self.radius.pod_bind = NULL;
+    self.radius.pod_port = 3799;
+    self.radius.pod_secret = NULL;
+    self.radius.pod_teardown_timeout_ms = 5000; /* 5s default */
+
     return OGS_OK;
 }
 
@@ -179,6 +196,19 @@ static int smf_context_validation(void)
     if (self.dns[0] == NULL && self.dns6[0] == NULL) {
         ogs_error("No smf.dns in '%s'", ogs_app()->file);
         return OGS_ERROR;
+    }
+
+    if (self.radius.enabled) {
+        if (!self.radius.server) {
+            ogs_error("RADIUS enabled but no smf.radius.server in '%s'",
+                    ogs_app()->file);
+            return OGS_ERROR;
+        }
+        if (!self.radius.secret || !self.radius.secret[0]) {
+            ogs_error("RADIUS enabled but no smf.radius.secret in '%s'",
+                    ogs_app()->file);
+            return OGS_ERROR;
+        }
     }
     if (ogs_list_first(&ogs_gtp_self()->gtpu_list) == NULL) {
         ogs_error("No smf.gtpu.address in '%s'", ogs_app()->file);
@@ -545,6 +575,68 @@ int smf_context_parse_config(void)
 
                     } while (ogs_yaml_iter_type(&dns_iter) ==
                                 YAML_SEQUENCE_NODE);
+                } else if (!strcmp(smf_key, "radius")) {
+                    yaml_node_t *node =
+                        yaml_document_get_node(document, smf_iter.pair->value);
+                    ogs_assert(node);
+                    ogs_assert(node->type == YAML_MAPPING_NODE);
+                    ogs_yaml_iter_t r_iter;
+
+                    ogs_yaml_iter_recurse(&smf_iter, &r_iter);
+                    while (ogs_yaml_iter_next(&r_iter)) {
+                        const char *rk = ogs_yaml_iter_key(&r_iter);
+                        const char *rv = ogs_yaml_iter_value(&r_iter);
+
+                        ogs_assert(rk);
+                        if (!strcmp(rk, "enabled")) {
+                            self.radius.enabled = ogs_yaml_iter_bool(&r_iter);
+                        } else if (!strcmp(rk, "server")) {
+                            self.radius.server = rv;
+                        } else if (!strcmp(rk, "auth_port")) {
+                            if (rv) self.radius.auth_port = atoi(rv);
+                        } else if (!strcmp(rk, "acct_port")) {
+                            if (rv) self.radius.acct_port = atoi(rv);
+                        } else if (!strcmp(rk, "port")) {
+                            if (rv) {
+                                int p = atoi(rv);
+
+                                self.radius.auth_port = (uint16_t)p;
+                                self.radius.acct_port = (uint16_t)(p + 1);
+                            }
+                        } else if (!strcmp(rk, "secret") ||
+                                !strcmp(rk, "community")) {
+                            self.radius.secret = rv;
+                        } else if (!strcmp(rk, "nas_identifier")) {
+                            self.radius.nas_id = rv;
+                        } else if (!strcmp(rk, "nas_ip")) {
+                            self.radius.nas_ip = rv;
+                        } else if (!strcmp(rk, "timeout")) {
+                            if (rv) self.radius.timeout_ms = (unsigned)atoi(rv);
+                        } else if (!strcmp(rk, "retry")) {
+                            if (rv) self.radius.retry = atoi(rv);
+                        } else if (!strcmp(rk, "acct_interim_interval")) {
+                            if (rv)
+                                self.radius.acct_interim_interval =
+                                    (unsigned)atoi(rv);
+                        } else if (!strcmp(rk, "pod_enabled") ||
+                                !strcmp(rk, "pod")) {
+                            self.radius.pod_enabled =
+                                ogs_yaml_iter_bool(&r_iter);
+                        } else if (!strcmp(rk, "pod_bind") ||
+                                !strcmp(rk, "pod_address")) {
+                            self.radius.pod_bind = rv;
+                        } else if (!strcmp(rk, "pod_port")) {
+                            if (rv) self.radius.pod_port =
+                                (uint16_t)atoi(rv);
+                        } else if (!strcmp(rk, "pod_secret")) {
+                            self.radius.pod_secret = rv;
+                        } else if (!strcmp(rk, "pod_teardown_timeout_ms") ||
+                                !strcmp(rk, "pod_teardown_timeout")) {
+                            if (rv) self.radius.pod_teardown_timeout_ms =
+                                (uint32_t)atoi(rv);
+                        } else
+                            ogs_warn("unknown key `%s` in smf.radius", rk);
+                    }
                 } else if (!strcmp(smf_key, "mtu")) {
                     ogs_assert(ogs_yaml_iter_type(&smf_iter) !=
                             YAML_SCALAR_NODE);
@@ -2040,6 +2132,9 @@ void smf_sess_remove(smf_sess_t *sess)
             sess->ipv4 ? OGS_INET_NTOP(&sess->ipv4->addr, buf1) : "",
             sess->ipv6 ? OGS_INET6_NTOP(&sess->ipv6->addr, buf2) : "");
 
+    smf_radius_accounting_session_stopping(sess);
+    smf_radius_sess_clear(sess);
+
     ogs_list_remove(&smf_ue->sess_list, sess);
 
     memset(&e, 0, sizeof(e));
@@ -2412,10 +2507,23 @@ smf_bearer_t *smf_qos_flow_add(smf_sess_t *sess)
     ogs_assert(urr);
     qos_flow->urr = urr;
 
-    urr->meas_method = OGS_PFCP_MEASUREMENT_METHOD_VOLUME;
+    urr->meas_method = OGS_PFCP_MEASUREMENT_METHOD_VOLUME |
+                       OGS_PFCP_MEASUREMENT_METHOD_DURATION;
     urr->rep_triggers.volume_threshold = 1;
     urr->vol_threshold.tovol = 1;
     urr->vol_threshold.total_volume = 1024*1024*100;
+
+    /*
+     * If RADIUS Accounting Interim-Update is enabled, ask the UPF to emit
+     * a periodic Usage Report at the configured interval. This is the
+     * standard PFCP (TS 29.244) way of getting mid-session usage: the UPF
+     * is authoritative and the SMF just reacts to its reports. Works
+     * identically with open5gs-upfd and upg-vpp — no UPF-side changes.
+     */
+    if (self.radius.enabled && self.radius.acct_interim_interval) {
+        urr->rep_triggers.periodic_reporting = 1;
+        urr->meas_period = self.radius.acct_interim_interval;
+    }
 
     ogs_pfcp_pdr_associate_urr(dl_pdr, urr);
 

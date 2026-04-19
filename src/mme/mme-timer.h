@@ -40,6 +40,19 @@ typedef enum {
     MME_TIMER_T3470,
     MME_TIMER_T3489,
 
+    /*
+     * Watchdog for DEACTIVATE EPS BEARER CONTEXT REQUEST (3GPP TS 24.301
+     * §6.4.4). Not a strict T3495 implementation - we do not retransmit
+     * the NAS request. When it fires the MME assumes the UE will not
+     * acknowledge (e.g. UE went out of coverage right after paging)
+     * and gives up: it sends a Delete Bearer Response to SGW/SMF so the
+     * network core is not left hanging waiting for a Deactivate Accept
+     * that will never come. Without this watchdog the PGW-initiated
+     * bearer deactivation (e.g. RADIUS Packet of Disconnect) stalls
+     * indefinitely.
+     */
+    MME_TIMER_NAS_DEACTIVATE_BEARER,
+
     MME_TIMER_MOBILE_REACHABLE,
     MME_TIMER_IMPLICIT_DETACH,
 
@@ -71,6 +84,7 @@ void mme_timer_t3450_expire(void *data);
 void mme_timer_t3460_expire(void *data);
 void mme_timer_t3470_expire(void *data);
 void mme_timer_t3489_expire(void *data);
+void mme_timer_nas_deactivate_bearer_expire(void *data);
 
 void mme_timer_mobile_reachable_expire(void *data);
 void mme_timer_implicit_detach_expire(void *data);

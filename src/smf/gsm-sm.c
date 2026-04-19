@@ -2158,8 +2158,61 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
         smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
         ogs_assert(smf_ue);
 
-        ogs_info("[%s:%d] Session Release [PFCP-Delete-Trigger:%d]",
-            smf_ue->supi, sess->psi, e->h.sbi.state);
+        ogs_info("[%s:%d] Session Release [PFCP-Delete-Trigger:%d] "
+                "epc=%d",
+            smf_ue->supi ? smf_ue->supi :
+                (smf_ue->imsi_bcd[0] ? smf_ue->imsi_bcd : "(null)"),
+            sess->psi, e->h.sbi.state, sess->epc);
+
+        /*
+         * EPC sessions (GTPv2 / PGW-C role) cannot be torn down via the
+         * 5GC SBI flow (Namf_Communication_N1N2MessageTransfer). The SBI
+         * helpers below assert on NF-instance-id, which is never set for
+         * GTPv2-only sessions.
+         *
+         * For EPC we must send a GTPv2 Delete Bearer Request (default
+         * bearer) to SGW/MME. When the MME replies with Delete Bearer
+         * Response, the state machine in smf_gsm_state_operational
+         * transitions to smf_gsm_state_wait_pfcp_deletion, which sends
+         * PFCP Session Deletion and finally removes the session (which
+         * is what triggers RADIUS Accounting-Stop).
+         *
+         * We stay in the current (operational) state and let the normal
+         * S5C/PFCP handlers drive the rest of the teardown.
+         */
+        if (sess->epc) {
+            smf_bearer_t *linked_bearer = smf_default_bearer_in_sess(sess);
+            int rv;
+
+            if (!linked_bearer) {
+                ogs_error("[%s] Session Release (EPC): no default bearer",
+                        smf_ue->imsi_bcd[0] ? smf_ue->imsi_bcd : "?");
+                OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
+                break;
+            }
+
+            ogs_info("[%s] Session Release (EPC): sending Delete Bearer "
+                    "Request (EBI=%d, SGW-S5C-TEID=0x%x)",
+                    smf_ue->imsi_bcd[0] ? smf_ue->imsi_bcd : "?",
+                    linked_bearer->ebi, sess->sgw_s5c_teid);
+
+            rv = smf_gtp2_send_delete_bearer_request(
+                    linked_bearer,
+                    OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED,
+                    OGS_GTP2_CAUSE_REACTIVATION_REQUESTED);
+            if (rv != OGS_OK) {
+                ogs_error("[%s] Session Release (EPC): Delete Bearer "
+                        "Request failed (rv=%d), forcing PFCP deletion",
+                        smf_ue->imsi_bcd[0] ? smf_ue->imsi_bcd : "?", rv);
+                OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
+            }
+            /*
+             * On success we remain in smf_gsm_state_operational; the
+             * Delete Bearer Response handler will drive the transition
+             * to smf_gsm_state_wait_pfcp_deletion.
+             */
+            break;
+        }
 
         if (e->h.sbi.state == OGS_PFCP_DELETE_TRIGGER_SMF_INITIATED) {
             if (HOME_ROUTED_ROAMING_IN_HSMF(sess)) {

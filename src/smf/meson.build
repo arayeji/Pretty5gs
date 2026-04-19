@@ -17,6 +17,8 @@
 
 smf_conf = configuration_data()
 
+libcrypto_dep = dependency('libcrypto', required : true)
+
 smf_headers = ('''
     net/if.h
     netinet/ip.h
@@ -71,6 +73,7 @@ libsmf_sources = files('''
     local-path.h
     metrics.h
     pdu-info.h
+    radius-path.h
 
     init.c
     event.c
@@ -114,6 +117,7 @@ libsmf_sources = files('''
     local-path.c
     metrics.c
     pdu-info.c
+    radius-path.c
     ../../lib/metrics/prometheus/json_pager.c
 '''.split())
 
@@ -126,7 +130,8 @@ libsmf = static_library('smf',
                     libdiameter_gx_dep,
                     libdiameter_gy_dep,
                     libdiameter_s6b_dep,
-                    libpfcp_dep],
+                    libpfcp_dep,
+                    libcrypto_dep],
     install : false)
 
 libsmf_dep = declare_dependency(
@@ -138,7 +143,8 @@ libsmf_dep = declare_dependency(
                     libdiameter_gx_dep,
                     libdiameter_gy_dep,
                     libdiameter_s6b_dep,
-                    libpfcp_dep])
+                    libpfcp_dep,
+                    libcrypto_dep])
 
 smf_sources = files('''
     app.c

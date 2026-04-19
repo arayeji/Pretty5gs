@@ -4680,6 +4680,11 @@ mme_bearer_t *mme_bearer_add(mme_sess_t *sess)
             OGS_UINT_TO_POINTER(bearer->id));
     bearer->t3489.pkbuf = NULL;
 
+    bearer->t_nas_deactivate.timer = ogs_timer_add(
+            ogs_app()->timer_mgr, mme_timer_nas_deactivate_bearer_expire,
+            OGS_UINT_TO_POINTER(bearer->id));
+    bearer->t_nas_deactivate.pkbuf = NULL;
+
     memset(&e, 0, sizeof(e));
     e.bearer_id = bearer->id;
     ogs_fsm_init(&bearer->sm, esm_state_initial, esm_state_final, &e);
@@ -4708,6 +4713,7 @@ void mme_bearer_remove(mme_bearer_t *bearer)
 
     CLEAR_BEARER_ALL_TIMERS(bearer);
     ogs_timer_delete(bearer->t3489.timer);
+    ogs_timer_delete(bearer->t_nas_deactivate.timer);
 
     ogs_list_remove(&sess->bearer_list, bearer);
 

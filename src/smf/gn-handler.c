@@ -26,6 +26,7 @@
 #include "gn-handler.h"
 #include "n4-handler.h"
 #include "pfcp-path.h"
+#include "radius-path.h"
 
 #include "ipfw/ipfw2.h"
 
@@ -268,6 +269,15 @@ uint8_t smf_gn_handle_create_pdp_context_request(
     /* Initially Set Session Type from UE */
     sess->session.session_type = sess->ue_session_type;
 
+    if (smf_self()->radius.enabled)
+        memset(&sess->session.ue_ip, 0, sizeof(sess->session.ue_ip));
+
+    rv = smf_radius_authorize_for_session(sess);
+    if (rv != OGS_OK) {
+        ogs_error("RADIUS authentication failed");
+        return OGS_GTP1_CAUSE_USER_AUTHENTICATION_FAILED;
+    }
+
     /* Remove all previous bearer */
     smf_bearer_remove_all(sess);
 
@@ -321,6 +331,8 @@ uint8_t smf_gn_handle_create_pdp_context_request(
         cause_value = gtp_cause_from_pfcp(pfcp_cause, 1);
         return cause_value;
     }
+
+    smf_radius_accounting_session_started(sess);
 
     ogs_info("UE IMSI[%s] APN[%s] IPv4[%s] IPv6[%s]",
         smf_ue->imsi_bcd,

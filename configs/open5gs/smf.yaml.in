@@ -45,6 +45,68 @@ smf:
     - 2001:4860:4860::8888
     - 2001:4860:4860::8844
   mtu: 1400
+#  RADIUS (optional): Access-Request before UE IP assignment; framed IPv4/IPv6
+#  from Access-Accept; Accounting Start / Interim-Update / Stop. Use `secret`
+#  or `community` for the shared secret. `port` sets auth (UDP) and
+#  acct = port+1 unless overridden.
+#
+#  Class AVP(s) (RFC 2865 §5.25) received in Access-Accept are saved per
+#  session and echoed back verbatim in every Accounting-Request.
+#
+#  Volume counters (Acct-Input-Octets/Output-Octets plus Gigaword extensions)
+#  and Acct-Session-Time are included in Interim-Update and Stop; values come
+#  from PFCP URR volume measurements reported by the UPF. Interim-Update is
+#  UPF-driven: the SMF programs a periodic Measurement Period in the URR and
+#  emits Accounting-Request (Interim-Update=3) each time the UPF sends a
+#  Usage Report. Accounting-Stop uses the final Usage Report delivered in
+#  the PFCP Session Deletion Response.
+#
+#  RFC 5176 Dynamic Authorization: set pod_enabled to accept Disconnect-Request
+#  from the AAA server. Sessions are matched (in order) by Acct-Session-Id,
+#  Framed-IP-Address, Framed-IPv6-Prefix, then User-Name (+ optional
+#  Called-Station-Id). CoA-Request is currently NAKed with Unsupported-Service.
+#
+#  radius:
+#    enabled: true
+#    server: 127.0.0.1
+#    auth_port: 1812
+#    acct_port: 1813
+#    secret: your_radius_shared_secret
+#    nas_identifier: open5gs-smf
+#    # NAS-IP-Address (attribute 4). If unset, the first IPv4 SBI server
+#    # address is used; as a last resort 127.0.0.1 is sent so the
+#    # attribute is never missing (some AAA servers reject otherwise).
+#    nas_ip: 127.0.0.4
+#    timeout: 3000
+#    retry: 3
+#
+#  The following 3GPP Vendor-Specific (vendor 10415) attributes are added
+#  to every Access-Request and Accounting-Request automatically when the
+#  data is available on the session (no configuration required):
+#    - 3GPP-IMSI (1)                from IMSI
+#    - 3GPP-IMEISV (20)             from NAS IMEISV reported by UE/MME/AMF
+#    - 3GPP-User-Location-Info (22) TS 29.061 packed format:
+#        EPC sessions -> TAI + ECGI   (geo type 130)
+#        5GC sessions -> TAI + NR-CGI (geo type 136)
+#    # Interim-Update interval in seconds (0 = disabled). This value is
+#    # programmed as the PFCP URR Measurement Period on the UPF at session
+#    # establishment, so both open5gs-upfd and upg-vpp (or any standards
+#    # compliant UPF) emit a periodic Usage Report at this cadence. The SMF
+#    # forwards each report as a RADIUS Accounting-Request (Interim-Update).
+#    # No UPF-side configuration is required.
+#    acct_interim_interval: 300
+#    # Packet-of-Disconnect / CoA (RFC 5176) listener
+#    pod_enabled: true
+#    pod_bind: 0.0.0.0   # optional; any by default
+#    pod_port: 3799
+#    pod_secret: your_pod_shared_secret   # optional; falls back to `secret`
+#    # PoD teardown watchdog (EPC only). After the SMF sends a GTPv2 Delete
+#    # Bearer Request in response to a Disconnect-Request, it waits at most
+#    # this many milliseconds for the MME's Delete Bearer Response. If the
+#    # MME goes silent (e.g. paging/NAS-deactivate never completes), the SMF
+#    # forces local PFCP session deletion so the UPF tunnel is torn down and
+#    # RADIUS Accounting-Stop is still emitted. 0 disables the watchdog.
+#    pod_teardown_timeout_ms: 5000
 #  p-cscf:
 #    - 127.0.0.1
 #    - ::1

@@ -762,6 +762,26 @@ int nas_eps_send_deactivate_bearer_context_request(mme_bearer_t *bearer)
     rv = nas_eps_send_to_enb(mme_ue, s1apbuf);
     ogs_expect(rv == OGS_OK);
 
+    /*
+     * Arm the NAS-Deactivate watchdog. If the UE never acknowledges
+     * with DEACTIVATE EPS BEARER CONTEXT ACCEPT (e.g. it went out of
+     * coverage immediately after paging, the eNB dropped the NAS, or
+     * there's a radio race), the esm_state_active timer handler will
+     * fall back to sending Delete Bearer Response to SGW/SMF so the
+     * network-initiated bearer deactivation does not stall.
+     *
+     * The watchdog is started unconditionally after the send attempt
+     * (even if nas_eps_send_to_enb returned an error) because we still
+     * want the MME to eventually answer SGW/SMF rather than leave the
+     * PGW-initiated procedure hanging.
+     */
+    if (bearer->t_nas_deactivate.timer) {
+        ogs_timer_start(bearer->t_nas_deactivate.timer,
+                mme_timer_cfg(MME_TIMER_NAS_DEACTIVATE_BEARER)->duration);
+        ogs_debug("[%s] NAS-Deactivate watchdog armed (EBI=%d)",
+                mme_ue->imsi_bcd, bearer->ebi);
+    }
+
     return rv;
 }
 

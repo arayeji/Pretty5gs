@@ -22,6 +22,7 @@
 #include "gtp-path.h"
 #include "pfcp-path.h"
 #include "sbi-path.h"
+#include "radius-path.h"
 #include "metrics.h"
 #include "ogs-metrics.h"
 #include "metrics/prometheus/json_pager.h"
@@ -90,6 +91,9 @@ int smf_initialize(void)
     rv = smf_sbi_open();
     if (rv != 0) return OGS_ERROR;
 
+    rv = smf_radius_pod_open();
+    if (rv != 0) return OGS_ERROR;
+
     thread = ogs_thread_create(smf_main, NULL);
     if (!thread) return OGS_ERROR;
 
@@ -134,6 +138,7 @@ void smf_terminate(void)
     ogs_thread_destroy(thread);
     ogs_timer_delete(t_termination_holding);
 
+    smf_radius_pod_close();
     smf_gtp_close();
     smf_pfcp_close();
     smf_sbi_close();

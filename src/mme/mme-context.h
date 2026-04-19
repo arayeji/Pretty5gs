@@ -1021,6 +1021,7 @@ typedef struct mme_bearer_s {
 #define CLEAR_BEARER_ALL_TIMERS(__bEARER) \
     do { \
         CLEAR_BEARER_TIMER((__bEARER)->t3489); \
+        CLEAR_BEARER_TIMER((__bEARER)->t_nas_deactivate); \
     } while(0);
 #define CLEAR_BEARER_TIMER(__bEARER_TIMER) \
     do { \
@@ -1037,6 +1038,20 @@ typedef struct mme_bearer_s {
         ogs_timer_t     *timer;
         uint32_t        retry_count;;
     } t3489;
+
+    /*
+     * Watchdog on DEACTIVATE EPS BEARER CONTEXT REQUEST sent to the
+     * UE. Armed by nas_eps_send_deactivate_bearer_context_request()
+     * and cancelled when the UE answers with DEACTIVATE EPS BEARER
+     * CONTEXT ACCEPT. On expiry (UE silent), the MME sends Delete
+     * Bearer Response to SGW/SMF so the network-initiated teardown
+     * cannot stall forever.
+     */
+    struct {
+        ogs_pkbuf_t     *pkbuf;
+        ogs_timer_t     *timer;
+        uint32_t        retry_count;
+    } t_nas_deactivate;
 
     /* Related Context */
     ogs_pool_id_t   mme_ue_id;

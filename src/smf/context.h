@@ -64,6 +64,37 @@ typedef struct smf_ctf_config_s {
 
 int smf_ctf_config_init(smf_ctf_config_t *ctf_config);
 
+typedef struct smf_radius_config_s {
+    bool enabled;
+    const char *server;
+    uint16_t auth_port;
+    uint16_t acct_port;
+    const char *secret;
+    const char *nas_id;
+    const char *nas_ip;
+    unsigned timeout_ms;
+    int retry;
+
+    /* Interim-Update interval in seconds (0 = disabled). RFC 2869 §2.1 */
+    unsigned acct_interim_interval;
+
+    /* RFC 5176 Disconnect-Message / CoA listener */
+    bool pod_enabled;
+    const char *pod_bind;   /* local bind address, NULL = any */
+    uint16_t pod_port;      /* default 3799 */
+    const char *pod_secret; /* optional; falls back to 'secret' */
+
+    /*
+     * Max time (in ms) to wait for the MME to reply to a GTPv2 Delete
+     * Bearer Request triggered by a RADIUS Disconnect. If the MME goes
+     * silent (e.g. it paged the UE but never sent a Delete Bearer
+     * Response), the SMF forces PFCP Session Deletion so that the UPF
+     * tunnel is torn down and a RADIUS Accounting-Stop is emitted.
+     * 0 = disabled (keep retransmitting Delete Bearer Request forever).
+     */
+    uint32_t pod_teardown_timeout_ms;
+} smf_radius_config_t;
+
 typedef struct smf_nsmf_pdusession_param_s {
     OpenAPI_request_indication_e request_indication;
 
@@ -154,6 +185,8 @@ typedef struct smf_context_s {
         const char *maximum_integrity_protected_data_rate_uplink;
         const char *maximum_integrity_protected_data_rate_downlink;
     } security_indication;
+
+    smf_radius_config_t radius;
 
 #define SMF_UE_IS_LAST_SESSION(__sMF) \
      ((__sMF) && (ogs_list_count(&(__sMF)->sess_list)) == 1)
@@ -710,6 +743,32 @@ typedef struct smf_sess_s {
 
     bool establishment_accept_sent;
     ogs_sbi_xact_t *pending_modification_xact;
+
+    struct {
+        char *acct_session_id;
+        bool acct_started;
+
+        /*
+         * RFC 2865 §5.25: raw concatenation of every Class attribute
+         * value received in Access-Accept. Echoed verbatim in every
+         * Accounting-Request (Start / Interim-Update / Stop).
+         */
+        uint8_t *class_buf;
+        size_t class_len;
+
+        /* For Acct-Session-Time */
+        ogs_time_t start_time;
+
+        /*
+         * PoD teardown watchdog (EPC only).
+         *
+         * Armed after the SMF sends a GTPv2 Delete Bearer Request in
+         * response to a RADIUS Disconnect. If the MME fails to reply
+         * within pod_teardown_timeout_ms, the timer forces local
+         * PFCP-session deletion so Accounting-Stop is still emitted.
+         */
+        ogs_timer_t *teardown_timer;
+    } radius;
 
 } smf_sess_t;
 

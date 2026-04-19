@@ -26,6 +26,7 @@
 #include "sbi-path.h"
 #include "ngap-path.h"
 #include "fd-path.h"
+#include "radius-path.h"
 
 uint8_t gtp_cause_from_pfcp(uint8_t pfcp_cause, uint8_t gtp_version)
 {
@@ -1072,6 +1073,8 @@ int smf_5gc_n4_handle_session_deletion_response(
         ogs_pfcp_session_deletion_response_t *rsp)
 {
     int status = 0;
+    smf_bearer_t *bearer = NULL;
+    unsigned int i;
 
     ogs_debug("Session Deletion Response [5gc]");
 
@@ -1090,6 +1093,40 @@ int smf_5gc_n4_handle_session_deletion_response(
     } else {
         ogs_error("No Cause");
         status = OGS_SBI_HTTP_STATUS_BAD_REQUEST;
+    }
+
+    /*
+     * Final Usage Report: the UPF returns the last volume/duration
+     * counters for the deleted session. Accumulate them into sess->gy.*
+     * so downstream reporting (Gy, RADIUS Accounting-Stop) sees the final
+     * totals. Same parsing logic as the EPC deletion handler below.
+     */
+    bearer = smf_default_bearer_in_sess(sess);
+    for (i = 0; i < OGS_ARRAY_SIZE(rsp->usage_report); i++) {
+        ogs_pfcp_tlv_usage_report_session_deletion_response_t *use_rep =
+            &rsp->usage_report[i];
+        uint32_t urr_id;
+        int16_t decoded;
+        ogs_pfcp_volume_measurement_t volume;
+
+        if (use_rep->presence == 0)
+            break;
+        if (use_rep->urr_id.presence == 0)
+            continue;
+        urr_id = use_rep->urr_id.u32;
+        if (!bearer || !bearer->urr || bearer->urr->id != urr_id)
+            continue;
+        decoded = ogs_pfcp_parse_volume_measurement(
+                &volume, &use_rep->volume_measurement);
+        if (use_rep->volume_measurement.len != decoded) {
+            ogs_error("Invalid Volume Measurement");
+            continue;
+        }
+        if (volume.ulvol)
+            sess->gy.ul_octets += volume.uplink_volume;
+        if (volume.dlvol)
+            sess->gy.dl_octets += volume.downlink_volume;
+        sess->gy.duration += use_rep->duration_measurement.u32;
     }
 
     if (status != OGS_SBI_HTTP_STATUS_OK) {
@@ -1757,6 +1794,13 @@ uint8_t smf_n4_handle_session_report_request(
             sess->gy.reporting_reason =
                 smf_pfcp_urr_usage_report_trigger2diam_gy_reporting_reason(&rep_trig);
         }
+        /*
+         * RADIUS Accounting Interim-Update (RFC 2866 / 2869): the UPF has
+         * just delivered a fresh Usage Report (either periodic per URR
+         * Measurement Period, or because a threshold was crossed). Forward
+         * the latest volume/duration to the AAA as an Interim-Update.
+         */
+        smf_radius_accounting_interim_update(sess);
         switch (smf_use_gy_iface()) {
         case 1:
             if (!sess->gy.final_unit) {

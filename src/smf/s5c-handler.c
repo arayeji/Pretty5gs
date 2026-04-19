@@ -24,6 +24,7 @@
 #include "s5c-build.h"
 #include "s5c-handler.h"
 #include "pfcp-path.h"
+#include "radius-path.h"
 
 #include "ipfw/ipfw2.h"
 
@@ -287,6 +288,15 @@ uint8_t smf_s5c_handle_create_session_request(
     rv = ogs_paa_to_ip(paa, &sess->session.ue_ip);
     ogs_assert(rv == OGS_OK);
 
+    if (smf_self()->radius.enabled)
+        memset(&sess->session.ue_ip, 0, sizeof(sess->session.ue_ip));
+
+    rv = smf_radius_authorize_for_session(sess);
+    if (rv != OGS_OK) {
+        ogs_error("RADIUS authentication failed");
+        return OGS_GTP2_CAUSE_USER_AUTHENTICATION_FAILED;
+    }
+
     /* Set UE IP Address */
     rv = smf_sess_set_ue_ip(sess);
     if (rv != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
@@ -308,6 +318,8 @@ uint8_t smf_s5c_handle_create_session_request(
         }
         return cause_value;
     }
+
+    smf_radius_accounting_session_started(sess);
 
     ogs_info("UE IMSI[%s] APN[%s] IPv4[%s] IPv6[%s]",
         smf_ue->imsi_bcd,
@@ -1072,6 +1084,15 @@ bool smf_s5c_handle_delete_bearer_response(
     ogs_assert(rsp);
 
     ogs_debug("Delete Bearer Response");
+
+    /*
+     * If this Delete Bearer Request was triggered by a RADIUS PoD, the
+     * SMF has a watchdog armed that would otherwise force PFCP session
+     * deletion after radius.pod_teardown_timeout_ms. The MME just
+     * answered, so cancel the watchdog before driving the normal
+     * teardown chain.
+     */
+    smf_radius_pod_teardown_cancel(sess);
 
     /********************
      * Check Transaction
