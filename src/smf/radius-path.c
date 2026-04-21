@@ -54,6 +54,9 @@
 #define RADIUS_ATTR_SERVICE_TYPE            6
 #define RADIUS_ATTR_FRAMED_PROTOCOL         7
 #define RADIUS_ATTR_FRAMED_IP_ADDRESS       8
+#define RADIUS_ATTR_FRAMED_IP_NETMASK       9
+#define RADIUS_ATTR_FRAMED_ROUTE            22
+#define RADIUS_ATTR_FRAMED_IPV6_ROUTE       99
 #define RADIUS_ATTR_VENDOR_SPECIFIC         26
 #define RADIUS_ATTR_CALLED_STATION_ID       30
 #define RADIUS_ATTR_CALLING_STATION_ID      31
@@ -78,13 +81,13 @@
 /* RFC 5176 error cause */
 #define RADIUS_ATTR_ERROR_CAUSE             101
 
-/* 3GPP VSAs (TS 29.061 §16.4) */
+/* 3GPP VSAs (TS 29.061 ?16.4) */
 #define RADIUS_VENDOR_3GPP                  10415
 #define RADIUS_3GPP_IMSI                    1
 #define RADIUS_3GPP_IMEISV                  20
 #define RADIUS_3GPP_USER_LOCATION_INFO      22
 
-/* 3GPP-User-Location-Info Geographic Location Type (TS 29.061 §16.4.7.2). */
+/* 3GPP-User-Location-Info Geographic Location Type (TS 29.061 ?16.4.7.2). */
 #define RADIUS_3GPP_ULI_TYPE_CGI            0
 #define RADIUS_3GPP_ULI_TYPE_TAI            128
 #define RADIUS_3GPP_ULI_TYPE_ECGI           129
@@ -96,7 +99,7 @@
 #define RADIUS_ACCT_STATUS_STOP             2
 #define RADIUS_ACCT_STATUS_INTERIM_UPDATE   3
 
-/* Acct-Terminate-Cause values (RFC 2866 §5.10) */
+/* Acct-Terminate-Cause values (RFC 2866 ?5.10) */
 #define RADIUS_TERM_USER_REQUEST            1
 #define RADIUS_TERM_LOST_CARRIER            2
 #define RADIUS_TERM_IDLE_TIMEOUT            4
@@ -281,7 +284,7 @@ static uint8_t *append_attr_vendor_string(uint8_t *p,
 }
 
 /* Re-emit the Class attribute chunks we saved from Access-Accept.
- * RFC 2865 §5.25: Class attributes are opaque and must be echoed
+ * RFC 2865 ?5.25: Class attributes are opaque and must be echoed
  * unchanged. We split class_buf into up to 253-byte chunks. */
 static uint8_t *append_class_attrs(uint8_t *p, const uint8_t *buf, size_t len)
 {
@@ -388,8 +391,82 @@ static const uint8_t *radius_find_attr(const uint8_t *attrs, size_t len,
     return NULL;
 }
 
-/* Parse Framed-IP-Address, Framed-IPv6-Prefix and Class AVPs from
- * Access-Accept attributes into the session. */
+/*
+ * Canonicalize a Framed-Route / Framed-IPv6-Route AVP value (RFC 2865
+ * §5.22, RFC 3162 §2.4) into the CIDR form ("a.b.c.d/N" or
+ * "2001:db8::/64") that lib/pfcp/build.c emits and that open5gs-upfd's
+ * parse_framed_route() expects (it strsep()s on '/').
+ *
+ * Accepts:
+ *   "10.0.0.0/24"                        -> "10.0.0.0/24"
+ *   "10.0.0.0/24 192.0.2.1 1"            -> "10.0.0.0/24"
+ *   "10.0.0.0 255.255.255.0"             -> "10.0.0.0/24"
+ *   "10.0.0.0 255.255.255.0 0.0.0.0 1"   -> "10.0.0.0/24"
+ *   "2001:db8::/64 fe80::1 1"            -> "2001:db8::/64"
+ *
+ * Writes the canonical form to out (size out_sz) and returns true.
+ * Returns false on unparseable input.
+ */
+static bool radius_canon_framed_route(const uint8_t *val, size_t vlen,
+        bool is_ipv6, char *out, size_t out_sz)
+{
+    char tmp[256];
+    char *p, *tok_addr, *tok_mask, *save = NULL;
+    size_t n;
+
+    if (vlen == 0 || vlen >= sizeof(tmp))
+        return false;
+
+    memcpy(tmp, val, vlen);
+    tmp[vlen] = '\0';
+
+    /* RFC 2865 allows trailing CR/LF or garbage; trim. */
+    for (p = tmp + vlen - 1; p >= tmp && (*p == ' ' || *p == '\t' ||
+            *p == '\r' || *p == '\n'); p--)
+        *p = '\0';
+    /* Skip leading whitespace. */
+    for (p = tmp; *p == ' ' || *p == '\t'; p++);
+    if (!*p) return false;
+
+    tok_addr = strtok_r(p, " \t", &save);
+    if (!tok_addr) return false;
+
+    /* Case 1: CIDR form already (contains '/'). Use as-is. */
+    if (strchr(tok_addr, '/') != NULL) {
+        n = strlen(tok_addr);
+        if (n >= out_sz) return false;
+        memcpy(out, tok_addr, n + 1);
+        return true;
+    }
+
+    /* Case 2: legacy form "addr mask [gw [metric ...]]". Only meaningful
+     * for IPv4; IPv6 always uses CIDR per RFC 3162. */
+    if (is_ipv6) return false;
+
+    tok_mask = strtok_r(NULL, " \t", &save);
+    if (!tok_mask) return false;
+
+    {
+        struct in_addr mask_addr;
+        uint32_t m;
+        int prefix = 0;
+
+        if (inet_pton(AF_INET, tok_mask, &mask_addr) != 1)
+            return false;
+        m = ntohl(mask_addr.s_addr);
+        /* Count leading ones and verify the mask is contiguous. */
+        while (m & 0x80000000u) { prefix++; m <<= 1; }
+        if (m != 0) return false; /* non-contiguous mask */
+
+        n = (size_t)snprintf(out, out_sz, "%s/%d", tok_addr, prefix);
+        if (n >= out_sz) return false;
+    }
+    return true;
+}
+
+/* Parse Framed-IP-Address, Framed-IPv6-Prefix, Framed-Route,
+ * Framed-IPv6-Route and Class AVPs from Access-Accept attributes
+ * into the session. */
 static int radius_parse_access_accept(smf_sess_t *sess,
         const uint8_t *attrs, size_t attrs_len)
 {
@@ -409,9 +486,18 @@ static int radius_parse_access_accept(smf_sess_t *sess,
     uint8_t class_tmp[1024];
     size_t class_off = 0;
     uint32_t interim_interval = 0;
+    /* Collected Framed-Route / Framed-IPv6-Route values, canonicalized to
+     * CIDR form. Sized to match the PFCP PDI limit so we can't overflow
+     * either store. */
+    char *v4_routes[OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI];
+    int v4_routes_count = 0;
+    char *v6_routes[OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI];
+    int v6_routes_count = 0;
 
     ogs_assert(smf_ue);
     memset(v6, 0, sizeof v6);
+    memset(v4_routes, 0, sizeof v4_routes);
+    memset(v6_routes, 0, sizeof v6_routes);
 
     while (p + 2 <= end) {
         uint8_t t = p[0];
@@ -450,6 +536,42 @@ static int radius_parse_access_accept(smf_sess_t *sess,
 
             memcpy(&nw, p + 2, 4);
             interim_interval = be32toh(nw);
+        } else if (t == RADIUS_ATTR_FRAMED_ROUTE && alen > 2) {
+            char cidr[64];
+
+            if (v4_routes_count >= OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI) {
+                ogs_warn("RADIUS: too many Framed-Route AVPs (> %d), "
+                        "ignoring extras",
+                        OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI);
+            } else if (radius_canon_framed_route(p + 2, (size_t)(alen - 2),
+                        false, cidr, sizeof cidr)) {
+                v4_routes[v4_routes_count++] = ogs_strdup(cidr);
+                ogs_info("RADIUS: Framed-Route [%s]", cidr);
+            } else {
+                char bad[256];
+                size_t cp = ogs_min((size_t)(alen - 2), sizeof(bad) - 1);
+                memcpy(bad, p + 2, cp);
+                bad[cp] = '\0';
+                ogs_warn("RADIUS: unparseable Framed-Route '%s'", bad);
+            }
+        } else if (t == RADIUS_ATTR_FRAMED_IPV6_ROUTE && alen > 2) {
+            char cidr[64];
+
+            if (v6_routes_count >= OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI) {
+                ogs_warn("RADIUS: too many Framed-IPv6-Route AVPs (> %d), "
+                        "ignoring extras",
+                        OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI);
+            } else if (radius_canon_framed_route(p + 2, (size_t)(alen - 2),
+                        true, cidr, sizeof cidr)) {
+                v6_routes[v6_routes_count++] = ogs_strdup(cidr);
+                ogs_info("RADIUS: Framed-IPv6-Route [%s]", cidr);
+            } else {
+                char bad[256];
+                size_t cp = ogs_min((size_t)(alen - 2), sizeof(bad) - 1);
+                memcpy(bad, p + 2, cp);
+                bad[cp] = '\0';
+                ogs_warn("RADIUS: unparseable Framed-IPv6-Route '%s'", bad);
+            }
         }
 
         p += alen;
@@ -471,7 +593,7 @@ static int radius_parse_access_accept(smf_sess_t *sess,
     }
 
     /*
-     * RFC 2869 §2.1 Acct-Interim-Interval: in this implementation the
+     * RFC 2869 ?2.1 Acct-Interim-Interval: in this implementation the
      * reporting cadence is driven by the UPF via a PFCP URR Measurement
      * Period (set at session establishment from
      * smf.radius.acct_interim_interval). A per-session override from
@@ -482,6 +604,80 @@ static int radius_parse_access_accept(smf_sess_t *sess,
         ogs_info("RADIUS: Acct-Interim-Interval from server = %u s "
                 "(ignored; configured PFCP measurement period in use)",
                 (unsigned)interim_interval);
+    }
+
+    /*
+     * Install Framed-Route / Framed-IPv6-Route into the session. smf_bearer_add
+     * (EPC) and npcf-handler (5GC) read these fields and plumb them into the
+     * UL/DL PDRs, so the UPF installs routes on Session-Establishment without
+     * any further Session-Modification round-trip.
+     *
+     * Any previous (e.g. subscription-provisioned) routes are freed first so
+     * RADIUS takes precedence over UDM/PCF when both are present.
+     */
+    if (v4_routes_count > 0) {
+        int k;
+        if (sess->session.ipv4_framed_routes) {
+            for (k = 0; k < OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI; k++) {
+                if (sess->session.ipv4_framed_routes[k]) {
+                    ogs_free(sess->session.ipv4_framed_routes[k]);
+                    sess->session.ipv4_framed_routes[k] = NULL;
+                }
+            }
+        } else {
+            sess->session.ipv4_framed_routes = ogs_calloc(
+                    OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI,
+                    sizeof(sess->session.ipv4_framed_routes[0]));
+            ogs_assert(sess->session.ipv4_framed_routes);
+        }
+        for (k = 0; k < v4_routes_count; k++) {
+            /* Hand ownership over to the session store, no duplication. */
+            sess->session.ipv4_framed_routes[k] = v4_routes[k];
+            v4_routes[k] = NULL;
+        }
+        ogs_info("RADIUS: installed %d Framed-Route(s) on session",
+                v4_routes_count);
+    } else {
+        /* Nothing collected; in case we allocated any tmp strings (shouldn't
+         * happen given we only push on success), free them defensively. */
+        int k;
+        for (k = 0; k < OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI; k++) {
+            if (v4_routes[k]) {
+                ogs_free(v4_routes[k]);
+                v4_routes[k] = NULL;
+            }
+        }
+    }
+
+    if (v6_routes_count > 0) {
+        int k;
+        if (sess->session.ipv6_framed_routes) {
+            for (k = 0; k < OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI; k++) {
+                if (sess->session.ipv6_framed_routes[k]) {
+                    ogs_free(sess->session.ipv6_framed_routes[k]);
+                    sess->session.ipv6_framed_routes[k] = NULL;
+                }
+            }
+        } else {
+            sess->session.ipv6_framed_routes = ogs_calloc(
+                    OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI,
+                    sizeof(sess->session.ipv6_framed_routes[0]));
+            ogs_assert(sess->session.ipv6_framed_routes);
+        }
+        for (k = 0; k < v6_routes_count; k++) {
+            sess->session.ipv6_framed_routes[k] = v6_routes[k];
+            v6_routes[k] = NULL;
+        }
+        ogs_info("RADIUS: installed %d Framed-IPv6-Route(s) on session",
+                v6_routes_count);
+    } else {
+        int k;
+        for (k = 0; k < OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI; k++) {
+            if (v6_routes[k]) {
+                ogs_free(v6_routes[k]);
+                v6_routes[k] = NULL;
+            }
+        }
     }
 
     /* Apply framed addresses into sess->session.ue_ip. */
@@ -520,7 +716,7 @@ static int radius_parse_access_accept(smf_sess_t *sess,
 /* Request building                                                    */
 /* ------------------------------------------------------------------ */
 
-/* Encode 3GPP-User-Location-Info (TS 29.061 §16.4.7.2) for the given
+/* Encode 3GPP-User-Location-Info (TS 29.061 ?16.4.7.2) for the given
  * session, into out[] which must be >= 16 bytes. Returns the encoded
  * length, or 0 if no usable location info is available.
  *
@@ -605,15 +801,29 @@ static uint8_t *radius_append_sess_3gpp_attrs(uint8_t *p,
     size_t uli_len;
 
     if (smf_ue && smf_ue->imeisv_bcd[0]) {
+        ogs_info("RADIUS: appending 3GPP-IMEISV [%s] (len=%d)",
+                smf_ue->imeisv_bcd, smf_ue->imeisv_len);
         p = append_attr_vendor_string(p, RADIUS_VENDOR_3GPP,
                 RADIUS_3GPP_IMEISV, smf_ue->imeisv_bcd);
+    } else {
+        ogs_info("RADIUS: 3GPP-IMEISV NOT appended "
+                "(smf_ue=%p imeisv_len=%d imeisv_bcd[0]=0x%02x)",
+                (const void *)smf_ue,
+                smf_ue ? smf_ue->imeisv_len : -1,
+                (smf_ue && smf_ue->imeisv_bcd[0]) ?
+                        (unsigned)smf_ue->imeisv_bcd[0] : 0);
     }
 
     if (sess) {
         uli_len = radius_build_3gpp_uli(sess, uli);
         if (uli_len) {
+            ogs_info("RADIUS: appending 3GPP-User-Location-Info (len=%zu)",
+                    uli_len);
             p = append_attr_vendor_bytes(p, RADIUS_VENDOR_3GPP,
                     RADIUS_3GPP_USER_LOCATION_INFO, uli, uli_len);
+        } else {
+            ogs_info("RADIUS: 3GPP-User-Location-Info NOT appended "
+                    "(uli encode returned 0)");
         }
     }
 
@@ -650,7 +860,18 @@ static int radius_build_common_attrs(uint8_t *p, const char *user,
 /* UDP send/recv client                                                */
 /* ------------------------------------------------------------------ */
 
-static int radius_udp_exchange(uint16_t port,
+/*
+ * Single-server UDP exchange. Sends `req` to servers[srv_idx] on `port`,
+ * retries up to cfg->retry times, waits cfg->timeout_ms for each reply.
+ *
+ * Returns OGS_OK on a well-formed reply whose code is in acceptable_codes.
+ * Returns OGS_TIMEOUT if the server was silent for every attempt (so the
+ *   caller can move to the next server in the failover list).
+ * Returns OGS_ERROR for anything else (protocol violation, ID mismatch,
+ *   unexpected code) ? those are treated as "this server is misbehaving,
+ *   stop trying it for this request".
+ */
+static int radius_udp_exchange(int srv_idx, uint16_t port,
         const uint8_t *req, size_t req_len,
         uint8_t *res, size_t res_max, size_t *res_len,
         const uint8_t *acceptable_codes, unsigned num_codes)
@@ -659,20 +880,24 @@ static int radius_udp_exchange(uint16_t port,
     ogs_sock_t *sock = NULL;
     int rv = OGS_ERROR;
     int attempt;
+    int successes = 0, timeouts = 0;
     smf_radius_config_t *cfg = &smf_self()->radius;
+    smf_radius_server_t *s;
 
     ogs_assert(req);
     ogs_assert(res);
     ogs_assert(res_len);
+    ogs_assert(srv_idx >= 0 && srv_idx < cfg->num_servers);
 
-    if (!cfg->server) {
-        ogs_error("RADIUS server not configured");
+    s = &cfg->servers[srv_idx];
+    if (!s->host || !s->host[0]) {
+        ogs_error("RADIUS servers[%d]: no host configured", srv_idx);
         return OGS_ERROR;
     }
 
-    if (ogs_getaddrinfo(&peer, AF_UNSPEC, cfg->server, port, 0) != OGS_OK ||
+    if (ogs_getaddrinfo(&peer, AF_UNSPEC, s->host, port, 0) != OGS_OK ||
         peer == NULL) {
-        ogs_error("RADIUS ogs_getaddrinfo(%s) failed", cfg->server);
+        ogs_error("RADIUS ogs_getaddrinfo(%s) failed", s->host);
         return OGS_ERROR;
     }
 
@@ -691,17 +916,21 @@ static int radius_udp_exchange(uint16_t port,
 
         snd = ogs_sendto(sock->fd, req, req_len, 0, peer);
         if (snd != (ssize_t)req_len) {
-            ogs_warn("RADIUS sendto incomplete (%d vs %u)",
-                    (int)snd, (unsigned)req_len);
+            ogs_warn("RADIUS[%s] sendto incomplete (%d vs %u)",
+                    s->host, (int)snd, (unsigned)req_len);
             continue;
         }
 
         rcv = ogs_recvfrom(sock->fd, res, res_max, 0, &from);
         if (rcv < RADIUS_HDR_LEN) {
-            if (rcv < 0)
-                ogs_warn("RADIUS recvfrom failed");
-            else
-                ogs_warn("RADIUS short response");
+            if (rcv < 0) {
+                /* recv timeout or network error ? count as timeout so the
+                 * caller can fail over; all attempts exhausted here mean
+                 * the remote is effectively unreachable. */
+                timeouts++;
+            } else {
+                ogs_warn("RADIUS[%s] short response", s->host);
+            }
             continue;
         }
 
@@ -738,12 +967,173 @@ static int radius_udp_exchange(uint16_t port,
         }
 
         rv = OGS_OK;
+        successes++;
         break;
     }
 
     ogs_sock_destroy(sock);
     ogs_freeaddrinfo(peer);
+
+    /* Update runtime health for the caller's benefit. */
+    if (rv == OGS_OK) {
+        s->consecutive_failures = 0;
+        s->down_since = 0;
+    } else if (successes == 0 && timeouts >= cfg->retry) {
+        s->consecutive_failures++;
+        if (s->consecutive_failures >= SMF_RADIUS_BLACKLIST_THRESHOLD
+                && s->down_since == 0) {
+            s->down_since = ogs_time_now();
+            ogs_warn("RADIUS[%s]: marked DOWN after %d consecutive timeouts",
+                    s->host, s->consecutive_failures);
+        }
+        /* Translate "all attempts timed out" into a distinct return so
+         * the caller knows to fail over rather than give up. */
+        return OGS_TIMEUP;
+    }
+
     return rv;
+}
+
+/* ------------------------------------------------------------------ */
+/* Server selection                                                    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Produce an ordered list of server indices to try, honoring:
+ *   - session stickiness (sticky_idx tried first if healthy)
+ *   - select_mode       (primary_failover | hash_imsi)
+ *   - health            (down servers go to the end, unless cool-down
+ *                        has elapsed in which case they get one probe)
+ *
+ * Returns the number of servers written into `order[]`. A return of 0
+ * means no server is configured.
+ */
+static int radius_build_try_order(
+        int *order, int max_order,
+        int sticky_idx, const char *imsi_for_hash)
+{
+    smf_radius_config_t *cfg = &smf_self()->radius;
+    ogs_time_t now = ogs_time_now();
+    int n = 0;
+    int i;
+    bool used[SMF_MAX_RADIUS_SERVERS] = { 0 };
+
+    if (cfg->num_servers == 0) return 0;
+
+    /* 1) Sticky session server first if usable (session coherence). */
+    if (sticky_idx >= 0 && sticky_idx < cfg->num_servers) {
+        order[n++] = sticky_idx;
+        used[sticky_idx] = true;
+    }
+
+    /* 2) Preferred server by mode. */
+    if (cfg->select_mode == SMF_RADIUS_SELECT_HASH_IMSI
+            && imsi_for_hash && imsi_for_hash[0]) {
+        uint32_t h = 2166136261u;    /* FNV-1a */
+        const char *p;
+        for (p = imsi_for_hash; *p; p++) {
+            h ^= (uint8_t)*p;
+            h *= 16777619u;
+        }
+        int pref = (int)(h % (uint32_t)cfg->num_servers);
+        if (!used[pref]) {
+            order[n++] = pref;
+            used[pref] = true;
+        }
+    }
+
+    /* 3) Primaries in declaration order. */
+    for (i = 0; i < cfg->num_servers && n < max_order; i++) {
+        if (used[i] || !cfg->servers[i].is_primary) continue;
+        /* Skip blacklisted servers unless cool-down expired. */
+        if (cfg->servers[i].down_since != 0 &&
+                (now - cfg->servers[i].down_since) <
+                    ogs_time_from_msec(SMF_RADIUS_BLACKLIST_COOLDOWN_MS))
+            continue;
+        order[n++] = i;
+        used[i] = true;
+    }
+
+    /* 4) Secondaries in declaration order. */
+    for (i = 0; i < cfg->num_servers && n < max_order; i++) {
+        if (used[i] || cfg->servers[i].is_primary) continue;
+        if (cfg->servers[i].down_since != 0 &&
+                (now - cfg->servers[i].down_since) <
+                    ogs_time_from_msec(SMF_RADIUS_BLACKLIST_COOLDOWN_MS))
+            continue;
+        order[n++] = i;
+        used[i] = true;
+    }
+
+    /* 5) Last resort: any remaining (blacklisted, cooling down) server.
+     * Better to try a cold server than drop the request. */
+    for (i = 0; i < cfg->num_servers && n < max_order; i++) {
+        if (!used[i]) {
+            order[n++] = i;
+            used[i] = true;
+        }
+    }
+
+    return n;
+}
+
+/*
+ * Try each server in `order` until one returns OGS_OK or OGS_ERROR
+ * (protocol violation). Timeouts advance to the next server.
+ *
+ * On success, stores the selected index in *out_idx and the associated
+ * secret in *out_secret. This lets the caller verify the response
+ * authenticator with the right secret.
+ */
+static int radius_exchange_with_failover(
+        const int *order, int num_order,
+        bool is_accounting,
+        const uint8_t *req, size_t req_len,
+        uint8_t *res, size_t res_max, size_t *res_len,
+        const uint8_t *acceptable_codes, unsigned num_codes,
+        int *out_idx, const char **out_secret,
+        uint8_t *req_authenticator /* for accounting: recomputed per server */)
+{
+    smf_radius_config_t *cfg = &smf_self()->radius;
+    int i, rv = OGS_ERROR;
+    uint8_t scratch[RADIUS_PACKET_MAX];
+
+    for (i = 0; i < num_order; i++) {
+        int idx = order[i];
+        smf_radius_server_t *s = &cfg->servers[idx];
+        uint16_t port = is_accounting ? s->acct_port : s->auth_port;
+        const uint8_t *send_buf = req;
+
+        /* Accounting and PoD requests need the Request-Authenticator to
+         * be computed with *this server's* secret. We build a scratch
+         * copy for each try so the caller's buffer stays pristine. */
+        if (is_accounting && req_authenticator) {
+            memcpy(scratch, req, req_len);
+            radius_fill_request_authenticator(scratch, req_len,
+                    s->secret ? s->secret : "");
+            memcpy(req_authenticator, scratch + 4, 16);
+            send_buf = scratch;
+        }
+
+        rv = radius_udp_exchange(idx, port,
+                send_buf, req_len, res, res_max, res_len,
+                acceptable_codes, num_codes);
+
+        if (rv == OGS_OK) {
+            if (out_idx)    *out_idx    = idx;
+            if (out_secret) *out_secret = s->secret ? s->secret : "";
+            return OGS_OK;
+        }
+        if (rv == OGS_TIMEUP) {
+            ogs_info("RADIUS[%s]: timeout, trying next server", s->host);
+            continue;
+        }
+        /* Protocol error on this server ? still try the next one; some
+         * farms have a bad actor we want to skip past. */
+        ogs_info("RADIUS[%s]: protocol error, trying next server", s->host);
+    }
+
+    return rv == OGS_OK ? OGS_OK : OGS_ERROR;
 }
 
 /* ------------------------------------------------------------------ */
@@ -765,6 +1155,9 @@ int smf_radius_authorize_for_session(smf_sess_t *sess)
     uint8_t *p;
     uint16_t total_len;
     smf_radius_config_t *cfg = &smf_self()->radius;
+    int order[SMF_MAX_RADIUS_SERVERS];
+    int num_order, picked_idx = -1;
+    const char *picked_secret = NULL;
 
     if (!cfg->enabled)
         return OGS_OK;
@@ -796,25 +1189,40 @@ int smf_radius_authorize_for_session(smf_sess_t *sess)
     pkt[2] = (uint8_t)(total_len >> 8);
     pkt[3] = (uint8_t)(total_len);
 
+    num_order = radius_build_try_order(order, SMF_MAX_RADIUS_SERVERS,
+            -1 /* no sticky yet */, user);
+    if (num_order == 0) {
+        ogs_error("RADIUS: no servers configured");
+        return OGS_ERROR;
+    }
+
     {
         const uint8_t want[] = {
             RADIUS_CODE_ACCESS_ACCEPT,
             RADIUS_CODE_ACCESS_REJECT
         };
 
-        if (radius_udp_exchange(cfg->auth_port, pkt, total_len,
-                    res, sizeof res, &res_len, want, sizeof want) != OGS_OK) {
-            ogs_error("RADIUS Access-Request failed after %d attempts",
-                    cfg->retry);
+        /* Access-Request has a random 16-byte authenticator in the
+         * packet body ? no per-server rewrite needed. */
+        if (radius_exchange_with_failover(order, num_order,
+                    false /* is_accounting */,
+                    pkt, total_len, res, sizeof res, &res_len,
+                    want, sizeof want,
+                    &picked_idx, &picked_secret, NULL) != OGS_OK) {
+            ogs_error("RADIUS Access-Request failed on all %d server(s)",
+                    num_order);
             return OGS_ERROR;
         }
     }
 
     if (radius_verify_response(req_auth, res, res_len,
-                cfg->secret ? cfg->secret : "") != OGS_OK) {
+                picked_secret ? picked_secret : "") != OGS_OK) {
         ogs_warn("RADIUS Access-Accept/Reject authenticator mismatch");
         return OGS_ERROR;
     }
+    /* Pin this session to the server that accepted Access-Request so
+     * subsequent Interim/Stop go to the same AAA. */
+    sess->radius.server_idx = picked_idx;
 
     if (res[0] == RADIUS_CODE_ACCESS_REJECT) {
         ogs_error("RADIUS Access-Reject for IMSI[%s] DNN[%s]",
@@ -848,7 +1256,7 @@ static void radius_append_usage_counters(uint8_t **pp, smf_sess_t *sess,
         session_time = (uint32_t)(
                 (now - sess->radius.start_time) / OGS_USEC_PER_SEC);
 
-    /* Acct-Session-Time is sent on Interim and Stop (RFC 2866 §5.7).
+    /* Acct-Session-Time is sent on Interim and Stop (RFC 2866 ?5.7).
      * We also include it on Start as 0 which is harmless. */
     p = append_attr_u32_be(p, RADIUS_ATTR_ACCT_SESSION_TIME, session_time);
 
@@ -864,7 +1272,7 @@ static void radius_append_usage_counters(uint8_t **pp, smf_sess_t *sess,
     p = append_attr_u32_be(p, RADIUS_ATTR_ACCT_OUTPUT_OCTETS,
             (uint32_t)(dl & 0xFFFFFFFFULL));
 
-    /* Acct-Input/Output-Gigawords (RFC 2869 §5.1/5.2) when > 4 GiB. */
+    /* Acct-Input/Output-Gigawords (RFC 2869 ?5.1/5.2) when > 4 GiB. */
     if (ul >> 32)
         p = append_attr_u32_be(p, RADIUS_ATTR_ACCT_INPUT_GIGAWORDS,
                 (uint32_t)(ul >> 32));
@@ -904,11 +1312,14 @@ static int radius_send_accounting(smf_sess_t *sess, uint32_t status_type)
     uint8_t *p;
     uint16_t total_len;
     smf_radius_config_t *cfg = &smf_self()->radius;
+    int order[SMF_MAX_RADIUS_SERVERS];
+    int num_order, picked_idx = -1;
+    const char *picked_secret = NULL;
 
     ogs_assert(sess->radius.acct_session_id);
     ogs_assert(smf_ue);
 
-    if (!cfg->server)
+    if (cfg->num_servers == 0)
         return OGS_ERROR;
 
     user = radius_username(smf_ue);
@@ -927,7 +1338,7 @@ static int radius_send_accounting(smf_sess_t *sess, uint32_t status_type)
     p = append_attr_string(p, RADIUS_ATTR_ACCT_SESSION_ID,
             sess->radius.acct_session_id);
 
-    /* Echo the Class AVP(s) received in Access-Accept (RFC 2865 §5.25). */
+    /* Echo the Class AVP(s) received in Access-Accept (RFC 2865 ?5.25). */
     if (sess->radius.class_buf && sess->radius.class_len)
         p = append_class_attrs(p, sess->radius.class_buf,
                 sess->radius.class_len);
@@ -936,7 +1347,7 @@ static int radius_send_accounting(smf_sess_t *sess, uint32_t status_type)
         /*
          * sess->ipv4->addr[0] is already in network byte order
          * (it is copied straight into sin_addr.s_addr elsewhere in the
-         * stack — see src/smf/gy-path.c). append_attr_ipv4 also expects
+         * stack ? see src/smf/gy-path.c). append_attr_ipv4 also expects
          * network byte order, so pass it through unchanged. A prior
          * htobe32() here double-swapped on little-endian and produced a
          * reversed Framed-IP-Address on the wire.
@@ -963,30 +1374,44 @@ static int radius_send_accounting(smf_sess_t *sess, uint32_t status_type)
     pkt[2] = (uint8_t)(total_len >> 8);
     pkt[3] = (uint8_t)(total_len);
 
-    radius_fill_request_authenticator(pkt, total_len,
-            cfg->secret ? cfg->secret : "");
-
-    memcpy(req_auth_saved, pkt + 4, 16);
+    /* Request-Authenticator is computed per server inside the failover
+     * helper because each server has its own shared secret. */
+    num_order = radius_build_try_order(order, SMF_MAX_RADIUS_SERVERS,
+            sess->radius.server_idx,
+            radius_username(smf_ue));
+    if (num_order == 0) {
+        ogs_warn("RADIUS Accounting: no servers configured");
+        return OGS_ERROR;
+    }
 
     {
         const uint8_t want[] = { RADIUS_CODE_ACCOUNTING_RESPONSE };
 
-        if (radius_udp_exchange(cfg->acct_port, pkt, total_len,
-                    res, sizeof res, &res_len, want, sizeof want) != OGS_OK) {
-            ogs_warn("RADIUS Accounting-Request (status=%u) failed",
-                    (unsigned)status_type);
+        if (radius_exchange_with_failover(order, num_order,
+                    true /* is_accounting */,
+                    pkt, total_len, res, sizeof res, &res_len,
+                    want, sizeof want,
+                    &picked_idx, &picked_secret, req_auth_saved) != OGS_OK) {
+            ogs_warn("RADIUS Accounting-Request (status=%u) failed on all "
+                    "%d server(s)", (unsigned)status_type, num_order);
             return OGS_ERROR;
         }
     }
 
     if (radius_verify_response(req_auth_saved, res, res_len,
-                cfg->secret ? cfg->secret : "") != OGS_OK) {
+                picked_secret ? picked_secret : "") != OGS_OK) {
         ogs_warn("RADIUS Accounting-Response authenticator mismatch");
         return OGS_ERROR;
     }
 
-    ogs_debug("RADIUS Accounting-Response (status=%u) OK",
-            (unsigned)status_type);
+    /* If the session failed over to a different AAA (primary came back,
+     * or secondary took over), update the pin so next Interim stays
+     * coherent. */
+    if (picked_idx >= 0 && sess->radius.server_idx != picked_idx)
+        sess->radius.server_idx = picked_idx;
+
+    ogs_debug("RADIUS Accounting-Response (status=%u) OK from servers[%d]",
+            (unsigned)status_type, picked_idx);
     return OGS_OK;
 }
 
@@ -1208,7 +1633,7 @@ static smf_sess_t *pod_find_session(const uint8_t *attrs, size_t attrs_len)
 
 static void pod_send_response(int code, uint8_t id,
         const uint8_t *req_authenticator, ogs_sockaddr_t *to,
-        uint32_t error_cause)
+        uint32_t error_cause, const char *secret)
 {
     uint8_t pkt[RADIUS_PACKET_MAX];
     uint8_t digest[16];
@@ -1216,11 +1641,19 @@ static void pod_send_response(int code, uint8_t id,
     uint8_t *p;
     uint16_t total_len;
     size_t secret_len;
-    const char *secret;
     smf_radius_config_t *cfg = &smf_self()->radius;
 
-    secret = (cfg->pod_secret && cfg->pod_secret[0]) ?
-            cfg->pod_secret : (cfg->secret ? cfg->secret : "");
+    /* Fall back to the same candidate list pod_recv_cb uses in case a
+     * caller (e.g. early NAK before authenticator validation) didn't
+     * pass a specific secret. */
+    if (!secret || !secret[0]) {
+        if (cfg->pod_secret && cfg->pod_secret[0])
+            secret = cfg->pod_secret;
+        else if (cfg->num_servers > 0 && cfg->servers[0].secret)
+            secret = cfg->servers[0].secret;
+        else
+            secret = cfg->secret ? cfg->secret : "";
+    }
     secret_len = strlen(secret);
 
     memset(pkt, 0, sizeof pkt);
@@ -1236,7 +1669,7 @@ static void pod_send_response(int code, uint8_t id,
     pkt[3] = (uint8_t)(total_len);
 
     /* Response Authenticator = MD5(Code + ID + Length + ReqAuth +
-     * Attributes + Secret). RFC 5176 §3.2. */
+     * Attributes + Secret). RFC 5176 ?3.2. */
     memcpy(cat, pkt, 4);
     memcpy(cat + 4, req_authenticator, 16);
     memcpy(cat + 20, pkt + RADIUS_HDR_LEN, total_len - RADIUS_HDR_LEN);
@@ -1426,39 +1859,65 @@ static void pod_recv_cb(short when, ogs_socket_t fd, void *data)
         return;
     }
 
-    secret = (cfg->pod_secret && cfg->pod_secret[0]) ?
-            cfg->pod_secret : (cfg->secret ? cfg->secret : "");
-    secret_len = strlen(secret);
-
-    /* Verify Request-Authenticator:
-     *   ReqAuth == MD5(Code + ID + Length + 0*16 + Attributes + Secret)
-     * We do this by saving the authenticator, zeroing it, recomputing and
-     * comparing. RFC 5176 §3.5.
+    /*
+     * Try every configured shared secret, in this order:
+     *   1. Explicit `pod_secret` if set (lets operators issue PoDs from
+     *      a hosts that don't know the per-server AAA secret).
+     *   2. Each server's secret (so PoDs can come directly from any
+     *      configured AAA, e.g. in a primary+secondary farm).
+     *   3. Legacy `secret` (single-server deployments).
+     *
+     * The authenticator that matches is remembered so pod_send_response
+     * can reply with the same secret; otherwise the requester would see
+     * a bad Response-Authenticator.
      */
     memcpy(saved_auth, buf + 4, 16);
     memcpy(packet_copy, buf, plen);
-    {
-        uint8_t digest[16];
-        uint8_t cat[RADIUS_PACKET_MAX + 256];
-        size_t cat_len;
+    memset(packet_copy + 4, 0, 16);
 
-        memset(packet_copy + 4, 0, 16);
-        if ((size_t)plen + secret_len > sizeof cat) {
-            ogs_warn("RADIUS PoD: packet too large");
-            return;
+    secret = NULL;
+    secret_len = 0;
+    {
+        const char *candidates[SMF_MAX_RADIUS_SERVERS + 2];
+        unsigned nc = 0, i;
+
+        if (cfg->pod_secret && cfg->pod_secret[0])
+            candidates[nc++] = cfg->pod_secret;
+        for (i = 0; i < (unsigned)cfg->num_servers; i++) {
+            const char *cs = cfg->servers[i].secret;
+            if (cs && cs[0]) candidates[nc++] = cs;
         }
-        memcpy(cat, packet_copy, plen);
-        memcpy(cat + plen, secret, secret_len);
-        cat_len = plen + secret_len;
-        md5_digest(cat, cat_len, digest);
-        if (memcmp(digest, saved_auth, 16) != 0) {
+        if (cfg->secret && cfg->secret[0])
+            candidates[nc++] = cfg->secret;
+
+        for (i = 0; i < nc; i++) {
+            uint8_t digest[16];
+            uint8_t cat[RADIUS_PACKET_MAX + 256];
+            size_t slen = strlen(candidates[i]);
+            size_t cat_len;
+
+            if ((size_t)plen + slen > sizeof cat) continue;
+            memcpy(cat, packet_copy, plen);
+            memcpy(cat + plen, candidates[i], slen);
+            cat_len = plen + slen;
+            md5_digest(cat, cat_len, digest);
+            if (memcmp(digest, saved_auth, 16) == 0) {
+                secret = candidates[i];
+                secret_len = slen;
+                break;
+            }
+        }
+
+        if (!secret) {
             char ipbuf[OGS_ADDRSTRLEN];
 
-            ogs_warn("RADIUS PoD: Request-Authenticator mismatch from %s",
-                    OGS_ADDR(&from, ipbuf));
+            ogs_warn("RADIUS PoD: Request-Authenticator mismatch from "
+                    "%s (tried %u secret(s))",
+                    OGS_ADDR(&from, ipbuf), nc);
             return;
         }
     }
+    (void)secret_len;
 
     attrs = buf + RADIUS_HDR_LEN;
     attrs_len = plen - RADIUS_HDR_LEN;
@@ -1467,7 +1926,7 @@ static void pod_recv_cb(short when, ogs_socket_t fd, void *data)
     if (buf[0] == RADIUS_CODE_COA_REQUEST) {
         ogs_info("RADIUS CoA-Request received: unsupported");
         pod_send_response(RADIUS_CODE_COA_NAK, buf[1], saved_auth, &from,
-                RADIUS_ERR_CAUSE_UNSUPPORTED_SERVICE);
+                RADIUS_ERR_CAUSE_UNSUPPORTED_SERVICE, secret);
         return;
     }
 
@@ -1478,7 +1937,7 @@ static void pod_recv_cb(short when, ogs_socket_t fd, void *data)
         ogs_info("RADIUS Disconnect-Request: no matching session (from %s)",
                 OGS_ADDR(&from, ipbuf));
         pod_send_response(RADIUS_CODE_DISCONNECT_NAK, buf[1], saved_auth,
-                &from, RADIUS_ERR_CAUSE_SESSION_NOT_FOUND);
+                &from, RADIUS_ERR_CAUSE_SESSION_NOT_FOUND, secret);
         return;
     }
 
@@ -1496,7 +1955,8 @@ static void pod_recv_cb(short when, ogs_socket_t fd, void *data)
                 OGS_ADDR(&from, ipbuf));
     }
 
-    pod_send_response(RADIUS_CODE_DISCONNECT_ACK, buf[1], saved_auth, &from, 0);
+    pod_send_response(RADIUS_CODE_DISCONNECT_ACK, buf[1], saved_auth, &from,
+            0, secret);
 
     ogs_info("RADIUS PoD: releasing session "
             "(epc=%d, sess_id=%d, sgw_s5c_teid=0x%x)",
@@ -1658,4 +2118,143 @@ void smf_radius_pod_close(void)
         ogs_sock_destroy(s_pod_sock);
         s_pod_sock = NULL;
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* Hot reload                                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * String ownership: these pointers hold the heap-allocated copies that
+ * back smf_self()->radius.* entries we duplicated from an admin-API
+ * payload. We track them out-of-band (rather than marking the config
+ * struct with flags) because the YAML parser loads from ogs_app()'s
+ * YAML document and its pointers must NOT be freed on hot reload.
+ */
+static char *g_rad_owned_nas_id;
+static char *g_rad_owned_nas_ip;
+static char *g_rad_owned_pod_bind;
+static char *g_rad_owned_pod_secret;
+static char *g_rad_owned_legacy_server;
+static char *g_rad_owned_legacy_secret;
+static char *g_rad_owned_server_host  [SMF_MAX_RADIUS_SERVERS];
+static char *g_rad_owned_server_secret[SMF_MAX_RADIUS_SERVERS];
+
+static void rad_replace_owned(const char **field, char **owned,
+        const char *new_value)
+{
+    char *dup = (new_value && new_value[0]) ? ogs_strdup(new_value) : NULL;
+    char *old = *owned;
+
+    /* Null the config slot first so callers on other threads never see
+     * a pointer to freed memory. */
+    *field = dup;
+    *owned = dup;
+    if (old) ogs_free(old);
+}
+
+int smf_radius_apply_runtime(const smf_radius_config_t *new_cfg)
+{
+    smf_radius_config_t *cur = &smf_self()->radius;
+    bool pod_restart_needed = false;
+    int i;
+
+    ogs_assert(new_cfg);
+
+    ogs_info("RADIUS: applying runtime config "
+            "(enabled=%d, servers=%d, select_mode=%s)",
+            new_cfg->enabled ? 1 : 0,
+            new_cfg->num_servers,
+            new_cfg->select_mode == SMF_RADIUS_SELECT_HASH_IMSI ?
+                "hash_imsi" : "primary_failover");
+
+    /* Decide up front whether the PoD listener needs a bounce. We do
+     * this before mutating anything so a string compare against the
+     * old state is meaningful. */
+    {
+        const char *old_bind = cur->pod_bind ? cur->pod_bind : "";
+        const char *new_bind = new_cfg->pod_bind ? new_cfg->pod_bind : "";
+
+        if (cur->pod_enabled != new_cfg->pod_enabled ||
+                cur->pod_port != new_cfg->pod_port ||
+                strcmp(old_bind, new_bind) != 0)
+            pod_restart_needed = true;
+    }
+
+    /* Scalars + enums first; safe to update without locking because all
+     * data-path consumers run on the SMF main thread. */
+    cur->enabled               = new_cfg->enabled;
+    cur->select_mode           = new_cfg->select_mode;
+    cur->timeout_ms            = new_cfg->timeout_ms;
+    cur->retry                 = new_cfg->retry;
+    cur->acct_interim_interval = new_cfg->acct_interim_interval;
+    cur->pod_enabled           = new_cfg->pod_enabled;
+    cur->pod_port              = new_cfg->pod_port;
+    cur->pod_teardown_timeout_ms = new_cfg->pod_teardown_timeout_ms;
+
+    /* Shared-pointer strings. */
+    rad_replace_owned(&cur->nas_id,     &g_rad_owned_nas_id,     new_cfg->nas_id);
+    rad_replace_owned(&cur->nas_ip,     &g_rad_owned_nas_ip,     new_cfg->nas_ip);
+    rad_replace_owned(&cur->pod_bind,   &g_rad_owned_pod_bind,   new_cfg->pod_bind);
+    rad_replace_owned(&cur->pod_secret, &g_rad_owned_pod_secret, new_cfg->pod_secret);
+
+    /* Legacy flat server/secret: we null them out so PoD secret
+     * selection does not fall back to a stale value. The `servers[]`
+     * array is the source of truth once the admin API owns us. */
+    rad_replace_owned(&cur->server, &g_rad_owned_legacy_server, NULL);
+    rad_replace_owned(&cur->secret, &g_rad_owned_legacy_secret, NULL);
+
+    /* Swap the servers array. Free any heap-owned strings first so the
+     * slot is clean, then dup from new_cfg. */
+    for (i = 0; i < SMF_MAX_RADIUS_SERVERS; i++) {
+        if (g_rad_owned_server_host[i]) {
+            ogs_free(g_rad_owned_server_host[i]);
+            g_rad_owned_server_host[i] = NULL;
+        }
+        if (g_rad_owned_server_secret[i]) {
+            ogs_free(g_rad_owned_server_secret[i]);
+            g_rad_owned_server_secret[i] = NULL;
+        }
+        memset(&cur->servers[i], 0, sizeof(cur->servers[i]));
+    }
+    cur->num_servers = 0;
+    for (i = 0; i < new_cfg->num_servers && i < SMF_MAX_RADIUS_SERVERS; i++) {
+        const smf_radius_server_t *ns = &new_cfg->servers[i];
+        smf_radius_server_t *dst = &cur->servers[i];
+
+        if (!ns->host || !ns->host[0]) continue;
+
+        g_rad_owned_server_host[i]   = ogs_strdup(ns->host);
+        g_rad_owned_server_secret[i] = ogs_strdup(
+                ns->secret ? ns->secret : "");
+        dst->host       = g_rad_owned_server_host[i];
+        dst->auth_port  = ns->auth_port ? ns->auth_port : 1812;
+        dst->acct_port  = ns->acct_port ? ns->acct_port : 1813;
+        dst->secret     = g_rad_owned_server_secret[i];
+        dst->is_primary = ns->is_primary;
+        dst->weight     = ns->weight ? ns->weight : 1;
+        /* Clear health so next request gets a fresh chance at this
+         * server; admin edits implicitly reset blacklists. */
+        dst->consecutive_failures = 0;
+        dst->down_since = 0;
+        dst->last_probe = 0;
+        cur->num_servers++;
+    }
+
+    /* Existing sessions may still hold a server_idx that no longer
+     * maps to the same AAA. radius_build_try_order() handles this
+     * defensively (it clamps and falls back to mode-based selection). */
+
+    /* Finally, (re)start the PoD listener if needed. */
+    if (pod_restart_needed) {
+        smf_radius_pod_close();
+        if (cur->pod_enabled) {
+            if (smf_radius_pod_open() != OGS_OK) {
+                ogs_error("RADIUS PoD: failed to reopen listener after "
+                        "runtime reconfig; PoD disabled until next apply");
+            }
+        }
+    }
+
+    return OGS_OK;
 }

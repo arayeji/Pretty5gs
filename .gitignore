@@ -8,3 +8,6 @@ subprojects/usrsctp
 
 webui/.next
 /.vs
+/tools/admin-api/src/Open5gs.AdminApi/bin
+/tools/admin-api/.vs/Open5gs.AdminApi/DesignTimeBuild
+/tools/admin-api/.vs/Open5gs.AdminApi/FileContentIndex
