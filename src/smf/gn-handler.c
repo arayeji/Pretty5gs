@@ -27,6 +27,7 @@
 #include "n4-handler.h"
 #include "pfcp-path.h"
 #include "radius-path.h"
+#include "ga-writer.h"
 
 #include "ipfw/ipfw2.h"
 
@@ -333,6 +334,7 @@ uint8_t smf_gn_handle_create_pdp_context_request(
     }
 
     smf_radius_accounting_session_started(sess);
+    smf_ga_cdr_session_start(sess);
 
     ogs_info("UE IMSI[%s] APN[%s] IPv4[%s] IPv6[%s]",
         smf_ue->imsi_bcd,

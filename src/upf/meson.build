@@ -85,24 +85,31 @@ libarp_nd_dep = declare_dependency(
     link_with : libarp_nd,
     dependencies : libtins_dep)
 
-libupf = static_library('upf',
-    sources : libupf_sources,
-    dependencies : [
+libupf_deps = [
         libmetrics_dep,
         libpfcp_dep,
         libtun_dep,
         libarp_nd_dep,
-    ],
+    ]
+
+libupf_c_args = []
+
+if admin_watcher_enabled
+    libupf_sources += files('upf-admin-watcher.h', 'upf-admin-watcher.c')
+    libupf_deps += [open5gs_admin_watcher_dep]
+    libupf_c_args += ['-DOPEN5GS_ADMIN_WATCHER']
+endif
+
+libupf = static_library('upf',
+    sources : libupf_sources,
+    c_args : libupf_c_args,
+    dependencies : libupf_deps,
     install : false)
 
 libupf_dep = declare_dependency(
     link_with : libupf,
-    dependencies : [
-        libmetrics_dep,
-        libpfcp_dep,
-        libtun_dep,
-        libarp_nd_dep,
-    ])
+    compile_args : libupf_c_args,
+    dependencies : libupf_deps)
 
 upf_sources = files('''
     app.c

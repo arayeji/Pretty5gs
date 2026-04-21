@@ -123,6 +123,11 @@ add_project_arguments(
 
 subdir('configs')
 subdir('lib')
+# Optional admin-api C watcher; NFs gate their integration on this flag too.
+admin_watcher_enabled = get_option('admin_watcher')
+if admin_watcher_enabled
+    subdir('tools/admin-api/watcher-c')
+endif
 subdir('src')
 subdir('misc')
 # Don't build the tests unless we can run them (either natively or in an exe wrapper)

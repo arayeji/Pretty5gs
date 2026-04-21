@@ -1,0 +1,201 @@
+{
+  "Version": 1,
+  "WorkspaceRootPath": "C:\\Users\\ahmad\\source\\repos\\open5gs\\tools\\admin-api\\",
+  "Documents": [
+    {
+      "AbsoluteMoniker": "D:0:0:{A0F9C7B2-5B9C-4D1A-9B6E-1C2A3D4E5F60}|src\\Open5gs.AdminApi\\Open5gs.AdminApi.csproj|c:\\users\\ahmad\\source\\repos\\open5gs\\tools\\admin-api\\src\\open5gs.adminapi\\open5gs.adminapi.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}|",
+      "RelativeMoniker": "D:0:0:{A0F9C7B2-5B9C-4D1A-9B6E-1C2A3D4E5F60}|src\\Open5gs.AdminApi\\Open5gs.AdminApi.csproj|solutionrelative:src\\open5gs.adminapi\\open5gs.adminapi.csproj||{FA3CD31E-987B-443A-9B81-186104E8DAC1}|"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A0F9C7B2-5B9C-4D1A-9B6E-1C2A3D4E5F60}|src\\Open5gs.AdminApi\\Open5gs.AdminApi.csproj|c:\\users\\ahmad\\source\\repos\\open5gs\\tools\\admin-api\\src\\open5gs.adminapi\\validation\\smfradiusschema.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}",
+      "RelativeMoniker": "D:0:0:{A0F9C7B2-5B9C-4D1A-9B6E-1C2A3D4E5F60}|src\\Open5gs.AdminApi\\Open5gs.AdminApi.csproj|solutionrelative:src\\open5gs.adminapi\\validation\\smfradiusschema.cs||{A6C744A8-0E4A-4FC6-886A-064283054674}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\ahmad\\source\\repos\\open5gs\\build.md||{EFC0BB08-EA7D-40C6-A696-C870411A895B}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\ahmad\\source\\repos\\open5gs\\meson.build||{3B902123-F8A7-4915-9F01-361F908088D0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\ahmad\\source\\repos\\open5gs\\changes.ps1||{3B902123-F8A7-4915-9F01-361F908088D0}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\ahmad\\source\\repos\\open5gs\\configs\\systemd\\open5gs-bsfd.service.in||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A2FE74E1-B743-11D0-AE1A-00A0C90FFFC3}|\u003CMiscFiles\u003E|C:\\Users\\ahmad\\source\\repos\\open5gs\\configs\\open5gs\\cgf.yaml.in||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{A0F9C7B2-5B9C-4D1A-9B6E-1C2A3D4E5F60}|src\\Open5gs.AdminApi\\Open5gs.AdminApi.csproj|c:\\users\\ahmad\\source\\repos\\open5gs\\tools\\admin-api\\src\\open5gs.adminapi\\open5gs.adminapi.csproj||{04B8AB82-A572-4FEF-95CE-5222444B6B64}|",
+      "RelativeMoniker": "D:0:0:{A0F9C7B2-5B9C-4D1A-9B6E-1C2A3D4E5F60}|src\\Open5gs.AdminApi\\Open5gs.AdminApi.csproj|solutionrelative:src\\open5gs.adminapi\\open5gs.adminapi.csproj||{04B8AB82-A572-4FEF-95CE-5222444B6B64}|"
+    }
+  ],
+  "DocumentGroupContainers": [
+    {
+      "Orientation": 0,
+      "VerticalTabListWidth": 256,
+      "DocumentGroups": [
+        {
+          "DockedWidth": 200,
+          "SelectedChildIndex": 14,
+          "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:128:0:{13b12e3e-c1b4-4539-9371-4fe9a0d523fc}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:130:0:{1fc202d4-d401-403c-9834-5b218574bb67}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:131:0:{1fc202d4-d401-403c-9834-5b218574bb67}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:132:0:{1fc202d4-d401-403c-9834-5b218574bb67}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:133:0:{1fc202d4-d401-403c-9834-5b218574bb67}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:128:0:{1fc202d4-d401-403c-9834-5b218574bb67}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:129:0:{13b12e3e-c1b4-4539-9371-4fe9a0d523fc}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:14:0:{dcc4ea97-1c0c-482b-b205-e541c0df9728}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:13:0:{dcc4ea97-1c0c-482b-b205-e541c0df9728}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{dcc4ea97-1c0c-482b-b205-e541c0df9728}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:2:0:{dcc4ea97-1c0c-482b-b205-e541c0df9728}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:1:0:{dcc4ea97-1c0c-482b-b205-e541c0df9728}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:6:0:{dcc4ea97-1c0c-482b-b205-e541c0df9728}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{57d563b6-44a5-47df-85be-f4199ad6b651}"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 0,
+              "Title": "Open5gs.AdminApi",
+              "DocumentMoniker": "C:\\Users\\ahmad\\source\\repos\\open5gs\\tools\\admin-api\\src\\Open5gs.AdminApi\\Open5gs.AdminApi.csproj",
+              "RelativeDocumentMoniker": "src\\Open5gs.AdminApi\\Open5gs.AdminApi.csproj",
+              "ToolTip": "C:\\Users\\ahmad\\source\\repos\\open5gs\\tools\\admin-api\\src\\Open5gs.AdminApi\\Open5gs.AdminApi.csproj",
+              "RelativeToolTip": "src\\Open5gs.AdminApi\\Open5gs.AdminApi.csproj",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAA0AAAAYAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000758|",
+              "WhenOpened": "2026-04-20T21:20:41.454Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "SmfRadiusSchema.cs",
+              "DocumentMoniker": "C:\\Users\\ahmad\\source\\repos\\open5gs\\tools\\admin-api\\src\\Open5gs.AdminApi\\Validation\\SmfRadiusSchema.cs",
+              "RelativeDocumentMoniker": "src\\Open5gs.AdminApi\\Validation\\SmfRadiusSchema.cs",
+              "ToolTip": "C:\\Users\\ahmad\\source\\repos\\open5gs\\tools\\admin-api\\src\\Open5gs.AdminApi\\Validation\\SmfRadiusSchema.cs",
+              "RelativeToolTip": "src\\Open5gs.AdminApi\\Validation\\SmfRadiusSchema.cs",
+              "ViewState": "AgIAACYAAAAAAAAAAADgvy8AAAAdAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000738|",
+              "WhenOpened": "2026-04-19T21:39:57.858Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "open5gs-bsfd.service.in",
+              "DocumentMoniker": "C:\\Users\\ahmad\\source\\repos\\open5gs\\configs\\systemd\\open5gs-bsfd.service.in",
+              "RelativeDocumentMoniker": "..\\..\\configs\\systemd\\open5gs-bsfd.service.in",
+              "ToolTip": "C:\\Users\\ahmad\\source\\repos\\open5gs\\configs\\systemd\\open5gs-bsfd.service.in",
+              "RelativeToolTip": "..\\..\\configs\\systemd\\open5gs-bsfd.service.in",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-04-19T20:27:29.222Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "changes.ps1",
+              "DocumentMoniker": "C:\\Users\\ahmad\\source\\repos\\open5gs\\changes.ps1",
+              "RelativeDocumentMoniker": "..\\..\\changes.ps1",
+              "ToolTip": "C:\\Users\\ahmad\\source\\repos\\open5gs\\changes.ps1",
+              "RelativeToolTip": "..\\..\\changes.ps1",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAA8AAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-04-19T20:03:58.921Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "meson.build",
+              "DocumentMoniker": "C:\\Users\\ahmad\\source\\repos\\open5gs\\meson.build",
+              "RelativeDocumentMoniker": "..\\..\\meson.build",
+              "ToolTip": "C:\\Users\\ahmad\\source\\repos\\open5gs\\meson.build",
+              "RelativeToolTip": "..\\..\\meson.build",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAkAAABBAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-04-19T19:04:41.982Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 6,
+              "Title": "cgf.yaml.in",
+              "DocumentMoniker": "C:\\Users\\ahmad\\source\\repos\\open5gs\\configs\\open5gs\\cgf.yaml.in",
+              "RelativeDocumentMoniker": "..\\..\\configs\\open5gs\\cgf.yaml.in",
+              "ToolTip": "C:\\Users\\ahmad\\source\\repos\\open5gs\\configs\\open5gs\\cgf.yaml.in",
+              "RelativeToolTip": "..\\..\\configs\\open5gs\\cgf.yaml.in",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAEcAAAAIAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-04-19T19:03:57.652Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "build.md",
+              "DocumentMoniker": "C:\\Users\\ahmad\\source\\repos\\open5gs\\build.md",
+              "RelativeDocumentMoniker": "..\\..\\build.md",
+              "ToolTip": "C:\\Users\\ahmad\\source\\repos\\open5gs\\build.md",
+              "RelativeToolTip": "..\\..\\build.md",
+              "ViewState": "AgIAAAQAAAAAAAAAAAAAwBYAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001818|",
+              "WhenOpened": "2026-04-19T18:55:07.765Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 7,
+              "Title": "Open5gs.AdminApi",
+              "DocumentMoniker": "C:\\Users\\ahmad\\source\\repos\\open5gs\\tools\\admin-api\\src\\Open5gs.AdminApi\\Open5gs.AdminApi.csproj",
+              "RelativeDocumentMoniker": "src\\Open5gs.AdminApi\\Open5gs.AdminApi.csproj",
+              "ToolTip": "C:\\Users\\ahmad\\source\\repos\\open5gs\\tools\\admin-api\\src\\Open5gs.AdminApi\\Open5gs.AdminApi.csproj",
+              "RelativeToolTip": "src\\Open5gs.AdminApi\\Open5gs.AdminApi.csproj",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000758|",
+              "WhenOpened": "2026-04-19T17:18:48.573Z",
+              "EditorCaption": ""
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

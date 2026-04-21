@@ -33,6 +33,9 @@
 #include "metrics/prometheus/json_pager.h"
 #include "enb-info.h"
 #include "ue-info.h"
+#ifdef OPEN5GS_ADMIN_WATCHER
+#include "mme-admin-watcher.h"
+#endif
 
 static ogs_thread_t *thread;
 static void mme_main(void *data);
@@ -89,6 +92,10 @@ int mme_initialize(void)
     thread = ogs_thread_create(mme_main, NULL);
     if (!thread) return OGS_ERROR;
 
+#ifdef OPEN5GS_ADMIN_WATCHER
+    (void)mme_admin_watcher_init();
+#endif
+
     initialized = 1;
 
     return OGS_OK;
@@ -97,6 +104,10 @@ int mme_initialize(void)
 void mme_terminate(void)
 {
     if (!initialized) return;
+
+#ifdef OPEN5GS_ADMIN_WATCHER
+    mme_admin_watcher_final();
+#endif
 
     mme_event_term();
 

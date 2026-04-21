@@ -64,12 +64,60 @@ typedef struct smf_ctf_config_s {
 
 int smf_ctf_config_init(smf_ctf_config_t *ctf_config);
 
+/*
+ * RADIUS server selection modes:
+ *   PRIMARY_FAILOVER — every request tries servers in declared order,
+ *                      falling through on timeout (default).
+ *   HASH_IMSI        — hash(IMSI) % num_servers picks the preferred
+ *                      server; failover to next on timeout.
+ */
+typedef enum {
+    SMF_RADIUS_SELECT_PRIMARY_FAILOVER = 0,
+    SMF_RADIUS_SELECT_HASH_IMSI        = 1,
+} smf_radius_select_mode_e;
+
+#define SMF_MAX_RADIUS_SERVERS 4
+
+/*
+ * One physical AAA. Each server gets its own shared secret so operators
+ * can deploy heterogeneous farms.
+ *
+ * Health tracking is runtime-only (NOT persisted through apply_runtime):
+ *   consecutive_failures — bumped on every timeout, reset on success.
+ *   down_since           — 0 when healthy; set to now when the server
+ *                          just tripped the blacklist threshold.
+ *   last_probe           — gate for re-admitting a server from the
+ *                          blacklist.
+ */
+typedef struct smf_radius_server_s {
+    const char *host;      /* owned via smf_radius_cfg_owned_strings() */
+    uint16_t    auth_port;
+    uint16_t    acct_port;
+    const char *secret;    /* owned via smf_radius_cfg_owned_strings() */
+    bool        is_primary;
+    int         weight;    /* reserved for future weighted selection */
+
+    /* Runtime health (file-static state, not part of config). */
+    int         consecutive_failures;
+    ogs_time_t  down_since;
+    ogs_time_t  last_probe;
+} smf_radius_server_t;
+
 typedef struct smf_radius_config_s {
     bool enabled;
+
+    /*
+     * Legacy single-server knobs. Kept so existing YAML keeps working.
+     * At parse time, if `server` is set and servers[] is empty, we
+     * synthesize servers[0] from these fields. Callers should ALWAYS go
+     * through servers[]; the flat fields are not consulted on the data
+     * path.
+     */
     const char *server;
-    uint16_t auth_port;
-    uint16_t acct_port;
+    uint16_t    auth_port;     /* default 1812 */
+    uint16_t    acct_port;     /* default 1813 */
     const char *secret;
+
     const char *nas_id;
     const char *nas_ip;
     unsigned timeout_ms;
@@ -93,7 +141,65 @@ typedef struct smf_radius_config_s {
      * 0 = disabled (keep retransmitting Delete Bearer Request forever).
      */
     uint32_t pod_teardown_timeout_ms;
+
+    /*
+     * Multi-server farm. At least one primary is required when enabled.
+     * Parsed from the new `servers:` YAML block or synthesized from the
+     * legacy flat `server:` + `secret:` keys.
+     */
+    smf_radius_server_t servers[SMF_MAX_RADIUS_SERVERS];
+    int num_servers;
+    smf_radius_select_mode_e select_mode;
+
+    /*
+     * Blacklist cool-down for unhealthy servers. After this many ms
+     * since down_since we allow one probe attempt. Not operator-tunable
+     * yet; compile-time constant good enough for now.
+     */
+#define SMF_RADIUS_BLACKLIST_COOLDOWN_MS 30000
+    /* Consecutive failures before we mark a server down. */
+#define SMF_RADIUS_BLACKLIST_THRESHOLD   3
 } smf_radius_config_t;
+
+/*
+ * CDR writer configuration (Ga interface / GTP' offline charging).
+ *
+ * The SMF only builds the ASN.1 BER CDR and appends it to a local spool
+ * file under `spool_dir`. A separate daemon (e.g. open5gs-cgfd) reads
+ * the rotated files and delivers them to the CGF over GTP'. Keeping
+ * network I/O out of the SMF means a slow or unreachable CGF cannot
+ * block session handling, and CDRs survive process restarts on disk.
+ *
+ * Spool layout:
+ *   <spool_dir>/current/<node_id>-<epoch_ms>-<pid>.cdr   (active file)
+ *   <spool_dir>/ready/<same-name>.cdr                    (after rotation)
+ *
+ * On-disk record format inside the file (repeated):
+ *   4 B  magic       "O5CD"
+ *   1 B  version     0x01
+ *   1 B  format      0x01 (ASN.1 BER)
+ *   2 B  record length N (big endian)
+ *   N B  ASN.1-BER-encoded record, e.g. [APPLICATION 79] PGWRecord
+ */
+typedef struct smf_cdr_config_s {
+    bool enabled;
+
+    const char *spool_dir;      /* e.g. /var/spool/open5gs/cdr */
+    const char *node_id;        /* value of CDR [18] nodeID, ASCII */
+    const char *local_address;  /* value of CDR [4] p-GWAddress (IPv4) */
+
+    /* Rotation thresholds. Whichever is hit first closes the active file
+     * and renames it into <spool_dir>/ready/. 0 means disabled. */
+    uint32_t rotate_max_records;   /* default 100 */
+    uint32_t rotate_max_bytes;     /* default 65536 */
+    uint32_t rotate_max_seconds;   /* default 30 */
+
+    /* Which triggers emit a (partial) record, OR'd flags below. */
+    uint32_t triggers;
+#define SMF_CDR_TRIG_START           (1u << 0)
+#define SMF_CDR_TRIG_INTERIM         (1u << 1) /* any URR usage report */
+#define SMF_CDR_TRIG_STOP            (1u << 2)
+} smf_cdr_config_t;
 
 typedef struct smf_nsmf_pdusession_param_s {
     OpenAPI_request_indication_e request_indication;
@@ -187,6 +293,14 @@ typedef struct smf_context_s {
     } security_indication;
 
     smf_radius_config_t radius;
+
+    smf_cdr_config_t cdr;
+    /*
+     * SMF-wide monotonic counter used as [20] localSequenceNumber in each
+     * emitted CDR. Incremented exactly once per record written to the
+     * spool. Persisted best-effort via <spool_dir>/.seq at shutdown.
+     */
+    uint32_t cdr_local_seq;
 
 #define SMF_UE_IS_LAST_SESSION(__sMF) \
      ((__sMF) && (ogs_list_count(&(__sMF)->sess_list)) == 1)
@@ -744,6 +858,33 @@ typedef struct smf_sess_s {
     bool establishment_accept_sent;
     ogs_sbi_xact_t *pending_modification_xact;
 
+    /*
+     * CDR bookkeeping (filled by src/smf/ga-writer.c). Independent from
+     * the radius accounting block so the two can run in parallel.
+     */
+    struct {
+        /* Epoch of session establishment; source of both recordOpeningTime
+         * and startTime in the CDR, and basis for the duration field. */
+        ogs_time_t start_time;
+
+        /* Per-session counter used as [17] recordSequenceNumber. Starts
+         * at 1 for the first partial record and is bumped on every
+         * interim/stop record emitted for this session. */
+        uint32_t record_seq;
+
+        /* Running snapshot of UL/DL volumes at the time of the last
+         * emitted partial record, so the next partial can carry a
+         * per-bucket delta in [12] listOfTrafficVolumes when desired. */
+        uint64_t last_ul_octets;
+        uint64_t last_dl_octets;
+        ogs_time_t last_change_time;
+
+        /* TS 32.298 [15] causeForRecClosing. Captured by callers just
+         * before smf_sess_remove() so the stop CDR knows why. Default
+         * 0 (normalRelease). */
+        uint8_t cause_for_rec_closing;
+    } cdr;
+
     struct {
         char *acct_session_id;
         bool acct_started;
@@ -755,6 +896,14 @@ typedef struct smf_sess_s {
          */
         uint8_t *class_buf;
         size_t class_len;
+
+        /*
+         * Index into smf_self()->radius.servers[] that accepted this
+         * session's Access-Accept. Used to keep Interim/Stop for the
+         * same session on the same AAA (important for accounting
+         * coherence on the server side). -1 = not yet assigned.
+         */
+        int server_idx;
 
         /* For Acct-Session-Time */
         ogs_time_t start_time;

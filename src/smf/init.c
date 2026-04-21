@@ -23,10 +23,14 @@
 #include "pfcp-path.h"
 #include "sbi-path.h"
 #include "radius-path.h"
+#include "ga-writer.h"
 #include "metrics.h"
 #include "ogs-metrics.h"
 #include "metrics/prometheus/json_pager.h"
 #include "pdu-info.h"
+#ifdef OPEN5GS_ADMIN_WATCHER
+#include "smf-admin-watcher.h"
+#endif
 
 static ogs_thread_t *thread;
 static void smf_main(void *data);
@@ -94,11 +98,18 @@ int smf_initialize(void)
     rv = smf_radius_pod_open();
     if (rv != 0) return OGS_ERROR;
 
+    rv = smf_ga_writer_open();
+    if (rv != 0) return OGS_ERROR;
+
     thread = ogs_thread_create(smf_main, NULL);
     if (!thread) return OGS_ERROR;
 
     /* dumper /pdu-info */
     ogs_metrics_register_custom_ep(smf_dump_pdu_info, "/pdu-info");
+
+#ifdef OPEN5GS_ADMIN_WATCHER
+    (void)smf_admin_watcher_init();
+#endif
 
     initialized = 1;
 
@@ -133,11 +144,16 @@ void smf_terminate(void)
 {
     if (!initialized) return;
 
+#ifdef OPEN5GS_ADMIN_WATCHER
+    smf_admin_watcher_final();
+#endif
+
     /* Daemon terminating */
     event_termination();
     ogs_thread_destroy(thread);
     ogs_timer_delete(t_termination_holding);
 
+    smf_ga_writer_close();
     smf_radius_pod_close();
     smf_gtp_close();
     smf_pfcp_close();

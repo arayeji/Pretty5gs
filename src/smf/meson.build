@@ -74,6 +74,7 @@ libsmf_sources = files('''
     metrics.h
     pdu-info.h
     radius-path.h
+    ga-writer.h
 
     init.c
     event.c
@@ -118,33 +119,38 @@ libsmf_sources = files('''
     metrics.c
     pdu-info.c
     radius-path.c
+    ga-writer.c
     ../../lib/metrics/prometheus/json_pager.c
 '''.split())
 
+libsmf_deps = [libmetrics_dep,
+                libsbi_dep,
+                libngap_dep,
+                libnas_5gs_dep,
+                libdiameter_gx_dep,
+                libdiameter_gy_dep,
+                libdiameter_s6b_dep,
+                libpfcp_dep,
+                libcrypto_dep]
+
+libsmf_c_args = []
+
+if admin_watcher_enabled
+    libsmf_sources += files('smf-admin-watcher.h', 'smf-admin-watcher.c')
+    libsmf_deps += [open5gs_admin_watcher_dep]
+    libsmf_c_args += ['-DOPEN5GS_ADMIN_WATCHER']
+endif
+
 libsmf = static_library('smf',
     sources : libsmf_sources,
-    dependencies : [libmetrics_dep,
-                    libsbi_dep,
-                    libngap_dep,
-                    libnas_5gs_dep,
-                    libdiameter_gx_dep,
-                    libdiameter_gy_dep,
-                    libdiameter_s6b_dep,
-                    libpfcp_dep,
-                    libcrypto_dep],
+    c_args : libsmf_c_args,
+    dependencies : libsmf_deps,
     install : false)
 
 libsmf_dep = declare_dependency(
     link_with : libsmf,
-    dependencies : [libmetrics_dep,
-                    libsbi_dep,
-                    libngap_dep,
-                    libnas_5gs_dep,
-                    libdiameter_gx_dep,
-                    libdiameter_gy_dep,
-                    libdiameter_s6b_dep,
-                    libpfcp_dep,
-                    libcrypto_dep])
+    compile_args : libsmf_c_args,
+    dependencies : libsmf_deps)
 
 smf_sources = files('''
     app.c

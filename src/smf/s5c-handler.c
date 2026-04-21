@@ -25,6 +25,7 @@
 #include "s5c-handler.h"
 #include "pfcp-path.h"
 #include "radius-path.h"
+#include "ga-writer.h"
 
 #include "ipfw/ipfw2.h"
 
@@ -211,6 +212,28 @@ uint8_t smf_s5c_handle_create_session_request(
         }
     }
 
+    /* Set IMEI(SV) early so it is available for the RADIUS Access-Request
+     * built below by smf_radius_authorize_for_session(). Duplicated copy
+     * further down in this function is a harmless no-op but must not be
+     * the FIRST time smf_ue->imeisv_bcd becomes populated, or the
+     * 3GPP-IMEISV (VSA 20) attribute will be missing from the Access-
+     * Request and the initial Accounting-Start. */
+    if (req->me_identity.presence && req->me_identity.len > 0) {
+        smf_ue->imeisv_len = ogs_min(req->me_identity.len, OGS_MAX_IMEISV_LEN);
+        memcpy(smf_ue->imeisv,
+            (uint8_t *)req->me_identity.data, smf_ue->imeisv_len);
+        ogs_buffer_to_bcd(
+            smf_ue->imeisv, smf_ue->imeisv_len, smf_ue->imeisv_bcd);
+        ogs_info("S5C: IMEISV from Create Session Request [%s] (raw_len=%d)",
+                smf_ue->imeisv_bcd, smf_ue->imeisv_len);
+    } else {
+        ogs_info("S5C: no ME Identity IE in Create Session Request "
+                "(presence=%lu len=%u) - MME did not request IMEISV in SMC "
+                "or UE did not return one",
+                (unsigned long)req->me_identity.presence,
+                (unsigned)req->me_identity.len);
+    }
+
     /* Set Selection Mode, TS 29.274 8.58 */
     if (req->selection_mode.presence == 1) {
         sess->gtp.selection_mode = req->selection_mode.u8 & 0x03;
@@ -320,6 +343,7 @@ uint8_t smf_s5c_handle_create_session_request(
     }
 
     smf_radius_accounting_session_started(sess);
+    smf_ga_cdr_session_start(sess);
 
     ogs_info("UE IMSI[%s] APN[%s] IPv4[%s] IPv6[%s]",
         smf_ue->imsi_bcd,

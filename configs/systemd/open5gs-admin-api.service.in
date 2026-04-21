@@ -1,0 +1,63 @@
+[Unit]
+Description=Open5GS Admin API (dynamic NF configuration service)
+Documentation=file:/usr/share/open5gs/admin-api/open5gs-admin-api.env.example
+After=network-online.target mongod.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=open5gs
+Group=open5gs
+
+# The service is a single self-contained binary produced by
+# `dotnet publish -c Release -r linux-x64 --self-contained` and
+# installed into /opt/open5gs/admin-api/. No .NET runtime is required
+# on the host — the binary bundles the runtime.
+WorkingDirectory=/opt/open5gs/admin-api
+ExecStart=/opt/open5gs/admin-api/open5gs-admin-api
+
+# Secrets + URL + Mongo connection string live in an env file so the
+# unit file itself can be committed to VCS without leaking a token.
+# Create /etc/open5gs/admin-api.env from admin-api.env.example and
+# set 0640 root:open5gs before enabling the service.
+EnvironmentFile=-/etc/open5gs/admin-api.env
+
+# Sensible ASP.NET defaults. Override by adding e.g.
+#   ASPNETCORE_URLS=http://127.0.0.1:9998
+# to /etc/open5gs/admin-api.env if you want to bind differently.
+Environment=DOTNET_EnableDiagnostics=0
+Environment=DOTNET_PRINT_TELEMETRY_MESSAGE=false
+Environment=ASPNETCORE_ENVIRONMENT=Production
+
+Restart=always
+RestartSec=3
+# .NET exits with 0 on clean shutdown, 134 on uncaught exceptions.
+# Keep the service coming back up on anything non-zero.
+RestartPreventExitStatus=
+SuccessExitStatus=0
+
+# Reasonable sandboxing. Loosen these if you put Mongo's socket or
+# TLS material somewhere unusual.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/open5gs /opt/open5gs/admin-api
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+# .NET JITs at startup and on first use of generics, so RWX pages are
+# required. Do NOT enable MemoryDenyWriteExecute — it crashes the
+# hostfxr before Main() runs.
+MemoryDenyWriteExecute=false
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+# Lightweight resource guards.
+LimitNOFILE=65536
+TasksMax=4096
+
+[Install]
+WantedBy=multi-user.target

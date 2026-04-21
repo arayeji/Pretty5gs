@@ -84,26 +84,32 @@ libmme_sources = files('''
     ../../lib/metrics/prometheus/json_pager.c
 '''.split())
 
+libmme_deps = [libmetrics_dep,
+                libsctp_dep,
+                libs1ap_dep,
+                libnas_eps_dep,
+                libdiameter_s6a_dep,
+                libgtp_dep,
+                libsbi_dep]
+
+libmme_c_args = []
+
+if admin_watcher_enabled
+    libmme_sources += files('mme-admin-watcher.h', 'mme-admin-watcher.c')
+    libmme_deps += [open5gs_admin_watcher_dep]
+    libmme_c_args += ['-DOPEN5GS_ADMIN_WATCHER']
+endif
+
 libmme = static_library('mme',
     sources : libmme_sources,
-    dependencies : [libmetrics_dep,
-                    libsctp_dep,
-                    libs1ap_dep,
-                    libnas_eps_dep,
-                    libdiameter_s6a_dep,
-                    libgtp_dep,
-                    libsbi_dep],
+    c_args : libmme_c_args,
+    dependencies : libmme_deps,
     install : false)
 
 libmme_dep = declare_dependency(
     link_with : libmme,
-    dependencies : [libmetrics_dep,
-                    libsctp_dep,
-                    libs1ap_dep,
-                    libnas_eps_dep,
-                    libdiameter_s6a_dep,
-                    libsbi_dep,
-                    libgtp_dep])
+    compile_args : libmme_c_args,
+    dependencies : libmme_deps)
 
 mme_sources = files('''
     app-init.c

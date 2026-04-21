@@ -68,10 +68,36 @@ smf:
 #
 #  radius:
 #    enabled: true
+#    # === Legacy single-server form (still supported) ===
 #    server: 127.0.0.1
 #    auth_port: 1812
 #    acct_port: 1813
 #    secret: your_radius_shared_secret
+#    # === Multi-server / failover form ===
+#    # Preferred when you want primary + backup AAA(s). Each server gets
+#    # its own shared secret so heterogeneous farms work. If `servers:`
+#    # is present, the legacy flat `server`/`secret` above is ignored.
+#    # Up to 4 entries; at least one must have role: primary.
+#    #
+#    # servers:
+#    #   - host: 10.0.0.10
+#    #     secret: primary-secret
+#    #     role: primary
+#    #   - host: 10.0.0.11
+#    #     secret: backup-secret
+#    #     role: secondary
+#    #
+#    # select: primary_failover | hash_imsi
+#    #   primary_failover (default) - every request tries the primary
+#    #     first; if it times out (timeout * retry), the SMF falls over
+#    #     to the next server. A server that fails 3 consecutive attempts
+#    #     is blacklisted for 30s.
+#    #   hash_imsi - hash(IMSI) picks a preferred server; same failover
+#    #     rules apply. Useful for sticky session affinity to a farm.
+#    # Sessions remember which server accepted Access-Request so
+#    # Interim/Stop for the same session go to the same AAA.
+#    # PoD accepts any configured secret (per-server or pod_secret).
+#    select: primary_failover
 #    nas_identifier: open5gs-smf
 #    # NAS-IP-Address (attribute 4). If unset, the first IPv4 SBI server
 #    # address is used; as a last resort 127.0.0.1 is sent so the
@@ -107,6 +133,34 @@ smf:
 #    # forces local PFCP session deletion so the UPF tunnel is torn down and
 #    # RADIUS Accounting-Stop is still emitted. 0 disables the watchdog.
 #    pod_teardown_timeout_ms: 5000
+#
+#  Ga / GTP' offline charging CDR writer.
+#
+#  The SMF only appends ASN.1 BER CDRs (TS 32.298 PGWRecord) to a local
+#  spool directory; a separate daemon (open5gs-cgfd) ships them to the
+#  CGF over GTP'. This split keeps session handling independent of CGF
+#  availability and lets CDRs survive SMF restarts.
+#
+#  Directory layout created under spool_dir:
+#    current/   -- the active file being appended to
+#    ready/     -- rotated files, picked up by the CGF client
+#    .seq       -- persisted localSequenceNumber counter
+#
+#  cdr:
+#    enabled: true
+#    spool_dir: /var/spool/open5gs/cdr
+#    # Value of CDR [18] nodeID; also used as filename prefix.
+#    node_id: open5gs-smf-1
+#    # IPv4 address emitted as CDR [4] p-GWAddress. If unset the field
+#    # is omitted.
+#    local_address: 10.0.0.1
+#    # Rotate the active file when any of these is first hit. Set to 0
+#    # to disable an individual trigger.
+#    max_records: 100
+#    max_bytes: 65536
+#    max_seconds: 30
+#    # Which lifecycle events produce a record. Defaults to all three.
+#    triggers: start,interim,stop
 #  p-cscf:
 #    - 127.0.0.1
 #    - ::1

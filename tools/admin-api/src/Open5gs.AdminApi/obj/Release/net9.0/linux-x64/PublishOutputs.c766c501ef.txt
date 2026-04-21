@@ -1,0 +1,3 @@
+C:\Users\ahmad\source\repos\open5gs\tools\admin-api\src\Open5gs.AdminApi\obj\Release\net9.0\linux-x64\PubTmp\Out\appsettings.json
+C:\Users\ahmad\source\repos\open5gs\tools\admin-api\src\Open5gs.AdminApi\obj\Release\net9.0\linux-x64\PubTmp\Out\open5gs-admin-api.pdb
+C:\Users\ahmad\source\repos\open5gs\tools\admin-api\src\Open5gs.AdminApi\obj\Release\net9.0\linux-x64\PubTmp\Out\open5gs-admin-api

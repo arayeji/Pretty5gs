@@ -19,6 +19,7 @@
 
 #include "context.h"
 #include "radius-path.h"
+#include "ga-writer.h"
 #include "gtp-path.h"
 #include "pfcp-path.h"
 
@@ -170,6 +171,9 @@ static int smf_context_prepare(void)
     self.radius.server = NULL;
     self.radius.auth_port = 1812;
     self.radius.acct_port = 1813;
+    self.radius.num_servers = 0;
+    self.radius.select_mode = SMF_RADIUS_SELECT_PRIMARY_FAILOVER;
+    memset(self.radius.servers, 0, sizeof(self.radius.servers));
     self.radius.secret = NULL;
     self.radius.nas_id = NULL;
     self.radius.nas_ip = NULL;
@@ -181,6 +185,17 @@ static int smf_context_prepare(void)
     self.radius.pod_port = 3799;
     self.radius.pod_secret = NULL;
     self.radius.pod_teardown_timeout_ms = 5000; /* 5s default */
+
+    self.cdr.enabled = false;
+    self.cdr.spool_dir = NULL;
+    self.cdr.node_id = NULL;
+    self.cdr.local_address = NULL;
+    self.cdr.rotate_max_records = 100;
+    self.cdr.rotate_max_bytes = 65536;
+    self.cdr.rotate_max_seconds = 30;
+    self.cdr.triggers =
+            SMF_CDR_TRIG_START | SMF_CDR_TRIG_INTERIM | SMF_CDR_TRIG_STOP;
+    self.cdr_local_seq = 0;
 
     return OGS_OK;
 }
@@ -198,16 +213,55 @@ static int smf_context_validation(void)
         return OGS_ERROR;
     }
 
-    if (self.radius.enabled) {
-        if (!self.radius.server) {
-            ogs_error("RADIUS enabled but no smf.radius.server in '%s'",
+    if (self.cdr.enabled) {
+        if (!self.cdr.spool_dir || !*self.cdr.spool_dir) {
+            ogs_error("CDR writer enabled but no smf.cdr.spool_dir in '%s'",
                     ogs_app()->file);
             return OGS_ERROR;
         }
-        if (!self.radius.secret || !self.radius.secret[0]) {
-            ogs_error("RADIUS enabled but no smf.radius.secret in '%s'",
-                    ogs_app()->file);
-            return OGS_ERROR;
+    }
+
+    if (self.radius.enabled) {
+        /*
+         * Accept either the modern `servers:` block or the legacy flat
+         * keys. If the modern block is empty we synthesize servers[0]
+         * from `server` + `secret` so existing deployments keep working.
+         */
+        if (self.radius.num_servers == 0) {
+            if (!self.radius.server) {
+                ogs_error("RADIUS enabled but no smf.radius.server "
+                        "(or smf.radius.servers[]) in '%s'",
+                        ogs_app()->file);
+                return OGS_ERROR;
+            }
+            if (!self.radius.secret || !self.radius.secret[0]) {
+                ogs_error("RADIUS enabled but no smf.radius.secret in '%s'",
+                        ogs_app()->file);
+                return OGS_ERROR;
+            }
+            self.radius.servers[0].host       = self.radius.server;
+            self.radius.servers[0].auth_port  = self.radius.auth_port
+                    ? self.radius.auth_port : 1812;
+            self.radius.servers[0].acct_port  = self.radius.acct_port
+                    ? self.radius.acct_port : 1813;
+            self.radius.servers[0].secret     = self.radius.secret;
+            self.radius.servers[0].is_primary = true;
+            self.radius.servers[0].weight     = 1;
+            self.radius.num_servers = 1;
+        } else {
+            /* At least one entry must be a primary. */
+            int i;
+            bool any_primary = false;
+            for (i = 0; i < self.radius.num_servers; i++)
+                if (self.radius.servers[i].is_primary) {
+                    any_primary = true;
+                    break;
+                }
+            if (!any_primary) {
+                ogs_error("RADIUS: smf.radius.servers[] has no "
+                        "role=primary entry in '%s'", ogs_app()->file);
+                return OGS_ERROR;
+            }
         }
     }
     if (ogs_list_first(&ogs_gtp_self()->gtpu_list) == NULL) {
@@ -634,8 +688,158 @@ int smf_context_parse_config(void)
                                 !strcmp(rk, "pod_teardown_timeout")) {
                             if (rv) self.radius.pod_teardown_timeout_ms =
                                 (uint32_t)atoi(rv);
+                        } else if (!strcmp(rk, "select") ||
+                                !strcmp(rk, "select_mode")) {
+                            if (rv && !strcmp(rv, "hash_imsi"))
+                                self.radius.select_mode =
+                                    SMF_RADIUS_SELECT_HASH_IMSI;
+                            else
+                                self.radius.select_mode =
+                                    SMF_RADIUS_SELECT_PRIMARY_FAILOVER;
+                        } else if (!strcmp(rk, "servers")) {
+                            /*
+                             * Modern multi-server form:
+                             *   servers:
+                             *     - host: 10.0.0.10
+                             *       auth_port: 1812
+                             *       acct_port: 1813
+                             *       secret: s1
+                             *       role: primary   # or secondary
+                             *       weight: 1       # optional
+                             *     - host: 10.0.0.11
+                             *       secret: s2
+                             */
+                            ogs_yaml_iter_t s_arr;
+                            ogs_yaml_iter_recurse(&r_iter, &s_arr);
+                            while (ogs_yaml_iter_type(&s_arr)
+                                    == YAML_SEQUENCE_NODE) {
+                                ogs_yaml_iter_t s_map;
+                                smf_radius_server_t *d;
+
+                                if (!ogs_yaml_iter_next(&s_arr)) break;
+                                if (self.radius.num_servers >=
+                                        SMF_MAX_RADIUS_SERVERS) {
+                                    ogs_warn("smf.radius.servers exceeds "
+                                            "max %d; ignoring extra entries",
+                                            SMF_MAX_RADIUS_SERVERS);
+                                    break;
+                                }
+                                d = &self.radius.servers[
+                                        self.radius.num_servers];
+                                d->auth_port = 1812;
+                                d->acct_port = 1813;
+                                d->is_primary = true;
+                                d->weight = 1;
+
+                                ogs_yaml_iter_recurse(&s_arr, &s_map);
+                                while (ogs_yaml_iter_next(&s_map)) {
+                                    const char *sk = ogs_yaml_iter_key(&s_map);
+                                    const char *sv = ogs_yaml_iter_value(&s_map);
+                                    if (!sk) continue;
+                                    if (!strcmp(sk, "host") ||
+                                            !strcmp(sk, "address") ||
+                                            !strcmp(sk, "server")) {
+                                        d->host = sv;
+                                    } else if (!strcmp(sk, "auth_port")) {
+                                        if (sv) d->auth_port = (uint16_t)atoi(sv);
+                                    } else if (!strcmp(sk, "acct_port")) {
+                                        if (sv) d->acct_port = (uint16_t)atoi(sv);
+                                    } else if (!strcmp(sk, "port")) {
+                                        if (sv) {
+                                            int p = atoi(sv);
+                                            d->auth_port = (uint16_t)p;
+                                            d->acct_port = (uint16_t)(p + 1);
+                                        }
+                                    } else if (!strcmp(sk, "secret") ||
+                                            !strcmp(sk, "community")) {
+                                        d->secret = sv;
+                                    } else if (!strcmp(sk, "role")) {
+                                        d->is_primary = !sv ||
+                                            strcmp(sv, "secondary") != 0;
+                                    } else if (!strcmp(sk, "weight")) {
+                                        if (sv) d->weight = atoi(sv);
+                                    } else {
+                                        ogs_warn("unknown key `%s` in "
+                                                "smf.radius.servers[]", sk);
+                                    }
+                                }
+
+                                if (!d->host || !d->secret) {
+                                    ogs_error("smf.radius.servers[%d] "
+                                            "missing host or secret; "
+                                            "dropping entry",
+                                            self.radius.num_servers);
+                                    memset(d, 0, sizeof(*d));
+                                    continue;
+                                }
+                                self.radius.num_servers++;
+                            }
                         } else
                             ogs_warn("unknown key `%s` in smf.radius", rk);
+                    }
+                } else if (!strcmp(smf_key, "cdr")) {
+                    /*
+                     * Ga/GTP' CDR writer. The SMF only appends ASN.1
+                     * BER records to <spool_dir>; delivery to the CGF
+                     * is the responsibility of a separate daemon so
+                     * the SMF is never blocked on network I/O.
+                     */
+                    yaml_node_t *node =
+                        yaml_document_get_node(document, smf_iter.pair->value);
+                    ogs_assert(node);
+                    ogs_assert(node->type == YAML_MAPPING_NODE);
+                    ogs_yaml_iter_t c_iter;
+
+                    ogs_yaml_iter_recurse(&smf_iter, &c_iter);
+                    while (ogs_yaml_iter_next(&c_iter)) {
+                        const char *ck = ogs_yaml_iter_key(&c_iter);
+                        const char *cv = ogs_yaml_iter_value(&c_iter);
+
+                        ogs_assert(ck);
+                        if (!strcmp(ck, "enabled")) {
+                            self.cdr.enabled = ogs_yaml_iter_bool(&c_iter);
+                        } else if (!strcmp(ck, "spool_dir") ||
+                                !strcmp(ck, "directory")) {
+                            self.cdr.spool_dir = cv;
+                        } else if (!strcmp(ck, "node_id") ||
+                                !strcmp(ck, "nodeid")) {
+                            self.cdr.node_id = cv;
+                        } else if (!strcmp(ck, "local_address") ||
+                                !strcmp(ck, "pgw_address")) {
+                            self.cdr.local_address = cv;
+                        } else if (!strcmp(ck, "max_records")) {
+                            if (cv) self.cdr.rotate_max_records =
+                                (uint32_t)atoi(cv);
+                        } else if (!strcmp(ck, "max_bytes")) {
+                            if (cv) self.cdr.rotate_max_bytes =
+                                (uint32_t)atoi(cv);
+                        } else if (!strcmp(ck, "max_seconds")) {
+                            if (cv) self.cdr.rotate_max_seconds =
+                                (uint32_t)atoi(cv);
+                        } else if (!strcmp(ck, "triggers")) {
+                            /*
+                             * Comma-separated list: start,interim,stop.
+                             * Unknown tokens are ignored with a warning.
+                             */
+                            uint32_t t = 0;
+                            if (cv) {
+                                const char *p = cv;
+                                while (*p) {
+                                    while (*p == ' ' || *p == ',') p++;
+                                    if (!strncmp(p, "start", 5)) {
+                                        t |= SMF_CDR_TRIG_START; p += 5;
+                                    } else if (!strncmp(p, "interim", 7)) {
+                                        t |= SMF_CDR_TRIG_INTERIM; p += 7;
+                                    } else if (!strncmp(p, "stop", 4)) {
+                                        t |= SMF_CDR_TRIG_STOP; p += 4;
+                                    } else {
+                                        while (*p && *p != ',') p++;
+                                    }
+                                }
+                            }
+                            if (t) self.cdr.triggers = t;
+                        } else
+                            ogs_warn("unknown key `%s` in smf.cdr", ck);
                     }
                 } else if (!strcmp(smf_key, "mtu")) {
                     ogs_assert(ogs_yaml_iter_type(&smf_iter) !=
@@ -1589,6 +1793,9 @@ smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)
     sess->index = ogs_pool_index(&smf_sess_pool, sess);
     ogs_assert(sess->index > 0 && sess->index <= ogs_app()->pool.sess);
 
+    /* -1 means "no RADIUS server pinned yet". */
+    sess->radius.server_idx = -1;
+
     /* Set TEID & SEID */
     ogs_pool_alloc(&smf_n4_seid_pool, &sess->smf_n4_seid_node);
     ogs_assert(sess->smf_n4_seid_node);
@@ -1803,6 +2010,9 @@ smf_sess_t *smf_sess_add_by_psi(smf_ue_t *smf_ue, uint8_t psi)
 
     sess->index = ogs_pool_index(&smf_sess_pool, sess);
     ogs_assert(sess->index > 0 && sess->index <= ogs_app()->pool.sess);
+
+    /* -1 means "no RADIUS server pinned yet". */
+    sess->radius.server_idx = -1;
 
     /* Set TEID & SEID */
     ogs_pool_alloc(&smf_n4_seid_pool, &sess->smf_n4_seid_node);
@@ -2134,6 +2344,9 @@ void smf_sess_remove(smf_sess_t *sess)
 
     smf_radius_accounting_session_stopping(sess);
     smf_radius_sess_clear(sess);
+
+    smf_ga_cdr_session_stop(sess);
+    smf_ga_sess_clear(sess);
 
     ogs_list_remove(&smf_ue->sess_list, sess);
 
@@ -2515,17 +2728,39 @@ smf_bearer_t *smf_qos_flow_add(smf_sess_t *sess)
 
     /*
      * If RADIUS Accounting Interim-Update is enabled, ask the UPF to emit
-     * a periodic Usage Report at the configured interval. This is the
-     * standard PFCP (TS 29.244) way of getting mid-session usage: the UPF
-     * is authoritative and the SMF just reacts to its reports. Works
-     * identically with open5gs-upfd and upg-vpp — no UPF-side changes.
+     * a periodic Usage Report at the configured interval.
+     *
+     * We use `time_threshold` (TS 29.244 §7.5.2.9) rather than the
+     * `periodic_reporting` trigger. Both achieve the same effect on the
+     * wire, but open5gs-upfd only has a timer wired up for time_threshold
+     * (see upf_sess_urr_acc_timers_setup() in src/upf/context.c — it only
+     * installs timers for quota_validity_time / time_quota / time_threshold
+     * and completely ignores periodic_reporting/meas_period). time_threshold
+     * is honored by open5gs-upfd, upg-vpp and third-party UPFs alike.
      */
     if (self.radius.enabled && self.radius.acct_interim_interval) {
-        urr->rep_triggers.periodic_reporting = 1;
-        urr->meas_period = self.radius.acct_interim_interval;
+        urr->rep_triggers.time_threshold = 1;
+        urr->time_threshold = self.radius.acct_interim_interval;
+        /* open5gs-upfd only arms its time_threshold timer at session
+         * establishment if Measurement-Information ISTM is set (TS 29.244
+         * §8.2.116). See the `if (urr->meas_info.istm)` check in
+         * src/upf/n4-handler.c. Without this bit the UPF accepts the URR
+         * but never fires upf_sess_urr_acc_timers_cb(). */
+        urr->meas_info.istm = 1;
     }
+    ogs_info("SMF-URR-5GC: acct_interim=%u time_threshold=%u istm=%u "
+            "(volume_threshold=%u bytes)",
+            (unsigned)self.radius.acct_interim_interval,
+            (unsigned)urr->time_threshold,
+            (unsigned)urr->meas_info.istm,
+            (unsigned)urr->vol_threshold.total_volume);
 
+    /* Associate the URR with BOTH uplink and downlink PDRs. Without the UL
+     * association the UPF only measures one direction and ul_octets stays
+     * permanently at 0, which is what makes RADIUS Input-Octets and the Ga
+     * CDR listOfTrafficVolumes uplink counters come out as zero. */
     ogs_pfcp_pdr_associate_urr(dl_pdr, urr);
+    ogs_pfcp_pdr_associate_urr(ul_pdr, urr);
 
     /* QER */
     qer = ogs_pfcp_qer_add(&sess->pfcp);
@@ -3056,6 +3291,150 @@ smf_bearer_t *smf_bearer_add(smf_sess_t *sess)
     ogs_pfcp_pdr_associate_far(ul_pdr, ul_far);
 
     ul_far->apply_action = OGS_PFCP_APPLY_ACTION_FORW;
+
+    /*
+     * EPC default URR for byte/duration accounting.
+     *
+     * Upstream Open5GS only creates a URR on this EPC bearer when the Gy
+     * (Diameter online charging) path explicitly adds one from
+     * src/smf/gy-handler.c. That means in RADIUS-only (or pure offline
+     * charging / Ga-CDR) deployments the UPF is never asked to measure the
+     * bearer at all, so sess->gy.ul_octets / dl_octets stay at 0 for the
+     * session's lifetime and every Accounting-Interim / Accounting-Stop /
+     * PGW-CDR reports Input-Octets=Output-Octets=0.
+     *
+     * We install a default URR unconditionally here so that:
+     *   - RADIUS Accounting gets real Input/Output-Octets,
+     *   - the Ga CDR writer gets real listOfTrafficVolumes deltas,
+     *   - the Session-Deletion-Response always carries a final usage report
+     *     (TS 29.244 §7.5.7) and we never lose the session's tail traffic.
+     *
+     * If Gy later attaches its own URR via smf_gy_handle_cca_initial_request
+     * it reuses bearer->urr instead of creating a new one (see gy-handler.c
+     * line ~161), so this is idempotent.
+     */
+    if (!bearer->urr) {
+        ogs_pfcp_urr_t *urr = ogs_pfcp_urr_add(&sess->pfcp);
+        ogs_assert(urr);
+        bearer->urr = urr;
+
+        urr->meas_method = OGS_PFCP_MEASUREMENT_METHOD_VOLUME |
+                           OGS_PFCP_MEASUREMENT_METHOD_DURATION;
+
+        /* Keep a high volume_threshold as a hard backstop so the UPF will
+         * always send a report well before its internal counters risk
+         * wrapping — but don't rely on it as the interim-report driver. */
+        urr->rep_triggers.volume_threshold = 1;
+        urr->vol_threshold.tovol = 1;
+        urr->vol_threshold.total_volume = 1024ULL*1024ULL*1024ULL*4ULL;
+
+        /* RADIUS Accounting Interim-Update driver. See the longer comment
+         * in smf_qos_flow_add() for why we use time_threshold rather than
+         * periodic_reporting (open5gs-upfd ignores the latter) and why
+         * Measurement-Information ISTM must be set for the UPF to arm its
+         * timer at session-establishment time. */
+        if (self.radius.enabled && self.radius.acct_interim_interval) {
+            urr->rep_triggers.time_threshold = 1;
+            urr->time_threshold = self.radius.acct_interim_interval;
+            urr->meas_info.istm = 1;
+        }
+        ogs_info("SMF-URR-EPC: acct_interim=%u time_threshold=%u istm=%u "
+                "(volume_threshold=%llu bytes)",
+                (unsigned)self.radius.acct_interim_interval,
+                (unsigned)urr->time_threshold,
+                (unsigned)urr->meas_info.istm,
+                (unsigned long long)urr->vol_threshold.total_volume);
+
+        /* Associate URR with BOTH directions so the UPF reports UL and DL. */
+        ogs_pfcp_pdr_associate_urr(dl_pdr, urr);
+        ogs_pfcp_pdr_associate_urr(ul_pdr, urr);
+    }
+
+    /*
+     * Framed-Route / Framed-IPv6-Route plumbing (EPC path).
+     *
+     * Sources that populate sess->session.ipv[46]_framed_routes today:
+     *   - UDM / subscription DB (src/smf/nudm-handler.c, 5GC)
+     *   - PCF    (src/smf/npcf-handler.c, 5GC)
+     *   - RADIUS Access-Accept (src/smf/radius-path.c, EPC + 5GC)
+     *
+     * For EPC the 5GC plumbing in npcf-handler.c:544 never runs — that path
+     * is only hit by the N7/SM Policy Control flow. So we need to stamp the
+     * routes into the PDRs here, on the same spot where the 5GC code does
+     * it, mirrored line-for-line. The PFCP layer (lib/pfcp/build.c:402)
+     * then emits the PDI::Framed-Route IE in the initial
+     * Session-Establishment-Request and open5gs-upfd installs them as
+     * kernel routes pointing at this UE's GTP tunnel.
+     *
+     * Guarded on up_function_features.frrt (Framed Routing) — if the UPF
+     * didn't advertise the feature in its Association-Setup-Response, we
+     * skip installation to avoid the UPF rejecting the session.
+     */
+    if (sess->session.ipv4_framed_routes &&
+        sess->pfcp_node && sess->pfcp_node->up_function_features.frrt) {
+        int i;
+        int installed = 0;
+        for (i = 0; i < OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI; i++) {
+            const char *route = sess->session.ipv4_framed_routes[i];
+            if (!route) break;
+
+            if (!dl_pdr->ipv4_framed_routes) {
+                dl_pdr->ipv4_framed_routes = ogs_calloc(
+                        OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI,
+                        sizeof(dl_pdr->ipv4_framed_routes[0]));
+                ogs_assert(dl_pdr->ipv4_framed_routes);
+            }
+            dl_pdr->ipv4_framed_routes[i] = ogs_strdup(route);
+
+            if (!ul_pdr->ipv4_framed_routes) {
+                ul_pdr->ipv4_framed_routes = ogs_calloc(
+                        OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI,
+                        sizeof(ul_pdr->ipv4_framed_routes[0]));
+                ogs_assert(ul_pdr->ipv4_framed_routes);
+            }
+            ul_pdr->ipv4_framed_routes[i] = ogs_strdup(route);
+            installed++;
+        }
+        if (installed)
+            ogs_info("SMF-ROUTE-EPC: installed %d IPv4 Framed-Route(s) "
+                    "on bearer PDRs", installed);
+    } else if (sess->session.ipv4_framed_routes) {
+        ogs_warn("SMF-ROUTE-EPC: skipping IPv4 Framed-Route(s): UPF does "
+                "not advertise Framed Routing (frrt=0)");
+    }
+
+    if (sess->session.ipv6_framed_routes &&
+        sess->pfcp_node && sess->pfcp_node->up_function_features.frrt) {
+        int i;
+        int installed = 0;
+        for (i = 0; i < OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI; i++) {
+            const char *route = sess->session.ipv6_framed_routes[i];
+            if (!route) break;
+
+            if (!dl_pdr->ipv6_framed_routes) {
+                dl_pdr->ipv6_framed_routes = ogs_calloc(
+                        OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI,
+                        sizeof(dl_pdr->ipv6_framed_routes[0]));
+                ogs_assert(dl_pdr->ipv6_framed_routes);
+            }
+            dl_pdr->ipv6_framed_routes[i] = ogs_strdup(route);
+
+            if (!ul_pdr->ipv6_framed_routes) {
+                ul_pdr->ipv6_framed_routes = ogs_calloc(
+                        OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI,
+                        sizeof(ul_pdr->ipv6_framed_routes[0]));
+                ogs_assert(ul_pdr->ipv6_framed_routes);
+            }
+            ul_pdr->ipv6_framed_routes[i] = ogs_strdup(route);
+            installed++;
+        }
+        if (installed)
+            ogs_info("SMF-ROUTE-EPC: installed %d IPv6 Framed-Route(s) "
+                    "on bearer PDRs", installed);
+    } else if (sess->session.ipv6_framed_routes) {
+        ogs_warn("SMF-ROUTE-EPC: skipping IPv6 Framed-Route(s): UPF does "
+                "not advertise Framed Routing (frrt=0)");
+    }
 
     bearer->sess_id = sess->id;
 

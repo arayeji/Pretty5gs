@@ -27,6 +27,7 @@
 #include "ngap-path.h"
 #include "fd-path.h"
 #include "radius-path.h"
+#include "ga-writer.h"
 
 uint8_t gtp_cause_from_pfcp(uint8_t pfcp_cause, uint8_t gtp_version)
 {
@@ -1801,6 +1802,7 @@ uint8_t smf_n4_handle_session_report_request(
          * the latest volume/duration to the AAA as an Interim-Update.
          */
         smf_radius_accounting_interim_update(sess);
+        smf_ga_cdr_session_interim(sess);
         switch (smf_use_gy_iface()) {
         case 1:
             if (!sess->gy.final_unit) {

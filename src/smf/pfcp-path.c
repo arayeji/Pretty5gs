@@ -1086,3 +1086,45 @@ int smf_pfcp_send_session_report_response(
 
     return rv;
 }
+
+/*
+ * Admin-watcher hot-add entry point for a new UPF peer.
+ *
+ * Must run on the SMF main thread (owns pfcp_peer_list and timer_mgr).
+ * Ownership of addr is transferred to the new node on success; on failure
+ * the caller is responsible for releasing addr.
+ */
+ogs_pfcp_node_t *smf_pfcp_admin_add_upf_peer(
+        ogs_sockaddr_t *addr,
+        const char **dnns, int num_of_dnns)
+{
+    ogs_pfcp_node_t *node = NULL;
+    int i;
+
+    ogs_assert(addr);
+
+    node = ogs_pfcp_node_new(addr);
+    if (!node) {
+        ogs_error("smf_pfcp_admin_add_upf_peer: node_new failed");
+        return NULL;
+    }
+
+    ogs_list_add(&ogs_pfcp_self()->pfcp_peer_list, node);
+
+    if (dnns && num_of_dnns > 0) {
+        if (num_of_dnns > OGS_MAX_NUM_OF_DNN)
+            num_of_dnns = OGS_MAX_NUM_OF_DNN;
+        for (i = 0; i < num_of_dnns; i++) {
+            if (dnns[i])
+                node->dnn[i] = ogs_strdup(dnns[i]);
+        }
+        node->num_of_dnn = num_of_dnns;
+    }
+
+    pfcp_node_fsm_init(node, true);
+
+    ogs_info("smf_pfcp_admin_add_upf_peer: added UPF peer "
+            "(num_of_dnn=%u)", (unsigned)node->num_of_dnn);
+
+    return node;
+}

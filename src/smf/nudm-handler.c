@@ -19,6 +19,7 @@
 
 #include "nudm-handler.h"
 #include "radius-path.h"
+#include "ga-writer.h"
 #include "sbi-path.h"
 
 bool smf_nudm_sdm_handle_get(smf_sess_t *sess, ogs_sbi_stream_t *stream,
@@ -393,6 +394,7 @@ bool smf_nudm_sdm_handle_get(smf_sess_t *sess, ogs_sbi_stream_t *stream,
     ogs_assert(cause_value == OGS_PFCP_CAUSE_REQUEST_ACCEPTED);
 
     smf_radius_accounting_session_started(sess);
+    smf_ga_cdr_session_start(sess);
 
     r = smf_sbi_discover_and_send(OGS_SBI_SERVICE_TYPE_NUDM_SDM, NULL,
             smf_nudm_sdm_build_subscription, sess, stream, 0,

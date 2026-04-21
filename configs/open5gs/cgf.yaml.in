@@ -1,0 +1,91 @@
+logger:
+  file:
+    path: @localstatedir@/log/open5gs/cgf.log
+#  level: info   # fatal|error|warn|info(default)|debug|trace
+
+global:
+  max:
+    ue: 1024
+
+################################################################################
+# open5gs-cgfd — GTP' CDR forwarder (3GPP Ga interface)
+################################################################################
+#
+# The CGF forwarder reads ASN.1 BER CDR files produced by the SMF (see
+# `smf.cdr:` in smf.yaml.in) out of a local spool directory and ships them
+# to one or more Charging Gateway Functions over GTP' (TS 32.295). The
+# forwarder is a separate process so a slow or unreachable CGF never
+# blocks SMF session handling, and CDRs survive restarts on disk.
+#
+# Directory layout under `spool_dir` (mirrors the writer side):
+#   current/   -- file being appended by the SMF
+#   ready/     -- rotated files picked up by this daemon
+#   done/      -- files successfully delivered to a CGF
+#   failed/    -- files quarantined (bad framing or all peers rejected)
+#
+cgf:
+  spool_dir: @localstatedir@/spool/open5gs/cdr
+  node_id: open5gs-cgf-1
+
+  # Retention for fully-delivered CDR files.
+  #
+  #   false (default): on full ACK from a CGF peer, the spool file is
+  #                    moved from ready/ to done/ and kept forever. Use
+  #                    this if another process (backup, billing cross-
+  #                    check, auditor) needs the local archive.
+  #   true:            on full ACK, the spool file is unlink(2)'d.
+  #                    Recommended on busy nodes where the CGF is the
+  #                    system of record and local retention would fill
+  #                    the disk.
+  #
+  # Files that fail all peers are always moved to failed/ for manual
+  # inspection, regardless of this flag.
+  #
+  # Also hot-editable via the Admin API settings kind `cgfd:gtpp`.
+  purge_on_success: false
+
+  # One or more CGF peers. The first "primary" entry wins the active
+  # slot; secondaries are tried in declaration order on failover.
+  #
+  # These fields (peer list + timers + batch) can also be hot-edited at
+  # runtime via the Admin API settings kind `cgfd:gtpp`. The daemon
+  # polls the Admin API periodically; a new revision will replace the
+  # peer list without restarting. Existing sockets/xacts are preserved
+  # for peers that stay in the new list (matched by host+port), new
+  # peers are dialed, and removed peers are closed. See
+  # tools/admin-api/README for the PUT /settings/cgfd:gtpp contract.
+  peer:
+    - address: 127.0.0.1
+      port: 3386
+      role: primary
+#    - address: 10.0.0.51
+#      port: 3386
+#      role: secondary
+
+  timers:
+    echo_interval_s: 60              # GTP' Echo cadence
+    request_rto_ms: 3000             # DTRR retransmit timeout
+    request_retries: 4               # attempts before giving up on a peer
+    failover_after_missed_echoes: 3  # consecutive missed echoes => DOWN
+    spool_poll_ms: 1000              # how often to scan ready/ for new files
+
+  batch:
+    # Maximum number of encoded CDRs packed into a single GTP'
+    # DataRecordTransferRequest. Keeping the UDP payload below MTU
+    # avoids fragmentation and makes retransmission cheaper.
+    max_records_per_packet: 5
+    max_bytes_per_packet: 1300
+
+  # Data Record Packet IE sub-header. Four octets sitting between the
+  # `fc <len>` TLIV header and the list of length-prefixed BER records:
+  #
+  #   Number of Records (1 B) | Format (1 B) | Format Version (2 B)
+  #
+  # Each record inside the IE is then preceded by its own 2-byte
+  # big-endian length — that's the wire format Ericsson/Nokia CGFs
+  # accept (note there is no Application Identifier octet here).
+  # Defaults match the interop capture we validated against.
+  # Accepts decimal or 0x-prefixed hex.
+  #drp:
+  #  data_record_format: 1                # 1=BER, 2=UNALIGNED_PER, 3=ALIGNED_PER, 4=XML
+  #  data_record_format_version: 0x1906   # 16-bit vendor-defined

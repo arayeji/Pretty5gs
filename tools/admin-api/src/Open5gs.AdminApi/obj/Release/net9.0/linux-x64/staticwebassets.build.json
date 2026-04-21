@@ -1,0 +1,12 @@
+{
+  "Version": 1,
+  "Hash": "/djSak2Hi5w03ZsjrYrWckMeVHNtxKKSXn3DzdsrJmA=",
+  "Source": "open5gs-admin-api",
+  "BasePath": "_content/open5gs-admin-api",
+  "Mode": "Default",
+  "ManifestType": "Build",
+  "ReferencedProjectsConfiguration": [],
+  "DiscoveryPatterns": [],
+  "Assets": [],
+  "Endpoints": []
+}

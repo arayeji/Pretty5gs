@@ -68,6 +68,18 @@ int smf_pfcp_send_session_report_response(
 uint32_t smf_pfcp_urr_usage_report_trigger2diam_gy_reporting_reason(
             ogs_pfcp_usage_report_trigger_t *rep_trigger);
 
+/*
+ * Main-thread-only helper to add a UPF peer at runtime (admin-watcher use).
+ *
+ * Creates an ogs_pfcp_node_t, appends it to pfcp_peer_list, stamps the
+ * per-peer DNN filter (if any), and kicks the PFCP association FSM so the
+ * new UPF starts heartbeating. MUST be called from the SMF main thread
+ * (the thread that owns timer_mgr). Returns the new node or NULL.
+ */
+ogs_pfcp_node_t *smf_pfcp_admin_add_upf_peer(
+        ogs_sockaddr_t *addr,
+        const char **dnns, int num_of_dnns);
+
 #ifdef __cplusplus
 }
 #endif

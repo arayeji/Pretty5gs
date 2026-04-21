@@ -21,6 +21,9 @@
 #include "gtp-path.h"
 #include "pfcp-path.h"
 #include "metrics.h"
+#ifdef OPEN5GS_ADMIN_WATCHER
+#include "upf-admin-watcher.h"
+#endif
 
 static ogs_thread_t *thread;
 static void upf_main(void *data);
@@ -77,6 +80,10 @@ int upf_initialize(void)
     thread = ogs_thread_create(upf_main, NULL);
     if (!thread) return OGS_ERROR;
 
+#ifdef OPEN5GS_ADMIN_WATCHER
+    (void)upf_admin_watcher_init();
+#endif
+
     initialized = 1;
 
     return OGS_OK;
@@ -85,6 +92,10 @@ int upf_initialize(void)
 void upf_terminate(void)
 {
     if (!initialized) return;
+
+#ifdef OPEN5GS_ADMIN_WATCHER
+    upf_admin_watcher_final();
+#endif
 
     upf_event_term();
 

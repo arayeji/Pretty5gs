@@ -1,0 +1,463 @@
+openapi: 3.0.3
+info:
+  title: Open5GS Admin API
+  version: "0.1.0"
+  description: |
+    Append-only admin API for dynamic MME/SMF/UPF configuration.
+
+    Semantics:
+      * **POST** adds a resource if its natural key is not already present.
+        Re-posting an identical resource is a no-op (returns 200 with the
+        existing doc, does **not** bump the global revision).
+      * **DELETE** removes the configuration row. It does NOT touch live UEs,
+        eNBs, or gNBs. Cleanup of in-flight sessions is out of scope.
+      * A monotonic global revision is bumped on every successful mutating
+        call. NFs poll the admin API (or tail Mongo directly) and apply the
+        delta on the next tick. Clients can watch `/apply-status` to see
+        which NFs have converged.
+  license:
+    name: AGPL-3.0-only
+
+servers:
+  - url: http://localhost:9998
+    description: local dev
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  schemas:
+    ValidationErrors:
+      type: object
+      additionalProperties:
+        type: string
+      example:
+        mcc: "mcc must be 3 digits"
+
+    Plmn:
+      type: object
+      required: [mcc, mnc]
+      properties:
+        id:          { type: string, readOnly: true }
+        mcc:         { type: string, pattern: '^[0-9]{3}$' }
+        mnc:         { type: string, pattern: '^[0-9]{2,3}$' }
+        label:       { type: string, nullable: true }
+        revision:    { type: integer, format: int64, readOnly: true }
+        createdAt:   { type: string, format: date-time, readOnly: true }
+        updatedAt:   { type: string, format: date-time, readOnly: true }
+
+    PlmnCreate:
+      type: object
+      required: [mcc, mnc]
+      properties:
+        mcc:   { type: string, pattern: '^[0-9]{3}$' }
+        mnc:   { type: string, pattern: '^[0-9]{2,3}$' }
+        label: { type: string, nullable: true }
+
+    Tac:
+      type: object
+      required: [mcc, mnc, tacValue]
+      properties:
+        id:        { type: string, readOnly: true }
+        mcc:       { type: string }
+        mnc:       { type: string }
+        tacValue:  { type: integer, minimum: 0, maximum: 16777215 }
+        label:     { type: string, nullable: true }
+        revision:  { type: integer, format: int64, readOnly: true }
+        createdAt: { type: string, format: date-time, readOnly: true }
+        updatedAt: { type: string, format: date-time, readOnly: true }
+
+    TacCreate:
+      type: object
+      required: [mcc, mnc, tac]
+      properties:
+        mcc:   { type: string, pattern: '^[0-9]{3}$' }
+        mnc:   { type: string, pattern: '^[0-9]{2,3}$' }
+        tac:   { type: integer, minimum: 0, maximum: 16777215 }
+        label: { type: string, nullable: true }
+
+    Dnn:
+      type: object
+      required: [name]
+      properties:
+        id:        { type: string, readOnly: true }
+        name:      { type: string }
+        dns1:      { type: string, nullable: true, format: ipv4 }
+        dns2:      { type: string, nullable: true }
+        mtu:       { type: integer, nullable: true, minimum: 576, maximum: 9216 }
+        sliceSst:  { type: integer, nullable: true, minimum: 1, maximum: 255 }
+        sliceSd:   { type: string,  nullable: true, pattern: '^[0-9a-fA-F]{6}$' }
+        label:     { type: string,  nullable: true }
+        revision:  { type: integer, format: int64, readOnly: true }
+        createdAt: { type: string, format: date-time, readOnly: true }
+        updatedAt: { type: string, format: date-time, readOnly: true }
+
+    DnnCreate:
+      type: object
+      required: [name]
+      properties:
+        name:     { type: string }
+        dns1:     { type: string, nullable: true }
+        dns2:     { type: string, nullable: true }
+        mtu:      { type: integer, nullable: true }
+        sliceSst: { type: integer, nullable: true }
+        sliceSd:  { type: string,  nullable: true }
+        label:    { type: string,  nullable: true }
+
+    UpfPeer:
+      type: object
+      required: [host, port]
+      properties:
+        id:        { type: string, readOnly: true }
+        host:      { type: string }
+        port:      { type: integer, default: 8805 }
+        dnns:
+          type: array
+          items: { type: string }
+        label:     { type: string, nullable: true }
+        revision:  { type: integer, format: int64, readOnly: true }
+
+    UpfPeerCreate:
+      type: object
+      required: [host]
+      properties:
+        host:  { type: string }
+        port:  { type: integer, default: 8805 }
+        dnns:
+          type: array
+          items: { type: string }
+        label: { type: string, nullable: true }
+
+    Subnet:
+      type: object
+      required: [cidr, dnn]
+      properties:
+        id:        { type: string, readOnly: true }
+        cidr:      { type: string }
+        dnn:       { type: string }
+        dev:       { type: string, nullable: true }
+        gateway:   { type: string, nullable: true }
+        label:     { type: string, nullable: true }
+        revision:  { type: integer, format: int64, readOnly: true }
+
+    SubnetCreate:
+      type: object
+      required: [cidr, dnn]
+      properties:
+        cidr:    { type: string }
+        dnn:     { type: string }
+        dev:     { type: string, nullable: true }
+        gateway: { type: string, nullable: true }
+        label:   { type: string, nullable: true }
+
+    NfHeartbeat:
+      type: object
+      properties:
+        nfId:            { type: string }
+        nfType:          { type: string, enum: [mme, sgwc, sgwu, smf, upf, amf, ausf, udm, udr, pcf, nssf] }
+        appliedRevision: { type: integer, format: int64 }
+        updatedAt:       { type: string, format: date-time }
+        lastError:       { type: string, nullable: true }
+        version:         { type: string, nullable: true }
+
+    NfHeartbeatCreate:
+      type: object
+      required: [nfId, nfType, appliedRevision]
+      properties:
+        nfId:            { type: string }
+        nfType:          { type: string }
+        appliedRevision: { type: integer, format: int64 }
+        lastError:       { type: string, nullable: true }
+        version:         { type: string, nullable: true }
+
+    ApplyStatus:
+      type: object
+      properties:
+        currentRevision: { type: integer, format: int64 }
+        nfs:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/NfHeartbeat'
+              - type: object
+                properties:
+                  lag: { type: integer, format: int64 }
+
+paths:
+  /api/v1/plmns:
+    get:
+      summary: List PLMNs
+      tags: [plmns]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Plmn' }
+    post:
+      summary: Add a PLMN (idempotent on mcc+mnc)
+      tags: [plmns]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PlmnCreate' }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Plmn' }
+        "200":
+          description: Already existed (idempotent re-post)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Plmn' }
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ValidationErrors' }
+        "409":
+          description: Capacity reached
+
+  /api/v1/plmns/{mcc}/{mnc}:
+    delete:
+      summary: Delete a PLMN config row (does not touch live UEs)
+      tags: [plmns]
+      parameters:
+        - name: mcc
+          in: path
+          required: true
+          schema: { type: string }
+        - name: mnc
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Not found }
+
+  /api/v1/tacs:
+    get:
+      summary: List TACs
+      tags: [tacs]
+      parameters:
+        - name: mcc
+          in: query
+          schema: { type: string }
+        - name: mnc
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Tac' }
+    post:
+      summary: Add a TAC (idempotent on mcc+mnc+tac)
+      tags: [tacs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TacCreate' }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Tac' } } } }
+        "200": { description: Already existed }
+        "400": { description: Validation error }
+        "409": { description: Capacity reached }
+
+  /api/v1/tacs/{mcc}/{mnc}/{tac}:
+    delete:
+      summary: Delete a TAC config row
+      tags: [tacs]
+      parameters:
+        - name: mcc
+          in: path
+          required: true
+          schema: { type: string }
+        - name: mnc
+          in: path
+          required: true
+          schema: { type: string }
+        - name: tac
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Not found }
+
+  /api/v1/dnns:
+    get:
+      summary: List DNNs
+      tags: [dnns]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Dnn' }
+    post:
+      summary: Add a DNN
+      tags: [dnns]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DnnCreate' }
+      responses:
+        "201": { description: Created }
+        "200": { description: Already existed }
+        "400": { description: Validation error }
+        "409": { description: Capacity reached }
+
+  /api/v1/dnns/{name}:
+    delete:
+      summary: Delete a DNN
+      tags: [dnns]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Not found }
+
+  /api/v1/upf-peers:
+    get:
+      summary: List UPF peers known to SMF
+      tags: [upf-peers]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/UpfPeer' }
+    post:
+      summary: Add a UPF peer
+      tags: [upf-peers]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpfPeerCreate' }
+      responses:
+        "201": { description: Created }
+        "200": { description: Already existed }
+        "400": { description: Validation error }
+        "409": { description: Capacity reached }
+
+  /api/v1/upf-peers/{host}/{port}:
+    delete:
+      summary: Delete a UPF peer
+      tags: [upf-peers]
+      parameters:
+        - name: host
+          in: path
+          required: true
+          schema: { type: string }
+        - name: port
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Not found }
+
+  /api/v1/subnets:
+    get:
+      summary: List IP pools / subnets
+      tags: [subnets]
+      parameters:
+        - name: dnn
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Subnet' }
+    post:
+      summary: Add an IP pool
+      tags: [subnets]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SubnetCreate' }
+      responses:
+        "201": { description: Created }
+        "200": { description: Already existed }
+        "400": { description: Validation error }
+        "409": { description: Capacity reached }
+    delete:
+      summary: Delete an IP pool (cidr + dnn as query params)
+      tags: [subnets]
+      parameters:
+        - name: cidr
+          in: query
+          required: true
+          schema: { type: string }
+        - name: dnn
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Deleted }
+        "400": { description: Missing query params }
+        "404": { description: Not found }
+
+  /api/v1/apply-status:
+    get:
+      summary: Current revision + per-NF applied state
+      tags: [apply-status]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplyStatus' }
+
+  /api/v1/apply-status/heartbeat:
+    post:
+      summary: NF watcher posts its latest applied revision here
+      tags: [apply-status]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NfHeartbeatCreate' }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NfHeartbeat' }
+
+  /healthz:
+    get:
+      summary: Liveness + Mongo reachability probe
+      security: []
+      responses:
+        "200": { description: Healthy }
+        "503": { description: Unhealthy }

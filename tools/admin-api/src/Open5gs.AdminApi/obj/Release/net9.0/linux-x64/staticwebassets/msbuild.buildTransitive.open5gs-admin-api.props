@@ -1,0 +1,3 @@
+﻿<Project>
+  <Import Project="..\buildMultiTargeting\open5gs-admin-api.props" />
+</Project>

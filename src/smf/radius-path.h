@@ -51,4 +51,22 @@ void smf_radius_sess_clear(smf_sess_t *sess);
  * DBR-Response -> PFCP-deletion chain. */
 void smf_radius_pod_teardown_cancel(smf_sess_t *sess);
 
+/*
+ * Hot-reload RADIUS client + PoD configuration from the admin API.
+ *
+ * new_cfg fields are consumed in place: pointer-valued fields
+ * (server host, secrets, nas_identifier, pod_bind, pod_secret) are
+ * duplicated into heap memory owned by this module so the caller may
+ * free its own copies immediately. Scalar fields (ports, timers,
+ * retries, select_mode) are copied atomically into smf_self()->radius.
+ *
+ * The PoD listener is restarted when its bind address or port changes;
+ * otherwise it keeps running so in-flight disconnects are not lost.
+ *
+ * Returns OGS_OK on success. Never returns OGS_ERROR for "just the
+ * secret changed" — all edits are best-effort and the daemon keeps
+ * running either way.
+ */
+int smf_radius_apply_runtime(const smf_radius_config_t *new_cfg);
+
 #endif /* SMF_RADIUS_PATH_H */
