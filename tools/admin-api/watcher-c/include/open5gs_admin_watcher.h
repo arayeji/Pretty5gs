@@ -118,6 +118,9 @@ typedef struct ogs_admin_smf_radius_s {
     const char *pod_secret;
     uint32_t    pod_teardown_timeout_ms;
 
+    /* 1 = apply Framed-IP from Access-Accept to UE/PFCP (default). 0 = ignore. */
+    int         use_framed_ip_for_ue;
+
     ogs_admin_radius_server_t servers[OGS_ADMIN_MAX_RADIUS_SERVERS];
     int         num_servers;
 } ogs_admin_smf_radius_t;

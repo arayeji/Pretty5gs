@@ -429,6 +429,12 @@ static void ow_apply_smf_radius_payload(
     cfg.pod_teardown_timeout_ms = (uint32_t)ow_clamp_long(
         cJSON_GetObjectItem(payload, "pod_teardown_timeout_ms"), 5000);
 
+    {
+        cJSON *fi = cJSON_GetObjectItem(payload, "use_framed_ip_for_ue");
+        cfg.use_framed_ip_for_ue =
+                (!fi || !cJSON_IsBool(fi) || cJSON_IsTrue(fi)) ? 1 : 0;
+    }
+
     cJSON *servers = cJSON_GetObjectItem(payload, "servers");
     if (cJSON_IsArray(servers)) {
         cJSON *s;

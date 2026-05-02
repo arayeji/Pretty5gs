@@ -680,33 +680,38 @@ static int radius_parse_access_accept(smf_sess_t *sess,
         }
     }
 
-    /* Apply framed addresses into sess->session.ue_ip. */
-    memset(&sess->session.ue_ip, 0, sizeof(sess->session.ue_ip));
+    /* Apply framed addresses into sess->session.ue_ip (PFCP UE address). */
+    if (smf_self()->radius.use_framed_ip_for_ue) {
+        memset(&sess->session.ue_ip, 0, sizeof(sess->session.ue_ip));
 
-    if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV4) {
-        if (!got_v4) {
-            ogs_error("RADIUS: no Framed-IP-Address for IPv4 session");
+        if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV4) {
+            if (!got_v4) {
+                ogs_error("RADIUS: no Framed-IP-Address for IPv4 session");
+                return OGS_ERROR;
+            }
+            sess->session.ue_ip.addr = v4_be;
+        } else if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV6) {
+            if (!got_v6) {
+                ogs_error("RADIUS: no Framed-IPv6-Prefix for IPv6 session");
+                return OGS_ERROR;
+            }
+            memcpy(sess->session.ue_ip.addr6, v6, OGS_IPV6_LEN);
+        } else if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
+            if (!got_v4 || !got_v6) {
+                ogs_error("RADIUS: need Framed-IP-Address and "
+                        "Framed-IPv6-Prefix for IPv4v6 session");
+                return OGS_ERROR;
+            }
+            sess->session.ue_ip.addr = v4_be;
+            memcpy(sess->session.ue_ip.addr6, v6, OGS_IPV6_LEN);
+        } else {
+            ogs_error("RADIUS: unsupported PDU session type %u",
+                    (unsigned)sess->session.session_type);
             return OGS_ERROR;
         }
-        sess->session.ue_ip.addr = v4_be;
-    } else if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV6) {
-        if (!got_v6) {
-            ogs_error("RADIUS: no Framed-IPv6-Prefix for IPv6 session");
-            return OGS_ERROR;
-        }
-        memcpy(sess->session.ue_ip.addr6, v6, OGS_IPV6_LEN);
-    } else if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
-        if (!got_v4 || !got_v6) {
-            ogs_error("RADIUS: need Framed-IP-Address and Framed-IPv6-Prefix "
-                    "for IPv4v6 session");
-            return OGS_ERROR;
-        }
-        sess->session.ue_ip.addr = v4_be;
-        memcpy(sess->session.ue_ip.addr6, v6, OGS_IPV6_LEN);
-    } else {
-        ogs_error("RADIUS: unsupported PDU session type %u",
-                (unsigned)sess->session.session_type);
-        return OGS_ERROR;
+    } else if (got_v4 || got_v6) {
+        ogs_info("RADIUS: ignoring framed UE IP/prefix from Access-Accept "
+                "(smf.radius.use_framed_ip_for_ue: false)");
     }
 
     return OGS_OK;
@@ -2191,6 +2196,7 @@ int smf_radius_apply_runtime(const smf_radius_config_t *new_cfg)
     cur->pod_enabled           = new_cfg->pod_enabled;
     cur->pod_port              = new_cfg->pod_port;
     cur->pod_teardown_timeout_ms = new_cfg->pod_teardown_timeout_ms;
+    cur->use_framed_ip_for_ue    = new_cfg->use_framed_ip_for_ue;
 
     /* Shared-pointer strings. */
     rad_replace_owned(&cur->nas_id,     &g_rad_owned_nas_id,     new_cfg->nas_id);

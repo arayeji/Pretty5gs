@@ -311,7 +311,8 @@ uint8_t smf_s5c_handle_create_session_request(
     rv = ogs_paa_to_ip(paa, &sess->session.ue_ip);
     ogs_assert(rv == OGS_OK);
 
-    if (smf_self()->radius.enabled)
+    if (smf_self()->radius.enabled &&
+            smf_self()->radius.use_framed_ip_for_ue)
         memset(&sess->session.ue_ip, 0, sizeof(sess->session.ue_ip));
 
     rv = smf_radius_authorize_for_session(sess);

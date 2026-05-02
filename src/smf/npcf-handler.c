@@ -757,8 +757,8 @@ bool smf_npcf_smpolicycontrol_handle_create(
         up2cp_pdr->f_teid.teid = sess->local_ul_teid;
     }
 
-    dl_pdr->precedence = OGS_PFCP_DEFAULT_PDR_PRECEDENCE;
-    ul_pdr->precedence = OGS_PFCP_DEFAULT_PDR_PRECEDENCE;
+    dl_pdr->precedence = smf_self()->default_pdr_precedence;
+    ul_pdr->precedence = smf_self()->default_pdr_precedence;
 
     cp2up_pdr->precedence = OGS_PFCP_CP2UP_PDR_PRECEDENCE;
     up2cp_pdr->precedence = OGS_PFCP_UP2CP_PDR_PRECEDENCE;

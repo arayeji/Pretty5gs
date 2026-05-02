@@ -19,6 +19,7 @@ namespace Open5gs.AdminApi.Validation;
 ///   "pod_port":        int,
 ///   "pod_secret":      string?,
 ///   "pod_teardown_timeout_ms": int,
+///   "use_framed_ip_for_ue": bool,
 ///   "servers": [
 ///      {"host": "10.0.0.10", "auth_port":1812, "acct_port":1813,
 ///       "secret":"s1", "role":"primary"},
@@ -57,6 +58,7 @@ internal static class SmfRadius
         bool podEnabled = TryBool(input, "pod_enabled") ?? false;
         int podPort    = TryInt(input, "pod_port", 3799) ?? 3799;
         int podTo      = TryInt(input, "pod_teardown_timeout_ms", 5000) ?? 5000;
+        bool useFramedIpForUe = TryBool(input, "use_framed_ip_for_ue") ?? true;
 
         if (timeoutMs is < 100 or > 60_000)
             errors["timeout_ms"] = "must be 100..60000";
@@ -173,6 +175,7 @@ internal static class SmfRadius
             w.WriteNumber("pod_port", podPort);
             if (podSecret is not null) w.WriteString("pod_secret", podSecret);
             w.WriteNumber("pod_teardown_timeout_ms", podTo);
+            w.WriteBoolean("use_framed_ip_for_ue", useFramedIpForUe);
 
             w.WritePropertyName("servers");
             w.WriteStartArray();

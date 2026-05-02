@@ -270,7 +270,8 @@ uint8_t smf_gn_handle_create_pdp_context_request(
     /* Initially Set Session Type from UE */
     sess->session.session_type = sess->ue_session_type;
 
-    if (smf_self()->radius.enabled)
+    if (smf_self()->radius.enabled &&
+            smf_self()->radius.use_framed_ip_for_ue)
         memset(&sess->session.ue_ip, 0, sizeof(sess->session.ue_ip));
 
     rv = smf_radius_authorize_for_session(sess);

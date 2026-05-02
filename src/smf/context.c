@@ -185,6 +185,9 @@ static int smf_context_prepare(void)
     self.radius.pod_port = 3799;
     self.radius.pod_secret = NULL;
     self.radius.pod_teardown_timeout_ms = 5000; /* 5s default */
+    self.radius.use_framed_ip_for_ue = true;
+
+    self.default_pdr_precedence = OGS_PFCP_DEFAULT_PDR_PRECEDENCE;
 
     self.cdr.enabled = false;
     self.cdr.spool_dir = NULL;
@@ -688,6 +691,9 @@ int smf_context_parse_config(void)
                                 !strcmp(rk, "pod_teardown_timeout")) {
                             if (rv) self.radius.pod_teardown_timeout_ms =
                                 (uint32_t)atoi(rv);
+                        } else if (!strcmp(rk, "use_framed_ip_for_ue")) {
+                            self.radius.use_framed_ip_for_ue =
+                                ogs_yaml_iter_bool(&r_iter);
                         } else if (!strcmp(rk, "select") ||
                                 !strcmp(rk, "select_mode")) {
                             if (rv && !strcmp(rv, "hash_imsi"))
@@ -846,6 +852,15 @@ int smf_context_parse_config(void)
                             YAML_SCALAR_NODE);
                     self.mtu = atoi(ogs_yaml_iter_value(&smf_iter));
                     ogs_assert(self.mtu);
+                } else if (!strcmp(smf_key, "default_pdr_precedence")) {
+                    const char *v = ogs_yaml_iter_value(&smf_iter);
+
+                    if (v)
+                        self.default_pdr_precedence =
+                            (uint32_t)strtoul(v, NULL, 10);
+                    if (self.default_pdr_precedence == 0)
+                        self.default_pdr_precedence =
+                            OGS_PFCP_DEFAULT_PDR_PRECEDENCE;
                 } else if (!strcmp(smf_key, "p-cscf")) {
                     ogs_yaml_iter_t p_cscf_iter;
                     ogs_yaml_iter_recurse(&smf_iter, &p_cscf_iter);
@@ -3834,27 +3849,29 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
     ogs_ipsubnet_t p_cscf, p_cscf6;
     int size = 0;
     int i = 0;
-    uint16_t mtu = 0;
+    uint16_t mtu_rsp = 0;
+    uint16_t injected_mtu = 0;
 
     ogs_assert(pco_buf);
-    ogs_assert(buffer);
-    ogs_assert(length);
+
+    if ((!buffer || length <= 0) && !smf_self()->mtu)
+        return 0;
 
     num_of_ipcp = 0;
     memset(&pco_ipcp, 0, sizeof(pco_ipcp));
-
-    size = ogs_pco_parse(&ue, buffer, length);
-    if (size != length) {
-        ogs_error("ogs_pco_parse() failed [size:%d != length:%d]",
-                size, length);
-        return 0;
-    }
-
     memset(&smf, 0, sizeof(ogs_pco_t));
-    smf.ext = ue.ext;
-    smf.configuration_protocol = ue.configuration_protocol;
 
-    for (i = 0; i < ue.num_of_id; i++) {
+    if (buffer && length > 0) {
+        size = ogs_pco_parse(&ue, buffer, length);
+        if (size != length) {
+            ogs_error("ogs_pco_parse() failed [size:%d != length:%d]",
+                    size, length);
+            return 0;
+        }
+        smf.ext = ue.ext;
+        smf.configuration_protocol = ue.configuration_protocol;
+
+        for (i = 0; i < ue.num_of_id; i++) {
         uint8_t *data = ue.ids[i].data;
         switch(ue.ids[i].id) {
         case OGS_PCO_ID_PASSWORD_AUTHENTICATION_PROTOCOL:
@@ -4032,10 +4049,10 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
             break;
         case OGS_PCO_ID_IPV4_LINK_MTU_REQUEST:
             if (smf_self()->mtu) {
-                mtu = htobe16(smf_self()->mtu);
+                mtu_rsp = htobe16(smf_self()->mtu);
                 smf.ids[smf.num_of_id].id = ue.ids[i].id;
                 smf.ids[smf.num_of_id].len = sizeof(uint16_t);
-                smf.ids[smf.num_of_id].data = &mtu;
+                smf.ids[smf.num_of_id].data = &mtu_rsp;
                 smf.num_of_id++;
             }
             break;
@@ -4057,7 +4074,39 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
         default:
             ogs_warn("Unknown PCO ID:(0x%x)", ue.ids[i].id);
         }
+        }
+    } else {
+        /*
+         * No UE PCO; synthesize header (TS 24.008) so we can return MTU
+         * when smf.mtu is configured.
+         */
+        smf.ext = 1;
+        smf.configuration_protocol =
+            OGS_PCO_PPP_FOR_USE_WITH_IP_PDP_TYPE_OR_IP_PDN_TYPE;
     }
+
+    /* Offer IPv4 link MTU whenever smf.mtu is set, even if UE did not ask. */
+    if (smf_self()->mtu) {
+        bool have_mtu = false;
+
+        for (i = 0; i < smf.num_of_id; i++) {
+            if (smf.ids[i].id == OGS_PCO_ID_IPV4_LINK_MTU_REQUEST) {
+                have_mtu = true;
+                break;
+            }
+        }
+        if (!have_mtu &&
+            smf.num_of_id < OGS_MAX_NUM_OF_PROTOCOL_OR_CONTAINER_ID) {
+            injected_mtu = htobe16(smf_self()->mtu);
+            smf.ids[smf.num_of_id].id = OGS_PCO_ID_IPV4_LINK_MTU_REQUEST;
+            smf.ids[smf.num_of_id].len = sizeof(uint16_t);
+            smf.ids[smf.num_of_id].data = (uint8_t *)&injected_mtu;
+            smf.num_of_id++;
+        }
+    }
+
+    if (smf.num_of_id == 0)
+        return 0;
 
     size = ogs_pco_build(pco_buf, OGS_MAX_PCO_LEN, &smf);
     ogs_expect(size > 0);

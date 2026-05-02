@@ -44,7 +44,8 @@ smf:
     - 8.8.4.4
     - 2001:4860:4860::8888
     - 2001:4860:4860::8844
-  mtu: 1400
+  mtu: 1400  # Advertised as IPv4 link MTU in PCO/ePCO whenever non-zero
+#  default_pdr_precedence: 65535  # default bearer DL/UL PDR (TS 29.244); try e.g. 100 for some UPG-VPP builds
 #  RADIUS (optional): Access-Request before UE IP assignment; framed IPv4/IPv6
 #  from Access-Accept; Accounting Start / Interim-Update / Stop. Use `secret`
 #  or `community` for the shared secret. `port` sets auth (UDP) and
@@ -133,6 +134,10 @@ smf:
 #    # forces local PFCP session deletion so the UPF tunnel is torn down and
 #    # RADIUS Accounting-Stop is still emitted. 0 disables the watchdog.
 #    pod_teardown_timeout_ms: 5000
+#    # When false, Framed-IP-Address / Framed-IPv6-Prefix in Access-Accept are
+#    # ignored for UE assignment (not sent as UE IP in PFCP); subscription/pool
+#    # still applies. Class, routes, and accounting are unchanged.
+#    use_framed_ip_for_ue: true
 #
 #  Ga / GTP' offline charging CDR writer.
 #

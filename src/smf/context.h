@@ -143,6 +143,14 @@ typedef struct smf_radius_config_s {
     uint32_t pod_teardown_timeout_ms;
 
     /*
+     * When true (default), Framed-IP-Address / Framed-IPv6-Prefix from
+     * Access-Accept are applied to sess->session.ue_ip and sent in PFCP.
+     * When false, RADIUS may still authenticate and supply Class/routes,
+     * but UE IP comes from the PDN subscription / SMF pool only.
+     */
+    bool use_framed_ip_for_ue;
+
+    /*
      * Multi-server farm. At least one primary is required when enabled.
      * Parsed from the new `servers:` YAML block or synthesized from the
      * legacy flat `server:` + `secret:` keys.
@@ -283,7 +291,11 @@ typedef struct smf_context_s {
     ogs_hash_t      *smf_n4_seid_hash; /* hash table (SMF-N4-SEID) */
     ogs_hash_t      *n1n2message_hash; /* hash table (N1N2Message Location) */
 
-    uint16_t        mtu;            /* MTU to advertise in PCO */
+    uint16_t        mtu;            /* IPv4 link MTU in PCO/ePCO (0x0010); always
+                                     * sent when non-zero, even if UE did not
+                                     * request it in PCO */
+    uint32_t        default_pdr_precedence; /* default bearer DL/UL PDR (TS 29.244);
+                                             * UPG-VPP may need e.g. 100 vs 65535 */
 
     struct  {
         const char *integrity_protection_indication;

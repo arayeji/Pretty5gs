@@ -595,8 +595,8 @@ bool smf_nsmf_handle_create_sm_context(
         ul_pdr->f_teid.teid = sess->local_ul_teid;
     }
 
-    dl_pdr->precedence = OGS_PFCP_DEFAULT_PDR_PRECEDENCE;
-    ul_pdr->precedence = OGS_PFCP_DEFAULT_PDR_PRECEDENCE;
+    dl_pdr->precedence = smf_self()->default_pdr_precedence;
+    ul_pdr->precedence = smf_self()->default_pdr_precedence;
 
     /* Save N1 SM Message and send it to H-SMF */
     if (sess->n1SmBufFromUe) ogs_pkbuf_free(sess->n1SmBufFromUe);

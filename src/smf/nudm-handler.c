@@ -349,7 +349,8 @@ bool smf_nudm_sdm_handle_get(smf_sess_t *sess, ogs_sbi_stream_t *stream,
     }
 
     if (smf_self()->radius.enabled) {
-        memset(&sess->session.ue_ip, 0, sizeof(sess->session.ue_ip));
+        if (smf_self()->radius.use_framed_ip_for_ue)
+            memset(&sess->session.ue_ip, 0, sizeof(sess->session.ue_ip));
         r = smf_radius_authorize_for_session(sess);
         if (r != OGS_OK) {
             strerror = ogs_msprintf("[%s:%d] RADIUS authentication failed",

@@ -246,6 +246,9 @@ static void on_smf_radius_update(
             ? ogs_strdup(cfg->pod_secret) : NULL;
     g_pending_radius.cfg.pod_teardown_timeout_ms = cfg->pod_teardown_timeout_ms;
 
+    g_pending_radius.cfg.use_framed_ip_for_ue = cfg->use_framed_ip_for_ue ?
+            true : false;
+
     for (i = 0; i < cfg->num_servers && i < SMF_MAX_RADIUS_SERVERS; i++) {
         const ogs_admin_radius_server_t *s = &cfg->servers[i];
         smf_radius_server_t *d = &g_pending_radius.cfg.servers[i];
