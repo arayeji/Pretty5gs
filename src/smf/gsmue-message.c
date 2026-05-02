@@ -1587,12 +1587,26 @@ ogs_pkbuf_t *gsmue_build_pdu_session_establishment_accept(smf_sess_t *sess)
     }
 
     /* Extended protocol configuration options */
-    if (sess->nas.ue_epco.buffer && sess->nas.ue_epco.length) {
+    if ((sess->nas.ue_epco.buffer && sess->nas.ue_epco.length) ||
+            smf_self()->mtu) {
+        uint8_t *in = NULL;
+        int in_len = 0;
+
+        if (sess->nas.ue_epco.buffer && sess->nas.ue_epco.length) {
+            in = sess->nas.ue_epco.buffer;
+            in_len = (int)sess->nas.ue_epco.length;
+        }
         epco_buf = ogs_calloc(OGS_MAX_EPCO_LEN, sizeof(uint8_t));
         ogs_assert(epco_buf);
-        epco_len = smf_pco_build(epco_buf,
-                sess->nas.ue_epco.buffer, sess->nas.ue_epco.length);
-        ogs_assert(epco_len > 0);
+        epco_len = smf_pco_build(epco_buf, in, in_len);
+        if (epco_len <= 0) {
+            ogs_error("smf_pco_build() failed");
+            if (in)
+                ogs_log_hexdump(OGS_LOG_ERROR, in, in_len);
+            ogs_free(epco_buf);
+            epco_buf = NULL;
+            return NULL;
+        }
         pdu_session_establishment_accept->presencemask |=
             OGS_NAS_5GS_PDU_SESSION_ESTABLISHMENT_ACCEPT_EXTENDED_PROTOCOL_CONFIGURATION_OPTIONS_PRESENT;
         extended_protocol_configuration_options->buffer = epco_buf;

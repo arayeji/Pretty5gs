@@ -136,15 +136,23 @@ ogs_pkbuf_t *smf_s5c_build_create_session_response(
         rsp->aggregate_maximum_bit_rate.len = sizeof(ambr);
     }
 
-    /* PCO */
-    if (sess->gtp.ue_pco.presence &&
-            sess->gtp.ue_pco.len && sess->gtp.ue_pco.data) {
-        pco_len = smf_pco_build(
-                pco_buf, sess->gtp.ue_pco.data, sess->gtp.ue_pco.len);
+    /* PCO (when UE sent PCO, or when smf.mtu is set — MTU may be injected) */
+    if ((sess->gtp.ue_pco.presence && sess->gtp.ue_pco.len &&
+                sess->gtp.ue_pco.data) ||
+            smf_self()->mtu) {
+        uint8_t *in = NULL;
+        int in_len = 0;
+
+        if (sess->gtp.ue_pco.presence && sess->gtp.ue_pco.len &&
+                sess->gtp.ue_pco.data) {
+            in = sess->gtp.ue_pco.data;
+            in_len = (int)sess->gtp.ue_pco.len;
+        }
+        pco_len = smf_pco_build(pco_buf, in, in_len);
         if (pco_len <= 0) {
             ogs_error("smf_pco_build() failed");
-            ogs_log_hexdump(OGS_LOG_ERROR,
-                    sess->gtp.ue_pco.data, sess->gtp.ue_pco.len);
+            if (in)
+                ogs_log_hexdump(OGS_LOG_ERROR, in, in_len);
             goto cleanup;
         }
         rsp->protocol_configuration_options.presence = 1;
@@ -301,15 +309,23 @@ ogs_pkbuf_t *smf_s5c_build_delete_session_response(
 
     /* Recovery */
 
-    /* PCO */
-    if (sess->gtp.ue_pco.presence &&
-            sess->gtp.ue_pco.len && sess->gtp.ue_pco.data) {
-        pco_len = smf_pco_build(
-                pco_buf, sess->gtp.ue_pco.data, sess->gtp.ue_pco.len);
+    /* PCO (when UE sent PCO, or when smf.mtu is set — MTU may be injected) */
+    if ((sess->gtp.ue_pco.presence && sess->gtp.ue_pco.len &&
+                sess->gtp.ue_pco.data) ||
+            smf_self()->mtu) {
+        uint8_t *in = NULL;
+        int in_len = 0;
+
+        if (sess->gtp.ue_pco.presence && sess->gtp.ue_pco.len &&
+                sess->gtp.ue_pco.data) {
+            in = sess->gtp.ue_pco.data;
+            in_len = (int)sess->gtp.ue_pco.len;
+        }
+        pco_len = smf_pco_build(pco_buf, in, in_len);
         if (pco_len <= 0) {
             ogs_error("smf_pco_build() failed");
-            ogs_log_hexdump(OGS_LOG_ERROR,
-                    sess->gtp.ue_pco.data, sess->gtp.ue_pco.len);
+            if (in)
+                ogs_log_hexdump(OGS_LOG_ERROR, in, in_len);
             goto cleanup;
         }
         rsp->protocol_configuration_options.presence = 1;

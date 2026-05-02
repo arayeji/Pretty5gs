@@ -284,15 +284,22 @@ ogs_pkbuf_t *gsm_build_pdu_session_establishment_accept(smf_sess_t *sess)
         ogs_fatal("This should not be invoked from H-SMF during HR-Roaming");
         ogs_assert_if_reached();
     } else {
-        if (sess->nas.ue_epco.buffer && sess->nas.ue_epco.length) {
+        if ((sess->nas.ue_epco.buffer && sess->nas.ue_epco.length) ||
+                smf_self()->mtu) {
+            uint8_t *in = NULL;
+            int in_len = 0;
+
+            if (sess->nas.ue_epco.buffer && sess->nas.ue_epco.length) {
+                in = sess->nas.ue_epco.buffer;
+                in_len = (int)sess->nas.ue_epco.length;
+            }
             epco_buf = ogs_calloc(OGS_MAX_EPCO_LEN, sizeof(uint8_t));
             ogs_assert(epco_buf);
-            epco_len = smf_pco_build(epco_buf,
-                    sess->nas.ue_epco.buffer, sess->nas.ue_epco.length);
+            epco_len = smf_pco_build(epco_buf, in, in_len);
             if (epco_len <= 0) {
                 ogs_error("smf_pco_build() failed");
-                ogs_log_hexdump(OGS_LOG_ERROR,
-                        sess->nas.ue_epco.buffer, sess->nas.ue_epco.length);
+                if (in)
+                    ogs_log_hexdump(OGS_LOG_ERROR, in, in_len);
                 goto cleanup;
             }
             pdu_session_establishment_accept->presencemask |=

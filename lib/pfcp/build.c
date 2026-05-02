@@ -501,19 +501,47 @@ void ogs_pfcp_build_update_pdr(
     message->pdr_id.presence = 1;
     message->pdr_id.u16 = pdr->id;
 
+    /*
+     * 3GPP TS 29.244 Table 7.5.4.2-1: PDI in Update PDR is conditional.
+     * Always include the detection identifiers so that strict UP functions
+     * (e.g., eUPF) can validate the modification. Include source_interface
+     * unconditionally and the optional UE IP / F-TEID / DNN when present.
+     */
+    message->pdi.presence = 1;
+    message->pdi.source_interface.presence = 1;
+    message->pdi.source_interface.u8 = pdr->src_if;
+
+    if (pdr->src_if_type_presence) {
+        message->pdi.source_interface_type.presence = 1;
+        message->pdi.source_interface_type.u8 = pdr->src_if_type;
+    }
+
+    if (pdr->dnn) {
+        message->pdi.network_instance.presence = 1;
+        message->pdi.network_instance.len = ogs_fqdn_build(
+            pdrbuf[i].dnn, pdr->dnn, strlen(pdr->dnn));
+        message->pdi.network_instance.data = pdrbuf[i].dnn;
+    }
+
+    if (pdr->ue_ip_addr_len) {
+        message->pdi.ue_ip_address.presence = 1;
+        message->pdi.ue_ip_address.data = &pdr->ue_ip_addr;
+        message->pdi.ue_ip_address.len = pdr->ue_ip_addr_len;
+    }
+
+    if (pdr->f_teid_len) {
+        memcpy(&pdrbuf[i].f_teid, &pdr->f_teid, pdr->f_teid_len);
+        pdrbuf[i].f_teid.teid = htobe32(pdr->f_teid.teid);
+
+        message->pdi.local_f_teid.presence = 1;
+        message->pdi.local_f_teid.data = &pdrbuf[i].f_teid;
+        message->pdi.local_f_teid.len = pdr->f_teid_len;
+    }
+
     if (modify_flags &
             (OGS_PFCP_MODIFY_TFT_NEW|OGS_PFCP_MODIFY_TFT_ADD|
              OGS_PFCP_MODIFY_TFT_REPLACE|OGS_PFCP_MODIFY_TFT_DELETE|
              OGS_PFCP_MODIFY_EPC_TFT_UPDATE)) {
-        message->pdi.presence = 1;
-        message->pdi.source_interface.presence = 1;
-        message->pdi.source_interface.u8 = pdr->src_if;
-
-        if (pdr->src_if_type_presence) {
-            message->pdi.source_interface_type.presence = 1;
-            message->pdi.source_interface_type.u8 = pdr->src_if_type;
-        }
-
         memset(pfcp_sdf_filter, 0, sizeof(pfcp_sdf_filter));
         for (j = 0; j < pdr->num_of_flow && j < OGS_MAX_NUM_OF_FLOW_IN_PDR; j++) {
             ogs_assert(pdr->flow[j].fd || pdr->flow[j].bid);
