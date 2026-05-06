@@ -366,7 +366,12 @@ typedef struct ogs_pfcp_subnet_s {
 
     ogs_ipsubnet_t  sub;                    /* Subnet : 2001:db8:cafe::0/48 */
     ogs_ipsubnet_t  gw;                     /* Gateway : 2001:db8:cafe::1 */
-    char            dnn[OGS_MAX_DNN_LEN+1]; /* DNN : "internet", "volte", .. */
+    /*
+     * DNN/APN keys that share this UE IP pool (case-insensitive match).
+     * num_of_dnn == 0: wildcard — any DNN may use this pool (first match wins).
+     */
+    char            dnn[OGS_MAX_NUM_OF_DNN][OGS_MAX_DNN_LEN+1];
+    uint8_t         num_of_dnn;
 
 #define OGS_MAX_NUM_OF_SUBNET_RANGE 16
     struct {
@@ -509,9 +514,16 @@ void ogs_pfcp_dev_remove(ogs_pfcp_dev_t *dev);
 void ogs_pfcp_dev_remove_all(void);
 ogs_pfcp_dev_t *ogs_pfcp_dev_find_by_ifname(const char *ifname);
 
+/* dnn / dnn_spec: NULL or "" = wildcard pool; or comma-separated list in one string. */
 ogs_pfcp_subnet_t *ogs_pfcp_subnet_add(
         const char *ipstr, const char *mask_or_numbits,
         const char *gateway, const char *dnn, const char *ifname);
+/* Same as multiple comma-separated names in ogs_pfcp_subnet_add(). */
+ogs_pfcp_subnet_t *ogs_pfcp_subnet_add_multi(
+        const char *ipstr, const char *mask_or_numbits,
+        const char *gateway,
+        const char dnnv[][OGS_MAX_DNN_LEN+1], int num_of_dnn,
+        const char *ifname);
 ogs_pfcp_subnet_t *ogs_pfcp_subnet_next(ogs_pfcp_subnet_t *subnet);
 void ogs_pfcp_subnet_remove(ogs_pfcp_subnet_t *subnet);
 void ogs_pfcp_subnet_remove_all(void);

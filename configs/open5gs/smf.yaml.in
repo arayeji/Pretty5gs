@@ -35,6 +35,7 @@ smf:
       - address: 127.0.0.4
         port: 9090
   session:
+    # Optional dnn / apn: omit or use dnn: [a, b] or dnn: a, b — same UE IP pool for listed DNNs
     - subnet: 10.45.0.0/16
       gateway: 10.45.0.1
     - subnet: 2001:db8:cafe::/48

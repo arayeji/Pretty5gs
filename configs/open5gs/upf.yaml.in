@@ -19,6 +19,7 @@ upf:
     server:
       - address: 127.0.0.7
   session:
+    # dnn: [a, b] or dnn: a, b — shared pool (must match SMF session entries)
     - subnet: 10.45.0.0/16
       gateway: 10.45.0.1
     - subnet: 2001:db8:cafe::/48

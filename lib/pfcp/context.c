@@ -147,25 +147,27 @@ static int ogs_pfcp_check_subnet_overlapping(void)
     char buf2[OGS_ADDRSTRLEN];
     int rv = OGS_OK;
 
-    ogs_list_for_each(&self.subnet_list, subnet){
-        for (next_subnet = ogs_list_next(subnet); (next_subnet);
+    ogs_list_for_each(&self.subnet_list, subnet) {
+        for (next_subnet = ogs_list_next(subnet); next_subnet;
                 next_subnet = ogs_list_next(next_subnet)) {
-            if ((strlen(subnet->dnn) == 0 ||
-                 strlen(next_subnet->dnn) == 0 ||
-                (strcmp(subnet->dnn, next_subnet->dnn)) == 0) &&
-                subnet->gw.family == next_subnet->gw.family) {
+            if (subnet->gw.family != next_subnet->gw.family)
+                continue;
+
+            /* One address pool per prefix / instance: overlapping ranges
+             * always collide regardless of dnn (split DNNs use dnn: list). */
+            {
                 uint32_t *addr1 = subnet->sub.sub;
                 uint32_t *addr2 = next_subnet->sub.sub;
                 uint32_t mask[4];
                 int i;
-                /* Get smaller subnet mask for IPv4 or IPv6 */
-                for (i = 0; i < 4 ; i++) {
+                for (i = 0; i < 4; i++)
                     mask[i] = (subnet->sub.mask[i] & next_subnet->sub.mask[i]);
-                }
-                /* Compare masked subnets if they overlap */
+
                 if (subnet->gw.family == AF_INET) {
                     if ((addr1[0] & mask[0]) == (addr2[0] & mask[0])) {
-                        ogs_error("Overlapping subnets in SMF configuration file: %s/%d and %s/%d",
+                        ogs_error("Overlapping subnets in SMF configuration file: "
+                                "%s/%d and %s/%d (use one session entry with "
+                                "dnn: [a, b] to share a pool)",
                                 OGS_INET_NTOP(&subnet->gw.sub[0], buf1),
                                 subnet->prefixlen,
                                 OGS_INET_NTOP(&next_subnet->gw.sub[0], buf2),
@@ -177,7 +179,9 @@ static int ogs_pfcp_check_subnet_overlapping(void)
                         ((addr1[1] & mask[1]) == (addr2[1] & mask[1])) &&
                         ((addr1[2] & mask[2]) == (addr2[2] & mask[2])) &&
                         ((addr1[3] & mask[3]) == (addr2[3] & mask[3]))) {
-                        ogs_error("Overlapping subnets in SMF configuration file: %s/%d and %s/%d",
+                        ogs_error("Overlapping subnets in SMF configuration file: "
+                                "%s/%d and %s/%d (use one session entry with "
+                                "dnn: [a, b] to share a pool)",
                                 OGS_INET6_NTOP(&subnet->gw.sub[0], buf1),
                                 subnet->prefixlen,
                                 OGS_INET6_NTOP(&next_subnet->gw.sub[0], buf2),
@@ -759,7 +763,9 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                         const char *ipstr = NULL;
                         const char *gateway = NULL;
                         const char *mask_or_numbits = NULL;
-                        const char *dnn = NULL;
+                        char dnn_seq[OGS_MAX_NUM_OF_DNN][OGS_MAX_DNN_LEN+1];
+                        int dnn_seq_n = 0;
+                        const char *dnn_scalar = NULL;
                         const char *dev = self.tun_ifname;
                         const char *low[OGS_MAX_NUM_OF_SUBNET_RANGE];
                         const char *high[OGS_MAX_NUM_OF_SUBNET_RANGE];
@@ -800,7 +806,36 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                                 gateway = ogs_yaml_iter_value(&subnet_iter);
                             } else if (!strcmp(subnet_key, "apn") ||
                                         !strcmp(subnet_key, "dnn")) {
-                                dnn = ogs_yaml_iter_value(&subnet_iter);
+                                yaml_node_t *dnn_node = yaml_document_get_node(
+                                        document, subnet_iter.pair->value);
+                                if (dnn_node &&
+                                        dnn_node->type == YAML_SEQUENCE_NODE) {
+                                    ogs_yaml_iter_t dnn_sq;
+                                    ogs_yaml_iter_recurse(&subnet_iter, &dnn_sq);
+                                    dnn_seq_n = 0;
+                                    while (ogs_yaml_iter_next(&dnn_sq) &&
+                                            dnn_seq_n < OGS_MAX_NUM_OF_DNN) {
+                                        const char *dv =
+                                            ogs_yaml_iter_value(&dnn_sq);
+                                        int j, dup = 0;
+
+                                        if (!dv || !*dv)
+                                            continue;
+                                        for (j = 0; j < dnn_seq_n; j++) {
+                                            if (ogs_strcasecmp(dnn_seq[j], dv) == 0) {
+                                                dup = 1;
+                                                break;
+                                            }
+                                        }
+                                        if (dup)
+                                            continue;
+                                        ogs_cpystrn(dnn_seq[dnn_seq_n++], dv,
+                                                OGS_MAX_DNN_LEN);
+                                    }
+                                } else {
+                                    dnn_scalar = ogs_yaml_iter_value(
+                                            &subnet_iter);
+                                }
                             } else if (!strcmp(subnet_key, "dev")) {
                                 dev = ogs_yaml_iter_value(&subnet_iter);
                             } else if (!strcmp(subnet_key, "range")) {
@@ -841,8 +876,15 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                                 ogs_warn("unknown key `%s`", subnet_key);
                         }
 
-                        subnet = ogs_pfcp_subnet_add(
-                                ipstr, mask_or_numbits, gateway, dnn, dev);
+                        if (dnn_seq_n > 0) {
+                            subnet = ogs_pfcp_subnet_add_multi(
+                                    ipstr, mask_or_numbits, gateway,
+                                    dnn_seq, dnn_seq_n, dev);
+                        } else {
+                            subnet = ogs_pfcp_subnet_add(
+                                    ipstr, mask_or_numbits, gateway,
+                                    dnn_scalar, dev);
+                        }
                         ogs_assert(subnet);
 
                         subnet->num_of_range = num;
@@ -2416,15 +2458,57 @@ ogs_pfcp_dev_t *ogs_pfcp_dev_find_by_ifname(const char *ifname)
     return OGS_OK;
 }
 
-ogs_pfcp_subnet_t *ogs_pfcp_subnet_add(
-        const char *ipstr, const char *mask_or_numbits,
-        const char *gateway, const char *dnn, const char *ifname)
+static int subnet_parse_dnn_spec(const char *spec,
+        char out[][OGS_MAX_DNN_LEN+1], int max_n)
 {
-    int rv;
+    char *dup = NULL;
+    char *saveptr = NULL;
+    char *tok;
+    int n = 0;
+
+    if (!spec || !spec[0])
+        return 0;
+
+    dup = ogs_strdup(spec);
+    ogs_assert(dup);
+    for (tok = ogs_strtok_r(dup, ",", &saveptr); tok && n < max_n;
+            tok = ogs_strtok_r(NULL, ",", &saveptr)) {
+        char *e;
+        int i, is_dup = 0;
+
+        while (*tok == ' ' || *tok == '\t')
+            tok++;
+        e = tok + strlen(tok);
+        while (e > tok && (e[-1] == ' ' || e[-1] == '\t'))
+            *--e = '\0';
+        if (*tok == '\0')
+            continue;
+        for (i = 0; i < n; i++) {
+            if (ogs_strcasecmp(out[i], tok) == 0) {
+                is_dup = 1;
+                break;
+            }
+        }
+        if (is_dup)
+            continue;
+        ogs_cpystrn(out[n++], tok, OGS_MAX_DNN_LEN);
+    }
+    ogs_free(dup);
+    return n;
+}
+
+static ogs_pfcp_subnet_t *subnet_add_with_dnns(
+        const char *ipstr, const char *mask_or_numbits,
+        const char *gateway,
+        const char dnnv[][OGS_MAX_DNN_LEN+1], int num_of_dnn,
+        const char *ifname)
+{
+    int rv, i;
     ogs_pfcp_dev_t *dev = NULL;
     ogs_pfcp_subnet_t *subnet = NULL;
 
     ogs_assert(ifname);
+    ogs_assert(num_of_dnn >= 0 && num_of_dnn <= OGS_MAX_NUM_OF_DNN);
 
     dev = ogs_pfcp_dev_find_by_ifname(ifname);
     if (!dev)
@@ -2484,14 +2568,36 @@ ogs_pfcp_subnet_t *ogs_pfcp_subnet_add(
         ogs_assert(rv == OGS_OK);
     }
 
-    if (dnn)
-        ogs_cpystrn(subnet->dnn, dnn, OGS_MAX_DNN_LEN);
+    for (i = 0; i < num_of_dnn; i++)
+        ogs_cpystrn(subnet->dnn[i], dnnv[i], OGS_MAX_DNN_LEN);
+    subnet->num_of_dnn = (uint8_t)num_of_dnn;
 
     ogs_pool_init(&subnet->pool, ogs_app()->pool.sess);
 
     ogs_list_add(&self.subnet_list, subnet);
 
     return subnet;
+}
+
+ogs_pfcp_subnet_t *ogs_pfcp_subnet_add(
+        const char *ipstr, const char *mask_or_numbits,
+        const char *gateway, const char *dnn, const char *ifname)
+{
+    char dnnv[OGS_MAX_NUM_OF_DNN][OGS_MAX_DNN_LEN+1];
+    int n = subnet_parse_dnn_spec(dnn, dnnv, OGS_MAX_NUM_OF_DNN);
+
+    return subnet_add_with_dnns(
+            ipstr, mask_or_numbits, gateway, dnnv, n, ifname);
+}
+
+ogs_pfcp_subnet_t *ogs_pfcp_subnet_add_multi(
+        const char *ipstr, const char *mask_or_numbits,
+        const char *gateway,
+        const char dnnv[][OGS_MAX_DNN_LEN+1], int num_of_dnn,
+        const char *ifname)
+{
+    return subnet_add_with_dnns(
+            ipstr, mask_or_numbits, gateway, dnnv, num_of_dnn, ifname);
 }
 
 void ogs_pfcp_subnet_remove(ogs_pfcp_subnet_t *subnet)
@@ -2513,6 +2619,21 @@ void ogs_pfcp_subnet_remove_all(void)
         ogs_pfcp_subnet_remove(subnet);
 }
 
+static bool subnet_matches_ue_dnn(
+        const ogs_pfcp_subnet_t *subnet, const char *dnn)
+{
+    int i;
+
+    ogs_assert(dnn);
+    if (subnet->num_of_dnn == 0)
+        return true;
+    for (i = 0; i < subnet->num_of_dnn; i++) {
+        if (ogs_strcasecmp(subnet->dnn[i], dnn) == 0)
+            return true;
+    }
+    return false;
+}
+
 ogs_pfcp_subnet_t *ogs_pfcp_find_subnet(int family)
 {
     ogs_pfcp_subnet_t *subnet = NULL;
@@ -2521,7 +2642,7 @@ ogs_pfcp_subnet_t *ogs_pfcp_find_subnet(int family)
 
     ogs_list_for_each(&self.subnet_list, subnet) {
         if ((subnet->family == AF_UNSPEC || subnet->family == family) &&
-            (strlen(subnet->dnn) == 0) &&
+            (subnet->num_of_dnn == 0) &&
             subnet->pool.avail)
             break;
     }
@@ -2538,8 +2659,7 @@ ogs_pfcp_subnet_t *ogs_pfcp_find_subnet_by_dnn(int family, const char *dnn)
 
     ogs_list_for_each(&self.subnet_list, subnet) {
         if ((subnet->family == AF_UNSPEC || subnet->family == family) &&
-            (strlen(subnet->dnn) == 0 ||
-                (strlen(subnet->dnn) && ogs_strcasecmp(subnet->dnn, dnn) == 0)) &&
+            subnet_matches_ue_dnn(subnet, dnn) &&
             subnet->pool.avail)
             break;
     }
