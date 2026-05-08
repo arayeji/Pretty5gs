@@ -73,7 +73,7 @@ Unique index: **`(host, port)`** — `uq_upf_peer`.
 |--------------|----------|----------------------------------------------------|
 | `_id`        | ObjectId | auto                                               |
 | `cidr`       | string   | IPv4 or IPv6 CIDR                                  |
-| `dnn`        | string   | lowercased                                         |
+| `dnn`        | string   | one DNN or comma-separated list (≤16), stored sorted lowercased |
 | `dev`        | string?  | tun/dev device on UPF host (e.g. `ogstun`)         |
 | `gateway`    | string?  | UPF-side gateway                                   |
 | `label`      | string?  |                                                    |

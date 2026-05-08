@@ -170,7 +170,7 @@ public static class SyncEndpoints
         foreach (var s in dto.Subnets ?? [])
         {
             var cidrErr = InputGuards.Cidr(s.Cidr);
-            var dnnErr  = InputGuards.Dnn(s.Dnn);
+            var dnnErr  = InputGuards.DnnSubnetSpec(s.Dnn, out var canonicalDnn);
             if (cidrErr is not null || dnnErr is not null)
             {
                 errors.Add($"subnet {s.Cidr}/{s.Dnn}: " +
@@ -180,15 +180,14 @@ public static class SyncEndpoints
                 continue;
             }
 
-            var normalizedDnn = s.Dnn.ToLowerInvariant();
             var exists = await ctx.Subnets
-                .Find(x => x.Cidr == s.Cidr && x.Dnn == normalizedDnn).AnyAsync(ct);
+                .Find(x => x.Cidr == s.Cidr && x.Dnn == canonicalDnn).AnyAsync(ct);
             if (exists) { subsSkipped++; continue; }
 
             var rev = await revs.NextAsync(ct);
             var doc = new Subnet
             {
-                Cidr = s.Cidr, Dnn = normalizedDnn,
+                Cidr = s.Cidr, Dnn = canonicalDnn,
                 Dev = s.Dev, Gateway = s.Gateway,
                 Label = s.Label, Revision = rev,
             };
@@ -307,6 +306,18 @@ public static class SyncEndpoints
         Span<byte> buf = stackalloc byte[32];
         SHA256.HashData(Encoding.UTF8.GetBytes(s), buf);
         return Convert.ToHexString(buf).ToLowerInvariant();
+    }
+
+    private static void AppendSubnetDnnYaml(StringBuilder sb, string dnn)
+    {
+        if (dnn.Contains(','))
+        {
+            sb.AppendLine("      dnn:");
+            foreach (var p in dnn.Split(',', StringSplitOptions.TrimEntries))
+                sb.AppendLine($"        - {p}");
+        }
+        else
+            sb.AppendLine($"      dnn: {dnn}");
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -433,7 +444,7 @@ public static class SyncEndpoints
                 {
                     sb.AppendLine($"    - addr: {s.Cidr}" +
                                   (s.Label is not null ? $"  # {s.Label}" : ""));
-                    sb.AppendLine($"      dnn: {s.Dnn}");
+                    AppendSubnetDnnYaml(sb, s.Dnn);
                     if (s.Dev is not null)
                         sb.AppendLine($"      dev: {s.Dev}");
                     if (s.Gateway is not null)
@@ -458,7 +469,7 @@ public static class SyncEndpoints
                 {
                     sb.AppendLine($"    - addr: {s.Cidr}" +
                                   (s.Label is not null ? $"  # {s.Label}" : ""));
-                    sb.AppendLine($"      dnn: {s.Dnn}");
+                    AppendSubnetDnnYaml(sb, s.Dnn);
                     if (s.Dev is not null)
                         sb.AppendLine($"      dev: {s.Dev}");
                     if (s.Gateway is not null)

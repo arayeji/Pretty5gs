@@ -139,7 +139,11 @@ components:
       properties:
         id:        { type: string, readOnly: true }
         cidr:      { type: string }
-        dnn:       { type: string }
+        dnn:
+          type: string
+          description: >
+            One DNN or comma-separated list (max 16), e.g. "internet, hiweb".
+            Stored canonical form is sorted lowercase (e.g. "hiweb,internet").
         dev:       { type: string, nullable: true }
         gateway:   { type: string, nullable: true }
         label:     { type: string, nullable: true }
@@ -150,7 +154,9 @@ components:
       required: [cidr, dnn]
       properties:
         cidr:    { type: string }
-        dnn:     { type: string }
+        dnn:
+          type: string
+          description: One DNN or comma-separated list (max 16) sharing this UE pool.
         dev:     { type: string, nullable: true }
         gateway: { type: string, nullable: true }
         label:   { type: string, nullable: true }

@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using Open5gs.AdminApi.Auth;
 using Open5gs.AdminApi.Infrastructure;
 using Open5gs.AdminApi.Models;
 using Open5gs.AdminApi.Validation;
+using System.Text.RegularExpressions;
 
 namespace Open5gs.AdminApi.Endpoints;
 
@@ -29,8 +31,13 @@ public static class SubnetEndpoints
     {
         var filter = FilterDefinition<Subnet>.Empty;
         if (!string.IsNullOrEmpty(dnn))
-            filter &= Builders<Subnet>.Filter.Eq(
-                s => s.Dnn, dnn.ToLowerInvariant());
+        {
+            var q = dnn.ToLowerInvariant();
+            var esc = Regex.Escape(q);
+            filter &= Builders<Subnet>.Filter.Regex(
+                s => s.Dnn,
+                new BsonRegularExpression($@"(^|,){esc}(,|$)"));
+        }
 
         var items = await ctx.Subnets.Find(filter)
             .SortBy(s => s.Dnn).ThenBy(s => s.Cidr)
@@ -51,10 +58,11 @@ public static class SubnetEndpoints
             HttpContext http,
             CancellationToken ct)
     {
+        var dnnSpecErr = InputGuards.DnnSubnetSpec(dto.Dnn, out var canonicalDnn);
         var checks = new[]
         {
             ("cidr",    InputGuards.Cidr(dto.Cidr)),
-            ("dnn",     InputGuards.Dnn(dto.Dnn)),
+            ("dnn",     dnnSpecErr),
             ("gateway", InputGuards.IpAddress(dto.Gateway)),
         };
         if (EndpointHelpers.HasErrors(checks))
@@ -66,9 +74,8 @@ public static class SubnetEndpoints
             return TypedResults.Conflict(
                 $"subnet capacity reached ({ConfigLimits.MaxSubnets})");
 
-        var normalizedDnn = dto.Dnn.ToLowerInvariant();
         var existing = await ctx.Subnets
-            .Find(s => s.Cidr == dto.Cidr && s.Dnn == normalizedDnn)
+            .Find(s => s.Cidr == dto.Cidr && s.Dnn == canonicalDnn)
             .FirstOrDefaultAsync(ct);
         if (existing is not null)
             return TypedResults.Ok(existing);
@@ -77,7 +84,7 @@ public static class SubnetEndpoints
         var s = new Subnet
         {
             Cidr = dto.Cidr,
-            Dnn = normalizedDnn,
+            Dnn = canonicalDnn,
             Dev = dto.Dev,
             Gateway = dto.Gateway,
             Label = dto.Label,
@@ -92,7 +99,7 @@ public static class SubnetEndpoints
             when (ex.WriteError.Category == ServerErrorCategory.DuplicateKey)
         {
             var again = await ctx.Subnets
-                .Find(x => x.Cidr == dto.Cidr && x.Dnn == normalizedDnn)
+                .Find(x => x.Cidr == dto.Cidr && x.Dnn == canonicalDnn)
                 .FirstAsync(ct);
             return TypedResults.Ok(again);
         }
@@ -120,15 +127,17 @@ public static class SubnetEndpoints
             return TypedResults.BadRequest(
                 "both 'cidr' and 'dnn' query parameters are required");
 
-        var normalized = dnn.ToLowerInvariant();
+        if (InputGuards.DnnSubnetSpec(dnn, out var canonicalDelete) is { } delErr)
+            return TypedResults.BadRequest(delErr);
+
         var existing = await ctx.Subnets
-            .Find(s => s.Cidr == cidr && s.Dnn == normalized)
+            .Find(s => s.Cidr == cidr && s.Dnn == canonicalDelete)
             .FirstOrDefaultAsync(ct);
         if (existing is null)
             return TypedResults.NotFound();
 
         await ctx.Subnets.DeleteOneAsync(
-            s => s.Cidr == cidr && s.Dnn == normalized,
+            s => s.Cidr == cidr && s.Dnn == canonicalDelete,
             cancellationToken: ct);
         var rev = await revs.NextAsync(ct);
         await audit.RecordAsync(

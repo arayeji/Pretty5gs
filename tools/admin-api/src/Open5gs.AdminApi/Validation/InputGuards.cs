@@ -38,6 +38,33 @@ public static partial class InputGuards
         v is not null && DnnRe().IsMatch(v)
             ? null : "dnn name must match ^[a-zA-Z0-9][a-zA-Z0-9\\-_.]{0,62}$";
 
+    /// <summary>
+    /// Subnet pool DNN binding: one name or a comma-separated list (matches PFCP
+    /// ogs_pfcp_subnet_add). Tokens are validated, deduplicated, sorted, lowercased.
+    /// </summary>
+    public static string? DnnSubnetSpec(string? v, out string normalized)
+    {
+        normalized = "";
+        if (string.IsNullOrWhiteSpace(v))
+            return "dnn is required";
+        var parts = v.Split(',', StringSplitOptions.TrimEntries
+            | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+            return "dnn is required";
+        if (parts.Length > 16)
+            return "at most 16 dnn names per subnet row";
+        foreach (var p in parts)
+        {
+            if (Dnn(p) is { } err)
+                return err;
+        }
+        normalized = string.Join(",", parts
+            .Select(p => p.ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.Ordinal));
+        return null;
+    }
+
     public static string? Sst(int? v) =>
         v is null || v is >= 1 and <= 255
             ? null : "sst must be 1..255";
