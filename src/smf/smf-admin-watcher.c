@@ -39,6 +39,10 @@
 
 #include "open5gs_admin_watcher.h"
 
+#ifndef OGS_ADMIN_SMF_RADIUS_HAS_USE_FRAMED_IP_FOR_UE
+#error "Update tools/admin-api/watcher-c/include/open5gs_admin_watcher.h (need ogs_admin_smf_radius_t.use_framed_ip_for_ue — same commit as smf-admin-watcher.c)."
+#endif
+
 #define DRAIN_INTERVAL_MS 1000
 
 /* ------------------------------------------------------------------ */

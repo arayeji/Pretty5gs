@@ -124,6 +124,7 @@ typedef struct ogs_admin_smf_radius_s {
     ogs_admin_radius_server_t servers[OGS_ADMIN_MAX_RADIUS_SERVERS];
     int         num_servers;
 } ogs_admin_smf_radius_t;
+#define OGS_ADMIN_SMF_RADIUS_HAS_USE_FRAMED_IP_FOR_UE 1
 
 typedef void (*ogs_admin_smf_radius_update_cb)(
         const ogs_admin_smf_radius_t *cfg,
