@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("open5gs-admin-api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("0.1.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("0.1.0+93a07024b9b17fd753a01b0e7e865e8f4010c106")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("0.1.0+455e7b6928312c42f4facacbfb8db7abb145b848")]
 [assembly: System.Reflection.AssemblyProductAttribute("open5gs-admin-api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("open5gs-admin-api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("0.1.0.0")]

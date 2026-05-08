@@ -42,6 +42,28 @@ typedef struct pcrf_context_s {
     const char          *diam_conf_path;  /* PCRF Diameter conf path */
     ogs_diam_config_t   *diam_config;     /* PCRF Diameter config */
 
+    /* Optional Gx policy from PyHSS MySQL (`subscriber`, `apn` tables). */
+    struct {
+        bool enabled;
+        char *server;
+        unsigned int port;
+        char *user;
+        char *password;
+        char *database;
+    } mysql;
+
+    /*
+     * If false, skip Mongo ogs_dbi for Gx (db_uri ignored for session policy).
+     * Default true.
+     */
+    bool use_mongodb;
+
+    /*
+     * When PyHSS MySQL lookup fails for the Gx APN, retry with this APN name
+     * (e.g. internet). NULL = no retry.
+     */
+    char *default_apn;
+
     ogs_thread_mutex_t  db_lock;
 
     ogs_hash_t          *ip_hash; /* hash table for Gx Frame IPv4/IPv6 */

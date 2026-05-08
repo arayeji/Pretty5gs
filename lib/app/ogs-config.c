@@ -1094,6 +1094,7 @@ int ogs_app_parse_session_conf(
     ogs_yaml_iter_recurse(parent, &session_array);
     do {
         const char *name = NULL;
+        bool is_default = false;
         ogs_app_session_conf_t *session_conf = NULL;
         ogs_session_data_t *session_data = NULL;
 
@@ -1103,6 +1104,11 @@ int ogs_app_parse_session_conf(
             ogs_assert(session_key);
             if (!strcmp(session_key, OGS_NAME_STRING)) {
                 name = (char *)ogs_yaml_iter_value(&session_iter);
+            } else if (!strcmp(session_key, "default")) {
+                const char *v = ogs_yaml_iter_value(&session_iter);
+                if (v && (!strcmp(v, "true") || !strcmp(v, "yes") ||
+                        !strcmp(v, "1")))
+                    is_default = true;
             }
         }
 
@@ -1112,6 +1118,7 @@ int ogs_app_parse_session_conf(
                 ogs_error("ogs_app_session_conf_add() failed [DNN:%s]", name);
                 return OGS_ERROR;
             }
+            session_conf->is_default = is_default;
         } else {
             ogs_error("No APN/DNN");
             return OGS_ERROR;
@@ -1337,11 +1344,12 @@ ogs_app_policy_conf_t *ogs_app_policy_conf_find(
     ogs_free(supi_type);
     ogs_free(supi_id);
 
+    /* Prefer policies with SUPI ranges; catch-all entries (num==0) follow. */
     ogs_list_for_each(&local_conf.policy_list, policy_conf) {
-        /* If supi_range is set, check if supi_decimal falls within
-         * any of the defined ranges.
-         */
-        if (policy_conf->supi_range.num > 0) {
+        if (policy_conf->supi_range.num <= 0)
+            continue;
+        /* If supi_range is set, check if supi_decimal falls within ranges. */
+        {
             int in_range = 0;
             for (i = 0; i < policy_conf->supi_range.num; i++) {
                 if ((supi_decimal >= policy_conf->supi_range.start[i]) &&
@@ -1355,16 +1363,26 @@ ogs_app_policy_conf_t *ogs_app_policy_conf_find(
             }
         }
 
-        /* If a plmn_id is set and it does not match the
-         * current policy's plmn_id, skip this policy.
-         */
+        /* If a plmn_id is set and it does not match the policy, skip */
         if (policy_conf->plmn_id_valid &&
             memcmp(&policy_conf->plmn_id, plmn_id,
                    sizeof(ogs_plmn_id_t)) != 0) {
             continue;
         }
 
-        /* Both conditions met; return this policy configuration */
+        return policy_conf;
+    }
+
+    ogs_list_for_each(&local_conf.policy_list, policy_conf) {
+        if (policy_conf->supi_range.num > 0)
+            continue;
+
+        if (policy_conf->plmn_id_valid &&
+            memcmp(&policy_conf->plmn_id, plmn_id,
+                   sizeof(ogs_plmn_id_t)) != 0) {
+            continue;
+        }
+
         return policy_conf;
     }
 
@@ -1534,10 +1552,25 @@ ogs_app_session_conf_t *ogs_app_session_conf_find_by_dnn(
     ogs_list_for_each(&slice_conf->sess_list, session_conf) {
         ogs_assert(session_conf->data.session.name);
         if (strcmp(session_conf->data.session.name, name) == 0)
-            break;
+            return session_conf;
     }
 
-    return session_conf;
+    return NULL;
+}
+
+ogs_app_session_conf_t *ogs_app_session_conf_find_default(
+        ogs_app_slice_conf_t *slice_conf)
+{
+    ogs_app_session_conf_t *session_conf = NULL;
+
+    ogs_assert(slice_conf);
+
+    ogs_list_for_each(&slice_conf->sess_list, session_conf) {
+        if (session_conf->is_default)
+            return session_conf;
+    }
+
+    return NULL;
 }
 void ogs_app_session_conf_remove(ogs_app_session_conf_t *session_conf)
 {
@@ -1574,6 +1607,7 @@ int ogs_app_config_session_data(
     ogs_app_policy_conf_t *policy_conf = NULL;
     ogs_app_slice_conf_t *slice_conf = NULL;
     ogs_app_session_conf_t *session_conf = NULL;
+    int used_default = 0;
 
     ogs_assert(supi);
     ogs_assert(dnn);
@@ -1606,11 +1640,25 @@ int ogs_app_config_session_data(
     }
     session_conf = ogs_app_session_conf_find_by_dnn(slice_conf, dnn);
     if (!session_conf) {
+        session_conf = ogs_app_session_conf_find_default(slice_conf);
+        if (session_conf) {
+            used_default = 1;
+            ogs_warn("No SESSION [%s]; using default session profile [%s]",
+                    dnn, session_conf->data.session.name);
+        }
+    }
+    if (!session_conf) {
         ogs_error("No SESSION [%s]", dnn);
         return OGS_ERROR;
     }
 
     OGS_STORE_SESSION_DATA(session_data, &session_conf->data);
+    /* Gx/APN: use the IMS-requested identifier with QoS/AMBR from default. */
+    if (used_default) {
+        ogs_free(session_data->session.name);
+        session_data->session.name = ogs_strdup(dnn);
+        ogs_assert(session_data->session.name);
+    }
 
     return OGS_OK;
 }

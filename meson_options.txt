@@ -1,3 +1,4 @@
 option('fuzzing', type: 'boolean', value: false, description: 'Enable fuzzing tests')
 option('lib_fuzzing_engine', type : 'string', value : '', description : 'Path to the libFuzzer engine library')
-option('admin_watcher', type : 'boolean', value : true, description : 'Build the Open5GS Admin API C watcher library (tools/admin-api/watcher-c)')
+option('mysql_pcrf', type: 'boolean', value: false, description: 'Link PCRF with libmysqlclient for PyHSS MySQL policy (subscriber+apn)')
+option('admin_watcher', type: 'boolean', value: false, description: 'Enable admin watcher build')

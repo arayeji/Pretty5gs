@@ -20,6 +20,7 @@
 #include "ogs-dbi.h"
 #include "pcrf-context.h"
 #include "pcrf-fd-path.h"
+#include "pcrf-mysql.h"
 
 static pcrf_context_t self;
 static ogs_diam_config_t g_diam_conf;
@@ -43,6 +44,8 @@ void pcrf_context_init(void)
     /* Initialize PCRF context */
     memset(&self, 0, sizeof(pcrf_context_t));
     self.diam_config = &g_diam_conf;
+    self.mysql.port = 3306;
+    self.use_mongodb = true;
 
     ogs_log_install_domain(&__ogs_diam_domain, "diam", ogs_core()->log.level);
     ogs_log_install_domain(&__ogs_dbi_domain, "dbi", ogs_core()->log.level);
@@ -57,12 +60,38 @@ void pcrf_context_init(void)
     context_initialized = 1;
 }
 
+static void pcrf_dynamic_config_free(void)
+{
+    if (self.mysql.server) {
+        ogs_free(self.mysql.server);
+        self.mysql.server = NULL;
+    }
+    if (self.mysql.user) {
+        ogs_free(self.mysql.user);
+        self.mysql.user = NULL;
+    }
+    if (self.mysql.password) {
+        ogs_free(self.mysql.password);
+        self.mysql.password = NULL;
+    }
+    if (self.mysql.database) {
+        ogs_free(self.mysql.database);
+        self.mysql.database = NULL;
+    }
+    if (self.default_apn) {
+        ogs_free(self.default_apn);
+        self.default_apn = NULL;
+    }
+}
+
 void pcrf_context_final(void)
 {
     ogs_assert(context_initialized == 1);
     ogs_assert(self.ip_hash);
     ogs_hash_destroy(self.ip_hash);
     ogs_thread_mutex_destroy(&self.hash_lock);
+
+    pcrf_dynamic_config_free();
 
     ogs_thread_mutex_destroy(&self.db_lock);
 
@@ -87,6 +116,20 @@ static int pcrf_context_validation(void)
         ogs_error("No pcrf.freeDiameter in '%s'",
                 ogs_app()->file);
         return OGS_ERROR;
+    }
+
+    if (self.mysql.enabled) {
+#ifdef HAVE_MYSQL
+        if (!self.mysql.server || !self.mysql.user || !self.mysql.database) {
+            ogs_error("pcrf.mysql enabled but server, user, or database "
+                    "missing in '%s'", ogs_app()->file);
+            return OGS_ERROR;
+        }
+#else
+        ogs_error("pcrf.mysql.enabled in '%s' but open5gs was built without "
+                "meson -Dmysql_pcrf=true", ogs_app()->file);
+        return OGS_ERROR;
+#endif
     }
 
     return OGS_OK;
@@ -126,6 +169,7 @@ static int parse_policy_conf(ogs_yaml_iter_t *parent)
         ogs_app_slice_conf_t *slice_conf = NULL;
         ogs_supi_range_t supi_range;
         ogs_s_nssai_t s_nssai;
+        bool policy_catchall = false;
 
         memset(&supi_range, 0, sizeof(ogs_supi_range_t));
 
@@ -139,31 +183,40 @@ static int parse_policy_conf(ogs_yaml_iter_t *parent)
                     ogs_error("ogs_app_parse_supi_range_conf() failed");
                     return rv;
                 }
+            } else if (!strcmp(policy_key, "default")) {
+                const char *v = ogs_yaml_iter_value(&policy_iter);
+                if (v && (!strcmp(v, "true") || !strcmp(v, "yes") ||
+                        !strcmp(v, "1")))
+                    policy_catchall = true;
             }
         }
 
         if (supi_range.num) {
-            policy_conf = ogs_app_policy_conf_add(
-                    supi_range.num ? &supi_range : NULL, NULL);
-            if (!policy_conf) {
-                ogs_error("ogs_app_policy_conf_add() failed "
-                        "[supi_range.num:%d]", supi_range.num);
-                return OGS_ERROR;
-            }
-
-            s_nssai.sst = 1;
-            s_nssai.sd.v = OGS_S_NSSAI_NO_SD_VALUE;
-
-            slice_conf = ogs_app_slice_conf_add(policy_conf, &s_nssai);
-            if (!slice_conf) {
-                ogs_error("ogs_app_slice_conf_add() failed");
-                return OGS_ERROR;
-            }
-            slice_conf->data.default_indicator = true;
+            policy_conf = ogs_app_policy_conf_add(&supi_range, NULL);
+        } else if (policy_catchall) {
+            memset(&supi_range, 0, sizeof(supi_range));
+            policy_conf = ogs_app_policy_conf_add(&supi_range, NULL);
+            ogs_warn("policy: IMSI catch-all (default: true) — evaluated after "
+                    "policies that define supi_range");
         } else {
-            ogs_error("No SUPI Range");
+            ogs_error("Each policy: entry requires supi_range: "
+                    "or default: true (catch-all IMSI)");
             return OGS_ERROR;
         }
+        if (!policy_conf) {
+            ogs_error("ogs_app_policy_conf_add() failed");
+            return OGS_ERROR;
+        }
+
+        s_nssai.sst = 1;
+        s_nssai.sd.v = OGS_S_NSSAI_NO_SD_VALUE;
+
+        slice_conf = ogs_app_slice_conf_add(policy_conf, &s_nssai);
+        if (!slice_conf) {
+            ogs_error("ogs_app_slice_conf_add() failed");
+            return OGS_ERROR;
+        }
+        slice_conf->data.default_indicator = true;
 
         OGS_YAML_ARRAY_RECURSE(&policy_array, &policy_iter);
         while (ogs_yaml_iter_next(&policy_iter)) {
@@ -365,8 +418,57 @@ int pcrf_context_parse_config(void)
                 } else if (!strcmp(pcrf_key, "diameter_stats_interval")) {
                     const char *v = ogs_yaml_iter_value(&pcrf_iter);
                     if (v) self.diam_config->stats.interval_sec = atoi(v);
+                } else if (!strcmp(pcrf_key, "mongodb")) {
+                    const char *v = ogs_yaml_iter_value(&pcrf_iter);
+                    if (v && (!strcmp(v, "false") || !strcmp(v, "no") ||
+                            !strcmp(v, "0")))
+                        self.use_mongodb = false;
+                    else
+                        self.use_mongodb = true;
+                } else if (!strcmp(pcrf_key, "default_apn")) {
+                    const char *v = ogs_yaml_iter_value(&pcrf_iter);
+                    if (self.default_apn) {
+                        ogs_free(self.default_apn);
+                        self.default_apn = NULL;
+                    }
+                    self.default_apn =
+                            (v && v[0]) ? ogs_strdup(v) : NULL;
                 } else if (!strcmp(pcrf_key, "metrics")) {
                     /* handle config in metrics library */
+                } else if (!strcmp(pcrf_key, "mysql")) {
+                    ogs_yaml_iter_t mysql_iter;
+                    ogs_yaml_iter_recurse(&pcrf_iter, &mysql_iter);
+                    self.mysql.enabled = true;
+                    while (ogs_yaml_iter_next(&mysql_iter)) {
+                        const char *mk = ogs_yaml_iter_key(&mysql_iter);
+                        const char *mv = ogs_yaml_iter_value(&mysql_iter);
+                        ogs_assert(mk);
+                        if (!strcmp(mk, "server")) {
+                            if (self.mysql.server)
+                                ogs_free(self.mysql.server);
+                            self.mysql.server =
+                                mv ? ogs_strdup(mv) : NULL;
+                        } else if (!strcmp(mk, "port")) {
+                            if (mv)
+                                self.mysql.port = (unsigned int)atoi(mv);
+                        } else if (!strcmp(mk, "user")) {
+                            if (self.mysql.user)
+                                ogs_free(self.mysql.user);
+                            self.mysql.user =
+                                mv ? ogs_strdup(mv) : NULL;
+                        } else if (!strcmp(mk, "password")) {
+                            if (self.mysql.password)
+                                ogs_free(self.mysql.password);
+                            self.mysql.password =
+                                mv ? ogs_strdup(mv) : NULL;
+                        } else if (!strcmp(mk, "database")) {
+                            if (self.mysql.database)
+                                ogs_free(self.mysql.database);
+                            self.mysql.database =
+                                mv ? ogs_strdup(mv) : NULL;
+                        } else
+                            ogs_warn("unknown key `%s` in pcrf.mysql", mk);
+                    }
                 } else if (!strcmp(pcrf_key, OGS_POLICY_STRING)) {
                     rv = parse_policy_conf(&pcrf_iter);
                     if (rv != OGS_OK) {
@@ -388,11 +490,8 @@ int pcrf_context_parse_config(void)
 int pcrf_db_qos_data(
         char *imsi_bcd, char *apn, ogs_session_data_t *session_data)
 {
-    int rv, i;
+    int rv = OGS_ERROR, i;
     char *supi = NULL;
-
-    ogs_app_policy_conf_t *policy_conf = NULL;
-    ogs_app_slice_conf_t *slice_conf = NULL;
 
     ogs_assert(imsi_bcd);
     ogs_assert(apn);
@@ -405,25 +504,42 @@ int pcrf_db_qos_data(
     supi = ogs_msprintf("%s-%s", OGS_ID_SUPI_TYPE_IMSI, imsi_bcd);
     ogs_assert(supi);
 
-    policy_conf = ogs_app_policy_conf_find(supi, NULL);
-    if (policy_conf)
-        slice_conf = ogs_list_first(&policy_conf->slice_list);
+    rv = ogs_app_config_session_data(supi, NULL, NULL, apn, session_data);
+    if (rv == OGS_OK)
+        goto qos_data_done;
 
-    if (slice_conf) {
-        rv = ogs_app_config_session_data(supi, NULL, NULL, apn, session_data);
-        if (rv != OGS_OK)
-            ogs_error("ogs_app_config_session_data() failed for APN(%s)", apn);
-    } else {
-        rv = ogs_dbi_session_data(supi, NULL, apn, session_data);
-        if (rv != OGS_OK)
-            ogs_error("ogs_dbi_session_data() failed for IMSI(%s)+APN(%s)",
-                    imsi_bcd, apn);
+    memset(session_data, 0, sizeof(*session_data));
+
+    if (self.mysql.enabled) {
+        rv = pcrf_mysql_qos_data(imsi_bcd, apn, session_data);
+        if (rv != OGS_OK && self.default_apn &&
+                ogs_strcasecmp(apn, self.default_apn) != 0) {
+            ogs_warn("pcrf_mysql_qos_data() failed for IMSI(%s)+APN(%s); "
+                    "retry with default_apn(%s)",
+                    imsi_bcd, apn, self.default_apn);
+            memset(session_data, 0, sizeof(*session_data));
+            rv = pcrf_mysql_qos_data(imsi_bcd, self.default_apn, session_data);
+        }
     }
 
-    /* For EPC, we need to inialize Flow-Status in Pcc-Rule */
-    for (i = 0; i < session_data->num_of_pcc_rule; i++) {
-        ogs_pcc_rule_t *pcc_rule = &session_data->pcc_rule[i];
-        pcc_rule->flow_status = OGS_DIAM_RX_FLOW_STATUS_ENABLED;
+    if (rv != OGS_OK && self.use_mongodb && ogs_app()->db_uri) {
+        memset(session_data, 0, sizeof(*session_data));
+        ogs_warn("PCRF YAML/MySQL incomplete; MongoDB fallback for "
+                "IMSI(%s)+APN(%s)", imsi_bcd, apn);
+        rv = ogs_dbi_session_data(supi, NULL, apn, session_data);
+    }
+
+    if (rv != OGS_OK) {
+        ogs_error("No session policy for IMSI(%s)+APN(%s)",
+                imsi_bcd, apn);
+    }
+
+qos_data_done:
+    if (rv == OGS_OK) {
+        for (i = 0; i < session_data->num_of_pcc_rule; i++) {
+            ogs_pcc_rule_t *pcc_rule = &session_data->pcc_rule[i];
+            pcc_rule->flow_status = OGS_DIAM_RX_FLOW_STATUS_ENABLED;
+        }
     }
 
     ogs_free(supi);

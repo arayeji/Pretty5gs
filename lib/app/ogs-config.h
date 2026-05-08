@@ -182,6 +182,9 @@ typedef struct ogs_app_session_conf_s {
 
     ogs_session_data_t data;
 
+    /* If true, used when no session `name` matches the Gx/PDU DNN/APN. */
+    bool is_default;
+
     ogs_app_slice_conf_t *slice_conf;
 } ogs_app_session_conf_t;
 
@@ -224,6 +227,8 @@ ogs_app_session_conf_t *ogs_app_session_conf_add(
         ogs_app_slice_conf_t *slice_conf, const char *name);
 ogs_app_session_conf_t *ogs_app_session_conf_find_by_dnn(
         ogs_app_slice_conf_t *slice_conf, const char *name);
+ogs_app_session_conf_t *ogs_app_session_conf_find_default(
+        ogs_app_slice_conf_t *slice_conf);
 void ogs_app_session_conf_remove(ogs_app_session_conf_t *session_conf);
 void ogs_app_session_conf_remove_all(
         ogs_app_slice_conf_t *slice_conf);

@@ -19,6 +19,7 @@
 
 #include "pcrf-context.h"
 #include "pcrf-fd-path.h"
+#include "pcrf-mysql.h"
 #include "pcrf-sm.h"
 #include "metrics.h"
 
@@ -50,9 +51,12 @@ int pcrf_initialize(void)
     rv = pcrf_context_parse_config();
     if (rv != OGS_OK) return rv;
 
+    rv = pcrf_mysql_open(pcrf_self());
+    if (rv != OGS_OK) return rv;
+
     ogs_metrics_context_open(ogs_metrics_self());
 
-    if (ogs_app()->db_uri) {
+    if (ogs_app()->db_uri && pcrf_self()->use_mongodb) {
         rv = ogs_dbi_init(ogs_app()->db_uri);
         if (rv != OGS_OK) return rv;
     }
@@ -78,7 +82,9 @@ void pcrf_terminate(void)
 
     pcrf_fd_final();
 
-    if (ogs_app()->db_uri) {
+    pcrf_mysql_close();
+
+    if (ogs_app()->db_uri && pcrf_self()->use_mongodb) {
         ogs_dbi_final();
     }
 

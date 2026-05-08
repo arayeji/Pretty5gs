@@ -1,0 +1,10 @@
+-- Open5GS PCRF with -Dmysql_pcrf=true uses the PyHSS database schema as-is.
+-- Relevant PyHSS tables/columns (see pyhss lib/database.py):
+--   subscriber.imsi
+--   subscriber.apn_list   (comma-separated APN short names, matching apn.apn)
+--   subscriber.enabled
+--   apn.apn, apn.ip_version, apn.qci
+--   apn.arp_priority, apn.arp_preemption_capability, apn.arp_preemption_vulnerability
+--   apn.apn_ambr_dl, apn.apn_ambr_ul  (interpreted as kbit/s, converted to bit/s in PCRF)
+--
+-- Deploy PyHSS and point pcrf.yaml `pcrf.mysql.database` at the same DB.
