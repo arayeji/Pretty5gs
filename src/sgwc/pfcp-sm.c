@@ -199,6 +199,17 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
             sess = sgwc_sess_find_by_seid(xact->local_seid);
         }
 
+        /* Session Establishment Request stores sess->id in xact->data. After
+         * PFCP restoration both CP-side and UP-side SEIDs in header/xact can
+         * be 0 until the response carries the new UP F-SEID; resolve session
+         * from the transaction in that case. */
+        if (!sess && message->h.type ==
+                OGS_PFCP_SESSION_ESTABLISHMENT_RESPONSE_TYPE) {
+            ogs_pool_id_t sess_id = OGS_POINTER_TO_UINT(xact->data);
+            if (sess_id >= OGS_MIN_POOL_ID && sess_id <= OGS_MAX_POOL_ID)
+                sess = sgwc_sess_find_by_id(sess_id);
+        }
+
         switch (message->h.type) {
         case OGS_PFCP_HEARTBEAT_REQUEST_TYPE:
             ogs_expect(true ==
@@ -282,9 +293,15 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
                 }
                 up_f_seid = rsp->up_f_seid.data;
                 ogs_assert(up_f_seid);
-                /* Clang scan-build SA: NULL pointer dereference: sess=NULL if both message->h.seid=0 and
-                 * xact->local_seid=0. */
-                ogs_assert(sess);
+                if (!sess) {
+                    ogs_error("No session for PFCP Session Establishment "
+                            "Response (restoration); "
+                            "seid_presence=%d seid=0x%llx local_seid=0x%llx",
+                            message->h.seid_presence,
+                            (unsigned long long)message->h.seid,
+                            (unsigned long long)xact->local_seid);
+                    break;
+                }
                 sess->sgwu_sxa_seid = be64toh(up_f_seid->seid);
             } else {
                 sgwc_sxa_handle_session_establishment_response(

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("open5gs-admin-api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("0.1.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("0.1.0+711c7e17958bdbec28c5fa90d4889008e1550b06")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("0.1.0+7066505c8e5f079d9679d8100be06005933cf0dd")]
 [assembly: System.Reflection.AssemblyProductAttribute("open5gs-admin-api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("open5gs-admin-api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("0.1.0.0")]
