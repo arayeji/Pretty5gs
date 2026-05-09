@@ -1113,12 +1113,13 @@ int ogs_app_parse_session_conf(
         while (ogs_yaml_iter_next(&session_iter)) {
             const char *session_key = ogs_yaml_iter_key(&session_iter);
             ogs_assert(session_key);
-            if (!strcmp(session_key, OGS_NAME_STRING)) {
-                name = (char *)ogs_yaml_iter_value(&session_iter);
+            if (!strcmp(session_key, OGS_NAME_STRING) ||
+                    !strcmp(session_key, "apn") ||
+                    !strcmp(session_key, "dnn")) {
+                if (!name)
+                    name = (char *)ogs_yaml_iter_value(&session_iter);
             } else if (!strcmp(session_key, "default")) {
-                const char *v = ogs_yaml_iter_value(&session_iter);
-                if (v && (!strcmp(v, "true") || !strcmp(v, "yes") ||
-                        !strcmp(v, "1")))
+                if (ogs_yaml_iter_bool(&session_iter))
                     is_default = true;
             }
         }
@@ -1562,7 +1563,7 @@ ogs_app_session_conf_t *ogs_app_session_conf_find_by_dnn(
 
     ogs_list_for_each(&slice_conf->sess_list, session_conf) {
         ogs_assert(session_conf->data.session.name);
-        if (strcmp(session_conf->data.session.name, name) == 0)
+        if (ogs_strcasecmp(session_conf->data.session.name, name) == 0)
             return session_conf;
     }
 
@@ -1659,7 +1660,18 @@ int ogs_app_config_session_data(
         }
     }
     if (!session_conf) {
-        ogs_error("No SESSION [%s]", dnn);
+        /* No dnn: match and no session with default: true — use first slice
+         * session as implicit default (PCRF/5GC parity with typical OSS). */
+        session_conf = ogs_list_first(&slice_conf->sess_list);
+        if (session_conf) {
+            used_default = 1;
+            ogs_warn("No SESSION [%s] and no default: session; using first "
+                    "session profile [%s]",
+                    dnn, session_conf->data.session.name);
+        }
+    }
+    if (!session_conf) {
+        ogs_error("No SESSION [%s] and slice has no session entries", dnn);
         return OGS_ERROR;
     }
 

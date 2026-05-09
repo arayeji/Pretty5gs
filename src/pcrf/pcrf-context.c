@@ -184,9 +184,7 @@ static int parse_policy_conf(ogs_yaml_iter_t *parent)
                     return rv;
                 }
             } else if (!strcmp(policy_key, "default")) {
-                const char *v = ogs_yaml_iter_value(&policy_iter);
-                if (v && (!strcmp(v, "true") || !strcmp(v, "yes") ||
-                        !strcmp(v, "1")))
+                if (ogs_yaml_iter_bool(&policy_iter))
                     policy_catchall = true;
             }
         }

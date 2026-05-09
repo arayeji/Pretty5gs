@@ -37,7 +37,7 @@ extern "C" {
 #define OGS_PFCP_INDIRECT_DATA_FORWARDING_CHOOSE_ID 10
 
 #define OGS_MAX_NUM_OF_DEV      16
-#define OGS_MAX_NUM_OF_SUBNET   16
+#define OGS_MAX_NUM_OF_SUBNET   2048
 
 typedef struct ogs_pfcp_node_s ogs_pfcp_node_t;
 
@@ -109,7 +109,7 @@ typedef struct ogs_pfcp_node_s {
     uint16_t        tac[OGS_MAX_NUM_OF_TAI];
     uint8_t         num_of_tac;
     const char*     dnn[OGS_MAX_NUM_OF_DNN];
-    uint8_t         num_of_dnn;
+    int             num_of_dnn;
     uint32_t        e_cell_id[OGS_MAX_NUM_OF_CELL_ID];
     uint8_t         num_of_e_cell_id;
     uint64_t        nr_cell_id[OGS_MAX_NUM_OF_CELL_ID];
@@ -369,9 +369,11 @@ typedef struct ogs_pfcp_subnet_s {
     /*
      * DNN/APN keys that share this UE IP pool (case-insensitive match).
      * num_of_dnn == 0: wildcard — any DNN may use this pool (first match wins).
+     * Rows are heap-allocated (see subnet_add_with_dnns) so the subnet pool
+     * does not embed OGS_MAX_NUM_OF_DNN * OGS_MAX_DNN_LEN per object.
      */
-    char            dnn[OGS_MAX_NUM_OF_DNN][OGS_MAX_DNN_LEN+1];
-    uint8_t         num_of_dnn;
+    char            (*dnn)[OGS_MAX_DNN_LEN+1];
+    int             num_of_dnn;
 
 #define OGS_MAX_NUM_OF_SUBNET_RANGE 16
     struct {

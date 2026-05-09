@@ -11,7 +11,7 @@ namespace Open5gs.AdminApi.Infrastructure;
 public static class ConfigLimits
 {
     /// <summary>OGS_MAX_NUM_OF_DNN (lib/proto/types.h).</summary>
-    public const int MaxDnns = 16;
+    public const int MaxDnns = 2024;
 
     /// <summary>OGS_MAX_NUM_OF_PLMN (AMF) (lib/proto/types.h).</summary>
     public const int MaxPlmnsAmf = 12;
@@ -23,7 +23,7 @@ public static class ConfigLimits
     public const int MaxGummei = 8;
 
     /// <summary>OGS_MAX_NUM_OF_SUBNET (lib/pfcp/context.h).</summary>
-    public const int MaxSubnets = 16;
+    public const int MaxSubnets = 2048;
 
     /// <summary>
     /// OGS_MAX_NUM_OF_SUPPORTED_TA (MME served_tai entries). Open5GS defines

@@ -99,8 +99,12 @@ extern "C" {
 
 #define OGS_MAX_NUM_OF_CELL_ID          16
 #define OGS_MAX_NUM_OF_ENB_ID           16
-#define OGS_MAX_NUM_OF_DNN              16
-#define OGS_MAX_NUM_OF_APN              OGS_MAX_NUM_OF_DNN
+/*
+ * DNN/APN name slots in SMF/PFCP and related 5GC structures.
+ * Kept separate: MME GTP-C still uses OGS_MAX_NUM_OF_APN for PGW APN lists.
+ */
+#define OGS_MAX_NUM_OF_DNN              2024
+#define OGS_MAX_NUM_OF_APN              16
 #define OGS_MAX_NUM_OF_HOSTNAME         16
 #define OGS_MAX_DNN_LEN                 100
 #define OGS_MAX_APN_LEN                 OGS_MAX_DNN_LEN
