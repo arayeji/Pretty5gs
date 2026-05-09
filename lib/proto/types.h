@@ -134,6 +134,11 @@ extern "C" {
 #define OGS_MAX_NUM_OF_BPLMN            OGS_MAX_NUM_OF_PLMN
 
 #define OGS_MAX_NUM_OF_TAI              16
+/*
+ * Maximum type-0 partial lists stored in ogs_eps_tai0_list_t.
+ * Each partial list holds up to OGS_MAX_NUM_OF_TAI TACs (see TS 24.301).
+ */
+#define OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST    256
 #define OGS_MAX_NUM_OF_SLICE            8
 
 #define OGS_NEXT_ID(__id, __min, __max) \

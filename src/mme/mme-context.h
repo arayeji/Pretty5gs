@@ -186,7 +186,7 @@ typedef struct mme_sgsn_s {
 typedef struct mme_sgw_s {
     ogs_gtp_node_t  gnode;
 
-    uint16_t        tac[OGS_MAX_NUM_OF_TAI];
+    uint16_t        *tac;
     int             num_of_tac;
     uint32_t        e_cell_id[OGS_MAX_NUM_OF_CELL_ID];
     int             num_of_e_cell_id;
@@ -201,8 +201,8 @@ typedef struct mme_pgw_s {
 
     const char      *apn[OGS_MAX_NUM_OF_APN];
     uint8_t         num_of_apn;
-    uint16_t        tac[OGS_MAX_NUM_OF_TAI];
-    uint8_t         num_of_tac;
+    uint16_t        *tac;
+    int             num_of_tac;
     uint32_t        e_cell_id[OGS_MAX_NUM_OF_CELL_ID];
     uint8_t         num_of_e_cell_id;
 } mme_pgw_t;

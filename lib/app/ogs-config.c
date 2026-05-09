@@ -114,9 +114,11 @@ int ogs_app_global_conf_prepare(void)
 
 #define MAX_NUM_OF_UE               1024    /* Num of UEs */
 #define MAX_NUM_OF_PEER             64      /* Num of Peer */
+#define DEFAULT_MAX_TAI_PER_GTP_CLIENT  4096
 
     global_conf.max.ue = MAX_NUM_OF_UE;
     global_conf.max.peer = MAX_NUM_OF_PEER;
+    global_conf.max.tai = DEFAULT_MAX_TAI_PER_GTP_CLIENT;
 
     ogs_pkbuf_default_init(&global_conf.pkbuf_config);
 
@@ -131,6 +133,12 @@ static int global_conf_validation(void)
         global_conf.parameter.no_ipv6 == 1) {
         ogs_error("Both `no_ipv4` and `no_ipv6` set to `true` in `%s`",
                 ogs_app()->file);
+        return OGS_ERROR;
+    }
+
+    if (global_conf.max.tai < 1) {
+        ogs_error("Invalid global.max.tai %llu in `%s` (expected >= 1)",
+                (unsigned long long)global_conf.max.tai, ogs_app()->file);
         return OGS_ERROR;
     }
 
@@ -307,9 +315,12 @@ int ogs_app_parse_global_conf(ogs_yaml_iter_t *parent)
                     const char *v = ogs_yaml_iter_value(&max_iter);
                     if (v) global_conf.max.peer = atoi(v);
                 } else if (!strcmp(max_key, "gtp_peer") ||
-                            !strcmp(max_key, "enb")) {
+                           !strcmp(max_key, "enb")) {
                     const char *v = ogs_yaml_iter_value(&max_iter);
                     if (v) global_conf.max.gtp_peer = atoi(v);
+                } else if (!strcmp(max_key, "tai")) {
+                    const char *v = ogs_yaml_iter_value(&max_iter);
+                    if (v) global_conf.max.tai = atoi(v);
                 } else
                     ogs_warn("unknown key `%s`", max_key);
             }

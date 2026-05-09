@@ -553,7 +553,7 @@ typedef struct ogs_eps_tai0_list_s {
          */
         ogs_plmn_id_t plmn_id;
         uint16_t tac[OGS_MAX_NUM_OF_TAI];
-    } __attribute__ ((packed)) tai[OGS_MAX_NUM_OF_TAI];
+    } __attribute__ ((packed)) tai[OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST];
 } __attribute__ ((packed)) ogs_eps_tai0_list_t;
 
 typedef struct ogs_eps_tai1_list_s {

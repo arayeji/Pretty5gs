@@ -82,6 +82,12 @@ typedef struct ogs_global_conf_s {
         uint64_t ue;
         uint64_t peer;
         uint64_t gtp_peer;
+
+        /*
+         * MME: maximum TAC entries per GTP-C client (sgwc/smf tac: list).
+         * Does not change NAS Tracking Area Identity List limits in mme.tai.
+         */
+        uint64_t tai;
     } max;
 
     struct {

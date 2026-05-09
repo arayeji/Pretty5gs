@@ -764,12 +764,15 @@ int mme_context_parse_config(void)
                                             OGS_MAX_NUM_OF_HOSTNAME];
                                         uint16_t port =
                                             ogs_gtp_self()->gtpc_port;
-                                        uint16_t tac[OGS_MAX_NUM_OF_TAI] = {0,};
+                                        uint16_t *tac = ogs_calloc(
+                                                ogs_global_conf()->max.tai,
+                                                sizeof(uint16_t));
                                         int num_of_tac = 0;
                                         uint32_t e_cell_id[
                                             OGS_MAX_NUM_OF_CELL_ID] = {0,};
                                         int num_of_e_cell_id = 0;
 
+                                        ogs_assert(tac);
                                         if (ogs_yaml_iter_type(&sgwc_array) ==
                                                 YAML_MAPPING_NODE) {
                                             memcpy(&sgwc_iter, &sgwc_array,
@@ -778,13 +781,16 @@ int mme_context_parse_config(void)
                                                     &sgwc_array) ==
                                                 YAML_SEQUENCE_NODE) {
                                             if (!ogs_yaml_iter_next(
-                                                        &sgwc_array))
+                                                        &sgwc_array)) {
+                                                ogs_free(tac);
                                                 break;
+                                            }
                                             ogs_yaml_iter_recurse(
                                                     &sgwc_array, &sgwc_iter);
                                         } else if (ogs_yaml_iter_type(
                                                     &sgwc_array) ==
                                                 YAML_SCALAR_NODE) {
+                                            ogs_free(tac);
                                             break;
                                         } else
                                             ogs_assert_if_reached();
@@ -865,7 +871,8 @@ int mme_context_parse_config(void)
                                                     }
 
                                                     ogs_assert(num_of_tac <
-                                                            OGS_MAX_NUM_OF_TAI);
+                                                            (int)ogs_global_conf()->
+                                                            max.tai);
                                                     v = ogs_yaml_iter_value(
                                                             &tac_iter);
                                                     if (v) {
@@ -932,21 +939,27 @@ int mme_context_parse_config(void)
                                                 ogs_global_conf()->parameter.
                                                 prefer_ipv4);
 
-                                        if (addr == NULL) continue;
+                                        if (addr == NULL) {
+                                            ogs_free(tac);
+                                            continue;
+                                        }
 
                                         sgw = mme_sgw_add(addr);
                                         ogs_assert(sgw);
 
                                         sgw->num_of_tac = num_of_tac;
                                         if (num_of_tac != 0)
-                                            memcpy(sgw->tac,
-                                                    tac, sizeof(sgw->tac));
+                                            memcpy(sgw->tac, tac,
+                                                    sizeof(uint16_t) *
+                                                    num_of_tac);
 
                                         sgw->num_of_e_cell_id =
                                             num_of_e_cell_id;
                                         if (num_of_e_cell_id != 0)
                                             memcpy(sgw->e_cell_id, e_cell_id,
                                                     sizeof(sgw->e_cell_id));
+
+                                        ogs_free(tac);
 
                                     } while (ogs_yaml_iter_type(&sgwc_array) ==
                                             YAML_SEQUENCE_NODE);
@@ -967,12 +980,15 @@ int mme_context_parse_config(void)
                                         const char *apn[
                                             OGS_MAX_NUM_OF_APN] = {NULL,};
                                         uint8_t num_of_apn = 0;
-                                        uint16_t tac[OGS_MAX_NUM_OF_TAI] = {0,};
-                                        uint8_t num_of_tac = 0;
+                                        uint16_t *tac = ogs_calloc(
+                                                ogs_global_conf()->max.tai,
+                                                sizeof(uint16_t));
+                                        int num_of_tac = 0;
                                         uint32_t e_cell_id[
                                             OGS_MAX_NUM_OF_CELL_ID] = {0,};
                                         uint8_t num_of_e_cell_id = 0;
 
+                                        ogs_assert(tac);
                                         if (ogs_yaml_iter_type(&smf_array) ==
                                                 YAML_MAPPING_NODE) {
                                             memcpy(&smf_iter, &smf_array,
@@ -980,13 +996,16 @@ int mme_context_parse_config(void)
                                         } else if (ogs_yaml_iter_type(
                                                     &smf_array) ==
                                             YAML_SEQUENCE_NODE) {
-                                            if (!ogs_yaml_iter_next(&smf_array))
+                                            if (!ogs_yaml_iter_next(&smf_array)) {
+                                                ogs_free(tac);
                                                 break;
+                                            }
                                             ogs_yaml_iter_recurse(
                                                     &smf_array, &smf_iter);
                                         } else if (ogs_yaml_iter_type(
                                                     &smf_array) ==
                                                 YAML_SCALAR_NODE) {
+                                            ogs_free(tac);
                                             break;
                                         } else
                                             ogs_assert_if_reached();
@@ -1096,7 +1115,8 @@ int mme_context_parse_config(void)
                                                     }
 
                                                     ogs_assert(num_of_tac <
-                                                            OGS_MAX_NUM_OF_TAI);
+                                                            (int)ogs_global_conf()->
+                                                            max.tai);
                                                     v = ogs_yaml_iter_value(
                                                             &tac_iter);
                                                     if (v) {
@@ -1161,7 +1181,10 @@ int mme_context_parse_config(void)
                                                 ogs_global_conf()->parameter.
                                                 prefer_ipv4);
 
-                                        if (addr == NULL) continue;
+                                        if (addr == NULL) {
+                                            ogs_free(tac);
+                                            continue;
+                                        }
 
                                         pgw = mme_pgw_add(addr);
                                         ogs_assert(pgw);
@@ -1173,14 +1196,17 @@ int mme_context_parse_config(void)
 
                                         pgw->num_of_tac = num_of_tac;
                                         if (num_of_tac != 0)
-                                            memcpy(pgw->tac,
-                                                    tac, sizeof(pgw->tac));
+                                            memcpy(pgw->tac, tac,
+                                                    sizeof(uint16_t) *
+                                                    num_of_tac);
 
                                         pgw->num_of_e_cell_id =
                                             num_of_e_cell_id;
                                         if (num_of_e_cell_id != 0)
                                             memcpy(pgw->e_cell_id, e_cell_id,
                                                     sizeof(pgw->e_cell_id));
+
+                                        ogs_free(tac);
 
                                     } while (ogs_yaml_iter_type(&smf_array) ==
                                             YAML_SEQUENCE_NODE);
@@ -1612,8 +1638,15 @@ int mme_context_parse_config(void)
                     do {
                         const char *mcc = NULL, *mnc = NULL;
                         int num_of_tac = 0;
-                        uint16_t start[OGS_MAX_NUM_OF_TAI];
-                        uint16_t end[OGS_MAX_NUM_OF_TAI];
+                        uint16_t *start = NULL;
+                        uint16_t *end = NULL;
+
+                        start = ogs_calloc(ogs_global_conf()->max.tai,
+                                sizeof(uint16_t));
+                        end = ogs_calloc(ogs_global_conf()->max.tai,
+                                sizeof(uint16_t));
+                        ogs_assert(start);
+                        ogs_assert(end);
 
                         if (ogs_yaml_iter_type(&tai_array) ==
                                 YAML_MAPPING_NODE) {
@@ -1621,15 +1654,23 @@ int mme_context_parse_config(void)
                                     sizeof(ogs_yaml_iter_t));
                         } else if (ogs_yaml_iter_type(&tai_array) ==
                             YAML_SEQUENCE_NODE) {
-                            if (!ogs_yaml_iter_next(&tai_array))
+                            if (!ogs_yaml_iter_next(&tai_array)) {
+                                ogs_free(start);
+                                ogs_free(end);
                                 break;
+                            }
                             ogs_yaml_iter_recurse(&tai_array,
                                     &tai_iter);
                         } else if (ogs_yaml_iter_type(&tai_array) ==
                                 YAML_SCALAR_NODE) {
+                            ogs_free(start);
+                            ogs_free(end);
                             break;
-                        } else
+                        } else {
+                            ogs_free(start);
+                            ogs_free(end);
                             ogs_assert_if_reached();
+                        }
 
                         while (ogs_yaml_iter_next(&tai_iter)) {
                             const char *tai_key = ogs_yaml_iter_key(&tai_iter);
@@ -1678,7 +1719,8 @@ int mme_context_parse_config(void)
 
                                         if (low) {
                                             ogs_assert(num_of_tac <
-                                                OGS_MAX_NUM_OF_TAI);
+                                                (int)ogs_global_conf()->
+                                                max.tai);
                                             start[num_of_tac] = atoi(low);
                                             if (high) {
                                                 end[num_of_tac] = atoi(high);
@@ -1730,8 +1772,14 @@ int mme_context_parse_config(void)
                                 for (tac = 0; tac < num_of_tac; tac++) {
                                     ogs_assert(end[tac] >= start[tac]);
                                     if (start[tac] == end[tac]) {
+                                        if (count >= OGS_MAX_NUM_OF_TAI) {
+                                            ogs_assert(num_of_list0 <
+                                                    OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST - 1);
+                                            num_of_list0++;
+                                            count = 0;
+                                        }
                                         ogs_assert(num_of_list0 <
-                                                OGS_MAX_NUM_OF_TAI);
+                                                OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST);
 
                                         list0->tai[num_of_list0].type =
                                             OGS_TAI0_TYPE;
@@ -1772,6 +1820,9 @@ int mme_context_parse_config(void)
                             ogs_warn("Ignore tai : mcc(%p), mnc(%p), "
                                     "num_of_tac(%d)", mcc, mnc, num_of_tac);
                         }
+
+                        ogs_free(start);
+                        ogs_free(end);
                     } while (ogs_yaml_iter_type(&tai_array) ==
                             YAML_SEQUENCE_NODE);
 
@@ -2777,6 +2828,9 @@ mme_sgw_t *mme_sgw_add(ogs_sockaddr_t *addr)
     ogs_assert(sgw);
     memset(sgw, 0, sizeof *sgw);
 
+    sgw->tac = ogs_calloc(ogs_global_conf()->max.tai, sizeof(uint16_t));
+    ogs_assert(sgw->tac);
+
     sgw->gnode.sa_list = addr;
 
     ogs_list_init(&sgw->gnode.local_list);
@@ -2797,6 +2851,8 @@ void mme_sgw_remove(mme_sgw_t *sgw)
 
     ogs_gtp_xact_delete_all(&sgw->gnode);
     ogs_freeaddrinfo(sgw->gnode.sa_list);
+
+    ogs_free(sgw->tac);
 
     ogs_pool_free(&mme_sgw_pool, sgw);
 }
@@ -2833,6 +2889,9 @@ mme_pgw_t *mme_pgw_add(ogs_sockaddr_t *addr)
     ogs_assert(pgw);
     memset(pgw, 0, sizeof *pgw);
 
+    pgw->tac = ogs_calloc(ogs_global_conf()->max.tai, sizeof(uint16_t));
+    ogs_assert(pgw->tac);
+
     pgw->sa_list = addr;
 
     ogs_list_add(&self.pgw_list, pgw);
@@ -2847,6 +2906,8 @@ void mme_pgw_remove(mme_pgw_t *pgw)
     ogs_list_remove(&self.pgw_list, pgw);
 
     ogs_freeaddrinfo(pgw->sa_list);
+    ogs_free(pgw->tac);
+
     ogs_pool_free(&mme_pgw_pool, pgw);
 }
 
@@ -5086,7 +5147,8 @@ int mme_find_served_tai(ogs_eps_tai_t *tai)
         ogs_eps_tai1_list_t *list1 = &self.served_tai[i].list1;
         ogs_eps_tai2_list_t *list2 = &self.served_tai[i].list2;
 
-        for (j = 0; list0->tai[j].num; j++) {
+        for (j = 0; j < OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST &&
+                list0->tai[j].num; j++) {
             ogs_assert(list0->tai[j].type == OGS_TAI0_TYPE);
             ogs_assert(list0->tai[j].num <= OGS_MAX_NUM_OF_TAI);
 

@@ -39,7 +39,8 @@ int ogs_nas_tai_list_build(
     memset(&target1, 0, sizeof(ogs_eps_tai1_list_t));
     memset(&target2, 0, sizeof(ogs_eps_tai2_list_t));
 
-    for (i = 0; source0 && source0->tai[i].num; i++) {
+    for (i = 0; source0 && i < OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST &&
+            source0->tai[i].num; i++) {
         ogs_assert(source0->tai[i].type == OGS_TAI0_TYPE);
         target0.tai[i].type = source0->tai[i].type;
 
