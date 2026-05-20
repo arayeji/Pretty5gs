@@ -38,9 +38,34 @@ extern int __sgwc_log_domain;
 
 typedef struct sgwc_tunnel_s sgwc_tunnel_t;
 
+/*
+ * Ga / GTP' offline SGW-CDR writer (see lib/cdr/framing.h).
+ * Records use OGS_CDR_FORMAT_BER_SGW in the spool header.
+ */
+typedef struct sgwc_cdr_config_s {
+    bool enabled;
+
+    const char *spool_dir;
+    const char *node_id;
+    const char *local_address;  /* SGW S5/S11 address for CDR [4] s-GWAddress */
+
+    uint32_t interim_interval_s;   /* URR time_threshold, default 300 */
+    uint32_t rotate_max_records;
+    uint32_t rotate_max_bytes;
+    uint32_t rotate_max_seconds;
+
+    uint32_t triggers;
+#define SGWC_CDR_TRIG_START           (1u << 0)
+#define SGWC_CDR_TRIG_INTERIM         (1u << 1)
+#define SGWC_CDR_TRIG_STOP            (1u << 2)
+} sgwc_cdr_config_t;
+
 typedef struct sgwc_context_s {
     ogs_list_t mme_s11_list;    /* MME GTPC Node List */
     ogs_list_t pgw_s5c_list;    /* PGW GTPC Node List */
+
+    sgwc_cdr_config_t cdr;
+    uint32_t cdr_local_seq;
 
     ogs_hash_t *imsi_ue_hash;   /* hash table (IMSI : SGW_UE) */
     ogs_hash_t *sgw_s11_teid_hash;  /* hash table (SGW-S11-TEID : SGW_UE) */
@@ -66,6 +91,7 @@ typedef struct sgwc_ue_s {
     bool            uli_presence;
     ogs_eps_tai_t   e_tai;
     ogs_e_cgi_t     e_cgi;
+    ogs_pkbuf_t     *uli_pkbuf;   /* raw GTPv2 ULI for CDR [32] */
 
     ogs_list_t      sess_list;
 
@@ -92,6 +118,23 @@ typedef struct sgwc_sess_s {
     /* PDN Address Allocation (PAA) */
     ogs_paa_t       paa;
 
+    uint32_t        charging_id;
+
+    /* Usage from PFCP URR reports (interval deltas summed). */
+    uint64_t        usage_ul_octets;
+    uint64_t        usage_dl_octets;
+
+    struct {
+        ogs_time_t start_time;
+        uint32_t record_seq;
+        uint64_t last_ul_octets;
+        uint64_t last_dl_octets;
+        uint32_t last_interval_duration_s;
+        uint8_t cause_for_rec_closing;
+    } cdr;
+
+    ogs_plmn_id_t   serving_plmn_id;
+
     ogs_list_t      bearer_list;
 
     /* Related Context */
@@ -107,6 +150,8 @@ typedef struct sgwc_bearer_s {
     ogs_lnode_t     to_modify_node;
 
     uint8_t         ebi;
+
+    ogs_pfcp_urr_t  *urr;
 
     ogs_list_t      tunnel_list;
     ogs_pool_id_t   sess_id;
@@ -193,6 +238,9 @@ sgwc_tunnel_t *sgwc_tunnel_find_by_far_id(
 sgwc_tunnel_t *sgwc_dl_tunnel_in_bearer(sgwc_bearer_t *bearer);
 sgwc_tunnel_t *sgwc_ul_tunnel_in_bearer(sgwc_bearer_t *bearer);
 sgwc_tunnel_t *sgwc_tunnel_find_by_id(ogs_pool_id_t id);
+
+void sgwc_bearer_urr_setup(sgwc_bearer_t *bearer);
+void sgwc_ue_store_uli_raw(sgwc_ue_t *sgwc_ue, void *data, uint16_t len);
 
 #ifdef __cplusplus
 }

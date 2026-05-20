@@ -591,11 +591,16 @@ typedef struct ogs_nas_tracking_area_identity_list_s {
     uint8_t buffer[OGS_NAS_EPS_MAX_TAI_LIST_LEN];
 } __attribute__ ((packed)) ogs_nas_tracking_area_identity_list_t;
 
+int ogs_nas_tai_list_build_serving_only(
+        ogs_nas_tracking_area_identity_list_t *target,
+        const ogs_eps_tai_t *serving_tai);
+
 int ogs_nas_tai_list_build(
         ogs_nas_tracking_area_identity_list_t *target,
         ogs_eps_tai0_list_t *source0,
         ogs_eps_tai1_list_t *source1,
-        ogs_eps_tai2_list_t *source2);
+        ogs_eps_tai2_list_t *source2,
+        const ogs_eps_tai_t *serving_tai);
 
 
 /* 9.9.3.35 UE radio capability information update needed

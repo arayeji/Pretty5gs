@@ -15,8 +15,8 @@ sudo ninja -C build
 sudo ninja -C build install
 
 sudo ldconfig
-
-sudo systemctl restart  open5gs-smfd.service open5gs-mmed.service open5gs-sgwcd.service 
+systemctl daemon-reload
+sudo systemctl restart  open5gs-smfd.service open5gs-mmed.service open5gs-sgwcd.service open5gs-cgfd.service
 
 ################################################################################
 # Added: PCRF + PyHSS MySQL

@@ -90,7 +90,7 @@ static void ogs_nas_eps_message_test2(abts_case *tc, void *data)
     tai0_list.tai[0].num = 1;
     ogs_plmn_id_build(&tai0_list.tai[0].plmn_id, 417, 99, 2);
     tai0_list.tai[0].tac[0] = 12345;
-    ogs_nas_tai_list_build(&attach_accept->tai_list, &tai0_list, NULL, NULL);
+    ogs_nas_tai_list_build(&attach_accept->tai_list, &tai0_list, NULL, NULL, NULL);
 
     attach_accept->esm_message_container.length = sizeof(esm_buffer);
     attach_accept->esm_message_container.buffer = 

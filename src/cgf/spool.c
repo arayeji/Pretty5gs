@@ -19,6 +19,8 @@
 
 #include "spool.h"
 
+#include "cdr/framing.h"
+
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
@@ -33,11 +35,10 @@
 #include <dirent.h>
 #endif
 
-/* On-disk framing — must match src/smf/ga-writer.c exactly. */
-#define CDR_FILE_MAGIC      "O5CD"
-#define CDR_FILE_VERSION    0x01
-#define CDR_FILE_FORMAT_BER 0x01
-#define CDR_RECORD_HDR_LEN  8
+/* On-disk framing — must match lib/cdr/framing.h and ga-writer modules. */
+#define CDR_FILE_MAGIC      OGS_CDR_FILE_MAGIC
+#define CDR_FILE_VERSION    OGS_CDR_FILE_VERSION
+#define CDR_RECORD_HDR_LEN  OGS_CDR_RECORD_HDR_LEN
 
 static cgf_spool_file_t *g_active = NULL;
 
@@ -141,23 +142,28 @@ void cgf_spool_refill(void)
     }
 
     /* Quick sanity check of the first frame. */
-    if (data_len >= CDR_RECORD_HDR_LEN &&
-            memcmp(data, CDR_FILE_MAGIC, 4) != 0) {
-        ogs_error("cgf: '%s' has bad magic, quarantining", path);
-        ogs_free(data);
-        /* Move directly to failed/. */
-        {
-            const char *base = strrchr(path, '/');
+    if (data_len >= CDR_RECORD_HDR_LEN) {
+        if (memcmp(data, CDR_FILE_MAGIC, 4) != 0 ||
+                data[4] != CDR_FILE_VERSION ||
+                !ogs_cdr_format_is_valid(data[5])) {
+            ogs_error("cgf: '%s' has bad spool header (magic/version/format), "
+                    "quarantining", path);
+            ogs_free(data);
+            /* Move directly to failed/. */
+            {
+                const char *base = strrchr(path, '/');
 #ifdef _WIN32
-            { const char *bb = strrchr(path, '\\'); if (bb > base) base = bb; }
+                { const char *bb = strrchr(path, '\\');
+                  if (bb > base) base = bb; }
 #endif
-            base = base ? base + 1 : path;
-            char dst[512];
-            ogs_snprintf(dst, sizeof(dst), "%s/%s",
-                    cgf_self()->failed_dir, base);
-            rename(path, dst);
+                base = base ? base + 1 : path;
+                char dst[512];
+                ogs_snprintf(dst, sizeof(dst), "%s/%s",
+                        cgf_self()->failed_dir, base);
+                rename(path, dst);
+            }
+            return;
         }
-        return;
     }
 
     f = ogs_calloc(1, sizeof(*f));
@@ -168,7 +174,10 @@ void cgf_spool_refill(void)
     f->next_record_offset = 0;
     g_active = f;
 
-    ogs_info("cgf: opened spool file '%s' (%zu B)", path, data_len);
+    ogs_info("cgf: opened spool file '%s' (%zu B, first_record=%s)",
+            path, data_len,
+            data_len >= OGS_CDR_RECORD_HDR_LEN ?
+                ogs_cdr_format_name(data[5]) : "?");
 }
 
 uint32_t cgf_spool_stage_batch(cgf_spool_file_t *file,
@@ -190,7 +199,7 @@ uint32_t cgf_spool_stage_batch(cgf_spool_file_t *file,
 
         if (memcmp(h, CDR_FILE_MAGIC, 4) != 0 ||
                 h[4] != CDR_FILE_VERSION ||
-                h[5] != CDR_FILE_FORMAT_BER) {
+                !ogs_cdr_format_is_valid(h[5])) {
             ogs_error("cgf: corrupt framing in '%s' at offset %zu",
                     file->path, off);
             /* Treat the rest of the file as lost; the caller will

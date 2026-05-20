@@ -20,6 +20,7 @@
 #include "pfcp-path.h"
 #include "gtp-path.h"
 #include "sxa-handler.h"
+#include "ga-writer.h"
 
 static uint8_t gtp_cause_from_pfcp(uint8_t pfcp_cause)
 {
@@ -1479,6 +1480,45 @@ void sgwc_sxa_handle_session_deletion_response(
     }
 
     ogs_assert(sess);
+
+    /* Final usage report on session deletion (interval deltas). */
+    {
+        unsigned int ui;
+        sgwc_bearer_t *bearer = NULL;
+
+        for (ui = 0; ui < OGS_ARRAY_SIZE(pfcp_rsp->usage_report); ui++) {
+            ogs_pfcp_tlv_usage_report_session_deletion_response_t *use_rep =
+                &pfcp_rsp->usage_report[ui];
+            uint32_t urr_id;
+            int16_t decoded;
+            ogs_pfcp_volume_measurement_t volume;
+
+            if (use_rep->presence == 0)
+                break;
+            if (use_rep->urr_id.presence == 0)
+                continue;
+
+            urr_id = use_rep->urr_id.u32;
+            ogs_list_for_each(&sess->bearer_list, bearer) {
+                if (bearer->urr && bearer->urr->id == urr_id)
+                    break;
+            }
+            if (!bearer || !bearer->urr || bearer->urr->id != urr_id)
+                continue;
+
+            decoded = ogs_pfcp_parse_volume_measurement(
+                    &volume, &use_rep->volume_measurement);
+            if (use_rep->volume_measurement.len != decoded)
+                continue;
+
+            sgwc_sess_usage_accumulate(sess,
+                    volume.ulvol ? volume.uplink_volume : 0,
+                    volume.dlvol ? volume.downlink_volume : 0,
+                    use_rep->duration_measurement.presence ?
+                        use_rep->duration_measurement.u32 : 0);
+        }
+    }
+
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
     ogs_assert(sgwc_ue);
 
@@ -1645,6 +1685,50 @@ void sgwc_sxa_handle_session_report_request(
             }
         } else
             ogs_error("Cannot find Session in Error Indication");
+
+    } else if (report_type.usage_report) {
+        unsigned int i;
+        uint32_t interval_duration_s = 0;
+
+        for (i = 0; i < OGS_ARRAY_SIZE(pfcp_req->usage_report); i++) {
+            ogs_pfcp_tlv_usage_report_session_report_request_t *use_rep =
+                &pfcp_req->usage_report[i];
+            uint32_t urr_id;
+            sgwc_bearer_t *bearer = NULL;
+            int16_t decoded;
+            ogs_pfcp_volume_measurement_t volume;
+
+            if (use_rep->presence == 0)
+                break;
+            if (use_rep->urr_id.presence == 0)
+                continue;
+
+            urr_id = use_rep->urr_id.u32;
+            ogs_list_for_each(&sess->bearer_list, bearer) {
+                if (bearer->urr && bearer->urr->id == urr_id)
+                    break;
+            }
+            if (!bearer || !bearer->urr || bearer->urr->id != urr_id)
+                continue;
+
+            decoded = ogs_pfcp_parse_volume_measurement(
+                    &volume, &use_rep->volume_measurement);
+            if (use_rep->volume_measurement.len != decoded) {
+                ogs_error("Invalid Volume Measurement");
+                continue;
+            }
+
+            sgwc_sess_usage_accumulate(sess,
+                    volume.ulvol ? volume.uplink_volume : 0,
+                    volume.dlvol ? volume.downlink_volume : 0,
+                    use_rep->duration_measurement.presence ?
+                        use_rep->duration_measurement.u32 : 0);
+
+            if (use_rep->duration_measurement.presence)
+                interval_duration_s = use_rep->duration_measurement.u32;
+        }
+
+        sgwc_ga_cdr_session_interim(sess, interval_duration_s);
 
     } else {
         ogs_error("Not supported Report Type[%d]", report_type.value);

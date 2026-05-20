@@ -88,6 +88,11 @@ typedef struct ogs_global_conf_s {
          * Does not change NAS Tracking Area Identity List limits in mme.tai.
          */
         uint64_t tai;
+        /*
+         * MME: maximum type-0 partial lists in mme.tai (each holds up to 16
+         * TACs). Increase when mme.tai lists many individual TAC values.
+         */
+        uint64_t eps_tai0_partial_list;
     } max;
 
     struct {
@@ -198,6 +203,8 @@ int ogs_app_config_init(void);
 void ogs_app_config_final(void);
 
 ogs_app_global_conf_t *ogs_global_conf(void);
+
+uint64_t ogs_app_max_eps_tai0_partial_list(void);
 ogs_app_local_conf_t *ogs_local_conf(void);
 
 int ogs_app_count_nf_conf_sections(const char *conf_section);

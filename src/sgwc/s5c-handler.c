@@ -19,6 +19,7 @@
 
 #include "gtp-path.h"
 #include "pfcp-path.h"
+#include "ga-writer.h"
 
 #include "s5c-handler.h"
 
@@ -323,6 +324,11 @@ void sgwc_s5c_handle_create_session_response(
     }
     /* Setup GTP Node */
     OGS_SETUP_GTP_NODE(sess, pgw);
+
+    if (rsp->pdn_connection_charging_id.presence)
+        sess->charging_id = rsp->pdn_connection_charging_id.u32;
+
+    sgwc_ga_cdr_session_start(sess);
 
     ogs_assert(ogs_list_count(&sess->bearer_list));
     ogs_info("    sess_id=%d xact=%p", sess->id, s11_xact);

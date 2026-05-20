@@ -20,9 +20,31 @@
 #include "nas-security.h"
 #include "emm-build.h"
 #include "mme-sm.h"
+#include "eplmn-config.h"
 
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __emm_log_domain
+
+static int emm_tai_list_build_for_accept(
+        ogs_nas_tracking_area_identity_list_t *target,
+        mme_ue_t *mme_ue, int served_tai_index)
+{
+    ogs_assert(target);
+    ogs_assert(mme_ue);
+    ogs_assert(served_tai_index >= 0 &&
+            served_tai_index < OGS_MAX_NUM_OF_SUPPORTED_TA);
+
+    if (mme_self()->tai_list_serving_only) {
+        ogs_debug("    TAI list: serving_only (TAC:%d)", mme_ue->tai.tac);
+        return ogs_nas_tai_list_build_serving_only(target, &mme_ue->tai);
+    }
+
+    return ogs_nas_tai_list_build(target,
+            mme_self()->served_tai[served_tai_index].list0,
+            &mme_self()->served_tai[served_tai_index].list1,
+            &mme_self()->served_tai[served_tai_index].list2,
+            &mme_ue->tai);
+}
 
 ogs_pkbuf_t *emm_build_attach_accept(
         mme_ue_t *mme_ue, ogs_pkbuf_t *esmbuf)
@@ -162,10 +184,8 @@ ogs_pkbuf_t *emm_build_attach_accept(
     ogs_assert(served_tai_index >= 0 &&
             served_tai_index < OGS_MAX_NUM_OF_SUPPORTED_TA);
     ogs_assert(OGS_OK ==
-        ogs_nas_tai_list_build(&attach_accept->tai_list,
-            &mme_self()->served_tai[served_tai_index].list0,
-            &mme_self()->served_tai[served_tai_index].list1,
-            &mme_self()->served_tai[served_tai_index].list2));
+        emm_tai_list_build_for_accept(
+            &attach_accept->tai_list, mme_ue, served_tai_index));
 
     attach_accept->esm_message_container.buffer = esmbuf->data;
     attach_accept->esm_message_container.length = esmbuf->len;
@@ -263,6 +283,16 @@ ogs_pkbuf_t *emm_build_attach_accept(
         tmsi->type = OGS_NAS_MOBILE_IDENTITY_TMSI;
         tmsi->tmsi = mme_ue->next.p_tmsi;
         ogs_debug("    P-TMSI: 0x%08x", tmsi->tmsi);
+    }
+
+    if (mme_self()->num_of_eplmn) {
+        ogs_assert(mme_eplmn_build_nas_list(
+                    &attach_accept->equivalent_plmns,
+                    mme_self()->num_of_eplmn, mme_self()->eplmn) == OGS_OK);
+        attach_accept->presencemask |=
+            OGS_NAS_EPS_ATTACH_ACCEPT_EQUIVALENT_PLMNS_PRESENT;
+        ogs_debug("    Equivalent PLMNs[%d] included in Attach Accept",
+                mme_self()->num_of_eplmn);
     }
 
     pkbuf = nas_eps_security_encode(mme_ue, &message);
@@ -604,10 +634,8 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
     ogs_assert(served_tai_index >= 0 &&
             served_tai_index < OGS_MAX_NUM_OF_SUPPORTED_TA);
     ogs_assert(OGS_OK ==
-        ogs_nas_tai_list_build(&tau_accept->tai_list,
-            &mme_self()->served_tai[served_tai_index].list0,
-            &mme_self()->served_tai[served_tai_index].list1,
-            &mme_self()->served_tai[served_tai_index].list2));
+        emm_tai_list_build_for_accept(
+            &tau_accept->tai_list, mme_ue, served_tai_index));
 
     /* Set EPS bearer context status */
     tau_accept->presencemask |=
@@ -693,6 +721,16 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
     }
     tau_accept->eps_network_feature_support.
         extended_protocol_configuration_options = 1;
+
+    if (mme_self()->num_of_eplmn) {
+        ogs_assert(mme_eplmn_build_nas_list(
+                    &tau_accept->equivalent_plmns,
+                    mme_self()->num_of_eplmn, mme_self()->eplmn) == OGS_OK);
+        tau_accept->presencemask |=
+            OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_EQUIVALENT_PLMNS_PRESENT;
+        ogs_debug("    Equivalent PLMNs[%d] included in TAU Accept",
+                mme_self()->num_of_eplmn);
+    }
 
     return nas_eps_security_encode(mme_ue, &message);
 }
