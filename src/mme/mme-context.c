@@ -20,6 +20,7 @@
 #include "ogs-sctp.h"
 
 #include "mme-context.h"
+#include "eplmn-config.h"
 #include "mme-event.h"
 #include "mme-timer.h"
 #include "nas-path.h"
@@ -70,6 +71,33 @@ static void stats_remove_mme_session(void);
 static bool compare_ue_info(mme_sgw_t *node, enb_ue_t *enb_ue);
 static mme_sgw_t *selected_sgw_node(mme_sgw_t *current, enb_ue_t *enb_ue);
 static mme_sgw_t *changed_sgw_node(mme_sgw_t *current, enb_ue_t *enb_ue);
+
+static ogs_eps_tai0_list_t *mme_served_tai_list0(int index)
+{
+    ogs_eps_tai0_list_t **list0 = NULL;
+
+    ogs_assert(index >= 0 && index < OGS_MAX_NUM_OF_SUPPORTED_TA);
+
+    list0 = &self.served_tai[index].list0;
+    if (*list0 == NULL) {
+        *list0 = ogs_calloc(1, sizeof(ogs_eps_tai0_list_t));
+        ogs_assert(*list0);
+    }
+
+    return *list0;
+}
+
+static void mme_served_tai_list0_free_all(void)
+{
+    int i;
+
+    for (i = 0; i < OGS_MAX_NUM_OF_SUPPORTED_TA; i++) {
+        if (self.served_tai[i].list0) {
+            ogs_free(self.served_tai[i].list0);
+            self.served_tai[i].list0 = NULL;
+        }
+    }
+}
 
 void mme_context_init(void)
 {
@@ -163,6 +191,8 @@ void mme_context_final(void)
     mme_sgsn_remove_all();
     mme_hssmap_remove_all();
     mme_emerg_remove_all();
+
+    mme_served_tai_list0_free_all();
 
     ogs_assert(self.enb_addr_hash);
     ogs_hash_destroy(self.enb_addr_hash);
@@ -282,7 +312,8 @@ static int mme_context_validation(void)
         return OGS_ERROR;
     }
 
-    if (self.served_tai[0].list0.tai[0].num == 0 &&
+    if ((!self.served_tai[0].list0 ||
+         self.served_tai[0].list0->tai[0].num == 0) &&
         self.served_tai[0].list1.tai[0].num == 0 &&
         self.served_tai[0].list2.num == 0) {
         ogs_error("No mme.tai.plmn_id|tac in '%s'", ogs_app()->file);
@@ -328,6 +359,15 @@ static int mme_context_validation(void)
         ogs_error("Not support GPRS Timer [%d]", (int)self.time.t3423.value);
         return OGS_ERROR;
     }
+
+    if (mme_eplmn_validate(self.num_of_eplmn) != OGS_OK)
+        return OGS_ERROR;
+
+    if (self.num_of_eplmn)
+        mme_eplmn_log_config(self.num_of_eplmn, self.eplmn);
+
+    ogs_info("TAI type-0 partial list limit: %llu (global.max.eps_tai0_partial_list)",
+            (unsigned long long)ogs_app_max_eps_tai0_partial_list());
 
     return OGS_OK;
 }
@@ -1620,6 +1660,20 @@ int mme_context_parse_config(void)
                         }
                     } while (ogs_yaml_iter_type(&gummei_array) ==
                             YAML_SEQUENCE_NODE);
+                } else if (!strcmp(mme_key, "equivalent_plmn")) {
+                    rv = mme_eplmn_parse_config(&mme_iter,
+                            &self.num_of_eplmn, self.eplmn);
+                    if (rv != OGS_OK)
+                        return rv;
+                } else if (!strcmp(mme_key, "tai_list_in_accept")) {
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+                    if (v && !strcmp(v, "serving_only")) {
+                        self.tai_list_serving_only = true;
+                        ogs_info("NAS TAI list in Attach/TAU Accept: serving_only");
+                    } else if (v && strcmp(v, "all")) {
+                        ogs_warn("Unknown tai_list_in_accept `%s' "
+                                "(use: serving_only or all)", v);
+                    }
                 } else if (!strcmp(mme_key, "tai")) {
                     int num_of_list0 = 0;
                     int num_of_list1 = 0;
@@ -1629,7 +1683,7 @@ int mme_context_parse_config(void)
 
                     ogs_assert(self.num_of_served_tai <
                             OGS_MAX_NUM_OF_SUPPORTED_TA);
-                    list0 = &self.served_tai[self.num_of_served_tai].list0;
+                    list0 = mme_served_tai_list0(self.num_of_served_tai);
                     list1 = &self.served_tai[self.num_of_served_tai].list1;
                     list2 = &self.served_tai[self.num_of_served_tai].list2;
 
@@ -1769,17 +1823,43 @@ int mme_context_parse_config(void)
 
                             } else {
                                 int tac, count = 0;
+                                uint64_t max_list0 =
+                                    ogs_app_max_eps_tai0_partial_list();
+
                                 for (tac = 0; tac < num_of_tac; tac++) {
                                     ogs_assert(end[tac] >= start[tac]);
                                     if (start[tac] == end[tac]) {
                                         if (count >= OGS_MAX_NUM_OF_TAI) {
-                                            ogs_assert(num_of_list0 <
-                                                    OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST - 1);
+                                            if (num_of_list0 + 1 >=
+                                                    max_list0) {
+                                                ogs_error(
+                                                    "Too many TAI type-0 "
+                                                    "partial lists (%llu max, "
+                                                    "see global.max."
+                                                    "eps_tai0_partial_list in "
+                                                    "'%s')",
+                                                    (unsigned long long)
+                                                    max_list0,
+                                                    ogs_app()->file);
+                                                ogs_free(start);
+                                                ogs_free(end);
+                                                return OGS_ERROR;
+                                            }
                                             num_of_list0++;
                                             count = 0;
                                         }
-                                        ogs_assert(num_of_list0 <
-                                                OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST);
+                                        if (num_of_list0 >= max_list0) {
+                                            ogs_error(
+                                                "Too many TAI type-0 partial "
+                                                "lists (%llu max, see global."
+                                                "max.eps_tai0_partial_list in "
+                                                "'%s')",
+                                                (unsigned long long)max_list0,
+                                                ogs_app()->file);
+                                            ogs_free(start);
+                                            ogs_free(end);
+                                            return OGS_ERROR;
+                                        }
 
                                         list0->tai[num_of_list0].type =
                                             OGS_TAI0_TYPE;
@@ -5143,11 +5223,14 @@ int mme_find_served_tai(ogs_eps_tai_t *tai)
     ogs_assert(tai);
 
     for (i = 0; i < self.num_of_served_tai; i++) {
-        ogs_eps_tai0_list_t *list0 = &self.served_tai[i].list0;
+        ogs_eps_tai0_list_t *list0 = self.served_tai[i].list0;
         ogs_eps_tai1_list_t *list1 = &self.served_tai[i].list1;
         ogs_eps_tai2_list_t *list2 = &self.served_tai[i].list2;
 
-        for (j = 0; j < OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST &&
+        if (!list0)
+            continue;
+
+        for (j = 0; j < (int)ogs_app_max_eps_tai0_partial_list() &&
                 list0->tai[j].num; j++) {
             ogs_assert(list0->tai[j].type == OGS_TAI0_TYPE);
             ogs_assert(list0->tai[j].num <= OGS_MAX_NUM_OF_TAI);

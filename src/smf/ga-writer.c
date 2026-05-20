@@ -19,6 +19,8 @@
 
 #include "ga-writer.h"
 
+#include "cdr/framing.h"
+
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
@@ -38,9 +40,9 @@
 /*  On-disk framing                                                   */
 /* ================================================================== */
 
-#define CDR_FILE_MAGIC     "O5CD"
-#define CDR_FILE_VERSION   0x01
-#define CDR_FILE_FORMAT_BER 0x01
+#define CDR_FILE_MAGIC     OGS_CDR_FILE_MAGIC
+#define CDR_FILE_VERSION   OGS_CDR_FILE_VERSION
+#define CDR_FILE_FORMAT_BER OGS_CDR_FORMAT_BER_PGW
 
 /* Cap the encoded PGWRecord at 4 KiB. Well above anything TS 32.298
  * ever produces in practice (the sample in the design doc is 217 B). */

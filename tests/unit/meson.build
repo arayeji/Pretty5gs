@@ -26,15 +26,21 @@ testunit_unit_sources = files('''
     security-test.c
     nrf-discovery-test.c
     crash-test.c
+    eplmn-test.c
+    tai-list-test.c
 '''.split())
+
+testunit_unit_sources += files('../../src/mme/eplmn-config.c')
 
 testunit_unit_exe = executable('unit',
     sources : testunit_unit_sources,
+    include_directories : include_directories('../../src/mme'),
     c_args : [testunit_core_cc_flags, sbi_cc_flags],
     dependencies : [libs1ap_dep,
                     libgtp_dep,
                     libngap_dep,
                     libnas_eps_dep,
+                    libapp_dep,
                     libsbi_dep])
 
 test('unit', testunit_unit_exe, is_parallel : false, suite: 'unit')

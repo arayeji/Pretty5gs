@@ -8,6 +8,22 @@ global:
     ue: 1024  # The number of UE can be increased depending on memory size.
 #    peer: 64
 
+#
+#  Ga / GTP' offline SGW-CDR writer (TS 32.298 SGWRecord).
+#  Spool files use format byte OGS_CDR_FORMAT_BER_SGW (0x02); SMF PGW-CDRs
+#  use 0x01. Both are forwarded by open5gs-cgfd from the same spool_dir.
+#
+#  cdr:
+#    enabled: true
+#    spool_dir: @localstatedir@/spool/open5gs/cdr
+#    node_id: open5gs-sgwc-1
+#    local_address: 127.0.0.3
+#    interim_interval_s: 300
+#    max_records: 100
+#    max_bytes: 65536
+#    max_seconds: 30
+#    triggers: start,interim,stop
+#
 sgwc:
   gtpc:
     server:

@@ -21,6 +21,7 @@
 
 #include "gtp-path.h"
 #include "pfcp-path.h"
+#include "ga-writer.h"
 
 static ogs_thread_t *thread;
 static void sgwc_main(void *data);
@@ -66,6 +67,9 @@ int sgwc_initialize(void)
     rv = sgwc_pfcp_open();
     if (rv != OGS_OK) return rv;
 
+    rv = sgwc_ga_writer_open();
+    if (rv != OGS_OK) return rv;
+
     thread = ogs_thread_create(sgwc_main, NULL);
     if (!thread) return OGS_ERROR;
 
@@ -84,6 +88,8 @@ void sgwc_terminate(void)
 
     sgwc_gtp_close();
     sgwc_pfcp_close();
+
+    sgwc_ga_writer_close();
 
     sgwc_context_final();
 

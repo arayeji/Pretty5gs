@@ -264,6 +264,9 @@ void sgwc_s11_handle_create_session_request(
         decoded = ogs_gtp2_parse_uli(&uli, &req->user_location_information);
         if (req->user_location_information.len == decoded) {
             sgwc_ue->uli_presence = true;
+            sgwc_ue_store_uli_raw(sgwc_ue,
+                    req->user_location_information.data,
+                    req->user_location_information.len);
 
             ogs_nas_to_plmn_id(&sgwc_ue->e_tai.plmn_id, &uli.tai.nas_plmn_id);
             sgwc_ue->e_tai.tac = uli.tai.tac;
@@ -627,6 +630,9 @@ void sgwc_s11_handle_modify_bearer_request(
         decoded = ogs_gtp2_parse_uli(&uli, &req->user_location_information);
         if (req->user_location_information.len == decoded) {
             sgwc_ue->uli_presence = true;
+            sgwc_ue_store_uli_raw(sgwc_ue,
+                    req->user_location_information.data,
+                    req->user_location_information.len);
 
             ogs_nas_to_plmn_id(&sgwc_ue->e_tai.plmn_id, &uli.tai.nas_plmn_id);
             sgwc_ue->e_tai.tac = uli.tai.tac;
@@ -1008,6 +1014,9 @@ void sgwc_s11_handle_create_bearer_response(
         decoded = ogs_gtp2_parse_uli(&uli, &rsp->user_location_information);
         if (rsp->user_location_information.len == decoded) {
             sgwc_ue->uli_presence = true;
+            sgwc_ue_store_uli_raw(sgwc_ue,
+                    rsp->user_location_information.data,
+                    rsp->user_location_information.len);
 
             ogs_nas_to_plmn_id(&sgwc_ue->e_tai.plmn_id, &uli.tai.nas_plmn_id);
             sgwc_ue->e_tai.tac = uli.tai.tac;

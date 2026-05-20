@@ -8,6 +8,7 @@ global:
     ue: 1024  # The number of UE can be increased depending on memory size.
 #    peer: 64
 #    tai: 4096  # Max TAC entries per GTP-C client (mme.gtpc.client.sgwc / .smf tac lists). Default: 4096.
+#    eps_tai0_partial_list: 20000  # Max type-0 partial lists in mme.tai (16 TACs each). Default: 20000.
 
 mme:
   freeDiameter: @sysconfdir@/freeDiameter/mme.conf
@@ -37,6 +38,15 @@ mme:
         mcc: 999
         mnc: 70
       tac: 1
+#  tai_list_in_accept: serving_only
+#    Send only the UE's current TAC in Attach/TAU Accept (not the full mme.tai
+#    list). Use with large mme.tai and legacy UEs (e.g. MikroTik). S1 Setup
+#    still uses the full mme.tai configuration. Default: all (full list).
+#  equivalent_plmn:
+#    - mcc: 999
+#      mnc: 71
+#    - mcc: 999
+#      mnc: 72
   security:
     integrity_order : [ EIA2, EIA1, EIA0 ]
     ciphering_order : [ EEA0, EEA1, EEA2 ]

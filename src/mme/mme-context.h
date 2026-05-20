@@ -109,10 +109,21 @@ typedef struct mme_context_s {
     /* Served TAI */
     int             num_of_served_tai;
     struct {
-        ogs_eps_tai0_list_t list0;
+        ogs_eps_tai0_list_t *list0;
         ogs_eps_tai1_list_t list1;
         ogs_eps_tai2_list_t list2;
     } served_tai[OGS_MAX_NUM_OF_SUPPORTED_TA];
+
+    /*
+     * NAS TAI list in Attach/TAU Accept (mme.tai is still used for S1 Setup).
+     * false: full served_tai lists (may truncate at 96 octets).
+     * true: only the UE's current TAC (type-2 list, 6 octets).
+     */
+    bool            tai_list_serving_only;
+
+    /* Equivalent PLMN (TS 24.301 §9.9.3.18) */
+    int             num_of_eplmn;
+    ogs_plmn_id_t   eplmn[OGS_NAS_MAX_PLMN];
 
     /* Access Control */
     int             default_reject_cause;

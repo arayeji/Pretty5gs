@@ -115,10 +115,13 @@ int ogs_app_global_conf_prepare(void)
 #define MAX_NUM_OF_UE               1024    /* Num of UEs */
 #define MAX_NUM_OF_PEER             64      /* Num of Peer */
 #define DEFAULT_MAX_TAI_PER_GTP_CLIENT  4096
+#define DEFAULT_MAX_EPS_TAI0_PARTIAL_LIST   20000
 
     global_conf.max.ue = MAX_NUM_OF_UE;
     global_conf.max.peer = MAX_NUM_OF_PEER;
     global_conf.max.tai = DEFAULT_MAX_TAI_PER_GTP_CLIENT;
+    global_conf.max.eps_tai0_partial_list =
+        DEFAULT_MAX_EPS_TAI0_PARTIAL_LIST;
 
     ogs_pkbuf_default_init(&global_conf.pkbuf_config);
 
@@ -142,7 +145,30 @@ static int global_conf_validation(void)
         return OGS_ERROR;
     }
 
+    if (global_conf.max.eps_tai0_partial_list < 1 ||
+            global_conf.max.eps_tai0_partial_list >
+                OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST) {
+        ogs_error("Invalid global.max.eps_tai0_partial_list %llu in `%s` "
+                "(expected 1-%d)",
+                (unsigned long long)global_conf.max.eps_tai0_partial_list,
+                ogs_app()->file, OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST);
+        return OGS_ERROR;
+    }
+
     return OGS_OK;
+}
+
+uint64_t ogs_app_max_eps_tai0_partial_list(void)
+{
+    uint64_t max = ogs_global_conf()->max.eps_tai0_partial_list;
+
+    if (max < 1)
+        max = DEFAULT_MAX_EPS_TAI0_PARTIAL_LIST;
+
+    if (max > OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST)
+        max = OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST;
+
+    return max;
 }
 
 int ogs_app_count_nf_conf_sections(const char *conf_section)
@@ -321,6 +347,9 @@ int ogs_app_parse_global_conf(ogs_yaml_iter_t *parent)
                 } else if (!strcmp(max_key, "tai")) {
                     const char *v = ogs_yaml_iter_value(&max_iter);
                     if (v) global_conf.max.tai = atoi(v);
+                } else if (!strcmp(max_key, "eps_tai0_partial_list")) {
+                    const char *v = ogs_yaml_iter_value(&max_iter);
+                    if (v) global_conf.max.eps_tai0_partial_list = atoi(v);
                 } else
                     ogs_warn("unknown key `%s`", max_key);
             }

@@ -141,8 +141,9 @@ extern "C" {
 /*
  * Maximum type-0 partial lists stored in ogs_eps_tai0_list_t.
  * Each partial list holds up to OGS_MAX_NUM_OF_TAI TACs (see TS 24.301).
+ * Runtime limit is global.max.eps_tai0_partial_list (default 20000).
  */
-#define OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST    256
+#define OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST    20000
 #define OGS_MAX_NUM_OF_SLICE            8
 
 #define OGS_NEXT_ID(__id, __min, __max) \

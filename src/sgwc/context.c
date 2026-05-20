@@ -20,6 +20,7 @@
 #include <yaml.h>
 
 #include "context.h"
+#include "ga-writer.h"
 
 static sgwc_context_t self;
 
@@ -68,6 +69,15 @@ void sgwc_context_init(void)
     ogs_assert(self.sgwc_sxa_seid_hash);
 
     ogs_list_init(&self.sgw_ue_list);
+
+    self.cdr.enabled = false;
+    self.cdr.interim_interval_s = 300;
+    self.cdr.rotate_max_records = 100;
+    self.cdr.rotate_max_bytes = 65536;
+    self.cdr.rotate_max_seconds = 30;
+    self.cdr.triggers = SGWC_CDR_TRIG_START | SGWC_CDR_TRIG_INTERIM |
+            SGWC_CDR_TRIG_STOP;
+    self.cdr_local_seq = 0;
 
     context_initialized = 1;
 }
@@ -148,6 +158,58 @@ int sgwc_context_parse_config(void)
                     /* handle config in pfcp library */
                 } else if (!strcmp(sgwc_key, "sgwu")) {
                     /* handle config in pfcp library */
+                } else if (!strcmp(sgwc_key, "cdr")) {
+                    ogs_yaml_iter_t c_iter;
+                    ogs_yaml_iter_recurse(&sgwc_iter, &c_iter);
+                    while (ogs_yaml_iter_next(&c_iter)) {
+                        const char *ck = ogs_yaml_iter_key(&c_iter);
+                        const char *cv = ogs_yaml_iter_value(&c_iter);
+                        ogs_assert(ck);
+                        if (!strcmp(ck, "enabled")) {
+                            self.cdr.enabled = ogs_yaml_iter_bool(&c_iter);
+                        } else if (!strcmp(ck, "spool_dir") ||
+                                !strcmp(ck, "directory")) {
+                            self.cdr.spool_dir = cv;
+                        } else if (!strcmp(ck, "node_id") ||
+                                !strcmp(ck, "nodeid")) {
+                            self.cdr.node_id = cv;
+                        } else if (!strcmp(ck, "local_address") ||
+                                !strcmp(ck, "sgw_address")) {
+                            self.cdr.local_address = cv;
+                        } else if (!strcmp(ck, "interim_interval_s") ||
+                                !strcmp(ck, "interim_interval")) {
+                            if (cv) self.cdr.interim_interval_s =
+                                (uint32_t)atoi(cv);
+                        } else if (!strcmp(ck, "max_records")) {
+                            if (cv) self.cdr.rotate_max_records =
+                                (uint32_t)atoi(cv);
+                        } else if (!strcmp(ck, "max_bytes")) {
+                            if (cv) self.cdr.rotate_max_bytes =
+                                (uint32_t)atoi(cv);
+                        } else if (!strcmp(ck, "max_seconds")) {
+                            if (cv) self.cdr.rotate_max_seconds =
+                                (uint32_t)atoi(cv);
+                        } else if (!strcmp(ck, "triggers")) {
+                            uint32_t t = 0;
+                            if (cv) {
+                                const char *p = cv;
+                                while (*p) {
+                                    while (*p == ' ' || *p == ',') p++;
+                                    if (!strncmp(p, "start", 5)) {
+                                        t |= SGWC_CDR_TRIG_START; p += 5;
+                                    } else if (!strncmp(p, "interim", 7)) {
+                                        t |= SGWC_CDR_TRIG_INTERIM; p += 7;
+                                    } else if (!strncmp(p, "stop", 4)) {
+                                        t |= SGWC_CDR_TRIG_STOP; p += 4;
+                                    } else {
+                                        while (*p && *p != ',') p++;
+                                    }
+                                }
+                            }
+                            if (t) self.cdr.triggers = t;
+                        } else
+                            ogs_warn("unknown key `%s` in sgwc.cdr", ck);
+                    }
                 } else
                     ogs_warn("unknown key `%s`", sgwc_key);
             }
@@ -259,6 +321,11 @@ int sgwc_ue_remove(sgwc_ue_t *sgwc_ue)
             &sgwc_ue->sgw_s11_teid, sizeof(sgwc_ue->sgw_s11_teid), NULL);
     ogs_hash_unset_if_owner(self.imsi_ue_hash,
             sgwc_ue->imsi, sgwc_ue->imsi_len, sgwc_ue);
+
+    if (sgwc_ue->uli_pkbuf) {
+        ogs_pkbuf_free(sgwc_ue->uli_pkbuf);
+        sgwc_ue->uli_pkbuf = NULL;
+    }
 
     sgwc_sess_remove_all(sgwc_ue);
 
@@ -450,6 +517,9 @@ int sgwc_sess_remove(sgwc_sess_t *sess)
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
     ogs_assert(sgwc_ue);
 
+    sgwc_ga_cdr_session_stop(sess);
+    sgwc_ga_sess_clear(sess);
+
     ogs_list_remove(&sgwc_ue->sess_list, sess);
 
     ogs_hash_set(self.sgwc_sxa_seid_hash, &sess->sgwc_sxa_seid,
@@ -597,7 +667,59 @@ sgwc_bearer_t *sgwc_bearer_add(sgwc_sess_t *sess)
         return NULL;
     }
 
+    sgwc_bearer_urr_setup(bearer);
+
     return bearer;
+}
+
+void sgwc_ue_store_uli_raw(sgwc_ue_t *sgwc_ue, void *data, uint16_t len)
+{
+    ogs_assert(sgwc_ue);
+    if (sgwc_ue->uli_pkbuf) {
+        ogs_pkbuf_free(sgwc_ue->uli_pkbuf);
+        sgwc_ue->uli_pkbuf = NULL;
+    }
+    if (!data || !len) return;
+    sgwc_ue->uli_pkbuf = ogs_pkbuf_alloc(NULL, len);
+    if (sgwc_ue->uli_pkbuf)
+        ogs_pkbuf_put_data(sgwc_ue->uli_pkbuf, data, len);
+}
+
+void sgwc_bearer_urr_setup(sgwc_bearer_t *bearer)
+{
+    sgwc_sess_t *sess = NULL;
+    sgwc_cdr_config_t *cfg = &sgwc_self()->cdr;
+    ogs_pfcp_urr_t *urr = NULL;
+    sgwc_tunnel_t *dl_tunnel = NULL;
+    sgwc_tunnel_t *ul_tunnel = NULL;
+
+    ogs_assert(bearer);
+    if (!cfg->enabled) return;
+
+    sess = sgwc_sess_find_by_id(bearer->sess_id);
+    ogs_assert(sess);
+    if (bearer->urr) return;
+
+    urr = ogs_pfcp_urr_add(&sess->pfcp);
+    ogs_assert(urr);
+    bearer->urr = urr;
+
+    urr->meas_method = OGS_PFCP_MEASUREMENT_METHOD_VOLUME |
+                       OGS_PFCP_MEASUREMENT_METHOD_DURATION;
+
+    if (cfg->interim_interval_s) {
+        urr->rep_triggers.time_threshold = 1;
+        urr->time_threshold = cfg->interim_interval_s;
+        urr->meas_info.istm = 1;
+    }
+
+    dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
+    ul_tunnel = sgwc_ul_tunnel_in_bearer(bearer);
+    ogs_assert(dl_tunnel && dl_tunnel->pdr);
+    ogs_assert(ul_tunnel && ul_tunnel->pdr);
+
+    ogs_pfcp_pdr_associate_urr(dl_tunnel->pdr, urr);
+    ogs_pfcp_pdr_associate_urr(ul_tunnel->pdr, urr);
 }
 
 int sgwc_bearer_remove(sgwc_bearer_t *bearer)

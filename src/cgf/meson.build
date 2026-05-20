@@ -46,6 +46,7 @@ endif
 libcgf = static_library('cgf',
     sources : libcgf_sources,
     c_args : libcgf_c_args,
+    include_directories : libcdr_inc,
     dependencies : libcgf_deps,
     install : false)
 
