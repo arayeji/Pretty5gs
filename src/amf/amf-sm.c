@@ -814,19 +814,29 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             OGS_ADDR(addr, buf));
 
         gnb = amf_gnb_find_by_addr(addr);
-        if (!gnb) {
-            gnb = amf_gnb_add(sock, addr);
-            if (!gnb) {
-                ogs_error("amf_gnb_add() failed");
-                ogs_sock_destroy(sock);
-                ogs_free(addr);
-            }
-        } else {
-            ogs_warn("gNB context duplicated with IP-address [%s]!!!",
+        if (gnb) {
+            /*
+             * Mirror of the MME S1AP fix: a new SCTP association from
+             * a gNB IP we already track is a reconnect, not a real
+             * duplicate. Refusing the new socket strands the gNB
+             * until kernel SCTP heartbeats time out and finally
+             * evict the stale context. Drop the stale context (which
+             * releases its UEs through the standard CONNREFUSED path)
+             * and accept the new association.
+             */
+            ogs_warn("gNB-N2[%s] reconnected; replacing stale context",
                     OGS_ADDR(addr, buf));
+            amf_sbi_send_deactivate_all_ue_in_gnb(
+                    gnb, AMF_REMOVE_S1_CONTEXT_BY_LO_CONNREFUSED);
+            amf_gnb_remove(gnb);
+            gnb = NULL;
+        }
+
+        gnb = amf_gnb_add(sock, addr);
+        if (!gnb) {
+            ogs_error("amf_gnb_add() failed");
             ogs_sock_destroy(sock);
             ogs_free(addr);
-            ogs_warn("N2 Socket Closed");
         }
 
         break;
@@ -870,10 +880,24 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
 
         gnb = amf_gnb_find_by_addr(addr);
         if (gnb) {
-            ogs_info("gNB-N2[%s] connection refused!!!", OGS_ADDR(addr, buf));
-            amf_sbi_send_deactivate_all_ue_in_gnb(
-                    gnb, AMF_REMOVE_S1_CONTEXT_BY_LO_CONNREFUSED);
-            amf_gnb_remove(gnb);
+            if (gnb->sctp.sock != sock) {
+                /*
+                 * Late SCTP_COMM_LOST / SCTP_SHUTDOWN for a socket
+                 * that was already superseded by a fast reconnect
+                 * (see AMF_EVENT_NGAP_LO_ACCEPT). The current gNB
+                 * context owns a different fd and is healthy; do not
+                 * tear it down on behalf of the dead one.
+                 */
+                ogs_warn("Stale CONNREFUSED for [%s] ignored "
+                        "(socket already replaced by reconnect)",
+                        OGS_ADDR(addr, buf));
+            } else {
+                ogs_info("gNB-N2[%s] connection refused!!!",
+                        OGS_ADDR(addr, buf));
+                amf_sbi_send_deactivate_all_ue_in_gnb(
+                        gnb, AMF_REMOVE_S1_CONTEXT_BY_LO_CONNREFUSED);
+                amf_gnb_remove(gnb);
+            }
         } else {
             ogs_warn("gNB-N2[%s] connection refused, Already Removed!",
                     OGS_ADDR(addr, buf));

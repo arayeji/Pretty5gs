@@ -109,19 +109,40 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             OGS_ADDR(addr, buf));
 
         enb = mme_enb_find_by_addr(addr);
-        if (!enb) {
-            enb = mme_enb_add(sock, addr);
-            if (!enb) {
-                ogs_error("mme_enb_add() failed");
-                ogs_sock_destroy(sock);
-                ogs_free(addr);
-            }
-        } else {
-            ogs_warn("eNB context duplicated with IP-address [%s]!!!",
+        if (enb) {
+            /*
+             * A new SCTP association from an eNB IP we already track
+             * means the previous association is dead from the eNB's
+             * point of view (eNB restart, network reset, fast
+             * reconnect), but our context was not yet evicted because
+             * SCTP_COMM_LOST / SCTP_SHUTDOWN had not been delivered on
+             * the old fd yet (the kernel can lag heartbeat detection
+             * for tens of seconds while still returning EPIPE on
+             * send).
+             *
+             * Refusing the new socket here was the historic behaviour
+             * and produced a hard lockout: every reconnect attempt
+             * was treated as a "duplicate" and rejected until SCTP
+             * timeouts finally cleaned up the stale fd. Instead, drop
+             * the stale context (releases its UEs via the same path
+             * as CONNREFUSED) and accept the new association.
+             *
+             * SCTP cookies validate the peer, so an unauthorized host
+             * cannot hijack an eNB context this way.
+             */
+            ogs_warn("eNB-S1[%s] reconnected; replacing stale context",
                     OGS_ADDR(addr, buf));
+            mme_gtp_send_release_all_ue_in_enb(
+                    enb, OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_LO_CONNREFUSED);
+            mme_enb_remove(enb);
+            enb = NULL;
+        }
+
+        enb = mme_enb_add(sock, addr);
+        if (!enb) {
+            ogs_error("mme_enb_add() failed");
             ogs_sock_destroy(sock);
             ogs_free(addr);
-            ogs_warn("S1 Socket Closed");
         }
 
         break;
@@ -170,10 +191,25 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
         enb = mme_enb_find_by_addr(addr);
         if (enb) {
-            ogs_info("eNB-S1[%s] connection refused!!!", OGS_ADDR(addr, buf));
-            mme_gtp_send_release_all_ue_in_enb(
-                    enb, OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_LO_CONNREFUSED);
-            mme_enb_remove(enb);
+            if (enb->sctp.sock != sock) {
+                /*
+                 * Late SCTP_COMM_LOST / SCTP_SHUTDOWN for a socket
+                 * that was already superseded by a fast reconnect
+                 * (see MME_EVENT_S1AP_LO_ACCEPT). The current eNB
+                 * context owns a different fd and is healthy; do not
+                 * tear it down on behalf of the dead one.
+                 */
+                ogs_warn("Stale CONNREFUSED for [%s] ignored "
+                        "(socket already replaced by reconnect)",
+                        OGS_ADDR(addr, buf));
+            } else {
+                ogs_info("eNB-S1[%s] connection refused!!!",
+                        OGS_ADDR(addr, buf));
+                mme_gtp_send_release_all_ue_in_enb(
+                        enb,
+                        OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_LO_CONNREFUSED);
+                mme_enb_remove(enb);
+            }
         } else {
             ogs_warn("eNB-S1[%s] connection refused, Already Removed!",
                     OGS_ADDR(addr, buf));
