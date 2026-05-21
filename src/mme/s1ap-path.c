@@ -834,9 +834,9 @@ int s1ap_send_handover_request(
         return rv;
     }
 
-    ogs_info("    Source : ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
+    ogs_debug("    Source : ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
             source_ue->enb_ue_s1ap_id, source_ue->mme_ue_s1ap_id);
-    ogs_info("    Target : ENB_UE_S1AP_ID[Unknown] MME_UE_S1AP_ID[%d]",
+    ogs_debug("    Target : ENB_UE_S1AP_ID[Unknown] MME_UE_S1AP_ID[%d]",
             target_ue->mme_ue_s1ap_id);
 
     enb_ue_source_associate_target(source_ue, target_ue);

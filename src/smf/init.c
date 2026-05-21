@@ -155,6 +155,7 @@ void smf_terminate(void)
 
     smf_ga_writer_close();
     smf_radius_pod_close();
+    smf_radius_servers_close();
     smf_gtp_close();
     smf_pfcp_close();
     smf_sbi_close();

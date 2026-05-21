@@ -1051,9 +1051,9 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
 
     if (s6a_message->result_code != ER_DIAMETER_SUCCESS) {
         if (s6a_message->err)
-            ogs_info("    Result Code: %d", s6a_message->result_code);
+            ogs_debug("    Result Code: %d", s6a_message->result_code);
         else if (s6a_message->exp_err)
-            ogs_info("    Experimental Result Code: %d",
+            ogs_debug("    Experimental Result Code: %d",
                     s6a_message->result_code);
         else {
             ogs_fatal("ERROR DIAMETER Result Code(%d)",

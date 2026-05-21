@@ -242,7 +242,7 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
             imsi_bcd);
         mme_ue_set_imsi(mme_ue, imsi_bcd);
 
-        ogs_info("    IMSI[%s]", imsi_bcd);
+        ogs_debug("    IMSI[%s]", imsi_bcd);
 
         break;
     case OGS_NAS_EPS_MOBILE_IDENTITY_GUTI:
@@ -253,7 +253,7 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         nas_guti.mme_code = eps_mobile_identity_guti->mme_code;
         nas_guti.m_tmsi = eps_mobile_identity_guti->m_tmsi;
 
-        ogs_info("    GUTI[G:%d,C:%d,M_TMSI:0x%x] IMSI[%s]",
+        ogs_debug("    GUTI[G:%d,C:%d,M_TMSI:0x%x] IMSI[%s]",
                 nas_guti.mme_gid,
                 nas_guti.mme_code,
                 nas_guti.m_tmsi,
@@ -293,17 +293,17 @@ int emm_handle_attach_complete(
     ogs_assert(mme_ue);
     ogs_assert(enb_ue);
 
-    ogs_info("    IMSI[%s]", mme_ue->imsi_bcd);
+    ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
 
     ogs_gettimeofday(&tv);
     ogs_gmtime(tv.tv_sec, &gmt);
     ogs_localtime(tv.tv_sec, &local);
 
-    ogs_info("    UTC [%04d-%02d-%02dT%02d:%02d:%02d] Timezone[%d]/DST[%d]",
+    ogs_debug("    UTC [%04d-%02d-%02dT%02d:%02d:%02d] Timezone[%d]/DST[%d]",
         gmt.tm_year+1900, gmt.tm_mon+1, gmt.tm_mday,
         gmt.tm_hour, gmt.tm_min, gmt.tm_sec,
         (int)gmt.tm_gmtoff, gmt.tm_isdst);
-    ogs_info("    LOCAL [%04d-%02d-%02dT%02d:%02d:%02d] Timezone[%d]/DST[%d]",
+    ogs_debug("    LOCAL [%04d-%02d-%02dT%02d:%02d:%02d] Timezone[%d]/DST[%d]",
         local.tm_year+1900, local.tm_mon+1, local.tm_mday,
         local.tm_hour, local.tm_min, local.tm_sec,
         (int)local.tm_gmtoff, local.tm_isdst);
@@ -489,7 +489,7 @@ int emm_handle_identity_response(
             return OGS_ERROR;
         }
 
-        ogs_info("    IMSI[%s]", mme_ue->imsi_bcd);
+        ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
     } else {
         ogs_warn("Not supported Identity type[%d]", mobile_identity->imsi.type);
     }
@@ -629,7 +629,7 @@ int emm_handle_service_request(
         mme_ue->nhcc = 1;
     }
 
-    ogs_info("    GUTI[G:%d,C:%d,M_TMSI:0x%x] IMSI[%s]",
+    ogs_debug("    GUTI[G:%d,C:%d,M_TMSI:0x%x] IMSI[%s]",
             mme_ue->current.guti.mme_gid,
             mme_ue->current.guti.mme_code,
             mme_ue->current.guti.m_tmsi,
@@ -816,7 +816,7 @@ int emm_handle_tau_request(
         nas_guti.mme_code = eps_mobile_identity_guti->mme_code;
         nas_guti.m_tmsi = eps_mobile_identity_guti->m_tmsi;
 
-        ogs_info("    GUTI[G:%d,C:%d,M_TMSI:0x%x] IMSI:[%s]",
+        ogs_debug("    GUTI[G:%d,C:%d,M_TMSI:0x%x] IMSI:[%s]",
                 nas_guti.mme_gid,
                 nas_guti.mme_code,
                 nas_guti.m_tmsi,
@@ -919,7 +919,7 @@ int emm_handle_extended_service_request(
     case OGS_NAS_MOBILE_IDENTITY_TMSI:
         mobile_identity_tmsi = &mobile_identity->tmsi;
 
-        ogs_info("    M-TMSI:[0x%x] IMSI:[%s]",
+        ogs_debug("    M-TMSI:[0x%x] IMSI:[%s]",
                 mobile_identity_tmsi->tmsi,
                 MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "Unknown");
         break;

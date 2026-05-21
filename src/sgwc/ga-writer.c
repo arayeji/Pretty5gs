@@ -507,7 +507,14 @@ static void write_record(const uint8_t *rec, size_t rec_len)
         g.fp = NULL;
         return;
     }
-    fflush(g.fp);
+    /*
+     * Skip the per-record fflush(): rotate_locked() always fflush()es
+     * before fclose()/rename(), so the only durability window we widen
+     * is "SGW-C crashes between rotations" - bounded to the current
+     * libc buffer (~4 KiB). rotate_max_records / _bytes / _seconds
+     * cap how much that can ever be. See src/smf/ga-writer.c for the
+     * full rationale.
+     */
     g.cur_records++;
     g.cur_bytes += (uint32_t)(rec_len + sizeof(hdr));
     if (should_rotate()) rotate_locked();

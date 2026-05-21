@@ -41,6 +41,9 @@ void smf_radius_accounting_interim_update(smf_sess_t *sess);
 int smf_radius_pod_open(void);
 void smf_radius_pod_close(void);
 
+/* Release cached RADIUS sockets / sockaddrs on shutdown. */
+void smf_radius_servers_close(void);
+
 /* Free any per-session radius resources (called from smf_sess_remove()). */
 void smf_radius_sess_clear(smf_sess_t *sess);
 

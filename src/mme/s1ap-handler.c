@@ -672,12 +672,39 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
                 ogs_info("Unknown UE by S_TMSI[G:%d,C:%d,M_TMSI:0x%x]",
                         nas_guti.mme_gid, nas_guti.mme_code, nas_guti.m_tmsi);
             } else {
-                ogs_info("    S_TMSI[G:%d,C:%d,M_TMSI:0x%x] IMSI:[%s]",
-                        mme_ue_from_stmsi->current.guti.mme_gid,
-                        mme_ue_from_stmsi->current.guti.mme_code,
-                        mme_ue_from_stmsi->current.guti.m_tmsi,
-                        MME_UE_HAVE_IMSI(mme_ue_from_stmsi)
-                            ? mme_ue_from_stmsi->imsi_bcd : "Unknown");
+                ogs_debug("    S_TMSI[G:%d,C:%d,M_TMSI:0x%x] IMSI:[%s]",
+                        mme_ue->current.guti.mme_gid,
+                        mme_ue->current.guti.mme_code,
+                        mme_ue->current.guti.m_tmsi,
+                        MME_UE_HAVE_IMSI(mme_ue)
+                            ? mme_ue->imsi_bcd : "Unknown");
+
+                /* If NAS(mme_ue_t) has already been associated with
+                 * older S1(enb_ue_t) context */
+                if (ECM_CONNECTED(mme_ue)) {
+    /*
+     * Issue #2786
+     *
+     * In cases where the UE sends an Integrity Un-Protected Attach
+     * Request or Service Request, there is an issue of sending
+     * a UEContextReleaseCommand for the OLD ENB Context.
+     *
+     * For example, if the UE switchs off and power-on after
+     * the first connection, the EPC sends a UEContextReleaseCommand.
+     *
+     * However, since there is no ENB context for this on the eNB,
+     * the eNB does not send a UEContextReleaseComplete,
+     * so the deletion of the ENB Context does not function properly.
+     *
+     * To solve this problem, the EPC has been modified to implicitly
+     * delete the ENB Context instead of sending a UEContextReleaseCommand.
+     */
+                    HOLDING_S1_CONTEXT(mme_ue);
+                }
+                enb_ue_associate_mme_ue(enb_ue, mme_ue);
+                ogs_debug("Mobile Reachable timer stopped for IMSI[%s]",
+                    mme_ue->imsi_bcd);
+                CLEAR_MME_UE_TIMER(mme_ue->t_mobile_reachable);
             }
         }
     } else {
@@ -812,7 +839,7 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
             sizeof(enb_ue->saved.e_cgi.cell_id));
     enb_ue->saved.e_cgi.cell_id = (be32toh(enb_ue->saved.e_cgi.cell_id) >> 4);
 
-    ogs_info("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d] TAC[%d] CellID[0x%x]",
+    ogs_debug("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d] TAC[%d] CellID[0x%x]",
         enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id,
         enb_ue->saved.tai.tac, enb_ue->saved.e_cgi.cell_id);
 
@@ -2079,12 +2106,12 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
     }
 
     ogs_info("UE Context Release [Action:%d]", enb_ue->ue_ctx_rel_action);
-    ogs_info("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
+    ogs_debug("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
             enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
 
     mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
     if (mme_ue) {
-        ogs_info("    IMSI[%s]", mme_ue->imsi_bcd);
+        ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
 
         /*
          * An assert occurs when a NAS message retransmission occurs.
@@ -2572,7 +2599,7 @@ void s1ap_handle_enb_direct_information_transfer(
         rai.rac = *geran_cell_id->rAC.buf;
         memcpy(&cell_id, geran_cell_id->cI.buf, sizeof(uint16_t));
         cell_id = be16toh(cell_id);
-            ogs_info("    RAI[MCC:%u MNC:%u LAC:%u RAC:%u] CI[%u]",
+            ogs_debug("    RAI[MCC:%u MNC:%u LAC:%u RAC:%u] CI[%u]",
                       ogs_plmn_id_mcc(&plmn_id), ogs_plmn_id_mnc(&plmn_id),
                       rai.lai.lac, rai.rac, cell_id);
         sgsn = mme_sgsn_find_by_routing_address(&rai, cell_id);
@@ -2734,7 +2761,7 @@ void s1ap_handle_path_switch_request(
         return;
     }
 
-    ogs_info("    OLD ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
+    ogs_debug("    OLD ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
             enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
 
     if (!EUTRAN_CGI) {
@@ -2827,21 +2854,21 @@ void s1ap_handle_path_switch_request(
         return;
     }
 
-    ogs_info("    OLD TAI[PLMN_ID:%06x,TAC:%d]",
+    ogs_debug("    OLD TAI[PLMN_ID:%06x,TAC:%d]",
             ogs_plmn_id_hexdump(&mme_ue->tai.plmn_id),
             mme_ue->tai.tac);
-    ogs_info("    OLD E_CGI[PLMN_ID:%06x,CELL_ID:0x%x]",
+    ogs_debug("    OLD E_CGI[PLMN_ID:%06x,CELL_ID:0x%x]",
             ogs_plmn_id_hexdump(&mme_ue->e_cgi.plmn_id),
             mme_ue->e_cgi.cell_id);
 
-    if (!UESecurityCapabilities) {
-        ogs_error("No UESecurityCapabilities");
-        r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
-                S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-        return;
-    }
+    /* Update ENB-UE-S1AP-ID */
+    enb_ue->enb_ue_s1ap_id = *ENB_UE_S1AP_ID;
+
+    /* Change enb_ue to the NEW eNB */
+    enb_ue_switch_to_enb(enb_ue, enb);
+
+    ogs_debug("    NEW ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
+            enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
 
     pLMNidentity = &TAI->pLMNidentity;
     if (pLMNidentity->size != sizeof(enb_ue->saved.tai.plmn_id)) {
@@ -2965,10 +2992,10 @@ void s1ap_handle_path_switch_request(
             sizeof(enb_ue->saved.e_cgi.cell_id));
     enb_ue->saved.e_cgi.cell_id = (be32toh(enb_ue->saved.e_cgi.cell_id) >> 4);
 
-    ogs_info("    TAI[PLMN_ID:%06x,TAC:%d]",
+    ogs_debug("    TAI[PLMN_ID:%06x,TAC:%d]",
             ogs_plmn_id_hexdump(&enb_ue->saved.tai.plmn_id),
             enb_ue->saved.tai.tac);
-    ogs_info("    E_CGI[PLMN_ID:%06x,CELL_ID:0x%x]",
+    ogs_debug("    E_CGI[PLMN_ID:%06x,CELL_ID:0x%x]",
             ogs_plmn_id_hexdump(&enb_ue->saved.e_cgi.plmn_id),
             enb_ue->saved.e_cgi.cell_id);
 
@@ -3214,7 +3241,7 @@ void s1ap_handle_enb_configuration_transfer(
 
         target_enb = mme_enb_find_by_enb_id(target_enb_id);
         if (target_enb == NULL) {
-            ogs_error("eNB configuration transfer : "
+            ogs_debug("eNB configuration transfer : "
                         "cannot find target eNB-id[0x%x]", target_enb_id);
             r = s1ap_send_error_indication(enb, NULL, NULL,
                     S1AP_Cause_PR_radioNetwork,
