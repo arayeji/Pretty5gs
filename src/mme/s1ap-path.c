@@ -891,10 +891,25 @@ int s1ap_send_error_indication(
 {
     int rv;
     ogs_pkbuf_t *s1apbuf = NULL;
+    char buf[OGS_ADDRSTRLEN];
 
     ogs_assert(enb);
 
-    ogs_info("ErrorIndication");
+    /*
+     * Demoted from ogs_info to ogs_debug: Error Indication is normal
+     * S1AP protocol housekeeping (it just tells the eNB "your last
+     * message referenced something I do not know about"). At >1k
+     * eNBs every transient UE-context miss produces one of these
+     * and floods production logs. The enriched debug line below
+     * (group/cause + IDs + eNB addr) makes it actually useful when
+     * the operator does enable debug.
+     */
+    ogs_debug("ErrorIndication eNB[%s] group=%d cause=%ld "
+            "mme_ue_s1ap_id=%s enb_ue_s1ap_id=%s",
+            OGS_ADDR(enb->sctp.addr, buf),
+            (int)group, (long)cause,
+            mme_ue_s1ap_id ? "set" : "(none)",
+            enb_ue_s1ap_id ? "set" : "(none)");
 
     s1apbuf = ogs_s1ap_build_error_indication(
             mme_ue_s1ap_id, enb_ue_s1ap_id, group, cause);
