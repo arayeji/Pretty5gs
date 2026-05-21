@@ -83,6 +83,7 @@ libmme_sources = files('''
     metrics.c
     enb-info.c
     ue-info.c
+    admin-api.c
     ../../lib/metrics/prometheus/json_pager.c
 '''.split())
 

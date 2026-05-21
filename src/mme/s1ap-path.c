@@ -990,3 +990,30 @@ int s1ap_send_s1_reset_ack(
 
     return rv;
 }
+
+int s1ap_send_s1_reset(mme_enb_t *enb, S1AP_Cause_PR group, long cause)
+{
+    int rv;
+    ogs_pkbuf_t *s1apbuf = NULL;
+
+    ogs_assert(enb);
+
+    ogs_info("S1-Reset (MME-initiated, full s1_Interface)");
+
+    /*
+     * partOfS1_Interface = NULL -> the builder emits
+     * resetType = s1_Interface (reset_all). That matches the
+     * "drop this eNB entirely" semantics we want for the admin
+     * detach endpoint; partial-reset (per-UE list) is not exposed.
+     */
+    s1apbuf = ogs_s1ap_build_s1_reset(group, cause, NULL);
+    if (!s1apbuf) {
+        ogs_error("ogs_s1ap_build_s1_reset() failed");
+        return OGS_ERROR;
+    }
+
+    rv = s1ap_send_to_enb(enb, s1apbuf, S1AP_NON_UE_SIGNALLING);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}

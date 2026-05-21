@@ -14,5 +14,9 @@ RestartSec=2
 RestartPreventExitStatus=1
 ExecReload=/bin/kill -HUP $MAINPID
 
+# Bearer / session FDs scale with the served UE population; the
+# default (1024) is far too low for any non-trivial deployment.
+LimitNOFILE=1048576
+
 [Install]
 WantedBy=multi-user.target

@@ -36,16 +36,20 @@
 
 static bool maximum_number_of_enbs_is_reached(void)
 {
-    mme_enb_t *enb = NULL, *next_enb = NULL;
-    int number_of_enbs_online = 0;
-
-    ogs_list_for_each_safe(&mme_self()->enb_list, next_enb, enb) {
-        if (enb->state.s1_setup_success) {
-            number_of_enbs_online++;
-        }
-    }
-
-    return number_of_enbs_online >= ogs_global_conf()->max.peer;
+    /*
+     * Use the cached enb_list count instead of walking the list:
+     * this function used to be called on every S1 Setup Request
+     * and was O(n) over all attached eNBs. With pool exhaustion
+     * driving reconnect storms (see mme_enb_add() comment), the
+     * quadratic cost saturated the main loop and starved the
+     * /metrics HTTP worker (empty body / connection reset).
+     *
+     * We now compare against the total enb_list size rather than
+     * only those with state.s1_setup_success set; the original
+     * intent was to bound MME memory, and the underlying pool is
+     * sized to global.max.peer*2 so this is the correct guard.
+     */
+    return mme_self()->num_of_enbs >= (int)ogs_global_conf()->max.peer;
 }
 
 static bool enb_plmn_id_is_foreign(mme_enb_t *enb)
@@ -83,83 +87,72 @@ static bool served_tai_is_found(mme_enb_t *enb)
     return false;
 }
 
-static enb_ue_t *s1ap_find_enb_ue_by_message_ue_ids(
-        mme_enb_t *enb, S1AP_MME_UE_S1AP_ID_t *MME_UE_S1AP_ID,
-        S1AP_ENB_UE_S1AP_ID_t *ENB_UE_S1AP_ID)
+/*
+ * Print the TAIs the eNB advertised in its S1 Setup / eNB
+ * Configuration Update, plus the TAIs we have configured in
+ * mme.tai. Operators routinely hit "Cannot find Served TAI" with
+ * nothing in the log explaining *which* TAI was missing; this
+ * makes the mismatch obvious without having to enable [s1ap]
+ * DEBUG. Called from the warn-path only, so this iteration is
+ * not on the hot path.
+ */
+static void log_tai_mismatch_diagnostic(mme_enb_t *enb)
 {
-    int r;
-    enb_ue_t *enb_ue = NULL;
+    int i, j, k;
 
-    ogs_assert(enb);
-
-    if (!ENB_UE_S1AP_ID) {
-        ogs_error("No ENB_UE_S1AP_ID");
-        r = s1ap_send_error_indication(enb, NULL, NULL,
-                S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-        return NULL;
+    ogs_warn("    eNB advertised %d TAI(s):", enb->num_of_supported_ta_list);
+    for (i = 0; i < enb->num_of_supported_ta_list; i++) {
+        ogs_eps_tai_t *t = &enb->supported_ta_list[i];
+        ogs_warn("        [%d] MCC=%03d MNC=%0*d TAC=%u (0x%04x)",
+                i,
+                ogs_plmn_id_mcc(&t->plmn_id),
+                ogs_plmn_id_mnc_len(&t->plmn_id),
+                ogs_plmn_id_mnc(&t->plmn_id),
+                t->tac, t->tac);
     }
 
-    if (*ENB_UE_S1AP_ID > 0x00ffffff) {
-        ogs_error("Invalid ENB_UE_S1AP_ID [%ld]", *ENB_UE_S1AP_ID);
-        r = s1ap_send_error_indication(enb, NULL, ENB_UE_S1AP_ID,
-                S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-        return NULL;
-    }
+    ogs_warn("    MME 'mme.tai' is configured with %d entry/entries:",
+            mme_self()->num_of_served_tai);
+    for (i = 0; i < mme_self()->num_of_served_tai; i++) {
+        ogs_eps_tai0_list_t *list0 = mme_self()->served_tai[i].list0;
+        ogs_eps_tai1_list_t *list1 = &mme_self()->served_tai[i].list1;
+        ogs_eps_tai2_list_t *list2 = &mme_self()->served_tai[i].list2;
 
-    if (!MME_UE_S1AP_ID) {
-        ogs_error("No MME_UE_S1AP_ID");
-        r = s1ap_send_error_indication(enb, NULL, ENB_UE_S1AP_ID,
-                S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-        return NULL;
+        if (list0) {
+            for (j = 0; j < (int)ogs_app_max_eps_tai0_partial_list() &&
+                    list0->tai[j].num; j++) {
+                for (k = 0; k < list0->tai[j].num; k++) {
+                    ogs_warn("        [%d] (list0) MCC=%03d MNC=%0*d TAC=%u "
+                            "(0x%04x)",
+                            i,
+                            ogs_plmn_id_mcc(&list0->tai[j].plmn_id),
+                            ogs_plmn_id_mnc_len(&list0->tai[j].plmn_id),
+                            ogs_plmn_id_mnc(&list0->tai[j].plmn_id),
+                            list0->tai[j].tac[k], list0->tai[j].tac[k]);
+                }
+            }
+        }
+        for (j = 0; list1->tai[j].num; j++) {
+            ogs_warn("        [%d] (list1) MCC=%03d MNC=%0*d "
+                    "TAC=%u..%u (0x%04x..0x%04x)",
+                    i,
+                    ogs_plmn_id_mcc(&list1->tai[j].plmn_id),
+                    ogs_plmn_id_mnc_len(&list1->tai[j].plmn_id),
+                    ogs_plmn_id_mnc(&list1->tai[j].plmn_id),
+                    list1->tai[j].tac,
+                    list1->tai[j].tac + list1->tai[j].num - 1,
+                    list1->tai[j].tac,
+                    list1->tai[j].tac + list1->tai[j].num - 1);
+        }
+        for (j = 0; j < list2->num; j++) {
+            ogs_warn("        [%d] (list2) MCC=%03d MNC=%0*d TAC=%u (0x%04x)",
+                    i,
+                    ogs_plmn_id_mcc(&list2->tai[j].plmn_id),
+                    ogs_plmn_id_mnc_len(&list2->tai[j].plmn_id),
+                    ogs_plmn_id_mnc(&list2->tai[j].plmn_id),
+                    list2->tai[j].tac, list2->tai[j].tac);
+        }
     }
-
-    enb_ue = enb_ue_find_by_mme_ue_s1ap_id(*MME_UE_S1AP_ID);
-    if (!enb_ue) {
-        ogs_error("No eNB UE Context : MME_UE_S1AP_ID[%lld]",
-                (long long)*MME_UE_S1AP_ID);
-        r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
-                S1AP_Cause_PR_radioNetwork,
-                S1AP_CauseRadioNetwork_unknown_mme_ue_s1ap_id);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-        return NULL;
-    }
-
-    if (enb_ue->enb_id != enb->id) {
-        ogs_error("MME_UE_S1AP_ID[%lld] does not belong to this eNB "
-                "[UE:eNB-ID:%llu, Message:eNB-ID:%llu]",
-                (long long)*MME_UE_S1AP_ID,
-                (unsigned long long)enb_ue->enb_id,
-                (unsigned long long)enb->id);
-        r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
-                S1AP_Cause_PR_radioNetwork,
-                S1AP_CauseRadioNetwork_unknown_mme_ue_s1ap_id);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-        return NULL;
-    }
-
-    if (enb_ue->enb_ue_s1ap_id != *ENB_UE_S1AP_ID) {
-        ogs_error("Invalid ENB_UE_S1AP_ID[%lld] for "
-                "MME_UE_S1AP_ID[%lld] [expected:%u]",
-                (long long)*ENB_UE_S1AP_ID,
-                (long long)*MME_UE_S1AP_ID,
-                enb_ue->enb_ue_s1ap_id);
-        r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
-                S1AP_Cause_PR_radioNetwork,
-                S1AP_CauseRadioNetwork_unknown_mme_ue_s1ap_id);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-        return NULL;
-    }
-
-    return enb_ue;
 }
 
 void s1ap_handle_s1_setup_request(mme_enb_t *enb, ogs_s1ap_message_t *message)
@@ -364,6 +357,7 @@ void s1ap_handle_s1_setup_request(mme_enb_t *enb, ogs_s1ap_message_t *message)
     if (!served_tai_is_found(enb)) {
         ogs_warn("S1-Setup failure:");
         ogs_warn("    Cannot find Served TAI. Check 'mme.tai' configuration");
+        log_tai_mismatch_diagnostic(enb);
         group = S1AP_Cause_PR_misc;
         cause = S1AP_CauseMisc_unknown_PLMN;
 
@@ -521,6 +515,7 @@ void s1ap_handle_enb_configuration_update(
             ogs_warn("S1-Setup failure:");
             ogs_warn("    Cannot find Served TAI. "
                     "Check 'mme.tai' configuration");
+            log_tai_mismatch_diagnostic(enb);
             group = S1AP_Cause_PR_misc;
             cause = S1AP_CauseMisc_unknown_PLMN;
 

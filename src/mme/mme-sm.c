@@ -44,6 +44,30 @@ void mme_state_initial(ogs_fsm_t *s, mme_event_t *e)
     OGS_FSM_TRAN(s, &mme_state_operational);
 }
 
+/*
+ * One-shot timer fired by the graceful /admin/enb/detach flow.
+ * Re-injects the prepared follow-up event (with admin_force=1)
+ * onto the MME event queue so the actual eNB teardown happens
+ * on the main thread, after the S1AP Reset PDU has had time to
+ * leave the SCTP write buffer. The timer pointer is left in
+ * place; the consumer (case MME_EVENT_ADMIN_DETACH_ENB) frees
+ * it once the event is dispatched.
+ */
+static void admin_detach_enb_finalize(void *data)
+{
+    mme_event_t *e = data;
+    int rv;
+
+    ogs_assert(e);
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("admin_detach_enb_finalize: ogs_queue_push failed: %d", rv);
+        if (e->timer) ogs_timer_delete(e->timer);
+        mme_event_free(e);
+    }
+}
+
 void mme_state_final(ogs_fsm_t *s, mme_event_t *e)
 {
     mme_sm_debug(e);
@@ -1002,6 +1026,150 @@ cleanup:
                     mme_timer_get_name(e->timer_id), e->timer_id);
         }
         break;
+
+    /*
+     * Admin events posted by the Prometheus HTTP admin endpoints.
+     * The MHD worker thread enqueued these; we run on the MME main
+     * thread and own the relevant lists / FSMs, so the actual
+     * mutation is safe here.
+     *
+     * Two modes per e->admin_force:
+     *   0 (graceful, default) - standard 3GPP signalling: eNB gets
+     *                           an S1AP Reset PDU, UE gets a NAS
+     *                           Detach Request. Equivalents to an
+     *                           O&M-driven teardown.
+     *   1 (force)             - abrupt cleanup: no Reset / no NAS
+     *                           Detach. Use when the peer is dead.
+     */
+    case MME_EVENT_ADMIN_DETACH_ENB:
+    {
+        /*
+         * If this event was scheduled by the graceful one-shot
+         * timer (see admin_detach_enb_finalize above) the timer
+         * pointer is still attached - free it now so we don't
+         * leak.
+         */
+        if (e->timer) {
+            ogs_timer_delete(e->timer);
+            e->timer = NULL;
+        }
+
+        mme_enb_t *enb = mme_enb_find_by_id(e->enb_id);
+        if (!enb) {
+            ogs_warn("admin detach enb: eNB pool-id %d already gone",
+                    (int)e->enb_id);
+            break;
+        }
+
+        if (!e->admin_force) {
+            /*
+             * Graceful path. Send an MME-initiated S1AP Reset
+             * (resetType = s1_Interface, cause = O&M intervention).
+             * The S1AP PDU is queued into the SCTP write buffer
+             * and actually goes out on the next pollset iteration,
+             * so we cannot tear the SCTP down right now or the
+             * Reset would be dropped. Re-queue ourselves with
+             * admin_force=1 after a short delay; by then the
+             * Reset has been sent and (most likely) acknowledged.
+             */
+            ogs_info("admin detach enb (graceful): "
+                    "sending S1 Reset to enb_id=0x%x peer=%s",
+                    enb->enb_id,
+                    ogs_sockaddr_to_string_static(enb->sctp.addr));
+
+            s1ap_send_s1_reset(enb,
+                    S1AP_Cause_PR_misc,
+                    S1AP_CauseMisc_om_intervention);
+
+            mme_event_t *later = mme_event_new(MME_EVENT_ADMIN_DETACH_ENB);
+            ogs_assert(later);
+            later->enb_id = e->enb_id;
+            later->admin_force = 1;
+            later->timer = ogs_timer_add(ogs_app()->timer_mgr,
+                    admin_detach_enb_finalize, later);
+            ogs_assert(later->timer);
+            /* 2s is enough for an S1 Reset round-trip on a healthy link. */
+            ogs_timer_start(later->timer, ogs_time_from_sec(2));
+            break;
+        }
+
+        ogs_info("admin detach enb (force): enb_id=0x%x peer=%s",
+                enb->enb_id,
+                ogs_sockaddr_to_string_static(enb->sctp.addr));
+        /* Release every UE on this eNB, then drop the eNB context. */
+        mme_gtp_send_release_all_ue_in_enb(enb,
+                OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_RESET_ALL);
+        mme_enb_remove(enb);
+        break;
+    }
+
+    case MME_EVENT_ADMIN_DETACH_UE:
+    {
+        mme_ue = mme_ue_find_by_id(e->mme_ue_id);
+        if (!mme_ue) {
+            ogs_warn("admin detach ue: mme_ue pool-id %d already gone",
+                    (int)e->mme_ue_id);
+            break;
+        }
+
+        if (e->admin_force) {
+            /*
+             * Implicit detach (UE not notified over the air). SGW /
+             * SMF / PGW still cleaned up via the standard cascade.
+             * Reuse the timer-driven path - it sets detach_type to
+             * MME_IMPLICIT and runs mme_send_delete_session_or_detach
+             * for us.
+             */
+            ogs_info("admin detach ue (force/implicit): imsi=%s",
+                    mme_ue->imsi_bcd);
+            mme_timer_implicit_detach_expire(OGS_UINT_TO_POINTER(mme_ue->id));
+            break;
+        }
+
+        /*
+         * Graceful path = MME-initiated explicit detach
+         * (TS 23.401 § 5.3.8.3). Mirrors the HSS-CLR flow in
+         * mme-s6a-handler.c so the UE actually receives a NAS
+         * Detach Request and the eNB sees the resulting UE Context
+         * Release.
+         */
+        ogs_info("admin detach ue (graceful): imsi=%s state=%s",
+                mme_ue->imsi_bcd,
+                ECM_CONNECTED(mme_ue) ? "ECM-CONNECTED" : "ECM-IDLE");
+
+        mme_ue->detach_type = MME_DETACH_TYPE_MME_EXPLICIT;
+
+        if (ECM_IDLE(mme_ue)) {
+            int r;
+            MME_STORE_PAGING_INFO(mme_ue,
+                    MME_PAGING_TYPE_DETACH_TO_UE, NULL);
+            r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
+            ogs_expect(r == OGS_OK);
+            ogs_assert(r != OGS_ERROR);
+        } else {
+            int r;
+            enb_ue_t *enb_ue = NULL;
+
+            MME_CLEAR_PAGING_INFO(mme_ue);
+            r = nas_eps_send_detach_request(mme_ue);
+            ogs_expect(r == OGS_OK);
+            ogs_assert(r != OGS_ERROR);
+
+            if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
+                ogs_assert(OGS_OK ==
+                        sgsap_send_detach_indication(mme_ue));
+            } else {
+                enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+                if (enb_ue) {
+                    mme_send_delete_session_or_detach(enb_ue, mme_ue);
+                } else {
+                    ogs_warn("admin detach ue: no S1 context for imsi=%s",
+                            mme_ue->imsi_bcd);
+                }
+            }
+        }
+        break;
+    }
 
     case MME_EVENT_SGSAP_LO_SCTP_COMM_UP:
         sock = e->sock;

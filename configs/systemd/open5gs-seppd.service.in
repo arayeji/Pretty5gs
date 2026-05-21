@@ -14,5 +14,8 @@ RestartSec=2
 RestartPreventExitStatus=1
 ExecReload=/bin/kill -HUP $MAINPID
 
+# SEPP terminates N32 to every roaming partner PLMN.
+LimitNOFILE=1048576
+
 [Install]
 WantedBy=multi-user.target

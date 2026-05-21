@@ -19,7 +19,79 @@
 
 #include "ogs-app.h"
 
+#ifndef _WIN32
+#include <sys/resource.h>
+#include <errno.h>
+#include <string.h>
+#endif
+
 int __ogs_app_domain;
+
+/*
+ * Raise the open-files soft limit up to the hard limit.
+ *
+ * Without this, daemons launched outside systemd (manual `./open5gs-mmed`
+ * runs, docker images that don't ship our unit file, distro packages
+ * that haven't picked up the new LimitNOFILE=) silently inherit the
+ * shell/system default of 1024. With ~1000 attached eNBs/gNBs the
+ * daemon then fails accept() on /metrics with EMFILE, presenting to
+ * the client as connection-reset or empty body. Same symptom appears
+ * around 1000 active sessions on SMF/SGW.
+ *
+ * We only raise the *soft* limit, and only up to the *hard* limit -
+ * never lowered, never above what the kernel/operator already allows.
+ * This is unprivileged on Linux/BSD. Errors are non-fatal: log them
+ * and continue with whatever the OS gave us.
+ */
+static void ogs_app_raise_nofile(void)
+{
+#ifndef _WIN32
+    struct rlimit rl;
+
+    if (getrlimit(RLIMIT_NOFILE, &rl) != 0) {
+        ogs_warn("getrlimit(RLIMIT_NOFILE) failed: %s", strerror(errno));
+        return;
+    }
+
+    rlim_t old_soft = rl.rlim_cur;
+    if (rl.rlim_cur < rl.rlim_max) {
+        rl.rlim_cur = rl.rlim_max;
+        if (setrlimit(RLIMIT_NOFILE, &rl) != 0) {
+            ogs_warn("setrlimit(RLIMIT_NOFILE, cur=%llu, max=%llu) failed: %s "
+                    "- staying at %llu fds. If you see /metrics "
+                    "empty/RST or 'Too many open files' under load, raise "
+                    "LimitNOFILE= in the systemd unit or 'ulimit -n'.",
+                    (unsigned long long)rl.rlim_cur,
+                    (unsigned long long)rl.rlim_max,
+                    strerror(errno),
+                    (unsigned long long)old_soft);
+            return;
+        }
+    }
+
+    /*
+     * Hard cap is too low for production scale (default systemd unit on
+     * the host might still cap us at 1024). Surface it so the operator
+     * knows to bump LimitNOFILE= or /etc/security/limits.conf.
+     */
+    if (rl.rlim_cur < 4096) {
+        ogs_warn("RLIMIT_NOFILE is %llu (raised from %llu). This is below "
+                "the recommended floor of 4096. With many SCTP / SBI "
+                "peers, /metrics will start returning empty body / "
+                "connection reset once the limit is hit. Increase "
+                "'LimitNOFILE=' in the systemd unit "
+                "(/etc/systemd/system/open5gs-*.service.d/) or raise "
+                "the system-wide ulimit.",
+                (unsigned long long)rl.rlim_cur,
+                (unsigned long long)old_soft);
+    } else {
+        ogs_info("RLIMIT_NOFILE soft=%llu hard=%llu (raised from %llu)",
+                (unsigned long long)rl.rlim_cur,
+                (unsigned long long)rl.rlim_max,
+                (unsigned long long)old_soft);
+    }
+#endif /* !_WIN32 */
+}
 
 static ogs_app_pool_dump_cb_t pool_dump_cb = NULL;
 
@@ -167,7 +239,15 @@ int ogs_app_initialize(
     }
 
     /**************************************************************************
-     * Stage 8 : Queue, Timer and Poll
+     * Stage 8 : Raise file-descriptor limit before opening any sockets
+     *
+     * Done here (not in main() of each NF) so every daemon picks it
+     * up automatically. See ogs_app_raise_nofile() for the rationale.
+     */
+    ogs_app_raise_nofile();
+
+    /**************************************************************************
+     * Stage 9 : Queue, Timer and Poll
      */
     ogs_app()->queue = ogs_queue_create(ogs_app()->pool.event);
     ogs_assert(ogs_app()->queue);

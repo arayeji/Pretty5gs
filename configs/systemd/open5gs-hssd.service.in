@@ -14,5 +14,8 @@ RestartSec=2
 RestartPreventExitStatus=1
 ExecReload=/bin/kill -HUP $MAINPID
 
+# S6a Diameter peers + MongoDB driver sockets.
+LimitNOFILE=1048576
+
 [Install]
 WantedBy=multi-user.target

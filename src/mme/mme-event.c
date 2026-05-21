@@ -101,6 +101,11 @@ const char *mme_event_get_name(mme_event_t *e)
         return "MME_EVENT_GN_MESSAGE";
     case MME_EVENT_GN_TIMER:
         return "MME_EVENT_GN_TIMER";
+
+    case MME_EVENT_ADMIN_DETACH_ENB:
+        return "MME_EVENT_ADMIN_DETACH_ENB";
+    case MME_EVENT_ADMIN_DETACH_UE:
+        return "MME_EVENT_ADMIN_DETACH_UE";
     default:
        break;
     }

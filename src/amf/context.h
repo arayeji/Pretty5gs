@@ -111,6 +111,13 @@ typedef struct amf_context_s {
     uint64_t        amf_ue_ngap_id; /* amf_ue_ngap_id generator */
 
     ogs_list_t      gnb_list;       /* GNB NGAP Client List */
+    /*
+     * Cached size of gnb_list. ogs_list_count() is O(n); calling
+     * it on every Add/Remove log and every NG Setup attempt was
+     * quadratic and caused the same /metrics starvation seen on
+     * MME (see src/mme/mme-context.h).
+     */
+    int             num_of_gnbs;
     ogs_list_t      amf_ue_list;
 
     ogs_hash_t      *gnb_addr_hash; /* hash table for GNB Address */

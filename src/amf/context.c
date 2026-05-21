@@ -58,8 +58,19 @@ void amf_context_init(void)
     ogs_list_init(&self.ngap_list);
     ogs_list_init(&self.ngap_list6);
 
-    /* Allocate TWICE the pool to check if maximum number of gNBs is reached */
+    /*
+     * Allocate TWICE the pool to check if maximum number of gNBs
+     * is reached. Soft limit at max.peer in
+     * maximum_number_of_gnbs_is_reached(); the slack absorbs brief
+     * reconnect storms. Operators with > ~64 gNBs MUST raise
+     * 'global.max.peer' in YAML; otherwise rejected gNBs retry
+     * forever and saturate the main loop / starve /metrics.
+     */
     ogs_pool_init(&amf_gnb_pool, ogs_global_conf()->max.peer*2);
+    ogs_info("gNB capacity: max=%u (pool=%u, configure via "
+            "'global.max.peer' in YAML)",
+            (unsigned)ogs_global_conf()->max.peer,
+            (unsigned)ogs_global_conf()->max.peer*2);
     ogs_pool_init(&amf_ue_pool, ogs_global_conf()->max.ue);
     ogs_pool_init(&ran_ue_pool, ogs_global_conf()->max.ue);
     ogs_pool_init(&amf_sess_pool, ogs_app()->pool.sess);
@@ -1242,7 +1253,18 @@ amf_gnb_t *amf_gnb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
 
     ogs_pool_id_calloc(&amf_gnb_pool, &gnb);
     if (!gnb) {
-        ogs_error("ogs_pool_id_calloc() failed");
+        /*
+         * amf_gnb_pool is sized to global.max.peer * 2. When this
+         * fires the operator must raise 'global.max.peer' in YAML
+         * (e.g. peer: 16384 for ~8k gNBs). Otherwise the affected
+         * gNB will retry forever and AMF burns CPU on SCTP
+         * accept/reject cycles, which starves the /metrics worker.
+         */
+        ogs_error("Cannot allocate amf_gnb (pool exhausted, "
+                "cap=%u, current=%d) - raise "
+                "'global.max.peer' in YAML config",
+                (unsigned)ogs_global_conf()->max.peer * 2,
+                self.num_of_gnbs);
         return NULL;
     }
 
@@ -1271,11 +1293,18 @@ amf_gnb_t *amf_gnb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
     e.gnb_id = gnb->id;
     ogs_fsm_init(&gnb->sm, ngap_state_initial, ngap_state_final, &e);
 
+    /*
+     * /gnb-info iterates self.gnb_list on the MHD worker thread.
+     * Take the metrics dump lock so the reader never sees a
+     * half-linked or freed gnb.
+     */
+    ogs_metrics_dump_lock();
     ogs_list_add(&self.gnb_list, gnb);
+    self.num_of_gnbs++;
+    ogs_metrics_dump_unlock();
     amf_metrics_inst_global_inc(AMF_METR_GLOB_GAUGE_GNB);
 
-    ogs_info("[Added] Number of gNBs is now %d",
-            ogs_list_count(&self.gnb_list));
+    ogs_info("[Added] Number of gNBs is now %d", self.num_of_gnbs);
 
     return gnb;
 }
@@ -1287,7 +1316,15 @@ void amf_gnb_remove(amf_gnb_t *gnb)
     ogs_assert(gnb);
     ogs_assert(gnb->sctp.sock);
 
+    /*
+     * Hold the dump lock for the full destruction path - the dumper
+     * dereferences gnb->sctp.addr and walks gnb->ran_ue_list, both
+     * of which are about to be freed.
+     */
+    ogs_metrics_dump_lock();
     ogs_list_remove(&self.gnb_list, gnb);
+    if (self.num_of_gnbs > 0)
+        self.num_of_gnbs--;
 
     memset(&e, 0, sizeof(e));
     e.gnb_id = gnb->id;
@@ -1301,9 +1338,9 @@ void amf_gnb_remove(amf_gnb_t *gnb)
     ogs_sctp_flush_and_destroy(&gnb->sctp);
 
     ogs_pool_id_free(&amf_gnb_pool, gnb);
+    ogs_metrics_dump_unlock();
     amf_metrics_inst_global_dec(AMF_METR_GLOB_GAUGE_GNB);
-    ogs_info("[Removed] Number of gNBs is now %d",
-            ogs_list_count(&self.gnb_list));
+    ogs_info("[Removed] Number of gNBs is now %d", self.num_of_gnbs);
 }
 
 void amf_gnb_remove_all(void)
@@ -1694,7 +1731,14 @@ amf_ue_t *amf_ue_add(ran_ue_t *ran_ue)
 
     amf_ue_fsm_init(amf_ue);
 
+    /*
+     * /ue-info walks self.amf_ue_list on the MHD thread - take the
+     * dump lock so the reader either sees the old list head or the
+     * fully-linked new amf_ue, never a torn pointer.
+     */
+    ogs_metrics_dump_lock();
     ogs_list_add(&self.amf_ue_list, amf_ue);
+    ogs_metrics_dump_unlock();
 
     ogs_info("[Added] Number of AMF-UEs is now %d",
             ogs_list_count(&self.amf_ue_list));
@@ -1708,6 +1752,12 @@ void amf_ue_remove(amf_ue_t *amf_ue)
 
     ogs_assert(amf_ue);
 
+    /*
+     * Hold the dump lock for the entire teardown path - the /ue-info
+     * dumper drills into amf_ue->sess_list/bearer state we are
+     * about to release.
+     */
+    ogs_metrics_dump_lock();
     ogs_list_remove(&self.amf_ue_list, amf_ue);
 
     amf_ue_fsm_fini(amf_ue);
@@ -1795,6 +1845,7 @@ void amf_ue_remove(amf_ue_t *amf_ue)
     amf_ue->ran_ue_id = OGS_INVALID_POOL_ID;
 
     ogs_pool_id_free(&amf_ue_pool, amf_ue);
+    ogs_metrics_dump_unlock();
 
     ogs_info("[Removed] Number of AMF-UEs is now %d",
             ogs_list_count(&self.amf_ue_list));

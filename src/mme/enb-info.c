@@ -63,6 +63,7 @@
 
 #include "ogs-core.h"
 #include "ogs-proto.h"
+#include "ogs-metrics.h"
 #include "mme-context.h"
 #include "enb-info.h"
 
@@ -74,12 +75,18 @@
 #endif
 
 
-size_t mme_dump_enb_info(char *buf, size_t buflen, size_t page, size_t page_size)
+size_t mme_dump_enb_info(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
-    page_size = page_size ? page_size : ENB_INFO_PAGE_SIZE_DEFAULT;
-    if (page_size > ENB_INFO_PAGE_SIZE_DEFAULT) page_size = ENB_INFO_PAGE_SIZE_DEFAULT;
+    /*
+     * Default to the historic 100-per-page when the caller did not
+     * specify, but no longer clamp on the upper bound. The HTTP
+     * layer (serve_json_from_dumper) grows its buffer to fit, so
+     * very large page_size values are honoured directly.
+     */
+    if (page_size == 0) page_size = ENB_INFO_PAGE_SIZE_DEFAULT;
 
-    return mme_dump_enb_info_paged(buf, buflen, page, page_size);
+    return mme_dump_enb_info_paged(buf, buflen, page, page_size, q);
 }
 
 static inline const char *safe_sa_str(const ogs_sockaddr_t *sa)
@@ -90,14 +97,40 @@ static inline const char *safe_sa_str(const ogs_sockaddr_t *sa)
     return ogs_sockaddr_to_string_static((ogs_sockaddr_t *)sa);
 }
 
-size_t mme_dump_enb_info_paged(char *buf, size_t buflen, size_t page, size_t page_size)
+/*
+ * Compare an ogs_sockaddr to a textual IPv4/IPv6 query value. The
+ * comparison is exact-text against the IP portion of
+ * ogs_sockaddr_to_string_static (which has the form "[ipv6]:port"
+ * or "ipv4:port"), so we strip the brackets and the trailing
+ * ":port" before strcmp.
+ */
+static bool sa_matches_ip(const ogs_sockaddr_t *sa, const char *needle)
+{
+    if (!sa || !needle || !*needle) return false;
+    const char *s = ogs_sockaddr_to_string_static((ogs_sockaddr_t *)sa);
+    if (!s) return false;
+    /* IPv6 form: [::1]:36412 - lift the bracketed part */
+    if (s[0] == '[') {
+        const char *end = strchr(s + 1, ']');
+        if (!end) return false;
+        size_t len = (size_t)(end - (s + 1));
+        return strlen(needle) == len && strncmp(s + 1, needle, len) == 0;
+    }
+    const char *colon = strrchr(s, ':');
+    if (!colon) return strcmp(s, needle) == 0;
+    size_t len = (size_t)(colon - s);
+    return strlen(needle) == len && strncmp(s, needle, len) == 0;
+}
+
+size_t mme_dump_enb_info_paged(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
     if (!buf || buflen == 0) return 0;
 
     const bool no_paging = (page == SIZE_MAX);
     if (!no_paging) {
         if (page_size == 0) page_size = ENB_INFO_PAGE_SIZE_DEFAULT;
-        if (page_size > ENB_INFO_PAGE_SIZE_DEFAULT) page_size = ENB_INFO_PAGE_SIZE_DEFAULT;
+        /* No upper clamp - the HTTP layer grows the buffer to fit. */
     } else {
         page_size = SIZE_MAX;
         page = 0;
@@ -128,18 +161,39 @@ size_t mme_dump_enb_info_paged(char *buf, size_t buflen, size_t page, size_t pag
     bool has_next = false;
     bool oom = false;
 
+    /*
+     * This dumper runs on the MHD thread (see lib/metrics/prometheus/
+     * context.c). Take the coarse metrics dump lock so the MME main
+     * thread can't free an mme_enb_t / enb_ue_t we are iterating.
+     * Released right before json_pager_finalize() since the rest of
+     * the work only touches the cJSON tree built above.
+     */
+    ogs_metrics_dump_lock();
+
     mme_enb_t *enb = NULL;
     ogs_list_for_each(&ctxt->enb_list, enb) {
+        /*
+         * Server-side filters. Apply BEFORE the paging cursor so
+         * paging is over the filtered subset, not over the full
+         * list (which would make most pages empty).
+         */
+        if (q && q->has_enb_id && enb->enb_id != q->enb_id)
+            continue;
+        if (q && q->ip && *q->ip && !sa_matches_ip(enb->sctp.addr, q->ip))
+            continue;
+
         int act = json_pager_advance(no_paging, idx, start_index, emitted, page_size, &has_next);
         if (act == 1) { idx++; continue; }
         if (act == 2) break;
 
-        /* Count connected UEs on this eNB */
-        size_t num_connected_ues = 0;
-        {
-            enb_ue_t *ue_it = NULL;
-            ogs_list_for_each(&enb->enb_ue_list, ue_it) num_connected_ues++;
-        }
+        /*
+         * Use the maintained per-eNB counter rather than walking
+         * enb->enb_ue_list. The list is mutated by the MME main
+         * thread, and we are running on the MHD worker thread; the
+         * counter is a single int (atomic read) so a stale value is
+         * the worst case here, not a use-after-free.
+         */
+        size_t num_connected_ues = (size_t)(enb->num_enb_ues > 0 ? enb->num_enb_ues : 0);
 
         /* eNB object (build fully before attaching) */
         cJSON *e = cJSON_CreateObject();
@@ -234,6 +288,8 @@ size_t mme_dump_enb_info_paged(char *buf, size_t buflen, size_t page, size_t pag
         emitted++;
         idx++;
     }
+
+    ogs_metrics_dump_unlock();
 
     json_pager_add_trailing(root, no_paging, page, page_size,
                             emitted, has_next && !oom, "/enb-info", oom);

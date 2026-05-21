@@ -139,8 +139,22 @@ void mme_context_init(void)
     ogs_pool_init(&mme_hssmap_pool, ogs_app()->pool.nf);
     ogs_pool_init(&mme_emerg_pool, ogs_app()->pool.emerg);
 
-    /* Allocate TWICE the pool to check if maximum number of eNBs is reached */
+    /*
+     * Allocate TWICE the pool to check if maximum number of eNBs
+     * is reached. The S1 Setup gate (maximum_number_of_enbs_is_reached)
+     * still uses max.peer as the soft limit; the extra slack absorbs
+     * brief reconnect storms without dropping legitimate eNBs.
+     *
+     * Operators with more than ~64 eNBs MUST raise global.max.peer in
+     * the YAML config (default is intentionally conservative). Mismatch
+     * here is the classic cause of "/metrics empty response" because
+     * rejected eNBs retry forever and saturate the main loop.
+     */
     ogs_pool_init(&mme_enb_pool, ogs_global_conf()->max.peer*2);
+    ogs_info("eNB capacity: max=%u (pool=%u, configure via "
+            "'global.max.peer' in YAML)",
+            (unsigned)ogs_global_conf()->max.peer,
+            (unsigned)ogs_global_conf()->max.peer*2);
 
     ogs_pool_init(&mme_ue_pool, ogs_global_conf()->max.ue);
     ogs_pool_init(&mme_s11_teid_pool, ogs_global_conf()->max.ue);
@@ -3375,7 +3389,23 @@ mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
 
     ogs_pool_id_calloc(&mme_enb_pool, &enb);
     if (!enb) {
-        ogs_error("ogs_pool_id_calloc() failed");
+        /*
+         * mme_enb_pool is sized to global.max.peer * 2 in
+         * mme_context_init(). When this fires the operator must
+         * raise global.max.peer in the YAML (e.g.
+         *   global:
+         *     max:
+         *       peer: 16384
+         * for ~8k eNBs with headroom for reconnects). Otherwise
+         * the affected eNB will retry forever and the MME burns
+         * CPU on SCTP accept/reject cycles, which in turn
+         * starves the /metrics HTTP worker.
+         */
+        ogs_error("Cannot allocate mme_enb (pool exhausted, "
+                "cap=%u, current=%d) - raise "
+                "'global.max.peer' in YAML config",
+                (unsigned)ogs_global_conf()->max.peer * 2,
+                self.num_of_enbs);
         return NULL;
     }
 
@@ -3405,11 +3435,19 @@ mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
     e.enb_id = enb->id;
     ogs_fsm_init(&enb->sm, s1ap_state_initial, s1ap_state_final, &e);
 
+    /*
+     * The /enb-info dumper iterates self.enb_list on the MHD
+     * thread. Take the metrics dump lock around the list mutation
+     * so the reader either sees the old or the new list head, never
+     * a partial pointer write.
+     */
+    ogs_metrics_dump_lock();
     ogs_list_add(&self.enb_list, enb);
+    self.num_of_enbs++;
+    ogs_metrics_dump_unlock();
     mme_metrics_inst_global_inc(MME_METR_GLOB_GAUGE_ENB);
 
-    ogs_info("[Added] Number of eNBs is now %d",
-            ogs_list_count(&self.enb_list));
+    ogs_info("[Added] Number of eNBs is now %d", self.num_of_enbs);
 
     return enb;
 }
@@ -3421,7 +3459,16 @@ int mme_enb_remove(mme_enb_t *enb)
     ogs_assert(enb);
     ogs_assert(enb->sctp.sock);
 
+    /*
+     * Hold the metrics dump lock for the full destruction path -
+     * not just the list_remove - because the /enb-info dumper
+     * accesses enb_ue_list, sctp.addr, etc. and we are about to
+     * free them.
+     */
+    ogs_metrics_dump_lock();
     ogs_list_remove(&self.enb_list, enb);
+    if (self.num_of_enbs > 0)
+        self.num_of_enbs--;
 
     memset(&e, 0, sizeof(e));
     e.enb_id = enb->id;
@@ -3447,9 +3494,9 @@ int mme_enb_remove(mme_enb_t *enb)
     }
 
     ogs_pool_id_free(&mme_enb_pool, enb);
+    ogs_metrics_dump_unlock();
     mme_metrics_inst_global_dec(MME_METR_GLOB_GAUGE_ENB);
-    ogs_info("[Removed] Number of eNBs is now %d",
-            ogs_list_count(&self.enb_list));
+    ogs_info("[Removed] Number of eNBs is now %d", self.num_of_enbs);
 
     return OGS_OK;
 }
@@ -3569,6 +3616,7 @@ enb_ue_t *enb_ue_add(mme_enb_t *enb, uint32_t enb_ue_s1ap_id)
     enb_ue->enb_id = enb->id;
 
     ogs_list_add(&enb->enb_ue_list, enb_ue);
+    enb->num_enb_ues++;
     if (enb->enb_ue_hash)
         ogs_hash_set(enb->enb_ue_hash,
                 &enb_ue->enb_ue_s1ap_id,
@@ -3601,6 +3649,7 @@ void enb_ue_remove(enb_ue_t *enb_ue)
 
     if (enb) {
         ogs_list_remove(&enb->enb_ue_list, enb_ue);
+        if (enb->num_enb_ues > 0) enb->num_enb_ues--;
         if (enb->enb_ue_hash) {
             /*
              * Fast path: the current field value still matches the key
@@ -3668,10 +3717,13 @@ void enb_ue_switch_to_enb(enb_ue_t *enb_ue, mme_enb_t *new_enb)
         }
     }
 
-    if (enb)
+    if (enb) {
         ogs_list_remove(&enb->enb_ue_list, enb_ue);
+        if (enb->num_enb_ues > 0) enb->num_enb_ues--;
+    }
 
     ogs_list_add(&new_enb->enb_ue_list, enb_ue);
+    new_enb->num_enb_ues++;
     if (new_enb->enb_ue_hash)
         ogs_hash_set(new_enb->enb_ue_hash,
                 &enb_ue->enb_ue_s1ap_id,
@@ -4141,7 +4193,14 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
 
     mme_ue_fsm_init(mme_ue);
 
+    /*
+     * /ue-info iterates self.mme_ue_list on the MHD thread. Guard
+     * the link insertion so the reader sees a fully-initialized
+     * mme_ue or no mme_ue at all.
+     */
+    ogs_metrics_dump_lock();
     ogs_list_add(&self.mme_ue_list, mme_ue);
+    ogs_metrics_dump_unlock();
 
     ogs_info("[Added] Number of MME-UEs is now %d",
             ogs_list_count(&self.mme_ue_list));
@@ -4154,6 +4213,15 @@ void mme_ue_remove(mme_ue_t *mme_ue)
     sgw_ue_t *sgw_ue = NULL;
     ogs_assert(mme_ue);
 
+    /*
+     * Take the metrics dump lock for the duration of teardown.
+     * The /ue-info dumper may be walking mme_ue_list right now, and
+     * we are about to free this mme_ue plus its session/bearer
+     * sublists - racing the reader could segfault. The lock is
+     * released only after pool_id_free() so by the time the MHD
+     * thread re-acquires it, this mme_ue is gone from the list.
+     */
+    ogs_metrics_dump_lock();
     ogs_list_remove(&self.mme_ue_list, mme_ue);
 
     mme_ue_fsm_fini(mme_ue);
@@ -4211,6 +4279,7 @@ void mme_ue_remove(mme_ue_t *mme_ue)
     ogs_pool_free(&mme_s11_teid_pool, mme_ue->mme_s11_teid_node);
     ogs_pool_free(&mme_gn_teid_pool, mme_ue->gn.mme_gn_teid_node);
     ogs_pool_id_free(&mme_ue_pool, mme_ue);
+    ogs_metrics_dump_unlock();
 
     ogs_info("[Removed] Number of MME-UEs is now %d",
             ogs_list_count(&self.mme_ue_list));
@@ -4927,7 +4996,15 @@ mme_sess_t *mme_sess_add(mme_ue_t *mme_ue, uint8_t pti)
     bearer = mme_bearer_add(sess);
     ogs_assert(bearer);
 
+    /*
+     * Guard sess_list mutation against the /ue-info dumper running
+     * on the MHD thread. The dump lock is recursive so this is safe
+     * even when we are already inside a locked region (e.g. attach
+     * processing that holds it for a wider window).
+     */
+    ogs_metrics_dump_lock();
     ogs_list_add(&mme_ue->sess_list, sess);
+    ogs_metrics_dump_unlock();
 
     stats_add_mme_session();
 
@@ -4942,6 +5019,11 @@ void mme_sess_remove(mme_sess_t *sess)
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     ogs_assert(mme_ue);
 
+    /*
+     * Same as mme_sess_add - keep the dumper from observing a
+     * half-removed sess or following a freed pointer.
+     */
+    ogs_metrics_dump_lock();
     ogs_list_remove(&mme_ue->sess_list, sess);
 
     mme_bearer_remove_all(sess);
@@ -4952,6 +5034,7 @@ void mme_sess_remove(mme_sess_t *sess)
     OGS_TLV_CLEAR_DATA(&sess->pgw_epco);
 
     ogs_pool_id_free(&mme_sess_pool, sess);
+    ogs_metrics_dump_unlock();
 
     stats_remove_mme_session();
 }
@@ -5073,7 +5156,13 @@ mme_bearer_t *mme_bearer_add(mme_sess_t *sess)
     bearer->mme_ue_id = mme_ue->id;
     bearer->sess_id = sess->id;
 
+    /*
+     * Guard bearer_list mutation - the /ue-info dumper walks
+     * sess->bearer_list on the MHD worker thread.
+     */
+    ogs_metrics_dump_lock();
     ogs_list_add(&sess->bearer_list, bearer);
+    ogs_metrics_dump_unlock();
     /* Keep the EBI -> bearer-id lookup table in sync so subsequent
      * mme_bearer_find_by_ue_ebi() calls hit O(1). */
     if (bearer->ebi >= MIN_EPS_BEARER_ID && bearer->ebi <= MAX_EPS_BEARER_ID)
@@ -5119,6 +5208,14 @@ void mme_bearer_remove(mme_bearer_t *bearer)
     ogs_timer_delete(bearer->t3489.timer);
     ogs_timer_delete(bearer->t_nas_deactivate.timer);
 
+    /*
+     * Take the dump lock around bearer teardown - the /ue-info
+     * dumper drills into sess->bearer_list and dereferences each
+     * bearer's ebi/qci fields, and we are about to free this
+     * bearer. Lock is recursive (see lib/metrics/context.c) so an
+     * outer locked section is OK.
+     */
+    ogs_metrics_dump_lock();
     ogs_list_remove(&sess->bearer_list, bearer);
 
     OGS_TLV_CLEAR_DATA(&bearer->tft);
@@ -5139,6 +5236,7 @@ void mme_bearer_remove(mme_bearer_t *bearer)
     }
 
     ogs_pool_id_free(&mme_bearer_pool, bearer);
+    ogs_metrics_dump_unlock();
 }
 
 void mme_bearer_remove_all(mme_sess_t *sess)

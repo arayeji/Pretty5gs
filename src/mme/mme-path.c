@@ -47,10 +47,17 @@ void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
         }
         break;
 
-    /* MME Explicit Detach, ie: O&M Procedures */
+    /* MME-initiated explicit detach (TS 23.401 §5.3.8.3),
+     * e.g. O&M action via the admin API. Semantically identical
+     * to HSS-initiated explicit detach: a NAS Detach Request has
+     * already been sent to the UE (or will be after paging) by
+     * the caller; here we just tear down the S11 sessions and
+     * leave UE-side cleanup to the Detach Accept handler.
+     */
     case MME_DETACH_TYPE_MME_EXPLICIT:
-        ogs_fatal("Not Implemented : MME_DETACH_TYPE_MME_EXPLICIT");
-        ogs_assert_if_reached();
+        ogs_debug("Explicit MME Detach");
+        mme_gtp_send_delete_all_sessions(
+                enb_ue, mme_ue, OGS_GTP_DELETE_NO_ACTION);
         break;
 
     /* HSS Explicit Detach, ie: Subscription Withdrawl Cancel Location
