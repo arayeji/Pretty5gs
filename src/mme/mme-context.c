@@ -238,13 +238,19 @@ mme_context_t *mme_self(void)
 
 void mme_context_pool_dump(void)
 {
+    /*
+     * Read fields directly off the pool struct. The OGS_POOL macro
+     * still defines name/size/avail/peak; doing it this way means a
+     * partial header sync (only the new accessor macros missing)
+     * does not break the dump.
+     */
 #define MME_POOL_DUMP(_p) \
     ogs_info("[pool] %-22s size=%-10d avail=%-10d used=%-10d peak=%-10d", \
-            ogs_pool_name(&(_p)), \
-            ogs_pool_size(&(_p)), \
-            ogs_pool_avail(&(_p)), \
-            ogs_pool_size(&(_p)) - ogs_pool_avail(&(_p)), \
-            ogs_pool_peak(&(_p)))
+            (_p).name, \
+            (_p).size, \
+            (_p).avail, \
+            (_p).size - (_p).avail, \
+            (_p).peak)
 
     ogs_info("===== MME pool stats =====");
     MME_POOL_DUMP(mme_enb_pool);
