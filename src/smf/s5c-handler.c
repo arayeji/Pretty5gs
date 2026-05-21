@@ -343,6 +343,18 @@ uint8_t smf_s5c_handle_create_session_request(
         return cause_value;
     }
 
+    /* Set User Location Information (raw IE bytes).
+     *
+     * Must be stored BEFORE smf_ga_cdr_session_start() below, otherwise the
+     * opening Ga CDR record is emitted with an empty userLocationInformation
+     * [32] field and the warning "user_location_information absent from
+     * session" fires for every UE — even though the MME did include the ULI
+     * IE in the Create Session Request. */
+    if (req->user_location_information.presence) {
+        OGS_TLV_STORE_DATA(&sess->gtp.user_location_information,
+                &req->user_location_information);
+    }
+
     smf_radius_accounting_session_started(sess);
     smf_ga_cdr_session_start(sess);
 
@@ -506,11 +518,9 @@ uint8_t smf_s5c_handle_create_session_request(
                 &req->additional_protocol_configuration_options);
     }
 
-    /* Set User Location Information */
-    if (req->user_location_information.presence) {
-        OGS_TLV_STORE_DATA(&sess->gtp.user_location_information,
-                &req->user_location_information);
-    }
+    /* User Location Information is stored earlier in this handler (before
+     * smf_ga_cdr_session_start()). Do NOT re-store it here — that would
+     * leak the previous OGS_TLV_STORE_DATA() allocation. */
 
     /* Set UE Timezone */
     if (req->ue_time_zone.presence) {

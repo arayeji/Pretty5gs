@@ -28,7 +28,31 @@
 extern "C" {
 #endif /* __cplusplus */
 
-#define OGS_MAX_NUM_OF_SESS             4   /* Num of APN(Session) per UE */
+/*
+ * Maximum APN-Configurations (4G) / DNN-Configurations (5G) a single
+ * subscriber can have stored on the NF.
+ *
+ * This is a *static array bound* embedded in several structures:
+ *   - mme_ue_t.session[OGS_MAX_NUM_OF_SESS]       (per-UE in mme_ue_pool)
+ *   - ogs_slice_data_t.session[OGS_MAX_NUM_OF_SESS]  (per-slice; up to
+ *     OGS_MAX_NUM_OF_SLICE=8 slices inside ogs_subscription_data_t,
+ *     which is stack-allocated during S6a/SBI parsing).
+ *
+ * Bumping it raises the cap that the S6a/HSS path will accept before
+ * logging 'Ignore max session count overflow [N>=N]'. Operators with
+ * many APNs per subscriber (slicing, MVNO tenants, enterprise) need
+ * it >= the largest subscription their HSS will send.
+ *
+ * RAM cost is mme_ue_pool * (OGS_MAX_NUM_OF_SESS - old) * sizeof
+ * (ogs_session_t). At max.ue=400000 each +1 here costs ~80 MB.
+ *
+ * NOTE: this constant ALSO seeds the default for global.max.sess_per_ue
+ * (used to size the *active*-session pool in recalculate_pool_size()).
+ * If you don't want the active-session pool to grow proportionally,
+ * set 'global.max.sess_per_ue' in YAML to the typical *active* session
+ * count per UE (usually 1-4), independent of this hard cap.
+ */
+#define OGS_MAX_NUM_OF_SESS             25  /* Num of APN(Session) per UE */
 #define OGS_MAX_NUM_OF_BEARER           4   /* Num of Bearer per Session */
 #define OGS_BEARER_PER_UE               8   /* Num of Bearer per UE */
 #define OGS_MAX_NUM_OF_GTPU_BUFFER      64  /* Num of GTPU Buffer per UE */
