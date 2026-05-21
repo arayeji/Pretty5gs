@@ -47,7 +47,7 @@ ogs_pkbuf_t *sgwc_s11_build_create_session_response(
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
     ogs_assert(sgwc_ue);
 
-    ogs_info("    SGW_S5C_TEID[0x%x] PGW_S5C_TEID[0x%x]",
+    ogs_debug("    SGW_S5C_TEID[0x%x] PGW_S5C_TEID[0x%x]",
             sess->sgw_s5c_teid, sess->pgw_s5c_teid);
 
     rsp = &gtp_message.create_session_response;
@@ -93,7 +93,7 @@ ogs_pkbuf_t *sgwc_s11_build_create_session_response(
         ul_tunnel = sgwc_ul_tunnel_in_bearer(bearer);
         ogs_assert(ul_tunnel);
 
-        ogs_info("    SGW_S1U_TEID[0x%x] PGW_S5U_TEID[0x%x]",
+        ogs_debug("    SGW_S1U_TEID[0x%x] PGW_S5U_TEID[0x%x]",
                 ul_tunnel->local_teid, ul_tunnel->remote_teid);
 
         /* Data Plane(UL) : SGW-S1U */

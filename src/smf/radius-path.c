@@ -546,7 +546,7 @@ static int radius_parse_access_accept(smf_sess_t *sess,
             } else if (radius_canon_framed_route(p + 2, (size_t)(alen - 2),
                         false, cidr, sizeof cidr)) {
                 v4_routes[v4_routes_count++] = ogs_strdup(cidr);
-                ogs_info("RADIUS: Framed-Route [%s]", cidr);
+                ogs_debug("RADIUS: Framed-Route [%s]", cidr);
             } else {
                 char bad[256];
                 size_t cp = ogs_min((size_t)(alen - 2), sizeof(bad) - 1);
@@ -564,7 +564,7 @@ static int radius_parse_access_accept(smf_sess_t *sess,
             } else if (radius_canon_framed_route(p + 2, (size_t)(alen - 2),
                         true, cidr, sizeof cidr)) {
                 v6_routes[v6_routes_count++] = ogs_strdup(cidr);
-                ogs_info("RADIUS: Framed-IPv6-Route [%s]", cidr);
+                ogs_debug("RADIUS: Framed-IPv6-Route [%s]", cidr);
             } else {
                 char bad[256];
                 size_t cp = ogs_min((size_t)(alen - 2), sizeof(bad) - 1);
@@ -601,7 +601,7 @@ static int radius_parse_access_accept(smf_sess_t *sess,
      * the URR; we log it for now.
      */
     if (interim_interval) {
-        ogs_info("RADIUS: Acct-Interim-Interval from server = %u s "
+        ogs_debug("RADIUS: Acct-Interim-Interval from server = %u s "
                 "(ignored; configured PFCP measurement period in use)",
                 (unsigned)interim_interval);
     }
@@ -635,7 +635,7 @@ static int radius_parse_access_accept(smf_sess_t *sess,
             sess->session.ipv4_framed_routes[k] = v4_routes[k];
             v4_routes[k] = NULL;
         }
-        ogs_info("RADIUS: installed %d Framed-Route(s) on session",
+        ogs_debug("RADIUS: installed %d Framed-Route(s) on session",
                 v4_routes_count);
     } else {
         /* Nothing collected; in case we allocated any tmp strings (shouldn't
@@ -668,7 +668,7 @@ static int radius_parse_access_accept(smf_sess_t *sess,
             sess->session.ipv6_framed_routes[k] = v6_routes[k];
             v6_routes[k] = NULL;
         }
-        ogs_info("RADIUS: installed %d Framed-IPv6-Route(s) on session",
+        ogs_debug("RADIUS: installed %d Framed-IPv6-Route(s) on session",
                 v6_routes_count);
     } else {
         int k;
@@ -710,7 +710,7 @@ static int radius_parse_access_accept(smf_sess_t *sess,
             return OGS_ERROR;
         }
     } else if (got_v4 || got_v6) {
-        ogs_info("RADIUS: ignoring framed UE IP/prefix from Access-Accept "
+        ogs_debug("RADIUS: ignoring framed UE IP/prefix from Access-Accept "
                 "(smf.radius.use_framed_ip_for_ue: false)");
     }
 
@@ -806,12 +806,12 @@ static uint8_t *radius_append_sess_3gpp_attrs(uint8_t *p,
     size_t uli_len;
 
     if (smf_ue && smf_ue->imeisv_bcd[0]) {
-        ogs_info("RADIUS: appending 3GPP-IMEISV [%s] (len=%d)",
+        ogs_debug("RADIUS: appending 3GPP-IMEISV [%s] (len=%d)",
                 smf_ue->imeisv_bcd, smf_ue->imeisv_len);
         p = append_attr_vendor_string(p, RADIUS_VENDOR_3GPP,
                 RADIUS_3GPP_IMEISV, smf_ue->imeisv_bcd);
     } else {
-        ogs_info("RADIUS: 3GPP-IMEISV NOT appended "
+        ogs_debug("RADIUS: 3GPP-IMEISV NOT appended "
                 "(smf_ue=%p imeisv_len=%d imeisv_bcd[0]=0x%02x)",
                 (const void *)smf_ue,
                 smf_ue ? smf_ue->imeisv_len : -1,
@@ -822,12 +822,12 @@ static uint8_t *radius_append_sess_3gpp_attrs(uint8_t *p,
     if (sess) {
         uli_len = radius_build_3gpp_uli(sess, uli);
         if (uli_len) {
-            ogs_info("RADIUS: appending 3GPP-User-Location-Info (len=%zu)",
+            ogs_debug("RADIUS: appending 3GPP-User-Location-Info (len=%zu)",
                     uli_len);
             p = append_attr_vendor_bytes(p, RADIUS_VENDOR_3GPP,
                     RADIUS_3GPP_USER_LOCATION_INFO, uli, uli_len);
         } else {
-            ogs_info("RADIUS: 3GPP-User-Location-Info NOT appended "
+            ogs_debug("RADIUS: 3GPP-User-Location-Info NOT appended "
                     "(uli encode returned 0)");
         }
     }
@@ -876,13 +876,79 @@ static int radius_build_common_attrs(uint8_t *p, const char *user,
  *   unexpected code) ? those are treated as "this server is misbehaving,
  *   stop trying it for this request".
  */
+/*
+ * Drop any cached transport for a server slot. Called when the runtime
+ * config replaces the server (host/port may have changed) and from
+ * smf_radius_servers_close() at shutdown.
+ */
+static void radius_server_transport_clear(smf_radius_server_t *s)
+{
+    if (!s) return;
+    if (s->sock) {
+        ogs_sock_destroy(s->sock);
+        s->sock = NULL;
+    }
+    if (s->peer_auth) {
+        ogs_freeaddrinfo(s->peer_auth);
+        s->peer_auth = NULL;
+    }
+    if (s->peer_acct) {
+        ogs_freeaddrinfo(s->peer_acct);
+        s->peer_acct = NULL;
+    }
+    s->sock_timeout_ms = 0;
+}
+
+/*
+ * Resolve `s->host` for the requested port, caching the result on the
+ * server slot. The auth and accounting destinations get separate
+ * sockaddrs because their service ports differ, but they share the
+ * underlying address family so a single UDP socket per server can serve
+ * both.
+ *
+ * Returns the cached sockaddr or NULL if resolution fails (the caller
+ * will surface an error and fail over).
+ */
+static ogs_sockaddr_t *radius_server_peer_get(
+        smf_radius_server_t *s, uint16_t port)
+{
+    ogs_sockaddr_t **slot;
+
+    ogs_assert(s);
+    ogs_assert(port);
+
+    if (port == s->auth_port)
+        slot = &s->peer_auth;
+    else if (port == s->acct_port)
+        slot = &s->peer_acct;
+    else
+        /* Unexpected: callers only pass either auth_port or acct_port.
+         * Fall back to acct slot so we still cache and avoid a leak. */
+        slot = &s->peer_acct;
+
+    if (*slot)
+        return *slot;
+
+    if (ogs_getaddrinfo(slot, AF_UNSPEC, s->host, port, 0) != OGS_OK ||
+            *slot == NULL) {
+        ogs_error("RADIUS ogs_getaddrinfo(%s:%u) failed",
+                s->host, (unsigned)port);
+        if (*slot) {
+            ogs_freeaddrinfo(*slot);
+            *slot = NULL;
+        }
+        return NULL;
+    }
+
+    return *slot;
+}
+
 static int radius_udp_exchange(int srv_idx, uint16_t port,
         const uint8_t *req, size_t req_len,
         uint8_t *res, size_t res_max, size_t *res_len,
         const uint8_t *acceptable_codes, unsigned num_codes)
 {
     ogs_sockaddr_t *peer = NULL;
-    ogs_sock_t *sock = NULL;
     int rv = OGS_ERROR;
     int attempt;
     int successes = 0, timeouts = 0;
@@ -900,38 +966,55 @@ static int radius_udp_exchange(int srv_idx, uint16_t port,
         return OGS_ERROR;
     }
 
-    if (ogs_getaddrinfo(&peer, AF_UNSPEC, s->host, port, 0) != OGS_OK ||
-        peer == NULL) {
-        ogs_error("RADIUS ogs_getaddrinfo(%s) failed", s->host);
+    peer = radius_server_peer_get(s, port);
+    if (!peer)
         return OGS_ERROR;
+
+    /*
+     * Open the UDP socket lazily on first use. If the family of the
+     * resolved peer changed (rare; happens after IPv4->IPv6 DNS swap),
+     * drop the cached socket so the new one matches.
+     */
+    if (s->sock && s->sock->family != peer->ogs_sa_family) {
+        ogs_sock_destroy(s->sock);
+        s->sock = NULL;
+        s->sock_timeout_ms = 0;
+    }
+    if (!s->sock) {
+        s->sock = ogs_sock_socket(peer->ogs_sa_family,
+                SOCK_DGRAM, IPPROTO_UDP);
+        if (!s->sock) {
+            ogs_error("RADIUS ogs_sock_socket() failed");
+            return OGS_ERROR;
+        }
+        s->sock_timeout_ms = 0;
     }
 
-    sock = ogs_sock_socket(peer->ogs_sa_family, SOCK_DGRAM, IPPROTO_UDP);
-    if (!sock) {
-        ogs_error("RADIUS ogs_sock_socket() failed");
-        ogs_freeaddrinfo(peer);
-        return OGS_ERROR;
+    /* Refresh receive timeout only when it actually changed; on every
+     * config reload the next call will pick up the new value, but most
+     * calls find the timeout already correct. */
+    if (s->sock_timeout_ms != cfg->timeout_ms) {
+        sock_set_rcv_timeout(s->sock->fd, cfg->timeout_ms);
+        s->sock_timeout_ms = cfg->timeout_ms;
     }
-
-    sock_set_rcv_timeout(sock->fd, cfg->timeout_ms);
 
     for (attempt = 0; attempt < cfg->retry; attempt++) {
         ssize_t snd, rcv;
         ogs_sockaddr_t from;
 
-        snd = ogs_sendto(sock->fd, req, req_len, 0, peer);
+        snd = ogs_sendto(s->sock->fd, req, req_len, 0, peer);
         if (snd != (ssize_t)req_len) {
             ogs_warn("RADIUS[%s] sendto incomplete (%d vs %u)",
                     s->host, (int)snd, (unsigned)req_len);
             continue;
         }
 
-        rcv = ogs_recvfrom(sock->fd, res, res_max, 0, &from);
+        rcv = ogs_recvfrom(s->sock->fd, res, res_max, 0, &from);
         if (rcv < RADIUS_HDR_LEN) {
             if (rcv < 0) {
-                /* recv timeout or network error ? count as timeout so the
-                 * caller can fail over; all attempts exhausted here mean
-                 * the remote is effectively unreachable. */
+                /* recv timeout or network error: count as timeout so
+                 * the caller can fail over; all attempts exhausted here
+                 * mean the remote is effectively unreachable. */
                 timeouts++;
             } else {
                 ogs_warn("RADIUS[%s] short response", s->host);
@@ -975,9 +1058,6 @@ static int radius_udp_exchange(int srv_idx, uint16_t port,
         successes++;
         break;
     }
-
-    ogs_sock_destroy(sock);
-    ogs_freeaddrinfo(peer);
 
     /* Update runtime health for the caller's benefit. */
     if (rv == OGS_OK) {
@@ -1130,12 +1210,12 @@ static int radius_exchange_with_failover(
             return OGS_OK;
         }
         if (rv == OGS_TIMEUP) {
-            ogs_info("RADIUS[%s]: timeout, trying next server", s->host);
+            ogs_debug("RADIUS[%s]: timeout, trying next server", s->host);
             continue;
         }
         /* Protocol error on this server ? still try the next one; some
          * farms have a bad actor we want to skip past. */
-        ogs_info("RADIUS[%s]: protocol error, trying next server", s->host);
+        ogs_debug("RADIUS[%s]: protocol error, trying next server", s->host);
     }
 
     return rv == OGS_OK ? OGS_OK : OGS_ERROR;
@@ -1239,7 +1319,7 @@ int smf_radius_authorize_for_session(smf_sess_t *sess)
                 res_len - RADIUS_HDR_LEN) != OGS_OK)
         return OGS_ERROR;
 
-    ogs_info("RADIUS Access-Accept: UE IP from server for IMSI[%s] DNN[%s]",
+    ogs_debug("RADIUS Access-Accept: UE IP from server for IMSI[%s] DNN[%s]",
             user, called ? called : "");
     return OGS_OK;
 }
@@ -1489,7 +1569,7 @@ void smf_radius_accounting_session_stopping(smf_sess_t *sess)
         return;
     }
 
-    ogs_info("RADIUS Accounting-Stop: sending for sess_id=%d "
+    ogs_debug("RADIUS Accounting-Stop: sending for sess_id=%d "
             "session-id=%s",
             (int)sess->id, sess->radius.acct_session_id);
     rc = radius_send_accounting(sess, RADIUS_ACCT_STATUS_STOP);
@@ -2125,6 +2205,21 @@ void smf_radius_pod_close(void)
     }
 }
 
+/*
+ * Release the cached UDP transport for every configured RADIUS server.
+ * Called from smf_terminate() so we don't leak sockets / sockaddrs at
+ * shutdown. Safe to call multiple times; clear() leaves slots in a
+ * benign state.
+ */
+void smf_radius_servers_close(void)
+{
+    smf_radius_config_t *cfg = &smf_self()->radius;
+    int i;
+
+    for (i = 0; i < SMF_MAX_RADIUS_SERVERS; i++)
+        radius_server_transport_clear(&cfg->servers[i]);
+}
+
 /* ------------------------------------------------------------------ */
 /* Hot reload                                                          */
 /* ------------------------------------------------------------------ */
@@ -2213,6 +2308,9 @@ int smf_radius_apply_runtime(const smf_radius_config_t *new_cfg)
     /* Swap the servers array. Free any heap-owned strings first so the
      * slot is clean, then dup from new_cfg. */
     for (i = 0; i < SMF_MAX_RADIUS_SERVERS; i++) {
+        /* Drop the cached UDP transport: the new server may resolve
+         * to a different host/port/family. */
+        radius_server_transport_clear(&cur->servers[i]);
         if (g_rad_owned_server_host[i]) {
             ogs_free(g_rad_owned_server_host[i]);
             g_rad_owned_server_host[i] = NULL;

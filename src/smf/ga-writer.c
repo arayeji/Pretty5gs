@@ -879,7 +879,21 @@ static void write_record(const uint8_t *rec, size_t rec_len)
         g.fp = NULL;
         return;
     }
-    fflush(g.fp);
+
+    /*
+     * We intentionally do NOT fflush() per record. libc's default block
+     * buffering coalesces writes into ~4 KiB pages, so on a busy SMF
+     * (hundreds of CDRs/s) we save one write(2) syscall per record.
+     *
+     * Durability is unchanged in steady state: rotate_locked() always
+     * fflush()es before fclose()/rename() so every ready/ file is fully
+     * promoted from libc -> kernel. The only window we widen is "SMF
+     * crashes between rotations" - bounded to whatever is still in the
+     * current libc buffer (a few KiB). With the existing rotate-by-
+     * records / bytes / seconds knobs that loss is at most one block-
+     * worth of records, and rotate_max_seconds caps the wall-clock
+     * exposure regardless of traffic.
+     */
 
     g.cur_records++;
     g.cur_bytes += (uint32_t)(rec_len + sizeof(hdr));

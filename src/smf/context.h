@@ -101,6 +101,26 @@ typedef struct smf_radius_server_s {
     int         consecutive_failures;
     ogs_time_t  down_since;
     ogs_time_t  last_probe;
+
+    /*
+     * Cached transport for the data path. Resolving the host string and
+     * opening a UDP socket on every Access-/Accounting-Request is
+     * expensive: at 100+ active UEs the SMF spent more time in
+     * getaddrinfo/socket/destroy than in the RADIUS exchange itself.
+     *
+     *   peer_auth / peer_acct - one shot DNS at first use, kept until the
+     *                           server slot is replaced.
+     *   sock                  - persistent UDP socket reused across all
+     *                           requests; recv timeout is refreshed before
+     *                           each send so config changes take effect.
+     *   sock_timeout_ms       - tracks the timeout currently applied to
+     *                           `sock`, lets us skip the setsockopt() when
+     *                           cfg->timeout_ms has not moved.
+     */
+    ogs_sockaddr_t *peer_auth;
+    ogs_sockaddr_t *peer_acct;
+    ogs_sock_t     *sock;
+    unsigned        sock_timeout_ms;
 } smf_radius_server_t;
 
 typedef struct smf_radius_config_s {
