@@ -2320,23 +2320,88 @@ int mme_context_parse_config(void)
                             ogs_warn("unknown key `%s`", network_name_key);
                     }
                 } else if (!strcmp(mme_key, "sgsap")) {
+                    /*
+                     * Default per-VLR TAI-LAI mapping cap.
+                     *
+                     * Each parsed map entry becomes an mme_csmap_t allocated
+                     * from mme_csmap_pool (sized by ogs_app()->pool.csmap,
+                     * which defaults to global.max.peer — typically thousands
+                     * to tens of thousands). So this number is just the
+                     * parse-time soft cap; raising it costs nothing at idle
+                     * because the parse buffer is heap-allocated below and
+                     * freed as soon as the client block finishes.
+                     *
+                     * Can be overridden in YAML via:
+                     *   mme:
+                     *     sgsap:
+                     *       max_csmap: <N>
+                     *       client:
+                     *         - address: ...
+                     *
+                     * The 'max_csmap' key may appear before OR after
+                     * 'client:' — a pre-scan below handles either order.
+                     */
+#define MAX_NUM_OF_CSMAP            8000 /* Default num of TAI-LAI MAP per VLR */
+                    int max_csmap = MAX_NUM_OF_CSMAP;
+                    {
+                        /* Pre-scan sgsap block for 'max_csmap' so YAML
+                         * key order does not matter. */
+                        ogs_yaml_iter_t prescan_iter;
+                        ogs_yaml_iter_recurse(&mme_iter, &prescan_iter);
+                        while (ogs_yaml_iter_next(&prescan_iter)) {
+                            const char *pk = ogs_yaml_iter_key(&prescan_iter);
+                            if (pk && !strcmp(pk, "max_csmap")) {
+                                const char *pv =
+                                    ogs_yaml_iter_value(&prescan_iter);
+                                if (pv) {
+                                    int n = atoi(pv);
+                                    if (n > 0) max_csmap = n;
+                                }
+                            }
+                        }
+                        if (max_csmap < 1) max_csmap = 1;
+                        /* Hard ceiling on parse-time buffer
+                         * (1,000,000 * 48 B = 48 MB) to keep an
+                         * accidentally huge value from OOM'ing init. */
+                        if (max_csmap > 1000000) {
+                            ogs_warn("sgsap.max_csmap=%d clamped to 1000000",
+                                    max_csmap);
+                            max_csmap = 1000000;
+                        }
+                        if (max_csmap != MAX_NUM_OF_CSMAP)
+                            ogs_info("sgsap: max_csmap=%d (default %d) "
+                                    "TAI-LAI mappings per VLR",
+                                    max_csmap, MAX_NUM_OF_CSMAP);
+                    }
+
                     ogs_yaml_iter_t sgsap_iter;
                     ogs_yaml_iter_recurse(&mme_iter, &sgsap_iter);
                     while (ogs_yaml_iter_next(&sgsap_iter)) {
                         const char *sgsap_key = ogs_yaml_iter_key(&sgsap_iter);
                         ogs_assert(sgsap_key);
+                        if (!strcmp(sgsap_key, "max_csmap")) {
+                            /* Consumed by pre-scan above. */
+                            continue;
+                        }
                         if (!strcmp(sgsap_key, "client")) {
                             ogs_yaml_iter_t client_iter, client_array;
                             ogs_yaml_iter_recurse(&sgsap_iter, &client_array);
                             do {
                                 mme_vlr_t *vlr = NULL;
                                 ogs_plmn_id_t plmn_id;
-#define MAX_NUM_OF_CSMAP            128 /* Num of TAI-LAI MAP per MME */
-                                struct {
+                                /*
+                                 * Heap-allocated so 8000+ entries don't
+                                 * blow the stack (8000 * 48 B = ~384 KB).
+                                 * Freed before the do/while iterates to the
+                                 * next client (and on any early return).
+                                 */
+                                struct csmap_entry_s {
                                     const char *tai_mcc, *tai_mnc;
                                     const char *lai_mcc, *lai_mnc;
                                     const char *tac, *lac;
-                                } map[MAX_NUM_OF_CSMAP];
+                                } *map = ogs_calloc(
+                                        max_csmap, sizeof(struct csmap_entry_s));
+                                ogs_assert(map);
                                 int map_num = 0;
                                 ogs_sockaddr_t *addr = NULL, *local_addr = NULL;
                                 int family = AF_UNSPEC;
@@ -2354,15 +2419,20 @@ int mme_context_parse_config(void)
                                             sizeof(ogs_yaml_iter_t));
                                 } else if (ogs_yaml_iter_type(&client_array) ==
                                     YAML_SEQUENCE_NODE) {
-                                    if (!ogs_yaml_iter_next(&client_array))
+                                    if (!ogs_yaml_iter_next(&client_array)) {
+                                        ogs_free(map);
                                         break;
+                                    }
                                     ogs_yaml_iter_recurse(
                                             &client_array, &client_iter);
                                 } else if (ogs_yaml_iter_type(&client_array) ==
                                     YAML_SCALAR_NODE) {
+                                    ogs_free(map);
                                     break;
-                                } else
+                                } else {
+                                    ogs_free(map);
                                     ogs_assert_if_reached();
+                                }
 
                                 while (ogs_yaml_iter_next(&client_iter)) {
                                     const char *client_key =
@@ -2447,6 +2517,7 @@ int mme_context_parse_config(void)
                                         if (rv != OGS_OK) {
                                             ogs_error("ogs_app_parse_sockopt_"
                                                     "config() failed");
+                                            ogs_free(map);
                                             return rv;
                                         }
                                         is_option = true;
@@ -2593,35 +2664,51 @@ int mme_context_parse_config(void)
                                         if (!map[map_num].tai_mcc) {
                                             ogs_error("No map.tai.plmn_id.mcc "
                                                     "in configuration file");
+                                            ogs_free(map);
                                             return OGS_ERROR;
                                         }
                                         if (!map[map_num].tai_mnc) {
                                             ogs_error("No map.tai.plmn_id.mnc "
                                                     "in configuration file");
+                                            ogs_free(map);
                                             return OGS_ERROR;
                                         }
                                         if (!map[map_num].tac) {
                                             ogs_error("No map.tai.tac "
                                                     "in configuration file");
+                                            ogs_free(map);
                                             return OGS_ERROR;
                                         }
                                         if (!map[map_num].lai_mcc) {
                                             ogs_error("No map.lai.plmn_id.mcc "
                                                     "in configuration file");
+                                            ogs_free(map);
                                             return OGS_ERROR;
                                         }
                                         if (!map[map_num].lai_mnc) {
                                             ogs_error("No map.lai.plmn_id.mnc "
                                                     "in configuration file");
+                                            ogs_free(map);
                                             return OGS_ERROR;
                                         }
                                         if (!map[map_num].lac) {
                                             ogs_error("No map.lai.lac "
                                                     "in configuration file");
+                                            ogs_free(map);
                                             return OGS_ERROR;
                                         }
 
                                         map_num++;
+                                        if (map_num >= max_csmap) {
+                                            ogs_error("Too many TAI-LAI "
+                                                    "mappings for one VLR "
+                                                    "(reached cap %d). "
+                                                    "Increase "
+                                                    "mme.sgsap.max_csmap.",
+                                                    max_csmap);
+                                            ogs_free(map);
+                                            return OGS_ERROR;
+                                        }
 
                                     } else if (!strcmp(client_key, "tai")) {
                                         ogs_error(
@@ -2642,6 +2729,7 @@ int mme_context_parse_config(void)
                                             "          mcc: 001\n"
                                             "          mnc: 01\n"
                                             "        lac: 43691\n");
+                                        ogs_free(map);
                                         return OGS_ERROR;
                                     } else if (!strcmp(client_key, "lai")) {
                                         ogs_error(
@@ -2662,6 +2750,7 @@ int mme_context_parse_config(void)
                                             "          mcc: 001\n"
                                             "          mnc: 01\n"
                                             "        lac: 43691\n");
+                                        ogs_free(map);
                                         return OGS_ERROR;
                                     } else
                                         ogs_warn("unknown key `%s`",
@@ -2671,6 +2760,7 @@ int mme_context_parse_config(void)
 
                                 if (map_num == 0) {
                                     ogs_error("No TAI-LAI Map");
+                                    ogs_free(map);
                                     return OGS_ERROR;
                                 }
 
@@ -2687,7 +2777,10 @@ int mme_context_parse_config(void)
                                         ogs_global_conf()->parameter.
                                         prefer_ipv4);
 
-                                if (addr == NULL) continue;
+                                if (addr == NULL) {
+                                    ogs_free(map);
+                                    continue;
+                                }
 
                                 local_addr = NULL;
                                 for (i = 0; i < local_hostname_num; i++) {
@@ -2725,6 +2818,12 @@ int mme_context_parse_config(void)
                                             &csmap->lai.nas_plmn_id, &plmn_id);
                                     csmap->lai.lac = atoi(map[i].lac);
                                 }
+
+                                /* Release per-client parse buffer; the
+                                 * permanent storage now lives in
+                                 * mme_csmap_pool entries attached to the
+                                 * VLR's csmap_list. */
+                                ogs_free(map);
                             } while (ogs_yaml_iter_type(&client_array) ==
                                     YAML_SEQUENCE_NODE);
                         } else
