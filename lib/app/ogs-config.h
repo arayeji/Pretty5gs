@@ -93,6 +93,22 @@ typedef struct ogs_global_conf_s {
          * TACs). Increase when mme.tai lists many individual TAC values.
          */
         uint64_t eps_tai0_partial_list;
+
+        /*
+         * Per-UE pool multipliers. Used by recalculate_pool_size() to
+         * dimension session/bearer/tunnel/gtpu/misc pools at startup.
+         *
+         * Defaults match the historical hard-coded constants
+         * (OGS_MAX_NUM_OF_SESS, OGS_MAX_NUM_OF_BEARER, MAX_NUM_OF_TUNNEL,
+         * OGS_MAX_NUM_OF_GTPU_BUFFER, POOL_NUM_PER_UE). Lower them when
+         * the deployment uses fewer sessions/bearers per UE than the
+         * standards-permitted maxima to dramatically cut pre-allocated RAM.
+         */
+        uint32_t sess_per_ue;       /* default OGS_MAX_NUM_OF_SESS (4)    */
+        uint32_t bearer_per_sess;   /* default OGS_MAX_NUM_OF_BEARER (4)  */
+        uint32_t tunnel_per_bearer; /* default MAX_NUM_OF_TUNNEL (3)      */
+        uint32_t gtpu_buf_per_ue;   /* default OGS_MAX_NUM_OF_GTPU_BUFFER (64) */
+        uint32_t pool_per_ue;       /* default POOL_NUM_PER_UE (16)       */
     } max;
 
     struct {

@@ -236,6 +236,110 @@ mme_context_t *mme_self(void)
     return &self;
 }
 
+void mme_context_pool_dump(void)
+{
+#define MME_POOL_DUMP(_p) \
+    ogs_info("[pool] %-22s size=%-10d avail=%-10d used=%-10d peak=%-10d", \
+            ogs_pool_name(&(_p)), \
+            ogs_pool_size(&(_p)), \
+            ogs_pool_avail(&(_p)), \
+            ogs_pool_size(&(_p)) - ogs_pool_avail(&(_p)), \
+            ogs_pool_peak(&(_p)))
+
+    ogs_info("===== MME pool stats =====");
+    MME_POOL_DUMP(mme_enb_pool);
+    MME_POOL_DUMP(mme_ue_pool);
+    MME_POOL_DUMP(enb_ue_pool);
+    MME_POOL_DUMP(sgw_ue_pool);
+    MME_POOL_DUMP(mme_sess_pool);
+    MME_POOL_DUMP(mme_bearer_pool);
+    MME_POOL_DUMP(mme_s11_teid_pool);
+    MME_POOL_DUMP(mme_gn_teid_pool);
+    MME_POOL_DUMP(m_tmsi_pool);
+    MME_POOL_DUMP(mme_sgw_pool);
+    MME_POOL_DUMP(mme_pgw_pool);
+    MME_POOL_DUMP(mme_vlr_pool);
+    MME_POOL_DUMP(mme_csmap_pool);
+    MME_POOL_DUMP(mme_sgsn_pool);
+    MME_POOL_DUMP(mme_sgsn_route_pool);
+    MME_POOL_DUMP(mme_hssmap_pool);
+    MME_POOL_DUMP(mme_emerg_pool);
+    ogs_info("[list] mme_ue_list count=%d  (active in idle = list - enb_ue used)",
+            ogs_list_count(&self.mme_ue_list));
+    ogs_info("==========================");
+
+#undef MME_POOL_DUMP
+}
+
+int mme_context_evict_idle_ues(int want)
+{
+    static ogs_time_t last_run = 0;
+    ogs_time_t now;
+    mme_ue_t *mme_ue = NULL, *next = NULL;
+    int evicted = 0;
+    int avail, size, watermark;
+
+    size = ogs_pool_size(&mme_ue_pool);
+    avail = ogs_pool_avail(&mme_ue_pool);
+
+    /*
+     * Watermark = 1% of pool, clamped to [16, 4096].
+     * Above this many free slots we treat the pool as healthy and skip
+     * the O(N) walk entirely.
+     */
+    watermark = size / 100;
+    if (watermark < 16) watermark = 16;
+    if (watermark > 4096) watermark = 4096;
+    if (avail >= watermark)
+        return 0;
+
+    now = ogs_time_now();
+
+    /* Cap at one sweep per second; the queued implicit-detach events
+     * need time to drain before the next round makes sense. */
+    if (last_run && now - last_run < ogs_time_from_sec(1))
+        return 0;
+    last_run = now;
+
+    if (want <= 0)
+        want = watermark - avail;
+    if (want < 16) want = 16;
+
+    /*
+     * Single linear pass. We only evict UEs that have been IDLE for at
+     * least MIN_IDLE_AGE_SEC so a UE that just released S1 isn't
+     * yanked while it might reattach. The list is not sorted, so we
+     * pick whatever qualifies in list order. This is good enough: the
+     * goal is to free *some* slots, not the absolute LRU set.
+     */
+#define MIN_IDLE_AGE_SEC 60
+    ogs_list_for_each_safe(&self.mme_ue_list, next, mme_ue) {
+        if (evicted >= want) break;
+        if (mme_ue->idle_since == 0) continue;
+        if (now - mme_ue->idle_since <
+                ogs_time_from_sec(MIN_IDLE_AGE_SEC)) continue;
+
+        /* Clear the stamp so the next sweep doesn't re-pick the same
+         * UE before the implicit-detach event drains and tears it
+         * down. */
+        mme_ue->idle_since = 0;
+
+        /* Reuse the implicit-detach timer path so the EMM FSM handles
+         * the teardown exactly as if T-implicit had fired naturally. */
+        mme_timer_implicit_detach_expire(OGS_UINT_TO_POINTER(mme_ue->id));
+        evicted++;
+    }
+#undef MIN_IDLE_AGE_SEC
+
+    if (evicted > 0)
+        ogs_warn("[pool] Soft-cap eviction queued implicit-detach for %d "
+                "idle UEs (mme_ue_pool size=%d avail=%d, list=%d)",
+                evicted, size, ogs_pool_avail(&mme_ue_pool),
+                ogs_list_count(&self.mme_ue_list));
+
+    return evicted;
+}
+
 static int mme_context_prepare(void)
 {
     self.relative_capacity = 0xff;
@@ -3418,7 +3522,17 @@ enb_ue_t *enb_ue_add(mme_enb_t *enb, uint32_t enb_ue_s1ap_id)
 
     ogs_pool_id_calloc(&enb_ue_pool, &enb_ue);
     if (enb_ue == NULL) {
-        ogs_error("Could not allocate enb_ue context from pool");
+        static ogs_time_t last_pool_err = 0;
+        ogs_time_t now = ogs_time_now();
+        if (last_pool_err == 0 ||
+                now - last_pool_err > ogs_time_from_sec(1)) {
+            last_pool_err = now;
+            ogs_error("Could not allocate enb_ue context from pool "
+                    "(enb_ue_pool size=%d avail=%d). "
+                    "Raise global.max.ue.",
+                    ogs_pool_size(&enb_ue_pool),
+                    ogs_pool_avail(&enb_ue_pool));
+        }
         return NULL;
     }
 
@@ -3463,8 +3577,19 @@ enb_ue_t *enb_ue_add(mme_enb_t *enb, uint32_t enb_ue_s1ap_id)
 void enb_ue_remove(enb_ue_t *enb_ue)
 {
     mme_enb_t *enb = NULL;
+    mme_ue_t *mme_ue = NULL;
 
     ogs_assert(enb_ue);
+
+    /*
+     * Mark the owning mme_ue as IDLE for the LRU eviction path. If the
+     * mme_ue is also being torn down (detach / implicit detach), its
+     * mme_ue_remove() runs immediately after this and the field is
+     * never observed. Stamp unconditionally — branch-free.
+     */
+    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+    if (mme_ue)
+        mme_ue->idle_since = ogs_time_now();
 
     enb = mme_enb_find_by_id(enb_ue->enb_id);
 
@@ -3849,9 +3974,33 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
         return NULL;
     }
 
+    /*
+     * Pre-flight: if the pool is below its watermark, fire the soft-cap
+     * evictor *before* attempting allocation. The evictor only queues
+     * implicit-detach events (it doesn't free synchronously), so this
+     * one allocation still likely fails — but subsequent allocations
+     * in this attach storm will succeed once the event queue drains.
+     */
+    mme_context_evict_idle_ues(0);
+
     ogs_pool_id_calloc(&mme_ue_pool, &mme_ue);
     if (mme_ue == NULL) {
-        ogs_error("Could not allocate mme_ue context from pool");
+        static ogs_time_t last_pool_err = 0;
+        ogs_time_t now = ogs_time_now();
+        if (last_pool_err == 0 ||
+                now - last_pool_err > ogs_time_from_sec(1)) {
+            last_pool_err = now;
+            ogs_error("Could not allocate mme_ue context from pool "
+                    "(mme_ue_pool size=%d avail=%d list=%d, "
+                    "enb_ue_pool size=%d avail=%d). "
+                    "Raise global.max.ue or shorten mme.time.t3412.value "
+                    "to free idle UE contexts sooner.",
+                    ogs_pool_size(&mme_ue_pool),
+                    ogs_pool_avail(&mme_ue_pool),
+                    ogs_list_count(&self.mme_ue_list),
+                    ogs_pool_size(&enb_ue_pool),
+                    ogs_pool_avail(&enb_ue_pool));
+        }
         return NULL;
     }
 
@@ -4602,6 +4751,10 @@ void enb_ue_associate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
 
     mme_ue->enb_ue_id = enb_ue->id;
     enb_ue->mme_ue_id = mme_ue->id;
+
+    /* UE is back to ECM-CONNECTED — drop the idle stamp so the LRU
+     * evictor only considers UEs that are genuinely idle. */
+    mme_ue->idle_since = 0;
 }
 
 void enb_ue_deassociate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
