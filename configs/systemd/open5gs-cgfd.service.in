@@ -15,6 +15,9 @@ RestartSec=2
 RestartPreventExitStatus=1
 ExecReload=/bin/kill -HUP $MAINPID
 
+# Diameter Ga peers + on-disk CDR spool fds.
+LimitNOFILE=1048576
+
 # Spool dir must be writable by the open5gs user; created by the
 # package postinst (see installer) but ReadWritePaths keeps it
 # sandboxed if you re-enable ProtectSystem later.

@@ -53,6 +53,16 @@ typedef enum {
     MME_EVENT_GN_MESSAGE,
     MME_EVENT_GN_TIMER,
 
+    /*
+     * Admin operations injected by the Prometheus HTTP admin
+     * endpoints (POST /admin/...). The HTTP handler runs on the
+     * MHD worker thread; posting these events bounces the actual
+     * mutation to the MME main thread so we don't race S1AP
+     * processing in mme_enb_t / mme_ue_t internals.
+     */
+    MME_EVENT_ADMIN_DETACH_ENB,
+    MME_EVENT_ADMIN_DETACH_UE,
+
     MAX_NUM_OF_MME_EVENT,
 
 } mme_event_e;
@@ -102,6 +112,14 @@ typedef struct mme_event_s {
     ogs_pool_id_t gtp_xact_id;
 
     ogs_timer_t *timer;
+
+    /*
+     * Set on MME_EVENT_ADMIN_DETACH_* events to request the abrupt
+     * cleanup path (no NAS Detach Request, no S1 Reset PDU). Comes
+     * from ?force=1 on the admin HTTP endpoint. Default 0 ->
+     * standard 3GPP detach signalling (UE/eNB are notified).
+     */
+    int admin_force;
 } mme_event_t;
 
 OGS_STATIC_ASSERT(OGS_EVENT_SIZE >= sizeof(mme_event_t));

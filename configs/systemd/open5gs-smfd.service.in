@@ -14,5 +14,10 @@ RestartSec=2
 RestartPreventExitStatus=1
 ExecReload=/bin/kill -HUP $MAINPID
 
+# PFCP + SBI + Diameter Gx/Gy + metrics. The systemd default
+# (1024) is the classic cause of /metrics empty body /
+# connection reset above ~1000 active sessions.
+LimitNOFILE=1048576
+
 [Install]
 WantedBy=multi-user.target

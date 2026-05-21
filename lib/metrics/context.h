@@ -44,6 +44,8 @@ typedef struct ogs_metrics_context_s {
 
     /* custom endpoints */
     ogs_list_t custom_eps;
+    /* admin endpoints (mutating) */
+    ogs_list_t admin_eps;
 } ogs_metrics_context_t;
 
 typedef enum ogs_metrics_histogram_bucket_type_s  {
@@ -116,8 +118,45 @@ static inline void ogs_metrics_inst_dec(ogs_metrics_inst_t *inst)
 }
 
 
+/*
+ * Optional query filter passed to JSON dumpers. The MHD access
+ * handler populates this from HTTP query string parameters so each
+ * dumper can implement simple server-side filtering without having
+ * to know about MHD types. Pointer fields are NULL when the caller
+ * did not pass the corresponding key. enb_id is wrapped in a
+ * "presence" flag because 0 is a valid eNB id on some deployments.
+ */
+typedef struct ogs_metrics_query_s {
+    const char *imsi;      /* ?imsi=15-digit          */
+    const char *supi;      /* ?supi=imsi-15-digit     */
+    const char *ue_ip;     /* ?ue_ip=10.x.y.z         */
+    const char *ip;        /* ?ip=<RAN node IP>       */
+    uint32_t    enb_id;    /* ?enb_id=N (also reused for gnb_id) */
+    int         has_enb_id;
+
+    /*
+     * ?force=1 (or true/yes) toggles "polite" vs "abrupt" semantics
+     * on admin endpoints:
+     *   - /admin/ue/detach:
+     *       force=0 (default) -> standard MME-initiated explicit
+     *                            detach: NAS Detach Request to UE,
+     *                            S11 Delete Session, S1 release.
+     *       force=1            -> implicit detach (UE not notified
+     *                            over the air; clean SGW/SMF side).
+     *   - /admin/enb/detach:
+     *       force=0 (default) -> send S1AP Reset (s1_Interface) to
+     *                            the eNB first, give it ~2s to act,
+     *                            then release all UEs and close
+     *                            SCTP.
+     *       force=1            -> immediate SGW/SMF teardown and
+     *                            SCTP close, no Reset PDU sent.
+     */
+    int         force;
+} ogs_metrics_query_t;
+
 typedef size_t (*ogs_metrics_custom_ep_hdlr_t)(
-    char *buf, size_t buflen, size_t page, size_t page_size);
+    char *buf, size_t buflen, size_t page, size_t page_size,
+    const ogs_metrics_query_t *q);
 
 typedef struct ogs_metrics_custom_ep_s {
     ogs_lnode_t lnode;
@@ -129,6 +168,52 @@ typedef struct ogs_metrics_custom_ep_s {
 
 void ogs_metrics_register_custom_ep(ogs_metrics_custom_ep_hdlr_t handler,
         const char *endpoint);
+
+/*
+ * Admin endpoints (POST/GET). These are gated behind a loopback
+ * ACL by default (see prometheus/context.c) because they mutate
+ * NF state. Returned int is the HTTP status to send; if `body` is
+ * left empty on success the caller gets "OK\n".
+ *
+ * Methods bitmask uses MHD_HTTP_METHOD_GET / MHD_HTTP_METHOD_POST
+ * style values via the OGS_METRICS_ADMIN_METHOD_* constants below.
+ */
+#define OGS_METRICS_ADMIN_METHOD_GET  0x1
+#define OGS_METRICS_ADMIN_METHOD_POST 0x2
+
+typedef int (*ogs_metrics_admin_ep_hdlr_t)(
+    const ogs_metrics_query_t *q,
+    char *body, size_t body_cap, size_t *body_len);
+
+typedef struct ogs_metrics_admin_ep_s {
+    ogs_lnode_t lnode;
+
+    char *endpoint;
+    unsigned int methods;       /* bitmask of OGS_METRICS_ADMIN_METHOD_* */
+    ogs_metrics_admin_ep_hdlr_t handler;
+} ogs_metrics_admin_ep_t;
+
+void ogs_metrics_register_admin_ep(ogs_metrics_admin_ep_hdlr_t handler,
+        const char *endpoint, unsigned int methods);
+
+/*
+ * Coarse mutex protecting NF state read by JSON custom endpoints
+ * (/enb-info, /ue-info, etc). Since the metrics HTTP server now
+ * runs on its own MHD thread, the NF main thread must take this
+ * mutex around list mutations (add/remove) and dumpers must take
+ * it during traversal. The /metrics endpoint itself uses atomic
+ * prom counters and does NOT need the lock.
+ *
+ * Note: NF main thread MUST always use the _trylock variant when
+ * holding any other lock to avoid priority inversion against the
+ * MHD thread - though in practice the dumpers only hold this for
+ * a single page of output (a few ms), so plain lock/unlock is
+ * acceptable on the main thread too.
+ */
+void ogs_metrics_dump_lock_init(void);
+void ogs_metrics_dump_lock_final(void);
+void ogs_metrics_dump_lock(void);
+void ogs_metrics_dump_unlock(void);
 
 #ifdef __cplusplus
 }

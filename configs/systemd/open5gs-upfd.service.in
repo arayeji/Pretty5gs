@@ -15,5 +15,9 @@ RestartSec=2
 RestartPreventExitStatus=1
 ExecReload=/bin/kill -HUP $MAINPID
 
+# GTP-U sockets, TUN/TAP fds and PFCP. Default 1024 is too low
+# for any high-throughput deployment.
+LimitNOFILE=1048576
+
 [Install]
 WantedBy=multi-user.target

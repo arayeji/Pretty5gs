@@ -25,6 +25,8 @@
 
 #include <stddef.h>
 
+#include "ogs-metrics.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -33,8 +35,10 @@ extern "C" {
 #define GNB_INFO_PAGE_SIZE_DEFAULT 100U
 #endif
 
-size_t amf_dump_gnb_info(char *buf, size_t buflen, size_t page, size_t page_size);
-size_t amf_dump_gnb_info_paged(char *buf, size_t buflen, size_t page, size_t page_size);
+size_t amf_dump_gnb_info(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q);
+size_t amf_dump_gnb_info_paged(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q);
 
 #ifdef __cplusplus
 }

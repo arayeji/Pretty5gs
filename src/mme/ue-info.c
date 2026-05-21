@@ -84,6 +84,7 @@
 
 #include "ogs-core.h"
 #include "ogs-proto.h"
+#include "ogs-metrics.h"
 
 #include "mme-context.h"
 #include "ue-info.h"
@@ -98,18 +99,22 @@
 #endif
 
 
-size_t mme_dump_ue_info(char *buf, size_t buflen, size_t page, size_t page_size)
+size_t mme_dump_ue_info(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
+    /*
+     * Default page_size to the historic 100 when unspecified. The
+     * upper-bound clamp is gone - HTTP grows its own buffer. Pass
+     * page=-1 (SIZE_MAX) to dump everything in one response.
+     */
     if (page == SIZE_MAX) {
+        page_size = SIZE_MAX;
         page = 0;
-        page_size = MME_UE_INFO_PAGE_SIZE_DEFAULT;
     } else if (page_size == 0) {
-        page_size = MME_UE_INFO_PAGE_SIZE_DEFAULT;
-    } else if (page_size > MME_UE_INFO_PAGE_SIZE_DEFAULT) {
         page_size = MME_UE_INFO_PAGE_SIZE_DEFAULT;
     }
 
-    return mme_dump_ue_info_paged(buf, buflen, page, page_size);
+    return mme_dump_ue_info_paged(buf, buflen, page, page_size, q);
 }
 
 static inline const char *cm_state_str(const mme_ue_t *ue)
@@ -332,14 +337,15 @@ end:
     return NULL;
 }
 
-size_t mme_dump_ue_info_paged(char *buf, size_t buflen, size_t page, size_t page_size)
+size_t mme_dump_ue_info_paged(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
     if (!buf || buflen == 0) return 0;
 
     const bool no_paging = (page == SIZE_MAX);
     if (!no_paging) {
         if (page_size == 0) page_size = MME_UE_INFO_PAGE_SIZE_DEFAULT;
-        if (page_size > MME_UE_INFO_PAGE_SIZE_DEFAULT) page_size = MME_UE_INFO_PAGE_SIZE_DEFAULT;
+        /* No upper clamp - HTTP layer grows its buffer to fit. */
     } else {
         page_size = SIZE_MAX;
         page = 0;
@@ -374,8 +380,32 @@ size_t mme_dump_ue_info_paged(char *buf, size_t buflen, size_t page, size_t page
         return 0;
     }
 
+    /*
+     * The MHD daemon runs on its own thread now, so we have to hold
+     * the metrics dump lock while walking mme_ue_list / each ue's
+     * sublists (sessions, bearers). The lock pairs with the wrappers
+     * the MME main thread takes around mme_ue_add / mme_ue_remove.
+     */
+    ogs_metrics_dump_lock();
+
     mme_ue_t *ue = NULL;
     ogs_list_for_each(&ctxt->mme_ue_list, ue) {
+        /*
+         * Filter BEFORE the pager so paging is over the filtered
+         * subset. enb_id matches the eNB this UE is currently
+         * connected to via its enb_ue, if any. imsi compares the
+         * 15-digit BCD string.
+         */
+        if (q && q->imsi && *q->imsi) {
+            if (!ue->imsi_bcd[0] || strcmp(ue->imsi_bcd, q->imsi) != 0)
+                continue;
+        }
+        if (q && q->has_enb_id) {
+            enb_ue_t *ran = enb_ue_find_by_id(ue->enb_ue_id);
+            mme_enb_t *e  = ran ? mme_enb_find_by_id(ran->enb_id) : NULL;
+            if (!e || e->enb_id != q->enb_id) continue;
+        }
+
         int act = json_pager_advance(no_paging, idx, start_index, emitted, page_size, &has_next);
         if (act == 1) { idx++; continue; }
         if (act == 2) break;
@@ -387,6 +417,8 @@ size_t mme_dump_ue_info_paged(char *buf, size_t buflen, size_t page, size_t page
         emitted++;
         idx++;
     }
+
+    ogs_metrics_dump_unlock();
 
     /* attach only when array is fully built */
     cJSON_AddItemToObjectCS(root, "items", items);

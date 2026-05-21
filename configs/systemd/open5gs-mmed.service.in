@@ -14,5 +14,13 @@ RestartSec=2
 RestartPreventExitStatus=1
 ExecReload=/bin/kill -HUP $MAINPID
 
+# One file descriptor per attached eNB SCTP association, plus
+# listen sockets, S6a Diameter peers, GTP-C/S11 sockets and the
+# /metrics HTTP listener. The default (1024) is hit at ~1000 eNBs
+# and presents as /metrics empty body / connection reset because
+# MHD's accept() returns EMFILE. Set generously - the daemon
+# also self-raises the soft limit at startup (see lib/app).
+LimitNOFILE=1048576
+
 [Install]
 WantedBy=multi-user.target

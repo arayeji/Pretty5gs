@@ -14,5 +14,11 @@ RestartSec=2
 RestartPreventExitStatus=1
 ExecReload=/bin/kill -HUP $MAINPID
 
+# One file descriptor per gNB NGAP association plus SBI / GTP /
+# metrics sockets. The systemd default (1024) is the classic
+# cause of /metrics empty body / connection reset above ~1000
+# gNBs (MHD accept() returns EMFILE).
+LimitNOFILE=1048576
+
 [Install]
 WantedBy=multi-user.target

@@ -77,6 +77,7 @@
 #include <limits.h>
 
 #include "ogs-core.h"
+#include "ogs-metrics.h"
 #include "context.h"
 #include "pdu-info.h"
 #include "sbi/openapi/external/cJSON.h"
@@ -660,14 +661,15 @@ static cJSON *build_ue_object(const smf_ue_t *ue)
     return ueo;
 }
 
-size_t smf_dump_pdu_info_paged(char *buf, size_t buflen, size_t page, size_t page_size)
+size_t smf_dump_pdu_info_paged(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
     if (!buf || buflen == 0) return 0;
 
     const bool no_paging = (page == SIZE_MAX);
     if (!no_paging) {
         if (page_size == 0) page_size = PDU_INFO_PAGE_SIZE_DEFAULT;
-        if (page_size > PDU_INFO_PAGE_SIZE_DEFAULT) page_size = PDU_INFO_PAGE_SIZE_DEFAULT;
+        /* No upper clamp - HTTP layer grows its buffer to fit. */
     } else {
         page_size = SIZE_MAX;
         page = 0;
@@ -687,7 +689,45 @@ size_t smf_dump_pdu_info_paged(char *buf, size_t buflen, size_t page, size_t pag
     smf_context_t *smf = smf_self();
     smf_ue_t *ue = NULL;
 
+    /*
+     * MHD now serves /pdu-info on its own thread; take the metrics
+     * dump lock around the SMF context iteration so the main thread
+     * can't free an smf_ue / smf_sess / bearer mid-traversal.
+     */
+    ogs_metrics_dump_lock();
+
     ogs_list_for_each(&smf->smf_ue_list, ue) {
+        /*
+         * UE-level filters first. SUPI compares the full "imsi-..."
+         * string; the IMSI filter compares against imsi_bcd. The
+         * ue_ip filter walks the UE's sessions because the IP is
+         * per-session (a single UE can hold multiple PDU sessions
+         * with different IPs).
+         */
+        if (q && q->supi && *q->supi) {
+            if (!ue->supi || strcmp(ue->supi, q->supi) != 0)
+                continue;
+        }
+        if (q && q->imsi && *q->imsi) {
+            if (!ue->imsi_bcd[0] || strcmp(ue->imsi_bcd, q->imsi) != 0)
+                continue;
+        }
+        if (q && q->ue_ip && *q->ue_ip) {
+            bool match = false;
+            smf_sess_t *s = NULL;
+            ogs_list_for_each(&ue->sess_list, s) {
+                char ip4[OGS_ADDRSTRLEN] = "";
+                char ip6[OGS_ADDRSTRLEN] = "";
+                if (s->ipv4) OGS_INET_NTOP(&s->ipv4->addr, ip4);
+                if (s->ipv6) OGS_INET6_NTOP(&s->ipv6->addr, ip6);
+                if ((ip4[0] && strcmp(ip4, q->ue_ip) == 0) ||
+                    (ip6[0] && strcmp(ip6, q->ue_ip) == 0)) {
+                    match = true; break;
+                }
+            }
+            if (!match) continue;
+        }
+
         int act = json_pager_advance(no_paging, idx, start_index, emitted, page_size, &has_next);
         if (act == 1) { idx++; continue; }
         if (act == 2) break;
@@ -700,21 +740,29 @@ size_t smf_dump_pdu_info_paged(char *buf, size_t buflen, size_t page, size_t pag
         idx++;
     }
 
+    ogs_metrics_dump_unlock();
+
     cJSON_AddItemToObjectCS(root, "items", items);
     json_pager_add_trailing(root, no_paging, page, page_size, emitted, has_next && !oom, "/pdu-info", oom);
 
     return json_pager_finalize(root, buf, buflen);
 }
 
-size_t smf_dump_pdu_info(char *buf, size_t buflen, size_t page, size_t page_size)
+size_t smf_dump_pdu_info(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
+    /*
+     * Default to 100 per page when unspecified. page=-1 triggers
+     * no-paging mode inside the _paged() function. Upper-bound
+     * clamp removed - HTTP layer grows its buffer.
+     */
     if (page == SIZE_MAX) {
+        page_size = SIZE_MAX;
         page = 0;
-        page_size = PDU_INFO_PAGE_SIZE_DEFAULT;
     } else if (page_size == 0) {
         page_size = PDU_INFO_PAGE_SIZE_DEFAULT;
     }
 
-    return smf_dump_pdu_info_paged(buf, buflen, page, page_size);
+    return smf_dump_pdu_info_paged(buf, buflen, page, page_size, q);
 }
 

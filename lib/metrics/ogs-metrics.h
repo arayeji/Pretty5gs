@@ -41,6 +41,18 @@ extern "C" {
 }
 #endif
 
+/*
+ * Public extern of the metrics log domain symbol. Every other
+ * Open5GS library header that redefines OGS_LOG_DOMAIN also
+ * publishes the underlying symbol (see ogs-app.h, ogs-s1ap.h,
+ * etc.). Without this, TUs that include this header *before*
+ * other headers carrying asn1c inline functions
+ * (asn_internal.h's ogs_asn_malloc/calloc/realloc) end up baking
+ * "__ogs_metrics_domain" into those inlines and the link / compile
+ * fails with "__ogs_metrics_domain undeclared".
+ */
+extern int __ogs_metrics_domain;
+
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __ogs_metrics_domain
 

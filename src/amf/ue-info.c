@@ -109,6 +109,7 @@
 
 #include "ogs-core.h"
 #include "ogs-proto.h"
+#include "ogs-metrics.h"
 #include "context.h"
 #include "ue-info.h"
 
@@ -116,12 +117,13 @@
 #include "metrics/prometheus/json_pager.h"
 
 
-size_t amf_dump_ue_info(char *buf, size_t buflen, size_t page, size_t page_size)
+size_t amf_dump_ue_info(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
-    page_size = page_size ? page_size : 100;
-    if (page_size > 100) page_size = 100;
+    /* Default to 100/page; no upper clamp (HTTP layer grows buffer). */
+    if (page_size == 0) page_size = 100;
 
-    return amf_dump_ue_info_paged(buf, buflen, page, page_size);
+    return amf_dump_ue_info_paged(buf, buflen, page, page_size, q);
 }
 
 static inline uint32_t u24_to_u32(ogs_uint24_t v)
@@ -593,14 +595,15 @@ fail:
     return NULL;
 }
 
-size_t amf_dump_ue_info_paged(char *buf, size_t buflen, size_t page, size_t page_size)
+size_t amf_dump_ue_info_paged(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
     if (!buf || buflen == 0) return 0;
 
     const bool no_paging = (page == SIZE_MAX);
     if (!no_paging) {
         if (page_size == 0) page_size = 100;
-        if (page_size > 100) page_size = 100;
+        /* No upper clamp - HTTP layer grows its buffer to fit. */
     } else {
         page_size = SIZE_MAX;
         page = 0;
@@ -621,8 +624,37 @@ size_t amf_dump_ue_info_paged(char *buf, size_t buflen, size_t page, size_t page
     bool has_next = false;
     bool oom = false;
 
+    /*
+     * Synchronise with the AMF main thread - it owns the lists we
+     * are about to walk, and MHD now runs on its own poll thread.
+     */
+    ogs_metrics_dump_lock();
+
     amf_ue_t *ue = NULL;
     ogs_list_for_each(&ctxt->amf_ue_list, ue) {
+        /*
+         * Filter BEFORE the pager so paging is over the filtered
+         * subset. SUPI compares "imsi-<15digits>"; the plain IMSI
+         * query value is BCD-compared against amf_ue->supi after
+         * the imsi- prefix.
+         */
+        if (q && q->supi && *q->supi) {
+            if (!ue->supi || strcmp(ue->supi, q->supi) != 0)
+                continue;
+        }
+        if (q && q->imsi && *q->imsi) {
+            const char *want = q->imsi;
+            const char *have = ue->supi;
+            if (!have) continue;
+            if (strncmp(have, "imsi-", 5) == 0) have += 5;
+            if (strcmp(have, want) != 0) continue;
+        }
+        if (q && q->has_enb_id) {
+            ran_ue_t *ran = ran_ue_find_by_id(ue->ran_ue_id);
+            amf_gnb_t *gnb = ran ? amf_gnb_find_by_id(ran->gnb_id) : NULL;
+            if (!gnb || gnb->gnb_id != q->enb_id) continue;
+        }
+
         int act = json_pager_advance(no_paging, idx, start_index, emitted, page_size, &has_next);
         if (act == 1) { idx++; continue; }
         if (act == 2) break;
@@ -634,6 +666,8 @@ size_t amf_dump_ue_info_paged(char *buf, size_t buflen, size_t page, size_t page
         emitted++;
         idx++;
     }
+
+    ogs_metrics_dump_unlock();
 
     /* add trailing pager info (json_pager_finalize will free 'root') */
     json_pager_add_trailing(root, no_paging, page, page_size, emitted,

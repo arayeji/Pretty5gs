@@ -95,6 +95,17 @@ typedef struct mme_context_s {
     ogs_sockaddr_t  *pgw_addr6;     /* First IPv6 Address Selected */
 
     ogs_list_t      enb_list;       /* ENB S1AP Client List */
+    /*
+     * Cached size of enb_list. ogs_list_count() is O(n) on this
+     * intrusive list, so calling it for every Add/Remove log line
+     * and for maximum_number_of_enbs_is_reached() on every S1
+     * Setup attempt is quadratic with respect to attached eNBs.
+     * Under reconnect storms (e.g. pool exhausted at ~max.peer*2)
+     * this dominates the main loop and starves the metrics HTTP
+     * worker, presenting as /metrics empty body / connection
+     * reset. Maintain a counter alongside the list instead.
+     */
+    int             num_of_enbs;
 
     ogs_list_t      vlr_list;       /* VLR SGsAP Client List */
     ogs_list_t      csmap_list;     /* TAI-LAI Map List */
@@ -281,6 +292,17 @@ typedef struct mme_enb_s {
     ogs_pkbuf_t     *s1_reset_ack; /* Reset message */
 
     ogs_list_t      enb_ue_list;
+
+    /*
+     * Approximate count of enb_ue's hanging off this eNB, maintained
+     * alongside the list itself. The /enb-info JSON dumper now runs
+     * on the MHD worker thread (see lib/metrics/prometheus/context.c)
+     * and walking enb_ue_list cross-thread would race with the MME
+     * S1AP path adding/removing UEs. Reading a single int is atomic
+     * on every architecture we support, so the dumper can return a
+     * (possibly off-by-one) snapshot without taking a lock.
+     */
+    int             num_enb_ues;
 
     /*
      * Lookup index for enb_ue by ENB-UE-S1AP-ID. Each S1AP message

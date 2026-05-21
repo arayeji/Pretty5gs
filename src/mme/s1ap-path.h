@@ -105,6 +105,19 @@ int s1ap_send_s1_reset_ack(
         mme_enb_t *enb,
         S1AP_UE_associatedLogicalS1_ConnectionListRes_t *partOfS1_Interface);
 
+/*
+ * MME-initiated S1 Reset (TS 36.413 §8.7.2). Sends a Reset PDU to
+ * the eNB asking it to release every UE context on this S1 (i.e.
+ * resetType = s1_Interface). Used by the admin "graceful detach"
+ * path so the eNB knows the MME is dropping it instead of just
+ * seeing SCTP COMM_LOST. The eNB is expected to respond with
+ * Reset Acknowledge; that response is handled by the existing
+ * s1ap-handler.c::s1ap_handle_reset_ack() (treated as informational
+ * since our local release runs on a delayed admin event).
+ */
+int s1ap_send_s1_reset(
+        mme_enb_t *enb, S1AP_Cause_PR group, long cause);
+
 #ifdef __cplusplus
 }
 #endif

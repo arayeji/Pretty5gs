@@ -84,6 +84,7 @@
 
 #include "ogs-core.h"
 #include "ogs-proto.h"
+#include "ogs-metrics.h"
 #include "context.h"
 #include "gnb-info.h"
 
@@ -94,9 +95,31 @@
 #define GNB_INFO_PAGE_SIZE_DEFAULT 100U
 #endif
 
-size_t amf_dump_gnb_info(char *buf, size_t buflen, size_t page, size_t page_size)
+size_t amf_dump_gnb_info(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
-    return amf_dump_gnb_info_paged(buf, buflen, page, page_size);
+    return amf_dump_gnb_info_paged(buf, buflen, page, page_size, q);
+}
+
+/*
+ * Same logic as the MME's sa_matches_ip - exact-match the IP
+ * portion of the sockaddr's printable form against the query.
+ */
+static bool sa_matches_ip(ogs_sockaddr_t *sa, const char *needle)
+{
+    if (!sa || !needle || !*needle) return false;
+    const char *s = ogs_sockaddr_to_string_static(sa);
+    if (!s) return false;
+    if (s[0] == '[') {
+        const char *end = strchr(s + 1, ']');
+        if (!end) return false;
+        size_t len = (size_t)(end - (s + 1));
+        return strlen(needle) == len && strncmp(s + 1, needle, len) == 0;
+    }
+    const char *colon = strrchr(s, ':');
+    if (!colon) return strcmp(s, needle) == 0;
+    size_t len = (size_t)(colon - s);
+    return strlen(needle) == len && strncmp(s, needle, len) == 0;
 }
 
 static inline uint32_t u24_to_u32(ogs_uint24_t v)
@@ -122,14 +145,15 @@ static inline int add_plmn_string(cJSON *obj, const char *key, const ogs_plmn_id
 
 /* ---------- main (paged) ---------- */
 
-size_t amf_dump_gnb_info_paged(char *buf, size_t buflen, size_t page, size_t page_size)
+size_t amf_dump_gnb_info_paged(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
     if (!buf || buflen == 0) return 0;
 
     const bool no_paging = (page == SIZE_MAX);
     if (!no_paging) {
         if (page_size == 0) page_size = GNB_INFO_PAGE_SIZE_DEFAULT;
-        if (page_size > GNB_INFO_PAGE_SIZE_DEFAULT) page_size = GNB_INFO_PAGE_SIZE_DEFAULT;
+        /* No upper clamp - HTTP layer grows its buffer to fit. */
     } else {
         page_size = SIZE_MAX;
         page = 0;
@@ -148,8 +172,22 @@ size_t amf_dump_gnb_info_paged(char *buf, size_t buflen, size_t page, size_t pag
 
     const size_t start_index = json_pager_safe_start_index(no_paging, page, page_size);
 
+    /*
+     * The MHD daemon now runs on its own polling thread; we must
+     * synchronise with the AMF main thread which may add/remove
+     * gNBs and ran_ue's concurrently. See lib/metrics/context.h
+     * for the lock contract.
+     */
+    ogs_metrics_dump_lock();
+
     amf_gnb_t *gnb = NULL;
     ogs_list_for_each(&ctxt->gnb_list, gnb) {
+        /* Server-side filter: gnb_id and/or sctp peer IP. */
+        if (q && q->has_enb_id && gnb->gnb_id != q->enb_id)
+            continue;
+        if (q && q->ip && *q->ip && !sa_matches_ip(gnb->sctp.addr, q->ip))
+            continue;
+
         int act = json_pager_advance(no_paging, idx, start_index, emitted, page_size, &has_next);
         if (act == 1) { idx++; continue; }
         if (act == 2) break;
@@ -272,6 +310,8 @@ size_t amf_dump_gnb_info_paged(char *buf, size_t buflen, size_t page, size_t pag
         emitted++;
         idx++;
     }
+
+    ogs_metrics_dump_unlock();
 
     json_pager_add_trailing(root, no_paging, page, page_size, emitted, has_next && !oom,"/gnb-info", oom);
 

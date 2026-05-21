@@ -33,6 +33,7 @@
 #include "metrics/prometheus/json_pager.h"
 #include "enb-info.h"
 #include "ue-info.h"
+#include "admin-api.h"
 #ifdef OPEN5GS_ADMIN_WATCHER
 #include "mme-admin-watcher.h"
 #endif
@@ -79,6 +80,14 @@ int mme_initialize(void)
     /* dumpers /enb-info /ue-info */
     ogs_metrics_register_custom_ep(mme_dump_enb_info, "/enb-info");
     ogs_metrics_register_custom_ep(mme_dump_ue_info, "/ue-info");
+
+    /*
+     * Admin (mutating) endpoints. No internal ACL - the metrics
+     * listener is expected to be firewalled at the host/network
+     * level. Each admin call is logged with caller address; see
+     * src/mme/admin-api.h for the endpoint surface.
+     */
+    mme_admin_api_register();
 
     rv = mme_fd_init();
     if (rv != OGS_OK) return OGS_ERROR;

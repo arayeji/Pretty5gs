@@ -14,5 +14,8 @@ RestartSec=2
 RestartPreventExitStatus=1
 ExecReload=/bin/kill -HUP $MAINPID
 
+# GTP-U sockets + TUN/TAP fds.
+LimitNOFILE=1048576
+
 [Install]
 WantedBy=multi-user.target

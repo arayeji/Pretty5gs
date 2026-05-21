@@ -23,11 +23,81 @@
 #include "ogs-core.h"
 #include "metrics/ogs-metrics.h"
 
+#if !defined(_WIN32)
+#include <pthread.h>
+#endif
+
 #define DEFAULT_PROMETHEUS_HTTP_PORT       9090
 
 int __ogs_metrics_domain;
 static ogs_metrics_context_t self;
 static int context_initialized = 0;
+
+/*
+ * Coarse mutex shared between the MHD daemon thread (custom JSON
+ * dumpers) and the NF main thread (state mutations). See header
+ * for usage notes.
+ *
+ * Recursive on POSIX so the NF main thread can take the lock at
+ * the top of, say, mme_ue_remove() and still call inner helpers
+ * (mme_sess_remove_all, etc.) that take the same lock again. On
+ * Windows CRITICAL_SECTION is recursive by default.
+ *
+ * We bypass the ogs_thread_mutex_init() macro which defaults to a
+ * normal pthread mutex.
+ */
+#if defined(_WIN32)
+static ogs_thread_mutex_t dump_mutex;
+#else
+static pthread_mutex_t dump_mutex;
+#endif
+static int dump_mutex_initialized = 0;
+
+void ogs_metrics_dump_lock_init(void)
+{
+    if (dump_mutex_initialized) return;
+#if defined(_WIN32)
+    ogs_thread_mutex_init(&dump_mutex);
+#else
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&dump_mutex, &attr);
+    pthread_mutexattr_destroy(&attr);
+#endif
+    dump_mutex_initialized = 1;
+}
+
+void ogs_metrics_dump_lock_final(void)
+{
+    if (!dump_mutex_initialized) return;
+#if defined(_WIN32)
+    ogs_thread_mutex_destroy(&dump_mutex);
+#else
+    pthread_mutex_destroy(&dump_mutex);
+#endif
+    dump_mutex_initialized = 0;
+}
+
+void ogs_metrics_dump_lock(void)
+{
+    if (!dump_mutex_initialized) return;
+#if defined(_WIN32)
+    ogs_thread_mutex_lock(&dump_mutex);
+#else
+    pthread_mutex_lock(&dump_mutex);
+#endif
+}
+
+void ogs_metrics_dump_unlock(void)
+{
+    if (!dump_mutex_initialized) return;
+#if defined(_WIN32)
+    ogs_thread_mutex_unlock(&dump_mutex);
+#else
+    pthread_mutex_unlock(&dump_mutex);
+#endif
+}
 
 void ogs_metrics_context_init(void)
 {
@@ -38,10 +108,12 @@ void ogs_metrics_context_init(void)
     /* Initialize METRICS context */
     memset(&self, 0, sizeof(ogs_metrics_context_t));
 
+    ogs_metrics_dump_lock_init();
     ogs_metrics_spec_init(ogs_metrics_self());
     ogs_metrics_server_init(ogs_metrics_self());
 
     ogs_list_init(&self.custom_eps);
+    ogs_list_init(&self.admin_eps);
 
     context_initialized = 1;
 }
@@ -61,6 +133,15 @@ void ogs_metrics_context_close(ogs_metrics_context_t *ctx)
         ogs_list_remove(&self.custom_eps, node);
         ogs_free(node);
     }
+
+    {
+        ogs_metrics_admin_ep_t *anode = NULL, *anode_next = NULL;
+        ogs_list_for_each_safe(&self.admin_eps, anode_next, anode) {
+            if (anode->endpoint) ogs_free(anode->endpoint);
+            ogs_list_remove(&self.admin_eps, anode);
+            ogs_free(anode);
+        }
+    }
 }
 
 void ogs_metrics_context_final(void)
@@ -69,6 +150,7 @@ void ogs_metrics_context_final(void)
 
     ogs_metrics_spec_final(ogs_metrics_self());
     ogs_metrics_server_final(ogs_metrics_self());
+    ogs_metrics_dump_lock_final();
 
     context_initialized = 0;
 }
@@ -290,4 +372,20 @@ void ogs_metrics_register_custom_ep(ogs_metrics_custom_ep_hdlr_t handler,
     ep->handler = handler;
 
     ogs_list_add(&self.custom_eps, ep);
+}
+
+void ogs_metrics_register_admin_ep(ogs_metrics_admin_ep_hdlr_t handler,
+        const char *endpoint, unsigned int methods)
+{
+    ogs_metrics_admin_ep_t *ep;
+
+    ep = ogs_calloc(1, sizeof(*ep));
+    ogs_assert(ep);
+
+    ep->endpoint = ogs_strdup(endpoint);
+    ep->handler = handler;
+    ep->methods = methods ? methods :
+            (OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
+
+    ogs_list_add(&self.admin_eps, ep);
 }

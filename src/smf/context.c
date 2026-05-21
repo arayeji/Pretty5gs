@@ -1374,7 +1374,13 @@ static smf_ue_t *smf_ue_add(void)
 
     ogs_list_init(&smf_ue->sess_list);
 
+    /*
+     * /pdu-info walks self.smf_ue_list on the MHD thread. Guard
+     * the list mutation - the reader uses the metrics dump lock.
+     */
+    ogs_metrics_dump_lock();
     ogs_list_add(&self.smf_ue_list, smf_ue);
+    ogs_metrics_dump_unlock();
 
     smf_metrics_inst_global_inc(SMF_METR_GLOB_GAUGE_UES_ACTIVE);
     ogs_info("[Added] Number of SMF-UEs is now %d",
@@ -1636,6 +1642,12 @@ void smf_ue_remove(smf_ue_t *smf_ue)
 {
     ogs_assert(smf_ue);
 
+    /*
+     * Hold the dump lock for the whole teardown - /pdu-info drills
+     * into smf_ue->sess_list and each session's bearer/PDR/QER
+     * sublists, all of which are about to be released here.
+     */
+    ogs_metrics_dump_lock();
     ogs_list_remove(&self.smf_ue_list, smf_ue);
 
     smf_sess_remove_all(smf_ue);
@@ -1653,6 +1665,7 @@ void smf_ue_remove(smf_ue_t *smf_ue)
     }
 
     ogs_pool_id_free(&smf_ue_pool, smf_ue);
+    ogs_metrics_dump_unlock();
 
     smf_metrics_inst_global_dec(SMF_METR_GLOB_GAUGE_UES_ACTIVE);
     ogs_info("[Removed] Number of SMF-UEs is now %d",

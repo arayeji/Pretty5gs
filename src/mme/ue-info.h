@@ -25,6 +25,8 @@
 #pragma once
 #include <stddef.h>
 
+#include "ogs-metrics.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -34,9 +36,9 @@ extern "C" {
 #endif
 
 size_t mme_dump_ue_info(char *buf, size_t buflen,
-        size_t page, size_t page_size);
+        size_t page, size_t page_size, const ogs_metrics_query_t *q);
 size_t mme_dump_ue_info_paged(char *buf, size_t buflen,
-        size_t page, size_t page_size);
+        size_t page, size_t page_size, const ogs_metrics_query_t *q);
 
 #ifdef __cplusplus
 }

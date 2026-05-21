@@ -24,16 +24,13 @@
 
 static bool maximum_number_of_gnbs_is_reached(void)
 {
-    amf_gnb_t *gnb = NULL, *next_gnb = NULL;
-    int number_of_gnbs_online = 0;
-
-    ogs_list_for_each_safe(&amf_self()->gnb_list, next_gnb, gnb) {
-        if (gnb->state.ng_setup_success) {
-            number_of_gnbs_online++;
-        }
-    }
-
-    return number_of_gnbs_online >= ogs_global_conf()->max.peer;
+    /*
+     * O(1) using the cached gnb_list size. The previous O(n) walk
+     * over gnb_list on every NG Setup Request was a major cause
+     * of CPU saturation during reconnect storms triggered by
+     * pool exhaustion (raise 'global.max.peer' in YAML).
+     */
+    return amf_self()->num_of_gnbs >= (int)ogs_global_conf()->max.peer;
 }
 
 static bool gnb_plmn_id_is_foreign(amf_gnb_t *gnb)
