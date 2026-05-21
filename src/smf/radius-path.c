@@ -917,13 +917,12 @@ static ogs_sockaddr_t *radius_server_peer_get(
     ogs_assert(s);
     ogs_assert(port);
 
+    /* Callers only pass either auth_port or acct_port. Any other value is
+     * treated as accounting so we still cache the resolution and avoid a
+     * leak instead of dropping back to per-call ogs_getaddrinfo(). */
     if (port == s->auth_port)
         slot = &s->peer_auth;
-    else if (port == s->acct_port)
-        slot = &s->peer_acct;
     else
-        /* Unexpected: callers only pass either auth_port or acct_port.
-         * Fall back to acct slot so we still cache and avoid a leak. */
         slot = &s->peer_acct;
 
     if (*slot)
