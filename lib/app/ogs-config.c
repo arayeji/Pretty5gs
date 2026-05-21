@@ -60,21 +60,36 @@ void ogs_app_config_final(void)
 
 static void recalculate_pool_size(void)
 {
-    ogs_app()->pool.gtpu =
-        global_conf.max.ue * OGS_MAX_NUM_OF_GTPU_BUFFER;
+    /*
+     * Per-UE multipliers. Zero means "not set in YAML" — fall back to the
+     * historical hard-coded constants so behaviour is identical when the
+     * operator does not opt in.
+     */
+    uint32_t sess_per_ue = global_conf.max.sess_per_ue ?
+        global_conf.max.sess_per_ue : OGS_MAX_NUM_OF_SESS;
+    uint32_t bearer_per_sess = global_conf.max.bearer_per_sess ?
+        global_conf.max.bearer_per_sess : OGS_MAX_NUM_OF_BEARER;
+#define DEFAULT_TUNNEL_PER_BEARER       3   /* Num of Tunnel per Bearer */
+    uint32_t tunnel_per_bearer = global_conf.max.tunnel_per_bearer ?
+        global_conf.max.tunnel_per_bearer : DEFAULT_TUNNEL_PER_BEARER;
+    uint32_t gtpu_buf_per_ue = global_conf.max.gtpu_buf_per_ue ?
+        global_conf.max.gtpu_buf_per_ue : OGS_MAX_NUM_OF_GTPU_BUFFER;
+#define DEFAULT_POOL_PER_UE             16
+    uint32_t pool_per_ue = global_conf.max.pool_per_ue ?
+        global_conf.max.pool_per_ue : DEFAULT_POOL_PER_UE;
 
-#define MAX_NUM_OF_TUNNEL       3   /* Num of Tunnel per Bearer */
-    ogs_app()->pool.sess = global_conf.max.ue * OGS_MAX_NUM_OF_SESS;
-    ogs_app()->pool.bearer = ogs_app()->pool.sess * OGS_MAX_NUM_OF_BEARER;
-    ogs_app()->pool.tunnel = ogs_app()->pool.bearer * MAX_NUM_OF_TUNNEL;
+    ogs_app()->pool.gtpu = global_conf.max.ue * gtpu_buf_per_ue;
 
-#define POOL_NUM_PER_UE 16
-    ogs_app()->pool.timer = global_conf.max.ue * POOL_NUM_PER_UE;
-    ogs_app()->pool.message = global_conf.max.ue * POOL_NUM_PER_UE;
-    ogs_app()->pool.event = global_conf.max.ue * POOL_NUM_PER_UE;
-    ogs_app()->pool.socket = global_conf.max.ue * POOL_NUM_PER_UE;
-    ogs_app()->pool.xact = global_conf.max.ue * POOL_NUM_PER_UE;
-    ogs_app()->pool.stream = global_conf.max.ue * POOL_NUM_PER_UE;
+    ogs_app()->pool.sess = global_conf.max.ue * sess_per_ue;
+    ogs_app()->pool.bearer = ogs_app()->pool.sess * bearer_per_sess;
+    ogs_app()->pool.tunnel = ogs_app()->pool.bearer * tunnel_per_bearer;
+
+    ogs_app()->pool.timer = global_conf.max.ue * pool_per_ue;
+    ogs_app()->pool.message = global_conf.max.ue * pool_per_ue;
+    ogs_app()->pool.event = global_conf.max.ue * pool_per_ue;
+    ogs_app()->pool.socket = global_conf.max.ue * pool_per_ue;
+    ogs_app()->pool.xact = global_conf.max.ue * pool_per_ue;
+    ogs_app()->pool.stream = global_conf.max.ue * pool_per_ue;
 
     ogs_app()->pool.nf = global_conf.max.peer;
 #define NF_SERVICE_PER_NF_INSTANCE 16
@@ -350,6 +365,26 @@ int ogs_app_parse_global_conf(ogs_yaml_iter_t *parent)
                 } else if (!strcmp(max_key, "eps_tai0_partial_list")) {
                     const char *v = ogs_yaml_iter_value(&max_iter);
                     if (v) global_conf.max.eps_tai0_partial_list = atoi(v);
+                } else if (!strcmp(max_key, "sess_per_ue")) {
+                    const char *v = ogs_yaml_iter_value(&max_iter);
+                    if (v) global_conf.max.sess_per_ue =
+                        (uint32_t)strtoul(v, NULL, 10);
+                } else if (!strcmp(max_key, "bearer_per_sess")) {
+                    const char *v = ogs_yaml_iter_value(&max_iter);
+                    if (v) global_conf.max.bearer_per_sess =
+                        (uint32_t)strtoul(v, NULL, 10);
+                } else if (!strcmp(max_key, "tunnel_per_bearer")) {
+                    const char *v = ogs_yaml_iter_value(&max_iter);
+                    if (v) global_conf.max.tunnel_per_bearer =
+                        (uint32_t)strtoul(v, NULL, 10);
+                } else if (!strcmp(max_key, "gtpu_buf_per_ue")) {
+                    const char *v = ogs_yaml_iter_value(&max_iter);
+                    if (v) global_conf.max.gtpu_buf_per_ue =
+                        (uint32_t)strtoul(v, NULL, 10);
+                } else if (!strcmp(max_key, "pool_per_ue")) {
+                    const char *v = ogs_yaml_iter_value(&max_iter);
+                    if (v) global_conf.max.pool_per_ue =
+                        (uint32_t)strtoul(v, NULL, 10);
                 } else
                     ogs_warn("unknown key `%s`", max_key);
             }

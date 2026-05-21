@@ -36,6 +36,21 @@ void ogs_app_terminate(void);
 int ogs_app_config_read(void);
 void ogs_app_setup_log(void);
 
+/*
+ * Pool stats dump hook.
+ *
+ * Per-daemon code (e.g. MME) can register a callback that prints
+ * size/avail/peak for its pre-allocated pools. The hook is invoked from
+ * the SIGUSR1 handler in main.c so operators can snapshot live pool
+ * pressure with `kill -USR1 <pid>` without restarting.
+ *
+ * NB: the callback runs on the signal-handler thread (ogs_signal_thread)
+ * which is already a regular pthread, so plain logging/printf is safe.
+ */
+typedef void (*ogs_app_pool_dump_cb_t)(void);
+void ogs_app_pool_dump_cb_set(ogs_app_pool_dump_cb_t cb);
+ogs_app_pool_dump_cb_t ogs_app_pool_dump_cb_get(void);
+
 #ifdef __cplusplus
 }
 #endif

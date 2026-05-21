@@ -39,6 +39,7 @@ typedef int32_t ogs_pool_id_t;
         const char *name; \
         int head, tail; \
         int size, avail; \
+        int peak;       /* max in-use = size - min(avail) seen */ \
         type **free, *array, **index; \
         \
         ogs_hash_t *id_hash; \
@@ -59,6 +60,7 @@ typedef int32_t ogs_pool_id_t;
     (pool)->index = malloc(sizeof(*(pool)->index) * _size); \
     ogs_assert((pool)->index); \
     (pool)->size = (pool)->avail = _size; \
+    (pool)->peak = 0; \
     (pool)->head = (pool)->tail = 0; \
     for (i = 0; i < _size; i++) { \
         (pool)->free[i] = &((pool)->array[i]); \
@@ -101,6 +103,7 @@ typedef int32_t ogs_pool_id_t;
     (pool)->index = ogs_malloc(sizeof(*(pool)->index) * _size); \
     ogs_assert((pool)->index); \
     (pool)->size = (pool)->avail = _size; \
+    (pool)->peak = 0; \
     (pool)->head = (pool)->tail = 0; \
     for (i = 0; i < _size; i++) { \
         (pool)->free[i] = &((pool)->array[i]); \
@@ -132,11 +135,14 @@ typedef int32_t ogs_pool_id_t;
 #define ogs_pool_alloc(pool, node) do { \
     *(node) = NULL; \
     if ((pool)->avail > 0) { \
+        int _used; \
         (pool)->avail--; \
         *(node) = (void*)(pool)->free[(pool)->head]; \
         (pool)->free[(pool)->head] = NULL; \
         (pool)->head = ((pool)->head + 1) % ((pool)->size); \
         (pool)->index[ogs_pool_index(pool, *(node))-1] = *(node); \
+        _used = (pool)->size - (pool)->avail; \
+        if (_used > (pool)->peak) (pool)->peak = _used; \
     } \
 } while (0)
 
@@ -176,6 +182,8 @@ typedef int32_t ogs_pool_id_t;
 
 #define ogs_pool_size(pool) ((pool)->size)
 #define ogs_pool_avail(pool) ((pool)->avail)
+#define ogs_pool_peak(pool) ((pool)->peak)
+#define ogs_pool_name(pool) ((pool)->name)
 
 #define ogs_pool_sequence_id_generate(pool) do { \
     int i; \

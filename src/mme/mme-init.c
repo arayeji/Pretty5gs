@@ -55,6 +55,9 @@ int mme_initialize(void)
     ogs_gtp_context_init(OGS_MAX_NUM_OF_GTPU_RESOURCE);
     mme_context_init();
 
+    /* Operator can `kill -USR1 <mme-pid>` to dump live pool stats. */
+    ogs_app_pool_dump_cb_set(mme_context_pool_dump);
+
     rv = ogs_gtp_xact_init();
     if (rv != OGS_OK) return rv;
 

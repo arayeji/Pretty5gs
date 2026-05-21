@@ -68,6 +68,10 @@ static int check_signal(int signum)
                 (unsigned long)talloc_total_blocks(__ogs_talloc_core),
                 (int)talloc_reference_count(__ogs_talloc_core),
                 __ogs_talloc_core);
+        {
+            ogs_app_pool_dump_cb_t cb = ogs_app_pool_dump_cb_get();
+            if (cb) cb();
+        }
         break;
 
     case SIGUSR2:

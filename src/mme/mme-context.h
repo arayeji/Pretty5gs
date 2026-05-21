@@ -698,6 +698,14 @@ struct mme_ue_s {
       (enb_ue_find_by_id((__mME)->enb_ue_id) == NULL)))
     ogs_pool_id_t   enb_ue_id;
 
+    /*
+     * Wall-clock time (ogs_time_now()) at which this UE last went IDLE
+     * (S1 released). 0 while the UE has an active S1 context.
+     * Used by mme_context_evict_idle_ues() to pick the oldest idle
+     * candidates first when the mme_ue_pool runs low.
+     */
+    ogs_time_t      idle_since;
+
 #define HOLDING_S1_CONTEXT(__mME) \
     do { \
         enb_ue_t *enb_ue_holding = NULL; \
@@ -1205,6 +1213,26 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue);
 void mme_ue_remove(mme_ue_t *mme_ue);
 void mme_ue_remove_all(void);
 mme_ue_t *mme_ue_find_by_id(ogs_pool_id_t id);
+
+/*
+ * Snapshot of every MME pool's size/avail/peak/list-count to the log.
+ * Invoked from the SIGUSR1 handler via ogs_app_pool_dump_cb_get().
+ * Operators run `kill -USR1 <mme-pid>` to inspect live pool pressure.
+ */
+void mme_context_pool_dump(void);
+
+/*
+ * Soft-cap eviction: if mme_ue_pool is dangerously full, immediately fire
+ * the implicit-detach event on the K oldest IDLE-mode UEs so their slots
+ * are freed instead of hard-rejecting the incoming attach.
+ *
+ * Returns the number of UEs actually evicted (0 if pool is healthy or no
+ * idle candidate is available).
+ *
+ * Cheap to call on the new-attach path: bails out instantly when
+ * `avail` is above the watermark.
+ */
+int mme_context_evict_idle_ues(int want);
 
 void mme_ue_fsm_init(mme_ue_t *mme_ue);
 void mme_ue_fsm_fini(mme_ue_t *mme_ue);

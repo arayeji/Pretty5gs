@@ -21,6 +21,18 @@
 
 int __ogs_app_domain;
 
+static ogs_app_pool_dump_cb_t pool_dump_cb = NULL;
+
+void ogs_app_pool_dump_cb_set(ogs_app_pool_dump_cb_t cb)
+{
+    pool_dump_cb = cb;
+}
+
+ogs_app_pool_dump_cb_t ogs_app_pool_dump_cb_get(void)
+{
+    return pool_dump_cb;
+}
+
 static int read_config(void);
 static int parse_config(void);
 
