@@ -3285,6 +3285,8 @@ mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
     enb->ostream_id = 0;
 
     ogs_list_init(&enb->enb_ue_list);
+    enb->enb_ue_hash = ogs_hash_make();
+    ogs_assert(enb->enb_ue_hash);
 
     ogs_hash_set(self.enb_addr_hash,
             enb->sctp.addr, sizeof(ogs_sockaddr_t), enb);
@@ -3328,6 +3330,11 @@ int mme_enb_remove(mme_enb_t *enb)
      */
 
     ogs_sctp_flush_and_destroy(&enb->sctp);
+
+    if (enb->enb_ue_hash) {
+        ogs_hash_destroy(enb->enb_ue_hash);
+        enb->enb_ue_hash = NULL;
+    }
 
     ogs_pool_id_free(&mme_enb_pool, enb);
     mme_metrics_inst_global_dec(MME_METR_GLOB_GAUGE_ENB);
@@ -3442,6 +3449,11 @@ enb_ue_t *enb_ue_add(mme_enb_t *enb, uint32_t enb_ue_s1ap_id)
     enb_ue->enb_id = enb->id;
 
     ogs_list_add(&enb->enb_ue_list, enb_ue);
+    if (enb->enb_ue_hash)
+        ogs_hash_set(enb->enb_ue_hash,
+                &enb_ue->enb_ue_s1ap_id,
+                sizeof(enb_ue->enb_ue_s1ap_id),
+                enb_ue);
 
     stats_add_enb_ue();
 
@@ -3456,7 +3468,38 @@ void enb_ue_remove(enb_ue_t *enb_ue)
 
     enb = mme_enb_find_by_id(enb_ue->enb_id);
 
-    if (enb) ogs_list_remove(&enb->enb_ue_list, enb_ue);
+    if (enb) {
+        ogs_list_remove(&enb->enb_ue_list, enb_ue);
+        if (enb->enb_ue_hash) {
+            /*
+             * Fast path: the current field value still matches the key
+             * that was inserted (true for the vast majority of removes).
+             * Fall back to a hash sweep if the id was rewritten by an
+             * S1 procedure (e.g. handover/path-switch) between insert
+             * and remove.
+             */
+            enb_ue_t *hit = (enb_ue_t *)ogs_hash_get(enb->enb_ue_hash,
+                    &enb_ue->enb_ue_s1ap_id,
+                    sizeof(enb_ue->enb_ue_s1ap_id));
+            if (hit == enb_ue) {
+                ogs_hash_set(enb->enb_ue_hash,
+                        &enb_ue->enb_ue_s1ap_id,
+                        sizeof(enb_ue->enb_ue_s1ap_id),
+                        NULL);
+            } else {
+                ogs_hash_index_t *hi;
+                for (hi = ogs_hash_first(enb->enb_ue_hash);
+                        hi; hi = ogs_hash_next(hi)) {
+                    if (ogs_hash_this_val(hi) == enb_ue) {
+                        const void *k = ogs_hash_this_key(hi);
+                        int klen = ogs_hash_this_key_len(hi);
+                        ogs_hash_set(enb->enb_ue_hash, k, klen, NULL);
+                        break;
+                    }
+                }
+            }
+        }
+    }
 
     ogs_assert(enb_ue->t_s1_holding);
     ogs_timer_delete(enb_ue->t_s1_holding);
@@ -3474,27 +3517,61 @@ void enb_ue_switch_to_enb(enb_ue_t *enb_ue, mme_enb_t *new_enb)
 
     enb = mme_enb_find_by_id(enb_ue->enb_id);
 
-    /* Remove from the old enb */
-    ogs_list_remove(&enb->enb_ue_list, enb_ue);
+    /*
+     * Path-switch (S1AP) may rewrite enb_ue->enb_ue_s1ap_id BEFORE
+     * calling us. We can't trust the current field value to remove the
+     * old hash entry safely, so we sweep every slot whose value points
+     * back to this enb_ue. This is rare (one collision per UE handover)
+     * and bounded by the small per-eNB UE count.
+     */
+    if (enb && enb->enb_ue_hash) {
+        ogs_hash_index_t *hi;
+        for (hi = ogs_hash_first(enb->enb_ue_hash);
+                hi; hi = ogs_hash_next(hi)) {
+            if (ogs_hash_this_val(hi) == enb_ue) {
+                const void *k = ogs_hash_this_key(hi);
+                int klen = ogs_hash_this_key_len(hi);
+                ogs_hash_set(enb->enb_ue_hash, k, klen, NULL);
+                break;
+            }
+        }
+    }
 
-    /* Add to the new enb */
+    if (enb)
+        ogs_list_remove(&enb->enb_ue_list, enb_ue);
+
     ogs_list_add(&new_enb->enb_ue_list, enb_ue);
+    if (new_enb->enb_ue_hash)
+        ogs_hash_set(new_enb->enb_ue_hash,
+                &enb_ue->enb_ue_s1ap_id,
+                sizeof(enb_ue->enb_ue_s1ap_id),
+                enb_ue);
 
-    /* Switch to enb */
     enb_ue->enb_id = new_enb->id;
 }
 
 enb_ue_t *enb_ue_find_by_enb_ue_s1ap_id(
         const mme_enb_t *enb, uint32_t enb_ue_s1ap_id)
 {
-    enb_ue_t *enb_ue = NULL;
+    ogs_assert(enb);
 
-    ogs_list_for_each(&enb->enb_ue_list, enb_ue) {
-        if (enb_ue_s1ap_id == enb_ue->enb_ue_s1ap_id)
-            break;
+    /*
+     * Fast path: per-eNB hash maintained by enb_ue_add / _remove /
+     * _switch_to_enb. Falls back to the linear scan only if the hash
+     * was somehow not created (defensive; mme_enb_add always builds it).
+     */
+    if (enb->enb_ue_hash)
+        return (enb_ue_t *)ogs_hash_get(enb->enb_ue_hash,
+                &enb_ue_s1ap_id, sizeof(enb_ue_s1ap_id));
+
+    {
+        enb_ue_t *enb_ue = NULL;
+        ogs_list_for_each(&enb->enb_ue_list, enb_ue) {
+            if (enb_ue_s1ap_id == enb_ue->enb_ue_s1ap_id)
+                return enb_ue;
+        }
+        return NULL;
     }
-
-    return enb_ue;
 }
 
 enb_ue_t *enb_ue_find(uint32_t index)
@@ -3854,6 +3931,18 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     mme_ue->gn.gtp_xact_id = OGS_INVALID_POOL_ID;
 
     ogs_list_init(&mme_ue->sess_list);
+
+    /*
+     * Seed the EBI -> bearer-id table with OGS_INVALID_POOL_ID so
+     * mme_bearer_find_by_ue_ebi() correctly reports "no bearer" for
+     * slots that have not been allocated yet (calloc gave us zero,
+     * which is a valid pool id on some configurations).
+     */
+    {
+        int i;
+        for (i = 0; i <= MAX_EPS_BEARER_ID; i++)
+            mme_ue->ebi_to_bearer_id[i] = OGS_INVALID_POOL_ID;
+    }
 
     /* Set MME-S11-TEID */
     ogs_pool_alloc(&mme_s11_teid_pool, &mme_ue->mme_s11_teid_node);
@@ -4344,6 +4433,17 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
                     else
                         ogs_error("Failed to reserve bearer (EBI=%d IMSI=%s)",
                                 old_bearer->ebi, mme_ue->imsi_bcd);
+
+                    /* Carry over the EBI -> bearer-id mapping so
+                     * mme_bearer_find_by_ue_ebi() on the NEW UE keeps
+                     * working immediately after the migration. */
+                    if (old_bearer->ebi >= MIN_EPS_BEARER_ID &&
+                            old_bearer->ebi <= MAX_EPS_BEARER_ID) {
+                        mme_ue->ebi_to_bearer_id[old_bearer->ebi] =
+                                old_bearer->id;
+                        old_mme_ue->ebi_to_bearer_id[old_bearer->ebi] =
+                                OGS_INVALID_POOL_ID;
+                    }
                 }
                 old_sess->mme_ue_id = mme_ue->id;
             }
@@ -4815,6 +4915,10 @@ mme_bearer_t *mme_bearer_add(mme_sess_t *sess)
     bearer->sess_id = sess->id;
 
     ogs_list_add(&sess->bearer_list, bearer);
+    /* Keep the EBI -> bearer-id lookup table in sync so subsequent
+     * mme_bearer_find_by_ue_ebi() calls hit O(1). */
+    if (bearer->ebi >= MIN_EPS_BEARER_ID && bearer->ebi <= MAX_EPS_BEARER_ID)
+        mme_ue->ebi_to_bearer_id[bearer->ebi] = bearer->id;
 
     bearer->t3489.timer = ogs_timer_add(
             ogs_app()->timer_mgr, mme_timer_t3489_expire,
@@ -4859,6 +4963,13 @@ void mme_bearer_remove(mme_bearer_t *bearer)
     ogs_list_remove(&sess->bearer_list, bearer);
 
     OGS_TLV_CLEAR_DATA(&bearer->tft);
+
+    /* Clear the EBI -> bearer-id slot before the EBI is returned to
+     * the bitmap so a racing find_by_ue_ebi() can not pick up a stale
+     * bearer that has already been removed from the session list. */
+    if (bearer->ebi >= MIN_EPS_BEARER_ID && bearer->ebi <= MAX_EPS_BEARER_ID &&
+            mme_ue->ebi_to_bearer_id[bearer->ebi] == bearer->id)
+        mme_ue->ebi_to_bearer_id[bearer->ebi] = OGS_INVALID_POOL_ID;
 
     ogs_expect(OGS_OK == mme_ebi_free(mme_ue, bearer->ebi));
 
@@ -4906,19 +5017,40 @@ mme_bearer_t *mme_bearer_find_by_sess_ebi(const mme_sess_t *sess, uint8_t ebi)
 
 mme_bearer_t *mme_bearer_find_by_ue_ebi(const mme_ue_t *mme_ue, uint8_t ebi)
 {
-    mme_sess_t *sess = NULL;
+    ogs_pool_id_t bearer_id;
     mme_bearer_t *bearer = NULL;
 
     ogs_assert(mme_ue);
 
-    sess = mme_sess_first(mme_ue);
-    while (sess) {
-        bearer = mme_bearer_find_by_sess_ebi(sess, ebi);
-        if (bearer) {
-            return bearer;
+    /*
+     * Fast path: the EBI -> bearer-id table is updated by
+     * mme_bearer_add / _remove. Most S1AP messages (E-RAB setup,
+     * release, modify, NAS over S1AP) end up here, so an O(1) array
+     * indexing replaces a per-session, per-bearer walk.
+     */
+    if (ebi >= MIN_EPS_BEARER_ID && ebi <= MAX_EPS_BEARER_ID) {
+        bearer_id = mme_ue->ebi_to_bearer_id[ebi];
+        if (bearer_id != OGS_INVALID_POOL_ID) {
+            bearer = mme_bearer_find_by_id(bearer_id);
+            /* Defensive: validate the bearer still belongs to this UE
+             * in case the slot survived a removal we did not see. */
+            if (bearer && bearer->mme_ue_id == mme_ue->id)
+                return bearer;
         }
+        return NULL;
+    }
 
-        sess = mme_sess_next(sess);
+    /* Out-of-range EBI: fall through to a linear walk. Callers that
+     * pass MIN-1..0 or > MAX hit the original behaviour, which already
+     * returned NULL via the loop. */
+    {
+        mme_sess_t *sess = mme_sess_first(mme_ue);
+        while (sess) {
+            bearer = mme_bearer_find_by_sess_ebi(sess, ebi);
+            if (bearer)
+                return bearer;
+            sess = mme_sess_next(sess);
+        }
     }
 
     return NULL;

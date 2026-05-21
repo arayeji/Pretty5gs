@@ -282,6 +282,16 @@ typedef struct mme_enb_s {
 
     ogs_list_t      enb_ue_list;
 
+    /*
+     * Lookup index for enb_ue by ENB-UE-S1AP-ID. Each S1AP message
+     * carrying an ENB-UE-S1AP-ID hits enb_ue_find_by_enb_ue_s1ap_id();
+     * with a busy eNB hosting hundreds of UEs the linear walk over
+     * enb_ue_list dominated the path. Maintained alongside the list:
+     * keys point into the enb_ue's own enb_ue_s1ap_id field, so no
+     * extra allocation per entry. NULL until first enb_ue_add().
+     */
+    ogs_hash_t      *enb_ue_hash;
+
 } mme_enb_t;
 
 typedef struct mme_emerg_s {
@@ -655,11 +665,25 @@ struct mme_ue_s {
 
 #define CLEAR_EPS_BEARER_ID(__mME) \
     do { \
+        int __ebi_i; \
         ogs_assert((__mME)); \
         (__mME)->ebi_bitmap = 0; \
+        for (__ebi_i = 0; __ebi_i <= MAX_EPS_BEARER_ID; __ebi_i++) \
+            (__mME)->ebi_to_bearer_id[__ebi_i] = OGS_INVALID_POOL_ID; \
     } while(0)
 
     uint16_t ebi_bitmap; /* bit5~bit15 used */
+
+    /*
+     * EBI -> mme_bearer_t pool id, indexed [MIN_EPS_BEARER_ID ..
+     * MAX_EPS_BEARER_ID]. Updated by mme_bearer_add/_remove so that
+     * mme_bearer_find_by_ue_ebi() is O(1) instead of walking every
+     * session+bearer for every S1AP E-RAB element. The pool id (not a
+     * raw pointer) survives stale references: if the bearer was freed
+     * out from under us, mme_bearer_find_by_id() returns NULL.
+     * OGS_INVALID_POOL_ID == "no bearer in this slot".
+     */
+    ogs_pool_id_t ebi_to_bearer_id[MAX_EPS_BEARER_ID + 1];
 
     /* Paging Info */
 #define ECM_CONNECTED(__mME) \
