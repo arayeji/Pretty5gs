@@ -321,7 +321,12 @@ mhd_server_access_handler(void *cls, struct MHD_Connection *connection,
 
 static int ogs_metrics_context_server_start(ogs_metrics_server_t *server)
 {
-#define MAX_NUM_OF_MHD_OPTION_ITEM 8
+    /*
+     * Bumped from 8 to 16 to fit the new tuning options without
+     * silently overrunning. MHD_OPTION_ARRAY scans until
+     * MHD_OPTION_END so leaving spare slots is harmless.
+     */
+#define MAX_NUM_OF_MHD_OPTION_ITEM 16
     struct MHD_OptionItem mhd_ops[MAX_NUM_OF_MHD_OPTION_ITEM];
     const union MHD_DaemonInfo *mhd_info = NULL;
     int index = 0;
@@ -357,6 +362,31 @@ static int ogs_metrics_context_server_start(ogs_metrics_server_t *server)
     mhd_ops[index].option = MHD_OPTION_SOCK_ADDR;
     mhd_ops[index].value = 0;
     mhd_ops[index].ptr_value = (void *)&addr->sa; index++;
+
+    /*
+     * In Open5GS the MHD daemon is driven by the main NF event loop
+     * (external polling via MHD_run callbacks). When the loop is
+     * busy - e.g. an MME serving thousands of eNBs - Prometheus
+     * scrapes can queue in the kernel SYN/accept queue long enough
+     * that the scraper times out and the connection is reset.
+     * Raise the per-daemon connection limit and the listen-backlog
+     * so a brief stall does not cost us a scrape.
+     */
+#ifdef MHD_OPTION_CONNECTION_LIMIT
+    mhd_ops[index].option = MHD_OPTION_CONNECTION_LIMIT;
+    mhd_ops[index].value = 4096;  /* default 1000 */
+    mhd_ops[index].ptr_value = NULL; index++;
+#endif
+#ifdef MHD_OPTION_LISTEN_BACKLOG_SIZE
+    mhd_ops[index].option = MHD_OPTION_LISTEN_BACKLOG_SIZE;
+    mhd_ops[index].value = 4096;  /* kernel will clamp to somaxconn */
+    mhd_ops[index].ptr_value = NULL; index++;
+#endif
+#ifdef MHD_OPTION_CONNECTION_TIMEOUT
+    mhd_ops[index].option = MHD_OPTION_CONNECTION_TIMEOUT;
+    mhd_ops[index].value = 30;    /* seconds; default 0 = unlimited */
+    mhd_ops[index].ptr_value = NULL; index++;
+#endif
 
     mhd_ops[index].option = MHD_OPTION_END;
     mhd_ops[index].value = 0;
