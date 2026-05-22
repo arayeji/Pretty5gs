@@ -20,6 +20,7 @@
 #include "mme-context.h"
 #include "mme-sm.h"
 #include "mme-timer.h"
+#include "mme-trace.h"
 
 #include "s1ap-handler.h"
 #include "s1ap-path.h"
@@ -405,6 +406,8 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         e->mme_ue_id = mme_ue->id;
         e->nas_message = &nas_message;
 
+        ogs_mme_trace_from_ids(e->enb_ue_id, mme_ue->id, NULL, "emm");
+
         ogs_fsm_dispatch(&mme_ue->sm, e);
         if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_exception)) {
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
@@ -540,6 +543,11 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         e->bearer_id = bearer->id;
         e->nas_message = &nas_message;
 
+        ogs_mme_trace_from_ids(
+                mme_ue->enb_ue_id, mme_ue->id,
+                sess->session ? sess->session->name : NULL,
+                "esm");
+
         ogs_fsm_dispatch(&bearer->sm, e);
         if (OGS_FSM_CHECK(&bearer->sm, esm_state_bearer_deactivated)) {
             if (default_bearer->ebi == bearer->ebi) {
@@ -637,6 +645,8 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
          * because the status is checked in the sending routine.
          */
 
+        ogs_mme_trace_from_ids(e->enb_ue_id, mme_ue->id, NULL, "s6a");
+
         switch (s6a_message->cmd_code) {
         case OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION:
             ogs_debug("OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION");
@@ -657,8 +667,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
                 /* Finally reject the UE: */
                 if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {
-                    ogs_info("[%s] Attach reject [OGS_NAS_EMM_CAUSE:%d]",
-                            mme_ue->imsi_bcd, emm_cause);
+                    OGS_TLOG_INFO("Attach reject [OGS_NAS_EMM_CAUSE:%d]", emm_cause);
                     r = nas_eps_send_attach_reject(
                             enb_ue, mme_ue, emm_cause,
                             OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
@@ -701,8 +710,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             emm_cause = mme_s6a_handle_ula(mme_ue, s6a_message);
             if (emm_cause != OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED) {
                 if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {
-                    ogs_info("[%s] Attach reject [OGS_NAS_EMM_CAUSE:%d]",
-                            mme_ue->imsi_bcd, emm_cause);
+                    OGS_TLOG_INFO("Attach reject [OGS_NAS_EMM_CAUSE:%d]", emm_cause);
                     r = nas_eps_send_attach_reject(
                             enb_ue, mme_ue, emm_cause,
                             OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);

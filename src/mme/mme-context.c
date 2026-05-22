@@ -23,6 +23,7 @@
 #include "eplmn-config.h"
 #include "mme-event.h"
 #include "mme-timer.h"
+#include "mme-trace.h"
 #include "nas-path.h"
 #include "s1ap-path.h"
 #include "s1ap-handler.h"
@@ -4497,9 +4498,18 @@ mme_ue_t *mme_ue_find_by_message(const ogs_nas_eps_message_t *message)
 
             mme_ue = mme_ue_find_by_imsi_bcd(imsi_bcd);
             if (mme_ue) {
-                ogs_info("[%s] known UE by IMSI", imsi_bcd);
+                ogs_mme_trace_set(
+                        enb_ue_find_by_id(mme_ue->enb_ue_id),
+                        mme_ue, NULL, "lookup");
+                OGS_TLOG_INFO("known UE by IMSI");
             } else {
-                ogs_info("[%s] Unknown UE by IMSI", imsi_bcd);
+                ogs_trace_ctx_t ctx;
+
+                memset(&ctx, 0, sizeof(ctx));
+                ogs_cpystrn(ctx.imsi, imsi_bcd, sizeof(ctx.imsi));
+                ogs_cpystrn(ctx.proc, "lookup", sizeof(ctx.proc));
+                ogs_trace_set(&ctx);
+                OGS_TLOG_INFO("Unknown UE by IMSI");
             }
             break;
         case OGS_NAS_EPS_MOBILE_IDENTITY_GUTI:
@@ -5548,8 +5558,11 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
                         create_action);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
-                ogs_warn("APN duplicated [%s]",
-                    pdn_connectivity_request->access_point_name.apn);
+                ogs_mme_trace_set(
+                        enb_ue_find_by_id(mme_ue->enb_ue_id), mme_ue,
+                        pdn_connectivity_request->access_point_name.apn,
+                        "esm");
+                OGS_TLOG_WARN("APN duplicated");
                 return NULL;
             }
         } else if (pdn_connectivity_request->request_type.value !=

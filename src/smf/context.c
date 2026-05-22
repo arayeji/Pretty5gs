@@ -1383,7 +1383,7 @@ static smf_ue_t *smf_ue_add(void)
     ogs_metrics_dump_unlock();
 
     smf_metrics_inst_global_inc(SMF_METR_GLOB_GAUGE_UES_ACTIVE);
-    ogs_info("[Added] Number of SMF-UEs is now %d",
+    ogs_debug("[Added] Number of SMF-UEs is now %d",
             ogs_list_count(&self.smf_ue_list));
     return smf_ue;
 }
@@ -1668,7 +1668,7 @@ void smf_ue_remove(smf_ue_t *smf_ue)
     ogs_metrics_dump_unlock();
 
     smf_metrics_inst_global_dec(SMF_METR_GLOB_GAUGE_UES_ACTIVE);
-    ogs_info("[Removed] Number of SMF-UEs is now %d",
+    ogs_debug("[Removed] Number of SMF-UEs is now %d",
             ogs_list_count(&self.smf_ue_list));
 }
 
@@ -3366,7 +3366,7 @@ smf_bearer_t *smf_bearer_add(smf_sess_t *sess)
             urr->time_threshold = self.radius.acct_interim_interval;
             urr->meas_info.istm = 1;
         }
-        ogs_info("SMF-URR-EPC: acct_interim=%u time_threshold=%u istm=%u "
+        ogs_debug("SMF-URR-EPC: acct_interim=%u time_threshold=%u istm=%u "
                 "(volume_threshold=%llu bytes)",
                 (unsigned)self.radius.acct_interim_interval,
                 (unsigned)urr->time_threshold,
@@ -4175,7 +4175,7 @@ void smf_pf_precedence_pool_final(smf_sess_t *sess)
 static void stats_add_smf_session(void)
 {
     num_of_smf_sess = num_of_smf_sess + 1;
-    ogs_info("[Added] Number of SMF-Sessions is now %d", num_of_smf_sess);
+    ogs_debug("[Added] Number of SMF-Sessions is now %d", num_of_smf_sess);
 }
 
 static void stats_remove_smf_session(smf_sess_t *sess)
@@ -4183,7 +4183,7 @@ static void stats_remove_smf_session(smf_sess_t *sess)
     ogs_assert(sess);
 
     num_of_smf_sess = num_of_smf_sess - 1;
-    ogs_info("[Removed] Number of SMF-Sessions is now %d", num_of_smf_sess);
+    ogs_debug("[Removed] Number of SMF-Sessions is now %d", num_of_smf_sess);
 }
 
 int smf_instance_get_load(void)

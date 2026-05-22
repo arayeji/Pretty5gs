@@ -21,6 +21,7 @@
 #include "s1ap-path.h"
 #include "sgsap-path.h"
 #include "mme-path.h"
+#include "mme-trace.h"
 
 #include "mme-sm.h"
 #include "mme-s6a-handler.h"
@@ -50,7 +51,9 @@ uint8_t mme_s6a_handle_aia(
     ogs_assert(e_utran_vector);
 
     if (s6a_message->result_code != ER_DIAMETER_SUCCESS) {
-        ogs_warn("Authentication Information failed [%d]",
+        ogs_mme_trace_set(
+                enb_ue_find_by_id(mme_ue->enb_ue_id), mme_ue, NULL, "s6a");
+        OGS_TLOG_WARN("Authentication Information failed [%d]",
                     s6a_message->result_code);
         return emm_cause_from_diameter(s6a_message->err, s6a_message->exp_err);
     }

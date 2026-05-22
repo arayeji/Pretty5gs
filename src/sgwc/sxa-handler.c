@@ -21,6 +21,7 @@
 #include "gtp-path.h"
 #include "sxa-handler.h"
 #include "ga-writer.h"
+#include "sgwc-trace.h"
 
 static uint8_t gtp_cause_from_pfcp(uint8_t pfcp_cause)
 {
@@ -171,7 +172,7 @@ void sgwc_sxa_handle_session_establishment_response(
 
     ogs_gtp2_indication_t *indication = NULL;
 
-    ogs_info("Session Establishment Response");
+    ogs_debug("Session Establishment Response");
 
     ogs_assert(pfcp_xact);
     ogs_assert(pfcp_rsp);
@@ -204,7 +205,9 @@ void sgwc_sxa_handle_session_establishment_response(
 
     if (pfcp_rsp->cause.presence) {
         if (pfcp_rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
-            ogs_warn("PFCP Cause [%d] : Not Accepted", pfcp_rsp->cause.u8);
+            ogs_error("PFCP Cause [%d:%s] : Not Accepted",
+                    pfcp_rsp->cause.u8,
+                    ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8));
             cause_value = gtp_cause_from_pfcp(pfcp_rsp->cause.u8);
         }
     } else {
@@ -326,6 +329,11 @@ void sgwc_sxa_handle_session_establishment_response(
     up_f_seid = pfcp_rsp->up_f_seid.data;
     ogs_assert(up_f_seid);
     sess->sgwu_sxa_seid = be64toh(up_f_seid->seid);
+
+    sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+    ogs_sgwc_trace_set(sgwc_ue, sess, "create-session");
+    OGS_TLOG_INFO("PFCP session established SGWU-SEID=0x%llx",
+            (unsigned long long)sess->sgwu_sxa_seid);
 
     /* Receive Control Plane(UL) : PGW-S5C */
     pgw_s5c_teid = create_session_request->
@@ -486,7 +494,7 @@ void sgwc_sxa_handle_session_modification_response(
 
     ogs_gtp2_cause_t cause;
 
-    ogs_info("Session Modification Response");
+    ogs_debug("Session Modification Response");
 
     ogs_assert(pfcp_xact);
     ogs_assert(pfcp_rsp);
@@ -1190,6 +1198,9 @@ void sgwc_sxa_handle_session_modification_response(
             rv = ogs_gtp_xact_commit(s11_xact);
             ogs_expect(rv == OGS_OK);
 
+            ogs_sgwc_trace_set(sgwc_ue, sess, "create-session");
+            OGS_TLOG_INFO("Create Session Response sent to MME");
+
         } else if (flags & OGS_PFCP_MODIFY_DL_ONLY) {
             if (SGWC_SESSION_SYNC_DONE(sgwc_ue,
                     OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE, flags)) {
@@ -1568,7 +1579,7 @@ void sgwc_sxa_handle_session_report_request(
     uint8_t cause_value = 0;
     uint16_t pdr_id = 0;
 
-    ogs_info("Session Report Request");
+    ogs_debug("Session Report Request");
 
     ogs_assert(pfcp_xact);
     ogs_assert(pfcp_req);

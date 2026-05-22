@@ -23,6 +23,7 @@
 #include "fd-path.h"
 #include "s5c-build.h"
 #include "s5c-handler.h"
+#include "smf-trace.h"
 #include "pfcp-path.h"
 #include "radius-path.h"
 #include "ga-writer.h"
@@ -94,9 +95,6 @@ uint8_t smf_s5c_handle_create_session_request(
         smf_sess_t *sess, ogs_gtp_xact_t *xact,
         ogs_gtp2_create_session_request_t *req)
 {
-    char buf1[OGS_ADDRSTRLEN];
-    char buf2[OGS_ADDRSTRLEN];
-
     int i, rv;
     int bearer_count;
     uint8_t cause_value = 0;
@@ -224,7 +222,7 @@ uint8_t smf_s5c_handle_create_session_request(
             (uint8_t *)req->me_identity.data, smf_ue->imeisv_len);
         ogs_buffer_to_bcd(
             smf_ue->imeisv, smf_ue->imeisv_len, smf_ue->imeisv_bcd);
-        ogs_info("S5C: IMEISV from Create Session Request [%s] (raw_len=%d)",
+        ogs_debug("S5C: IMEISV from Create Session Request [%s] (raw_len=%d)",
                 smf_ue->imeisv_bcd, smf_ue->imeisv_len);
     } else {
         ogs_info("S5C: no ME Identity IE in Create Session Request "
@@ -358,11 +356,8 @@ uint8_t smf_s5c_handle_create_session_request(
     smf_radius_accounting_session_started(sess);
     smf_ga_cdr_session_start(sess);
 
-    ogs_info("UE IMSI[%s] APN[%s] IPv4[%s] IPv6[%s]",
-        smf_ue->imsi_bcd,
-        sess->session.name,
-        sess->ipv4 ? OGS_INET_NTOP(&sess->ipv4->addr, buf1) : "",
-        sess->ipv6 ? OGS_INET6_NTOP(&sess->ipv6->addr, buf2) : "");
+    ogs_smf_trace_set(smf_ue, sess, "create-session");
+    OGS_TLOG_INFO("Create Session accepted");
 
     /* Control Plane(DL) : SGW-S5C */
     sgw_s5c_teid = req->sender_f_teid_for_control_plane.data;

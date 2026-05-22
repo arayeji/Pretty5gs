@@ -44,6 +44,7 @@ libmme_sources = files('''
     sbc-handler.h
     mme-sm.h
     mme-path.h
+    mme-trace.h
     metrics.h
 
     mme-init.c
@@ -79,6 +80,7 @@ libmme_sources = files('''
     mme-s11-handler.c
     mme-sm.c
     mme-path.c
+    mme-trace.c
     sbc-handler.c
     metrics.c
     enb-info.c

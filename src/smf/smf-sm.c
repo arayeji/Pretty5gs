@@ -23,6 +23,7 @@
 #include "pfcp-path.h"
 #include "sbi-path.h"
 #include "s5c-handler.h"
+#include "smf-trace.h"
 #include "gn-handler.h"
 #include "gx-handler.h"
 #include "gy-handler.h"
@@ -166,6 +167,10 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
 
             if (gtp2_sender_f_teid.teid_presence == true)
                 sess->sgw_s5c_teid = gtp2_sender_f_teid.teid;
+
+            ogs_smf_trace_set(smf_ue_find_by_id(sess->smf_ue_id), sess,
+                    "create-session");
+            OGS_TLOG_INFO("Create Session Request");
 
             ogs_debug("    SGW_S5C_TEID[0x%x], Sender F-TEID(%d)[0x%x]",
                     sess->sgw_s5c_teid,

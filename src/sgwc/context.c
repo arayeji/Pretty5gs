@@ -305,7 +305,7 @@ sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len)
 
     ogs_list_add(&self.sgw_ue_list, sgwc_ue);
 
-    ogs_info("[Added] Number of SGWC-UEs is now %d",
+    ogs_debug("[Added] Number of SGWC-UEs is now %d",
             ogs_list_count(&self.sgw_ue_list));
 
     return sgwc_ue;
@@ -332,7 +332,7 @@ int sgwc_ue_remove(sgwc_ue_t *sgwc_ue)
     ogs_pool_free(&sgwc_s11_teid_pool, sgwc_ue->sgw_s11_teid_node);
     ogs_pool_id_free(&sgwc_ue_pool, sgwc_ue);
 
-    ogs_info("[Removed] Number of SGWC-UEs is now %d",
+    ogs_debug("[Removed] Number of SGWC-UEs is now %d",
             ogs_list_count(&self.sgw_ue_list));
 
     return OGS_OK;
@@ -527,8 +527,7 @@ int sgwc_sess_remove(sgwc_sess_t *sess)
 
     sgwc_bearer_remove_all(sess);
 
-    ogs_assert(sess->pfcp.bar);
-    ogs_pfcp_bar_delete(sess->pfcp.bar);
+    ogs_pfcp_sess_clear(&sess->pfcp);
 
     ogs_pfcp_pool_final(&sess->pfcp);
 
@@ -1085,5 +1084,5 @@ static void stats_add_sgwc_session(void)
 static void stats_remove_sgwc_session(void)
 {
     num_of_sgwc_sess = num_of_sgwc_sess - 1;
-    ogs_info("[Removed] Number of SGWC-Sessions is now %d", num_of_sgwc_sess);
+    ogs_debug("[Removed] Number of SGWC-Sessions is now %d", num_of_sgwc_sess);
 }

@@ -57,7 +57,7 @@ int ogs_gtp_connect(ogs_sock_t *ipv4, ogs_sock_t *ipv6, ogs_gtp_node_t *gnode)
             ogs_assert_if_reached();
 
         if (sock) {
-            ogs_info("gtp_connect() [%s]:%d",
+            ogs_debug("gtp_connect() [%s]:%d",
                     OGS_ADDR(addr, buf), OGS_PORT(addr));
 
             gnode->sock = sock;
