@@ -259,6 +259,20 @@ void sgwc_s11_handle_create_session_request(
 
     ogs_info("UE IMSI[%s] APN[%s]", sgwc_ue->imsi_bcd, sess->session.name);
 
+    /* MSISDN (optional IE; forwarded by MME for SGW/PGW CDRs) */
+    if (req->msisdn.presence == 1 && req->msisdn.len && req->msisdn.data) {
+        if (req->msisdn.len > (int)sizeof(sgwc_ue->msisdn)) {
+            ogs_warn("MSISDN too long (%u), truncating for SGW-CDR",
+                    (unsigned)req->msisdn.len);
+            sgwc_ue->msisdn_len = sizeof(sgwc_ue->msisdn);
+        } else {
+            sgwc_ue->msisdn_len = req->msisdn.len;
+        }
+        memcpy(sgwc_ue->msisdn, req->msisdn.data, sgwc_ue->msisdn_len);
+        ogs_buffer_to_bcd(sgwc_ue->msisdn,
+                sgwc_ue->msisdn_len, sgwc_ue->msisdn_bcd);
+    }
+
     /* Set User Location Information */
     if (req->user_location_information.presence == 1) {
         decoded = ogs_gtp2_parse_uli(&uli, &req->user_location_information);

@@ -328,6 +328,12 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
     sgwc_self()->cdr_local_seq++;
     ber_uint_be_ctx(&b, 20, sgwc_self()->cdr_local_seq, 4);
 
+    /* [22] servedMSISDN (TBCD) — same tag as PGWRecord (TS 32.298). */
+    if (sgwc_ue->msisdn_bcd[0]) {
+        n = tbcd_encode(sgwc_ue->msisdn_bcd, tmp, sizeof(tmp));
+        if (n) ber_prim_ctx(&b, 22, tmp, n);
+    }
+
     {
         uint8_t pl[3];
         plmn_encode(&sess->serving_plmn_id, pl);
