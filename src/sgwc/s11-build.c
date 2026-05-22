@@ -41,7 +41,7 @@ ogs_pkbuf_t *sgwc_s11_build_create_session_response(
     ogs_gtp2_f_teid_t pgw_s5u_teid[OGS_BEARER_PER_UE];
     int pgw_s5u_len[OGS_BEARER_PER_UE];
 
-    ogs_info("[SGWC] Create Session Response");
+    ogs_debug("[SGWC] Create Session Response");
 
     ogs_assert(sess);
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);

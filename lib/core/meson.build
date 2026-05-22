@@ -235,6 +235,7 @@ libcore_sources = files('''
     ogs-time.h
     ogs-conv.h
     ogs-log.h
+    ogs-trace.h
     ogs-pkbuf.h
     ogs-memory.h
     ogs-rbtree.h
@@ -270,6 +271,7 @@ libcore_sources = files('''
     ogs-time.c
     ogs-conv.c
     ogs-log.c
+    ogs-trace.c
     ogs-pkbuf.c
     ogs-memory.c
     ogs-rbtree.c

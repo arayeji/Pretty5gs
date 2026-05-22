@@ -36,7 +36,7 @@ ogs_pkbuf_t *sgwc_sxa_build_session_establishment_request(
     ogs_pfcp_f_seid_t f_seid;
     int len;
 
-    ogs_info("Session Establishment Request");
+    ogs_debug("Session Establishment Request");
     ogs_assert(sess);
 
     pfcp_message = ogs_calloc(1, sizeof(*pfcp_message));
@@ -137,13 +137,13 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
     uint64_t modify_flags = 0;
     int total = 0;
 
-    ogs_info("Session Modification Request");
+    ogs_debug("Session Modification Request");
 
     ogs_assert(sess);
     ogs_assert(xact);
     modify_flags = xact->modify_flags;
     ogs_assert(modify_flags);
-    ogs_info("PFCP Session Modification build start: "
+    ogs_debug("PFCP Session Modification build start: "
             "sess_id=%d xact=%p flags=0x%llx bearer_to_modify_count=%d",
             sess->id, xact, (unsigned long long)modify_flags,
             ogs_list_count(&xact->bearer_to_modify_list));
@@ -314,7 +314,7 @@ ogs_pkbuf_t *sgwc_sxa_build_session_deletion_request(
     ogs_pfcp_message_t *pfcp_message = NULL;
     ogs_pkbuf_t *pkbuf = NULL;
 
-    ogs_info("Session Deletion Request");
+    ogs_debug("Session Deletion Request");
     ogs_assert(sess);
 
     pfcp_message = ogs_calloc(1, sizeof(*pfcp_message));

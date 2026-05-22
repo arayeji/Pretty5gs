@@ -19,6 +19,7 @@
 
 #include "gtp-path.h"
 #include "pfcp-path.h"
+#include "sgwc-trace.h"
 
 #include "s11-handler.h"
 
@@ -188,7 +189,15 @@ void sgwc_s11_handle_create_session_request(
     req = &message->create_session_request;
     ogs_assert(req);
 
-    ogs_info("Create Session Request");
+    if (sgwc_ue && req->sender_f_teid_for_control_plane.presence &&
+            req->sender_f_teid_for_control_plane.data) {
+        ogs_gtp2_f_teid_t *ft =
+            req->sender_f_teid_for_control_plane.data;
+        sgwc_ue->mme_s11_teid = be32toh(ft->teid);
+    }
+
+    ogs_sgwc_trace_set(sgwc_ue, NULL, "create-session");
+    OGS_TLOG_INFO("Create Session Request");
 
     /************************
      * Check SGWC-UE Context
@@ -257,7 +266,21 @@ void sgwc_s11_handle_create_session_request(
     sess = sgwc_sess_add(sgwc_ue, apn);
     ogs_assert(sess);
 
-    ogs_info("UE IMSI[%s] APN[%s]", sgwc_ue->imsi_bcd, sess->session.name);
+    /* Control-plane TEIDs from Create Session Request */
+    if (req->sender_f_teid_for_control_plane.presence &&
+            req->sender_f_teid_for_control_plane.data) {
+        mme_s11_teid = req->sender_f_teid_for_control_plane.data;
+        sgwc_ue->mme_s11_teid = be32toh(mme_s11_teid->teid);
+    }
+    if (req->pgw_s5_s8_address_for_control_plane_or_pmip.presence &&
+            req->pgw_s5_s8_address_for_control_plane_or_pmip.data) {
+        pgw_s5c_teid = req->pgw_s5_s8_address_for_control_plane_or_pmip.data;
+        sess->pgw_s5c_teid = be32toh(pgw_s5c_teid->teid);
+    }
+
+    ogs_sgwc_trace_set(sgwc_ue, sess, "create-session");
+    OGS_TLOG_INFO("S11 session ready SGW-S5C=0x%x PGW-S5C=0x%x",
+            sess->sgw_s5c_teid, sess->pgw_s5c_teid);
 
     /* MSISDN (optional IE; forwarded by MME for SGW/PGW CDRs) */
     if (req->msisdn.presence == 1 && req->msisdn.len && req->msisdn.data) {
@@ -443,6 +466,7 @@ void sgwc_s11_handle_create_session_request(
     ogs_assert(pgw_s5c_teid);
     sess->pgw_s5c_teid = be32toh(pgw_s5c_teid->teid);
 
+    ogs_sgwc_trace_set(sgwc_ue, sess, "create-session");
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
         sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);
 
@@ -492,7 +516,8 @@ void sgwc_s11_handle_modify_bearer_request(
     req = &message->modify_bearer_request;
     ogs_assert(req);
 
-    ogs_info("Modify Bearer Request");
+    ogs_sgwc_trace_set(sgwc_ue, NULL, "modify-bearer");
+    OGS_TLOG_INFO("Modify Bearer Request");
 
     /************************
      * Check SGWC-UE Context

@@ -19,6 +19,7 @@
 
 #include "mme-event.h"
 #include "mme-timer.h"
+#include "mme-trace.h"
 #include "s1ap-handler.h"
 #include "mme-gn-handler.h"
 #include "mme-fd-path.h"
@@ -362,17 +363,18 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             break;
         }
 
+        ogs_mme_trace_set(enb_ue, mme_ue, NULL, "emm");
+
         h.type = e->nas_type;
 
         xact_count = mme_ue_xact_count(mme_ue, OGS_GTP_LOCAL_ORIGINATOR);
 
         if (message->emm.h.security_header_type
                 == OGS_NAS_SECURITY_HEADER_FOR_SERVICE_REQUEST_MESSAGE) {
-            ogs_info("[%s] Service request", mme_ue->imsi_bcd);
+            OGS_TLOG_INFO("Service request");
 
             if (state != EMM_COMMON_STATE_REGISTERED) {
-                ogs_info("Service request : Not registered[%s]",
-                        mme_ue->imsi_bcd);
+                OGS_TLOG_INFO("Service request : Not registered");
                 r = nas_eps_send_service_reject(enb_ue, mme_ue,
                     OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK);
                 ogs_expect(r == OGS_OK);
@@ -455,7 +457,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                 break;
             }
 
-            ogs_info("Identity response");
+            OGS_TLOG_INFO("Identity response");
             CLEAR_MME_UE_TIMER(mme_ue->t3470);
 
             rv = emm_handle_identity_response(enb_ue, mme_ue,
@@ -485,7 +487,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             break;
 
         case OGS_NAS_EPS_ATTACH_REQUEST:
-            ogs_info("[%s] Attach request", mme_ue->imsi_bcd);
+            OGS_TLOG_INFO("Attach request");
             rv = emm_handle_attach_request(
                     enb_ue, mme_ue, &message->emm.attach_request, e->pkbuf);
             if (rv != OGS_OK) {
@@ -548,7 +550,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             break;
 
         case OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST:
-            ogs_info("[%s] Tracking area update request", mme_ue->imsi_bcd);
+            OGS_TLOG_INFO("Tracking area update request");
             rv = emm_handle_tau_request(enb_ue, mme_ue,
                     &message->emm.tracking_area_update_request, e->pkbuf);
             if (rv != OGS_OK) {
@@ -1600,7 +1602,8 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
 
         switch (message->emm.h.message_type) {
         case OGS_NAS_EPS_ATTACH_COMPLETE:
-            ogs_info("[%s] Attach complete", mme_ue->imsi_bcd);
+            ogs_mme_trace_set(enb_ue, mme_ue, NULL, "attach");
+            OGS_TLOG_INFO("Attach complete");
 
         /*
          * TS24.301

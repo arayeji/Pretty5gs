@@ -20,6 +20,7 @@
 #include "gtp-path.h"
 #include "pfcp-path.h"
 #include "ga-writer.h"
+#include "sgwc-trace.h"
 
 #include "s5c-handler.h"
 
@@ -93,7 +94,10 @@ void sgwc_s5c_handle_create_session_response(
     rsp = &message->create_session_response;
     ogs_assert(rsp);
 
-    ogs_info("Create Session Response");
+    ogs_assert(sess);
+    sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+    ogs_sgwc_trace_set(sgwc_ue, sess, "create-session");
+    OGS_TLOG_INFO("Create Session Response");
 
     /********************
      * Check Transaction

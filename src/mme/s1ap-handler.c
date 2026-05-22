@@ -19,6 +19,7 @@
 
 #include "mme-event.h"
 #include "mme-timer.h"
+#include "mme-trace.h"
 
 #include "s1ap-path.h"
 #include "nas-path.h"
@@ -565,8 +566,6 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
     InitialUEMessage = &initiatingMessage->value.choice.InitialUEMessage;
     ogs_assert(InitialUEMessage);
 
-    ogs_info("InitialUEMessage");
-
     for (i = 0; i < InitialUEMessage->protocolIEs.list.count; i++) {
         ie = InitialUEMessage->protocolIEs.list.array[i];
         switch (ie->id) {
@@ -662,9 +661,10 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
             memcpy(&nas_guti.m_tmsi, S_TMSI->m_TMSI.buf, S_TMSI->m_TMSI.size);
             nas_guti.m_tmsi = be32toh(nas_guti.m_tmsi);
 
-            mme_ue_from_stmsi = mme_ue_find_by_guti(&nas_guti);
-            if (!mme_ue_from_stmsi) {
-                ogs_info("Unknown UE by S_TMSI[G:%d,C:%d,M_TMSI:0x%x]",
+            mme_ue = mme_ue_find_by_guti(&nas_guti);
+            if (!mme_ue) {
+                ogs_mme_trace_set(enb_ue, NULL, NULL, "initial-ue");
+                OGS_TLOG_INFO("Unknown UE by S_TMSI[G:%d,C:%d,M_TMSI:0x%x]",
                         nas_guti.mme_gid, nas_guti.mme_code, nas_guti.m_tmsi);
             } else {
                 ogs_debug("    S_TMSI[G:%d,C:%d,M_TMSI:0x%x] IMSI:[%s]",
@@ -713,6 +713,13 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
                 mme_ue->current.guti.m_tmsi,
                 MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "Unknown");
         }
+    }
+
+    {
+        mme_ue_t *mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+
+        ogs_mme_trace_set(enb_ue, mme_ue, NULL, "initial-ue");
+        OGS_TLOG_INFO("InitialUEMessage");
     }
 
     if (!NAS_PDU) {
@@ -2100,11 +2107,9 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
         return;
     }
 
-    ogs_info("UE Context Release [Action:%d]", enb_ue->ue_ctx_rel_action);
-    ogs_debug("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
-            enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
-
     mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+    ogs_mme_trace_set(enb_ue, mme_ue, NULL, "s1-release");
+    OGS_TLOG_INFO("UE Context Release [Action:%d]", enb_ue->ue_ctx_rel_action);
     if (mme_ue) {
         ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
 

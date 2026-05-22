@@ -36,6 +36,7 @@
 #include "core/ogs-time.h"
 #include "core/ogs-conv.h"
 #include "core/ogs-log.h"
+#include "core/ogs-trace.h"
 #include "core/ogs-pkbuf.h"
 #include "core/ogs-memory.h"
 #include "core/ogs-rand.h"
