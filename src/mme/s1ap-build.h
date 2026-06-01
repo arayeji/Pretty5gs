@@ -28,7 +28,7 @@
 extern "C" {
 #endif
 
-ogs_pkbuf_t *s1ap_build_setup_rsp(void);
+ogs_pkbuf_t *s1ap_build_setup_rsp(mme_enb_t *enb);
 ogs_pkbuf_t *s1ap_build_setup_failure(
     S1AP_Cause_PR group, long cause, long time_to_wait);
 

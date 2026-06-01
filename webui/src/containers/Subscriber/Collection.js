@@ -2,16 +2,19 @@ import { Component } from 'react';
 import PropTypes from 'prop-types';
 import { connect } from 'react-redux';
 
-import { MODEL, fetchSubscribers, deleteSubscriber } from 'modules/crud/subscriber';
+import styled from 'styled-components';
+import oc from 'open-color';
+
+import { MODEL, fetchSubscriber, deleteSubscriber } from 'modules/crud/subscriber';
 import { clearActionStatus } from 'modules/crud/actions';
 import { select, selectActionStatus } from 'modules/crud/selectors';
 import * as Notification from 'modules/notification/actions';
 
-import { 
-  Layout, 
-  Subscriber, 
-  Spinner, 
-  FloatingButton, 
+import {
+  Layout,
+  Subscriber,
+  Spinner,
+  FloatingButton,
   Blank,
   Dimmed,
   Confirm
@@ -19,9 +22,20 @@ import {
 
 import Document from './Document';
 
+const NotFound = styled.div`
+  display: block;
+  margin: 2rem auto;
+  max-width: 700px;
+  padding: 1rem;
+  text-align: center;
+  font-size: 1rem;
+  color: ${oc.gray[6]};
+`;
+
 class Collection extends Component {
   state = {
     search: '',
+    searchedImsi: null,
     document: {
       action: '',
       visible: false,
@@ -38,20 +52,16 @@ class Collection extends Component {
     }
   };
 
-  componentWillMount() {
-    const { subscribers, dispatch } = this.props
-
-    if (subscribers.needsFetch) {
-      dispatch(subscribers.fetch)
-    }
-  }
-
   componentWillReceiveProps(nextProps) {
-    const { subscribers, status } = nextProps
-    const { dispatch } = this.props
+    const { status } = nextProps;
+    const { dispatch } = this.props;
+    const { searchedImsi } = this.state;
 
-    if (subscribers.needsFetch) {
-      dispatch(subscribers.fetch)
+    if (searchedImsi) {
+      const subscriber = select(fetchSubscriber(searchedImsi), nextProps.crud);
+      if (subscriber.needsFetch) {
+        dispatch(fetchSubscriber(searchedImsi));
+      }
     }
 
     if (status.response) {
@@ -60,9 +70,14 @@ class Collection extends Component {
         message: `${status.id} has been deleted`
       }));
       dispatch(clearActionStatus(MODEL, 'delete'));
-    } 
+
+      if (status.id === searchedImsi) {
+        this.setState({ search: '', searchedImsi: null });
+      }
+    }
 
     if (status.error) {
+      const response = status.error.response || {};
       let title = 'Unknown Code';
       let message = 'Unknown Error';
       if (response.data && response.data.name && response.data.message) {
@@ -91,10 +106,28 @@ class Collection extends Component {
     });
   }
 
-  handleSearchClear = (e) => {
+  handleSearchClear = () => {
     this.setState({
-      search: ''
+      search: '',
+      searchedImsi: null
     });
+  }
+
+  handleSearchKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      this.handleSearch();
+    }
+  }
+
+  handleSearch = () => {
+    const imsi = this.state.search.trim();
+    if (!imsi) {
+      return;
+    }
+
+    this.setState({ searchedImsi: imsi });
+    this.props.dispatch(fetchSubscriber(imsi));
   }
 
   documentHandler = {
@@ -200,57 +233,65 @@ class Collection extends Component {
     const {
       handleSearchChange,
       handleSearchClear,
+      handleSearchKeyDown,
       documentHandler,
       viewHandler,
       confirmHandler
     } = this;
 
-    const { 
+    const {
       search,
+      searchedImsi,
       document
     } = this.state;
 
-    const { 
-      subscribers,
+    const {
+      crud,
       status
     } = this.props
 
-    const {
-      isLoading,
-      data
-    } = subscribers;
+    const subscriber = searchedImsi
+      ? select(fetchSubscriber(searchedImsi), crud)
+      : { isLoading: false, needsFetch: false, data: null, error: null };
+
+    const subscribers = subscriber.data ? [subscriber.data] : [];
+    const isLoading = searchedImsi && subscriber.isLoading;
+    const notFound = searchedImsi && !subscriber.isLoading && !subscriber.data;
 
     return (
       <Layout.Content>
-        {Object.keys(data).length > 0 && <Subscriber.Search 
+        <Subscriber.Search
           onChange={handleSearchChange}
           value={search}
-          onClear={handleSearchClear} />}
-        <Subscriber.List
-          subscribers={data}
-          deletedImsi={status.id}
-          onView={viewHandler.show}
-          onEdit={documentHandler.actions.update}
-          onDelete={confirmHandler.show}
-          search={search}
-        />
+          onClear={handleSearchClear}
+          onKeyDown={handleSearchKeyDown} />
+        {subscribers.length > 0 &&
+          <Subscriber.List
+            subscribers={subscribers}
+            deletedImsi={status.id}
+            onView={viewHandler.show}
+            onEdit={documentHandler.actions.update}
+            onDelete={confirmHandler.show}
+            search="" />}
         {isLoading && <Spinner md />}
+        {notFound && (
+          <NotFound>No subscriber found for IMSI {searchedImsi}</NotFound>
+        )}
         <Blank
-          visible={!isLoading && !(Object.keys(data).length > 0)}
+          visible={!isLoading && !searchedImsi}
           title="ADD A SUBSCRIBER"
-          body="You have no subscribers... yet!"
+          body="Enter an IMSI above to find a subscriber, or add a new one."
           onTitle={documentHandler.actions.create}
           />
         <FloatingButton onClick={documentHandler.actions.create}/>
         <Subscriber.View
           visible={this.state.view.visible}
-          subscriber={data.filter(subscriber => 
-            subscriber.imsi === this.state.view.imsi)[0]}
+          subscriber={subscriber.data}
           disableOnClickOutside={this.state.view.disableOnClickOutside}
           onEdit={documentHandler.actions.update}
           onDelete={confirmHandler.show}
           onHide={viewHandler.hide}/>
-        <Document 
+        <Document
           { ...document }
           onEdit={documentHandler.actions.update}
           onDelete={confirmHandler.show}
@@ -270,8 +311,8 @@ class Collection extends Component {
 }
 
 Collection = connect(
-  (state) => ({ 
-    subscribers: select(fetchSubscribers(), state.crud),
+  (state) => ({
+    crud: state.crud,
     status: selectActionStatus(MODEL, state.crud, 'delete')
   })
 )(Collection);

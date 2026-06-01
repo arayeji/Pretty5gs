@@ -109,9 +109,13 @@ int ogs_gtp_context_parse_config(const char *local, const char *remote)
                                 int family = AF_UNSPEC;
                                 int i, num = 0;
                                 const char *hostname[OGS_MAX_NUM_OF_HOSTNAME];
+                                int num_of_advertise = 0;
+                                const char *advertise[OGS_MAX_NUM_OF_HOSTNAME];
                                 uint16_t port = self.gtpc_port;
                                 const char *dev = NULL;
                                 ogs_sockaddr_t *addr = NULL;
+                                ogs_sockaddr_t *adv_addr = NULL;
+                                ogs_sockaddr_t *adv_addr6 = NULL;
 
                                 ogs_sockopt_t option;
                                 bool is_option = false;
@@ -175,6 +179,31 @@ int ogs_gtp_context_parse_config(const char *local, const char *remote)
                                         } while (ogs_yaml_iter_type(
                                                     &hostname_iter) ==
                                                 YAML_SEQUENCE_NODE);
+                                    } else if (!strcmp(server_key, "advertise")) {
+                                        ogs_yaml_iter_t advertise_iter;
+                                        ogs_yaml_iter_recurse(
+                                                &server_iter, &advertise_iter);
+                                        ogs_assert(ogs_yaml_iter_type(
+                                                    &advertise_iter) !=
+                                                YAML_MAPPING_NODE);
+
+                                        do {
+                                            if (ogs_yaml_iter_type(
+                                                        &advertise_iter) ==
+                                                    YAML_SEQUENCE_NODE) {
+                                                if (!ogs_yaml_iter_next(
+                                                            &advertise_iter))
+                                                    break;
+                                            }
+
+                                            ogs_assert(num_of_advertise <
+                                                    OGS_MAX_NUM_OF_HOSTNAME);
+                                            advertise[num_of_advertise++] =
+                                                ogs_yaml_iter_value(
+                                                        &advertise_iter);
+                                        } while (ogs_yaml_iter_type(
+                                                    &advertise_iter) ==
+                                                YAML_SEQUENCE_NODE);
                                     } else if (!strcmp(server_key, "port")) {
                                         const char *v =
                                             ogs_yaml_iter_value(&server_iter);
@@ -199,6 +228,30 @@ int ogs_gtp_context_parse_config(const char *local, const char *remote)
                                         ogs_warn("unknown key `%s`",
                                                 server_key);
                                 }
+
+                                adv_addr = NULL;
+                                for (i = 0; i < num_of_advertise; i++) {
+                                    rv = ogs_addaddrinfo(&adv_addr,
+                                            family, advertise[i], port, 0);
+                                    ogs_assert(rv == OGS_OK);
+                                }
+                                rv = ogs_copyaddrinfo(&adv_addr6, adv_addr);
+                                ogs_assert(rv == OGS_OK);
+
+                                rv = ogs_filteraddrinfo(&adv_addr, AF_INET);
+                                ogs_assert(rv == OGS_OK);
+                                rv = ogs_filteraddrinfo(&adv_addr6, AF_INET6);
+                                ogs_assert(rv == OGS_OK);
+
+                                if (adv_addr || adv_addr6) {
+                                    rv = ogs_sockaddr_to_ip(
+                                            adv_addr, adv_addr6,
+                                            &self.gtpc_ip);
+                                    ogs_assert(rv == OGS_OK);
+                                }
+
+                                ogs_freeaddrinfo(adv_addr);
+                                ogs_freeaddrinfo(adv_addr6);
 
                                 /* Add address information */
                                 addr = NULL;

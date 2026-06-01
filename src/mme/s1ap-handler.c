@@ -249,6 +249,33 @@ void s1ap_handle_s1_setup_request(mme_enb_t *enb, ogs_s1ap_message_t *message)
     if (PagingDRX)
         ogs_debug("    PagingDRX[%ld]", *PagingDRX);
 
+    /*
+     * First broadcast PLMN in the first SupportedTAs item — used to
+     * order ServedGUMMEIs in the S1 Setup Response.
+     */
+    enb->supported_ta_plmn_present = false;
+    if (SupportedTAs->list.count > 0) {
+        S1AP_SupportedTAs_Item_t *first_ta =
+            (S1AP_SupportedTAs_Item_t *)SupportedTAs->list.array[0];
+        ogs_assert(first_ta);
+
+        if (first_ta->broadcastPLMNs.list.count > 0) {
+            S1AP_PLMNidentity_t *pLMNidentity =
+                (S1AP_PLMNidentity_t *)
+                first_ta->broadcastPLMNs.list.array[0];
+            ogs_assert(pLMNidentity);
+
+            if (pLMNidentity->size == sizeof(ogs_plmn_id_t)) {
+                memcpy(&enb->supported_ta_plmn, pLMNidentity->buf,
+                        sizeof(enb->supported_ta_plmn));
+                enb->supported_ta_plmn_present = true;
+                ogs_debug("    SupportedTAs PLMN_ID[MCC:%d MNC:%d]",
+                        ogs_plmn_id_mcc(&enb->supported_ta_plmn),
+                        ogs_plmn_id_mnc(&enb->supported_ta_plmn));
+            }
+        }
+    }
+
     /* Parse Supported TA */
     for (i = 0, enb->num_of_supported_ta_list = 0;
             i < SupportedTAs->list.count &&

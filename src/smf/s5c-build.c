@@ -86,11 +86,16 @@ ogs_pkbuf_t *smf_s5c_build_create_session_response(
         ogs_assert_if_reached();
     }
     smf_s5c_teid.teid = htobe32(sess->smf_n4_teid);
-    rv = ogs_gtp2_sockaddr_to_f_teid(
-            ogs_gtp_self()->gtpc_addr, ogs_gtp_self()->gtpc_addr6,
-            &smf_s5c_teid, &len);
+    if (ogs_gtp_self()->gtpc_ip.ipv4 || ogs_gtp_self()->gtpc_ip.ipv6) {
+        rv = ogs_gtp2_ip_to_f_teid(
+                &ogs_gtp_self()->gtpc_ip, &smf_s5c_teid, &len);
+    } else {
+        rv = ogs_gtp2_sockaddr_to_f_teid(
+                ogs_gtp_self()->gtpc_addr, ogs_gtp_self()->gtpc_addr6,
+                &smf_s5c_teid, &len);
+    }
     if (rv != OGS_OK) {
-        ogs_error("ogs_gtp2_sockaddr_to_f_teid() failed");
+        ogs_error("PGW S5C F-TEID build failed");
         goto cleanup;
     }
     rsp->pgw_s5_s8__s2a_s2b_f_teid_for_pmip_based_interface_or_for_gtp_based_control_plane_interface.

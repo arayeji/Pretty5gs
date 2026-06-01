@@ -316,8 +316,15 @@ void sgwc_s11_handle_create_session_request(
             ogs_debug("    E_CGI[PLMN_ID:%06x,CELL_ID:0x%x]",
                     ogs_plmn_id_hexdump(&sgwc_ue->e_cgi.plmn_id),
                     sgwc_ue->e_cgi.cell_id);
+
+            memcpy(&sess->serving_plmn_id, &sgwc_ue->e_tai.plmn_id,
+                    sizeof(sess->serving_plmn_id));
         } else
             ogs_error("Invalid User Location Info(ULI)");
+    }
+
+    if (req->serving_network.presence == 1) {
+        ogs_nas_to_plmn_id(&sess->serving_plmn_id, req->serving_network.data);
     }
 
     /* Select SGW-U based on UE Location Information */

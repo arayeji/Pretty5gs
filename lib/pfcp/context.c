@@ -1251,7 +1251,7 @@ bool ogs_pfcp_node_id_compare(
 }
 
 ogs_gtpu_resource_t *ogs_pfcp_find_gtpu_resource(ogs_list_t *list,
-        char *dnn, ogs_pfcp_interface_t source_interface)
+        const char *dnn, ogs_pfcp_interface_t source_interface)
 {
     ogs_gtpu_resource_t *resource = NULL;
 

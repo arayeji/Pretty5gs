@@ -22,9 +22,13 @@
 #include "mme-sm.h"
 #include "s1ap-build.h"
 
-ogs_pkbuf_t *s1ap_build_setup_rsp(void)
+ogs_pkbuf_t *s1ap_build_setup_rsp(mme_enb_t *enb)
 {
-    int i, j;
+    int i, j, k, t;
+    int gummei_order[OGS_MAX_NUM_OF_SERVED_GUMMEI];
+    int num_gummei = mme_self()->num_of_served_gummei;
+    int match_gummei = -1;
+    const ogs_plmn_id_t *preferred_plmn = NULL;
 
     S1AP_S1AP_PDU_t pdu;
     S1AP_SuccessfulOutcome_t *successfulOutcome = NULL;
@@ -83,23 +87,86 @@ ogs_pkbuf_t *s1ap_build_setup_rsp(void)
                 strlen(mme_self()->mme_name), MMEname);
     }
 
-    for (i = 0; i < mme_self()->num_of_served_gummei; i++) {
+    if (enb && enb->supported_ta_plmn_present)
+        preferred_plmn = &enb->supported_ta_plmn;
+
+    for (i = 0; i < num_gummei; i++)
+        gummei_order[i] = i;
+
+    if (preferred_plmn) {
+        for (i = 0; i < num_gummei; i++) {
+            served_gummei_t *sg = &mme_self()->served_gummei[i];
+
+            for (j = 0; j < sg->num_of_plmn_id; j++) {
+                if (memcmp(&sg->plmn_id[j], preferred_plmn,
+                            sizeof(ogs_plmn_id_t)) == 0) {
+                    match_gummei = i;
+                    break;
+                }
+            }
+            if (match_gummei >= 0)
+                break;
+        }
+
+        if (match_gummei >= 0) {
+            t = 0;
+            gummei_order[t++] = match_gummei;
+            for (k = 0; k < num_gummei; k++) {
+                if (k != match_gummei)
+                    gummei_order[t++] = k;
+            }
+        }
+    }
+
+    for (i = 0; i < num_gummei; i++) {
         S1AP_ServedGUMMEIsItem_t *ServedGUMMEIsItem = NULL;
+        int plmn_order[OGS_MAX_NUM_OF_PLMN_PER_MME];
+        int num_plmn;
+        int match_plmn = -1;
+
         ServedGUMMEIsItem = (S1AP_ServedGUMMEIsItem_t *)
             CALLOC(1, sizeof(S1AP_ServedGUMMEIsItem_t));
 
-        served_gummei_t *served_gummei = &mme_self()->served_gummei[i];
-        for (j = 0; j < served_gummei->num_of_plmn_id; j++) {
+        served_gummei_t *served_gummei =
+            &mme_self()->served_gummei[gummei_order[i]];
+        num_plmn = served_gummei->num_of_plmn_id;
+
+        for (j = 0; j < num_plmn; j++)
+            plmn_order[j] = j;
+
+        if (preferred_plmn) {
+            for (j = 0; j < num_plmn; j++) {
+                if (memcmp(&served_gummei->plmn_id[j], preferred_plmn,
+                            sizeof(ogs_plmn_id_t)) == 0) {
+                    match_plmn = j;
+                    break;
+                }
+            }
+
+            if (match_plmn >= 0) {
+                t = 0;
+                plmn_order[t++] = match_plmn;
+                for (k = 0; k < num_plmn; k++) {
+                    if (k != match_plmn)
+                        plmn_order[t++] = k;
+                }
+            }
+        }
+
+        for (j = 0; j < num_plmn; j++) {
             S1AP_PLMNidentity_t *PLMNidentity = NULL;
+            int pidx = plmn_order[j];
+
             PLMNidentity = (S1AP_PLMNidentity_t *)
                 CALLOC(1, sizeof(S1AP_PLMNidentity_t));
             ogs_s1ap_buffer_to_OCTET_STRING(
-                    &served_gummei->plmn_id[j], OGS_PLMN_ID_LEN, PLMNidentity);
+                    &served_gummei->plmn_id[pidx], OGS_PLMN_ID_LEN,
+                    PLMNidentity);
             ASN_SEQUENCE_ADD(
                     &ServedGUMMEIsItem->servedPLMNs.list, PLMNidentity);
             ogs_debug("    PLMN_ID[MCC:%d MNC:%d]",
-                ogs_plmn_id_mcc(&served_gummei->plmn_id[j]),
-                ogs_plmn_id_mnc(&served_gummei->plmn_id[j]));
+                ogs_plmn_id_mcc(&served_gummei->plmn_id[pidx]),
+                ogs_plmn_id_mnc(&served_gummei->plmn_id[pidx]));
         }
 
         for (j = 0; j < served_gummei->num_of_mme_gid; j++) {

@@ -59,13 +59,15 @@ const ClearIconWrapper = styled.div`
   cursor: pointer;
 `
 
-const Search = ({ value, onChange, onClear }) => (
+const Search = ({ value, onChange, onClear, onKeyDown, placeholder }) => (
   <Wrapper>
     <SearchIconWrapper><SearchIcon/></SearchIconWrapper>
-    <Input 
+    <Input
       value={value}
-      onChange={onChange}/>
-    {value !== '' && 
+      onChange={onChange}
+      onKeyDown={onKeyDown}
+      placeholder={placeholder}/>
+    {value !== '' &&
       <ClearIconWrapper onClick={onClear}>
         <ClearIcon/>
       </ClearIconWrapper>
@@ -77,7 +79,13 @@ const Search = ({ value, onChange, onClear }) => (
 Search.propTypes = {
   value: PropTypes.string,
   onChange: PropTypes.func,
-  onClear: PropTypes.func
+  onClear: PropTypes.func,
+  onKeyDown: PropTypes.func,
+  placeholder: PropTypes.string
+};
+
+Search.defaultProps = {
+  placeholder: 'Search by IMSI (press Enter)'
 };
 
 export default Search;
