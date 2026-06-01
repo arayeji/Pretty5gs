@@ -737,7 +737,6 @@ typedef struct smf_sess_s {
 
     /* DNN */
     char *full_dnn;
-
     ogs_pfcp_ue_ip_t *ipv4;
     ogs_pfcp_ue_ip_t *ipv6;
 
@@ -979,6 +978,12 @@ smf_sess_t *smf_sess_add_by_sm_context(ogs_sbi_message_t *message);
 smf_sess_t *smf_sess_add_by_pdu_session(ogs_sbi_message_t *message);
 smf_sess_t *smf_sess_add_by_psi(smf_ue_t *smf_ue, uint8_t psi);
 
+/*
+ * PFCP PDR Network Instance (NWI) for UPF/UPG GTP-U resource selection.
+ * Inbound roam (IMSI home not in global serving PLMN list): APN OI (mnc011…).
+ * Operator home (999-70, 432-46, … in global serving): APN NI (internet).
+ * IP pools / Gx still use session.name.
+ */
 void smf_sess_select_upf(smf_sess_t *sess);
 uint8_t smf_sess_set_ue_ip(smf_sess_t *sess);
 void smf_sess_set_paging_n1n2message_location(

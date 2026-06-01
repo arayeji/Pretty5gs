@@ -69,6 +69,38 @@ void *ogs_plmn_id_build(ogs_plmn_id_t *plmn_id,
     return plmn_id;
 }
 
+void ogs_plmn_id_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id)
+{
+    char mcc_buf[4];
+    char mnc_buf[4];
+    int mnc_len;
+    size_t len;
+
+    ogs_assert(imsi_bcd);
+    ogs_assert(imsi_bcd[0]);
+    ogs_assert(plmn_id);
+
+    len = strlen(imsi_bcd);
+    ogs_assert(len >= 5);
+
+    memcpy(mcc_buf, imsi_bcd, 3);
+    mcc_buf[3] = '\0';
+
+    /* 3GPP TS 23.003: 3-digit MNC uses filler 0 in digit 6 of the IMSI */
+    if (len >= 6 && imsi_bcd[5] == '0') {
+        memcpy(mnc_buf, imsi_bcd + 3, 3);
+        mnc_buf[3] = '\0';
+        mnc_len = 3;
+    } else {
+        memcpy(mnc_buf, imsi_bcd + 3, 2);
+        mnc_buf[2] = '\0';
+        mnc_len = 2;
+    }
+
+    ogs_plmn_id_build(plmn_id,
+            (uint16_t)atoi(mcc_buf), (uint16_t)atoi(mnc_buf), mnc_len);
+}
+
 void *ogs_nas_from_plmn_id(
         ogs_nas_plmn_id_t *ogs_nas_plmn_id, const ogs_plmn_id_t *plmn_id)
 {

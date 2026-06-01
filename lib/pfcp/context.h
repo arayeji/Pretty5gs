@@ -431,7 +431,7 @@ bool ogs_pfcp_node_id_compare(
         const ogs_pfcp_node_id_t *id1, const ogs_pfcp_node_id_t *id2);
 
 ogs_gtpu_resource_t *ogs_pfcp_find_gtpu_resource(ogs_list_t *list,
-        char *dnn, ogs_pfcp_interface_t source_interface);
+        const char *dnn, ogs_pfcp_interface_t source_interface);
 int ogs_pfcp_setup_far_gtpu_node(ogs_pfcp_far_t *far);
 int ogs_pfcp_setup_pdr_gtpu_node(ogs_pfcp_pdr_t *pdr);
 

@@ -8,10 +8,13 @@ sudo meson setup build --prefix=/usr -Dmysql_pcrf=true
 
 sudo ninja -C build
 sudo ninja -C build install
+BUILD=~/open5gsNew/build
+DEST=/usr/lib/x86_64-linux-gnu
+sudo cp -a $BUILD/lib/pfcp/libogspfcp.so* $DEST/
 
 sudo ldconfig
 sudo systemctl daemon-reload
-sudo systemctl restart  open5gs-smfd.service open5gs-mmed.service open5gs-sgwcd.service open5gs-cgfd.service
+sudo systemctl restart  open5gs-hssd.service open5gs-smfd.service open5gs-mmed.service open5gs-sgwcd.service open5gs-cgfd.service
 
 ################################################################################
 # Added: PCRF + PyHSS MySQL

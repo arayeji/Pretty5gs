@@ -277,6 +277,8 @@ typedef struct mme_enb_s {
     bool            enb_id_presence;
     uint32_t        enb_id;     /* eNB_ID received from eNB */
     ogs_plmn_id_t   plmn_id;    /* eNB PLMN-ID received from eNB */
+    ogs_plmn_id_t   supported_ta_plmn; /* first PLMN from SupportedTAs IE */
+    bool            supported_ta_plmn_present;
     ogs_sctp_sock_t sctp;       /* SCTP socket */
 
     struct {

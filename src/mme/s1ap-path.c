@@ -346,7 +346,7 @@ int s1ap_send_s1_setup_response(mme_enb_t *enb)
 
     ogs_debug("S1-Setup response");
 
-    s1ap_buffer = s1ap_build_setup_rsp();
+    s1ap_buffer = s1ap_build_setup_rsp(enb);
     if (!s1ap_buffer) {
         ogs_error("s1ap_build_setup_rsp() failed");
         return OGS_ERROR;

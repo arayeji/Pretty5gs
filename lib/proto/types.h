@@ -271,6 +271,7 @@ uint16_t ogs_plmn_id_mnc_len(const ogs_plmn_id_t *plmn_id);
 
 void *ogs_plmn_id_build(ogs_plmn_id_t *plmn_id,
         uint16_t mcc, uint16_t mnc, uint16_t mnc_len);
+void ogs_plmn_id_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id);
 
 char *ogs_plmn_id_mcc_string(const ogs_plmn_id_t *plmn_id);
 char *ogs_plmn_id_mnc_string(const ogs_plmn_id_t *plmn_id);

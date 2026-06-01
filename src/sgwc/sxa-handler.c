@@ -17,6 +17,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include "context.h"
 #include "pfcp-path.h"
 #include "gtp-path.h"
 #include "sxa-handler.h"

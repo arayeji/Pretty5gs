@@ -4,7 +4,7 @@
 
 # Copy them preserving folder structure
 git diff --name-only HEAD -- "*.c" "*.h" "*.build"  "*.txt" | ForEach-Object {
-    $dest = "C:\Users\ahmad\open5gsChangesV2\$_"
+    $dest = "C:\Users\ahmad\open5gsChangesV6\$_"
     New-Item -ItemType Directory -Force -Path (Split-Path $dest)
     Copy-Item $_ $dest
 }
@@ -13,7 +13,7 @@ git diff --name-only HEAD -- "*.c" "*.h" "*.build"  "*.txt" | ForEach-Object {
 
 # Copy them preserving folder structure
 git ls-files --others --exclude-standard -- "*.c" "*.h" "*.build"  "*.txt" | ForEach-Object {
-    $dest = "C:\Users\ahmad\open5gsChangesV2\$_"
+    $dest = "C:\Users\ahmad\open5gsChangesV6\$_"
     New-Item -ItemType Directory -Force -Path (Split-Path $dest)
     Copy-Item $_ $dest
 }

@@ -4,7 +4,7 @@ import { connect } from 'react-redux';
 
 import NProgress from 'nprogress';
 
-import { MODEL, fetchSubscribers, fetchSubscriber, createSubscriber, updateSubscriber } from 'modules/crud/subscriber';
+import { MODEL, fetchSubscriber, createSubscriber, updateSubscriber } from 'modules/crud/subscriber';
 import { fetchProfiles } from 'modules/crud/profile';
 import { clearActionStatus } from 'modules/crud/actions';
 import { select, selectActionStatus } from 'modules/crud/selectors';
@@ -70,24 +70,24 @@ class Document extends Component {
   }
 
   componentWillMount() {
-    const { subscriber, profiles, dispatch } = this.props
+    const { subscriber, profiles, dispatch, visible } = this.props
 
     if (subscriber.needsFetch) {
       dispatch(subscriber.fetch)
     }
-    if (profiles.needsFetch) {
+    if (visible && profiles.needsFetch) {
       dispatch(profiles.fetch)
     }
   }
 
   componentWillReceiveProps(nextProps) {
-    const { subscriber, profiles, status } = nextProps
+    const { subscriber, profiles, status, visible } = nextProps
     const { dispatch, action, onHide } = this.props
 
     if (subscriber.needsFetch) {
       dispatch(subscriber.fetch)
     }
-    if (profiles.needsFetch) {
+    if (visible && profiles.needsFetch) {
       dispatch(profiles.fetch)
     }
 
@@ -174,14 +174,6 @@ class Document extends Component {
   }
 
   validate = (formData, errors) => {
-    const { subscribers, action, status } = this.props;
-    const { imsi } = formData;
-
-    if (action === 'create' && subscribers && subscribers.data &&
-      subscribers.data.filter(subscriber => subscriber.imsi === imsi).length > 0) {
-      errors.imsi.addError(`'${imsi}' is duplicated`);
-    }
-
 //    In Editing-mode, this is not working!
 //    More study is needed.
 //
@@ -313,9 +305,10 @@ class Document extends Component {
 }
 
 Document = connect(
-  (state, props) => ({ 
-    subscribers: select(fetchSubscribers(), state.crud),
-    subscriber: select(fetchSubscriber(props.imsi), state.crud),
+  (state, props) => ({
+    subscriber: props.imsi
+      ? select(fetchSubscriber(props.imsi), state.crud)
+      : { isLoading: false, needsFetch: false, data: null },
     profiles: select(fetchProfiles(), state.crud),
     status: selectActionStatus(MODEL, state.crud, props.action)
   })
