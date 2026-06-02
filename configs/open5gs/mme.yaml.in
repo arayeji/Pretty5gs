@@ -42,6 +42,24 @@ mme:
 #    Send only the UE's current TAC in Attach/TAU Accept (not the full mme.tai
 #    list). Use with large mme.tai and legacy UEs (e.g. MikroTik). S1 Setup
 #    still uses the full mme.tai configuration. Default: all (full list).
+#  mip_home_agent_host_dns: true
+#    Resolve home PGW from HSS MIP-Home-Agent-Host (Destination-Host/Realm)
+#    via DNS and cache the result. Set to false to skip DNS and use only
+#    mme.gtpc.client.smf / PGW list addresses. Default: true
+#  inbound_roam:
+#    gtp_apn_format: fqdn          # received | fqdn (default: fqdn)
+#    gtp_apn_lowercase: false
+#    strip_pap_from_gtp_pco: false # also strips IPCP/5G PCO on home-PGW CSR
+#    omit_indication_on_gtp_csr: false
+#    force_ipv4_pdn_on_home_pgw: false
+#    zero_bearer_mbr_for_non_gbr: false
+#    Home PGW (MIP-Home-Agent): GTP APN on S11; SGWC forwards on S5.
+#  ambr_limit:
+#    enabled: false
+#    force: false
+#    downlink: 200                 # Mbps when enabled
+#    uplink: 200
+#    Cap/sanitize HSS AMBR sentinels before GTP/NAS. Default: disabled.
 #  equivalent_plmn:
 #    - mcc: 999
 #      mnc: 71
@@ -76,9 +94,12 @@ mme:
 # GTP-C Server
 ################################################################################
 #  o Listen on IPv4 and IPv6
+#  o Non-default UDP source/listen port (default 2123; use only if peer/firewall
+#    requires it — home PGW must accept replies to this port)
 #  gtpc:
 #    server:
 #      - address: 127.0.0.2
+#        port: 2124
 #      - address: ::1
 #
 ################################################################################

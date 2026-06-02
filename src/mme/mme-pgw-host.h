@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 by Sukchan Lee <acetcom@gmail.com>
+ * Copyright (C) 2019-2026 by Sukchan Lee <acetcom@gmail.com>
  *
  * This file is part of Open5GS.
  *
@@ -17,32 +17,25 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef SGWC_GTP_PATH_H
-#define SGWC_GTP_PATH_H
+#if !defined(MME_PGW_HOST_H_INCLUDED)
+#define MME_PGW_HOST_H_INCLUDED
 
-#include "s11-build.h"
+#include "ogs-proto.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int sgwc_gtp_open(void);
-void sgwc_gtp_close(void);
+void mme_pgw_host_cache_init(void);
+void mme_pgw_host_cache_final(void);
 
-bool sgwc_gtpc_roam_port_enabled(void);
-int sgwc_gtp_connect_peer(sgwc_sess_t *sess, ogs_gtp_node_t *gnode);
-void sgwc_gtpc_f_teid_addr(
-        sgwc_sess_t *sess,
-        ogs_sockaddr_t **addr, ogs_sockaddr_t **addr6);
-
-int sgwc_gtp_send_create_session_response(
-    sgwc_sess_t *sess, ogs_gtp_xact_t *xact);
-
-int sgwc_gtp_send_downlink_data_notification(
-    uint8_t cause_value, sgwc_bearer_t *bearer);
+int mme_pgw_host_resolve(
+        const char *destination_host, int destination_host_len,
+        const char *destination_realm, int destination_realm_len,
+        ogs_ip_t *smf_ip);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* SGWC_GTP_PATH_H */
+#endif /* MME_PGW_HOST_H_INCLUDED */

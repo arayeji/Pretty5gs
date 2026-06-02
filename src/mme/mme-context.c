@@ -20,6 +20,7 @@
 #include "ogs-sctp.h"
 
 #include "mme-context.h"
+#include "mme-pgw-host.h"
 #include "eplmn-config.h"
 #include "mme-event.h"
 #include "mme-timer.h"
@@ -187,6 +188,22 @@ void mme_context_init(void)
     self.mme_gn_teid_hash = ogs_hash_make();
     ogs_assert(self.mme_gn_teid_hash);
 
+    self.mip_home_agent_host_dns = true;
+
+    self.inbound_roam_gtp_apn_format = MME_INBOUND_ROAM_GTP_APN_FQDN;
+    self.inbound_roam_gtp_apn_lowercase = false;
+    self.inbound_roam_strip_pap_from_gtp_pco = false;
+    self.inbound_roam_omit_indication_on_gtp_csr = false;
+    self.inbound_roam_force_ipv4_pdn_on_home_pgw = false;
+    self.inbound_roam_zero_bearer_mbr_for_non_gbr = false;
+
+    self.ambr_limit.enabled = false;
+    self.ambr_limit.force = false;
+    self.ambr_limit.downlink_bps = 200 * 1000000;
+    self.ambr_limit.uplink_bps = 200 * 1000000;
+
+    mme_pgw_host_cache_init();
+
     ogs_list_init(&self.mme_ue_list);
 
     context_initialized = 1;
@@ -208,6 +225,8 @@ void mme_context_final(void)
     mme_emerg_remove_all();
 
     mme_served_tai_list0_free_all();
+
+    mme_pgw_host_cache_final();
 
     ogs_assert(self.enb_addr_hash);
     ogs_hash_destroy(self.enb_addr_hash);
@@ -1799,6 +1818,115 @@ int mme_context_parse_config(void)
                         ogs_warn("Unknown tai_list_in_accept `%s' "
                                 "(use: serving_only or all)", v);
                     }
+                } else if (!strcmp(mme_key, "mip_home_agent_host_dns")) {
+                    self.mip_home_agent_host_dns =
+                        ogs_yaml_iter_bool(&mme_iter);
+                    ogs_info("MIP-Home-Agent-Host DNS resolve: %s",
+                            self.mip_home_agent_host_dns ? "enabled" :
+                            "disabled");
+                } else if (!strcmp(mme_key, "inbound_roam")) {
+                    ogs_yaml_iter_t roam_iter;
+                    ogs_yaml_iter_recurse(&mme_iter, &roam_iter);
+                    while (ogs_yaml_iter_next(&roam_iter)) {
+                        const char *rk = ogs_yaml_iter_key(&roam_iter);
+                        const char *rv = ogs_yaml_iter_value(&roam_iter);
+                        ogs_assert(rk);
+                        if (!strcmp(rk, "gtp_apn_format") ||
+                                !strcmp(rk, "apn_format")) {
+                            if (rv && (!strcmp(rv, "received") ||
+                                        !strcmp(rv, "exact") ||
+                                        !strcmp(rv, "as_received"))) {
+                                self.inbound_roam_gtp_apn_format =
+                                    MME_INBOUND_ROAM_GTP_APN_RECEIVED;
+                            } else if (rv && (!strcmp(rv, "fqdn") ||
+                                        !strcmp(rv, "full"))) {
+                                self.inbound_roam_gtp_apn_format =
+                                    MME_INBOUND_ROAM_GTP_APN_FQDN;
+                            } else
+                                ogs_warn("unknown mme.inbound_roam."
+                                        "gtp_apn_format `%s` "
+                                        "(use received|fqdn)", rv);
+                        } else if (!strcmp(rk, "gtp_apn_lowercase") ||
+                                !strcmp(rk, "apn_lowercase") ||
+                                !strcmp(rk, "lowercase")) {
+                            self.inbound_roam_gtp_apn_lowercase =
+                                ogs_yaml_iter_bool(&roam_iter);
+                        } else if (!strcmp(rk, "strip_pap_from_gtp_pco") ||
+                                !strcmp(rk, "strip_pap_from_pco")) {
+                            self.inbound_roam_strip_pap_from_gtp_pco =
+                                ogs_yaml_iter_bool(&roam_iter);
+                        } else if (!strcmp(rk,
+                                    "omit_indication_on_gtp_csr") ||
+                                !strcmp(rk, "omit_gtp_indication")) {
+                            self.inbound_roam_omit_indication_on_gtp_csr =
+                                ogs_yaml_iter_bool(&roam_iter);
+                        } else if (!strcmp(rk, "force_ipv4_pdn_on_home_pgw") ||
+                                !strcmp(rk, "force_ipv4_pdn")) {
+                            self.inbound_roam_force_ipv4_pdn_on_home_pgw =
+                                ogs_yaml_iter_bool(&roam_iter);
+                        } else if (!strcmp(rk,
+                                    "zero_bearer_mbr_for_non_gbr") ||
+                                !strcmp(rk, "non_gbr_zero_bearer_mbr")) {
+                            self.inbound_roam_zero_bearer_mbr_for_non_gbr =
+                                ogs_yaml_iter_bool(&roam_iter);
+                        } else
+                            ogs_warn("unknown key `%s` in mme.inbound_roam",
+                                    rk);
+                    }
+                    ogs_info("Inbound roam: apn=%s lowercase=%s "
+                            "sanitize_pco=%s omit_indication=%s "
+                            "force_ipv4_pdn=%s non_gbr_zero_mbr=%s",
+                            self.inbound_roam_gtp_apn_format ==
+                            MME_INBOUND_ROAM_GTP_APN_FQDN ? "fqdn" :
+                            "received",
+                            self.inbound_roam_gtp_apn_lowercase ?
+                            "true" : "false",
+                            self.inbound_roam_strip_pap_from_gtp_pco ?
+                            "true" : "false",
+                            self.inbound_roam_omit_indication_on_gtp_csr ?
+                            "true" : "false",
+                            self.inbound_roam_force_ipv4_pdn_on_home_pgw ?
+                            "true" : "false",
+                            self.inbound_roam_zero_bearer_mbr_for_non_gbr ?
+                            "true" : "false");
+                } else if (!strcmp(mme_key, "ambr_limit")) {
+                    ogs_yaml_iter_t ambr_iter;
+                    ogs_yaml_iter_recurse(&mme_iter, &ambr_iter);
+                    while (ogs_yaml_iter_next(&ambr_iter)) {
+                        const char *ambr_key = ogs_yaml_iter_key(&ambr_iter);
+                        ogs_assert(ambr_key);
+
+                        if (!strcmp(ambr_key, "enabled")) {
+                            self.ambr_limit.enabled =
+                                ogs_yaml_iter_bool(&ambr_iter);
+                        } else if (!strcmp(ambr_key, "force")) {
+                            self.ambr_limit.force =
+                                ogs_yaml_iter_bool(&ambr_iter);
+                        } else if (!strcmp(ambr_key, "downlink") ||
+                                !strcmp(ambr_key, "downlink_mbps")) {
+                            const char *v =
+                                ogs_yaml_iter_value(&ambr_iter);
+                            if (v)
+                                self.ambr_limit.downlink_bps =
+                                    atoi(v) * 1000000;
+                        } else if (!strcmp(ambr_key, "uplink") ||
+                                !strcmp(ambr_key, "uplink_mbps")) {
+                            const char *v =
+                                ogs_yaml_iter_value(&ambr_iter);
+                            if (v)
+                                self.ambr_limit.uplink_bps =
+                                    atoi(v) * 1000000;
+                        } else
+                            ogs_warn("Unknown ambr_limit key `%s'", ambr_key);
+                    }
+                    if (self.ambr_limit.uplink_bps == 0)
+                        self.ambr_limit.uplink_bps =
+                            self.ambr_limit.downlink_bps;
+                    ogs_info("AMBR limit: %s force=%s DL=%u Mbps UL=%u Mbps",
+                            self.ambr_limit.enabled ? "enabled" : "disabled",
+                            self.ambr_limit.force ? "yes" : "no",
+                            self.ambr_limit.downlink_bps / 1000000,
+                            self.ambr_limit.uplink_bps / 1000000);
                 } else if (!strcmp(mme_key, "tai")) {
                     int num_of_list0 = 0;
                     int num_of_list1 = 0;

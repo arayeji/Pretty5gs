@@ -322,8 +322,7 @@ void sgwc_s5c_handle_create_session_response(
                 pgw_s5c_teid, ogs_gtp_self()->gtpc_port);
         ogs_assert(pgw);
 
-        rv = ogs_gtp_connect(
-                ogs_gtp_self()->gtpc_sock, ogs_gtp_self()->gtpc_sock6, pgw);
+        rv = sgwc_gtp_connect_peer(sess, pgw);
         ogs_assert(rv == OGS_OK);
     }
     /* Setup GTP Node */

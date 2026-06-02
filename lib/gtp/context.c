@@ -301,6 +301,9 @@ int ogs_gtp_context_parse_config(const char *local, const char *remote)
                                     ogs_assert(rv == OGS_OK);
                                 }
 
+                                /* Bind + F-TEID peer port (ogs_gtp_self()->gtpc_port) */
+                                self.gtpc_port = port;
+
                             } while (ogs_yaml_iter_type(&server_array) ==
                                     YAML_SEQUENCE_NODE);
 

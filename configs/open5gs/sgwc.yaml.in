@@ -28,6 +28,38 @@ sgwc:
   gtpc:
     server:
       - address: 127.0.0.3
+        port: 2123
+  #
+  # GTP-U (all sessions): force SGWC F-TEID (CH=0) instead of SGW-U FTUP.
+  #
+#  gtpu:
+#    force_cp_teid: true
+#    teid_offset: 0
+#    teid_range_indication: 4
+#    teid_range: 10
+  #
+  # Inbound roam (Huawei HR, etc.):
+  #   gtpc — GTP-C source_port / teid_offset (S11+S5-C)
+  #   gtpu — GTP-U force_cp_teid + teid_offset/range (needs force_cp_teid if FTUP)
+  #
+#  inbound_roam:
+#    gtpc:
+#      source_port: 2124
+#      teid_offset: 0x80000000
+#      send_recovery_on_s5_csr: false
+#    gtpu:
+#      force_cp_teid: true
+#      teid_offset: 0x80000000
+#      teid_range_indication: 4
+#      teid_range: 10
+#    # PFCP Network Instance to SGW-U/UPG (default: GTP session APN FQDN).
+#    # match supports * wildcard (case-insensitive), e.g. *mnc070*
+#    sgwu_nwi_rewrite:
+#      - match: '*mnc070*'
+#        replace: roamapn
+#      - match: internet.mnc070.mcc999.gprs
+#        replace: roamapn
+#  # Same rules may be placed at sgwc.sgwu_nwi_rewrite (applies to all sessions).
   pfcp:
     server:
       - address: 127.0.0.3
@@ -39,9 +71,11 @@ sgwc:
 # GTP-C Server
 ################################################################################
 #  o Listen on IPv4 and IPv6
+#  o GTP-C listen port (default 2123). S11; PGW S5 destination stays 2123.
 #  gtpc:
 #    server:
 #      - address: 127.0.0.3
+#        port: 2123
 #      - address: fd69:f21d:873c:fa::2
 #
 ################################################################################

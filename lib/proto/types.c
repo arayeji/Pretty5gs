@@ -693,6 +693,65 @@ int ogs_pco_build(unsigned char *data, int data_len, ogs_pco_t *pco)
     return size;
 }
 
+int ogs_pco_filter_copy(unsigned char *out, int out_max,
+        const unsigned char *in, int in_len,
+        const uint16_t *exclude_ids, int num_exclude_ids)
+{
+    ogs_pco_t pco;
+    int i, j, size, parsed;
+    bool skip;
+
+    ogs_assert(out);
+    ogs_assert(in);
+
+    if (in_len <= 0)
+        return 0;
+
+    parsed = ogs_pco_parse(&pco, (unsigned char *)in, in_len);
+    if (parsed < 0)
+        return parsed;
+    if (parsed != in_len) {
+        ogs_error("PCO parse length mismatch [%d != %d]", parsed, in_len);
+        return -EINVAL;
+    }
+
+    if (out_max < 1)
+        return -ENOSPC;
+
+    out[0] = (pco.ext ? 0x80 : 0) | (pco.configuration_protocol & 0x07);
+    size = 1;
+
+    for (i = 0; i < pco.num_of_id; i++) {
+        skip = false;
+        for (j = 0; j < num_exclude_ids; j++) {
+            if (pco.ids[i].id == exclude_ids[j]) {
+                skip = true;
+                break;
+            }
+        }
+        if (skip)
+            continue;
+
+        if (size + (int)(sizeof(uint16_t) + sizeof(uint8_t) + pco.ids[i].len) >
+                out_max) {
+            ogs_error("PCO filter buffer too small [%d]", out_max);
+            return -ENOSPC;
+        }
+
+        {
+            uint16_t id_be = htobe16(pco.ids[i].id);
+            memcpy(out + size, &id_be, sizeof(id_be));
+            size += sizeof(id_be);
+        }
+        memcpy(out + size, &pco.ids[i].len, sizeof(pco.ids[i].len));
+        size += sizeof(pco.ids[i].len);
+        memcpy(out + size, pco.ids[i].data, pco.ids[i].len);
+        size += pco.ids[i].len;
+    }
+
+    return size;
+}
+
 int ogs_ip_to_sockaddr(ogs_ip_t *ip, uint16_t port, ogs_sockaddr_t **list)
 {
     ogs_sockaddr_t *addr = NULL, *addr6 = NULL;

@@ -29,6 +29,7 @@ libsgwc_sources = files('''
     sgwc-sm.h
     ga-writer.h
     sgwc-trace.h
+    sgwc-gtp-interop.h
 
     init.c
     event.c
@@ -45,6 +46,7 @@ libsgwc_sources = files('''
     sgwc-sm.c
     ga-writer.c
     sgwc-trace.c
+    sgwc-gtp-interop.c
 '''.split())
 
 libsgwc = static_library('sgwc',

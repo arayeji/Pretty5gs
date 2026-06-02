@@ -327,6 +327,8 @@ void sgwc_s11_handle_create_session_request(
         ogs_nas_to_plmn_id(&sess->serving_plmn_id, req->serving_network.data);
     }
 
+    sgwc_inbound_roam_teid_offset_apply(sgwc_ue, sess);
+
     /* Select SGW-U based on UE Location Information */
     sgwc_sess_select_sgwu(sess);
 

@@ -293,6 +293,8 @@ int sgwc_pfcp_send_bearer_to_modify_list(
     ogs_assert(sess);
     ogs_assert(xact);
 
+    sgwc_sess_sync_pfcp_pdr_nwi(sess);
+
     xact->local_seid = sess->sgwc_sxa_seid;
     ogs_debug("PFCP Session Modification xact: "
             "sess_id=%d xact=%p local_seid=0x%llx bearer_to_modify_count=%d",
@@ -331,6 +333,8 @@ int sgwc_pfcp_send_session_establishment_request(
     ogs_pfcp_xact_t *xact = NULL;
 
     ogs_assert(sess);
+
+    sgwc_sess_sync_pfcp_pdr_nwi(sess);
 
     xact = ogs_pfcp_xact_local_create(
             sess->pfcp_node, sess_timeout, OGS_UINT_TO_POINTER(sess->id));
@@ -475,6 +479,8 @@ int sgwc_pfcp_send_bearer_modification_request(
     xact->local_seid = sess->sgwc_sxa_seid;
 
     ogs_list_add(&xact->bearer_to_modify_list, &bearer->to_modify_node);
+
+    sgwc_sess_sync_pfcp_pdr_nwi(sess);
 
     memset(&h, 0, sizeof(ogs_pfcp_header_t));
     h.type = OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE;

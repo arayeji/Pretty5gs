@@ -132,6 +132,42 @@ typedef struct mme_context_s {
      */
     bool            tai_list_serving_only;
 
+    /*
+     * Resolve HSS MIP-Home-Agent-Host (Destination-Host/Realm) via DNS
+     * to set session->smf_ip for home PGW S5-C. Disable to use only
+     * mme.gtpc.client.smf / static PGW addresses.
+     */
+    bool            mip_home_agent_host_dns;
+
+    /*
+     * Inbound roam / home PGW: GTP APN on S11 (SGWC forwards on S5).
+     * inbound_roam_gtp_apn_format: received = HSS/UE NI only;
+     *   fqdn = NI + OI (home PLMN if MIP-Home-Agent set, else serving).
+     */
+#define MME_INBOUND_ROAM_GTP_APN_RECEIVED 0
+#define MME_INBOUND_ROAM_GTP_APN_FQDN     1
+    uint8_t         inbound_roam_gtp_apn_format;
+    bool            inbound_roam_gtp_apn_lowercase;
+    /*
+     * Home PGW (MIP6): strip PAP/CHAP/IPCP/5G PCO from UE PCO on GTP CSR
+     * when enabled (vendor PGW interop). Default: false.
+     */
+    bool            inbound_roam_strip_pap_from_gtp_pco;
+    /* Omit GTP Indication IE on CSR toward home PGW / inbound roam. */
+    bool            inbound_roam_omit_indication_on_gtp_csr;
+    /* Force IPv4 PDN type on CSR when UE/HSS allow IPv4v6 (home PGW). */
+    bool            inbound_roam_force_ipv4_pdn_on_home_pgw;
+    /* Leave Bearer QoS MBR/GBR at zero for non-GBR (QCI 9, etc.) on CSR. */
+    bool            inbound_roam_zero_bearer_mbr_for_non_gbr;
+
+    /* Cap AMBR from HSS (bps) before GTP/NAS/S1AP */
+    struct {
+        bool enabled;
+        bool force;
+        uint32_t downlink_bps;
+        uint32_t uplink_bps;
+    } ambr_limit;
+
     /* Equivalent PLMN (TS 24.301 §9.9.3.18) */
     int             num_of_eplmn;
     ogs_plmn_id_t   eplmn[OGS_NAS_MAX_PLMN];
@@ -674,6 +710,17 @@ struct mme_ue_s {
     uint32_t        network_access_mode; /* Permitted EPS Attach Type */
     uint8_t         charging_characteristics[OGS_CHRGCHARS_LEN]; /* Subscription Level Charging Characteristics */
     bool            charging_characteristics_presence;
+
+    uint32_t        subscriber_status;
+    bool            subscriber_status_presence;
+    uint32_t        access_restriction_data;
+    bool            access_restriction_data_presence;
+    uint32_t        operator_determined_barring;
+    bool            operator_determined_barring_presence;
+    bool            ics_indicator;
+    bool            ics_indicator_presence;
+    uint32_t        subscribed_rau_tau_timer;
+    uint8_t         maximum_apn_restriction; /* GTPv2 APN restriction IE */
 
     uint32_t        context_identifier; /* default APN */
 

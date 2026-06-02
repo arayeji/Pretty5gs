@@ -683,6 +683,14 @@ typedef struct ogs_session_s {
 
     bool lbo_roaming_allowed; /* true: Allowed, false: Not allowed */
 
+#define OGS_SESSION_FIELD_UNSET                     255
+#define OGS_VPLMN_DYNAMIC_ADDRESS_NOT_ALLOWED       0
+#define OGS_VPLMN_DYNAMIC_ADDRESS_ALLOWED           1
+#define OGS_PDN_GW_ALLOCATION_STATIC                0
+#define OGS_PDN_GW_ALLOCATION_DYNAMIC               1
+    uint8_t vplmn_dynamic_address_allowed; /* 0/1 or OGS_SESSION_FIELD_UNSET */
+    uint8_t pdn_gw_allocation_type; /* static/dynamic or OGS_SESSION_FIELD_UNSET */
+
 #define OGS_SSC_MODE_1                              1
 #define OGS_SSC_MODE_2                              2
 #define OGS_SSC_MODE_3                              3
@@ -720,6 +728,10 @@ int ogs_fqdn_parse(char *dst, const char *src, int len);
 #define OGS_PCO_ID_IPV4_LINK_MTU_REQUEST                        0x0010
 #define OGS_PCO_ID_MS_SUPPORT_LOCAL_ADDR_TFT_INDICATOR          0x0011
 #define OGS_PCO_ID_P_CSCF_RE_SELECTION_SUPPORT                  0x0012
+#define OGS_PCO_ID_3GPP_PS_DATA_OFF_UE_STATUS                   0x0017
+#define OGS_PCO_ID_PDU_SESSION_ID                               0x001a
+#define OGS_PCO_ID_QOS_RULES_TWO_OCTET_LENGTH_SUPPORT           0x0023
+#define OGS_PCO_ID_QOS_FLOW_DESCRIPTIONS_TWO_OCTET_LENGTH_SUPPORT 0x0024
 
 enum ogs_pco_ipcp_options {
     OGS_IPCP_OPT_IPADDR = 3,
@@ -772,6 +784,9 @@ ED3(uint8_t ext:1;,
 
 int ogs_pco_parse(ogs_pco_t *pco, unsigned char *data, int data_len);
 int ogs_pco_build(unsigned char *data, int data_len, ogs_pco_t *pco);
+int ogs_pco_filter_copy(unsigned char *out, int out_max,
+        const unsigned char *in, int in_len,
+        const uint16_t *exclude_ids, int num_exclude_ids);
 
 /*
  * PFCP Specification
@@ -911,6 +926,9 @@ typedef struct ogs_subscription_data_s {
 
 #define OGS_RAU_TAU_DEFAULT_TIME                (12*60)     /* 12 min */
     uint32_t                subscribed_rau_tau_timer;       /* unit : seconds */
+
+    bool                    ics_indicator_presence;
+    bool                    ics_indicator;
 
     int num_of_slice;
     ogs_slice_data_t slice[OGS_MAX_NUM_OF_SLICE];

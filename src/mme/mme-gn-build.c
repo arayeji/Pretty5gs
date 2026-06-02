@@ -18,6 +18,7 @@
  */
 
 #include "mme-context.h"
+#include "mme-apn.h"
 
 #include "mme-gn-build.h"
 #include "mme-gn-handler.h"
@@ -148,8 +149,16 @@ static void build_qos_profile_from_session(ogs_gtp1_qos_profile_decoded_t *qos_p
 
 static int sess_fill_pdp_context_decoded(mme_sess_t *sess, ogs_gtp1_pdp_context_decoded_t *pdpctx_dec)
 {
+    mme_ue_t *mme_ue = NULL;
     mme_bearer_t *bearer = NULL;
+    char apn_fqdn[OGS_MAX_APN_LEN+1];
+    int apn_fqdn_len;
     int rv;
+
+    ogs_assert(sess);
+    ogs_assert(sess->session);
+    mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
+    ogs_assert(mme_ue);
 
     *pdpctx_dec = (ogs_gtp1_pdp_context_decoded_t){
         .ea = OGS_GTP1_PDPCTX_EXT_EUA_NO,
@@ -171,7 +180,10 @@ static int sess_fill_pdp_context_decoded(mme_sess_t *sess, ogs_gtp1_pdp_context_
         .trans_id = sess->pti,
     };
 
-    ogs_cpystrn(pdpctx_dec->apn, sess->session->name, sizeof(pdpctx_dec->apn));
+    apn_fqdn_len = mme_apn_for_gtp(
+            mme_ue, sess->session, apn_fqdn, sizeof(apn_fqdn));
+    ogs_assert(apn_fqdn_len > 0);
+    ogs_cpystrn(pdpctx_dec->apn, apn_fqdn, sizeof(pdpctx_dec->apn));
 
     rv = ogs_paa_to_ip(&sess->paa, &pdpctx_dec->pdp_address[0]);
     if (rv != OGS_OK)
