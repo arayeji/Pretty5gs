@@ -23,6 +23,7 @@
 #include "sxa-handler.h"
 #include "ga-writer.h"
 #include "sgwc-trace.h"
+#include "sgwc-gtp-interop.h"
 
 static uint8_t gtp_cause_from_pfcp(uint8_t pfcp_cause)
 {
@@ -321,9 +322,12 @@ void sgwc_sxa_handle_session_establishment_response(
     memset(&sgw_s5c_teid, 0, sizeof(ogs_gtp2_f_teid_t));
     sgw_s5c_teid.interface_type = OGS_GTP2_F_TEID_S5_S8_SGW_GTP_C;
     sgw_s5c_teid.teid = htobe32(sess->sgw_s5c_teid);
-    rv = ogs_gtp2_sockaddr_to_f_teid(
-            ogs_gtp_self()->gtpc_addr, ogs_gtp_self()->gtpc_addr6,
-            &sgw_s5c_teid, &sgw_s5c_len);
+    {
+        ogs_sockaddr_t *gtpc_addr = NULL, *gtpc_addr6 = NULL;
+        sgwc_gtpc_f_teid_addr(sess, &gtpc_addr, &gtpc_addr6);
+        rv = ogs_gtp2_sockaddr_to_f_teid(
+                gtpc_addr, gtpc_addr6, &sgw_s5c_teid, &sgw_s5c_len);
+    }
     ogs_assert(rv == OGS_OK);
 
     /* UP F-SEID */
@@ -348,8 +352,7 @@ void sgwc_sxa_handle_session_establishment_response(
                 pgw_s5c_teid, ogs_gtp_self()->gtpc_port);
         ogs_assert(pgw);
 
-        rv = ogs_gtp_connect(
-                ogs_gtp_self()->gtpc_sock, ogs_gtp_self()->gtpc_sock6, pgw);
+        rv = sgwc_gtp_connect_peer(sess, pgw);
         ogs_assert(rv == OGS_OK);
     }
     /* Setup GTP Node */
@@ -449,6 +452,14 @@ void sgwc_sxa_handle_session_establishment_response(
             create_session_request->bearer_contexts_to_be_created[i].
                 s5_s8_u_sgw_f_teid.len = sgw_s5u_len[i];
         }
+
+        if (sgwc_self()->inbound_roam_gtpc_send_recovery_on_s5_csr) {
+            create_session_request->recovery.presence = 1;
+            create_session_request->recovery.u8 =
+                sgwc_self()->gtpc_recovery;
+        }
+
+        /* APN/PCO: forward unchanged from MME on S11. */
 
         pkbuf = ogs_gtp2_build_msg(recv_message);
         if (!pkbuf) {

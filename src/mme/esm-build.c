@@ -20,6 +20,7 @@
 #include "nas-security.h"
 #include "esm-build.h"
 #include "mme-sm.h"
+#include "mme-ambr.h"
 
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __esm_log_domain
@@ -172,6 +173,7 @@ ogs_pkbuf_t *esm_build_activate_default_bearer_context_request(
         OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REQUEST;
 
     memcpy(&bearer->qos, &session->qos, sizeof(ogs_qos_t));
+    mme_qos_fill_bearer_bitrates(mme_ue, session, &bearer->qos);
 
     eps_qos_build(eps_qos, bearer->qos.index,
             bearer->qos.mbr.downlink, bearer->qos.mbr.uplink,
@@ -249,10 +251,21 @@ ogs_pkbuf_t *esm_build_activate_default_bearer_context_request(
         ogs_assert_if_reached();
     }
 
-    if (session->ambr.downlink || session->ambr.uplink) {
-        activate_default_eps_bearer_context_request->presencemask |=
-            OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REQUEST_APN_AMBR_PRESENT;
-        apn_ambr_build(apn_ambr, session->ambr.downlink, session->ambr.uplink);
+    {
+        ogs_bitrate_t sess_ambr = mme_sess_ambr_for_pdn(mme_ue, session);
+
+        mme_ambr_apply_config(&sess_ambr);
+        mme_ambr_complete_directions(&sess_ambr);
+        if (!sess_ambr.uplink && !sess_ambr.downlink &&
+                mme_self()->ambr_limit.enabled) {
+            sess_ambr.uplink = mme_self()->ambr_limit.uplink_bps;
+            sess_ambr.downlink = mme_self()->ambr_limit.downlink_bps;
+        }
+        if (sess_ambr.uplink && sess_ambr.downlink) {
+            activate_default_eps_bearer_context_request->presencemask |=
+                OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REQUEST_APN_AMBR_PRESENT;
+            apn_ambr_build(apn_ambr, sess_ambr.downlink, sess_ambr.uplink);
+        }
     }
 
     if (sess->pgw_epco.presence && sess->pgw_epco.len && sess->pgw_epco.data) {

@@ -1864,11 +1864,63 @@ smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)
     return sess;
 }
 
+/*
+ * Decode GTP APN IE and derive APN-NI for session.name (subnet, UPF, Gx).
+ * Roaming CSR often carries a full APN (e.g. internet.mnc070.mcc999.gprs).
+ */
+static bool smf_gtp_apn_parse(
+        char *apn_ni, char **full_apn_out,
+        void *apn_data, int apn_len)
+{
+    char apn[OGS_MAX_APN_LEN+1];
+    char *dnn_oi = NULL;
+
+    ogs_assert(apn_ni);
+    ogs_assert(full_apn_out);
+
+    *full_apn_out = NULL;
+
+    if (ogs_fqdn_parse(apn, apn_data, ogs_min(apn_len, OGS_MAX_APN_LEN)) <= 0)
+        return false;
+
+    dnn_oi = ogs_dnn_oi_from_fqdn(apn);
+    if (dnn_oi && dnn_oi > apn) {
+        size_t ni_len = (size_t)(dnn_oi - apn);
+
+        if (ni_len > 0 && apn[ni_len - 1] == '.')
+            ni_len--;
+        if (ni_len == 0 || ni_len > OGS_MAX_APN_LEN)
+            return false;
+
+        memcpy(apn_ni, apn, ni_len);
+        apn_ni[ni_len] = '\0';
+        *full_apn_out = ogs_strdup(apn);
+        ogs_assert(*full_apn_out);
+    } else {
+        ogs_cpystrn(apn_ni, apn, OGS_MAX_APN_LEN);
+    }
+
+    return true;
+}
+
+static void smf_gtp_apn_apply_to_sess(smf_sess_t *sess, char *full_apn)
+{
+    ogs_assert(sess);
+
+    if (!full_apn)
+        return;
+
+    if (sess->full_dnn)
+        ogs_free(sess->full_dnn);
+    sess->full_dnn = full_apn;
+}
+
 smf_sess_t *smf_sess_add_by_gtp1_message(ogs_gtp1_message_t *message)
 {
     smf_ue_t *smf_ue = NULL;
     smf_sess_t *sess = NULL;
     char apn[OGS_MAX_APN_LEN+1];
+    char *full_apn = NULL;
 
     ogs_gtp1_create_pdp_context_request_t *req = &message->create_pdp_context_request;
 
@@ -1888,9 +1940,10 @@ smf_sess_t *smf_sess_add_by_gtp1_message(ogs_gtp1_message_t *message)
         ogs_error("No APN");
         return NULL;
     } else {
-        if (ogs_fqdn_parse(apn, req->access_point_name.data,
-            ogs_min(req->access_point_name.len, OGS_MAX_APN_LEN)) <= 0) {
+        if (!smf_gtp_apn_parse(apn, &full_apn, req->access_point_name.data,
+                req->access_point_name.len)) {
             ogs_error("Invalid APN");
+            ogs_free(full_apn);
             return NULL;
         }
     }
@@ -1927,8 +1980,10 @@ smf_sess_t *smf_sess_add_by_gtp1_message(ogs_gtp1_message_t *message)
     smf_ue = smf_ue_find_by_imsi(req->imsi.data, req->imsi.len);
     if (!smf_ue) {
         smf_ue = smf_ue_add_by_imsi(req->imsi.data, req->imsi.len);
-        if (!smf_ue)
+        if (!smf_ue) {
+            ogs_free(full_apn);
             return NULL;
+        }
     }
 
     sess = smf_sess_find_by_apn(smf_ue, apn, req->rat_type.u8);
@@ -1939,8 +1994,11 @@ smf_sess_t *smf_sess_add_by_gtp1_message(ogs_gtp1_message_t *message)
     }
 
     sess = smf_sess_add_by_apn(smf_ue, apn, req->rat_type.u8);
-    if (!sess)
+    if (!sess) {
+        ogs_free(full_apn);
         return NULL;
+    }
+    smf_gtp_apn_apply_to_sess(sess, full_apn);
     sess->gtp.version = 1;
     smf_metrics_inst_global_inc(SMF_METR_GLOB_GAUGE_GTP1_PDPCTXS_ACTIVE);
     return sess;
@@ -1951,6 +2009,7 @@ smf_sess_t *smf_sess_add_by_gtp2_message(ogs_gtp2_message_t *message)
     smf_ue_t *smf_ue = NULL;
     smf_sess_t *sess = NULL;
     char apn[OGS_MAX_APN_LEN+1];
+    char *full_apn = NULL;
 
     ogs_gtp2_create_session_request_t *req = &message->create_session_request;
 
@@ -1962,18 +2021,23 @@ smf_sess_t *smf_sess_add_by_gtp2_message(ogs_gtp2_message_t *message)
         ogs_error("No APN");
         return NULL;
     } else {
-        if (ogs_fqdn_parse(apn, req->access_point_name.data,
-            ogs_min(req->access_point_name.len, OGS_MAX_APN_LEN)) <= 0) {
+        if (!smf_gtp_apn_parse(apn, &full_apn, req->access_point_name.data,
+                req->access_point_name.len)) {
             ogs_error("Invalid APN");
+            ogs_free(full_apn);
             return NULL;
         }
     }
     if (req->rat_type.presence == 0) {
         ogs_error("No RAT Type");
+        ogs_free(full_apn);
         return NULL;
     }
 
-    ogs_trace("smf_sess_add_by_message() [APN:%s]", apn);
+    if (full_apn)
+        ogs_trace("smf_sess_add_by_message() [APN:%s] [full:%s]", apn, full_apn);
+    else
+        ogs_trace("smf_sess_add_by_message() [APN:%s]", apn);
 
     /*
      * 7.2.1 in 3GPP TS 29.274 Release 15
@@ -1997,8 +2061,10 @@ smf_sess_t *smf_sess_add_by_gtp2_message(ogs_gtp2_message_t *message)
     smf_ue = smf_ue_find_by_imsi(req->imsi.data, req->imsi.len);
     if (!smf_ue) {
         smf_ue = smf_ue_add_by_imsi(req->imsi.data, req->imsi.len);
-        if (!smf_ue)
+        if (!smf_ue) {
+            ogs_free(full_apn);
             return NULL;
+        }
     }
 
     sess = smf_sess_find_by_apn(smf_ue, apn, req->rat_type.u8);
@@ -2009,8 +2075,11 @@ smf_sess_t *smf_sess_add_by_gtp2_message(ogs_gtp2_message_t *message)
     }
 
     sess = smf_sess_add_by_apn(smf_ue, apn, req->rat_type.u8);
-    if (!sess)
+    if (!sess) {
+        ogs_free(full_apn);
         return NULL;
+    }
+    smf_gtp_apn_apply_to_sess(sess, full_apn);
     sess->gtp.version = 2;
     smf_metrics_inst_global_inc(SMF_METR_GLOB_GAUGE_GTP2_SESSIONS_ACTIVE);
     return sess;

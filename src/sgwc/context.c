@@ -42,6 +42,257 @@ static int num_of_sgwc_sess = 0;
 static void stats_add_sgwc_session(void);
 static void stats_remove_sgwc_session(void);
 
+static bool sgwc_wildcard_match_ci(const char *pattern, const char *s)
+{
+    const char *p = NULL;
+    const char *str = NULL;
+    const char *star_p = NULL;
+    const char *star_s = NULL;
+
+    ogs_assert(pattern);
+    ogs_assert(s);
+
+    if (!strchr(pattern, '*'))
+        return ogs_strcasecmp(s, pattern) == 0;
+
+    p = pattern;
+    str = s;
+
+    while (*str) {
+        if (*p == '*') {
+            star_p = ++p;
+            star_s = str;
+            continue;
+        }
+        if (*p && tolower((unsigned char)*p) == tolower((unsigned char)*str)) {
+            p++;
+            str++;
+            continue;
+        }
+        if (star_p) {
+            p = star_p;
+            str = ++star_s;
+            continue;
+        }
+        return false;
+    }
+
+    while (*p == '*')
+        p++;
+    return *p == '\0';
+}
+
+static void sgwc_sgwu_nwi_rewrite_clear(void)
+{
+    sgwc_sgwu_nwi_rewrite_rule_t *rule = NULL, *next_rule = NULL;
+
+    ogs_list_for_each_safe(&self.sgwu_nwi_rewrite_list, next_rule, rule) {
+        ogs_list_remove(&self.sgwu_nwi_rewrite_list, rule);
+        if (rule->match)
+            ogs_free(rule->match);
+        if (rule->replace)
+            ogs_free(rule->replace);
+        ogs_free(rule);
+    }
+}
+
+static void sgwc_sgwu_nwi_rewrite_add(const char *match, const char *replace)
+{
+    sgwc_sgwu_nwi_rewrite_rule_t *rule = NULL;
+
+    ogs_assert(match);
+    ogs_assert(replace);
+
+    if (!match[0] || !replace[0]) {
+        ogs_warn("sgwu_nwi_rewrite: empty match or replace ignored");
+        return;
+    }
+
+    rule = ogs_calloc(1, sizeof(*rule));
+    ogs_assert(rule);
+    rule->match = ogs_strdup(match);
+    ogs_assert(rule->match);
+    rule->replace = ogs_strdup(replace);
+    ogs_assert(rule->replace);
+    ogs_list_add(&self.sgwu_nwi_rewrite_list, rule);
+
+    ogs_info("SGW-U NWI rewrite: [%s] -> [%s] "
+            "(case-insensitive, * wildcard)",
+            rule->match, rule->replace);
+}
+
+static void sgwc_sgwu_nwi_rewrite_parse(ogs_yaml_iter_t *parent_iter)
+{
+    ogs_yaml_iter_t rule_array, rule_iter;
+
+    ogs_assert(parent_iter);
+
+    ogs_yaml_iter_recurse(parent_iter, &rule_array);
+    do {
+        const char *match = NULL;
+        const char *replace = NULL;
+
+        if (ogs_yaml_iter_type(&rule_array) == YAML_MAPPING_NODE) {
+            memcpy(&rule_iter, &rule_array, sizeof(ogs_yaml_iter_t));
+        } else if (ogs_yaml_iter_type(&rule_array) == YAML_SEQUENCE_NODE) {
+            if (!ogs_yaml_iter_next(&rule_array))
+                break;
+            ogs_yaml_iter_recurse(&rule_array, &rule_iter);
+        } else if (ogs_yaml_iter_type(&rule_array) == YAML_SCALAR_NODE) {
+            break;
+        } else
+            ogs_assert_if_reached();
+
+        while (ogs_yaml_iter_next(&rule_iter)) {
+            const char *key = ogs_yaml_iter_key(&rule_iter);
+            ogs_assert(key);
+            if (!strcmp(key, "match") || !strcmp(key, "from"))
+                match = ogs_yaml_iter_value(&rule_iter);
+            else if (!strcmp(key, "replace") || !strcmp(key, "to"))
+                replace = ogs_yaml_iter_value(&rule_iter);
+            else
+                ogs_warn("unknown key `%s` in sgwu_nwi_rewrite rule", key);
+        }
+
+        if (match && replace)
+            sgwc_sgwu_nwi_rewrite_add(match, replace);
+        else if (match || replace)
+            ogs_warn("sgwu_nwi_rewrite rule needs both match and replace");
+    } while (ogs_yaml_iter_type(&rule_array) == YAML_SEQUENCE_NODE);
+}
+
+static bool sgwc_sgwu_nwi_rewrite_key(const char *key)
+{
+    return !strcmp(key, "sgwu_nwi_rewrite") ||
+           !strcmp(key, "nwi_rewrite") ||
+           !strcmp(key, "pfcp_nwi_rewrite");
+}
+
+static bool sgwc_sgwu_nwi_rewrite_apply(
+        sgwc_sess_t *sess, char *nwi, int buflen)
+{
+    sgwc_sgwu_nwi_rewrite_rule_t *rule = NULL;
+    const char *candidates[2];
+    int i;
+
+    ogs_assert(sess);
+    ogs_assert(nwi);
+    ogs_assert(buflen > OGS_MAX_APN_LEN);
+
+    if (ogs_list_empty(&self.sgwu_nwi_rewrite_list))
+        return false;
+
+    candidates[0] = nwi;
+    candidates[1] = sess->session.name;
+
+    for (i = 0; i < 2; i++) {
+        const char *candidate = candidates[i];
+
+        if (!candidate || !candidate[0])
+            continue;
+
+        ogs_list_for_each(&self.sgwu_nwi_rewrite_list, rule) {
+            if (sgwc_wildcard_match_ci(rule->match, candidate)) {
+                ogs_debug("SGW-U NWI rewrite: %s -> %s (pattern %s)",
+                        candidate, rule->replace, rule->match);
+                ogs_cpystrn(nwi, rule->replace, buflen);
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+static void sgwc_gtpu_teid_conf_apply_key(
+        const char *key, ogs_yaml_iter_t *iter,
+        bool *force_cp_teid,
+        uint32_t *teid_offset,
+        uint8_t *teid_range_indication,
+        uint8_t *teid_range)
+{
+    const char *value = NULL;
+
+    ogs_assert(key);
+    ogs_assert(iter);
+
+    if (!strcmp(key, "force_cp_teid") || !strcmp(key, "cp_teid")) {
+        *force_cp_teid = ogs_yaml_iter_bool(iter);
+    } else if (!strcmp(key, "teid_offset")) {
+        value = ogs_yaml_iter_value(iter);
+        if (value)
+            *teid_offset = (uint32_t)strtoul(value, NULL, 0);
+    } else if (!strcmp(key, "teid_range_indication")) {
+        value = ogs_yaml_iter_value(iter);
+        if (value) {
+            int teidri = atoi(value);
+
+            if (teidri < 1 || teidri > 7)
+                ogs_warn("teid_range_indication %d out of range (1..7)",
+                        teidri);
+            else
+                *teid_range_indication = (uint8_t)teidri;
+        }
+    } else if (!strcmp(key, "teid_range")) {
+        value = ogs_yaml_iter_value(iter);
+        if (value)
+            *teid_range = (uint8_t)strtoul(value, NULL, 0);
+    }
+}
+
+static bool sgwc_gtpu_use_cp_teid(sgwc_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    if (sgwc_self()->gtpu_force_cp_teid)
+        return true;
+    if (sgwc_sess_is_inbound_roam(sess) &&
+            sgwc_self()->inbound_roam_gtpu_force_cp_teid)
+        return true;
+    return false;
+}
+
+static bool sgwc_gtpu_has_teid_encoding(sgwc_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    if (sgwc_sess_is_inbound_roam(sess)) {
+        if (sgwc_self()->inbound_roam_gtpu_teid_offset ||
+                sgwc_self()->inbound_roam_gtpu_teid_range_indication)
+            return true;
+    } else if (sgwc_self()->gtpu_teid_offset ||
+            sgwc_self()->gtpu_teid_range_indication) {
+        return true;
+    }
+    return false;
+}
+
+static uint32_t sgwc_gtpu_teid_from_index(sgwc_sess_t *sess, uint32_t index)
+{
+    uint8_t teidri = 0;
+    uint8_t teid_range = 0;
+    uint32_t offset = 0;
+
+    ogs_assert(sess);
+
+    if (sgwc_sess_is_inbound_roam(sess)) {
+        teidri = sgwc_self()->inbound_roam_gtpu_teid_range_indication;
+        teid_range = sgwc_self()->inbound_roam_gtpu_teid_range;
+        offset = sgwc_self()->inbound_roam_gtpu_teid_offset;
+    } else {
+        teidri = sgwc_self()->gtpu_teid_range_indication;
+        teid_range = sgwc_self()->gtpu_teid_range;
+        offset = sgwc_self()->gtpu_teid_offset;
+    }
+
+    if (teidri)
+        index = OGS_PFCP_GTPU_INDEX_TO_TEID(index, teidri, teid_range);
+    if (offset)
+        index += offset;
+
+    return index;
+}
+
 void sgwc_context_init(void)
 {
     ogs_assert(context_initialized == 0);
@@ -69,6 +320,7 @@ void sgwc_context_init(void)
     ogs_assert(self.sgwc_sxa_seid_hash);
 
     ogs_list_init(&self.sgw_ue_list);
+    ogs_list_init(&self.sgwu_nwi_rewrite_list);
 
     self.cdr.enabled = false;
     self.cdr.interim_interval_s = 300;
@@ -78,6 +330,7 @@ void sgwc_context_init(void)
     self.cdr.triggers = SGWC_CDR_TRIG_START | SGWC_CDR_TRIG_INTERIM |
             SGWC_CDR_TRIG_STOP;
     self.cdr_local_seq = 0;
+    self.gtpc_recovery = 1;
 
     context_initialized = 1;
 }
@@ -106,6 +359,8 @@ void sgwc_context_final(void)
 
     ogs_gtp_node_remove_all(&self.mme_s11_list);
     ogs_gtp_node_remove_all(&self.pgw_s5c_list);
+
+    sgwc_sgwu_nwi_rewrite_clear();
 
     context_initialized = 0;
 }
@@ -154,10 +409,123 @@ int sgwc_context_parse_config(void)
                 ogs_assert(sgwc_key);
                 if (!strcmp(sgwc_key, "gtpc")) {
                     /* handle config in gtp library */
+                } else if (!strcmp(sgwc_key, "gtpu")) {
+                    ogs_yaml_iter_t gtpu_iter;
+                    ogs_yaml_iter_recurse(&sgwc_iter, &gtpu_iter);
+                    while (ogs_yaml_iter_next(&gtpu_iter)) {
+                        const char *gk = ogs_yaml_iter_key(&gtpu_iter);
+                        ogs_assert(gk);
+                        sgwc_gtpu_teid_conf_apply_key(gk, &gtpu_iter,
+                                &self.gtpu_force_cp_teid,
+                                &self.gtpu_teid_offset,
+                                &self.gtpu_teid_range_indication,
+                                &self.gtpu_teid_range);
+                    }
+                    if (self.gtpu_force_cp_teid)
+                        ogs_info("GTP-U: SGWC assigns F-TEID (gtpu.force_cp_teid)");
+                    if (self.gtpu_teid_offset ||
+                            self.gtpu_teid_range_indication)
+                        ogs_info("GTP-U TEID offset=0x%x "
+                                "teid_range_indication=%u teid_range=%u",
+                                self.gtpu_teid_offset,
+                                self.gtpu_teid_range_indication,
+                                self.gtpu_teid_range);
+                } else if (sgwc_sgwu_nwi_rewrite_key(sgwc_key)) {
+                    sgwc_sgwu_nwi_rewrite_parse(&sgwc_iter);
                 } else if (!strcmp(sgwc_key, "pfcp")) {
                     /* handle config in pfcp library */
                 } else if (!strcmp(sgwc_key, "sgwu")) {
                     /* handle config in pfcp library */
+                } else if (!strcmp(sgwc_key, "inbound_roam")) {
+                    ogs_yaml_iter_t roam_iter;
+                    ogs_yaml_iter_recurse(&sgwc_iter, &roam_iter);
+                    while (ogs_yaml_iter_next(&roam_iter)) {
+                        const char *rk = ogs_yaml_iter_key(&roam_iter);
+                        ogs_assert(rk);
+                        if (!strcmp(rk, "gtpc")) {
+                            ogs_yaml_iter_t gtpc_iter;
+                            ogs_yaml_iter_recurse(&roam_iter, &gtpc_iter);
+                            while (ogs_yaml_iter_next(&gtpc_iter)) {
+                                const char *gk =
+                                    ogs_yaml_iter_key(&gtpc_iter);
+                                const char *gv =
+                                    ogs_yaml_iter_value(&gtpc_iter);
+                                ogs_assert(gk);
+                                if (!strcmp(gk, "source_port") ||
+                                        !strcmp(gk, "send_port") ||
+                                        !strcmp(gk, "port")) {
+                                    if (gv)
+                                        self.inbound_roam_gtpc_source_port =
+                                            (uint16_t)atoi(gv);
+                                } else if (!strcmp(gk, "teid_offset")) {
+                                    if (gv)
+                                        self.inbound_roam_teid_offset =
+                                            (uint32_t)strtoul(gv, NULL, 0);
+                                } else if (!strcmp(gk,
+                                            "send_recovery_on_s5_csr") ||
+                                        !strcmp(gk, "recovery_on_s5_csr")) {
+                                    self.inbound_roam_gtpc_send_recovery_on_s5_csr =
+                                        ogs_yaml_iter_bool(&gtpc_iter);
+                                } else if (!strcmp(gk, "recv_port") ||
+                                        !strcmp(gk, "dest_port") ||
+                                        !strcmp(gk, "destination_port")) {
+                                    ogs_warn("sgwc.inbound_roam.gtpc.%s "
+                                            "ignored — PGW destination is "
+                                            "always gtpc.server.port (%u)",
+                                            gk, ogs_gtp_self()->gtpc_port);
+                                } else
+                                    ogs_warn("unknown key `%s` in "
+                                            "sgwc.inbound_roam.gtpc", gk);
+                            }
+                        } else if (!strcmp(rk, "gtpu")) {
+                            ogs_yaml_iter_t gtpu_iter;
+                            ogs_yaml_iter_recurse(&roam_iter, &gtpu_iter);
+                            while (ogs_yaml_iter_next(&gtpu_iter)) {
+                                const char *gk = ogs_yaml_iter_key(&gtpu_iter);
+                                ogs_assert(gk);
+                                sgwc_gtpu_teid_conf_apply_key(gk, &gtpu_iter,
+                                        &self.inbound_roam_gtpu_force_cp_teid,
+                                        &self.inbound_roam_gtpu_teid_offset,
+                                        &self.inbound_roam_gtpu_teid_range_indication,
+                                        &self.inbound_roam_gtpu_teid_range);
+                            }
+                        } else if (!strcmp(rk, "teid_offset")) {
+                            const char *rv =
+                                ogs_yaml_iter_value(&roam_iter);
+                            if (rv)
+                                self.inbound_roam_teid_offset =
+                                    (uint32_t)strtoul(rv, NULL, 0);
+                        } else if (sgwc_sgwu_nwi_rewrite_key(rk)) {
+                            sgwc_sgwu_nwi_rewrite_parse(&roam_iter);
+                        } else
+                            ogs_warn("unknown key `%s` in sgwc.inbound_roam",
+                                    rk);
+                    }
+                    if (self.inbound_roam_gtpc_source_port)
+                        ogs_info("Inbound roam GTP-C S5 source_port=%u "
+                                "(PGW dest=%u, S11 on gtpc.server)",
+                                self.inbound_roam_gtpc_source_port,
+                                ogs_gtp_self()->gtpc_port);
+                    if (self.inbound_roam_gtpc_send_recovery_on_s5_csr)
+                        ogs_info("Inbound roam GTP-C S5 CSR: Recovery IE on");
+                    if (self.inbound_roam_teid_offset)
+                        ogs_info("Inbound roam GTP-C TEID offset=0x%x",
+                                self.inbound_roam_teid_offset);
+                    if (self.inbound_roam_gtpu_force_cp_teid)
+                        ogs_info("Inbound roam GTP-U: SGWC assigns F-TEID "
+                                "(force_cp_teid)");
+                    if (self.inbound_roam_gtpu_teid_offset ||
+                            self.inbound_roam_gtpu_teid_range_indication) {
+                        ogs_info("Inbound roam GTP-U TEID offset=0x%x "
+                                "teid_range_indication=%u teid_range=%u",
+                                self.inbound_roam_gtpu_teid_offset,
+                                self.inbound_roam_gtpu_teid_range_indication,
+                                self.inbound_roam_gtpu_teid_range);
+                        if (!self.inbound_roam_gtpu_force_cp_teid)
+                            ogs_warn("inbound_roam.gtpu teid_offset/range "
+                                    "needs force_cp_teid:true when SGW-U "
+                                    "advertises FTUP");
+                    }
                 } else if (!strcmp(sgwc_key, "cdr")) {
                     ogs_yaml_iter_t c_iter;
                     ogs_yaml_iter_recurse(&sgwc_iter, &c_iter);
@@ -373,6 +741,128 @@ sgwc_ue_t *sgwc_ue_find_by_teid(uint32_t teid)
 sgwc_ue_t *sgwc_ue_find_by_id(ogs_pool_id_t id)
 {
     return ogs_pool_find_by_id(&sgwc_ue_pool, id);
+}
+
+static bool sgwc_imsi_plmn_is_operator_home(const ogs_plmn_id_t *home_plmn_id)
+{
+    int i;
+
+    ogs_assert(home_plmn_id);
+
+    if (ogs_local_conf()->num_of_serving_plmn_id == 0)
+        return false;
+
+    for (i = 0; i < ogs_local_conf()->num_of_serving_plmn_id; i++) {
+        if (ogs_plmn_id_mcc(home_plmn_id) ==
+                ogs_plmn_id_mcc(&ogs_local_conf()->serving_plmn_id[i]) &&
+            ogs_plmn_id_mnc(home_plmn_id) ==
+                ogs_plmn_id_mnc(&ogs_local_conf()->serving_plmn_id[i]))
+            return true;
+    }
+
+    return false;
+}
+
+bool sgwc_sess_is_inbound_roam(sgwc_sess_t *sess)
+{
+    sgwc_ue_t *sgwc_ue = NULL;
+    ogs_plmn_id_t home_plmn_id;
+    ogs_plmn_id_t zero_plmn_id;
+
+    ogs_assert(sess);
+
+    sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+    if (!sgwc_ue)
+        return true;
+
+    ogs_plmn_id_from_imsi_bcd(sgwc_ue->imsi_bcd, &home_plmn_id);
+
+    if (sgwc_imsi_plmn_is_operator_home(&home_plmn_id))
+        return false;
+
+    memset(&zero_plmn_id, 0, sizeof(zero_plmn_id));
+    if (memcmp(&sess->serving_plmn_id, &zero_plmn_id, OGS_PLMN_ID_LEN) == 0)
+        return true;
+
+    if (ogs_plmn_id_mcc(&home_plmn_id) != ogs_plmn_id_mcc(&sess->serving_plmn_id))
+        return true;
+    if (ogs_plmn_id_mnc(&home_plmn_id) != ogs_plmn_id_mnc(&sess->serving_plmn_id))
+        return true;
+
+    return false;
+}
+
+static uint32_t sgwc_inbound_roam_teid(uint32_t raw)
+{
+    uint32_t offset = sgwc_self()->inbound_roam_teid_offset;
+
+    if (!offset)
+        return raw;
+    return raw + offset;
+}
+
+void sgwc_inbound_roam_teid_offset_apply(sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess)
+{
+    uint32_t raw_teid;
+    uint64_t seid;
+
+    ogs_assert(sgwc_ue);
+    ogs_assert(sess);
+
+    if (!sgwc_self()->inbound_roam_teid_offset)
+        return;
+    if (!sgwc_sess_is_inbound_roam(sess))
+        return;
+
+    raw_teid = *(sess->sgwc_sxa_seid_node);
+    ogs_hash_set(self.sgwc_sxa_seid_hash, &sess->sgwc_sxa_seid,
+            sizeof(sess->sgwc_sxa_seid), NULL);
+
+    sess->sgw_s5c_teid = sgwc_inbound_roam_teid(raw_teid);
+    seid = (uint64_t)sess->sgw_s5c_teid;
+    sess->sgwc_sxa_seid = seid;
+    ogs_hash_set(self.sgwc_sxa_seid_hash, &sess->sgwc_sxa_seid,
+            sizeof(sess->sgwc_sxa_seid), sess);
+
+    raw_teid = *(sgwc_ue->sgw_s11_teid_node);
+    ogs_hash_set(self.sgw_s11_teid_hash, &sgwc_ue->sgw_s11_teid,
+            sizeof(sgwc_ue->sgw_s11_teid), NULL);
+    sgwc_ue->sgw_s11_teid = sgwc_inbound_roam_teid(raw_teid);
+    ogs_hash_set(self.sgw_s11_teid_hash, &sgwc_ue->sgw_s11_teid,
+            sizeof(sgwc_ue->sgw_s11_teid), sgwc_ue);
+
+    ogs_debug("Inbound roam TEID offset 0x%x: SGW-S11=0x%x SGW-S5C=0x%x",
+            sgwc_self()->inbound_roam_teid_offset,
+            sgwc_ue->sgw_s11_teid, sess->sgw_s5c_teid);
+}
+
+void sgwc_sess_sync_pfcp_pdr_nwi(sgwc_sess_t *sess)
+{
+    ogs_pfcp_pdr_t *pdr = NULL;
+    ogs_pfcp_far_t *far = NULL;
+    char nwi[OGS_MAX_APN_LEN+1];
+
+    ogs_assert(sess);
+
+    if (!sess->session.name || !sess->session.name[0])
+        return;
+
+    ogs_cpystrn(nwi, sess->session.name, sizeof(nwi));
+    sgwc_sgwu_nwi_rewrite_apply(sess, nwi, sizeof(nwi));
+
+    ogs_list_for_each(&sess->pfcp.pdr_list, pdr) {
+        if (pdr->apn)
+            ogs_free(pdr->apn);
+        pdr->apn = ogs_strdup(nwi);
+        ogs_assert(pdr->apn);
+    }
+
+    ogs_list_for_each(&sess->pfcp.far_list, far) {
+        if (far->apn)
+            ogs_free(far->apn);
+        far->apn = ogs_strdup(nwi);
+        ogs_assert(far->apn);
+    }
 }
 
 sgwc_sess_t *sgwc_sess_add(sgwc_ue_t *sgwc_ue, char *apn)
@@ -888,7 +1378,8 @@ sgwc_tunnel_t *sgwc_tunnel_add(
     ogs_assert(sess->pfcp.bar);
 
     ogs_assert(sess->pfcp_node);
-    if (sess->pfcp_node->up_function_features.ftup) {
+    if (sess->pfcp_node->up_function_features.ftup &&
+            !sgwc_gtpu_use_cp_teid(sess)) {
 
        /* TS 129 244 V16.5.0 8.2.3
         *
@@ -915,7 +1406,10 @@ sgwc_tunnel_t *sgwc_tunnel_add(
         if (resource) {
             ogs_user_plane_ip_resource_info_to_sockaddr(&resource->info,
                 &tunnel->local_addr, &tunnel->local_addr6);
-            if (resource->info.teidri)
+            if (sgwc_gtpu_has_teid_encoding(sess))
+                tunnel->local_teid =
+                    sgwc_gtpu_teid_from_index(sess, pdr->teid);
+            else if (resource->info.teidri)
                 tunnel->local_teid = OGS_PFCP_GTPU_INDEX_TO_TEID(
                         pdr->teid, resource->info.teidri,
                         resource->info.teid_range);
@@ -934,7 +1428,8 @@ sgwc_tunnel_t *sgwc_tunnel_add(
             else
                 ogs_assert_if_reached();
 
-            tunnel->local_teid = pdr->teid;
+            tunnel->local_teid = sgwc_gtpu_has_teid_encoding(sess) ?
+                sgwc_gtpu_teid_from_index(sess, pdr->teid) : pdr->teid;
         }
 
         ogs_assert(OGS_OK ==
@@ -942,6 +1437,7 @@ sgwc_tunnel_t *sgwc_tunnel_add(
                 tunnel->local_addr, tunnel->local_addr6,
                 &pdr->f_teid, &pdr->f_teid_len));
         pdr->f_teid.teid = tunnel->local_teid;
+        pdr->f_teid.ch = 0;
     }
 
     return tunnel;

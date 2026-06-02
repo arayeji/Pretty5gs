@@ -18,6 +18,8 @@
  */
 
 #include "mme-context.h"
+#include "mme-apn.h"
+#include "mme-ambr.h"
 
 #include "mme-s11-build.h"
 
@@ -48,8 +50,12 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
     struct timeval now;
     struct tm time_exp;
     char apn[OGS_MAX_APN_LEN+1];
+    char apn_fqdn[OGS_MAX_APN_LEN+1];
+    int apn_fqdn_len;
 
     ogs_gtp2_indication_t indication;
+    uint8_t pco_buf[OGS_MAX_PCO_LEN];
+    int pco_len = 0;
 
     ogs_assert(sess);
     session = sess->session;
@@ -162,14 +168,25 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
         req->pgw_s5_s8_address_for_control_plane_or_pmip.len = len;
     }
 
+    apn_fqdn_len = mme_apn_for_gtp(
+            mme_ue, session, apn_fqdn, sizeof(apn_fqdn));
+    ogs_assert(apn_fqdn_len > 0);
+
+    ogs_debug("    GTP APN[%s] (HSS NI[%s])", apn_fqdn, session->name);
+    if (session->vplmn_dynamic_address_allowed != OGS_SESSION_FIELD_UNSET)
+        ogs_debug("    HSS VPLMN-Dynamic-Address-Allowed[%u]",
+                session->vplmn_dynamic_address_allowed);
+    if (session->pdn_gw_allocation_type != OGS_SESSION_FIELD_UNSET)
+        ogs_debug("    HSS PDN-GW-Allocation-Type[%u]",
+                session->pdn_gw_allocation_type);
+
     req->access_point_name.presence = 1;
-    req->access_point_name.len = ogs_fqdn_build(
-            apn, session->name, strlen(session->name));
+    req->access_point_name.len = ogs_fqdn_build(apn, apn_fqdn, apn_fqdn_len);
     req->access_point_name.data = apn;
 
     req->selection_mode.presence = 1;
     req->selection_mode.u8 =
-        OGS_GTP2_SELECTION_MODE_MS_OR_NETWORK_PROVIDED_APN;
+        mme_gtp2_selection_mode_for_sess(mme_ue, sess, session);
 
     ogs_debug("sess->ue_request_type.type = %d", sess->ue_request_type.type);
 
@@ -212,13 +229,8 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
         if (session->session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
             session->session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
             session->session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
-            req->pdn_type.u8 =
-                (session->session_type & sess->ue_request_type.type);
-            if (req->pdn_type.u8 == 0) {
-                ogs_fatal("Cannot derive PDN Type [UE:%d,HSS:%d]",
-                    sess->ue_request_type.type, session->session_type);
-                ogs_assert_if_reached();
-            }
+            req->pdn_type.u8 = mme_gtp2_pdn_type_for_sess(
+                    session, sess->ue_request_type.type);
         } else {
             ogs_error("Invalid PDN-TYPE[%d]", session->session_type);
             return NULL;
@@ -228,23 +240,25 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
 
     ogs_debug("req->pdn_type.u8 = %d", req->pdn_type.u8);
 
-    memset(&indication, 0, sizeof(ogs_gtp2_indication_t));
-    req->indication_flags.presence = 1;
-    req->indication_flags.data = &indication;
-    req->indication_flags.len = sizeof(ogs_gtp2_indication_t);
+    if (!mme_gtp_csr_omit_indication(mme_ue, session)) {
+        memset(&indication, 0, sizeof(ogs_gtp2_indication_t));
+        req->indication_flags.presence = 1;
+        req->indication_flags.data = &indication;
+        req->indication_flags.len = sizeof(ogs_gtp2_indication_t);
 
-    indication.change_reporting_support_indication = 1;
-    indication.enb_change_reporting_support_indication = 1;
+        indication.change_reporting_support_indication = 1;
+        indication.enb_change_reporting_support_indication = 1;
 
-    if (req->pdn_type.u8 == OGS_PDU_SESSION_TYPE_IPV4V6)
-        indication.dual_address_bearer_flag = 1;
+        if (req->pdn_type.u8 == OGS_PDU_SESSION_TYPE_IPV4V6)
+            indication.dual_address_bearer_flag = 1;
 
-    if (sess->ue_request_type.value == OGS_NAS_EPS_REQUEST_TYPE_HANDOVER)
-        indication.handover_indication = 1;
+        if (sess->ue_request_type.value == OGS_NAS_EPS_REQUEST_TYPE_HANDOVER)
+            indication.handover_indication = 1;
 
-    if (create_action == OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST ||
-        create_action == OGS_GTP_CREATE_IN_TRACKING_AREA_UPDATE)
-        indication.operation_indication = 1;
+        if (create_action == OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST ||
+            create_action == OGS_GTP_CREATE_IN_TRACKING_AREA_UPDATE)
+            indication.operation_indication = 1;
+    }
 
     sess->paa.session_type = req->pdn_type.u8;
     ogs_debug("sess->paa.session_type = %d", sess->paa.session_type);
@@ -267,22 +281,41 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
     req->pdn_address_allocation.presence = 1;
 
     req->maximum_apn_restriction.presence = 1;
-    req->maximum_apn_restriction.u8 = OGS_GTP2_APN_NO_RESTRICTION;
+    req->maximum_apn_restriction.u8 = mme_ue->maximum_apn_restriction;
 
-    if (session->ambr.uplink || session->ambr.downlink) {
-        /*
-         * Ch 8.7. Aggregate Maximum Bit Rate(AMBR) in TS 29.274 V15.9.0
-         *
-         * AMBR is defined in clause 9.9.4.2 of 3GPP TS 24.301 [23],
-         * but it shall be encoded as shown in Figure 8.7-1 as
-         * Unsigned32 binary integer values in kbps (1000 bits per second).
-         */
-        memset(&ambr, 0, sizeof(ogs_gtp2_ambr_t));
-        ambr.uplink = htobe32(session->ambr.uplink / 1000);
-        ambr.downlink = htobe32(session->ambr.downlink / 1000);
-        req->aggregate_maximum_bit_rate.presence = 1;
-        req->aggregate_maximum_bit_rate.data = &ambr;
-        req->aggregate_maximum_bit_rate.len = sizeof(ambr);
+    {
+        ogs_bitrate_t sess_ambr = mme_sess_ambr_for_pdn(mme_ue, session);
+
+        mme_ambr_apply_config(&sess_ambr);
+        mme_ambr_complete_directions(&sess_ambr);
+        if (!mme_ambr_bps_meaningful(sess_ambr.uplink) ||
+                !mme_ambr_bps_meaningful(sess_ambr.downlink)) {
+            sess_ambr.uplink = 0;
+            sess_ambr.downlink = 0;
+            if (mme_self()->ambr_limit.enabled) {
+                sess_ambr.uplink = mme_self()->ambr_limit.uplink_bps;
+                sess_ambr.downlink = mme_self()->ambr_limit.downlink_bps;
+            }
+        }
+        if (!(session->ambr.downlink || session->ambr.uplink) &&
+                (sess_ambr.downlink || sess_ambr.uplink))
+            session->ambr = sess_ambr;
+
+        if (sess_ambr.uplink && sess_ambr.downlink) {
+            /*
+             * Ch 8.7. Aggregate Maximum Bit Rate(AMBR) in TS 29.274 V15.9.0
+             *
+             * AMBR is defined in clause 9.9.4.2 of 3GPP TS 24.301 [23],
+             * but it shall be encoded as shown in Figure 8.7-1 as
+             * Unsigned32 binary integer values in kbps (1000 bits per second).
+             */
+            memset(&ambr, 0, sizeof(ogs_gtp2_ambr_t));
+            ambr.uplink = htobe32(sess_ambr.uplink / 1000);
+            ambr.downlink = htobe32(sess_ambr.downlink / 1000);
+            req->aggregate_maximum_bit_rate.presence = 1;
+            req->aggregate_maximum_bit_rate.data = &ambr;
+            req->aggregate_maximum_bit_rate.len = sizeof(ambr);
+        }
     }
 
     if (sess->ue_epco.length && sess->ue_epco.buffer) {
@@ -292,9 +325,18 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
         req->extended_protocol_configuration_options.len =
             sess->ue_epco.length;
     } else if (sess->ue_pco.length && sess->ue_pco.buffer) {
-        req->protocol_configuration_options.presence = 1;
-        req->protocol_configuration_options.data = sess->ue_pco.buffer;
-        req->protocol_configuration_options.len = sess->ue_pco.length;
+        rv = mme_gtp_pco_for_csr(session,
+                sess->ue_pco.buffer, sess->ue_pco.length,
+                pco_buf, sizeof(pco_buf), &pco_len);
+        if (rv != OGS_OK) {
+            ogs_error("mme_gtp_pco_for_csr() failed");
+            return NULL;
+        }
+        if (pco_len > 0) {
+            req->protocol_configuration_options.presence = 1;
+            req->protocol_configuration_options.data = pco_buf;
+            req->protocol_configuration_options.len = pco_len;
+        }
     }
 
     int i = 0;
@@ -339,13 +381,7 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
                 pgw_s5u_len[i];
         }
 
-        memset(&bearer_qos, 0, sizeof(bearer_qos));
-        bearer_qos.qci = session->qos.index;
-        bearer_qos.priority_level = session->qos.arp.priority_level;
-        bearer_qos.pre_emption_capability =
-            session->qos.arp.pre_emption_capability;
-        bearer_qos.pre_emption_vulnerability =
-            session->qos.arp.pre_emption_vulnerability;
+        mme_gtp2_bearer_qos_from_session(&bearer_qos, mme_ue, session);
         req->bearer_contexts_to_be_created[i].bearer_level_qos.presence = 1;
         ogs_gtp2_build_bearer_qos(
                 &req->bearer_contexts_to_be_created[i].bearer_level_qos,

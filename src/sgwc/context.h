@@ -38,6 +38,12 @@ extern int __sgwc_log_domain;
 
 typedef struct sgwc_tunnel_s sgwc_tunnel_t;
 
+typedef struct sgwc_sgwu_nwi_rewrite_rule_s {
+    ogs_lnode_t lnode;
+    char *match;
+    char *replace;
+} sgwc_sgwu_nwi_rewrite_rule_t;
+
 /*
  * Ga / GTP' offline SGW-CDR writer (see lib/cdr/framing.h).
  * Records use OGS_CDR_FORMAT_BER_SGW in the spool header.
@@ -72,6 +78,47 @@ typedef struct sgwc_context_s {
     ogs_hash_t *sgwc_sxa_seid_hash; /* hash table (SGWC-SXA-SEID : Session) */
 
     ogs_list_t sgw_ue_list;    /* SGW_UE List */
+
+    /* GTPv2-C Recovery counter (TS 29.274) for Echo/CSR interop */
+    uint8_t gtpc_recovery;
+
+    /*
+     * Inbound roam S5: optional local UDP bind (source port only).
+     * PGW destination stays gtpc.server.port (2123). Replies to source port
+     * are received on this second socket.
+     */
+    uint16_t inbound_roam_gtpc_source_port;
+    /* Include Recovery IE on forwarded S5 Create Session Request. */
+    bool inbound_roam_gtpc_send_recovery_on_s5_csr;
+    /* Added to pool TEIDs for inbound-roam S11/S5-C (and PFCP SEID lookup). */
+    uint32_t inbound_roam_teid_offset;
+
+    /*
+     * GTP-U: force SGWC to assign local F-TEID (CH=0) instead of UP (FTUP).
+     * teid_offset / teid_range_* apply when encoding pdr->teid for PFCP/GTP-U.
+     */
+    bool gtpu_force_cp_teid;
+    uint32_t gtpu_teid_offset;
+    uint8_t gtpu_teid_range_indication;
+    uint8_t gtpu_teid_range;
+
+    bool inbound_roam_gtpu_force_cp_teid;
+    uint32_t inbound_roam_gtpu_teid_offset;
+    uint8_t inbound_roam_gtpu_teid_range_indication;
+    uint8_t inbound_roam_gtpu_teid_range;
+
+    ogs_sock_t *roam_gtpc_sock;
+    ogs_sock_t *roam_gtpc_sock6;
+    ogs_sockaddr_t *roam_gtpc_addr;
+    ogs_sockaddr_t *roam_gtpc_addr6;
+    ogs_poll_t *roam_gtpc_poll;
+    ogs_poll_t *roam_gtpc_poll6;
+
+    /*
+     * PFCP Network Instance sent to SGW-U (UPG/VPP): optional rewrite rules.
+     * Default NWI is the session APN from GTP. match supports * (case-insensitive).
+     */
+    ogs_list_t sgwu_nwi_rewrite_list;
 } sgwc_context_t;
 
 typedef struct sgwc_ue_s {
@@ -200,6 +247,10 @@ void sgwc_ue_remove_all(void);
 sgwc_ue_t *sgwc_ue_find_by_id(ogs_pool_id_t id);
 
 sgwc_sess_t *sgwc_sess_add(sgwc_ue_t *sgwc_ue, char *apn);
+
+bool sgwc_sess_is_inbound_roam(sgwc_sess_t *sess);
+void sgwc_inbound_roam_teid_offset_apply(sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess);
+void sgwc_sess_sync_pfcp_pdr_nwi(sgwc_sess_t *sess);
 
 void sgwc_sess_select_sgwu(sgwc_sess_t *sess);
 

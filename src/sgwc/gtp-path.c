@@ -106,6 +106,141 @@ static void _gtpv2_c_recv_cb(short when, ogs_socket_t fd, void *data)
     }
 }
 
+static ogs_sockaddr_t *sgwc_gtpc_sa_with_port(
+        ogs_sockaddr_t *src, uint16_t port)
+{
+    ogs_sockaddr_t *dst = NULL;
+    ogs_sockaddr_t *p = NULL;
+
+    ogs_assert(src);
+    ogs_assert(port);
+
+    ogs_assert(OGS_OK == ogs_copyaddrinfo(&dst, src));
+    for (p = dst; p; p = p->next) {
+        if (p->ogs_sa_family == AF_INET)
+            p->sin.sin_port = htobe16(port);
+        else if (p->ogs_sa_family == AF_INET6)
+            p->sin6.sin6_port = htobe16(port);
+    }
+
+    return dst;
+}
+
+static int sgwc_roam_gtpc_open(void)
+{
+    char buf[OGS_ADDRSTRLEN];
+    uint16_t port = sgwc_self()->inbound_roam_gtpc_source_port;
+    ogs_sockaddr_t *sa_list = NULL;
+    ogs_sockaddr_t *sa_list6 = NULL;
+    ogs_sock_t *sock = NULL;
+
+    if (!port)
+        return OGS_OK;
+
+    if (port == ogs_gtp_self()->gtpc_port) {
+        ogs_warn("inbound_roam.gtpc.source_port == gtpc.server.port (%u); "
+                "single socket mode", port);
+        return OGS_OK;
+    }
+
+    if (ogs_gtp_self()->gtpc_addr) {
+        sa_list = sgwc_gtpc_sa_with_port(ogs_gtp_self()->gtpc_addr, port);
+        ogs_assert(sa_list);
+        sock = ogs_udp_server(sa_list, NULL);
+        ogs_freeaddrinfo(sa_list);
+        if (!sock) {
+            ogs_error("roam GTP-C IPv4 bind failed port %u", port);
+            return OGS_ERROR;
+        }
+        sgwc_self()->roam_gtpc_sock = sock;
+        sgwc_self()->roam_gtpc_addr = &sock->local_addr;
+        ogs_info("roam GTP-C bind [%s]:%u (S5 local source; PGW dest port %u)",
+                OGS_ADDR(sgwc_self()->roam_gtpc_addr, buf), port,
+                ogs_gtp_self()->gtpc_port);
+        sgwc_self()->roam_gtpc_poll = ogs_pollset_add(ogs_app()->pollset,
+                OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
+        ogs_assert(sgwc_self()->roam_gtpc_poll);
+    }
+
+    if (ogs_gtp_self()->gtpc_addr6) {
+        sa_list6 = sgwc_gtpc_sa_with_port(ogs_gtp_self()->gtpc_addr6, port);
+        ogs_assert(sa_list6);
+        sock = ogs_udp_server(sa_list6, NULL);
+        ogs_freeaddrinfo(sa_list6);
+        if (!sock) {
+            ogs_error("roam GTP-C IPv6 bind failed port %u", port);
+            return OGS_ERROR;
+        }
+        sgwc_self()->roam_gtpc_sock6 = sock;
+        sgwc_self()->roam_gtpc_addr6 = &sock->local_addr;
+        ogs_info("roam GTP-C bind [%s]:%u (S5 local source; PGW dest port %u)",
+                OGS_ADDR(sgwc_self()->roam_gtpc_addr6, buf), port,
+                ogs_gtp_self()->gtpc_port);
+        sgwc_self()->roam_gtpc_poll6 = ogs_pollset_add(ogs_app()->pollset,
+                OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
+        ogs_assert(sgwc_self()->roam_gtpc_poll6);
+    }
+
+    if (!sgwc_self()->roam_gtpc_sock && !sgwc_self()->roam_gtpc_sock6) {
+        ogs_error("inbound_roam.gtpc.source_port %u: no roam socket", port);
+        return OGS_ERROR;
+    }
+
+    return OGS_OK;
+}
+
+bool sgwc_gtpc_roam_port_enabled(void)
+{
+    uint16_t port = sgwc_self()->inbound_roam_gtpc_source_port;
+
+    if (!port || port == ogs_gtp_self()->gtpc_port)
+        return false;
+
+    return sgwc_self()->roam_gtpc_sock != NULL ||
+        sgwc_self()->roam_gtpc_sock6 != NULL;
+}
+
+static bool sgwc_gtpc_use_roam_socket(sgwc_sess_t *sess)
+{
+    ogs_assert(sess);
+    return sgwc_gtpc_roam_port_enabled() &&
+        sgwc_sess_is_inbound_roam(sess);
+}
+
+void sgwc_gtpc_f_teid_addr(
+        sgwc_sess_t *sess,
+        ogs_sockaddr_t **addr, ogs_sockaddr_t **addr6)
+{
+    ogs_assert(addr);
+    ogs_assert(addr6);
+
+    if (sgwc_gtpc_use_roam_socket(sess)) {
+        *addr = sgwc_self()->roam_gtpc_addr;
+        *addr6 = sgwc_self()->roam_gtpc_addr6;
+    } else {
+        *addr = ogs_gtp_self()->gtpc_addr;
+        *addr6 = ogs_gtp_self()->gtpc_addr6;
+    }
+}
+
+int sgwc_gtp_connect_peer(sgwc_sess_t *sess, ogs_gtp_node_t *gnode)
+{
+    ogs_sock_t *sock = NULL;
+    ogs_sock_t *sock6 = NULL;
+
+    ogs_assert(gnode);
+
+    if (sgwc_gtpc_use_roam_socket(sess)) {
+        sock = sgwc_self()->roam_gtpc_sock;
+        sock6 = sgwc_self()->roam_gtpc_sock6;
+    } else {
+        sock = ogs_gtp_self()->gtpc_sock;
+        sock6 = ogs_gtp_self()->gtpc_sock6;
+    }
+
+    return ogs_gtp_connect(sock, sock6, gnode);
+}
+
 int sgwc_gtp_open(void)
 {
     ogs_socknode_t *node = NULL;
@@ -132,11 +267,30 @@ int sgwc_gtp_open(void)
     ogs_assert(ogs_gtp_self()->gtpc_sock || ogs_gtp_self()->gtpc_sock6);
     ogs_assert(ogs_gtp_self()->gtpc_addr || ogs_gtp_self()->gtpc_addr6);
 
-    return OGS_OK;
+    return sgwc_roam_gtpc_open();
 }
 
 void sgwc_gtp_close(void)
 {
+    if (sgwc_self()->roam_gtpc_poll) {
+        ogs_pollset_remove(sgwc_self()->roam_gtpc_poll);
+        sgwc_self()->roam_gtpc_poll = NULL;
+    }
+    if (sgwc_self()->roam_gtpc_sock) {
+        ogs_sock_destroy(sgwc_self()->roam_gtpc_sock);
+        sgwc_self()->roam_gtpc_sock = NULL;
+        sgwc_self()->roam_gtpc_addr = NULL;
+    }
+    if (sgwc_self()->roam_gtpc_poll6) {
+        ogs_pollset_remove(sgwc_self()->roam_gtpc_poll6);
+        sgwc_self()->roam_gtpc_poll6 = NULL;
+    }
+    if (sgwc_self()->roam_gtpc_sock6) {
+        ogs_sock_destroy(sgwc_self()->roam_gtpc_sock6);
+        sgwc_self()->roam_gtpc_sock6 = NULL;
+        sgwc_self()->roam_gtpc_addr6 = NULL;
+    }
+
     ogs_socknode_remove_all(&ogs_gtp_self()->gtpc_list);
     ogs_socknode_remove_all(&ogs_gtp_self()->gtpc_list6);
 }

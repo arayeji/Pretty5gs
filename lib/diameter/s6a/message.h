@@ -127,6 +127,7 @@ extern struct dict_object *ogs_diam_s6a_autn;
 extern struct dict_object *ogs_diam_s6a_kasme;
 extern struct dict_object *ogs_diam_s6a_subscriber_status;
 extern struct dict_object *ogs_diam_s6a_operator_determined_barring;
+extern struct dict_object *ogs_diam_s6a_ics_indicator;
 extern struct dict_object *ogs_diam_s6a_ambr;
 extern struct dict_object *ogs_diam_s6a_network_access_mode;
 extern struct dict_object *ogs_diam_s6a_access_restriction_data;
@@ -186,6 +187,7 @@ typedef struct ogs_diam_s6a_ula_message_s {
 #define OGS_DIAM_S6A_ULA_FLAGS_SEPARATION_INDICATION       (0)
 #define OGS_DIAM_S6A_ULA_FLAGS_MME_REGISTERED_FOR_SMS      (1)
     uint32_t ula_flags;
+    uint32_t subdatamask;
     ogs_subscription_data_t subscription_data;
 } ogs_diam_s6a_ula_message_t;
 

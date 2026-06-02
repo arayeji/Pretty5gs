@@ -25,6 +25,7 @@
 
 #include "mme-sm.h"
 #include "mme-s6a-handler.h"
+#include "mme-ambr.h"
 
 /* Unfortunately fd doesn't distinguish
  * between result-code and experimental-result-code.
@@ -99,7 +100,50 @@ uint8_t mme_s6a_handle_ula(
     ogs_assert(subscription_data->num_of_slice == 1);
     slice_data = &subscription_data->slice[0];
 
+    if (ula_message->subdatamask & OGS_DIAM_S6A_SUBDATA_SUB_STATUS) {
+        mme_ue->subscriber_status = subscription_data->subscriber_status;
+        mme_ue->subscriber_status_presence = true;
+        if (mme_ue->subscriber_status !=
+                OGS_SUBSCRIBER_STATUS_SERVICE_GRANTED) {
+            ogs_error("Subscriber-Status not SERVICE_GRANTED [%u]",
+                    mme_ue->subscriber_status);
+            return OGS_NAS_EMM_CAUSE_EPS_SERVICES_NOT_ALLOWED;
+        }
+    }
+
+    if (ula_message->subdatamask & OGS_DIAM_S6A_SUBDATA_OP_DET_BARRING) {
+        mme_ue->operator_determined_barring =
+            subscription_data->operator_determined_barring;
+        mme_ue->operator_determined_barring_presence = true;
+        if (mme_ue->operator_determined_barring &
+                OGS_OP_DET_BARRING_ALL_PS_BARRED) {
+            ogs_error("Operator Determined Barring: all PS barred");
+            return OGS_NAS_EMM_CAUSE_EPS_SERVICES_NOT_ALLOWED;
+        }
+    }
+
+    if (ula_message->subdatamask & OGS_DIAM_S6A_SUBDATA_ARD) {
+        mme_ue->access_restriction_data =
+            subscription_data->access_restriction_data;
+        mme_ue->access_restriction_data_presence = true;
+        if (mme_ue->access_restriction_data &
+                OGS_ACCESS_RESTRICTION_WB_E_UTRAN_NOT_ALLOWED) {
+            ogs_error("Access-Restriction-Data: E-UTRAN not allowed");
+            return OGS_NAS_EMM_CAUSE_EPS_SERVICES_NOT_ALLOWED;
+        }
+    }
+
+    if (subscription_data->ics_indicator_presence) {
+        mme_ue->ics_indicator = subscription_data->ics_indicator;
+        mme_ue->ics_indicator_presence = true;
+    }
+
+    mme_ue->subscribed_rau_tau_timer =
+        subscription_data->subscribed_rau_tau_timer;
+    mme_ue->maximum_apn_restriction = OGS_GTP2_APN_NO_RESTRICTION;
+
     memcpy(&mme_ue->ambr, &subscription_data->ambr, sizeof(ogs_bitrate_t));
+    mme_ambr_apply_config(&mme_ue->ambr);
 
     mme_session_remove_all(mme_ue);
 
@@ -203,6 +247,7 @@ uint8_t mme_s6a_handle_idr(
 
     if (idr_message->subdatamask & OGS_DIAM_S6A_SUBDATA_UEAMBR) {
         memcpy(&mme_ue->ambr, &subscription_data->ambr, sizeof(ogs_bitrate_t));
+        mme_ambr_apply_config(&mme_ue->ambr);
     }
 
     if (idr_message->subdatamask & OGS_DIAM_S6A_SUBDATA_APN_CONFIG) {
@@ -395,6 +440,11 @@ static uint8_t mme_ue_session_from_slice_data(mme_ue_t *mme_ue,
                 sizeof(mme_ue->session[i].charging_characteristics));
         mme_ue->session[i].charging_characteristics_presence =
             slice_data->session[i].charging_characteristics_presence;
+
+        mme_ue->session[i].vplmn_dynamic_address_allowed =
+            slice_data->session[i].vplmn_dynamic_address_allowed;
+        mme_ue->session[i].pdn_gw_allocation_type =
+            slice_data->session[i].pdn_gw_allocation_type;
     }
 
     return i;
