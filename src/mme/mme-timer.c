@@ -79,6 +79,14 @@ mme_timer_cfg_t *mme_timer_cfg(mme_timer_e id)
     return &g_mme_timer_cfg[id];
 }
 
+void mme_timer_set_t3450(ogs_time_t duration, int max_count)
+{
+    if (duration > 0)
+        g_mme_timer_cfg[MME_TIMER_T3450].duration = duration;
+    if (max_count > 0)
+        g_mme_timer_cfg[MME_TIMER_T3450].max_count = max_count;
+}
+
 const char *mme_timer_get_name(mme_timer_e id)
 {
     switch (id) {

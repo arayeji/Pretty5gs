@@ -81,6 +81,13 @@ mme:
 #      value: 3240  # 54 minutes * 60 = 3240 seconds
 #    t3423:
 #      value: 720   # 12 minutes * 60 = 720 seconds
+#  o T3450: MME timer after Attach/TAU Accept sent with
+#    InitialContextSetupRequest (NAS TS 24.301). On expiry the MME
+#    retransmits the full S1AP InitialContextSetupRequest (not only
+#    Downlink NAS Transport). Defaults: value 6 (seconds), max_count 4.
+#    t3450:
+#      value: 6
+#      max_count: 4
 
 ################################################################################
 # S1AP Server
