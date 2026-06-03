@@ -187,6 +187,36 @@ int nas_eps_send_attach_accept(mme_ue_t *mme_ue)
     return rv;
 }
 
+int nas_eps_resend_t3450_initial_context(mme_ue_t *mme_ue)
+{
+    int rv;
+    ogs_pkbuf_t *emmbuf = NULL;
+    ogs_pkbuf_t *s1apbuf = NULL;
+
+    ogs_assert(mme_ue);
+
+    if (!mme_ue->t3450.pkbuf) {
+        ogs_error("No T3450 NAS buffer");
+        return OGS_ERROR;
+    }
+
+    emmbuf = mme_ue->t3450.pkbuf;
+
+    s1apbuf = s1ap_build_initial_context_setup_request(mme_ue, emmbuf);
+    if (!s1apbuf) {
+        ogs_error("s1ap_build_initial_context_setup_request() failed");
+        return OGS_ERROR;
+    }
+
+    rv = nas_eps_send_to_enb(mme_ue, s1apbuf);
+    ogs_expect(rv == OGS_OK);
+
+    ogs_timer_start(mme_ue->t3450.timer,
+            mme_timer_cfg(MME_TIMER_T3450)->duration);
+
+    return rv;
+}
+
 int nas_eps_send_attach_reject(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     ogs_nas_emm_cause_t emm_cause, ogs_nas_esm_cause_t esm_cause)
 {

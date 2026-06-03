@@ -33,6 +33,7 @@ int nas_eps_send_to_downlink_nas_transport(
         enb_ue_t *enb_ue, ogs_pkbuf_t *pkbuf);
 
 int nas_eps_send_attach_accept(mme_ue_t *mme_ue);
+int nas_eps_resend_t3450_initial_context(mme_ue_t *mme_ue);
 int nas_eps_send_attach_reject(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     ogs_nas_emm_cause_t emm_cause, ogs_nas_esm_cause_t esm_cause);
 

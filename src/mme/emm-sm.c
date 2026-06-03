@@ -1829,11 +1829,7 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
                     return;
                 }
 
-                ogs_timer_start(mme_ue->t3450.timer,
-                        mme_timer_cfg(MME_TIMER_T3450)->duration);
-
-                r = nas_eps_send_to_downlink_nas_transport(
-                        enb_ue_find_by_id(mme_ue->enb_ue_id), emmbuf);
+                r = nas_eps_resend_t3450_initial_context(mme_ue);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
             }

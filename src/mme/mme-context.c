@@ -3030,6 +3030,31 @@ int mme_context_parse_config(void)
                                 } else
                                     ogs_warn("unknown key `%s`", t3423_key);
                             }
+                        } else if (!strcmp(time_key, "t3450")) {
+                            ogs_yaml_iter_t t3450_iter;
+                            ogs_time_t duration = 0;
+                            int max_count = 0;
+
+                            ogs_yaml_iter_recurse(&time_iter, &t3450_iter);
+                            while (ogs_yaml_iter_next(&t3450_iter)) {
+                                const char *t3450_key =
+                                    ogs_yaml_iter_key(&t3450_iter);
+                                ogs_assert(t3450_key);
+
+                                if (!strcmp(t3450_key, "value")) {
+                                    const char *v =
+                                        ogs_yaml_iter_value(&t3450_iter);
+                                    if (v)
+                                        duration = ogs_time_from_sec(atoll(v));
+                                } else if (!strcmp(t3450_key, "max_count")) {
+                                    const char *v =
+                                        ogs_yaml_iter_value(&t3450_iter);
+                                    if (v)
+                                        max_count = atoi(v);
+                                } else
+                                    ogs_warn("unknown key `%s`", t3450_key);
+                            }
+                            mme_timer_set_t3450(duration, max_count);
                         } else if (!strcmp(time_key, "t3512")) {
                             /* handle config in amf */
                         } else if (!strcmp(time_key, "nf_instance")) {
