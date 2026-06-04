@@ -1,34 +1,92 @@
-<p align="center"><a href="https://open5gs.org" target="_blank" rel="noopener noreferrer"><img width="100" src="https://open5gs.org/assets/img/open5gs-logo-only.png" alt="Open5GS logo"></a></p>
+# Pretty5GS
 
-## Getting Started
+Pretty5GS is a production-oriented fork of [Open5GS](https://open5gs.org/) focused on LTE/EPC operability, RADIUS integration, roaming, and attach-path diagnostics. It tracks upstream Open5GS for core 5GC behavior and adds features below that operators typically patch locally.
 
-Please follow the [documentation](https://open5gs.org/open5gs/docs/) at [open5gs.org](https://open5gs.org/)!
+## Compared to upstream Open5GS
 
-## Sponsors
+| Area | Upstream Open5GS | Pretty5GS |
+|------|------------------|-----------|
+| RADIUS (SMF) | Limited / evolving | Multi-server RADIUS, framed IP, Framed-Route / Framed-IPv6-Route, accounting, optional Gx bypass with PyHSS MySQL policy |
+| PFCP / SMF pools | Standard pools | Multi-DNN subnets sharing one UE pool; clearer pool-exhaustion logging with IMSI/DNN |
+| Admin API | Basic | HTTP admin on MME/SMF (9090): metrics under load, per-IMSI trace filter, SMF RADIUS/subnet controls |
+| MME scale | Fixed large pools | Configurable per-UE pool multipliers, peak tracking, SIGUSR1 pool dump, soft-cap LRU eviction |
+| MME lookups | Linear scans | O(1) `enb_ue` by S1AP-ID; EBI → bearer map |
+| SCTP | Reconnect quirks | Stale eNB/gNB SCTP context replaced on reconnect |
+| TAI / PLMN | Standard limits | Higher TAI caps; serving-only TAI list; ePLMN; S1 PLMN preference |
+| SGWC / SMF GTP | Default selection | SGWC/SMF selection by serving PLMN and IMSI PLMN; S5-C F-TEID handling |
+| PGW / SMF (MME) | First configured SMF | SMF/PGW pick by `plmn_id` / `serving_plmn_id` / `imsi_plmn_id` (same model as SGWC) |
+| Roaming | Baseline | Inbound roam interop, SGW-U NWI wildcard, EPLMN serving-only, ULA tolerance, configurable T3450 |
+| Tracing | Global log level only | Per-IMSI DEBUG without restart (`trace_imsi` YAML + `/admin/trace/imsi`); correlated MME/SGWC/SMF attach logs |
+| Attach visibility | Mostly INFO/DEBUG | `ATTACH step:` lines at ERROR for production grep; SGW/PGW selection logged with rule name |
+| CDR (4G) | Partial ULI | ULI in MME/SMF/SGWC CDRs; SGWC `servedMSISDN`; higher APN / SGsAP TAI-LAI limits |
+| Milenage K4 (Huawei HSS9860) | Not present | Optional AES unwrap of stored K/OPc via env or `global.milenage` in YAML (disabled = all-zero key) |
+| PyHSS | Separate | `milenage.py` K4 parity with Open5GS; optional MySQL PCRF path documented in local `build.md` (gitignored) |
 
-If you find Open5GS useful for work, please consider supporting this Open Source project by [Becoming a sponsor](https://github.com/sponsors/acetcom). To manage the funding transactions transparently, you can donate through [OpenCollective](https://opencollective.com/open5gs).
+## Quick start
 
-<p align="center">
-  <a target="_blank" href="https://open5gs.org/#sponsors">
-      <img alt="sponsors" src="https://open5gs.org/assets/img/sponsors.svg">
-  </a>
-</p>
+Build and install follow upstream Open5GS (Meson/Ninja). Use the example configs under `configs/open5gs/`; replace addresses, PLMN IDs, and secrets with your lab values.
 
-## Community
+```bash
+meson setup build --prefix=/usr
+ninja -C build
+sudo ninja -C build install
+```
 
-- Problem with Open5GS can be filed as [issues](https://github.com/open5gs/open5gs/issues) in this repository.
-- Other topics related to this project are happening on the [discussions](https://github.com/open5gs/open5gs/discussions).
-- Voice and text chat are available in Open5GS's [Discord](https://discordapp.com/) workspace. Use [this link](https://discord.gg/GreNkuc) to get started.
+## Configuration highlights
 
-## Contributing
+**Per-IMSI debug (no restart)**
 
-If you're contributing through a pull request to Open5GS project on GitHub, please read the [Contributor License Agreement](https://open5gs.org/open5gs/cla/) in advance.
+```yaml
+# mme.yaml
+mme:
+  trace_imsi:
+    - 001010000000001
+```
+
+```bash
+curl 'http://127.0.0.1:9090/admin/trace/imsi?imsi=001010000000001'
+curl 'http://127.0.0.1:9090/admin/trace/imsi?imsi=list'
+```
+
+**Milenage K4 (Huawei ciphertext in MongoDB)**
+
+```yaml
+# hss.yaml (or any NF that loads global:)
+global:
+  milenage:
+    k4_file: /etc/open5gs/milenage_k4.key
+```
+
+Copy `configs/open5gs/milenage_k4.key.example` to a root-only file and set your 32-hex-char key, or use `OPEN5GS_K4` / `OPEN5GS_K4_FILE`. All zeros disables unwrap.
+
+**SGWC / SMF PLMN selection (MME)**
+
+List more specific `imsi_plmn_id` entries before broader `plmn_id` / `serving_plmn_id` rows under `mme.gtpc.client.sgwc` and `mme.gtpc.client.smf`.
+
+**Production attach grep**
+
+```bash
+grep 'ATTACH step' /var/log/open5gs/mme.log
+grep 'SGW' /var/log/open5gs/mme.log
+grep 'PGW/SMF selected' /var/log/open5gs/mme.log
+grep 'UE IP assign' /var/log/open5gs/smf.log
+```
+
+## Branch layout (Pretty5GS remote)
+
+Topic branches are stacked on `main` for review without merge conflicts when merged in order:
+
+1. `feat/pretty5gs-radius` — RADIUS, PFCP multi-DNN, admin-api SMF, PyHSS Gx
+2. `feat/pretty5gs-mme-tai` — TAI/ePLMN, SGWC Ga CDR, hot-path reductions
+3. `feat/pretty5gs-mme-perf` — Pools, SCTP fix, metrics scale
+4. `feat/pretty5gs-cdr-trace` — CDR fixes, correlated trace
+5. `feat/pretty5gs-plmn-gtp` — PLMN/SGWC/SMF GTP selection
+6. `feat/pretty5gs-roaming` — Roam, T3450, EPLMN
+7. `feat/pretty5gs-imsi-trace` — Per-IMSI trace filter
+8. `feat/pretty5gs-attach-diag` — Attach steps, PGW PLMN pick, SMF IP logs
+
+Integration branch: `feat/pretty5gs` (full stack).
 
 ## License
 
-- Open5GS Open Source files are made available under the terms of the GNU Affero General Public License ([GNU AGPL v3.0](https://www.gnu.org/licenses/agpl-3.0.html)).
-- [Commercial licenses](https://open5gs.org/open5gs/support/) are also available from [NewPlane](https://newplane.io/) at [sales@newplane.io](mailto:sales@newplane.io).
-
-## Support
-
-Technical support and customized services for Open5GS are provided by [NewPlane](https://newplane.io/) at [support@newplane.io](mailto:support@newplane.io).
+Same as Open5GS: AGPL-3.0+. See upstream `LICENSE` and component copyrights in source files.

@@ -1,7 +1,13 @@
 logger:
   file:
     path: @localstatedir@/log/open5gs/mme.log
-#  level: info   # fatal|error|warn|info(default)|debug|trace
+#  level: error   # production: errors + ATTACH step breadcrumbs
+#  domain:         # optional finer control without full debug:
+#    mme: error
+#    gtp: warn
+#    s1ap: error
+#    s6a: error
+#    nas: warn
 
 global:
   max:
@@ -11,6 +17,12 @@ global:
 #    eps_tai0_partial_list: 20000  # Max type-0 partial lists in mme.tai (16 TACs each). Default: 20000.
 
 mme:
+  # DEBUG/TRACE for matching IMSI prefixes only (also at logger level=error).
+  # Runtime (no restart): GET http://<mme-metrics>:9090/admin/trace/imsi?imsi=99970
+  #   list filters: ?imsi=list   clear all: ?force=1
+#  trace_imsi:
+#    - 99970
+#    - 001010000000002
   freeDiameter: @sysconfdir@/freeDiameter/mme.conf
   s1ap:
     server:
@@ -38,10 +50,18 @@ mme:
         mcc: 999
         mnc: 70
       tac: 1
+#  attach_accept:
+#    tai_list: serving_only       # serving_only | all (default: serving_only)
+#    equivalent_plmn: true        # send EPLMN IE when equivalent_plmn set
+#    equivalent_plmn_serving_only: true  # one visitor PLMN when matched
+#    ims_voice_over_ps: true      # VoPS in EPS network feature (default: true)
+#    t3402: false                  # T3402 IE in Accept (default: false, Huawei)
+#    esm_cause_pdn_type_mismatch: true  # ESM #50/#51 (default: true)
+#    legacy_gprs_qos: true        # 2G QoS/LLC/radio/PFI IEs (default: true)
+#  Legacy top-level keys (same as attach_accept.*) are still accepted:
 #  tai_list_in_accept: serving_only
-#    Send only the UE's current TAC in Attach/TAU Accept (not the full mme.tai
-#    list). Use with large mme.tai and legacy UEs (e.g. MikroTik). S1 Setup
-#    still uses the full mme.tai configuration. Default: all (full list).
+#  ims_voice_over_ps_in_s1_mode: true
+#  equivalent_plmn_serving_only: true
 #  mip_home_agent_host_dns: true
 #    Resolve home PGW from HSS MIP-Home-Agent-Host (Destination-Host/Realm)
 #    via DNS and cache the result. Set to false to skip DNS and use only
@@ -65,6 +85,7 @@ mme:
 #      mnc: 71
 #    - mcc: 999
 #      mnc: 72
+#  (EPLMN send/filter: see attach_accept.equivalent_plmn* above)
   security:
     integrity_order : [ EIA2, EIA1, EIA0 ]
     ciphering_order : [ EEA0, EEA1, EEA2 ]
@@ -130,6 +151,20 @@ mme:
 ################################################################################
 # GTP-C Client
 ################################################################################
+#  o SGW selection by serving PLMN (TAI PLMN) and/or home IMSI PLMN
+#  gtpc:
+#    client:
+#      sgwc:
+#        - address: 127.0.0.3
+#          plmn_id:
+#            mcc: 999
+#            mnc: 70
+#        - address: 127.0.0.4
+#          imsi_plmn_id:
+#            mcc: 999
+#            mnc: 71
+#        - address: 127.0.0.5
+#
 #  o SGW selection by eNodeB TAC
 #   (either single TAC or multiple TACs, DECIMAL representation)
 #  gtpc:
@@ -149,6 +184,24 @@ mme:
 #          e_cell_id: abcde01
 #        - address: 127.0.2.2
 #          e_cell_id: [12345, a9413, 98765]
+#
+#  o SMF/PGW selection by home IMSI PLMN and/or serving PLMN (list order matters:
+#    put imsi_plmn_id entries before serving plmn_id / apn / default)
+#  gtpc:
+#    client:
+#      smf:
+#        - address: 127.0.0.5
+#          imsi_plmn_id:
+#            mcc: 999
+#            mnc: 35
+#        - address: 127.0.0.6
+#          imsi_plmn_id:
+#            mcc: 999
+#            mnc: 70
+#        - address: 127.0.0.4
+#          plmn_id:
+#            mcc: 999
+#            mnc: 70
 #
 #  o SMF selection by APN
 #  gtpc:
@@ -227,11 +280,13 @@ mme:
 #      - address: msc.open5gs.org # SCTP server address configured on the MSC/VLR
 #        local_address: 127.0.0.2 # SCTP local IP addresses to be bound in the MME
 #        map:
+#          imsi_prefix: 99970   # optional; match IMSI (multi-operator map)
 #          tai:
 #            plmn_id:
 #              mcc: 001
 #              mnc: 01
-#            tac: 4131
+#            tac: 10000
+#            tac_end: 10999       # optional inclusive end; omit for single TAC
 #          lai:
 #            plmn_id:
 #              mcc: 001
@@ -251,7 +306,7 @@ mme:
 #      - address:       # SCTP server address configured on the MSC/VLR
 #          - 127.0.0.88
 #          - 10.0.0.88
-#          - 172.16.0.88
+#          - 10.0.0.10
 #          - 2001:db8:babe::88
 #        local_address: # SCTP local IP addresses to be bound in the MME
 #          - 127.0.0.2
