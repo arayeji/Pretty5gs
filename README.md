@@ -1,6 +1,6 @@
 # Pretty5GS
 
-Pretty5GS is a production-oriented fork of [Open5GS](https://open5gs.org/) focused on LTE/EPC operability, RADIUS integration, roaming, and attach-path diagnostics. It tracks upstream Open5GS for core 5GC behavior and adds features below that operators typically patch locally.
+Pretty5GS is a production-oriented fork of [Open5GS](https://open5gs.org/) focused on LTE/EPC operability, RADIUS integration, roaming, and attach-path diagnostics. **`main` merges the latest upstream Open5GS** (NAS/S1AP validation, `no_ims`, T3396, HSS IMSI checks) **with all Pretty5GS features below**.
 
 ## Compared to upstream Open5GS
 
@@ -72,20 +72,23 @@ grep 'PGW/SMF selected' /var/log/open5gs/mme.log
 grep 'UE IP assign' /var/log/open5gs/smf.log
 ```
 
-## Branch layout (Pretty5GS remote)
+## Merge order
 
-Topic branches are stacked on `main` for review without merge conflicts when merged in order:
+**Use `main` (or `feat/pretty5gs`)** — both point at the integrated tree. You do not need to merge the historical topic branches unless you want a step-by-step review.
 
-1. `feat/pretty5gs-radius` — RADIUS, PFCP multi-DNN, admin-api SMF, PyHSS Gx
-2. `feat/pretty5gs-mme-tai` — TAI/ePLMN, SGWC Ga CDR, hot-path reductions
-3. `feat/pretty5gs-mme-perf` — Pools, SCTP fix, metrics scale
-4. `feat/pretty5gs-cdr-trace` — CDR fixes, correlated trace
-5. `feat/pretty5gs-plmn-gtp` — PLMN/SGWC/SMF GTP selection
-6. `feat/pretty5gs-roaming` — Roam, T3450, EPLMN
-7. `feat/pretty5gs-imsi-trace` — Per-IMSI trace filter
-8. `feat/pretty5gs-attach-diag` — Attach steps, PGW PLMN pick, SMF IP logs
+Historical topic branches (oldest → newest, each includes the previous):
 
-Integration branch: `feat/pretty5gs` (full stack).
+1. `feat/pretty5gs-radius`
+2. `feat/pretty5gs-mme-tai`
+3. `feat/pretty5gs-mme-perf`
+4. `feat/pretty5gs-ops`
+5. `feat/pretty5gs-cdr-trace`
+6. `feat/pretty5gs-plmn-gtp`
+7. `feat/pretty5gs-roaming`
+8. `feat/pretty5gs-imsi-trace`
+9. `feat/pretty5gs-attach-diag`
+
+Then merge **`main`** into your deployment branch (or build directly from `main`).
 
 ## License
 
