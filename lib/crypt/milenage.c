@@ -136,7 +136,7 @@ static int k4_try_source(const char *label, const char *hex,
         nz = 0;
         for (i = 0; i < 16; i++) if (k4_key[i]) { nz = 1; break; }
         *enabled_out = nz;
-        ogs_log_print(OGS_LOG_INFO,
+        ogs_log_print(OGS_LOG_DEBUG,
             "Milenage K4: loaded from %s (enabled=%d)\n", label, nz);
         return 1;
     }
@@ -144,7 +144,7 @@ static int k4_try_source(const char *label, const char *hex,
         nz = 0;
         for (i = 0; i < 16; i++) if (k4_key[i]) { nz = 1; break; }
         *enabled_out = nz;
-        ogs_log_print(OGS_LOG_INFO,
+        ogs_log_print(OGS_LOG_DEBUG,
             "Milenage K4: loaded from %s file (enabled=%d)\n", label, nz);
         return 1;
     }
@@ -172,7 +172,7 @@ static void k4_init(void)
 
     if (!k4_config_enabled && !k4_env_enabled()) {
         k4_enabled = 0;
-        ogs_log_print(OGS_LOG_INFO,
+        ogs_log_print(OGS_LOG_DEBUG,
             "Milenage K4: disabled (set global.milenage.enabled or "
             "OPEN5GS_K4_ENABLED=1)\n");
         return;
@@ -194,7 +194,7 @@ static void k4_init(void)
         return;
 
     k4_enabled = 0;
-    ogs_log_print(OGS_LOG_INFO,
+    ogs_log_print(OGS_LOG_DEBUG,
         "Milenage K4: not configured (enabled=0)\n");
 }
 
@@ -216,7 +216,7 @@ static void milenage_log_hex(const char *tag, const uint8_t *buf, int len)
     for (i = 0; i < len; i++)
         snprintf(hex + 2*i, 3, "%02x", buf[i]);
     hex[2*len] = 0;
-    ogs_log_print(OGS_LOG_INFO, "Milenage [%s] %s\n", tag, hex);
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage [%s] %s\n", tag, hex);
 }
 
 /* Unwrap (K_stored, OPc_stored) -> (K_plain, OPc_plain). Passthrough if disabled. */
@@ -227,12 +227,12 @@ static void k4_unwrap(const uint8_t *k_in, const uint8_t *opc_in,
     milenage_log_hex("K   input (as stored) ", k_in, 16);
     milenage_log_hex("OPc input (as stored) ", opc_in, 16);
     if (!k4_enabled) {
-        ogs_log_print(OGS_LOG_INFO, "Milenage [K4] disabled ? passthrough\n");
+        ogs_log_print(OGS_LOG_DEBUG, "Milenage [K4] disabled ? passthrough\n");
         memcpy(k_out, k_in, 16);
         memcpy(opc_out, opc_in, 16);
         return;
     }
-    ogs_log_print(OGS_LOG_INFO, "Milenage [K4] enabled ? decrypting\n");
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage [K4] enabled ? decrypting\n");
     milenage_log_hex("K4 key                ", k4_key, 16);
     k4_aes_ecb_decrypt_block(k4_key, k_in, k_out);
     k4_aes_ecb_decrypt_block(k4_key, opc_in, opc_out);
@@ -258,7 +258,7 @@ int milenage_f1(const uint8_t *opc, const uint8_t *k,
     int i;
     uint8_t r1 = 64;
 
-    ogs_log_print(OGS_LOG_INFO, "Milenage [f1] ENTER\n");
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage [f1] ENTER\n");
     milenage_log_hex("f1 RAND               ", _rand, 16);
     milenage_log_hex("f1 SQN                ", sqn, 6);
     milenage_log_hex("f1 AMF                ", amf, 2);
@@ -289,7 +289,7 @@ int milenage_f1(const uint8_t *opc, const uint8_t *k,
         os_memcpy(mac_s, tmp1 + 8, 8); /* f1* */
     if (mac_a) milenage_log_hex("f1 MAC-A (out)        ", mac_a, 8);
     if (mac_s) milenage_log_hex("f1 MAC-S (out)        ", mac_s, 8);
-    ogs_log_print(OGS_LOG_INFO, "Milenage [f1] EXIT ok\n");
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage [f1] EXIT ok\n");
     return 0;
 }
 
@@ -308,7 +308,7 @@ int milenage_f2345(const uint8_t *opc, const uint8_t *k,
     uint8_t r4 = 64;
     uint8_t r5 = 96;
 
-    ogs_log_print(OGS_LOG_INFO, "Milenage [f2345] ENTER\n");
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage [f2345] ENTER\n");
     milenage_log_hex("f2345 RAND            ", _rand, 16);
     k4_unwrap(k, opc, k_p, opc_p);
 
@@ -365,7 +365,7 @@ int milenage_f2345(const uint8_t *opc, const uint8_t *k,
     if (ik)     milenage_log_hex("f2345 IK  (out)       ", ik, 16);
     if (ak)     milenage_log_hex("f2345 AK  (out)       ", ak, 6);
     if (akstar) milenage_log_hex("f2345 AK* (out)       ", akstar, 6);
-    ogs_log_print(OGS_LOG_INFO, "Milenage [f2345] EXIT ok\n");
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage [f2345] EXIT ok\n");
     return 0;
 }
 
@@ -384,19 +384,19 @@ void milenage_generate(const uint8_t *opc, const uint8_t *amf,
     int i;
     uint8_t mac_a[8];
 
-    ogs_log_print(OGS_LOG_INFO, "Milenage [generate] ENTER\n");
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage [generate] ENTER\n");
     milenage_log_hex("generate RAND         ", _rand, 16);
     milenage_log_hex("generate SQN          ", sqn, 6);
     milenage_log_hex("generate AMF          ", amf, 2);
 
     if (*res_len < 8) {
-        ogs_log_print(OGS_LOG_INFO, "Milenage [generate] EXIT: res_len<8 fail\n");
+        ogs_log_print(OGS_LOG_DEBUG, "Milenage [generate] EXIT: res_len<8 fail\n");
         *res_len = 0;
         return;
     }
     if (milenage_f1(opc, k, _rand, sqn, amf, mac_a, NULL) ||
         milenage_f2345(opc, k, _rand, res, ck, ik, ak, NULL)) {
-        ogs_log_print(OGS_LOG_INFO, "Milenage [generate] EXIT: f1/f2345 fail\n");
+        ogs_log_print(OGS_LOG_DEBUG, "Milenage [generate] EXIT: f1/f2345 fail\n");
         *res_len = 0;
         return;
     }
@@ -410,7 +410,7 @@ void milenage_generate(const uint8_t *opc, const uint8_t *amf,
 
     milenage_log_hex("generate AUTN (out)   ", autn, 16);
     milenage_log_hex("generate RES  (out)   ", res, 8);
-    ogs_log_print(OGS_LOG_INFO, "Milenage [generate] EXIT ok\n");
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage [generate] EXIT ok\n");
 }
 
 /**
@@ -425,12 +425,12 @@ int milenage_auts(const uint8_t *opc, const uint8_t *k,
     uint8_t ak[6], mac_s[8];
     int i;
 
-    ogs_log_print(OGS_LOG_INFO, "Milenage [auts] ENTER\n");
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage [auts] ENTER\n");
     milenage_log_hex("auts RAND             ", _rand, 16);
     milenage_log_hex("auts AUTS (in)        ", auts, 14);
 
     if (milenage_f2345(opc, k, _rand, NULL, NULL, NULL, NULL, ak)) {
-        ogs_log_print(OGS_LOG_INFO, "Milenage [auts] EXIT: f2345 fail\n");
+        ogs_log_print(OGS_LOG_DEBUG, "Milenage [auts] EXIT: f2345 fail\n");
         return -1;
     }
     for (i = 0; i < 6; i++)
@@ -438,12 +438,12 @@ int milenage_auts(const uint8_t *opc, const uint8_t *k,
     milenage_log_hex("auts SQN (recovered)  ", sqn, 6);
     if (milenage_f1(opc, k, _rand, sqn, amf, NULL, mac_s) ||
         os_memcmp_const(mac_s, auts + 6, 8) != 0) {
-        ogs_log_print(OGS_LOG_INFO, "Milenage [auts] EXIT: MAC-S mismatch\n");
+        ogs_log_print(OGS_LOG_DEBUG, "Milenage [auts] EXIT: MAC-S mismatch\n");
         milenage_log_hex("auts MAC-S computed   ", mac_s, 8);
         milenage_log_hex("auts MAC-S expected   ", auts + 6, 8);
         return -1;
     }
-    ogs_log_print(OGS_LOG_INFO, "Milenage [auts] EXIT ok\n");
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage [auts] EXIT ok\n");
     return 0;
 }
 
@@ -477,58 +477,58 @@ int milenage_check(const uint8_t *opc, const uint8_t *k,
     uint8_t mac_a[8], ak[6], rx_sqn[6];
     const uint8_t *amf;
 
-    ogs_log_print(OGS_LOG_INFO, "Milenage: AUTN\n");
-    ogs_log_hexdump(OGS_LOG_INFO, autn, 16);
-    ogs_log_print(OGS_LOG_INFO, "Milenage: RAND\n");
-    ogs_log_hexdump(OGS_LOG_INFO, _rand, 16);
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage: AUTN\n");
+    ogs_log_hexdump(OGS_LOG_DEBUG, autn, 16);
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage: RAND\n");
+    ogs_log_hexdump(OGS_LOG_DEBUG, _rand, 16);
 
     if (milenage_f2345(opc, k, _rand, res, ck, ik, ak, NULL))
         return -1;
 
     *res_len = 8;
-    ogs_log_print(OGS_LOG_INFO, "Milenage: RES\n");
-    ogs_log_hexdump(OGS_LOG_INFO, res, *res_len);
-    ogs_log_print(OGS_LOG_INFO, "Milenage: CK\n");
-    ogs_log_hexdump(OGS_LOG_INFO, ck, 16);
-    ogs_log_print(OGS_LOG_INFO, "Milenage: IK\n");
-    ogs_log_hexdump(OGS_LOG_INFO, ik, 16);
-    ogs_log_print(OGS_LOG_INFO, "Milenage: AK\n");
-    ogs_log_hexdump(OGS_LOG_INFO, ak, 6);
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage: RES\n");
+    ogs_log_hexdump(OGS_LOG_DEBUG, res, *res_len);
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage: CK\n");
+    ogs_log_hexdump(OGS_LOG_DEBUG, ck, 16);
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage: IK\n");
+    ogs_log_hexdump(OGS_LOG_DEBUG, ik, 16);
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage: AK\n");
+    ogs_log_hexdump(OGS_LOG_DEBUG, ak, 6);
 
     /* AUTN = (SQN ^ AK) || AMF || MAC */
     for (i = 0; i < 6; i++)
         rx_sqn[i] = autn[i] ^ ak[i];
-    ogs_log_print(OGS_LOG_INFO, "Milenage: SQN\n");
-    ogs_log_hexdump(OGS_LOG_INFO, rx_sqn, 6);
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage: SQN\n");
+    ogs_log_hexdump(OGS_LOG_DEBUG, rx_sqn, 6);
 
     if (os_memcmp(rx_sqn, sqn, 6) <= 0) {
         uint8_t auts_amf[2] = { 0x00, 0x00 };
         if (milenage_f2345(opc, k, _rand, NULL, NULL, NULL, NULL, ak))
             return -1;
-        ogs_log_print(OGS_LOG_INFO, "Milenage: AK*\n");
-        ogs_log_hexdump(OGS_LOG_INFO, ak, 6);
+        ogs_log_print(OGS_LOG_DEBUG, "Milenage: AK*\n");
+        ogs_log_hexdump(OGS_LOG_DEBUG, ak, 6);
         for (i = 0; i < 6; i++)
             auts[i] = sqn[i] ^ ak[i];
         if (milenage_f1(opc, k, _rand, sqn, auts_amf, NULL, auts + 6))
             return -1;
-        ogs_log_print(OGS_LOG_INFO, "Milenage: AUTS*\n");
-        ogs_log_hexdump(OGS_LOG_INFO, auts, 14);
+        ogs_log_print(OGS_LOG_DEBUG, "Milenage: AUTS*\n");
+        ogs_log_hexdump(OGS_LOG_DEBUG, auts, 14);
         return -2;
     }
 
     amf = autn + 6;
-    ogs_log_print(OGS_LOG_INFO, "Milenage: AMF\n");
-    ogs_log_hexdump(OGS_LOG_INFO, amf, 2);
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage: AMF\n");
+    ogs_log_hexdump(OGS_LOG_DEBUG, amf, 2);
     if (milenage_f1(opc, k, _rand, rx_sqn, amf, mac_a, NULL))
         return -1;
 
-    ogs_log_print(OGS_LOG_INFO, "Milenage: MAC_A\n");
-    ogs_log_hexdump(OGS_LOG_INFO, mac_a, 8);
+    ogs_log_print(OGS_LOG_DEBUG, "Milenage: MAC_A\n");
+    ogs_log_hexdump(OGS_LOG_DEBUG, mac_a, 8);
 
     if (os_memcmp_const(mac_a, autn + 8, 8) != 0) {
-        ogs_log_print(OGS_LOG_INFO, "Milenage: MAC mismatch\n");
-        ogs_log_print(OGS_LOG_INFO, "Milenage: Received MAC_A\n");
-        ogs_log_hexdump(OGS_LOG_INFO, autn + 8, 8);
+        ogs_log_print(OGS_LOG_DEBUG, "Milenage: MAC mismatch\n");
+        ogs_log_print(OGS_LOG_DEBUG, "Milenage: Received MAC_A\n");
+        ogs_log_hexdump(OGS_LOG_DEBUG, autn + 8, 8);
         return -1;
     }
 

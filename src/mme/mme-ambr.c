@@ -23,10 +23,21 @@
 
 bool mme_ambr_bps_meaningful(uint32_t bps)
 {
-    if (bps == 0 || bps == MME_AMBR_UNLIMITED_BPS ||
-            bps == MME_AMBR_HSS_LARGE_BPS)
-        return false;
-    return true;
+    /*
+     * Only 0 means "no AMBR provisioned".
+     *
+     * Previously 2^30 (MME_AMBR_HSS_LARGE_BPS) and UINT32_MAX
+     * (MME_AMBR_UNLIMITED_BPS) were treated as sentinels and forced to 0 by
+     * mme_ambr_sanitize_bitrate(). But 2^30 is exactly the value the Open5GS
+     * WebUI stores for a "1 Gbps" subscription (value << unit*10, 1 << 30),
+     * so every subscriber provisioned with a whole-Gbps AMBR had their
+     * UE-AMBR zeroed -> the eNB policed them to ~0 -> no uplink/downlink.
+     *
+     * Treat all nonzero rates as real values. When an operator genuinely
+     * wants to clamp huge/unlimited AMBRs, ambr_limit (enabled/force) is the
+     * intended mechanism and still applies on top of this.
+     */
+    return bps != 0;
 }
 
 void mme_ambr_complete_directions(ogs_bitrate_t *ambr)
