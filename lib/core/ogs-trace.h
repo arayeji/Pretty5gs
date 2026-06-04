@@ -53,8 +53,22 @@ typedef struct ogs_trace_ctx_s {
     uint32_t pgw_s5c_teid;
 } ogs_trace_ctx_t;
 
+#define OGS_MAX_TRACE_IMSI_FILTERS 16
+
 void ogs_trace_clear(void);
 void ogs_trace_set(const ogs_trace_ctx_t *ctx);
+
+/*
+ * Runtime IMSI prefix filters: DEBUG/TRACE logs for matching subscribers
+ * are emitted even when the log domain level is error/warn. Prefix match
+ * (e.g. "99970" matches "001010000000002"). Thread-safe; no restart.
+ */
+void ogs_trace_filter_clear(void);
+int ogs_trace_filter_add(const char *imsi_prefix);
+int ogs_trace_filter_remove(const char *imsi_prefix);
+bool ogs_trace_filter_match(const char *imsi_bcd);
+int ogs_trace_filter_count(void);
+const char *ogs_trace_filter_get(int index);
 /* Prefer ogs_trace_set() for OGS_TLOG prefixes (merge keeps stale fields). */
 void ogs_trace_merge(const ogs_trace_ctx_t *ctx);
 const ogs_trace_ctx_t *ogs_trace_get(void);

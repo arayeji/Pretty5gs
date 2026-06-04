@@ -398,6 +398,26 @@ int ogs_log_config_domain(const char *domain, const char *level)
     return OGS_OK;
 }
 
+bool ogs_log_domain_prints(int domain_id, ogs_log_level_e level)
+{
+    ogs_log_domain_t *domain = ogs_pool_find(&domain_pool, domain_id);
+
+    if (!domain)
+        return false;
+
+    if (domain->level >= level)
+        return true;
+
+    if (level <= OGS_LOG_DEBUG) {
+        const ogs_trace_ctx_t *trace = ogs_trace_get();
+
+        if (trace->imsi[0] && ogs_trace_filter_match(trace->imsi))
+            return true;
+    }
+
+    return false;
+}
+
 void ogs_log_vprintf(ogs_log_level_e level, int id,
     ogs_err_t err, const char *file, int line, const char *func,
     int content_only, const char *format, va_list ap)
@@ -416,8 +436,13 @@ void ogs_log_vprintf(ogs_log_level_e level, int id,
             fprintf(stderr, "No LogDomain[id:%d] in %s:%d", id, file, line);
             ogs_assert_if_reached();
         }
-        if (domain->level < level)
-            return;
+        if (domain->level < level) {
+            if (level > OGS_LOG_DEBUG)
+                return;
+            if (!ogs_trace_get()->imsi[0] ||
+                    !ogs_trace_filter_match(ogs_trace_get()->imsi))
+                return;
+        }
 
         p = logstr;
         last = logstr + OGS_HUGE_LEN;

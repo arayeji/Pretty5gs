@@ -21,6 +21,21 @@
 
 static ogs_trace_ctx_t self;
 
+static struct {
+    ogs_thread_mutex_t mutex;
+    int initialized;
+    int count;
+    char imsi[OGS_MAX_TRACE_IMSI_FILTERS][OGS_TRACE_IMSI_LEN];
+} trace_filter;
+
+static void trace_filter_init_once(void)
+{
+    if (trace_filter.initialized)
+        return;
+    ogs_thread_mutex_init(&trace_filter.mutex);
+    trace_filter.initialized = 1;
+}
+
 static void trace_copy_str(char *dst, size_t dstlen, const char *src)
 {
     ogs_assert(dst);
@@ -103,6 +118,116 @@ static void trace_fmt_teid(char *buf, size_t buflen, uint32_t value)
         ogs_snprintf(buf, buflen, "0x%x", value);
     else
         ogs_cpystrn(buf, "-", buflen);
+}
+
+void ogs_trace_filter_clear(void)
+{
+    trace_filter_init_once();
+    ogs_thread_mutex_lock(&trace_filter.mutex);
+    trace_filter.count = 0;
+    memset(trace_filter.imsi, 0, sizeof(trace_filter.imsi));
+    ogs_thread_mutex_unlock(&trace_filter.mutex);
+}
+
+int ogs_trace_filter_add(const char *imsi_prefix)
+{
+    int i;
+
+    if (!imsi_prefix || !imsi_prefix[0])
+        return OGS_ERROR;
+
+    trace_filter_init_once();
+    ogs_thread_mutex_lock(&trace_filter.mutex);
+
+    for (i = 0; i < trace_filter.count; i++) {
+        if (strcmp(trace_filter.imsi[i], imsi_prefix) == 0) {
+            ogs_thread_mutex_unlock(&trace_filter.mutex);
+            return OGS_OK;
+        }
+    }
+
+    if (trace_filter.count >= OGS_MAX_TRACE_IMSI_FILTERS) {
+        ogs_thread_mutex_unlock(&trace_filter.mutex);
+        return OGS_ERROR;
+    }
+
+    ogs_cpystrn(trace_filter.imsi[trace_filter.count], imsi_prefix,
+            OGS_TRACE_IMSI_LEN);
+    trace_filter.count++;
+
+    ogs_thread_mutex_unlock(&trace_filter.mutex);
+    return OGS_OK;
+}
+
+int ogs_trace_filter_remove(const char *imsi_prefix)
+{
+    int i, j;
+
+    if (!imsi_prefix || !imsi_prefix[0])
+        return OGS_ERROR;
+
+    trace_filter_init_once();
+    ogs_thread_mutex_lock(&trace_filter.mutex);
+
+    for (i = 0; i < trace_filter.count; i++) {
+        if (strcmp(trace_filter.imsi[i], imsi_prefix) != 0)
+            continue;
+
+        for (j = i + 1; j < trace_filter.count; j++)
+            ogs_cpystrn(trace_filter.imsi[j - 1], trace_filter.imsi[j],
+                    OGS_TRACE_IMSI_LEN);
+        trace_filter.count--;
+        trace_filter.imsi[trace_filter.count][0] = '\0';
+        ogs_thread_mutex_unlock(&trace_filter.mutex);
+        return OGS_OK;
+    }
+
+    ogs_thread_mutex_unlock(&trace_filter.mutex);
+    return OGS_ERROR;
+}
+
+bool ogs_trace_filter_match(const char *imsi_bcd)
+{
+    int i;
+    bool matched = false;
+
+    if (!imsi_bcd || !imsi_bcd[0])
+        return false;
+
+    trace_filter_init_once();
+    ogs_thread_mutex_lock(&trace_filter.mutex);
+
+    for (i = 0; i < trace_filter.count; i++) {
+        size_t n = strlen(trace_filter.imsi[i]);
+
+        if (n == 0)
+            continue;
+        if (strncmp(imsi_bcd, trace_filter.imsi[i], n) == 0) {
+            matched = true;
+            break;
+        }
+    }
+
+    ogs_thread_mutex_unlock(&trace_filter.mutex);
+    return matched;
+}
+
+int ogs_trace_filter_count(void)
+{
+    trace_filter_init_once();
+    return trace_filter.count;
+}
+
+const char *ogs_trace_filter_get(int index)
+{
+    trace_filter_init_once();
+    ogs_thread_mutex_lock(&trace_filter.mutex);
+    if (index < 0 || index >= trace_filter.count) {
+        ogs_thread_mutex_unlock(&trace_filter.mutex);
+        return NULL;
+    }
+    ogs_thread_mutex_unlock(&trace_filter.mutex);
+    return trace_filter.imsi[index];
 }
 
 size_t ogs_trace_format_prefix(char *buf, size_t buflen)
