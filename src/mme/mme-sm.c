@@ -36,6 +36,10 @@
 #include "mme-s6a-handler.h"
 #include "mme-path.h"
 
+#ifdef OPEN5GS_ADMIN_WATCHER
+#include "mme-admin-watcher.h"
+#endif
+
 void mme_state_initial(ogs_fsm_t *s, mme_event_t *e)
 {
     mme_sm_debug(e);
@@ -1110,6 +1114,12 @@ cleanup:
         mme_enb_remove(enb);
         break;
     }
+
+#ifdef OPEN5GS_ADMIN_WATCHER
+    case MME_EVENT_ADMIN_TAC_ADD:
+        mme_admin_tac_add_apply(e->admin_mcc, e->admin_mnc, e->admin_tac);
+        break;
+#endif
 
     case MME_EVENT_ADMIN_DETACH_UE:
     {

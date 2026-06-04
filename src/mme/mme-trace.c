@@ -105,10 +105,32 @@ static const char *mme_ue_log_id(mme_ue_t *mme_ue)
     return "-";
 }
 
+static bool mme_ue_progress_is_failure(const char *step)
+{
+    size_t len;
+
+    ogs_assert(step);
+
+    if (!strcmp(step, "attach_reject"))
+        return true;
+
+    len = strlen(step);
+    if (len > 5 && !strcmp(step + len - 5, "_fail"))
+        return true;
+
+    return false;
+}
+
 void mme_ue_progress(mme_ue_t *mme_ue, const char *step)
 {
+    const char *imsi = mme_ue_log_id(mme_ue);
+
     ogs_assert(step);
-    ogs_error("[%s] ATTACH step: %s", mme_ue_log_id(mme_ue), step);
+
+    if (mme_ue_progress_is_failure(step))
+        ogs_error("[%s] ATTACH step: %s", imsi, step);
+    else
+        ogs_info("[%s] ATTACH step: %s", imsi, step);
 }
 
 void mme_ue_debug(mme_ue_t *mme_ue, const char *fmt, ...)

@@ -29,10 +29,17 @@ extern "C" {
 void mme_pgw_host_cache_init(void);
 void mme_pgw_host_cache_final(void);
 
+int mme_pgw_host_lookup_cache(
+        const char *destination_host, int destination_host_len,
+        const char *destination_realm, int destination_realm_len,
+        ogs_ip_t *smf_ip);
+
 int mme_pgw_host_resolve(
         const char *destination_host, int destination_host_len,
         const char *destination_realm, int destination_realm_len,
         ogs_ip_t *smf_ip);
+
+void mme_pgw_host_resolve_pending_sessions(ogs_slice_data_t *slice_data);
 
 #ifdef __cplusplus
 }

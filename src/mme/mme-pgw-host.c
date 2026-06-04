@@ -147,6 +147,37 @@ static int pgw_host_dns_resolve(const char *fqdn, ogs_ip_t *smf_ip)
     return OGS_OK;
 }
 
+int mme_pgw_host_lookup_cache(
+        const char *destination_host, int destination_host_len,
+        const char *destination_realm, int destination_realm_len,
+        ogs_ip_t *smf_ip)
+{
+    char fqdn[OGS_MAX_FQDN_LEN+1];
+    ogs_ip_t *cached = NULL;
+
+    ogs_assert(smf_ip);
+    memset(smf_ip, 0, sizeof(*smf_ip));
+
+    if (!mme_self()->mip_home_agent_host_dns)
+        return OGS_ERROR;
+
+    pgw_host_build_fqdn(fqdn, sizeof(fqdn),
+            destination_host, destination_host_len,
+            destination_realm, destination_realm_len);
+
+    if (!fqdn[0])
+        return OGS_ERROR;
+
+    ogs_assert(pgw_host_cache);
+    cached = ogs_hash_get(pgw_host_cache, fqdn, strlen(fqdn));
+    if (!cached)
+        return OGS_ERROR;
+
+    memcpy(smf_ip, cached, sizeof(*smf_ip));
+    ogs_debug("PGW host cache hit [%s]", fqdn);
+    return OGS_OK;
+}
+
 int mme_pgw_host_resolve(
         const char *destination_host, int destination_host_len,
         const char *destination_realm, int destination_realm_len,
@@ -158,7 +189,10 @@ int mme_pgw_host_resolve(
     ogs_ip_t resolved;
 
     ogs_assert(smf_ip);
-    memset(smf_ip, 0, sizeof(*smf_ip));
+
+    if (mme_pgw_host_lookup_cache(destination_host, destination_host_len,
+                destination_realm, destination_realm_len, smf_ip) == OGS_OK)
+        return OGS_OK;
 
     if (!mme_self()->mip_home_agent_host_dns) {
         ogs_debug("MIP-Home-Agent-Host DNS resolve is disabled");
@@ -174,14 +208,6 @@ int mme_pgw_host_resolve(
         return OGS_ERROR;
     }
 
-    ogs_assert(pgw_host_cache);
-    cached = ogs_hash_get(pgw_host_cache, fqdn, strlen(fqdn));
-    if (cached) {
-        memcpy(smf_ip, cached, sizeof(*smf_ip));
-        ogs_debug("PGW host cache hit [%s]", fqdn);
-        return OGS_OK;
-    }
-
     memset(&resolved, 0, sizeof(resolved));
     if (pgw_host_dns_resolve(fqdn, &resolved) != OGS_OK)
         return OGS_ERROR;
@@ -195,4 +221,33 @@ int mme_pgw_host_resolve(
 
     memcpy(smf_ip, cached, sizeof(*smf_ip));
     return OGS_OK;
+}
+
+void mme_pgw_host_resolve_pending_sessions(ogs_slice_data_t *slice_data)
+{
+    int i;
+
+    if (!slice_data)
+        return;
+
+    for (i = 0; i < slice_data->num_of_session; i++) {
+        ogs_session_t *sess = &slice_data->session[i];
+
+        if (!sess->mip_home_agent_host[0])
+            continue;
+        if (sess->smf_ip.ipv4 || sess->smf_ip.ipv6)
+            continue;
+
+        if (mme_pgw_host_resolve(sess->mip_home_agent_host,
+                    (int)strlen(sess->mip_home_agent_host),
+                    sess->mip_home_agent_realm,
+                    (int)strlen(sess->mip_home_agent_realm),
+                    &sess->smf_ip) != OGS_OK) {
+            ogs_error("MIP-Home-Agent-Host resolution failed [%s]",
+                    sess->mip_home_agent_host);
+        }
+
+        sess->mip_home_agent_host[0] = '\0';
+        sess->mip_home_agent_realm[0] = '\0';
+    }
 }

@@ -703,6 +703,9 @@ typedef struct ogs_session_s {
     char **ipv4_framed_routes;
     char **ipv6_framed_routes;
     ogs_ip_t smf_ip;
+    /* Filled when MIP-Home-Agent-Host DNS is deferred to the MME main thread. */
+    char mip_home_agent_host[OGS_MAX_FQDN_LEN+1];
+    char mip_home_agent_realm[OGS_MAX_FQDN_LEN+1];
 } ogs_session_t;
 
 int ogs_fqdn_build(char *dst, const char *src, int len);

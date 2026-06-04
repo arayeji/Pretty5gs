@@ -36,7 +36,8 @@ static int mme_s6a_subscription_data_from_avp(struct avp *avp,
     ogs_subscription_data_t *subscription_data,
     mme_ue_t *mme_ue, uint32_t *subdatamask);
 
-static int mme_s6a_mip_home_agent_host_to_ip(struct avp *avp, ogs_ip_t *smf_ip)
+static int mme_s6a_mip_home_agent_host_to_session(
+        struct avp *avp, ogs_session_t *session)
 {
     int ret;
     struct avp *child = NULL;
@@ -46,7 +47,7 @@ static int mme_s6a_mip_home_agent_host_to_ip(struct avp *avp, ogs_ip_t *smf_ip)
     int host_len = 0, realm_len = 0;
 
     ogs_assert(avp);
-    ogs_assert(smf_ip);
+    ogs_assert(session);
 
     ret = fd_avp_search_avp(avp, ogs_diam_destination_host, &child);
     if (ret == 0 && child) {
@@ -74,7 +75,18 @@ static int mme_s6a_mip_home_agent_host_to_ip(struct avp *avp, ogs_ip_t *smf_ip)
         return OGS_ERROR;
     }
 
-    return mme_pgw_host_resolve(host, host_len, realm, realm_len, smf_ip);
+    session->mip_home_agent_host[0] = '\0';
+    session->mip_home_agent_realm[0] = '\0';
+
+    if (mme_pgw_host_lookup_cache(host, host_len, realm, realm_len,
+                &session->smf_ip) == OGS_OK)
+        return OGS_OK;
+
+    ogs_cpystrn(session->mip_home_agent_host, host,
+            sizeof(session->mip_home_agent_host));
+    ogs_cpystrn(session->mip_home_agent_realm, realm,
+            sizeof(session->mip_home_agent_realm));
+    return OGS_OK;
 }
 
 struct sess_state {
@@ -837,10 +849,10 @@ static int mme_s6a_subscription_data_from_avp(struct avp *avp,
                                 if (!mme_self()->mip_home_agent_host_dns) {
                                     ogs_debug("MIP-Home-Agent-Host ignored "
                                             "(mip_home_agent_host_dns:false)");
-                                } else if (mme_s6a_mip_home_agent_host_to_ip(
-                                            avpch4, &session->smf_ip) != OGS_OK) {
+                                } else if (mme_s6a_mip_home_agent_host_to_session(
+                                            avpch4, session) != OGS_OK) {
                                     ogs_error("MIP-Home-Agent-Host "
-                                            "resolution failed");
+                                            "parse failed");
                                 }
                             }
                             break;

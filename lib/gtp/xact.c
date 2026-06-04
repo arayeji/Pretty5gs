@@ -825,7 +825,14 @@ int ogs_gtp_xact_commit(ogs_gtp_xact_t *xact)
     pkbuf = xact->seq[xact->step-1].pkbuf;
     ogs_assert(pkbuf);
 
-    ogs_expect(OGS_OK == ogs_gtp_sendto(xact->gnode, pkbuf));
+    if (ogs_gtp_sendto(xact->gnode, pkbuf) != OGS_OK) {
+        ogs_error("[%d] ogs_gtp_sendto() failed peer [%s]:%d",
+                xact->xid,
+                OGS_ADDR(&xact->gnode->addr, buf),
+                OGS_PORT(&xact->gnode->addr));
+        ogs_gtp_xact_delete(xact);
+        return OGS_ERROR;
+    }
 
     return OGS_OK;
 }

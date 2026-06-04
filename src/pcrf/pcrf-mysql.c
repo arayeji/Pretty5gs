@@ -28,6 +28,8 @@
 #include <mysql.h>
 
 static MYSQL *pcrf_mysql;
+static ogs_thread_mutex_t pcrf_mysql_mutex;
+static int pcrf_mysql_mutex_initialized;
 
 /*
  * PyHSS stores APN-AMBR in apn.apn_ambr_{dl,ul} consistent with 3GPP
@@ -104,19 +106,45 @@ static int pcrf_mysql_apn_in_list(const char *apn_list, const char *apn)
     return 0;
 }
 
+static int pcrf_mysql_ensure_connected(void)
+{
+    ogs_assert(pcrf_mysql);
+
+    if (mysql_ping(pcrf_mysql) == 0)
+        return OGS_OK;
+
+    ogs_warn("PCRF MySQL: connection lost (%s), reconnecting",
+            mysql_error(pcrf_mysql));
+
+    if (mysql_ping(pcrf_mysql) == 0)
+        return OGS_OK;
+
+    ogs_error("PCRF MySQL: reconnect failed: %s", mysql_error(pcrf_mysql));
+    return OGS_ERROR;
+}
+
 int pcrf_mysql_open(pcrf_context_t *ctx)
 {
+    bool reconnect = true;
+
     ogs_assert(ctx);
     if (!ctx->mysql.enabled)
         return OGS_OK;
 
     ogs_assert(ctx->mysql.server && ctx->mysql.user && ctx->mysql.database);
 
+    ogs_thread_mutex_init(&pcrf_mysql_mutex);
+    pcrf_mysql_mutex_initialized = 1;
+
     pcrf_mysql = mysql_init(NULL);
     if (!pcrf_mysql) {
         ogs_error("mysql_init() failed");
+        ogs_thread_mutex_destroy(&pcrf_mysql_mutex);
+        pcrf_mysql_mutex_initialized = 0;
         return OGS_ERROR;
     }
+
+    mysql_options(pcrf_mysql, MYSQL_OPT_RECONNECT, &reconnect);
 
     if (!mysql_real_connect(pcrf_mysql, ctx->mysql.server, ctx->mysql.user,
             ctx->mysql.password ? ctx->mysql.password : "",
@@ -124,6 +152,7 @@ int pcrf_mysql_open(pcrf_context_t *ctx)
         ogs_error("mysql_real_connect failed: %s", mysql_error(pcrf_mysql));
         mysql_close(pcrf_mysql);
         pcrf_mysql = NULL;
+        ogs_thread_mutex_destroy(&pcrf_mysql_mutex);
         return OGS_ERROR;
     }
 
@@ -134,10 +163,17 @@ int pcrf_mysql_open(pcrf_context_t *ctx)
 
 void pcrf_mysql_close(void)
 {
+    if (!pcrf_mysql_mutex_initialized)
+        return;
+
+    ogs_thread_mutex_lock(&pcrf_mysql_mutex);
     if (pcrf_mysql) {
         mysql_close(pcrf_mysql);
         pcrf_mysql = NULL;
     }
+    ogs_thread_mutex_unlock(&pcrf_mysql_mutex);
+    ogs_thread_mutex_destroy(&pcrf_mysql_mutex);
+    pcrf_mysql_mutex_initialized = 0;
 }
 
 int pcrf_mysql_qos_data(
@@ -150,9 +186,24 @@ int pcrf_mysql_qos_data(
     MYSQL_ROW row;
     long ambr_dl_kbps, ambr_ul_kbps;
     int ip_ver, qci, arp_pri;
+    int rv = OGS_ERROR;
 
     ogs_assert(imsi_bcd && apn && session_data);
-    ogs_assert(pcrf_mysql);
+
+    if (!pcrf_mysql_mutex_initialized) {
+        ogs_error("PCRF MySQL not connected");
+        return OGS_ERROR;
+    }
+
+    ogs_thread_mutex_lock(&pcrf_mysql_mutex);
+
+    if (!pcrf_mysql) {
+        ogs_error("PCRF MySQL not connected");
+        goto out;
+    }
+
+    if (pcrf_mysql_ensure_connected() != OGS_OK)
+        goto out;
 
     memset(session_data, 0, sizeof(*session_data));
 
@@ -174,27 +225,25 @@ int pcrf_mysql_qos_data(
 
     if (mysql_query(pcrf_mysql, query)) {
         ogs_error("mysql_query failed: %s", mysql_error(pcrf_mysql));
-        return OGS_ERROR;
+        goto out;
     }
 
     res = mysql_store_result(pcrf_mysql);
     if (!res) {
         ogs_error("mysql_store_result failed: %s", mysql_error(pcrf_mysql));
-        return OGS_ERROR;
+        goto out;
     }
 
     row = mysql_fetch_row(res);
     if (!row || !row[0]) {
         ogs_error("No PyHSS subscriber+apn for IMSI[%s] APN[%s]", imsi_bcd, apn);
-        mysql_free_result(res);
-        return OGS_ERROR;
+        goto out;
     }
 
     if (!pcrf_mysql_apn_in_list(row[0], apn)) {
         ogs_error("APN[%s] not in apn_list for IMSI[%s] (list:[%s])",
                 apn, imsi_bcd, row[0]);
-        mysql_free_result(res);
-        return OGS_ERROR;
+        goto out;
     }
 
     session_data->session.name = ogs_strdup(apn);
@@ -230,8 +279,13 @@ int pcrf_mysql_qos_data(
     session_data->session.ambr.downlink = PCRF_PYHSS_AMBR_TO_BPS(ambr_dl_kbps);
     session_data->session.ambr.uplink = PCRF_PYHSS_AMBR_TO_BPS(ambr_ul_kbps);
 
-    mysql_free_result(res);
-    return OGS_OK;
+    rv = OGS_OK;
+
+out:
+    if (res)
+        mysql_free_result(res);
+    ogs_thread_mutex_unlock(&pcrf_mysql_mutex);
+    return rv;
 }
 
 #else /* !HAVE_MYSQL */

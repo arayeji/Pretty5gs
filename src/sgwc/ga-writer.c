@@ -455,6 +455,9 @@ static void rotate_locked(void)
 
     if (!g.fp || !g.current_path) return;
     fflush(g.fp);
+#if !defined(_WIN32)
+    fsync(fileno(g.fp));
+#endif
     fclose(g.fp);
     g.fp = NULL;
 

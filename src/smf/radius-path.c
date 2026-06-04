@@ -511,15 +511,30 @@ static int radius_parse_access_accept(smf_sess_t *sess,
             memcpy(&v4_be, p + 2, 4);
             if (v4_be != 0)
                 got_v4 = true;
-        } else if (t == RADIUS_ATTR_FRAMED_IPV6_PREFIX && alen >= 4) {
-            uint8_t prefix_len = p[4];
-            size_t prefix_octets = (prefix_len + 7) / 8;
-            size_t need = 2u + 1u + prefix_octets;
+        } else if (t == RADIUS_ATTR_FRAMED_IPV6_PREFIX) {
+            /* RFC 3162: reserved(1) + prefix-length(1) + prefix */
+            if (alen >= 4) {
+                uint8_t prefix_len = p[3];
+                size_t prefix_octets = (prefix_len + 7) / 8;
+                size_t need = 1u + 1u + prefix_octets;
 
-            if (alen >= 2 + need && prefix_octets <= OGS_IPV6_LEN) {
-                memset(v6, 0, sizeof v6);
-                memcpy(v6, p + 5, prefix_octets);
-                got_v6 = true;
+                if (alen >= 2 + need && prefix_octets <= OGS_IPV6_LEN) {
+                    memset(v6, 0, sizeof v6);
+                    memcpy(v6, p + 4, prefix_octets);
+                    got_v6 = true;
+                }
+            }
+            /* Our encoder uses two reserved octets before prefix-length. */
+            if (!got_v6 && alen >= 5) {
+                uint8_t prefix_len = p[4];
+                size_t prefix_octets = (prefix_len + 7) / 8;
+                size_t need = 2u + 1u + prefix_octets;
+
+                if (alen >= 2 + need && prefix_octets <= OGS_IPV6_LEN) {
+                    memset(v6, 0, sizeof v6);
+                    memcpy(v6, p + 5, prefix_octets);
+                    got_v6 = true;
+                }
             }
         } else if (t == RADIUS_ATTR_CLASS && alen >= 2) {
             size_t vlen = alen - 2;

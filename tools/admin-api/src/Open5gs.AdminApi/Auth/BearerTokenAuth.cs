@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.BearerToken;
 using Microsoft.AspNetCore.Authorization;
 using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Encodings.Web;
 using Microsoft.Extensions.Options;
 
@@ -66,8 +68,10 @@ public sealed class BearerTokenAuthHandler
             return Task.FromResult(AuthenticateResult.Fail(
                 "Expected 'Authorization: Bearer <token>'"));
 
-        var token = header.AsSpan(prefix.Length).Trim();
-        if (!FixedTimeEquals(token, expected))
+        var token = header.AsSpan(prefix.Length).Trim().ToString();
+        if (!CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(token),
+                Encoding.UTF8.GetBytes(expected)))
             return Task.FromResult(AuthenticateResult.Fail("Invalid token"));
 
         var id = new ClaimsIdentity(new[]
@@ -81,14 +85,6 @@ public sealed class BearerTokenAuthHandler
             new AuthenticationTicket(p, BearerTokenAuthOptions.SchemeName)));
     }
 
-    private static bool FixedTimeEquals(ReadOnlySpan<char> a, string b)
-    {
-        if (a.Length != b.Length) return false;
-        var diff = 0;
-        for (var i = 0; i < a.Length; i++)
-            diff |= a[i] ^ b[i];
-        return diff == 0;
-    }
 }
 
 public static class AuthExtensions

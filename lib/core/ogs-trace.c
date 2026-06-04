@@ -214,20 +214,29 @@ bool ogs_trace_filter_match(const char *imsi_bcd)
 
 int ogs_trace_filter_count(void)
 {
+    int count;
+
     trace_filter_init_once();
-    return trace_filter.count;
+    ogs_thread_mutex_lock(&trace_filter.mutex);
+    count = trace_filter.count;
+    ogs_thread_mutex_unlock(&trace_filter.mutex);
+    return count;
 }
 
-const char *ogs_trace_filter_get(int index)
+int ogs_trace_filter_get(int index, char *buf, size_t buflen)
 {
+    if (!buf || buflen == 0)
+        return OGS_ERROR;
+
     trace_filter_init_once();
     ogs_thread_mutex_lock(&trace_filter.mutex);
     if (index < 0 || index >= trace_filter.count) {
         ogs_thread_mutex_unlock(&trace_filter.mutex);
-        return NULL;
+        return OGS_ERROR;
     }
+    ogs_cpystrn(buf, trace_filter.imsi[index], buflen);
     ogs_thread_mutex_unlock(&trace_filter.mutex);
-    return trace_filter.imsi[index];
+    return OGS_OK;
 }
 
 size_t ogs_trace_format_prefix(char *buf, size_t buflen)

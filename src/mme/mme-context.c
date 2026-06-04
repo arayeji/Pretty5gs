@@ -36,6 +36,15 @@
 static mme_context_t self;
 static ogs_diam_config_t g_diam_conf;
 
+/* PLMN-indexed csmap buckets (see mme_csmap_plmn_attach). */
+static ogs_hash_t *mme_csmap_plmn_hash;
+
+static ogs_list_t *mme_csmap_plmn_bucket(
+        const ogs_plmn_id_t *plmn_id, bool create);
+static void mme_csmap_plmn_attach(mme_csmap_t *csmap);
+static void mme_csmap_plmn_detach(mme_csmap_t *csmap);
+static void mme_csmap_plmn_hash_clear(void);
+
 int __mme_log_domain;
 int __emm_log_domain;
 int __esm_log_domain;
@@ -135,6 +144,9 @@ void mme_context_init(void)
     ogs_list_init(&self.enb_list);
     ogs_list_init(&self.vlr_list);
     ogs_list_init(&self.csmap_list);
+    ogs_assert(mme_csmap_plmn_hash == NULL);
+    mme_csmap_plmn_hash = ogs_hash_make();
+    ogs_assert(mme_csmap_plmn_hash);
     ogs_list_init(&self.hssmap_list);
     ogs_list_init(&self.emerg_list);
 
@@ -225,6 +237,10 @@ void mme_context_final(void)
     mme_sgw_remove_all();
     mme_pgw_remove_all();
     mme_csmap_remove_all();
+    if (mme_csmap_plmn_hash) {
+        ogs_hash_destroy(mme_csmap_plmn_hash);
+        mme_csmap_plmn_hash = NULL;
+    }
     mme_vlr_remove_all();
     mme_sgsn_remove_all();
     mme_hssmap_remove_all();
@@ -1201,9 +1217,16 @@ int mme_context_parse_config(void)
                                                             break;
                                                     }
 
-                                                    ogs_assert(num_of_tac <
+                                                    if (num_of_tac >=
                                                             (int)ogs_global_conf()->
-                                                            max.tai);
+                                                            max.tai) {
+                                                        ogs_warn("sgwc tac list "
+                                                                "exceeds max.tai "
+                                                                "(%d), skipping",
+                                                                (int)ogs_global_conf()->
+                                                                max.tai);
+                                                        break;
+                                                    }
                                                     v = ogs_yaml_iter_value(
                                                             &tac_iter);
                                                     if (v) {
@@ -1488,9 +1511,16 @@ int mme_context_parse_config(void)
                                                             break;
                                                     }
 
-                                                    ogs_assert(num_of_tac <
+                                                    if (num_of_tac >=
                                                             (int)ogs_global_conf()->
-                                                            max.tai);
+                                                            max.tai) {
+                                                        ogs_warn("smf tac list "
+                                                                "exceeds max.tai "
+                                                                "(%d), skipping",
+                                                                (int)ogs_global_conf()->
+                                                                max.tai);
+                                                        break;
+                                                    }
                                                     v = ogs_yaml_iter_value(
                                                             &tac_iter);
                                                     if (v) {
@@ -2144,16 +2174,26 @@ int mme_context_parse_config(void)
                                 !strcmp(ambr_key, "downlink_mbps")) {
                             const char *v =
                                 ogs_yaml_iter_value(&ambr_iter);
-                            if (v)
-                                self.ambr_limit.downlink_bps =
-                                    atoi(v) * 1000000;
+                            if (v) {
+                                uint64_t mbps = (uint64_t)atoi(v);
+                                uint64_t bps = mbps * 1000000ULL;
+
+                                if (bps > UINT32_MAX)
+                                    bps = UINT32_MAX;
+                                self.ambr_limit.downlink_bps = (uint32_t)bps;
+                            }
                         } else if (!strcmp(ambr_key, "uplink") ||
                                 !strcmp(ambr_key, "uplink_mbps")) {
                             const char *v =
                                 ogs_yaml_iter_value(&ambr_iter);
-                            if (v)
-                                self.ambr_limit.uplink_bps =
-                                    atoi(v) * 1000000;
+                            if (v) {
+                                uint64_t mbps = (uint64_t)atoi(v);
+                                uint64_t bps = mbps * 1000000ULL;
+
+                                if (bps > UINT32_MAX)
+                                    bps = UINT32_MAX;
+                                self.ambr_limit.uplink_bps = (uint32_t)bps;
+                            }
                         } else
                             ogs_warn("Unknown ambr_limit key `%s'", ambr_key);
                     }
@@ -2263,9 +2303,16 @@ int mme_context_parse_config(void)
                                             high = NULL;
 
                                         if (low) {
-                                            ogs_assert(num_of_tac <
-                                                (int)ogs_global_conf()->
-                                                max.tai);
+                                            if (num_of_tac >=
+                                                    (int)ogs_global_conf()->
+                                                    max.tai) {
+                                                ogs_warn("served tai list "
+                                                        "exceeds max.tai (%d), "
+                                                        "skipping",
+                                                        (int)ogs_global_conf()->
+                                                        max.tai);
+                                                break;
+                                            }
                                             start[num_of_tac] = atoi(low);
                                             if (high) {
                                                 end[num_of_tac] = atoi(high);
@@ -3206,6 +3253,7 @@ int mme_context_parse_config(void)
                                                 map[i].imsi_prefix,
                                                 sizeof(csmap->imsi_prefix));
                                     }
+                                    mme_csmap_plmn_attach(csmap);
                                 }
 
                                 /* Release per-client parse buffer; the
@@ -3927,6 +3975,51 @@ mme_vlr_t *mme_vlr_find_by_sock(const ogs_sock_t *sock)
     return NULL;
 }
 
+static ogs_list_t *mme_csmap_plmn_bucket(const ogs_plmn_id_t *plmn_id, bool create)
+{
+    char key[OGS_PLMN_ID_LEN];
+    ogs_list_t *bucket = NULL;
+
+    ogs_assert(plmn_id);
+    ogs_assert(mme_csmap_plmn_hash);
+
+    memcpy(key, plmn_id, OGS_PLMN_ID_LEN);
+    bucket = ogs_hash_get(mme_csmap_plmn_hash, key, OGS_PLMN_ID_LEN);
+    if (bucket || !create)
+        return bucket;
+
+    bucket = ogs_calloc(1, sizeof(*bucket));
+    ogs_assert(bucket);
+    ogs_list_init(bucket);
+    ogs_hash_set(mme_csmap_plmn_hash, ogs_strdup(key), OGS_PLMN_ID_LEN, bucket);
+    return bucket;
+}
+
+static void mme_csmap_plmn_attach(mme_csmap_t *csmap)
+{
+    ogs_plmn_id_t plmn_id;
+    ogs_list_t *bucket;
+
+    ogs_assert(csmap);
+    ogs_nas_to_plmn_id(&plmn_id, &csmap->tai.nas_plmn_id);
+    bucket = mme_csmap_plmn_bucket(&plmn_id, true);
+    ogs_assert(bucket);
+    ogs_list_add(bucket, &csmap->plmn_lnode);
+}
+
+static void mme_csmap_plmn_detach(mme_csmap_t *csmap)
+{
+    ogs_plmn_id_t plmn_id;
+    ogs_list_t *bucket;
+
+    ogs_assert(csmap);
+    ogs_nas_to_plmn_id(&plmn_id, &csmap->tai.nas_plmn_id);
+    bucket = mme_csmap_plmn_bucket(&plmn_id, false);
+    if (!bucket)
+        return;
+    ogs_list_remove(bucket, &csmap->plmn_lnode);
+}
+
 mme_csmap_t *mme_csmap_add(mme_vlr_t *vlr)
 {
     mme_csmap_t *csmap = NULL;
@@ -3948,9 +4041,30 @@ void mme_csmap_remove(mme_csmap_t *csmap)
 {
     ogs_assert(csmap);
 
+    mme_csmap_plmn_detach(csmap);
     ogs_list_remove(&self.csmap_list, csmap);
 
     ogs_pool_free(&mme_csmap_pool, csmap);
+}
+
+static void mme_csmap_plmn_hash_clear(void)
+{
+    ogs_hash_index_t *hi = NULL;
+
+    if (!mme_csmap_plmn_hash)
+        return;
+
+    for (hi = ogs_hash_first(mme_csmap_plmn_hash); hi;
+            hi = ogs_hash_next(hi)) {
+        char *key = (char *)ogs_hash_this_key(hi);
+        ogs_list_t *bucket = (ogs_list_t *)ogs_hash_this_val(hi);
+
+        if (bucket)
+            ogs_free(bucket);
+        if (key)
+            ogs_free(key);
+    }
+    ogs_hash_clear(mme_csmap_plmn_hash);
 }
 
 void mme_csmap_remove_all(void)
@@ -3959,6 +4073,8 @@ void mme_csmap_remove_all(void)
 
     ogs_list_for_each_safe(&self.csmap_list, next_csmap, csmap)
         mme_csmap_remove(csmap);
+
+    mme_csmap_plmn_hash_clear();
 }
 
 static bool mme_csmap_tai_match(
@@ -3991,8 +4107,35 @@ mme_csmap_t *mme_csmap_find_by_tai_and_imsi(
 {
     mme_csmap_t *csmap = NULL;
     mme_csmap_t *fallback = NULL;
+    ogs_list_t *bucket = NULL;
+    ogs_lnode_t *node = NULL;
 
     ogs_assert(tai);
+
+    bucket = mme_csmap_plmn_bucket(&tai->plmn_id, false);
+    if (bucket) {
+        ogs_list_for_each(bucket, node) {
+            csmap = ogs_container_of(node, mme_csmap_t, plmn_lnode);
+            size_t len;
+
+            if (!mme_csmap_tai_match(csmap, tai))
+                continue;
+
+            if (csmap->imsi_prefix[0] == '\0') {
+                if (!fallback)
+                    fallback = csmap;
+                continue;
+            }
+
+            if (!imsi_bcd)
+                continue;
+
+            len = strlen(csmap->imsi_prefix);
+            if (len > 0 && strncmp(imsi_bcd, csmap->imsi_prefix, len) == 0)
+                return csmap;
+        }
+        return fallback;
+    }
 
     ogs_list_for_each(&self.csmap_list, csmap) {
         size_t len;
