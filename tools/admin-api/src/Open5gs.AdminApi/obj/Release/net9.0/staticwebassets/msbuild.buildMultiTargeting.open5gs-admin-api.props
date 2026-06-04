@@ -1,3 +1,0 @@
-﻿<Project>
-  <Import Project="..\build\open5gs-admin-api.props" />
-</Project>

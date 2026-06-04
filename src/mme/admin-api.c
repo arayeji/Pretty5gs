@@ -214,13 +214,13 @@ int mme_admin_trace_imsi(const ogs_metrics_query_t *q,
         off += snprintf(body + off, body_cap - off, "{\"trace_imsi\":[");
         n = ogs_trace_filter_count();
         for (i = 0; i < n; i++) {
-            const char *p = ogs_trace_filter_get(i);
+            char imsi[OGS_TRACE_IMSI_LEN];
 
-            if (!p)
+            if (ogs_trace_filter_get(i, imsi, sizeof(imsi)) != OGS_OK)
                 continue;
             if (i > 0)
                 off += snprintf(body + off, body_cap - off, ",");
-            off += snprintf(body + off, body_cap - off, "\"%s\"", p);
+            off += snprintf(body + off, body_cap - off, "\"%s\"", imsi);
         }
         off += snprintf(body + off, body_cap - off, "]}\n");
         *body_len = off;

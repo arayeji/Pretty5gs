@@ -106,6 +106,8 @@ const char *mme_event_get_name(mme_event_t *e)
         return "MME_EVENT_ADMIN_DETACH_ENB";
     case MME_EVENT_ADMIN_DETACH_UE:
         return "MME_EVENT_ADMIN_DETACH_UE";
+    case MME_EVENT_ADMIN_TAC_ADD:
+        return "MME_EVENT_ADMIN_TAC_ADD";
     default:
        break;
     }

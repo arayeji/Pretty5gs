@@ -26,6 +26,7 @@
 #include "mme-sm.h"
 #include "mme-s6a-handler.h"
 #include "mme-ambr.h"
+#include "mme-pgw-host.h"
 
 /* Unfortunately fd doesn't distinguish
  * between result-code and experimental-result-code.
@@ -106,6 +107,8 @@ uint8_t mme_s6a_handle_ula(
 
     ogs_assert(subscription_data->num_of_slice == 1);
     slice_data = &subscription_data->slice[0];
+
+    mme_pgw_host_resolve_pending_sessions(slice_data);
 
     if (ula_message->subdatamask & OGS_DIAM_S6A_SUBDATA_SUB_STATUS) {
         mme_ue->subscriber_status = subscription_data->subscriber_status;
@@ -260,6 +263,8 @@ uint8_t mme_s6a_handle_idr(
     if (idr_message->subdatamask & OGS_DIAM_S6A_SUBDATA_APN_CONFIG) {
         ogs_assert(subscription_data->num_of_slice == 1);
         slice_data = &subscription_data->slice[0];
+
+        mme_pgw_host_resolve_pending_sessions(slice_data);
 
         if (slice_data->all_apn_config_inc ==
                 OGS_ALL_APN_CONFIGURATIONS_INCLUDED) {

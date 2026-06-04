@@ -254,10 +254,19 @@ int mme_gtp_open(void)
             &mme_self()->pgw_list, AF_INET6, NULL);
 
     ogs_list_for_each(&mme_self()->sgw_list, sgw) {
+        char buf[OGS_ADDRSTRLEN];
+
         rv = ogs_gtp_connect(
                 ogs_gtp_self()->gtpc_sock, ogs_gtp_self()->gtpc_sock6,
                 &sgw->gnode);
-        ogs_assert(rv == OGS_OK);
+        if (rv != OGS_OK) {
+            ogs_error("gtp_connect() failed for SGW [%s]:%d",
+                    OGS_ADDR(sgw->gnode.sa_list, buf),
+                    OGS_PORT(sgw->gnode.sa_list));
+            return OGS_ERROR;
+        }
+        ogs_info("MME S11 peer configured: [%s]:%d",
+                OGS_ADDR(&sgw->gnode.addr, buf), OGS_PORT(&sgw->gnode.addr));
     }
 
     ogs_list_for_each(&mme_self()->sgsn_list, sgsn) {
@@ -310,7 +319,37 @@ int mme_gtp_send_create_session_request(
         return OGS_ERROR;
     }
 
-    mme_ue_progress(mme_ue, "create_session_req");
+    {
+        char buf[OGS_ADDRSTRLEN];
+        ogs_gtp_node_t *gnode = sgw_ue->gnode;
+
+        if (!gnode || !gnode->sock) {
+            ogs_error("[%s] S11 Create Session not sent: "
+                    "SGW GTP node not connected",
+                    MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+            ogs_pkbuf_free(pkbuf);
+            mme_ue_progress(mme_ue, "create_session_req_fail");
+            return OGS_ERROR;
+        }
+
+        if (OGS_PORT(&gnode->addr) == 0) {
+            rv = ogs_gtp_connect(
+                    ogs_gtp_self()->gtpc_sock, ogs_gtp_self()->gtpc_sock6,
+                    gnode);
+            if (rv != OGS_OK) {
+                ogs_error("[%s] S11 Create Session not sent: "
+                        "ogs_gtp_connect() failed for SGW",
+                        MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+                ogs_pkbuf_free(pkbuf);
+                mme_ue_progress(mme_ue, "create_session_req_fail");
+                return OGS_ERROR;
+            }
+        }
+
+        ogs_info("[%s] S11 Create Session -> [%s]:%d",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
+                OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
+    }
 
     xact = ogs_gtp_xact_local_create(
             sgw_ue->gnode, &h, pkbuf, timeout,
@@ -328,9 +367,16 @@ int mme_gtp_send_create_session_request(
         xact->enb_ue_id = OGS_INVALID_POOL_ID;
 
     rv = ogs_gtp_xact_commit(xact);
-    ogs_expect(rv == OGS_OK);
+    if (rv != OGS_OK) {
+        ogs_error("[%s] S11 Create Session commit failed",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+        mme_ue_progress(mme_ue, "create_session_req_fail");
+        return OGS_ERROR;
+    }
 
-    return rv;
+    mme_ue_progress(mme_ue, "create_session_req");
+
+    return OGS_OK;
 }
 
 int mme_gtp_send_modify_bearer_request(

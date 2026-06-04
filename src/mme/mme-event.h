@@ -62,6 +62,7 @@ typedef enum {
      */
     MME_EVENT_ADMIN_DETACH_ENB,
     MME_EVENT_ADMIN_DETACH_UE,
+    MME_EVENT_ADMIN_TAC_ADD,
 
     MAX_NUM_OF_MME_EVENT,
 
@@ -120,6 +121,11 @@ typedef struct mme_event_s {
      * standard 3GPP detach signalling (UE/eNB are notified).
      */
     int admin_force;
+
+    /* MME_EVENT_ADMIN_TAC_ADD: hot-add served TAI from admin watcher */
+    char admin_mcc[4];
+    char admin_mnc[4];
+    int admin_tac;
 } mme_event_t;
 
 OGS_STATIC_ASSERT(OGS_EVENT_SIZE >= sizeof(mme_event_t));

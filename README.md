@@ -26,12 +26,22 @@ Upstream docs: [open5gs.org](https://open5gs.org/open5gs/docs/). This README des
 
 ## Build and install
 
-Same as Open5GS (Meson/Ninja). Example:
+Same as Open5GS (Meson/Ninja). Use **one prefix** for all libs and binaries (do not mix `/usr/lib` and `/usr/local/lib`).
 
 ```bash
 meson setup build --prefix=/usr
 ninja -C build
 sudo ninja -C build install
+sudo ldconfig
+```
+
+After any change under `lib/app/` or `lib/crypt/`, always run **`ninja install`** (or copy **both** `libogsapp` and `libogscrypt` from the same build). Partial installs cause `undefined symbol: ogs_milenage_k4_apply_config` on every daemon.
+
+Verify:
+
+```bash
+ldd /usr/bin/open5gs-sgwcd | grep -E 'ogsapp|ogscrypt'
+nm -D /usr/lib/x86_64-linux-gnu/libogscrypt.so.2 | grep ogs_milenage_k4_apply_config
 ```
 
 PyHSS MySQL on PCRF requires `meson setup build -Dmysql_pcrf=true` and MySQL client dev packages.
@@ -52,7 +62,7 @@ global:
 
 Or environment: `OPEN5GS_K4_ENABLED=1` plus `OPEN5GS_K4` (32 hex chars) or `OPEN5GS_K4_FILE` (path).
 
-Copy `configs/open5gs/milenage_k4.key.example` to a root-only file. All-zero key = no unwrap. `milenage.py` (PyHSS) follows the same rules via `PYHSS_K4_ENABLED` / `PYHSS_K4` / `PYHSS_K4_FILE`.
+Copy `configs/open5gs/milenage_k4.key.example` to a root-only file. All-zero key = no unwrap. For PyHSS, configure K4 in that stack separately (env `OPEN5GS_K4_*` / YAML `global.milenage` apply to Open5GS C Milenage only).
 
 ### PCRF Gx via PyHSS MySQL
 

@@ -96,7 +96,7 @@ int sgwc_gtp_roam_pco_build(
     ogs_pco_t parsed, out;
     uint8_t ipcp_buf[64];
     int ipcp_len = 0;
-    int i, j, n, size;
+    int i, n, size;
 
     ogs_assert(dst);
 

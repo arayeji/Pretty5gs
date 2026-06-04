@@ -126,15 +126,40 @@ static void ber_len(ber_t *b, size_t len)
  * byte; for larger n we use two (high tag number form). The class bits
  * used here are context-specific (10...) which matches 3GPP CDR modules
  * that default to IMPLICIT TAGS without a class override. */
-static void ber_prim_ctx(ber_t *b, uint32_t tag,
-        const void *value, size_t len)
+static void ber_tag_ctx(ber_t *b, uint32_t tag)
 {
     if (tag < 31) {
         ber_u8(b, (uint8_t)(0x80 | tag)); /* context, primitive, tag */
-    } else {
-        ber_u8(b, 0x9f);                  /* context, primitive, 0x1f */
-        ber_u8(b, (uint8_t)tag);          /* high tag number */
+        return;
     }
+
+    ber_u8(b, 0x9f); /* context, primitive, high-tag-number form */
+    if (tag < 128) {
+        ber_u8(b, (uint8_t)tag);
+        return;
+    }
+
+    /* X.690 multi-octet tag number (base-128) */
+    {
+        uint8_t enc[5];
+        int n = 0;
+        uint32_t t = tag;
+
+        enc[n++] = (uint8_t)(t & 0x7f);
+        t >>= 7;
+        while (t) {
+            enc[n++] = (uint8_t)(0x80 | (t & 0x7f));
+            t >>= 7;
+        }
+        while (n > 0)
+            ber_u8(b, enc[--n]);
+    }
+}
+
+static void ber_prim_ctx(ber_t *b, uint32_t tag,
+        const void *value, size_t len)
+{
+    ber_tag_ctx(b, tag);
     ber_len(b, len);
     ber_raw(b, value, len);
 }
@@ -807,6 +832,9 @@ static void rotate_locked(void)
 
     if (!g.fp || !g.current_path) return;
     fflush(g.fp);
+#if !defined(_WIN32)
+    fsync(fileno(g.fp));
+#endif
     fclose(g.fp);
     g.fp = NULL;
 

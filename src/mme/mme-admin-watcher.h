@@ -19,6 +19,9 @@ extern "C" {
 int  mme_admin_watcher_init(void);
 void mme_admin_watcher_final(void);
 
+/* Apply a hot-added TAC on the MME main thread (see MME_EVENT_ADMIN_TAC_ADD). */
+void mme_admin_tac_add_apply(const char *mcc, const char *mnc, int tac);
+
 #ifdef __cplusplus
 }
 #endif

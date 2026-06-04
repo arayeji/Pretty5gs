@@ -312,6 +312,7 @@ typedef struct mme_vlr_s {
 
 typedef struct mme_csmap_s {
     ogs_lnode_t     lnode;
+    ogs_lnode_t     plmn_lnode;
 
     ogs_nas_eps_tai_t tai;
     uint16_t        tac_end;    /* inclusive; 0 = only tai.tac */
