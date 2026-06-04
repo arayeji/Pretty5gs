@@ -304,6 +304,28 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
                 }
                 sess->sgwu_sxa_seid = be64toh(up_f_seid->seid);
             } else {
+                if (!e->gtp_message) {
+                    ogs_gtp_xact_t *s11_xact = NULL;
+                    sgwc_ue_t *sgwc_ue = NULL;
+
+                    ogs_error("No buffered GTP message for PFCP Session "
+                            "Establishment Response (local_seid=0x%llx)",
+                            (unsigned long long)xact->local_seid);
+                    s11_xact = ogs_gtp_xact_find_by_id(xact->assoc_xact_id);
+                    if (sess)
+                        sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+                    if (s11_xact) {
+                        ogs_gtp_send_error_message(
+                                s11_xact,
+                                sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
+                                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                                OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+                    }
+                    if (sess)
+                        sgwc_sess_remove(sess);
+                    ogs_pfcp_xact_commit(xact);
+                    break;
+                }
                 sgwc_sxa_handle_session_establishment_response(
                     sess, xact, e->gtp_message,
                     &message->pfcp_session_establishment_response);
@@ -312,6 +334,13 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
 
         case OGS_PFCP_SESSION_MODIFICATION_RESPONSE_TYPE:
             if (!message->h.seid_presence) ogs_error("No SEID");
+
+            if (!xact->modify_flags) {
+                sgwc_sxa_handle_unexpected_modification_response(
+                        sess, xact,
+                        &message->pfcp_session_modification_response);
+                break;
+            }
 
             sgwc_sxa_handle_session_modification_response(
                 sess, xact, e->gtp_message,

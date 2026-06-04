@@ -21,7 +21,7 @@
 
 void ogs_sgwc_trace_set(
         sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess,
-        const char *proc)
+        const char *apn, const char *proc)
 {
     ogs_trace_ctx_t ctx;
     sgwc_bearer_t *bearer = NULL;
@@ -34,25 +34,23 @@ void ogs_sgwc_trace_set(
     if (sgwc_ue) {
         if (sgwc_ue->imsi_bcd[0])
             ogs_cpystrn(ctx.imsi, sgwc_ue->imsi_bcd, sizeof(ctx.imsi));
-        if (sgwc_ue->mme_s11_teid)
-            ctx.mme_s11_teid = sgwc_ue->mme_s11_teid;
-        if (sgwc_ue->sgw_s11_teid)
-            ctx.sgw_s11_teid = sgwc_ue->sgw_s11_teid;
+        ctx.mme_s11_teid = sgwc_ue->mme_s11_teid;
+        ctx.sgw_s11_teid = sgwc_ue->sgw_s11_teid;
     }
 
     if (sess) {
         if (sess->session.name)
             ogs_cpystrn(ctx.apn, sess->session.name, sizeof(ctx.apn));
-        if (sess->sgw_s5c_teid)
-            ctx.sgw_s5c_teid = sess->sgw_s5c_teid;
-        if (sess->pgw_s5c_teid)
-            ctx.pgw_s5c_teid = sess->pgw_s5c_teid;
+        ctx.sgw_s5c_teid = sess->sgw_s5c_teid;
+        ctx.pgw_s5c_teid = sess->pgw_s5c_teid;
 
         ogs_list_for_each(&sess->bearer_list, bearer) {
             ctx.ebi = bearer->ebi;
             break;
         }
+    } else if (apn && apn[0]) {
+        ogs_cpystrn(ctx.apn, apn, sizeof(ctx.apn));
     }
 
-    ogs_trace_merge(&ctx);
+    ogs_trace_set(&ctx);
 }

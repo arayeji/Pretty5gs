@@ -21,6 +21,7 @@
 #include "mme-sm.h"
 #include "mme-context.h"
 #include "mme-timer.h"
+#include "mme-trace.h"
 
 #include "s1ap-path.h"
 #include "mme-gtp-path.h"
@@ -190,6 +191,13 @@ static void mme_s11_create_session_fail(
                 mme_ue->imsi_bcd, fail_cause);
 
     if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST) {
+        if (enb_ue) {
+            mme_sess_t *sess = mme_sess_first(mme_ue);
+            ogs_mme_trace_set(enb_ue, mme_ue,
+                    (sess && sess->session) ? sess->session->name : NULL, "attach-reject");
+        }
+        OGS_TLOG_INFO("Attach reject [GTPv2-Cause:%d EMM:17 ESM:17]",
+                fail_cause);
         r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_NETWORK_FAILURE,
                 OGS_NAS_ESM_CAUSE_NETWORK_FAILURE);
@@ -377,7 +385,7 @@ void mme_s11_handle_create_session_response(
         ogs_assert(cause);
 
         bearer_cause = cause->value;
-        if (bearer_cause != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+        if (!OGS_GTP2_CAUSE_IS_SUCCESS(bearer_cause)) {
             ogs_error("[%s] GTP Bearer Cause [VALUE:%d]",
                     mme_ue->imsi_bcd, bearer_cause);
             fail_cause = bearer_cause;
@@ -386,12 +394,7 @@ void mme_s11_handle_create_session_response(
         }
     }
 
-    if (session_cause != OGS_GTP2_CAUSE_REQUEST_ACCEPTED &&
-        session_cause != OGS_GTP2_CAUSE_REQUEST_ACCEPTED_PARTIALLY &&
-        session_cause !=
-            OGS_GTP2_CAUSE_NEW_PDN_TYPE_DUE_TO_NETWORK_PREFERENCE &&
-        session_cause !=
-            OGS_GTP2_CAUSE_NEW_PDN_TYPE_DUE_TO_SINGLE_ADDRESS_BEARER_ONLY) {
+    if (!OGS_GTP2_CAUSE_IS_SUCCESS(session_cause)) {
         ogs_error("[%s] GTP Cause [VALUE:%d]", mme_ue->imsi_bcd, session_cause);
         fail_cause = session_cause;
         fail_reason = "Session Cause not accepted";
@@ -1597,7 +1600,11 @@ void mme_s11_handle_release_access_bearers_response(
                 /* All ENB_UE context
                  * where PartOfS1_interface was requested
                  * REMOVED */
-                ogs_assert(enb->s1_reset_ack);
+                if (!enb->s1_reset_ack) {
+                    ogs_warn("No S1 Reset Ack buffer (eNB[%u])",
+                            enb->enb_id);
+                    return;
+                }
                 r = s1ap_send_to_enb(
                         enb, enb->s1_reset_ack, S1AP_NON_UE_SIGNALLING);
                 ogs_expect(r == OGS_OK);

@@ -164,7 +164,8 @@ typedef struct smf_radius_config_s {
 
     /*
      * When true (default), Framed-IP-Address / Framed-IPv6-Prefix from
-     * Access-Accept are applied to sess->session.ue_ip and sent in PFCP.
+     * Access-Accept are applied to sess->session.ue_ip when present;
+     * missing framed addresses fall back to the SMF local IP pool.
      * When false, RADIUS may still authenticate and supply Class/routes,
      * but UE IP comes from the PDN subscription / SMF pool only.
      */

@@ -93,18 +93,17 @@ static bool served_tai_is_found(mme_enb_t *enb)
  * Configuration Update, plus the TAIs we have configured in
  * mme.tai. Operators routinely hit "Cannot find Served TAI" with
  * nothing in the log explaining *which* TAI was missing; this
- * makes the mismatch obvious without having to enable [s1ap]
- * DEBUG. Called from the warn-path only, so this iteration is
- * not on the hot path.
+ * makes the mismatch obvious; enable [mme] DEBUG to see the dump.
+ * Called from the warn-path only, so this iteration is not on the hot path.
  */
 static void log_tai_mismatch_diagnostic(mme_enb_t *enb)
 {
     int i, j, k;
 
-    ogs_warn("    eNB advertised %d TAI(s):", enb->num_of_supported_ta_list);
+    ogs_debug("    eNB advertised %d TAI(s):", enb->num_of_supported_ta_list);
     for (i = 0; i < enb->num_of_supported_ta_list; i++) {
         ogs_eps_tai_t *t = &enb->supported_ta_list[i];
-        ogs_warn("        [%d] MCC=%03d MNC=%0*d TAC=%u (0x%04x)",
+        ogs_debug("        [%d] MCC=%03d MNC=%0*d TAC=%u (0x%04x)",
                 i,
                 ogs_plmn_id_mcc(&t->plmn_id),
                 ogs_plmn_id_mnc_len(&t->plmn_id),
@@ -112,7 +111,7 @@ static void log_tai_mismatch_diagnostic(mme_enb_t *enb)
                 t->tac, t->tac);
     }
 
-    ogs_warn("    MME 'mme.tai' is configured with %d entry/entries:",
+    ogs_debug("    MME 'mme.tai' is configured with %d entry/entries:",
             mme_self()->num_of_served_tai);
     for (i = 0; i < mme_self()->num_of_served_tai; i++) {
         ogs_eps_tai0_list_t *list0 = mme_self()->served_tai[i].list0;
@@ -123,7 +122,7 @@ static void log_tai_mismatch_diagnostic(mme_enb_t *enb)
             for (j = 0; j < (int)ogs_app_max_eps_tai0_partial_list() &&
                     list0->tai[j].num; j++) {
                 for (k = 0; k < list0->tai[j].num; k++) {
-                    ogs_warn("        [%d] (list0) MCC=%03d MNC=%0*d TAC=%u "
+                    ogs_debug("        [%d] (list0) MCC=%03d MNC=%0*d TAC=%u "
                             "(0x%04x)",
                             i,
                             ogs_plmn_id_mcc(&list0->tai[j].plmn_id),
@@ -134,7 +133,7 @@ static void log_tai_mismatch_diagnostic(mme_enb_t *enb)
             }
         }
         for (j = 0; list1->tai[j].num; j++) {
-            ogs_warn("        [%d] (list1) MCC=%03d MNC=%0*d "
+            ogs_debug("        [%d] (list1) MCC=%03d MNC=%0*d "
                     "TAC=%u..%u (0x%04x..0x%04x)",
                     i,
                     ogs_plmn_id_mcc(&list1->tai[j].plmn_id),
@@ -146,7 +145,7 @@ static void log_tai_mismatch_diagnostic(mme_enb_t *enb)
                     list1->tai[j].tac + list1->tai[j].num - 1);
         }
         for (j = 0; j < list2->num; j++) {
-            ogs_warn("        [%d] (list2) MCC=%03d MNC=%0*d TAC=%u (0x%04x)",
+            ogs_debug("        [%d] (list2) MCC=%03d MNC=%0*d TAC=%u (0x%04x)",
                     i,
                     ogs_plmn_id_mcc(&list2->tai[j].plmn_id),
                     ogs_plmn_id_mnc_len(&list2->tai[j].plmn_id),
@@ -691,7 +690,7 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
             mme_ue = mme_ue_find_by_guti(&nas_guti);
             if (!mme_ue) {
                 ogs_mme_trace_set(enb_ue, NULL, NULL, "initial-ue");
-                OGS_TLOG_INFO("Unknown UE by S_TMSI[G:%d,C:%d,M_TMSI:0x%x]",
+                OGS_TLOG_DEBUG("Unknown UE by S_TMSI[G:%d,C:%d,M_TMSI:0x%x]",
                         nas_guti.mme_gid, nas_guti.mme_code, nas_guti.m_tmsi);
             } else {
                 ogs_debug("    S_TMSI[G:%d,C:%d,M_TMSI:0x%x] IMSI:[%s]",
@@ -746,7 +745,7 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
         mme_ue_t *mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
 
         ogs_mme_trace_set(enb_ue, mme_ue, NULL, "initial-ue");
-        OGS_TLOG_INFO("InitialUEMessage");
+        OGS_TLOG_DEBUG("InitialUEMessage");
     }
 
     if (!NAS_PDU) {
@@ -1441,10 +1440,14 @@ void s1ap_handle_initial_context_setup_failure(
         return;
     }
 
-    ogs_debug("    Cause[Group:%d Cause:%d]",
-            Cause->present, (int)Cause->choice.radioNetwork);
-
     mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+    {
+        mme_sess_t *sess = mme_ue ? mme_sess_first(mme_ue) : NULL;
+        const char *apn = (sess && sess->session) ? sess->session->name : NULL;
+
+        s1ap_log_ue_failure(enb_ue, mme_ue, NULL, apn, "attach-fail",
+                "InitialContextSetupFailure", Cause);
+    }
 
     if (mme_ue) {
         /*
@@ -1814,6 +1817,8 @@ void s1ap_handle_e_rab_setup_response(
             ogs_log_hexdump(OGS_LOG_DEBUG,
                     bearer->enb_s1u_ip.addr6, OGS_IPV6_LEN);
 
+            CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
+
             if (OGS_FSM_CHECK(&bearer->sm, esm_state_active)) {
                 linked_bearer = mme_linked_bearer(bearer);
                 ogs_assert(linked_bearer);
@@ -1836,7 +1841,6 @@ void s1ap_handle_e_rab_setup_response(
     }
 
     if (E_RABFailedToSetupListBearerSURes) {
-        ogs_warn("E_RABFailedToSetupListBearerSURes");
         for (i = 0; i < E_RABFailedToSetupListBearerSURes->list.count; i++) {
             S1AP_E_RABItemIEs_t *item = NULL;
             S1AP_E_RABItem_t *e_rab = NULL;
@@ -1856,11 +1860,6 @@ void s1ap_handle_e_rab_setup_response(
 
             e_rab = &item->value.choice.E_RABItem;
 
-            ogs_warn("RAB_ID: %x", (int)e_rab->e_RAB_ID);
-            ogs_warn("    Cause[Group:%d Cause:%d]",
-                (int)e_rab->cause.present,
-                (int)e_rab->cause.choice.radioNetwork);
-
             bearer = mme_bearer_find_by_ue_ebi(mme_ue, e_rab->e_RAB_ID);
             if (!bearer) {
                 ogs_error("No Bearer [%d]", (int)e_rab->e_RAB_ID);
@@ -1871,6 +1870,16 @@ void s1ap_handle_e_rab_setup_response(
                 ogs_assert(r != OGS_ERROR);
                 return;
             }
+
+            {
+                mme_sess_t *sess = mme_sess_find_by_id(bearer->sess_id);
+                const char *apn = (sess && sess->session) ? sess->session->name : NULL;
+
+                s1ap_log_ue_failure(enb_ue, mme_ue, bearer, apn, "attach-fail",
+                        "E-RAB setup failed", &e_rab->cause);
+            }
+
+            CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
 
             linked_bearer = mme_linked_bearer(bearer);
             ogs_assert(linked_bearer);
@@ -1928,6 +1937,7 @@ void s1ap_handle_ue_context_release_request(
     S1AP_Cause_t *Cause = NULL;
 
     enb_ue_t *enb_ue = NULL;
+    mme_ue_t *mme_ue = NULL;
 
     ogs_assert(enb);
     ogs_assert(enb->sctp.sock);
@@ -2014,6 +2024,15 @@ void s1ap_handle_ue_context_release_request(
 
     ogs_debug("    Cause[Group:%d Cause:%d]",
             Cause->present, (int)Cause->choice.radioNetwork);
+
+    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+    if (mme_ue) {
+        mme_sess_t *sess = mme_sess_first(mme_ue);
+        const char *apn = (sess && sess->session) ? sess->session->name : NULL;
+
+        s1ap_log_ue_failure(enb_ue, mme_ue, NULL, apn, "attach-fail",
+                "UEContextReleaseRequest", Cause);
+    }
 
     switch (Cause->present) {
     case S1AP_Cause_PR_radioNetwork:
@@ -4625,7 +4644,11 @@ void s1ap_handle_s1_reset(
         /* All ENB_UE context
          * where PartOfS1_interface was requested
          * REMOVED */
-        ogs_assert(enb->s1_reset_ack);
+        if (!enb->s1_reset_ack) {
+            ogs_warn("No S1 Reset Ack buffer (eNB[%u], already sent?)",
+                    enb->enb_id);
+            break;
+        }
         r = s1ap_send_to_enb(enb, enb->s1_reset_ack, S1AP_NON_UE_SIGNALLING);
         ogs_expect(r == OGS_OK);
         ogs_assert(r != OGS_ERROR);

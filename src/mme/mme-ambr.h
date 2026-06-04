@@ -53,6 +53,14 @@ void mme_ambr_apply_config(ogs_bitrate_t *ambr);
  */
 ogs_bitrate_t mme_sess_ambr_for_pdn(mme_ue_t *mme_ue, ogs_session_t *session);
 
+/*
+ * UE-AMBR for S1AP (Initial Context Setup, Handover, etc.): subscribed
+ * UE-AMBR when present; otherwise sum of PDN AMBRs; otherwise mme ambr_limit.
+ * Matches NAS APN-AMBR derivation in esm-build so eNB does not reject ICS
+ * with semantic-error when HSS omits UE-AMBR on inbound roam.
+ */
+ogs_bitrate_t mme_ue_ambr_for_s1ap(mme_ue_t *mme_ue);
+
 bool mme_epc_qci_is_gbr(uint8_t qci);
 
 /*
@@ -66,6 +74,12 @@ void mme_qos_fill_bearer_bitrates(
 void mme_gtp2_bearer_qos_from_session(
         ogs_gtp2_bearer_qos_t *bearer_qos,
         mme_ue_t *mme_ue, ogs_session_t *session);
+
+/*
+ * S1AP E-RAB QoS: non-GBR bearers must not carry gbrQosInformation;
+ * drop partial MBR/GBR from GTP peers (e.g. Huawei CSR) on non-GBR QCIs.
+ */
+void mme_bearer_qos_for_s1ap(ogs_qos_t *qos);
 
 /* TS 29.274 Selection Mode for CSR from UE request vs HSS Service-Selection */
 uint8_t mme_gtp2_selection_mode_for_sess(

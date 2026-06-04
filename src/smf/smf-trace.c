@@ -43,10 +43,8 @@ void ogs_smf_trace_set(
     if (sess) {
         if (sess->session.name)
             ogs_cpystrn(ctx.apn, sess->session.name, sizeof(ctx.apn));
-        if (sess->sgw_s5c_teid)
-            ctx.sgw_s5c_teid = sess->sgw_s5c_teid;
-        if (sess->smf_n4_teid)
-            ctx.pgw_s5c_teid = sess->smf_n4_teid;
+        ctx.sgw_s5c_teid = sess->sgw_s5c_teid;
+        ctx.pgw_s5c_teid = sess->smf_n4_teid;
 
         ogs_list_for_each(&sess->bearer_list, bearer) {
             ctx.ebi = bearer->ebi;
@@ -66,5 +64,5 @@ void ogs_smf_trace_set(
         }
     }
 
-    ogs_trace_merge(&ctx);
+    ogs_trace_set(&ctx);
 }

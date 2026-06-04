@@ -37,7 +37,8 @@ int mme_apn_build_fqdn(
         const ogs_plmn_id_t *oi_plmn_id, bool lowercase);
 /*
  * GTP APN string for S11/Gn (before ogs_fqdn_build).
- * Inbound roam / home PGW: uses mme.inbound_roam gtp_apn_* config.
+ * S11/Gn GTP APN string (before ogs_fqdn_build).
+ * Home PLMN: APN-NI only (stock). Roaming PLMN: mme.inbound_roam gtp_apn_*.
  */
 int mme_apn_for_gtp(
         mme_ue_t *mme_ue, ogs_session_t *session,

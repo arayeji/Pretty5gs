@@ -57,23 +57,173 @@ static void state_cleanup(struct sess_state *sess_data, os0_t sid, void *opaque)
     ogs_free(sess_data);
 }
 
-static bool hss_s6a_user_name_to_imsi_bcd(
-        struct avp_hdr *hdr, char *imsi_bcd, size_t imsi_bcd_len)
+static int hss_s6a_air_add_os_avp(struct avp *group, struct dict_object *avp_obj,
+        uint8_t *data, size_t len)
 {
+    struct avp *avp = NULL;
+    union avp_value val;
+    int ret;
+
+    ogs_assert(group);
+    ogs_assert(avp_obj);
+    ogs_assert(data);
+
+    ret = fd_msg_avp_new(avp_obj, 0, &avp);
+    if (ret != 0)
+        return ret;
+
+    val.os.data = data;
+    val.os.len = len;
+    ret = fd_msg_avp_setvalue(avp, &val);
+    if (ret != 0)
+        return ret;
+
+    return fd_msg_avp_add(group, MSG_BRW_LAST_CHILD, avp);
+}
+
+static bool hss_s6a_air_resync_present(struct avp *req_auth_info)
+{
+    struct avp *avpch = NULL;
+
+    if (!req_auth_info)
+        return false;
+
+    if (fd_avp_search_avp(req_auth_info, ogs_diam_s6a_re_synchronization_info,
+            &avpch) != 0)
+        return false;
+
+    return avpch != NULL;
+}
+
+static int hss_s6a_air_handle_resync(struct avp *req_auth_info,
+        const char *imsi_bcd, const uint8_t *opc, const uint8_t *k,
+        uint8_t *rand, uint64_t *sqn, uint32_t *result_code)
+{
+    struct avp *avpch = NULL;
+    struct avp_hdr *hdr = NULL;
+    uint8_t sqn_buf[OGS_SQN_LEN];
+    uint8_t mac_s[OGS_MAC_S_LEN];
+    int ret;
+
+    ogs_assert(req_auth_info);
     ogs_assert(imsi_bcd);
+    ogs_assert(opc);
+    ogs_assert(k);
+    ogs_assert(rand);
+    ogs_assert(sqn);
+    ogs_assert(result_code);
 
-    if (!hdr || !hdr->avp_value || !hdr->avp_value->os.data)
-        return false;
+    ret = fd_avp_search_avp(req_auth_info, ogs_diam_s6a_re_synchronization_info,
+            &avpch);
+    if (ret != 0 || !avpch)
+        return OGS_OK;
 
-    if (hdr->avp_value->os.len == 0 ||
-            hdr->avp_value->os.len > OGS_MAX_IMSI_BCD_LEN ||
-            hdr->avp_value->os.len >= imsi_bcd_len)
-        return false;
+    ret = fd_msg_avp_hdr(avpch, &hdr);
+    if (ret != 0 || !hdr)
+        return OGS_ERROR;
 
-    ogs_cpystrn(imsi_bcd, (char*)hdr->avp_value->os.data,
-            hdr->avp_value->os.len + 1);
+    ogs_auc_sqn(opc, k, hdr->avp_value->os.data,
+            hdr->avp_value->os.data + OGS_RAND_LEN, sqn_buf, mac_s);
+    if (memcmp(mac_s, hdr->avp_value->os.data +
+                OGS_RAND_LEN + OGS_SQN_LEN, OGS_MAC_S_LEN) != 0) {
+        ogs_error("Re-synch MAC failed for IMSI: %s", imsi_bcd);
 
-    return ogs_imsi_bcd_is_valid(imsi_bcd);
+        ogs_log_print(OGS_LOG_ERROR, "MAC_S: ");
+        ogs_log_hexdump(OGS_LOG_ERROR, mac_s, OGS_MAC_S_LEN);
+        ogs_log_hexdump(OGS_LOG_ERROR,
+                (void*)(hdr->avp_value->os.data +
+                    OGS_RAND_LEN + OGS_SQN_LEN),
+                OGS_MAC_S_LEN);
+        ogs_log_print(OGS_LOG_ERROR, "SQN: ");
+        ogs_log_hexdump(OGS_LOG_ERROR, sqn_buf, OGS_SQN_LEN);
+
+        *result_code = OGS_DIAM_S6A_AUTHENTICATION_DATA_UNAVAILABLE;
+        return OGS_ERROR;
+    }
+
+    ogs_random(rand, OGS_RAND_LEN);
+    *sqn = ogs_buffer_to_uint64(sqn_buf, OGS_SQN_LEN);
+    /* 33.102 C.3.4 Guide : IND + 1 */
+    *sqn = (*sqn + 32 + 1) & OGS_MAX_SQN;
+
+    return OGS_OK;
+}
+
+static int hss_s6a_air_build_e_utran_vector(struct avp *auth_info_avp,
+        uint8_t *rand, uint8_t *xres, size_t xres_len,
+        uint8_t *autn, uint8_t *kasme)
+{
+    struct avp *vector = NULL;
+    int ret;
+
+    ogs_assert(auth_info_avp);
+    ogs_assert(rand);
+    ogs_assert(xres);
+    ogs_assert(autn);
+    ogs_assert(kasme);
+
+    ret = fd_msg_avp_new(ogs_diam_s6a_e_utran_vector, 0, &vector);
+    if (ret != 0) {
+        ogs_error("Failed to create E-UTRAN-Vector AVP");
+        return ret;
+    }
+
+    ret = hss_s6a_air_add_os_avp(vector, ogs_diam_s6a_rand, rand, OGS_KEY_LEN);
+    if (ret != 0)
+        return ret;
+    ret = hss_s6a_air_add_os_avp(vector, ogs_diam_s6a_xres, xres, xres_len);
+    if (ret != 0)
+        return ret;
+    ret = hss_s6a_air_add_os_avp(vector, ogs_diam_s6a_autn, autn, OGS_AUTN_LEN);
+    if (ret != 0)
+        return ret;
+    ret = hss_s6a_air_add_os_avp(vector, ogs_diam_s6a_kasme,
+            kasme, OGS_SHA256_DIGEST_SIZE);
+    if (ret != 0)
+        return ret;
+
+    return fd_msg_avp_add(auth_info_avp, MSG_BRW_LAST_CHILD, vector);
+}
+
+static int hss_s6a_air_build_utran_vector(struct avp *auth_info_avp,
+        uint8_t *rand, uint8_t *xres, size_t xres_len,
+        uint8_t *autn, uint8_t *ck, uint8_t *ik)
+{
+    struct avp *vector = NULL;
+    int ret;
+
+    ogs_assert(auth_info_avp);
+    ogs_assert(rand);
+    ogs_assert(xres);
+    ogs_assert(autn);
+    ogs_assert(ck);
+    ogs_assert(ik);
+
+    ret = fd_msg_avp_new(ogs_diam_s6a_utran_vector, 0, &vector);
+    if (ret != 0) {
+        ogs_error("Failed to create UTRAN-Vector AVP");
+        return ret;
+    }
+
+    ret = hss_s6a_air_add_os_avp(vector, ogs_diam_s6a_rand, rand, OGS_KEY_LEN);
+    if (ret != 0)
+        return ret;
+    ret = hss_s6a_air_add_os_avp(vector, ogs_diam_s6a_xres, xres, xres_len);
+    if (ret != 0)
+        return ret;
+    ret = hss_s6a_air_add_os_avp(vector, ogs_diam_s6a_autn, autn, OGS_AUTN_LEN);
+    if (ret != 0)
+        return ret;
+    ret = hss_s6a_air_add_os_avp(vector, ogs_diam_s6a_confidentiality_key,
+            ck, OGS_KEY_LEN);
+    if (ret != 0)
+        return ret;
+    ret = hss_s6a_air_add_os_avp(vector, ogs_diam_s6a_integrity_key,
+            ik, OGS_KEY_LEN);
+    if (ret != 0)
+        return ret;
+
+    return fd_msg_avp_add(auth_info_avp, MSG_BRW_LAST_CHILD, vector);
 }
 
 /* Default callback for the application. */
@@ -95,9 +245,8 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
 {
     int ret;
     struct msg *ans = NULL, *qry = NULL;
-    struct avp *avpch = NULL;
-    struct avp *avp_e_utran_vector = NULL, *avp_xres = NULL,
-               *avp_kasme = NULL, *avp_rand = NULL, *avp_autn = NULL;
+    struct avp *avp_req_eutran = NULL;
+    struct avp *avp_req_utran = NULL;
     struct avp_hdr *hdr = NULL;
     union avp_value val;
 
@@ -111,14 +260,15 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
     uint8_t xres[OGS_MAX_RES_LEN];
     uint8_t kasme[OGS_SHA256_DIGEST_SIZE];
     size_t xres_len = 8;
-    uint8_t mac_s[OGS_MAC_S_LEN];
 
     ogs_dbi_auth_info_t auth_info;
     uint8_t zero[OGS_RAND_LEN];
     int rv;
     uint32_t result_code = 0;
-    ogs_plmn_id_t visited_plmn_id;
+    uint8_t visited_plmn_bytes[OGS_PLMN_ID_LEN];
     int error_occurred = 0;
+    bool req_eutran = false;
+    bool req_utran = false;
 
     ogs_debug("Rx Authentication-Information-Request");
 
@@ -131,7 +281,6 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
     /* Initialize variables */
     memset(imsi_bcd, 0, sizeof(imsi_bcd));
     memset(&auth_info, 0, sizeof(auth_info));
-    memset(&visited_plmn_id, 0, sizeof(visited_plmn_id));
 
     /* Create answer header */
     qry = *msg;
@@ -196,41 +345,37 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
     else
         milenage_opc(auth_info.k, auth_info.op, opc);
 
-    /* Check for re-synchronization */
-    ret = fd_msg_search_avp(qry, ogs_diam_s6a_req_eutran_auth_info, &avp);
-    if (ret == 0 && avp) {
-        ret = fd_avp_search_avp(avp, ogs_diam_s6a_re_synchronization_info,
-                                &avpch);
-        if (ret == 0 && avpch) {
-            ret = fd_msg_avp_hdr(avpch, &hdr);
-            if (ret == 0 && hdr) {
-                ogs_auc_sqn(opc, auth_info.k,
-                        hdr->avp_value->os.data,
-                        hdr->avp_value->os.data + OGS_RAND_LEN,
-                        sqn, mac_s);
-                if (memcmp(mac_s, hdr->avp_value->os.data +
-                            OGS_RAND_LEN + OGS_SQN_LEN, OGS_MAC_S_LEN) == 0) {
-                    ogs_random(auth_info.rand, OGS_RAND_LEN);
-                    auth_info.sqn = ogs_buffer_to_uint64(sqn, OGS_SQN_LEN);
-                    /* 33.102 C.3.4 Guide : IND + 1 */
-                    auth_info.sqn = (auth_info.sqn + 32 + 1) & OGS_MAX_SQN;
-                } else {
-                    ogs_error("Re-synch MAC failed for IMSI: %s", imsi_bcd);
+    /* Which authentication vectors were requested? */
+    ret = fd_msg_search_avp(qry, ogs_diam_s6a_req_eutran_auth_info,
+            &avp_req_eutran);
+    if (ret == 0 && avp_req_eutran)
+        req_eutran = true;
 
-                    ogs_log_print(OGS_LOG_ERROR, "MAC_S: ");
-                    ogs_log_hexdump(OGS_LOG_ERROR, mac_s, OGS_MAC_S_LEN);
-                    ogs_log_hexdump(OGS_LOG_ERROR,
-                            (void*)(hdr->avp_value->os.data +
-                                OGS_RAND_LEN + OGS_SQN_LEN),
-                            OGS_MAC_S_LEN);
-                    ogs_log_print(OGS_LOG_ERROR, "SQN: ");
-                    ogs_log_hexdump(OGS_LOG_ERROR, sqn, OGS_SQN_LEN);
+    ret = fd_msg_search_avp(qry, ogs_diam_s6a_req_utran_geran_auth_info,
+            &avp_req_utran);
+    if (ret == 0 && avp_req_utran)
+        req_utran = true;
 
-                    result_code = OGS_DIAM_S6A_AUTHENTICATION_DATA_UNAVAILABLE;
-                    error_occurred = 1;
-                    goto out;
-                }
-            }
+    if (!req_eutran && !req_utran) {
+        ogs_warn("AIR without auth vector request for IMSI:%s, "
+                "defaulting to E-UTRAN", imsi_bcd);
+        req_eutran = true;
+    }
+
+    /* Re-synchronization (E-UTRAN or UTRAN/GERAN request) */
+    if (hss_s6a_air_resync_present(avp_req_eutran)) {
+        rv = hss_s6a_air_handle_resync(avp_req_eutran, imsi_bcd, opc,
+                auth_info.k, auth_info.rand, &auth_info.sqn, &result_code);
+        if (rv != OGS_OK) {
+            error_occurred = 1;
+            goto out;
+        }
+    } else if (hss_s6a_air_resync_present(avp_req_utran)) {
+        rv = hss_s6a_air_handle_resync(avp_req_utran, imsi_bcd, opc,
+                auth_info.k, auth_info.rand, &auth_info.sqn, &result_code);
+        if (rv != OGS_OK) {
+            error_occurred = 1;
+            goto out;
         }
     }
 
@@ -275,14 +420,13 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
-    memcpy(&visited_plmn_id, hdr->avp_value->os.data,
-            ogs_min(hdr->avp_value->os.len, sizeof(visited_plmn_id)));
+    memcpy(visited_plmn_bytes, hdr->avp_value->os.data,
+            ogs_min(hdr->avp_value->os.len, OGS_PLMN_ID_LEN));
 
-    /* Generate authentication vectors */
+    /* Generate authentication vectors (Milenage) */
     milenage_generate(opc, auth_info.amf, auth_info.k,
         ogs_uint64_to_buffer(auth_info.sqn, OGS_SQN_LEN, sqn), auth_info.rand,
         autn, ik, ck, ak, xres, &xres_len);
-    ogs_auc_kasme(ck, ik, hdr->avp_value->os.data, sqn, ak, kasme);
 
     /* Set the Authentication-Info */
     ret = fd_msg_avp_new(ogs_diam_s6a_authentication_info, 0, &avp);
@@ -292,107 +436,27 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
-    ret = fd_msg_avp_new(ogs_diam_s6a_e_utran_vector, 0, &avp_e_utran_vector);
-    if (ret != 0) {
-        ogs_error("Failed to create E-UTRAN-Vector AVP");
-        error_occurred = 1;
-        goto out;
+    if (req_utran) {
+        ret = hss_s6a_air_build_utran_vector(avp, auth_info.rand,
+                xres, xres_len, autn, ck, ik);
+        if (ret != 0) {
+            ogs_error("Failed to build UTRAN-Vector for IMSI:%s", imsi_bcd);
+            error_occurred = 1;
+            goto out;
+        }
+        ogs_debug("AIA UTRAN-Vector for IMSI:%s", imsi_bcd);
     }
 
-    /* Add RAND */
-    ret = fd_msg_avp_new(ogs_diam_s6a_rand, 0, &avp_rand);
-    if (ret != 0) {
-        ogs_error("Failed to create RAND AVP");
-        error_occurred = 1;
-        goto out;
-    }
-    val.os.data = auth_info.rand;
-    val.os.len = OGS_KEY_LEN;
-    ret = fd_msg_avp_setvalue(avp_rand, &val);
-    if (ret != 0) {
-        ogs_error("Failed to set RAND value");
-        error_occurred = 1;
-        goto out;
-    }
-    ret = fd_msg_avp_add(avp_e_utran_vector, MSG_BRW_LAST_CHILD, avp_rand);
-    if (ret != 0) {
-        ogs_error("Failed to add RAND AVP");
-        error_occurred = 1;
-        goto out;
-    }
-
-    /* Add XRES */
-    ret = fd_msg_avp_new(ogs_diam_s6a_xres, 0, &avp_xres);
-    if (ret != 0) {
-        ogs_error("Failed to create XRES AVP");
-        error_occurred = 1;
-        goto out;
-    }
-    val.os.data = xres;
-    val.os.len = xres_len;
-    ret = fd_msg_avp_setvalue(avp_xres, &val);
-    if (ret != 0) {
-        ogs_error("Failed to set XRES value");
-        error_occurred = 1;
-        goto out;
-    }
-    ret = fd_msg_avp_add(avp_e_utran_vector, MSG_BRW_LAST_CHILD, avp_xres);
-    if (ret != 0) {
-        ogs_error("Failed to add XRES AVP");
-        error_occurred = 1;
-        goto out;
-    }
-
-    /* Add AUTN */
-    ret = fd_msg_avp_new(ogs_diam_s6a_autn, 0, &avp_autn);
-    if (ret != 0) {
-        ogs_error("Failed to create AUTN AVP");
-        error_occurred = 1;
-        goto out;
-    }
-    val.os.data = autn;
-    val.os.len = OGS_AUTN_LEN;
-    ret = fd_msg_avp_setvalue(avp_autn, &val);
-    if (ret != 0) {
-        ogs_error("Failed to set AUTN value");
-        error_occurred = 1;
-        goto out;
-    }
-    ret = fd_msg_avp_add(avp_e_utran_vector, MSG_BRW_LAST_CHILD, avp_autn);
-    if (ret != 0) {
-        ogs_error("Failed to add AUTN AVP");
-        error_occurred = 1;
-        goto out;
-    }
-
-    /* Add KASME */
-    ret = fd_msg_avp_new(ogs_diam_s6a_kasme, 0, &avp_kasme);
-    if (ret != 0) {
-        ogs_error("Failed to create KASME AVP");
-        error_occurred = 1;
-        goto out;
-    }
-    val.os.data = kasme;
-    val.os.len = OGS_SHA256_DIGEST_SIZE;
-    ret = fd_msg_avp_setvalue(avp_kasme, &val);
-    if (ret != 0) {
-        ogs_error("Failed to set KASME value");
-        error_occurred = 1;
-        goto out;
-    }
-    ret = fd_msg_avp_add(avp_e_utran_vector, MSG_BRW_LAST_CHILD, avp_kasme);
-    if (ret != 0) {
-        ogs_error("Failed to add KASME AVP");
-        error_occurred = 1;
-        goto out;
-    }
-
-    /* Add E-UTRAN-Vector to Authentication-Info */
-    ret = fd_msg_avp_add(avp, MSG_BRW_LAST_CHILD, avp_e_utran_vector);
-    if (ret != 0) {
-        ogs_error("Failed to add E-UTRAN-Vector AVP");
-        error_occurred = 1;
-        goto out;
+    if (req_eutran) {
+        ogs_auc_kasme(ck, ik, visited_plmn_bytes, sqn, ak, kasme);
+        ret = hss_s6a_air_build_e_utran_vector(avp, auth_info.rand,
+                xres, xres_len, autn, kasme);
+        if (ret != 0) {
+            ogs_error("Failed to build E-UTRAN-Vector for IMSI:%s", imsi_bcd);
+            error_occurred = 1;
+            goto out;
+        }
+        ogs_debug("AIA E-UTRAN-Vector for IMSI:%s", imsi_bcd);
     }
 
     /* Add Authentication-Info to answer */

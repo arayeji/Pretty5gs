@@ -34,6 +34,7 @@ int nas_eps_send_to_downlink_nas_transport(
 
 int nas_eps_send_attach_accept(mme_ue_t *mme_ue);
 int nas_eps_resend_t3450_initial_context(mme_ue_t *mme_ue);
+int nas_eps_resend_bearer_setup_request(mme_bearer_t *bearer);
 int nas_eps_send_attach_reject(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     ogs_nas_emm_cause_t emm_cause, ogs_nas_esm_cause_t esm_cause);
 
@@ -58,6 +59,7 @@ void nas_eps_send_activate_all_dedicated_bearers(mme_bearer_t *default_bearer);
 int nas_eps_send_modify_bearer_context_request(
         mme_bearer_t *bearer, int qos_presence, int tft_presence);
 int nas_eps_send_deactivate_bearer_context_request(mme_bearer_t *bearer);
+int nas_eps_resend_deactivate_bearer_context_request(mme_bearer_t *bearer);
 int nas_eps_send_bearer_resource_allocation_reject(
         mme_ue_t *mme_ue, uint8_t pti, ogs_nas_esm_cause_t esm_cause);
 int nas_eps_send_bearer_resource_modification_reject(

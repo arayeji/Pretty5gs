@@ -176,12 +176,56 @@ static void eplmn_nas_encoding_test(abts_case *tc, void *data)
     ogs_pkbuf_free(pkbuf);
 }
 
+static void eplmn_serving_only_test(abts_case *tc, void *data)
+{
+    ogs_plmn_id_t eplmn[OGS_NAS_MAX_PLMN];
+    ogs_plmn_id_t serving;
+    ogs_nas_plmn_list_t nas_list;
+    int rv;
+
+    ogs_plmn_id_build(&eplmn[0], 432, 12, 2);
+    ogs_plmn_id_build(&eplmn[1], 432, 11, 2);
+    ogs_plmn_id_build(&eplmn[2], 432, 35, 2);
+    ogs_plmn_id_build(&serving, 432, 11, 2);
+
+    ABTS_INT_EQUAL(tc, 1, mme_eplmn_count_for_serving(
+                &serving, true, 3, eplmn));
+    rv = mme_eplmn_build_nas_list_for_serving(
+            &nas_list, &serving, true, 3, eplmn);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    ABTS_INT_EQUAL(tc, 3, nas_list.length);
+    {
+        ogs_nas_plmn_list_t expected;
+        rv = mme_eplmn_build_nas_list(&expected, 1, &eplmn[1]);
+        ABTS_INT_EQUAL(tc, OGS_OK, rv);
+        ABTS_INT_EQUAL(tc, expected.length, nas_list.length);
+        ABTS_TRUE(tc, memcmp(&expected, &nas_list, sizeof(nas_list)) == 0);
+    }
+
+    ogs_plmn_id_build(&serving, 432, 99, 2);
+    ABTS_INT_EQUAL(tc, 3, mme_eplmn_count_for_serving(
+                &serving, true, 3, eplmn));
+    rv = mme_eplmn_build_nas_list_for_serving(
+            &nas_list, &serving, true, 3, eplmn);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    ABTS_INT_EQUAL(tc, 9, nas_list.length);
+
+    ogs_plmn_id_build(&serving, 432, 11, 2);
+    ABTS_INT_EQUAL(tc, 3, mme_eplmn_count_for_serving(
+                &serving, false, 3, eplmn));
+    rv = mme_eplmn_build_nas_list_for_serving(
+            &nas_list, &serving, false, 3, eplmn);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    ABTS_INT_EQUAL(tc, 9, nas_list.length);
+}
+
 abts_suite *test_eplmn(abts_suite *suite)
 {
     suite = ADD_SUITE(suite)
 
     abts_run_test(suite, eplmn_config_count_test, NULL);
     abts_run_test(suite, eplmn_nas_encoding_test, NULL);
+    abts_run_test(suite, eplmn_serving_only_test, NULL);
 
     return suite;
 }

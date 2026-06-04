@@ -47,6 +47,10 @@ void ogs_trace_set(const ogs_trace_ctx_t *ctx)
 
 void ogs_trace_merge(const ogs_trace_ctx_t *ctx)
 {
+    /*
+     * Only overwrites fields that are non-empty/non-zero in ctx. Cleared fields
+     * in ctx do not reset self — use ogs_trace_set() for log prefixes.
+     */
     ogs_assert(ctx);
 
     if (ctx->imsi[0])

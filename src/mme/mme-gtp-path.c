@@ -236,7 +236,6 @@ int mme_gtp_open(void)
             &mme_self()->pgw_list, AF_INET, NULL);
     mme_self()->pgw_addr6 = mme_pgw_addr_find_by_apn_enb(
             &mme_self()->pgw_list, AF_INET6, NULL);
-    ogs_assert(mme_self()->pgw_addr || mme_self()->pgw_addr6);
 
     ogs_list_for_each(&mme_self()->sgw_list, sgw) {
         rv = ogs_gtp_connect(

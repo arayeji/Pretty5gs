@@ -64,6 +64,119 @@ typedef enum {
 static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
         emm_common_state_e state);
 
+static void emm_handle_t3450_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
+{
+    int r;
+    enb_ue_t *enb_ue = NULL;
+    ogs_pkbuf_t *emmbuf = NULL;
+
+    ogs_assert(s);
+    ogs_assert(mme_ue);
+
+    if (mme_ue->t3450.retry_count >=
+            mme_timer_cfg(MME_TIMER_T3450)->max_count) {
+        mme_sess_t *sess = mme_sess_first(mme_ue);
+        enb_ue_t *enb_ue_for_log = enb_ue_find_by_id(mme_ue->enb_ue_id);
+
+        ogs_mme_trace_set(enb_ue_for_log, mme_ue,
+                (sess && sess->session) ? sess->session->name : NULL, "attach-fail");
+        OGS_TLOG_INFO("Attach failed: T3450 expired "
+                "(no InitialContextSetupResponse/AttachComplete)");
+        ogs_warn("Retransmission of IMSI[%s] failed. "
+                "Stop retransmission", mme_ue->imsi_bcd);
+        OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
+        return;
+    }
+
+    mme_ue->t3450.retry_count++;
+
+    if (!mme_ue->t3450.pkbuf) {
+        ogs_error("No T3450 NAS buffer");
+        OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
+        return;
+    }
+
+    /*
+     * TAU with active_flag=0 uses Downlink NAS Transport; attach and
+     * TAU-with-ICS use InitialContextSetupRequest (see nas_eps_send_tau_accept).
+     */
+    if (mme_ue->tracking_area_update_accept_proc ==
+            S1AP_ProcedureCode_id_downlinkNASTransport) {
+        enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+        if (!enb_ue) {
+            ogs_warn("[%s] S1 context removed; stop T3450 Downlink NAS",
+                    mme_ue->imsi_bcd);
+            CLEAR_MME_UE_TIMER(mme_ue->t3450);
+            OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
+            return;
+        }
+
+        emmbuf = mme_ue->t3450.pkbuf;
+        mme_ue->t3450.pkbuf = ogs_pkbuf_copy(emmbuf);
+        if (!mme_ue->t3450.pkbuf) {
+            ogs_error("ogs_pkbuf_copy() failed");
+            ogs_pkbuf_free(emmbuf);
+            OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
+            return;
+        }
+
+        ogs_timer_start(mme_ue->t3450.timer,
+                mme_timer_cfg(MME_TIMER_T3450)->duration);
+
+        r = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
+        if (r != OGS_OK) {
+            ogs_error("T3450 Downlink NAS retransmit failed");
+            OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
+        }
+        return;
+    }
+
+    r = nas_eps_resend_t3450_initial_context(mme_ue);
+    if (r != OGS_OK) {
+        ogs_error("T3450 ICS retransmit failed");
+        OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
+    }
+}
+
+/*
+ * Timer expiry events can be queued before a state transition clears them
+ * (e.g. T3450 after ICS failure and S1 release). Drop these quietly.
+ */
+static bool emm_clear_stale_timer(mme_ue_t *mme_ue, int timer_id)
+{
+    ogs_assert(mme_ue);
+
+    switch (timer_id) {
+    case MME_TIMER_T3413:
+        ogs_debug("[%s] Stale %s in EMM state; clearing",
+                mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
+        CLEAR_MME_UE_TIMER(mme_ue->t3413);
+        return true;
+    case MME_TIMER_T3422:
+        ogs_debug("[%s] Stale %s in EMM state; clearing",
+                mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
+        CLEAR_MME_UE_TIMER(mme_ue->t3422);
+        return true;
+    case MME_TIMER_T3450:
+        ogs_debug("[%s] Stale %s in EMM state; clearing",
+                mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
+        CLEAR_MME_UE_TIMER(mme_ue->t3450);
+        return true;
+    case MME_TIMER_T3460:
+        ogs_debug("[%s] Stale %s in EMM state; clearing",
+                mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
+        CLEAR_MME_UE_TIMER(mme_ue->t3460);
+        return true;
+    case MME_TIMER_T3470:
+        ogs_debug("[%s] Stale %s in EMM state; clearing",
+                mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
+        CLEAR_MME_UE_TIMER(mme_ue->t3470);
+        return true;
+    default:
+        return false;
+    }
+}
+
 void emm_state_initial(ogs_fsm_t *s, mme_event_t *e)
 {
     ogs_assert(s);
@@ -122,6 +235,8 @@ void emm_state_de_registered(ogs_fsm_t *s, mme_event_t *e)
             break;
 
         default:
+            if (emm_clear_stale_timer(mme_ue, e->timer_id))
+                break;
             ogs_error("Unknown timer[%s:%d]",
                     mme_timer_get_name(e->timer_id), e->timer_id);
         }
@@ -305,7 +420,13 @@ void emm_state_registered(ogs_fsm_t *s, mme_event_t *e)
                 OGS_FSM_TRAN(s, &emm_state_de_registered);
             break;
 
+        case MME_TIMER_T3450:
+            emm_handle_t3450_timer(s, mme_ue);
+            break;
+
         default:
+            if (emm_clear_stale_timer(mme_ue, e->timer_id))
+                break;
             ogs_error("Unknown timer[%s:%d]",
                     mme_timer_get_name(e->timer_id), e->timer_id);
         }
@@ -761,6 +882,13 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             if (MME_NEXT_GUTI_IS_AVAILABLE(mme_ue)) {
                 ogs_fatal("MME does not create new GUTI");
                 ogs_assert_if_reached();
+                OGS_FSM_TRAN(s, &emm_state_initial_context_setup);
+            } else if (mme_ue->tracking_area_update_accept_proc ==
+                    S1AP_ProcedureCode_id_InitialContextSetup) {
+                /*
+                 * TAU Accept with ICS starts T3450; handle expiry in
+                 * emm_state_initial_context_setup (same as attach).
+                 */
                 OGS_FSM_TRAN(s, &emm_state_initial_context_setup);
             } else {
                 OGS_FSM_TRAN(s, &emm_state_registered);
@@ -1274,6 +1402,8 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
             }
             break;
         default:
+            if (emm_clear_stale_timer(mme_ue, e->timer_id))
+                break;
             ogs_error("Unknown timer[%s:%d]",
                     mme_timer_get_name(e->timer_id), e->timer_id);
             break;
@@ -1538,6 +1668,8 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
             }
             break;
         default:
+            if (emm_clear_stale_timer(mme_ue, e->timer_id))
+                break;
             ogs_error("Unknown timer[%s:%d]",
                     mme_timer_get_name(e->timer_id), e->timer_id);
             break;
@@ -1726,7 +1858,9 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
             break;
 
         case OGS_NAS_EPS_ATTACH_REQUEST:
-            ogs_warn("[%s] Attach request", mme_ue->imsi_bcd);
+            ogs_mme_trace_set(enb_ue, mme_ue, NULL, "attach");
+            OGS_TLOG_WARN("Attach request while waiting for "
+                    "InitialContextSetupResponse (UE retry)");
             rv = emm_handle_attach_request(
                     enb_ue, mme_ue, &message->emm.attach_request, e->pkbuf);
             if (rv != OGS_OK) {
@@ -1806,35 +1940,11 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
     case MME_EVENT_EMM_TIMER:
         switch (e->timer_id) {
         case MME_TIMER_T3450:
-            if (mme_ue->t3450.retry_count >=
-                    mme_timer_cfg(MME_TIMER_T3450)->max_count) {
-                ogs_warn("Retransmission of IMSI[%s] failed. "
-                        "Stop retransmission", mme_ue->imsi_bcd);
-                OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
-            } else {
-                ogs_pkbuf_t *emmbuf = NULL;
-
-                mme_ue->t3450.retry_count++;
-
-                emmbuf = mme_ue->t3450.pkbuf;
-                if (!emmbuf) {
-                    ogs_error("No emmbuf");
-                    return;
-                }
-
-                mme_ue->t3450.pkbuf = ogs_pkbuf_copy(emmbuf);
-                if (!mme_ue->t3450.pkbuf) {
-                    ogs_error("ogs_pkbuf_copy() failed");
-                    ogs_pkbuf_free(emmbuf);
-                    return;
-                }
-
-                r = nas_eps_resend_t3450_initial_context(mme_ue);
-                ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
-            }
+            emm_handle_t3450_timer(s, mme_ue);
             break;
         default:
+            if (emm_clear_stale_timer(mme_ue, e->timer_id))
+                break;
             ogs_error("Unknown timer[%s:%d]",
                     mme_timer_get_name(e->timer_id), e->timer_id);
             break;

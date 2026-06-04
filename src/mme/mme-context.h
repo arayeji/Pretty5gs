@@ -159,6 +159,14 @@ typedef struct mme_context_s {
     bool            inbound_roam_force_ipv4_pdn_on_home_pgw;
     /* Leave Bearer QoS MBR/GBR at zero for non-GBR (QCI 9, etc.) on CSR. */
     bool            inbound_roam_zero_bearer_mbr_for_non_gbr;
+    /*
+     * Omit ESM cause #50/#51/#52 on Activate Default Bearer when PDN type
+     * differs from UE request (align with home PGW / intentional IPv4).
+     */
+    bool            inbound_roam_suppress_pdn_type_esm_cause;
+
+    /* EPS network feature: IMS voice over PS in S1 mode (Attach/TAU Accept). */
+    bool            ims_voice_over_ps_in_s1_mode;
 
     /* Cap AMBR from HSS (bps) before GTP/NAS/S1AP */
     struct {
@@ -171,6 +179,12 @@ typedef struct mme_context_s {
     /* Equivalent PLMN (TS 24.301 §9.9.3.18) */
     int             num_of_eplmn;
     ogs_plmn_id_t   eplmn[OGS_NAS_MAX_PLMN];
+    /*
+     * When true (default), if the UE serving PLMN matches an entry in
+     * equivalent_plmn, only that PLMN is sent in Attach/TAU Accept.
+     * Otherwise the full configured list is sent.
+     */
+    bool            equivalent_plmn_serving_only;
 
     /* Access Control */
     int             default_reject_cause;
@@ -1010,7 +1024,7 @@ struct mme_ue_s {
         ogs_assert(__sESS); \
         mme_ue = mme_ue_find_by_id((__sESS)->mme_ue_id); \
         ogs_assert(mme_ue); \
-        ogs_info("Removed Session: UE IMSI:[%s] APN:[%s]", \
+        ogs_debug("Removed Session: UE IMSI:[%s] APN:[%s]", \
                 mme_ue->imsi_bcd, \
                 (__sESS)->session ? (__sESS)->session->name : "Unknown"); \
         if (mme_sess_count(mme_ue) == 1) /* Last Session */ \
@@ -1135,6 +1149,7 @@ typedef struct mme_bearer_s {
 #define CLEAR_BEARER_ALL_TIMERS(__bEARER) \
     do { \
         CLEAR_BEARER_TIMER((__bEARER)->t3489); \
+        CLEAR_BEARER_TIMER((__bEARER)->t_bearer_setup); \
         CLEAR_BEARER_TIMER((__bEARER)->t_nas_deactivate); \
     } while(0);
 #define CLEAR_BEARER_TIMER(__bEARER_TIMER) \
@@ -1152,6 +1167,18 @@ typedef struct mme_bearer_s {
         ogs_timer_t     *timer;
         uint32_t        retry_count;;
     } t3489;
+
+    /*
+     * Watchdog on E-RAB Setup Request (standalone bearer setup). Armed by
+     * nas_eps_send_activate_*_bearer_context_request() when the MME sends
+     * E-RABSetup over S1AP. Cleared when the eNB answers with E-RAB Setup
+     * Response or the UE rejects the NAS activate request.
+     */
+    struct {
+        ogs_pkbuf_t     *pkbuf;
+        ogs_timer_t     *timer;
+        uint32_t        retry_count;
+    } t_bearer_setup;
 
     /*
      * Watchdog on DEACTIVATE EPS BEARER CONTEXT REQUEST sent to the

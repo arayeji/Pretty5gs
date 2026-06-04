@@ -131,6 +131,54 @@ ogs_bitrate_t mme_sess_ambr_for_pdn(mme_ue_t *mme_ue, ogs_session_t *session)
     return ambr;
 }
 
+ogs_bitrate_t mme_ue_ambr_for_s1ap(mme_ue_t *mme_ue)
+{
+    ogs_bitrate_t ambr, pdn_ambr, sum;
+    mme_sess_t *sess;
+
+    ogs_assert(mme_ue);
+
+    memset(&ambr, 0, sizeof(ambr));
+    memset(&sum, 0, sizeof(sum));
+
+    ambr = mme_ue->ambr;
+    mme_ambr_sanitize_bitrate(&ambr);
+    if (ambr.downlink || ambr.uplink) {
+        mme_ambr_apply_config(&ambr);
+        mme_ambr_complete_directions(&ambr);
+        if (ambr.uplink || ambr.downlink)
+            return ambr;
+    }
+
+    ogs_list_for_each(&mme_ue->sess_list, sess) {
+        if (!sess->session)
+            continue;
+        pdn_ambr = mme_sess_ambr_for_pdn(mme_ue, sess->session);
+        mme_ambr_sanitize_bitrate(&pdn_ambr);
+        sum.downlink += pdn_ambr.downlink;
+        sum.uplink += pdn_ambr.uplink;
+    }
+
+    if (sum.downlink || sum.uplink) {
+        ambr = sum;
+        mme_ambr_apply_config(&ambr);
+        mme_ambr_complete_directions(&ambr);
+        if (ambr.uplink || ambr.downlink)
+            return ambr;
+    }
+
+    memset(&ambr, 0, sizeof(ambr));
+    mme_ambr_apply_config(&ambr);
+    mme_ambr_complete_directions(&ambr);
+    if (!ambr.uplink && !ambr.downlink &&
+            mme_self()->ambr_limit.enabled) {
+        ambr.uplink = mme_self()->ambr_limit.uplink_bps;
+        ambr.downlink = mme_self()->ambr_limit.downlink_bps;
+    }
+
+    return ambr;
+}
+
 bool mme_epc_qci_is_gbr(uint8_t qci)
 {
     switch (qci) {
@@ -204,6 +252,29 @@ void mme_gtp2_bearer_qos_from_session(
     bearer_qos->dl_mbr = qos.mbr.downlink;
     bearer_qos->ul_gbr = qos.gbr.uplink;
     bearer_qos->dl_gbr = qos.gbr.downlink;
+}
+
+void mme_bearer_qos_for_s1ap(ogs_qos_t *qos)
+{
+    ogs_assert(qos);
+
+    if (!mme_epc_qci_is_gbr(qos->index)) {
+        qos->mbr.downlink = 0;
+        qos->mbr.uplink = 0;
+        qos->gbr.downlink = 0;
+        qos->gbr.uplink = 0;
+        return;
+    }
+
+    if (!(qos->mbr.downlink && qos->mbr.uplink &&
+            qos->gbr.downlink && qos->gbr.uplink)) {
+        ogs_warn("GBR QCI[%u] has incomplete MBR/GBR; omit S1AP gbrQosInformation",
+                qos->index);
+        qos->mbr.downlink = 0;
+        qos->mbr.uplink = 0;
+        qos->gbr.downlink = 0;
+        qos->gbr.uplink = 0;
+    }
 }
 
 uint8_t mme_gtp2_selection_mode_for_sess(

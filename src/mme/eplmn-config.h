@@ -31,8 +31,14 @@ int mme_eplmn_parse_config(ogs_yaml_iter_t *parent,
         int *num_of_eplmn, ogs_plmn_id_t *eplmn);
 int mme_eplmn_validate(int num_of_eplmn);
 void mme_eplmn_log_config(int num_of_eplmn, ogs_plmn_id_t *eplmn);
+void mme_eplmn_log_serving_only(bool serving_only);
 int mme_eplmn_build_nas_list(ogs_nas_plmn_list_t *nas_list,
         int num_of_eplmn, ogs_plmn_id_t *eplmn);
+int mme_eplmn_build_nas_list_for_serving(ogs_nas_plmn_list_t *nas_list,
+        const ogs_plmn_id_t *serving_plmn, bool serving_only,
+        int num_of_eplmn, ogs_plmn_id_t *eplmn);
+int mme_eplmn_count_for_serving(const ogs_plmn_id_t *serving_plmn,
+        bool serving_only, int num_of_eplmn, ogs_plmn_id_t *eplmn);
 
 #ifdef __cplusplus
 }

@@ -143,6 +143,107 @@ static void bearer_timeout(ogs_gtp_xact_t *xact, void *data)
     }
 }
 
+#define SGWC_PFCP_CSR_UL_MODIFY_FLAGS \
+    (OGS_PFCP_MODIFY_UL_ONLY| \
+     OGS_PFCP_MODIFY_OUTER_HEADER_REMOVAL| \
+     OGS_PFCP_MODIFY_ACTIVATE|OGS_PFCP_MODIFY_SESSION)
+
+void sgwc_sxa_handle_unexpected_modification_response(
+        sgwc_sess_t *rsp_sess, ogs_pfcp_xact_t *pfcp_xact,
+        ogs_pfcp_session_modification_response_t *pfcp_rsp)
+{
+    ogs_gtp_xact_t *s11_xact = NULL;
+    sgwc_sess_t *est_sess = NULL;
+    sgwc_sess_t *sess = NULL;
+    sgwc_ue_t *sgwc_ue = NULL;
+    ogs_pool_id_t sess_id = OGS_INVALID_POOL_ID;
+    uint8_t cause_value = OGS_GTP2_CAUSE_SYSTEM_FAILURE;
+
+    ogs_assert(pfcp_xact);
+    ogs_assert(pfcp_rsp);
+
+    if (pfcp_rsp->cause.presence)
+        cause_value = gtp_cause_from_pfcp(pfcp_rsp->cause.u8);
+
+    if (pfcp_xact->seq[0].type !=
+            OGS_PFCP_SESSION_ESTABLISHMENT_REQUEST_TYPE) {
+        ogs_warn("Unexpected PFCP Session Modification Response "
+                "(xid=%u org=%d seq0_type=%u pfcp_cause=%u)",
+                pfcp_xact->xid, pfcp_xact->org, pfcp_xact->seq[0].type,
+                pfcp_rsp->cause.presence ? pfcp_rsp->cause.u8 : 0);
+        ogs_pfcp_xact_commit(pfcp_xact);
+        return;
+    }
+
+    ogs_warn("PFCP Mod Rsp matched establishment xact (xid=%u pfcp_cause=%u)",
+            pfcp_xact->xid,
+            pfcp_rsp->cause.presence ? pfcp_rsp->cause.u8 : 0);
+
+    s11_xact = ogs_gtp_xact_find_by_id(pfcp_xact->assoc_xact_id);
+    sess_id = OGS_POINTER_TO_UINT(pfcp_xact->data);
+    if (sess_id >= OGS_MIN_POOL_ID && sess_id <= OGS_MAX_POOL_ID)
+        est_sess = sgwc_sess_find_by_id(sess_id);
+
+    sess = rsp_sess ? rsp_sess : est_sess;
+
+    /*
+     * Under load, SGW-U may return Session Modification Response with an
+     * XID that still maps to a pending Session Establishment transaction
+     * (another session's UL-activate after PGW CSR). Do not fail unrelated
+     * Create Session procedures when PFCP cause is Request Accepted.
+     */
+    if (pfcp_rsp->cause.presence &&
+            pfcp_rsp->cause.u8 == OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
+        ogs_pfcp_xact_t *mod_xact = NULL;
+        ogs_gtp2_message_t gtp_message;
+
+        if (sess)
+            mod_xact = sgwc_pfcp_find_session_modify_xact(
+                    sess, SGWC_PFCP_CSR_UL_MODIFY_FLAGS);
+
+        if (mod_xact && mod_xact->gtpbuf &&
+                ogs_gtp2_parse_msg(&gtp_message, mod_xact->gtpbuf) == OGS_OK) {
+            ogs_warn("PFCP Mod Rsp xid collision (xid=%u); "
+                    "rerouting to pending UL-modify [%s]",
+                    pfcp_xact->xid, sess->session.name);
+            ogs_pfcp_xact_commit(pfcp_xact);
+            sgwc_sxa_handle_session_modification_response(
+                    sess, mod_xact, &gtp_message, pfcp_rsp);
+            return;
+        }
+
+        if (est_sess && est_sess->pgw_s5c_teid && pfcp_xact->gtpbuf &&
+                ogs_gtp2_parse_msg(&gtp_message, pfcp_xact->gtpbuf) == OGS_OK) {
+            pfcp_xact->modify_flags = SGWC_PFCP_CSR_UL_MODIFY_FLAGS;
+            ogs_warn("PFCP Mod Rsp on establishment xact (xid=%u); "
+                    "treating as CSR UL-activate [%s]",
+                    pfcp_xact->xid, est_sess->session.name);
+            sgwc_sxa_handle_session_modification_response(
+                    est_sess, pfcp_xact, &gtp_message, pfcp_rsp);
+            return;
+        }
+
+        ogs_warn("PFCP Mod Rsp on establishment xact (xid=%u); "
+                "ignored (no pending UL-modify or PGW CSR yet)",
+                pfcp_xact->xid);
+        ogs_pfcp_xact_commit(pfcp_xact);
+        return;
+    }
+
+    if (s11_xact) {
+        if (est_sess)
+            sgwc_ue = sgwc_ue_find_by_id(est_sess->sgwc_ue_id);
+        ogs_gtp_send_error_message(
+                s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
+                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, cause_value);
+    }
+
+    if (est_sess)
+        sgwc_sess_remove(est_sess);
+
+    ogs_pfcp_xact_commit(pfcp_xact);
+}
+
 void sgwc_sxa_handle_session_establishment_response(
         sgwc_sess_t *sess, ogs_pfcp_xact_t *pfcp_xact,
         ogs_gtp2_message_t *recv_message,
@@ -336,27 +437,56 @@ void sgwc_sxa_handle_session_establishment_response(
     sess->sgwu_sxa_seid = be64toh(up_f_seid->seid);
 
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-    ogs_sgwc_trace_set(sgwc_ue, sess, "create-session");
+    ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
     OGS_TLOG_INFO("PFCP session established SGWU-SEID=0x%llx",
             (unsigned long long)sess->sgwu_sxa_seid);
 
     /* Receive Control Plane(UL) : PGW-S5C */
-    pgw_s5c_teid = create_session_request->
-        pgw_s5_s8_address_for_control_plane_or_pmip.data;
-    ogs_assert(pgw_s5c_teid);
-
-    pgw = ogs_gtp_node_find_by_f_teid(&sgwc_self()->pgw_s5c_list, pgw_s5c_teid);
-    if (!pgw) {
-        pgw = ogs_gtp_node_add_by_f_teid(
-                &sgwc_self()->pgw_s5c_list,
-                pgw_s5c_teid, ogs_gtp_self()->gtpc_port);
-        ogs_assert(pgw);
-
-        rv = sgwc_gtp_connect_peer(sess, pgw);
-        ogs_assert(rv == OGS_OK);
+    if (create_session_request->
+            pgw_s5_s8_address_for_control_plane_or_pmip.presence &&
+            create_session_request->
+            pgw_s5_s8_address_for_control_plane_or_pmip.data) {
+        pgw_s5c_teid = create_session_request->
+            pgw_s5_s8_address_for_control_plane_or_pmip.data;
+        if (pgw_s5c_teid->teid)
+            sess->pgw_s5c_teid = be32toh(pgw_s5c_teid->teid);
     }
-    /* Setup GTP Node */
-    OGS_SETUP_GTP_NODE(sess, pgw);
+
+    if (pgw_s5c_teid) {
+        pgw = ogs_gtp_node_find_by_f_teid(
+                &sgwc_self()->pgw_s5c_list, pgw_s5c_teid);
+        if (!pgw) {
+            pgw = ogs_gtp_node_add_by_f_teid(
+                    &sgwc_self()->pgw_s5c_list,
+                    pgw_s5c_teid, ogs_gtp_self()->gtpc_port);
+            ogs_assert(pgw);
+
+            rv = sgwc_gtp_connect_peer(sess, pgw);
+            ogs_assert(rv == OGS_OK);
+        }
+        /* Setup GTP Node */
+        OGS_SETUP_GTP_NODE(sess, pgw);
+    } else if (sess->gnode) {
+        /*
+         * Duplicate or late PFCP Session Establishment Response:
+         * the buffered S11 Create Session Request may no longer expose
+         * the PGW F-TEID IE, but the S5 peer was already resolved.
+         */
+        ogs_warn("No PGW F-TEID in buffered Create Session Request; "
+                "reusing S5 peer (PGW_S5C_TEID=0x%x)",
+                sess->pgw_s5c_teid);
+        pgw = sess->gnode;
+    } else {
+        ogs_error("No PGW S5-C F-TEID in Create Session Request "
+                "(PGW_S5C_TEID=0x%x)", sess->pgw_s5c_teid);
+        if (sgwc_ue) {
+            ogs_gtp_send_error_message(
+                    s11_xact, sgwc_ue->mme_s11_teid,
+                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                    OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING);
+        }
+        return;
+    }
 
     /* Check Indication */
     if (create_session_request->indication_flags.presence &&
@@ -512,7 +642,14 @@ void sgwc_sxa_handle_session_modification_response(
     ogs_assert(pfcp_rsp);
 
     flags = pfcp_xact->modify_flags;
-    ogs_assert(flags);
+    if (!flags) {
+        ogs_error("PFCP Session Modification Response without modify_flags "
+                "(xid=%u org=%d seq0_type=%u local_seid=0x%llx)",
+                pfcp_xact->xid, pfcp_xact->org, pfcp_xact->seq[0].type,
+                (unsigned long long)pfcp_xact->local_seid);
+        ogs_pfcp_xact_commit(pfcp_xact);
+        return;
+    }
 
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
@@ -1210,7 +1347,7 @@ void sgwc_sxa_handle_session_modification_response(
             rv = ogs_gtp_xact_commit(s11_xact);
             ogs_expect(rv == OGS_OK);
 
-            ogs_sgwc_trace_set(sgwc_ue, sess, "create-session");
+            ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
             OGS_TLOG_INFO("Create Session Response sent to MME");
 
         } else if (flags & OGS_PFCP_MODIFY_DL_ONLY) {

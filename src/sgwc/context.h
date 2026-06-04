@@ -269,6 +269,9 @@ sgwc_sess_t *sgwc_sess_find_by_id(ogs_pool_id_t id);
 int sgwc_sess_pfcp_xact_count(
         sgwc_ue_t *sgwc_ue, uint8_t pfcp_type, uint64_t modify_flags);
 
+ogs_pfcp_xact_t *sgwc_pfcp_find_session_modify_xact(
+        sgwc_sess_t *sess, uint64_t modify_flags);
+
 sgwc_bearer_t *sgwc_bearer_add(sgwc_sess_t *sess);
 int sgwc_bearer_remove(sgwc_bearer_t *bearer);
 void sgwc_bearer_remove_all(sgwc_sess_t *sess);

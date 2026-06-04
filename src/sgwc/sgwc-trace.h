@@ -28,7 +28,7 @@ extern "C" {
 
 void ogs_sgwc_trace_set(
         sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess,
-        const char *proc);
+        const char *apn, const char *proc);
 
 #ifdef __cplusplus
 }

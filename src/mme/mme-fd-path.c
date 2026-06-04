@@ -1776,9 +1776,13 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
         ula_message->ula_flags = hdr->avp_value->i32;
         ogs_debug("    ULA-Flags: %d", ula_message->ula_flags);
     } else {
-        ogs_error("no_ULA-Flags");
-        error++;
-        goto cleanup;
+        /*
+         * Some external HSS implementations omit ULA-Flags. The MME does not
+         * act on this AVP today; default to 0 and continue with subscription
+         * data so Update Location can succeed.
+         */
+        ula_message->ula_flags = 0;
+        ogs_warn("no_ULA-Flags; defaulting to 0");
     }
 
     /* AVP: 'Subscription-Data'(1400)

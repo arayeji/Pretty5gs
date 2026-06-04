@@ -380,6 +380,67 @@ int mme_context_evict_idle_ues(int want)
     return evicted;
 }
 
+static void mme_timer_parse_yaml(
+        ogs_yaml_iter_t *time_iter, mme_timer_e id)
+{
+    ogs_yaml_iter_t iter;
+    ogs_time_t duration = 0;
+    int max_count = 0;
+
+    ogs_yaml_iter_recurse(time_iter, &iter);
+    while (ogs_yaml_iter_next(&iter)) {
+        const char *key = ogs_yaml_iter_key(&iter);
+        ogs_assert(key);
+
+        if (!strcmp(key, "value")) {
+            const char *v = ogs_yaml_iter_value(&iter);
+            if (v)
+                duration = ogs_time_from_sec(atoll(v));
+        } else if (!strcmp(key, "max_count")) {
+            const char *v = ogs_yaml_iter_value(&iter);
+            if (v)
+                max_count = atoi(v);
+        } else
+            ogs_warn("unknown key `%s` in mme.time.%s",
+                    key, mme_timer_get_name(id));
+    }
+
+    mme_timer_set(id, duration, max_count);
+}
+
+static void mme_bearer_setup_time_parse_yaml(ogs_yaml_iter_t *time_iter)
+{
+    ogs_yaml_iter_t iter;
+    ogs_time_t duration = 0;
+    int max_count = 0;
+
+    ogs_yaml_iter_recurse(time_iter, &iter);
+    while (ogs_yaml_iter_next(&iter)) {
+        const char *key = ogs_yaml_iter_key(&iter);
+        ogs_assert(key);
+
+        if (!strcmp(key, "value")) {
+            const char *v = ogs_yaml_iter_value(&iter);
+            if (v)
+                duration = ogs_time_from_sec(atoll(v));
+        } else if (!strcmp(key, "max_count")) {
+            const char *v = ogs_yaml_iter_value(&iter);
+            if (v)
+                max_count = atoi(v);
+        } else
+            ogs_warn("unknown key `%s` in mme.time.bearer_setup", key);
+    }
+
+    if (duration > 0) {
+        mme_timer_set(MME_TIMER_T3450, duration, 0);
+        mme_timer_set(MME_TIMER_BEARER_SETUP, duration, 0);
+    }
+    if (max_count > 0) {
+        mme_timer_set(MME_TIMER_T3450, 0, max_count);
+        mme_timer_set(MME_TIMER_BEARER_SETUP, 0, max_count);
+    }
+}
+
 static int mme_context_prepare(void)
 {
     self.relative_capacity = 0xff;
@@ -389,10 +450,10 @@ static int mme_context_prepare(void)
     self.diam_config->cnf_port = DIAMETER_PORT;
     self.diam_config->cnf_port_tls = DIAMETER_SECURE_PORT;
 
-    /* Set the default T3396 to 12 minutes */
-    self.time.t3396.value = 720;
-    /* Set the default T3412 to 9 minutes for backward compatibility. */
-    self.time.t3412.value = 540;
+    self.time.t3402.value = 720;  /* 12 minutes */
+    self.time.t3412.value = 600;  /* 10 minutes */
+
+    self.equivalent_plmn_serving_only = true;
 
     return OGS_OK;
 }
@@ -507,8 +568,10 @@ static int mme_context_validation(void)
     if (mme_eplmn_validate(self.num_of_eplmn) != OGS_OK)
         return OGS_ERROR;
 
-    if (self.num_of_eplmn)
+    if (self.num_of_eplmn) {
         mme_eplmn_log_config(self.num_of_eplmn, self.eplmn);
+        mme_eplmn_log_serving_only(self.equivalent_plmn_serving_only);
+    }
 
     ogs_info("TAI type-0 partial list limit: %llu (global.max.eps_tai0_partial_list)",
             (unsigned long long)ogs_app_max_eps_tai0_partial_list());
@@ -1809,6 +1872,9 @@ int mme_context_parse_config(void)
                             &self.num_of_eplmn, self.eplmn);
                     if (rv != OGS_OK)
                         return rv;
+                } else if (!strcmp(mme_key, "equivalent_plmn_serving_only")) {
+                    self.equivalent_plmn_serving_only =
+                        ogs_yaml_iter_bool(&mme_iter);
                 } else if (!strcmp(mme_key, "tai_list_in_accept")) {
                     const char *v = ogs_yaml_iter_value(&mme_iter);
                     if (v && !strcmp(v, "serving_only")) {
@@ -3030,31 +3096,25 @@ int mme_context_parse_config(void)
                                 } else
                                     ogs_warn("unknown key `%s`", t3423_key);
                             }
+                        } else if (!strcmp(time_key, "t3413")) {
+                            mme_timer_parse_yaml(&time_iter, MME_TIMER_T3413);
+                        } else if (!strcmp(time_key, "t3422")) {
+                            mme_timer_parse_yaml(&time_iter, MME_TIMER_T3422);
                         } else if (!strcmp(time_key, "t3450")) {
-                            ogs_yaml_iter_t t3450_iter;
-                            ogs_time_t duration = 0;
-                            int max_count = 0;
-
-                            ogs_yaml_iter_recurse(&time_iter, &t3450_iter);
-                            while (ogs_yaml_iter_next(&t3450_iter)) {
-                                const char *t3450_key =
-                                    ogs_yaml_iter_key(&t3450_iter);
-                                ogs_assert(t3450_key);
-
-                                if (!strcmp(t3450_key, "value")) {
-                                    const char *v =
-                                        ogs_yaml_iter_value(&t3450_iter);
-                                    if (v)
-                                        duration = ogs_time_from_sec(atoll(v));
-                                } else if (!strcmp(t3450_key, "max_count")) {
-                                    const char *v =
-                                        ogs_yaml_iter_value(&t3450_iter);
-                                    if (v)
-                                        max_count = atoi(v);
-                                } else
-                                    ogs_warn("unknown key `%s`", t3450_key);
-                            }
-                            mme_timer_set_t3450(duration, max_count);
+                            mme_timer_parse_yaml(&time_iter, MME_TIMER_T3450);
+                        } else if (!strcmp(time_key, "bearer_setup") ||
+                                !strcmp(time_key, "sae_bearer_setup")) {
+                            mme_bearer_setup_time_parse_yaml(&time_iter);
+                        } else if (!strcmp(time_key, "t3460")) {
+                            mme_timer_parse_yaml(&time_iter, MME_TIMER_T3460);
+                        } else if (!strcmp(time_key, "t3470")) {
+                            mme_timer_parse_yaml(&time_iter, MME_TIMER_T3470);
+                        } else if (!strcmp(time_key, "t3489")) {
+                            mme_timer_parse_yaml(&time_iter, MME_TIMER_T3489);
+                        } else if (!strcmp(time_key, "t3495") ||
+                                !strcmp(time_key, "nas_deactivate_bearer")) {
+                            mme_timer_parse_yaml(&time_iter,
+                                    MME_TIMER_NAS_DEACTIVATE_BEARER);
                         } else if (!strcmp(time_key, "t3512")) {
                             /* handle config in amf */
                         } else if (!strcmp(time_key, "nf_instance")) {
@@ -3376,6 +3436,30 @@ void mme_pgw_remove_all(void)
         mme_pgw_remove(pgw);
 }
 
+static bool mme_pgw_is_default(const mme_pgw_t *pgw)
+{
+    ogs_assert(pgw);
+
+    return pgw->num_of_apn == 0 &&
+            pgw->num_of_tac == 0 &&
+            pgw->num_of_e_cell_id == 0;
+}
+
+static ogs_sockaddr_t *mme_pgw_sockaddr_by_family(
+        mme_pgw_t *pgw, int family)
+{
+    ogs_sockaddr_t *addr = NULL;
+
+    ogs_assert(pgw);
+
+    for (addr = pgw->sa_list; addr; addr = addr->next) {
+        if (addr->ogs_sa_family == family)
+            return addr;
+    }
+
+    return NULL;
+}
+
 static bool compare_apn_enb_info(
     const mme_pgw_t *pgw, const mme_sess_t *sess)
 {
@@ -3386,6 +3470,8 @@ static bool compare_apn_enb_info(
     ogs_assert(sess);
     ogs_assert(sess->session);
     ogs_assert(sess->session->name);
+    ogs_assert(!mme_pgw_is_default(pgw));
+
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     ogs_assert(mme_ue);
 
@@ -3405,22 +3491,42 @@ ogs_sockaddr_t *mme_pgw_addr_find_by_apn_enb(
     ogs_list_t *list, int family, const mme_sess_t *sess)
 {
     mme_pgw_t *pgw = NULL;
+    ogs_sockaddr_t *default_addr = NULL;
+
     ogs_assert(list);
 
+    /*
+     * gtpc.client.smf selection:
+     * 1. Prefer an entry whose apn/tac/e_cell_id matches the session.
+     * 2. Otherwise use a default entry (no apn/tac/e_cell_id filters).
+     *
+     * A default entry must not win over a later, more specific entry, and
+     * must not be confused with "first entry in yaml" (old behaviour when
+     * sess was NULL).
+     */
     ogs_list_for_each(list, pgw) {
-        ogs_assert(pgw->sa_list);
-        ogs_sockaddr_t *addr = pgw->sa_list;
+        ogs_sockaddr_t *addr = mme_pgw_sockaddr_by_family(pgw, family);
 
-        while (addr) {
-            if (addr->ogs_sa_family == family &&
-                (!sess || compare_apn_enb_info(pgw, sess))) {
+        if (!addr)
+            continue;
+
+        if (!sess) {
+            if (mme_pgw_is_default(pgw))
                 return addr;
-            }
-            addr = addr->next;
+            continue;
         }
+
+        if (mme_pgw_is_default(pgw)) {
+            if (!default_addr)
+                default_addr = addr;
+            continue;
+        }
+
+        if (compare_apn_enb_info(pgw, sess))
+            return addr;
     }
 
-    return NULL;
+    return default_addr;
 }
 
 mme_vlr_t *mme_vlr_add(
@@ -5435,6 +5541,11 @@ mme_bearer_t *mme_bearer_add(mme_sess_t *sess)
             OGS_UINT_TO_POINTER(bearer->id));
     bearer->t3489.pkbuf = NULL;
 
+    bearer->t_bearer_setup.timer = ogs_timer_add(
+            ogs_app()->timer_mgr, mme_timer_bearer_setup_expire,
+            OGS_UINT_TO_POINTER(bearer->id));
+    bearer->t_bearer_setup.pkbuf = NULL;
+
     bearer->t_nas_deactivate.timer = ogs_timer_add(
             ogs_app()->timer_mgr, mme_timer_nas_deactivate_bearer_expire,
             OGS_UINT_TO_POINTER(bearer->id));
@@ -5468,6 +5579,7 @@ void mme_bearer_remove(mme_bearer_t *bearer)
 
     CLEAR_BEARER_ALL_TIMERS(bearer);
     ogs_timer_delete(bearer->t3489.timer);
+    ogs_timer_delete(bearer->t_bearer_setup.timer);
     ogs_timer_delete(bearer->t_nas_deactivate.timer);
 
     /*
