@@ -62,10 +62,10 @@ pcrf:
               pre_emption_vulnerability: 1
               pre_emption_capability: 1
 
-  # Optional PyHSS MySQL (meson -Dmysql_pcrf=true). Checked after YAML.
-  # (imsi, apn_list, enabled) joined with `apn` (qos, APN-AMBR). No extra tables.
-  # Used when IMSI SUP is not matched earlier in YAML policy (YAML is tried before MySQL).
+  # Optional PyHSS MySQL Gx policy (meson -Dmysql_pcrf=true). Disabled by default.
+  # YAML policy is tried first; MySQL only when enabled: true below.
   # mysql:
+  #   enabled: true
   #   server: 127.0.0.1
   #   port: 3306
   #   user: pyhss

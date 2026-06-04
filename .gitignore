@@ -2,9 +2,7 @@ install/
 
 # Local deploy / build notes (not for public repo)
 build.md
-changes.ps1
-sync-to-server.ps1
-deploy.env.ps1
+*.ps1
 deploy-bundle/
 .cursor/
 

@@ -119,8 +119,9 @@ typedef struct ogs_global_conf_s {
 
     ogs_pkbuf_config_t pkbuf_config;
 
-    /* Huawei HSS9860 Milenage K4 unwrap (32 hex chars or path to key file). */
+    /* Huawei HSS9860 Milenage K4 unwrap (off unless enabled). */
     struct {
+        bool enabled;
         char *k4;
         char *k4_file;
     } milenage;

@@ -1,5 +1,5 @@
 /*
- * K4 Patch for Open5GS Milenage ù for Huawei HSS9860 stored-credential unwrap
+ * K4 Patch for Open5GS Milenage ? for Huawei HSS9860 stored-credential unwrap
  *
  * Matches Huawei HSS9860 storage scheme: K and OPc in MongoDB are stored
  * AES-128-ECB encrypted with a K4 key. This patch decrypts them transparently
@@ -62,9 +62,13 @@ static int     k4_enabled = 0;  /* 1 when K4 is non-zero; do decrypt */
 
 static char *k4_config_hex = NULL;
 static char *k4_config_file = NULL;
+static int k4_config_enabled = 0;
 
-void ogs_milenage_k4_apply_config(const char *k4_hex, const char *k4_file)
+void ogs_milenage_k4_apply_config(
+        bool enabled, const char *k4_hex, const char *k4_file)
 {
+    k4_config_enabled = enabled ? 1 : 0;
+
     if (k4_config_hex) {
         ogs_free(k4_config_hex);
         k4_config_hex = NULL;
@@ -147,6 +151,16 @@ static int k4_try_source(const char *label, const char *hex,
     return 0;
 }
 
+static int k4_env_enabled(void)
+{
+    const char *env = getenv("OPEN5GS_K4_ENABLED");
+
+    if (!env || !env[0])
+        return 0;
+
+    return (!strcmp(env, "1") || !strcmp(env, "true") || !strcmp(env, "yes"));
+}
+
 static void k4_init(void)
 {
     const char *env;
@@ -155,6 +169,14 @@ static void k4_init(void)
     k4_ready = 1;
 
     memset(k4_key, 0, sizeof(k4_key));
+
+    if (!k4_config_enabled && !k4_env_enabled()) {
+        k4_enabled = 0;
+        ogs_log_print(OGS_LOG_INFO,
+            "Milenage K4: disabled (set global.milenage.enabled or "
+            "OPEN5GS_K4_ENABLED=1)\n");
+        return;
+    }
 
     env = getenv("OPEN5GS_K4");
     if (k4_try_source("OPEN5GS_K4", env, NULL, &k4_enabled))
@@ -205,12 +227,12 @@ static void k4_unwrap(const uint8_t *k_in, const uint8_t *opc_in,
     milenage_log_hex("K   input (as stored) ", k_in, 16);
     milenage_log_hex("OPc input (as stored) ", opc_in, 16);
     if (!k4_enabled) {
-        ogs_log_print(OGS_LOG_INFO, "Milenage [K4] disabled ù passthrough\n");
+        ogs_log_print(OGS_LOG_INFO, "Milenage [K4] disabled ? passthrough\n");
         memcpy(k_out, k_in, 16);
         memcpy(opc_out, opc_in, 16);
         return;
     }
-    ogs_log_print(OGS_LOG_INFO, "Milenage [K4] enabled ù decrypting\n");
+    ogs_log_print(OGS_LOG_INFO, "Milenage [K4] enabled ? decrypting\n");
     milenage_log_hex("K4 key                ", k4_key, 16);
     k4_aes_ecb_decrypt_block(k4_key, k_in, k_out);
     k4_aes_ecb_decrypt_block(k4_key, opc_in, opc_out);
@@ -350,7 +372,7 @@ int milenage_f2345(const uint8_t *opc, const uint8_t *k,
 /**
  * milenage_generate - Generate AKA AUTN,IK,CK,RES
  *
- * NOTE: does NOT unwrap k/opc itself ù it delegates to milenage_f1 and
+ * NOTE: does NOT unwrap k/opc itself ? it delegates to milenage_f1 and
  * milenage_f2345, which each unwrap internally. Unwrapping here would
  * cause double-decryption.
  */

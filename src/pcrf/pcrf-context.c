@@ -436,12 +436,13 @@ int pcrf_context_parse_config(void)
                 } else if (!strcmp(pcrf_key, "mysql")) {
                     ogs_yaml_iter_t mysql_iter;
                     ogs_yaml_iter_recurse(&pcrf_iter, &mysql_iter);
-                    self.mysql.enabled = true;
                     while (ogs_yaml_iter_next(&mysql_iter)) {
                         const char *mk = ogs_yaml_iter_key(&mysql_iter);
                         const char *mv = ogs_yaml_iter_value(&mysql_iter);
                         ogs_assert(mk);
-                        if (!strcmp(mk, "server")) {
+                        if (!strcmp(mk, "enabled")) {
+                            self.mysql.enabled = ogs_yaml_iter_bool(&mysql_iter);
+                        } else if (!strcmp(mk, "server")) {
                             if (self.mysql.server)
                                 ogs_free(self.mysql.server);
                             self.mysql.server =

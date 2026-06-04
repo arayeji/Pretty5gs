@@ -13,12 +13,9 @@
 # ciphertext is decrypted into local plaintext buffers before the algorithm
 # runs, so the same Huawei-exported ciphertext works in both stacks.
 #
-# K4 source order of precedence:
-#   1. PYHSS_K4 / OPEN5GS_K4 env (32 hex chars)
-#   2. PYHSS_K4_FILE / OPEN5GS_K4_FILE (path to 32 hex chars)
-#
-# If the resulting K4 is all zeros, unwrap is a no-op (safe to ship).
-# Do NOT commit a real K4 to source control.
+# Disabled by default. Enable with PYHSS_K4_ENABLED=1 (or OPEN5GS_K4_ENABLED=1)
+# then set PYHSS_K4 / OPEN5GS_K4 (32 hex) or PYHSS_K4_FILE / OPEN5GS_K4_FILE.
+# All-zero key = no unwrap. Do not commit real keys.
 # -----------------------------------------------------------------------------
 import hmac
 from Crypto.Cipher import AES
@@ -56,10 +53,26 @@ def _k4_load_file(path):
         return None
 
 
+def _k4_env_enabled():
+    for var in ("PYHSS_K4_ENABLED", "OPEN5GS_K4_ENABLED"):
+        v = os.environ.get(var)
+        if v and v.lower() in ("1", "true", "yes"):
+            return True
+    return False
+
+
 def _k4_init():
     """One-shot init of the K4 key. Called from _k4_unwrap; idempotent."""
     global _k4_key, _k4_enabled, _k4_source
     if _k4_key is not None:
+        return
+
+    if not _k4_env_enabled():
+        _k4_key = bytes(16)
+        _k4_source = "disabled"
+        _k4_enabled = False
+        CryptoLogger.info(
+            "Milenage K4: disabled (set PYHSS_K4_ENABLED=1 to enable)")
         return
 
     for var in ("PYHSS_K4", "OPEN5GS_K4"):
