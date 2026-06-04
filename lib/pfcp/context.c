@@ -40,6 +40,10 @@ static OGS_POOL(ogs_pfcp_rule_pool, ogs_pfcp_rule_t);
 static OGS_POOL(ogs_pfcp_dev_pool, ogs_pfcp_dev_t);
 static OGS_POOL(ogs_pfcp_subnet_pool, ogs_pfcp_subnet_t);
 
+static bool subnet_matches_ue_dnn(
+        const ogs_pfcp_subnet_t *subnet, const char *dnn);
+static void ogs_pfcp_log_matching_pools(int family, const char *dnn);
+
 void ogs_pfcp_context_init(void)
 {
     int i;
@@ -2410,7 +2414,10 @@ ogs_pfcp_ue_ip_t *ogs_pfcp_ue_ip_alloc(
         subnet = ogs_pfcp_find_subnet(family);
 
     if (subnet == NULL) {
-        ogs_error("All IP addresses in all subnets are occupied");
+        ogs_error("No free UE IP in matching pool(s) "
+                "(family=%d dnn=%s)",
+                family, dnn ? dnn : "*");
+        ogs_pfcp_log_matching_pools(family, dnn);
         *cause_value = OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
         return NULL;
     }
@@ -2419,7 +2426,8 @@ ogs_pfcp_ue_ip_t *ogs_pfcp_ue_ip_alloc(
     if (memcmp(addr, zero, maxbytes) != 0) {
         ue_ip = ogs_calloc(1, sizeof(ogs_pfcp_ue_ip_t));
         if (!ue_ip) {
-            ogs_error("All dynamic addresses are occupied");
+            ogs_error("Static UE IP allocation failed (family=%d dnn=%s)",
+                    family, dnn ? dnn : "*");
             *cause_value = OGS_PFCP_CAUSE_ALL_DYNAMIC_ADDRESS_ARE_OCCUPIED;
             return NULL;
         }
@@ -2430,7 +2438,17 @@ ogs_pfcp_ue_ip_t *ogs_pfcp_ue_ip_alloc(
     } else {
         ogs_pool_alloc(&subnet->pool, &ue_ip);
         if (!ue_ip) {
-            ogs_error("No resources available");
+            char ip[OGS_ADDRSTRLEN];
+
+            if (family == AF_INET6)
+                OGS_INET6_NTOP(&subnet->sub.sub[0], ip);
+            else
+                OGS_INET_NTOP(&subnet->sub.sub[0], ip);
+
+            ogs_error("UE IP pool exhausted %s/%u dnn=%s "
+                    "(free=0 total=%u)",
+                    ip, subnet->prefixlen, dnn ? dnn : "*",
+                    subnet->pool.size);
             *cause_value = OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
             return NULL;
         }
@@ -2703,6 +2721,42 @@ static bool subnet_matches_ue_dnn(
             return true;
     }
     return false;
+}
+
+static void ogs_pfcp_log_matching_pools(int family, const char *dnn)
+{
+    ogs_pfcp_subnet_t *subnet = NULL;
+    char ip[OGS_ADDRSTRLEN];
+    char dnn_tag[OGS_MAX_DNN_LEN + 16];
+    bool any_match = false;
+
+    ogs_list_for_each(&self.subnet_list, subnet) {
+        if (subnet->family != AF_UNSPEC && subnet->family != family)
+            continue;
+        if (dnn && !subnet_matches_ue_dnn(subnet, dnn))
+            continue;
+
+        any_match = true;
+        if (family == AF_INET6)
+            OGS_INET6_NTOP(&subnet->sub.sub[0], ip);
+        else
+            OGS_INET_NTOP(&subnet->sub.sub[0], ip);
+
+        if (subnet->num_of_dnn == 0)
+            ogs_cpystrn(dnn_tag, "dnn:*", sizeof dnn_tag);
+        else
+            ogs_snprintf(dnn_tag, sizeof dnn_tag, "dnn:%s",
+                    subnet->dnn[0]);
+
+        ogs_error("  pool %s/%u %s free=%u total=%u",
+                ip, subnet->prefixlen, dnn_tag,
+                subnet->pool.avail, subnet->pool.size);
+    }
+
+    if (!any_match) {
+        ogs_error("  no UE IP pool for family=%d dnn=%s",
+                family, dnn ? dnn : "*");
+    }
 }
 
 ogs_pfcp_subnet_t *ogs_pfcp_find_subnet(int family)
