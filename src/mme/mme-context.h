@@ -126,11 +126,19 @@ typedef struct mme_context_s {
     } served_tai[OGS_MAX_NUM_OF_SUPPORTED_TA];
 
     /*
-     * NAS TAI list in Attach/TAU Accept (mme.tai is still used for S1 Setup).
-     * false: full served_tai lists (may truncate at 96 octets).
-     * true: only the UE's current TAC (type-2 list, 6 octets).
+     * Attach/TAU Accept NAS encoding (mme.attach_accept in yaml).
+     * Defaults match typical Huawei ePC interop (single TAC, VoPS on,
+     * no T3402, ESM cause #50, legacy GPRS QoS IEs).
      */
-    bool            tai_list_serving_only;
+    struct {
+        bool tai_list_serving_only;
+        bool equivalent_plmn;
+        bool equivalent_plmn_serving_only;
+        bool ims_voice_over_ps;
+        bool t3402;
+        bool esm_cause_pdn_type_mismatch;
+        bool legacy_gprs_qos;
+    } attach_accept;
 
     /*
      * Resolve HSS MIP-Home-Agent-Host (Destination-Host/Realm) via DNS
@@ -165,9 +173,6 @@ typedef struct mme_context_s {
      */
     bool            inbound_roam_suppress_pdn_type_esm_cause;
 
-    /* EPS network feature: IMS voice over PS in S1 mode (Attach/TAU Accept). */
-    bool            ims_voice_over_ps_in_s1_mode;
-
     /* Cap AMBR from HSS (bps) before GTP/NAS/S1AP */
     struct {
         bool enabled;
@@ -179,12 +184,6 @@ typedef struct mme_context_s {
     /* Equivalent PLMN (TS 24.301 §9.9.3.18) */
     int             num_of_eplmn;
     ogs_plmn_id_t   eplmn[OGS_NAS_MAX_PLMN];
-    /*
-     * When true (default), if the UE serving PLMN matches an entry in
-     * equivalent_plmn, only that PLMN is sent in Attach/TAU Accept.
-     * Otherwise the full configured list is sent.
-     */
-    bool            equivalent_plmn_serving_only;
 
     /* Access Control */
     int             default_reject_cause;
@@ -263,6 +262,11 @@ typedef struct mme_sgw_s {
     uint32_t        e_cell_id[OGS_MAX_NUM_OF_CELL_ID];
     int             num_of_e_cell_id;
 
+    bool            serving_plmn_present;
+    ogs_plmn_id_t   serving_plmn_id;
+    bool            imsi_plmn_present;
+    ogs_plmn_id_t   imsi_plmn_id;
+
     ogs_list_t      sgw_ue_list;
 } mme_sgw_t;
 
@@ -277,6 +281,11 @@ typedef struct mme_pgw_s {
     int             num_of_tac;
     uint32_t        e_cell_id[OGS_MAX_NUM_OF_CELL_ID];
     uint8_t         num_of_e_cell_id;
+
+    bool            serving_plmn_present;
+    ogs_plmn_id_t   serving_plmn_id;
+    bool            imsi_plmn_present;
+    ogs_plmn_id_t   imsi_plmn_id;
 } mme_pgw_t;
 
 #define MME_SGSAP_IS_CONNECTED(__mME) \
@@ -305,7 +314,9 @@ typedef struct mme_csmap_s {
     ogs_lnode_t     lnode;
 
     ogs_nas_eps_tai_t tai;
+    uint16_t        tac_end;    /* inclusive; 0 = only tai.tac */
     ogs_nas_lai_t   lai;
+    char            imsi_prefix[6];   /* optional; empty = any IMSI on this TAI */
 
     mme_vlr_t       *vlr;
 } mme_csmap_t;
@@ -1244,6 +1255,11 @@ void mme_pgw_remove(mme_pgw_t *pgw);
 void mme_pgw_remove_all(void);
 ogs_sockaddr_t *mme_pgw_addr_find_by_apn_enb(
         ogs_list_t *list, int family, const mme_sess_t *sess);
+mme_pgw_t *mme_pgw_find_for_sess(
+        ogs_list_t *list, const mme_sess_t *sess);
+ogs_sockaddr_t *mme_pgw_sockaddr_by_family(
+        mme_pgw_t *pgw, int family);
+void mme_pgw_log_pick(mme_ue_t *mme_ue, const mme_pgw_t *pgw, const char *apn);
 
 mme_vlr_t *mme_vlr_add(
         ogs_sockaddr_t *sa_list,
@@ -1259,6 +1275,11 @@ void mme_csmap_remove(mme_csmap_t *csmap);
 void mme_csmap_remove_all(void);
 
 mme_csmap_t *mme_csmap_find_by_tai(const ogs_eps_tai_t *tai);
+mme_csmap_t *mme_csmap_find_by_tai_and_imsi(
+        const ogs_eps_tai_t *tai, const char *imsi_bcd);
+#define mme_csmap_find_for_ue(__mME) \
+    mme_csmap_find_by_tai_and_imsi(&(__mME)->tai, \
+        MME_UE_HAVE_IMSI((__mME)) ? (__mME)->imsi_bcd : NULL)
 mme_csmap_t *mme_csmap_find_by_nas_lai(const ogs_nas_lai_t *lai);
 
 mme_hssmap_t *mme_hssmap_add(ogs_plmn_id_t *plmn_id, const char *realm,
@@ -1297,6 +1318,7 @@ typedef enum {
     SGW_HAS_ALREADY_BEEN_RELOCATED = 3,
 } sgw_relocation_e;
 sgw_relocation_e sgw_ue_check_if_relocated(mme_ue_t *mme_ue);
+void mme_sgw_reselect_for_ue_if_needed(mme_ue_t *mme_ue);
 
 void mme_ue_new_guti(mme_ue_t *mme_ue);
 void mme_ue_confirm_guti(mme_ue_t *mme_ue);

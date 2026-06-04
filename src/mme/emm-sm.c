@@ -828,7 +828,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                     S1AP_ProcedureCode_id_InitialContextSetup;
 
             /* Update CSMAP from Tracking area update request */
-            mme_ue->csmap = mme_csmap_find_by_tai(&mme_ue->tai);
+            mme_ue->csmap = mme_csmap_find_for_ue(mme_ue);
             if (mme_ue->csmap &&
                 mme_ue->network_access_mode ==
                     OGS_NETWORK_ACCESS_MODE_PACKET_AND_CIRCUIT &&
@@ -1735,6 +1735,7 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
         switch (message->emm.h.message_type) {
         case OGS_NAS_EPS_ATTACH_COMPLETE:
             ogs_mme_trace_set(enb_ue, mme_ue, NULL, "attach");
+            mme_ue_progress(mme_ue, "attach_complete");
             OGS_TLOG_INFO("Attach complete");
 
         /*

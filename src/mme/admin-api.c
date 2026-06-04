@@ -194,6 +194,57 @@ int mme_admin_ue_detach(const ogs_metrics_query_t *q,
     return ADMIN_HTTP_ACCEPTED;
 }
 
+int mme_admin_trace_imsi(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    const char *imsi = (q && q->imsi) ? q->imsi : NULL;
+    int i, n;
+
+    /* ?force=1 clears all runtime trace prefixes (no restart) */
+    if (q && q->force) {
+        ogs_trace_filter_clear();
+        *body_len = fmt_json_status(body, body_cap, 200,
+                "trace_imsi filters cleared");
+        return 200;
+    }
+
+    if (imsi && strcmp(imsi, "list") == 0) {
+        size_t off = 0;
+
+        off += snprintf(body + off, body_cap - off, "{\"trace_imsi\":[");
+        n = ogs_trace_filter_count();
+        for (i = 0; i < n; i++) {
+            const char *p = ogs_trace_filter_get(i);
+
+            if (!p)
+                continue;
+            if (i > 0)
+                off += snprintf(body + off, body_cap - off, ",");
+            off += snprintf(body + off, body_cap - off, "\"%s\"", p);
+        }
+        off += snprintf(body + off, body_cap - off, "]}\n");
+        *body_len = off;
+        return 200;
+    }
+
+    if (!imsi || !*imsi) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_BAD_REQUEST,
+                "use ?imsi=<prefix>|list or ?force=1 to clear");
+        return ADMIN_HTTP_BAD_REQUEST;
+    }
+
+    if (ogs_trace_filter_add(imsi) != OGS_OK) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_INTERNAL_ERROR, "trace_imsi list full");
+        return ADMIN_HTTP_INTERNAL_ERROR;
+    }
+
+    *body_len = fmt_json_status(body, body_cap, 200,
+            "trace_imsi added %s (count=%d)", imsi, ogs_trace_filter_count());
+    return 200;
+}
+
 void mme_admin_api_register(void)
 {
     ogs_metrics_register_admin_ep(mme_admin_enb_detach,
@@ -201,5 +252,8 @@ void mme_admin_api_register(void)
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
     ogs_metrics_register_admin_ep(mme_admin_ue_detach,
             "/admin/ue/detach",
+            OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
+    ogs_metrics_register_admin_ep(mme_admin_trace_imsi,
+            "/admin/trace/imsi",
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
 }

@@ -31,6 +31,9 @@ static bool mme_esm_include_pdn_type_cause(
 {
     mme_context_t *ctx = mme_self();
 
+    if (!ctx->attach_accept.esm_cause_pdn_type_mismatch)
+        return false;
+
     if (ctx->inbound_roam_suppress_pdn_type_esm_cause)
         return false;
 
@@ -53,6 +56,38 @@ static void mme_esm_set_pdn_type_cause(
     req->esm_cause = esm_cause;
     req->presencemask |=
         OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REQUEST_ESM_CAUSE_PRESENT;
+}
+
+static void mme_esm_add_legacy_gprs_qos(
+        ogs_nas_eps_activate_default_eps_bearer_context_request_t *req)
+{
+    static const uint8_t negotiated_qos[] = {
+        0x23, 0x93, 0x1F, 0x91, 0x96, 0xFE, 0xFE, 0x74,
+        0x4B, 0xFF, 0xFF, 0x00, 0xCA, 0x00, 0xFA, 0x00, 0x32
+    };
+
+    ogs_assert(req);
+
+    req->negotiated_qos.length = sizeof(negotiated_qos);
+    memcpy(req->negotiated_qos.buffer, negotiated_qos,
+            sizeof(negotiated_qos));
+    req->presencemask |=
+        OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REQUEST_NEGOTIATED_QOS_PRESENT;
+
+    req->negotiated_llc_sapi = 0x03;
+    req->presencemask |=
+        OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REQUEST_NEGOTIATED_LLC_SAPI_PRESENT;
+
+    req->radio_priority.spare = 0;
+    req->radio_priority.value = 2;
+    req->presencemask |=
+        OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REQUEST_RADIO_PRIORITY_PRESENT;
+
+    req->packet_flow_identifier.length = 1;
+    req->packet_flow_identifier.spare = 0;
+    req->packet_flow_identifier.value = 8;
+    req->presencemask |=
+        OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REQUEST_PACKET_FLOW_IDENTIFIER_PRESENT;
 }
 
 ogs_pkbuf_t *esm_build_pdn_connectivity_reject(
@@ -293,6 +328,9 @@ ogs_pkbuf_t *esm_build_activate_default_bearer_context_request(
         memcpy(protocol_configuration_options->buffer,
                 sess->pgw_pco.data, protocol_configuration_options->length);
     }
+
+    if (mme_self()->attach_accept.legacy_gprs_qos)
+        mme_esm_add_legacy_gprs_qos(activate_default_eps_bearer_context_request);
 
     if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST)
         return ogs_nas_eps_plain_encode(&message);

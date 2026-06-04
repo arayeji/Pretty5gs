@@ -282,7 +282,7 @@ int esm_handle_information_response(
         }
 
         if (SESSION_CONTEXT_IS_AVAILABLE(mme_ue)) {
-            mme_csmap_t *csmap = mme_csmap_find_by_tai(&mme_ue->tai);
+            mme_csmap_t *csmap = mme_csmap_find_for_ue(mme_ue);
             mme_ue->csmap = csmap;
 
             if (!csmap ||
