@@ -4,7 +4,10 @@ import struct
 import sys
 from collections import Counter
 
-pcap = sys.argv[1] if len(sys.argv) > 1 else r"c:\Users\ahmad\Documents\all23412214422s22.pcap"
+if len(sys.argv) < 2:
+    print("usage: analyze-pcap-gtp.py <file.pcap>", file=sys.stderr)
+    sys.exit(1)
+pcap = sys.argv[1]
 pkts = rdpcap(pcap)
 print(f"Total packets: {len(pkts)}")
 

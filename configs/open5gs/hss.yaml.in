@@ -8,8 +8,9 @@ global:
   max:
     ue: 1024  # The number of UE can be increased depending on memory size.
 #    peer: 64
-  # Optional Huawei HSS9860 Milenage K4 unwrap (32 hex chars, all-zero = disabled).
+  # Optional Huawei HSS9860 Milenage K4 unwrap (disabled by default).
   # milenage:
+  #   enabled: true
   #   k4_file: @sysconfdir@/open5gs/milenage_k4.key
 
 hss:

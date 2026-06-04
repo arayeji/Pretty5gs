@@ -436,7 +436,10 @@ int ogs_app_parse_global_conf(ogs_yaml_iter_t *parent)
             while (ogs_yaml_iter_next(&milenage_iter)) {
                 const char *milenage_key = ogs_yaml_iter_key(&milenage_iter);
                 ogs_assert(milenage_key);
-                if (!strcmp(milenage_key, "k4")) {
+                if (!strcmp(milenage_key, "enabled")) {
+                    global_conf.milenage.enabled =
+                        ogs_yaml_iter_bool(&milenage_iter);
+                } else if (!strcmp(milenage_key, "k4")) {
                     const char *v = ogs_yaml_iter_value(&milenage_iter);
                     if (v) {
                         ogs_free(global_conf.milenage.k4);
@@ -454,7 +457,7 @@ int ogs_app_parse_global_conf(ogs_yaml_iter_t *parent)
         }
     }
 
-    ogs_milenage_k4_apply_config(
+    ogs_milenage_k4_apply_config(global_conf.milenage.enabled,
             global_conf.milenage.k4, global_conf.milenage.k4_file);
 
     rv = global_conf_validation();
