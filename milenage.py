@@ -14,12 +14,11 @@
 # runs, so the same Huawei-exported ciphertext works in both stacks.
 #
 # K4 source order of precedence:
-#   1. PYHSS_K4 env var         (32 hex chars)
-#   2. OPEN5GS_K4 env var       (32 hex chars - same name used by Open5GS)
-#   3. Compile-time default     (HSS9860 K4SNO=1)
+#   1. PYHSS_K4 / OPEN5GS_K4 env (32 hex chars)
+#   2. PYHSS_K4_FILE / OPEN5GS_K4_FILE (path to 32 hex chars)
 #
 # If the resulting K4 is all zeros, unwrap is a no-op (safe to ship).
-# Do NOT commit a real K4 to source control - prefer the env-var route.
+# Do NOT commit a real K4 to source control.
 # -----------------------------------------------------------------------------
 import hmac
 from Crypto.Cipher import AES
@@ -38,11 +37,23 @@ CryptoLogger = logging.getLogger('CryptoLogger')
 #                          K4 UNWRAP (Huawei HSS9860)
 # ============================================================================
 
-_K4_COMPILED_DEFAULT = bytes.fromhex("5cf877088c7fb8f89047b996b38dbf99")
-
 _k4_key = None
 _k4_enabled = False
 _k4_source = None
+
+
+def _k4_load_file(path):
+    try:
+        with open(path, "r", encoding="ascii") as fp:
+            hexv = fp.read().strip()
+    except OSError:
+        return None
+    if len(hexv) != 32:
+        return None
+    try:
+        return bytes.fromhex(hexv)
+    except ValueError:
+        return None
 
 
 def _k4_init():
@@ -68,8 +79,22 @@ def _k4_init():
                 "Milenage K4: %s is not valid hex, ignoring", var)
 
     if _k4_key is None:
-        _k4_key = _K4_COMPILED_DEFAULT
-        _k4_source = "compile-default"
+        for var in ("PYHSS_K4_FILE", "OPEN5GS_K4_FILE"):
+            path = os.environ.get(var)
+            if not path:
+                continue
+            key = _k4_load_file(path)
+            if key is None:
+                CryptoLogger.warning(
+                    "Milenage K4: %s could not be read, ignoring", var)
+                continue
+            _k4_key = key
+            _k4_source = var
+            break
+
+    if _k4_key is None:
+        _k4_key = bytes(16)
+        _k4_source = "disabled"
 
     _k4_enabled = any(b != 0 for b in _k4_key)
     CryptoLogger.info(

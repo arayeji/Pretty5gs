@@ -1,5 +1,5 @@
 /*
- * K4 Patch for Open5GS Milenage ó for Huawei HSS9860 stored-credential unwrap
+ * K4 Patch for Open5GS Milenage ù for Huawei HSS9860 stored-credential unwrap
  *
  * Matches Huawei HSS9860 storage scheme: K and OPc in MongoDB are stored
  * AES-128-ECB encrypted with a K4 key. This patch decrypts them transparently
@@ -8,13 +8,11 @@
  *
  * Apply: replace lib/crypt/milenage.c in your Open5GS source tree with this.
  *
- * K4 is loaded from environment variable OPEN5GS_K4 (32 hex chars) at first
- * Milenage call. If OPEN5GS_K4 is not set or invalid, the compile-time
- * default below is used. If the resulting K4 is all zeros, decryption is
- * skipped entirely (upstream behavior ó safe to ship).
+ * K4 is loaded at first Milenage call, in order:
+ *   OPEN5GS_K4, OPEN5GS_K4_FILE, global.milenage.k4 / k4_file in YAML.
+ * If the resulting K4 is all zeros, decryption is skipped (upstream behavior).
  *
- * Security: do NOT commit this file with a real K4 to source control.
- * Prefer the env-var route and keep the compile-time default all zeros.
+ * Security: do not commit real K4 values; use a root-only key file.
  */
 
 /*
@@ -28,6 +26,7 @@
 
 #include "milenage.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -61,12 +60,24 @@ static uint8_t k4_key[16];
 static int     k4_ready = 0;    /* 1 once k4_init has run */
 static int     k4_enabled = 0;  /* 1 when K4 is non-zero; do decrypt */
 
-/* Compile-time K4 key (HSS9860 K4SNO=1). Can be overridden at runtime
- * with OPEN5GS_K4=<32 hex chars> environment variable. */
-static const uint8_t k4_compiled_default[16] = {
-    0x5c, 0xf8, 0x77, 0x08, 0x8c, 0x7f, 0xb8, 0xf8,
-    0x90, 0x47, 0xb9, 0x96, 0xb3, 0x8d, 0xbf, 0x99
-};
+static char *k4_config_hex = NULL;
+static char *k4_config_file = NULL;
+
+void ogs_milenage_k4_apply_config(const char *k4_hex, const char *k4_file)
+{
+    if (k4_config_hex) {
+        ogs_free(k4_config_hex);
+        k4_config_hex = NULL;
+    }
+    if (k4_config_file) {
+        ogs_free(k4_config_file);
+        k4_config_file = NULL;
+    }
+    if (k4_hex && k4_hex[0])
+        k4_config_hex = ogs_strdup(k4_hex);
+    if (k4_file && k4_file[0])
+        k4_config_file = ogs_strdup(k4_file);
+}
 
 static int k4_hex2bin(const char *hex, uint8_t out[16])
 {
@@ -81,30 +92,88 @@ static int k4_hex2bin(const char *hex, uint8_t out[16])
     return 0;
 }
 
-static void k4_init(void)
+static int k4_load_from_file(const char *path, uint8_t out[16])
+{
+    FILE *fp;
+    char buf[64];
+    size_t n;
+    char *p;
+
+    if (!path || !path[0]) return -1;
+
+    fp = fopen(path, "r");
+    if (!fp) return -1;
+
+    memset(buf, 0, sizeof(buf));
+    if (!fgets(buf, sizeof(buf), fp)) {
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+
+    for (p = buf; *p; p++) {
+        if (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')
+            *p = '\0';
+    }
+    n = strlen(buf);
+    while (n > 0 && (buf[n-1] == ' ' || buf[n-1] == '\t')) {
+        buf[--n] = '\0';
+    }
+
+    return k4_hex2bin(buf, out);
+}
+
+static int k4_try_source(const char *label, const char *hex,
+        const char *file, int *enabled_out)
 {
     int i, nz;
+
+    if (hex && k4_hex2bin(hex, k4_key) == 0) {
+        nz = 0;
+        for (i = 0; i < 16; i++) if (k4_key[i]) { nz = 1; break; }
+        *enabled_out = nz;
+        ogs_log_print(OGS_LOG_INFO,
+            "Milenage K4: loaded from %s (enabled=%d)\n", label, nz);
+        return 1;
+    }
+    if (file && k4_load_from_file(file, k4_key) == 0) {
+        nz = 0;
+        for (i = 0; i < 16; i++) if (k4_key[i]) { nz = 1; break; }
+        *enabled_out = nz;
+        ogs_log_print(OGS_LOG_INFO,
+            "Milenage K4: loaded from %s file (enabled=%d)\n", label, nz);
+        return 1;
+    }
+    return 0;
+}
+
+static void k4_init(void)
+{
     const char *env;
 
     if (k4_ready) return;
     k4_ready = 1;
 
-    env = getenv("OPEN5GS_K4");
-    if (env && k4_hex2bin(env, k4_key) == 0) {
-        nz = 0;
-        for (i = 0; i < 16; i++) if (k4_key[i]) { nz = 1; break; }
-        k4_enabled = nz;
-        ogs_log_print(OGS_LOG_INFO,
-            "Milenage K4: loaded from OPEN5GS_K4 (enabled=%d)\n", k4_enabled);
-        return;
-    }
+    memset(k4_key, 0, sizeof(k4_key));
 
-    memcpy(k4_key, k4_compiled_default, 16);
-    nz = 0;
-    for (i = 0; i < 16; i++) if (k4_key[i]) { nz = 1; break; }
-    k4_enabled = nz;
+    env = getenv("OPEN5GS_K4");
+    if (k4_try_source("OPEN5GS_K4", env, NULL, &k4_enabled))
+        return;
+
+    env = getenv("OPEN5GS_K4_FILE");
+    if (k4_try_source("OPEN5GS_K4_FILE", NULL, env, &k4_enabled))
+        return;
+
+    if (k4_try_source("global.milenage.k4", k4_config_hex, NULL, &k4_enabled))
+        return;
+
+    if (k4_try_source("global.milenage.k4_file", NULL, k4_config_file,
+            &k4_enabled))
+        return;
+
+    k4_enabled = 0;
     ogs_log_print(OGS_LOG_INFO,
-        "Milenage K4: compile-time default (enabled=%d)\n", k4_enabled);
+        "Milenage K4: not configured (enabled=0)\n");
 }
 
 /* AES-128-ECB single-block decrypt using Open5GS's built-in AES. */
@@ -136,12 +205,12 @@ static void k4_unwrap(const uint8_t *k_in, const uint8_t *opc_in,
     milenage_log_hex("K   input (as stored) ", k_in, 16);
     milenage_log_hex("OPc input (as stored) ", opc_in, 16);
     if (!k4_enabled) {
-        ogs_log_print(OGS_LOG_INFO, "Milenage [K4] disabled ó passthrough\n");
+        ogs_log_print(OGS_LOG_INFO, "Milenage [K4] disabled ù passthrough\n");
         memcpy(k_out, k_in, 16);
         memcpy(opc_out, opc_in, 16);
         return;
     }
-    ogs_log_print(OGS_LOG_INFO, "Milenage [K4] enabled ó decrypting\n");
+    ogs_log_print(OGS_LOG_INFO, "Milenage [K4] enabled ù decrypting\n");
     milenage_log_hex("K4 key                ", k4_key, 16);
     k4_aes_ecb_decrypt_block(k4_key, k_in, k_out);
     k4_aes_ecb_decrypt_block(k4_key, opc_in, opc_out);
@@ -281,7 +350,7 @@ int milenage_f2345(const uint8_t *opc, const uint8_t *k,
 /**
  * milenage_generate - Generate AKA AUTN,IK,CK,RES
  *
- * NOTE: does NOT unwrap k/opc itself ó it delegates to milenage_f1 and
+ * NOTE: does NOT unwrap k/opc itself ù it delegates to milenage_f1 and
  * milenage_f2345, which each unwrap internally. Unwrapping here would
  * cause double-decryption.
  */

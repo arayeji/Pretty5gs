@@ -72,6 +72,9 @@ extern "C" {
 int curve25519_donna(
         uint8_t *mypublic, const uint8_t *secret, const uint8_t *basepoint);
 
+/* Apply global YAML / env K4 before first Milenage call (HSS, UDM, tests). */
+void ogs_milenage_k4_apply_config(const char *k4_hex, const char *k4_file);
+
 #ifdef __cplusplus
 }
 #endif
