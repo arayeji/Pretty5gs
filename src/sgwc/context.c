@@ -968,11 +968,13 @@ static ogs_pfcp_node_t *selected_sgwu_node(
     }
 
     ogs_error("No SGWUs are PFCP associated that are suited to RR");
-    return ogs_list_first(&ogs_pfcp_self()->pfcp_peer_list);
+    return NULL;
 }
 
 void sgwc_sess_select_sgwu(sgwc_sess_t *sess)
 {
+    ogs_pfcp_node_t *node = NULL;
+
     ogs_assert(sess);
 
     /*
@@ -984,18 +986,21 @@ void sgwc_sess_select_sgwu(sgwc_sess_t *sess)
             ogs_list_last(&ogs_pfcp_self()->pfcp_peer_list);
 
     if (ogs_pfcp_self()->pfcp_node) {
-
         /* setup GTP session with selected SGW-U */
-        ogs_pfcp_self()->pfcp_node =
-            selected_sgwu_node(ogs_pfcp_self()->pfcp_node, sess);
-        ogs_assert(ogs_pfcp_self()->pfcp_node);
-        OGS_SETUP_PFCP_NODE(sess, ogs_pfcp_self()->pfcp_node);
-        ogs_debug("UE using SGW-U on IP %s",
-                ogs_sockaddr_to_string_static(
-                    ogs_pfcp_self()->pfcp_node->addr_list));
+        node = selected_sgwu_node(ogs_pfcp_self()->pfcp_node, sess);
+        if (node) {
+            ogs_pfcp_self()->pfcp_node = node;
+            OGS_SETUP_PFCP_NODE(sess, node);
+            ogs_debug("UE using SGW-U on IP %s",
+                    ogs_sockaddr_to_string_static(node->addr_list));
+        } else {
+            ogs_error("No PFCP-associated SGW-U for session [APN:%s]",
+                    sess->session.name ? sess->session.name : "-");
+            sess->pfcp_node = NULL;
+        }
     } else {
-        ogs_error("No suitable SGWU found for session");
-        ogs_assert(sess->pfcp_node == NULL);
+        ogs_error("No SGW-U configured in sgwc.pfcp");
+        sess->pfcp_node = NULL;
     }
 }
 

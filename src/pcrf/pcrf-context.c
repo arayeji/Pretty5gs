@@ -121,14 +121,16 @@ static int pcrf_context_validation(void)
     if (self.mysql.enabled) {
 #ifdef HAVE_MYSQL
         if (!self.mysql.server || !self.mysql.user || !self.mysql.database) {
-            ogs_error("pcrf.mysql enabled but server, user, or database "
-                    "missing in '%s'", ogs_app()->file);
-            return OGS_ERROR;
+            ogs_warn("pcrf.mysql enabled but server, user, or database "
+                    "missing in '%s'; using YAML policy only",
+                    ogs_app()->file);
+            self.mysql.enabled = false;
         }
 #else
-        ogs_error("pcrf.mysql.enabled in '%s' but open5gs was built without "
-                "meson -Dmysql_pcrf=true", ogs_app()->file);
-        return OGS_ERROR;
+        ogs_warn("pcrf.mysql.enabled in '%s' but open5gs was built without "
+                "meson -Dmysql_pcrf=true; YAML policy only",
+                ogs_app()->file);
+        self.mysql.enabled = false;
 #endif
     }
 
