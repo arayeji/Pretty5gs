@@ -687,22 +687,22 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
             memcpy(&nas_guti.m_tmsi, S_TMSI->m_TMSI.buf, S_TMSI->m_TMSI.size);
             nas_guti.m_tmsi = be32toh(nas_guti.m_tmsi);
 
-            mme_ue = mme_ue_find_by_guti(&nas_guti);
-            if (!mme_ue) {
+            mme_ue_from_stmsi = mme_ue_find_by_guti(&nas_guti);
+            if (!mme_ue_from_stmsi) {
                 ogs_mme_trace_set(enb_ue, NULL, NULL, "initial-ue");
                 OGS_TLOG_DEBUG("Unknown UE by S_TMSI[G:%d,C:%d,M_TMSI:0x%x]",
                         nas_guti.mme_gid, nas_guti.mme_code, nas_guti.m_tmsi);
             } else {
                 ogs_debug("    S_TMSI[G:%d,C:%d,M_TMSI:0x%x] IMSI:[%s]",
-                        mme_ue->current.guti.mme_gid,
-                        mme_ue->current.guti.mme_code,
-                        mme_ue->current.guti.m_tmsi,
-                        MME_UE_HAVE_IMSI(mme_ue)
-                            ? mme_ue->imsi_bcd : "Unknown");
+                        mme_ue_from_stmsi->current.guti.mme_gid,
+                        mme_ue_from_stmsi->current.guti.mme_code,
+                        mme_ue_from_stmsi->current.guti.m_tmsi,
+                        MME_UE_HAVE_IMSI(mme_ue_from_stmsi)
+                            ? mme_ue_from_stmsi->imsi_bcd : "Unknown");
 
                 /* If NAS(mme_ue_t) has already been associated with
                  * older S1(enb_ue_t) context */
-                if (ECM_CONNECTED(mme_ue)) {
+                if (ECM_CONNECTED(mme_ue_from_stmsi)) {
     /*
      * Issue #2786
      *
@@ -720,12 +720,12 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
      * To solve this problem, the EPC has been modified to implicitly
      * delete the ENB Context instead of sending a UEContextReleaseCommand.
      */
-                    HOLDING_S1_CONTEXT(mme_ue);
+                    HOLDING_S1_CONTEXT(mme_ue_from_stmsi);
                 }
-                enb_ue_associate_mme_ue(enb_ue, mme_ue);
+                enb_ue_associate_mme_ue(enb_ue, mme_ue_from_stmsi);
                 ogs_debug("Mobile Reachable timer stopped for IMSI[%s]",
-                    mme_ue->imsi_bcd);
-                CLEAR_MME_UE_TIMER(mme_ue->t_mobile_reachable);
+                    mme_ue_from_stmsi->imsi_bcd);
+                CLEAR_MME_UE_TIMER(mme_ue_from_stmsi->t_mobile_reachable);
             }
         }
     } else {
