@@ -315,6 +315,29 @@ void mme_s6a_handle_clr(mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
         return;
     }
 
+    /*
+     * HSS sends Cancel-Location (MME-Update) to the previous registration when
+     * it receives ULR for the same subscriber. On re-attach at this MME the
+     * CLR targets the same mme_ue context that is still in attach/TAU.
+     *
+     * Applying implicit detach here overwrites nas_eps.type with
+     * DETACH_REQUEST_TO_UE and tears down the session that attach is creating.
+     * Combined attach then crashes in sgsap_handle_location_update_accept when
+     * SGs Location Update Accept arrives after create_session_rsp_ok.
+     *
+     * The in-flight attach/TAU supersedes the old registration; ignore CLR.
+     * (Cancel-Location-Answer was already sent in mme-fd-path.c.)
+     */
+    if (clr_message->cancellation_type == OGS_DIAM_S6A_CT_MME_UPDATE_PROCEDURE ||
+        clr_message->cancellation_type == OGS_DIAM_S6A_CT_SGSN_UPDATE_PROCEDURE) {
+        if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST ||
+            mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
+            ogs_info("[%s] Ignore CLR(MME-Update) during attach/TAU",
+                    mme_ue->imsi_bcd);
+            return;
+        }
+    }
+
     /* Set EPS Detach */
     memset(&mme_ue->nas_eps.detach, 0, sizeof(ogs_nas_detach_type_t));
 

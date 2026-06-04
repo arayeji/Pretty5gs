@@ -372,6 +372,11 @@ void sgwc_sxa_handle_session_establishment_response(
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
         if (sess) sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        ogs_error("[%s] PFCP Session Establishment failed [PFCP cause:%u] "
+                "-> S11 Create Session cause:%u",
+                sgwc_ue ? sgwc_ue->imsi_bcd : "-",
+                pfcp_rsp->cause.presence ? pfcp_rsp->cause.u8 : 0,
+                cause_value);
         ogs_gtp_send_error_message(
                 s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
                 OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, cause_value);

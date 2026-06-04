@@ -19,6 +19,28 @@
 
 #include "gtp-path.h"
 
+/*
+ * PGW peers are normally learned from Create Session F-TEID. Home PGW may
+ * reply from a different source IP than the F-TEID address, so classify
+ * by GTP message type before defaulting unknown peers to S11 (MME).
+ */
+static bool sgwc_gtpc_is_s5_pgw_message(uint8_t type)
+{
+    switch (type) {
+    case OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE:
+    case OGS_GTP2_MODIFY_BEARER_RESPONSE_TYPE:
+    case OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE:
+    case OGS_GTP2_CREATE_BEARER_REQUEST_TYPE:
+    case OGS_GTP2_UPDATE_BEARER_REQUEST_TYPE:
+    case OGS_GTP2_DELETE_BEARER_REQUEST_TYPE:
+    case OGS_GTP2_DELETE_BEARER_FAILURE_INDICATION_TYPE:
+    case OGS_GTP2_BEARER_RESOURCE_FAILURE_INDICATION_TYPE:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static void _gtpv2_c_recv_cb(short when, ogs_socket_t fd, void *data)
 {
     sgwc_event_t *e = NULL;
@@ -75,6 +97,28 @@ static void _gtpv2_c_recv_cb(short when, ogs_socket_t fd, void *data)
      *   "Context not found".
      */
     gnode = ogs_gtp_node_find_by_addr(&sgwc_self()->pgw_s5c_list, &from);
+    if (!gnode) {
+        uint8_t msg_type = 0;
+
+        if (pkbuf->len >= sizeof(ogs_gtp2_header_t))
+            msg_type = ((ogs_gtp2_header_t *)pkbuf->data)->type;
+
+        if (sgwc_gtpc_is_s5_pgw_message(msg_type)) {
+            gnode = ogs_gtp_node_add_by_addr(
+                    &sgwc_self()->pgw_s5c_list, &from);
+            if (!gnode) {
+                ogs_error("Failed to create PGW gnode(%s:%u), mempool full, "
+                        "ignoring msg!",
+                        OGS_ADDR(&from, frombuf), OGS_PORT(&from));
+                ogs_pkbuf_free(pkbuf);
+                return;
+            }
+            gnode->sock = data;
+            ogs_info("PGW S5-C peer learned [%s]:%u (GTP type %u)",
+                    OGS_ADDR(&from, frombuf), OGS_PORT(&from), msg_type);
+        }
+    }
+
     if (gnode) {
         e = sgwc_event_new(SGWC_EVT_S5C_MESSAGE);
         ogs_assert(e);

@@ -333,17 +333,19 @@ void sgwc_s11_handle_create_session_request(
     sgwc_sess_select_sgwu(sess);
 
     if (!sess->pfcp_node) {
-        ogs_error("[%s:%s] No SGWU available for session",
-                  sgwc_ue->imsi_bcd, sess->session.name);
-        cause_value = OGS_GTP2_CAUSE_SYSTEM_FAILURE;
+        ogs_error("[%s:%s] No PFCP-associated SGW-U (check open5gs-sgwud "
+                "and sgwc.yaml pfcp.client)",
+                sgwc_ue->imsi_bcd, sess->session.name);
+        cause_value = OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING;
         goto cleanup;
     }
 
     /* Check if selected SGW-U is associated with SGW-C */
     ogs_assert(sess->pfcp_node);
     if (!OGS_FSM_CHECK(&sess->pfcp_node->sm, sgwc_pfcp_state_associated)) {
-        ogs_error("[%s:%s] Remote peer not responding",
-                  sgwc_ue->imsi_bcd, sess->session.name);
+        ogs_error("[%s:%s] SGW-U [%s] not PFCP-associated with SGWC",
+                sgwc_ue->imsi_bcd, sess->session.name,
+                ogs_sockaddr_to_string_static(sess->pfcp_node->addr_list));
         cause_value = OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING;
         goto cleanup;
     }
@@ -489,6 +491,8 @@ void sgwc_s11_handle_create_session_request(
 
 cleanup:
     ogs_assert(cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
+    ogs_error("[%s] Create Session failed before SGW-U/SMF [GTP cause:%u]",
+            sgwc_ue ? sgwc_ue->imsi_bcd : "-", cause_value);
     if (sess)
         sgwc_sess_remove(sess);
 

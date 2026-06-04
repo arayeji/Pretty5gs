@@ -123,6 +123,24 @@ static int pcrf_mysql_ensure_connected(void)
     return OGS_ERROR;
 }
 
+static void pcrf_mysql_disable_runtime(pcrf_context_t *ctx)
+{
+    ogs_assert(ctx);
+
+    ctx->mysql.enabled = false;
+
+    if (pcrf_mysql_mutex_initialized) {
+        ogs_thread_mutex_lock(&pcrf_mysql_mutex);
+        if (pcrf_mysql) {
+            mysql_close(pcrf_mysql);
+            pcrf_mysql = NULL;
+        }
+        ogs_thread_mutex_unlock(&pcrf_mysql_mutex);
+        ogs_thread_mutex_destroy(&pcrf_mysql_mutex);
+        pcrf_mysql_mutex_initialized = 0;
+    }
+}
+
 int pcrf_mysql_open(pcrf_context_t *ctx)
 {
     bool reconnect = true;
@@ -138,10 +156,9 @@ int pcrf_mysql_open(pcrf_context_t *ctx)
 
     pcrf_mysql = mysql_init(NULL);
     if (!pcrf_mysql) {
-        ogs_error("mysql_init() failed");
-        ogs_thread_mutex_destroy(&pcrf_mysql_mutex);
-        pcrf_mysql_mutex_initialized = 0;
-        return OGS_ERROR;
+        ogs_warn("mysql_init() failed; PCRF continues with YAML policy only");
+        pcrf_mysql_disable_runtime(ctx);
+        return OGS_OK;
     }
 
     mysql_options(pcrf_mysql, MYSQL_OPT_RECONNECT, &reconnect);
@@ -149,11 +166,12 @@ int pcrf_mysql_open(pcrf_context_t *ctx)
     if (!mysql_real_connect(pcrf_mysql, ctx->mysql.server, ctx->mysql.user,
             ctx->mysql.password ? ctx->mysql.password : "",
             ctx->mysql.database, ctx->mysql.port, NULL, 0)) {
-        ogs_error("mysql_real_connect failed: %s", mysql_error(pcrf_mysql));
+        ogs_warn("mysql_real_connect failed: %s; PCRF continues with YAML "
+                "policy only", mysql_error(pcrf_mysql));
         mysql_close(pcrf_mysql);
         pcrf_mysql = NULL;
-        ogs_thread_mutex_destroy(&pcrf_mysql_mutex);
-        return OGS_ERROR;
+        pcrf_mysql_disable_runtime(ctx);
+        return OGS_OK;
     }
 
     ogs_info("PCRF MySQL: connected to %s/%s (PyHSS schema)",
@@ -294,9 +312,9 @@ int pcrf_mysql_open(pcrf_context_t *ctx)
 {
     ogs_assert(ctx);
     if (ctx->mysql.enabled) {
-        ogs_error("PCRF MySQL requested in config but Open5GS was built "
-                "without -Dmysql_pcrf=true (libmysqlclient)");
-        return OGS_ERROR;
+        ogs_warn("pcrf.mysql.enabled in config but Open5GS was built without "
+                "-Dmysql_pcrf=true; using YAML policy only");
+        ctx->mysql.enabled = false;
     }
     return OGS_OK;
 }
