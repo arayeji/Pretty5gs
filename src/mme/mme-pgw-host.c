@@ -23,12 +23,30 @@
 
 static ogs_hash_t *pgw_host_cache = NULL;
 
-static void pgw_host_cache_free_entry(char *fqdn, ogs_ip_t *ip)
+/*
+ * Negative-cache TTL. ogs_getaddrinfo() is a *blocking* call on the MME main
+ * event loop; a slow/unreachable resolver stalls all UE processing for the
+ * full resolver timeout. We cannot make the lookup truly asynchronous without
+ * reworking the ULA->Create-Session path, but we can ensure a failing FQDN
+ * blocks at most once per TTL instead of on every attach for that APN.
+ *
+ * TODO: move resolution to a worker thread / async resolver to remove the
+ * first-lookup stall entirely.
+ */
+#define PGW_HOST_NEG_CACHE_TTL ogs_time_from_sec(30)
+
+typedef struct pgw_host_cache_entry_s {
+    ogs_ip_t    ip;
+    bool        resolved;   /* false => negative (resolution failed) */
+    ogs_time_t  expire;     /* monotonic expiry for negative entries */
+} pgw_host_cache_entry_t;
+
+static void pgw_host_cache_free_entry(char *fqdn, pgw_host_cache_entry_t *entry)
 {
     if (fqdn)
         ogs_free(fqdn);
-    if (ip)
-        ogs_free(ip);
+    if (entry)
+        ogs_free(entry);
 }
 
 void mme_pgw_host_cache_init(void)
@@ -47,8 +65,9 @@ void mme_pgw_host_cache_final(void)
 
     for (hi = ogs_hash_first(pgw_host_cache); hi; hi = ogs_hash_next(hi)) {
         char *fqdn = (char *)ogs_hash_this_key(hi);
-        ogs_ip_t *ip = (ogs_ip_t *)ogs_hash_this_val(hi);
-        pgw_host_cache_free_entry(fqdn, ip);
+        pgw_host_cache_entry_t *entry =
+            (pgw_host_cache_entry_t *)ogs_hash_this_val(hi);
+        pgw_host_cache_free_entry(fqdn, entry);
     }
 
     ogs_hash_destroy(pgw_host_cache);
@@ -153,7 +172,7 @@ int mme_pgw_host_lookup_cache(
         ogs_ip_t *smf_ip)
 {
     char fqdn[OGS_MAX_FQDN_LEN+1];
-    ogs_ip_t *cached = NULL;
+    pgw_host_cache_entry_t *cached = NULL;
 
     ogs_assert(smf_ip);
     memset(smf_ip, 0, sizeof(*smf_ip));
@@ -170,10 +189,10 @@ int mme_pgw_host_lookup_cache(
 
     ogs_assert(pgw_host_cache);
     cached = ogs_hash_get(pgw_host_cache, fqdn, strlen(fqdn));
-    if (!cached)
+    if (!cached || !cached->resolved)
         return OGS_ERROR;
 
-    memcpy(smf_ip, cached, sizeof(*smf_ip));
+    memcpy(smf_ip, &cached->ip, sizeof(*smf_ip));
     ogs_debug("PGW host cache hit [%s]", fqdn);
     return OGS_OK;
 }
@@ -185,7 +204,7 @@ int mme_pgw_host_resolve(
 {
     char fqdn[OGS_MAX_FQDN_LEN+1];
     char *cache_key = NULL;
-    ogs_ip_t *cached = NULL;
+    pgw_host_cache_entry_t *cached = NULL;
     ogs_ip_t resolved;
 
     ogs_assert(smf_ip);
@@ -208,18 +227,55 @@ int mme_pgw_host_resolve(
         return OGS_ERROR;
     }
 
-    memset(&resolved, 0, sizeof(resolved));
-    if (pgw_host_dns_resolve(fqdn, &resolved) != OGS_OK)
+    ogs_assert(pgw_host_cache);
+
+    /*
+     * Negative cache: if this FQDN failed to resolve recently, do not block
+     * the main event loop again on getaddrinfo() until the TTL expires.
+     * (lookup_cache() above only returns positive hits, so a non-NULL entry
+     * here is a negative one; we reuse it in place to avoid key churn.)
+     */
+    cached = ogs_hash_get(pgw_host_cache, fqdn, strlen(fqdn));
+    if (cached && !cached->resolved && ogs_time_now() < cached->expire) {
+        ogs_debug("PGW host negative-cache hit [%s], skipping DNS", fqdn);
         return OGS_ERROR;
+    }
 
-    cache_key = ogs_strdup(fqdn);
-    ogs_assert(cache_key);
-    cached = ogs_calloc(1, sizeof(ogs_ip_t));
-    ogs_assert(cached);
-    memcpy(cached, &resolved, sizeof(*cached));
-    ogs_hash_set(pgw_host_cache, cache_key, strlen(cache_key), cached);
+    memset(&resolved, 0, sizeof(resolved));
+    if (pgw_host_dns_resolve(fqdn, &resolved) != OGS_OK) {
+        /* Cache/refresh the failure so subsequent attaches don't each block. */
+        if (cached) {
+            cached->resolved = false;
+            cached->expire = ogs_time_now() + PGW_HOST_NEG_CACHE_TTL;
+        } else {
+            cache_key = ogs_strdup(fqdn);
+            ogs_assert(cache_key);
+            cached = ogs_calloc(1, sizeof(*cached));
+            ogs_assert(cached);
+            cached->resolved = false;
+            cached->expire = ogs_time_now() + PGW_HOST_NEG_CACHE_TTL;
+            ogs_hash_set(pgw_host_cache, cache_key, strlen(cache_key), cached);
+        }
+        return OGS_ERROR;
+    }
 
-    memcpy(smf_ip, cached, sizeof(*smf_ip));
+    if (cached) {
+        /* Promote the (expired-negative) entry to a positive one. */
+        cached->resolved = true;
+        cached->expire = 0;
+        memcpy(&cached->ip, &resolved, sizeof(cached->ip));
+    } else {
+        cache_key = ogs_strdup(fqdn);
+        ogs_assert(cache_key);
+        cached = ogs_calloc(1, sizeof(*cached));
+        ogs_assert(cached);
+        cached->resolved = true;
+        cached->expire = 0;
+        memcpy(&cached->ip, &resolved, sizeof(cached->ip));
+        ogs_hash_set(pgw_host_cache, cache_key, strlen(cache_key), cached);
+    }
+
+    memcpy(smf_ip, &cached->ip, sizeof(*smf_ip));
     return OGS_OK;
 }
 

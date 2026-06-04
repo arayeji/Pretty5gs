@@ -384,7 +384,12 @@ void mme_s11_handle_create_session_response(
             break;
         }
         cause = rsp->bearer_contexts_created[i].cause.data;
-        ogs_assert(cause);
+        if (!cause) {
+            ogs_error("[%s] Invalid Bearer Cause IE", mme_ue->imsi_bcd);
+            fail_cause = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
+            fail_reason = "Invalid Bearer Cause IE";
+            goto fail;
+        }
 
         bearer_cause = cause->value;
         if (!OGS_GTP2_CAUSE_IS_SUCCESS(bearer_cause)) {

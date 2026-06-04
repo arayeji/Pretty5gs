@@ -1122,7 +1122,7 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
 
         mme_host = ogs_strndup(
             (char*)hdr->avp_value->os.data,
-            ogs_min(hdr->avp_value->os.len, OGS_MAX_FQDN_LEN) + 1);
+            ogs_min(hdr->avp_value->os.len, OGS_MAX_FQDN_LEN));
         if (!mme_host) {
             ogs_error("Failed to duplicate MME host");
             result_code = OGS_DIAM_INVALID_AVP_VALUE;

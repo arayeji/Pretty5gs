@@ -567,7 +567,8 @@ static int ogs_gtp_xact_update_rx(ogs_gtp_xact_t *xact, uint8_t type)
 
                 if (xact->step != 2 && xact->step != 3) {
                     ogs_gtp_xact_log_state(xact, type, "invalid step");
-                    ogs_pkbuf_free(pkbuf);
+                    /* pkbuf is still NULL here (assigned from
+                     * xact->seq[2].pkbuf below); nothing to free. */
                     return OGS_ERROR;
                 }
 

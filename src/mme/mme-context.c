@@ -217,8 +217,8 @@ void mme_context_init(void)
 
     self.ambr_limit.enabled = false;
     self.ambr_limit.force = false;
-    self.ambr_limit.downlink_bps = 200 * 1000000;
-    self.ambr_limit.uplink_bps = 200 * 1000000;
+    self.ambr_limit.downlink_bps = 200U * 1000000U;
+    self.ambr_limit.uplink_bps = 200U * 1000000U;
 
     mme_pgw_host_cache_init();
 

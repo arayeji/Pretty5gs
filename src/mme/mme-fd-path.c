@@ -1188,6 +1188,11 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
         ogs_assert(ret == 0);
+        if (!hdr->avp_value) {
+            ogs_error("no Result-Code value");
+            error++;
+            goto cleanup;
+        }
         s6a_message->result_code = hdr->avp_value->i32;
         s6a_message->err = &s6a_message->result_code;
         ogs_debug("    Result Code: %d", hdr->avp_value->i32);
@@ -1313,6 +1318,11 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
         if (avp_xres) {
             ret = fd_msg_avp_hdr(avp_xres, &hdr);
             ogs_assert(ret == 0);
+            if (!hdr->avp_value) {
+                ogs_error("no XRES value");
+                error++;
+                goto cleanup;
+            }
             e_utran_vector->xres_len =
                 ogs_min(hdr->avp_value->os.len,
                         OGS_ARRAY_SIZE(e_utran_vector->xres));
@@ -1335,6 +1345,11 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
         if (avp_kasme) {
             ret = fd_msg_avp_hdr(avp_kasme, &hdr);
             ogs_assert(ret == 0);
+            if (!hdr->avp_value) {
+                ogs_error("no KASME value");
+                error++;
+                goto cleanup;
+            }
             memcpy(e_utran_vector->kasme, hdr->avp_value->os.data,
                     ogs_min(hdr->avp_value->os.len,
                         OGS_ARRAY_SIZE(e_utran_vector->kasme)));
@@ -1355,6 +1370,11 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
         if (avp_rand) {
             ret = fd_msg_avp_hdr(avp_rand, &hdr);
             ogs_assert(ret == 0);
+            if (!hdr->avp_value) {
+                ogs_error("no RAND value");
+                error++;
+                goto cleanup;
+            }
             memcpy(e_utran_vector->rand, hdr->avp_value->os.data,
                     ogs_min(hdr->avp_value->os.len,
                         OGS_ARRAY_SIZE(e_utran_vector->rand)));
@@ -1375,6 +1395,11 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
         if (avp_autn) {
             ret = fd_msg_avp_hdr(avp_autn, &hdr);
             ogs_assert(ret == 0);
+            if (!hdr->avp_value) {
+                ogs_error("no AUTN value");
+                error++;
+                goto cleanup;
+            }
             memcpy(e_utran_vector->autn, hdr->avp_value->os.data,
                     ogs_min(hdr->avp_value->os.len,
                         OGS_ARRAY_SIZE(e_utran_vector->autn)));
@@ -1715,6 +1740,11 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
         ogs_assert(ret == 0);
+        if (!hdr->avp_value) {
+            ogs_error("no Result-Code value");
+            error++;
+            goto cleanup;
+        }
         s6a_message->result_code = hdr->avp_value->i32;
         s6a_message->err = &s6a_message->result_code;
         ogs_debug("    Result Code: %d", hdr->avp_value->i32);
@@ -2119,6 +2149,11 @@ static void mme_s6a_pua_cb(void *data, struct msg **msg)
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
         ogs_assert(ret == 0);
+        if (!hdr->avp_value) {
+            ogs_error("no Result-Code value");
+            error++;
+            goto cleanup;
+        }
         s6a_message->result_code = hdr->avp_value->i32;
         s6a_message->err = &s6a_message->result_code;
         ogs_debug("    Result Code: %d", hdr->avp_value->i32);
@@ -2336,7 +2371,8 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
 
     ret = fd_msg_avp_hdr(avp, &hdr);
     ogs_assert(ret == 0);
-    if (!hdr->avp_value->os.data || hdr->avp_value->os.len == 0) {
+    if (!hdr->avp_value || !hdr->avp_value->os.data ||
+            hdr->avp_value->os.len == 0) {
         ogs_error("Invalid User-Name AVP data");
         result_code = OGS_DIAM_INVALID_AVP_VALUE;
         goto error_out;
@@ -2524,7 +2560,8 @@ static int mme_s6a_idr_cb(struct msg **msg, struct avp *avp,
 
     ret = fd_msg_avp_hdr(avp, &hdr);
     ogs_assert(ret == 0);
-    if (!hdr->avp_value->os.data || hdr->avp_value->os.len == 0) {
+    if (!hdr->avp_value || !hdr->avp_value->os.data ||
+            hdr->avp_value->os.len == 0) {
         ogs_error("Invalid User-Name AVP data");
         result_code = OGS_DIAM_INVALID_AVP_VALUE;
         goto error_out;
