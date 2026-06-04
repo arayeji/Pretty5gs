@@ -43,6 +43,40 @@ static void response_timeout(void *data);
 static void holding_timeout(void *data);
 static void peer_timeout(void *data);
 
+static void ogs_gtp_xact_log_state(
+        const ogs_gtp_xact_t *xact, uint8_t type, const char *why)
+{
+    char buf[OGS_ADDRSTRLEN];
+
+    if (!xact) {
+        ogs_error("%s (no transaction) type=%u", why, type);
+        return;
+    }
+
+    if (why && strstr(why, "invalid step")) {
+        ogs_warn("%s: gtpv=%u xid=%u step=%d org=%u type=%u peer=[%s]:%d "
+                "local_teid=0x%x enb_ue_id=%d",
+                why, xact->gtp_version, xact->xid, xact->step, xact->org, type,
+                xact->gnode ? OGS_ADDR(&xact->gnode->addr, buf) : "?",
+                xact->gnode ? OGS_PORT(&xact->gnode->addr) : 0,
+                xact->local_teid, xact->enb_ue_id);
+        return;
+    }
+
+    if (xact->gnode) {
+        ogs_error("%s: gtpv=%u xid=%u step=%d org=%u type=%u peer=[%s]:%d "
+                "local_teid=0x%x enb_ue_id=%d",
+                why, xact->gtp_version, xact->xid, xact->step, xact->org, type,
+                OGS_ADDR(&xact->gnode->addr, buf), OGS_PORT(&xact->gnode->addr),
+                xact->local_teid, xact->enb_ue_id);
+    } else {
+        ogs_error("%s: gtpv=%u xid=%u step=%d org=%u type=%u local_teid=0x%x "
+                "enb_ue_id=%d",
+                why, xact->gtp_version, xact->xid, xact->step, xact->org, type,
+                xact->local_teid, xact->enb_ue_id);
+    }
+}
+
 int ogs_gtp_xact_init(void)
 {
     ogs_assert(ogs_gtp_xact_initialized == 0);
@@ -320,7 +354,7 @@ int ogs_gtp1_xact_update_tx(ogs_gtp_xact_t *xact,
         switch (stage) {
         case GTP_XACT_INITIAL_STAGE:
             if (xact->step != 0) {
-                ogs_error("invalid step[%d]", xact->step);
+                ogs_warn("invalid step[%d]", xact->step);
                 ogs_pkbuf_free(pkbuf);
                 return OGS_ERROR;
             }
@@ -333,7 +367,7 @@ int ogs_gtp1_xact_update_tx(ogs_gtp_xact_t *xact,
 
         case GTP_XACT_FINAL_STAGE:
             if (xact->step != 2 && xact->step != 3) {
-                ogs_error("invalid step[%d]", xact->step);
+                ogs_warn("invalid step[%d]", xact->step);
                 ogs_pkbuf_free(pkbuf);
                 return OGS_ERROR;
             }
@@ -353,7 +387,7 @@ int ogs_gtp1_xact_update_tx(ogs_gtp_xact_t *xact,
         case GTP_XACT_INTERMEDIATE_STAGE:
         case GTP_XACT_FINAL_STAGE:
             if (xact->step != 1) {
-                ogs_error("invalid step[%d]", xact->step);
+                ogs_warn("invalid step[%d]", xact->step);
                 ogs_pkbuf_free(pkbuf);
                 return OGS_ERROR;
             }
@@ -421,7 +455,7 @@ int ogs_gtp_xact_update_tx(ogs_gtp_xact_t *xact,
         switch (stage) {
         case GTP_XACT_INITIAL_STAGE:
             if (xact->step != 0) {
-                ogs_error("invalid step[%d]", xact->step);
+                ogs_warn("invalid step[%d]", xact->step);
                 ogs_pkbuf_free(pkbuf);
                 return OGS_ERROR;
             }
@@ -434,7 +468,7 @@ int ogs_gtp_xact_update_tx(ogs_gtp_xact_t *xact,
 
         case GTP_XACT_FINAL_STAGE:
             if (xact->step != 2) {
-                ogs_error("invalid step[%d]", xact->step);
+                ogs_warn("invalid step[%d]", xact->step);
                 ogs_pkbuf_free(pkbuf);
                 return OGS_ERROR;
             }
@@ -454,7 +488,7 @@ int ogs_gtp_xact_update_tx(ogs_gtp_xact_t *xact,
         case GTP_XACT_INTERMEDIATE_STAGE:
         case GTP_XACT_FINAL_STAGE:
             if (xact->step != 1) {
-                ogs_error("invalid step[%d]", xact->step);
+                ogs_warn("invalid step[%d]", xact->step);
                 ogs_pkbuf_free(pkbuf);
                 return OGS_ERROR;
             }
@@ -532,7 +566,7 @@ static int ogs_gtp_xact_update_rx(ogs_gtp_xact_t *xact, uint8_t type)
                 ogs_pkbuf_t *pkbuf = NULL;
 
                 if (xact->step != 2 && xact->step != 3) {
-                    ogs_error("invalid step[%d]", xact->step);
+                    ogs_gtp_xact_log_state(xact, type, "invalid step");
                     ogs_pkbuf_free(pkbuf);
                     return OGS_ERROR;
                 }
@@ -570,7 +604,7 @@ static int ogs_gtp_xact_update_rx(ogs_gtp_xact_t *xact, uint8_t type)
             }
 
             if (xact->step != 1) {
-                ogs_error("invalid step[%d]", xact->step);
+                ogs_warn("invalid step[%d]", xact->step);
                 return OGS_ERROR;
             }
 
@@ -582,7 +616,7 @@ static int ogs_gtp_xact_update_rx(ogs_gtp_xact_t *xact, uint8_t type)
 
         case GTP_XACT_FINAL_STAGE:
             if (xact->step != 1) {
-                ogs_error("invalid step[%d]", xact->step);
+                ogs_gtp_xact_log_state(xact, type, "invalid step");
                 return OGS_ERROR;
             }
             break;
@@ -598,7 +632,7 @@ static int ogs_gtp_xact_update_rx(ogs_gtp_xact_t *xact, uint8_t type)
                 ogs_pkbuf_t *pkbuf = NULL;
 
                 if (xact->step != 1 && xact->step != 2) {
-                    ogs_error("invalid step[%d]", xact->step);
+                    ogs_gtp_xact_log_state(xact, type, "invalid step");
                     return OGS_ERROR;
                 }
 
@@ -635,7 +669,7 @@ static int ogs_gtp_xact_update_rx(ogs_gtp_xact_t *xact, uint8_t type)
             }
 
             if (xact->step != 0) {
-                ogs_error("invalid step[%d]", xact->step);
+                ogs_gtp_xact_log_state(xact, type, "invalid step");
                 return OGS_ERROR;
             }
             if (xact->tm_holding)
@@ -650,7 +684,7 @@ static int ogs_gtp_xact_update_rx(ogs_gtp_xact_t *xact, uint8_t type)
 
         case GTP_XACT_FINAL_STAGE:
             if (xact->step != 2) {
-                ogs_error("invalid step[%d]", xact->step);
+                ogs_gtp_xact_log_state(xact, type, "invalid step");
                 return OGS_ERROR;
             }
 
@@ -706,7 +740,7 @@ int ogs_gtp_xact_commit(ogs_gtp_xact_t *xact)
         switch (stage) {
         case GTP_XACT_INITIAL_STAGE:
             if (xact->step != 1) {
-                ogs_error("invalid step[%d]", xact->step);
+                ogs_warn("invalid step[%d]", xact->step);
                 ogs_gtp_xact_delete(xact);
                 return OGS_ERROR;
             }
@@ -720,7 +754,7 @@ int ogs_gtp_xact_commit(ogs_gtp_xact_t *xact)
 
         case GTP_XACT_INTERMEDIATE_STAGE:
             if (xact->step != 2) {
-                ogs_error("invalid step[%d]", xact->step);
+                ogs_warn("invalid step[%d]", xact->step);
                 ogs_gtp_xact_delete(xact);
                 return OGS_ERROR;
             }
@@ -728,7 +762,7 @@ int ogs_gtp_xact_commit(ogs_gtp_xact_t *xact)
 
         case GTP_XACT_FINAL_STAGE:
             if (xact->step != 2 && xact->step != 3) {
-                ogs_error("invalid step[%d]", xact->step);
+                ogs_warn("invalid step[%d]", xact->step);
                 ogs_gtp_xact_delete(xact);
                 return OGS_ERROR;
             }
@@ -753,7 +787,7 @@ int ogs_gtp_xact_commit(ogs_gtp_xact_t *xact)
 
         case GTP_XACT_INTERMEDIATE_STAGE:
             if (xact->step != 2) {
-                ogs_error("invalid step[%d]", xact->step);
+                ogs_warn("invalid step[%d]", xact->step);
                 ogs_gtp_xact_delete(xact);
                 return OGS_ERROR;
             }
@@ -766,7 +800,7 @@ int ogs_gtp_xact_commit(ogs_gtp_xact_t *xact)
 
         case GTP_XACT_FINAL_STAGE:
             if (xact->step != 2 && xact->step != 3) {
-                ogs_error("invalid step[%d]", xact->step);
+                ogs_warn("invalid step[%d]", xact->step);
                 ogs_gtp_xact_delete(xact);
                 return OGS_ERROR;
             }
@@ -994,7 +1028,7 @@ int ogs_gtp1_xact_receive(
 
     rv = ogs_gtp_xact_update_rx(new, type);
     if (rv == OGS_ERROR) {
-        ogs_error("ogs_gtp_xact_update_rx() failed");
+        ogs_gtp_xact_log_state(new, type, "ogs_gtp_xact_update_rx() failed");
         ogs_gtp_xact_delete(new);
         return rv;
     } else if (rv == OGS_RETRY) {
@@ -1082,7 +1116,7 @@ int ogs_gtp_xact_receive(
 
     rv = ogs_gtp_xact_update_rx(new, type);
     if (rv == OGS_ERROR) {
-        ogs_error("ogs_gtp_xact_update_rx() failed");
+        ogs_gtp_xact_log_state(new, type, "ogs_gtp_xact_update_rx() failed");
         ogs_gtp_xact_delete(new);
         return rv;
     } else if (rv == OGS_RETRY) {
