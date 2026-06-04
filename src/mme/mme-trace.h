@@ -33,6 +33,13 @@ void ogs_mme_trace_from_ids(
         ogs_pool_id_t enb_ue_id, ogs_pool_id_t mme_ue_id,
         const char *apn, const char *proc);
 
+/* Visible at logger level=error — attach/SGW pipeline breadcrumbs */
+void mme_ue_progress(mme_ue_t *mme_ue, const char *step);
+
+/* DEBUG for one UE when IMSI is on ogs_trace_filter list (no restart) */
+void mme_ue_debug(mme_ue_t *mme_ue, const char *fmt, ...)
+    OGS_GNUC_PRINTF(2, 3);
+
 #ifdef __cplusplus
 }
 #endif

@@ -34,16 +34,20 @@ static int emm_tai_list_build_for_accept(
     ogs_assert(served_tai_index >= 0 &&
             served_tai_index < OGS_MAX_NUM_OF_SUPPORTED_TA);
 
-    if (mme_self()->tai_list_serving_only) {
+    if (mme_self()->attach_accept.tai_list_serving_only) {
         ogs_debug("    TAI list: serving_only (TAC:%d)", mme_ue->tai.tac);
         return ogs_nas_tai_list_build_serving_only(target, &mme_ue->tai);
     }
 
+    /*
+     * Default (tai_list_in_accept: all): full mme.tai lists with no serving-TAI
+     * reordering, matching upstream Open5GS Attach/TAU Accept encoding.
+     */
     return ogs_nas_tai_list_build(target,
             mme_self()->served_tai[served_tai_index].list0,
             &mme_self()->served_tai[served_tai_index].list1,
             &mme_self()->served_tai[served_tai_index].list2,
-            &mme_ue->tai);
+            NULL);
 }
 
 ogs_pkbuf_t *emm_build_attach_accept(
@@ -207,7 +211,8 @@ ogs_pkbuf_t *emm_build_attach_accept(
     }
 
     /* Set T3402 */
-    if (mme_self()->time.t3402.value) {
+    if (mme_self()->attach_accept.t3402 &&
+            mme_self()->time.t3402.value) {
         rv = ogs_nas_gprs_timer_from_sec(
                 t3402_value, mme_self()->time.t3402.value);
         ogs_assert(rv == OGS_OK);
@@ -256,7 +261,7 @@ ogs_pkbuf_t *emm_build_attach_accept(
         eps_network_feature_support->length = 1;
     }
     eps_network_feature_support->ims_voice_over_ps_session_in_s1_mode =
-        mme_self()->ims_voice_over_ps_in_s1_mode ? 1 : 0;
+        mme_self()->attach_accept.ims_voice_over_ps ? 1 : 0;
     eps_network_feature_support->extended_protocol_configuration_options = 1;
     if (mme_self()->emergency.dnn)
         eps_network_feature_support->emergency_bearer_services_in_s1_mode = 1;
@@ -282,14 +287,15 @@ ogs_pkbuf_t *emm_build_attach_accept(
         ogs_debug("    P-TMSI: 0x%08x", tmsi->tmsi);
     }
 
-    if (mme_self()->num_of_eplmn) {
+    if (mme_self()->attach_accept.equivalent_plmn &&
+            mme_self()->num_of_eplmn) {
         int num_eplmn = mme_eplmn_count_for_serving(&mme_ue->tai.plmn_id,
-                mme_self()->equivalent_plmn_serving_only,
+                mme_self()->attach_accept.equivalent_plmn_serving_only,
                 mme_self()->num_of_eplmn, mme_self()->eplmn);
 
         ogs_assert(mme_eplmn_build_nas_list_for_serving(
                     &attach_accept->equivalent_plmns, &mme_ue->tai.plmn_id,
-                    mme_self()->equivalent_plmn_serving_only,
+                    mme_self()->attach_accept.equivalent_plmn_serving_only,
                     mme_self()->num_of_eplmn, mme_self()->eplmn) == OGS_OK);
         attach_accept->presencemask |=
             OGS_NAS_EPS_ATTACH_ACCEPT_EQUIVALENT_PLMNS_PRESENT;
@@ -297,7 +303,7 @@ ogs_pkbuf_t *emm_build_attach_accept(
                 "(serving PLMN:%06x serving_only:%d)",
                 num_eplmn, mme_self()->num_of_eplmn,
                 ogs_plmn_id_hexdump(&mme_ue->tai.plmn_id),
-                mme_self()->equivalent_plmn_serving_only);
+                mme_self()->attach_accept.equivalent_plmn_serving_only);
     }
 
     pkbuf = nas_eps_security_encode(mme_ue, &message);
@@ -692,7 +698,8 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
     }
 
     /* Set T3402 */
-    if (mme_self()->time.t3402.value) {
+    if (mme_self()->attach_accept.t3402 &&
+            mme_self()->time.t3402.value) {
         rv = ogs_nas_gprs_timer_from_sec(
                 t3402_value, mme_self()->time.t3402.value);
         ogs_assert(rv == OGS_OK);
@@ -719,18 +726,19 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
     }
     tau_accept->eps_network_feature_support.
         ims_voice_over_ps_session_in_s1_mode =
-        mme_self()->ims_voice_over_ps_in_s1_mode ? 1 : 0;
+        mme_self()->attach_accept.ims_voice_over_ps ? 1 : 0;
     tau_accept->eps_network_feature_support.
         extended_protocol_configuration_options = 1;
 
-    if (mme_self()->num_of_eplmn) {
+    if (mme_self()->attach_accept.equivalent_plmn &&
+            mme_self()->num_of_eplmn) {
         int num_eplmn = mme_eplmn_count_for_serving(&mme_ue->tai.plmn_id,
-                mme_self()->equivalent_plmn_serving_only,
+                mme_self()->attach_accept.equivalent_plmn_serving_only,
                 mme_self()->num_of_eplmn, mme_self()->eplmn);
 
         ogs_assert(mme_eplmn_build_nas_list_for_serving(
                     &tau_accept->equivalent_plmns, &mme_ue->tai.plmn_id,
-                    mme_self()->equivalent_plmn_serving_only,
+                    mme_self()->attach_accept.equivalent_plmn_serving_only,
                     mme_self()->num_of_eplmn, mme_self()->eplmn) == OGS_OK);
         tau_accept->presencemask |=
             OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_EQUIVALENT_PLMNS_PRESENT;
@@ -738,7 +746,7 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
                 "(serving PLMN:%06x serving_only:%d)",
                 num_eplmn, mme_self()->num_of_eplmn,
                 ogs_plmn_id_hexdump(&mme_ue->tai.plmn_id),
-                mme_self()->equivalent_plmn_serving_only);
+                mme_self()->attach_accept.equivalent_plmn_serving_only);
     }
 
     return nas_eps_security_encode(mme_ue, &message);

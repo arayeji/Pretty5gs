@@ -21,6 +21,7 @@
 #include "mme-fd-path.h"
 #include "mme-pgw-host.h"
 #include "mme-ambr.h"
+#include "mme-trace.h"
 
 /* handler for Cancel-Location-Request cb */
 static struct disp_hdl *hdl_s6a_clr = NULL;
@@ -953,6 +954,7 @@ static void _mme_s6a_send_air(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     gtp_xact_id = gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID;
 
     ogs_debug("[MME] Authentication-Information-Request");
+    mme_ue_progress(mme_ue, "s6a_air_sent");
 
     /* Clear Security Context */
     CLEAR_SECURITY_CONTEXT(mme_ue);
@@ -1477,6 +1479,7 @@ void mme_s6a_send_ulr(enb_ue_t *enb_ue, mme_ue_t *mme_ue, uint32_t extra_ulr_fla
     }
 
     ogs_debug("[MME] Update-Location-Request");
+    mme_ue_progress(mme_ue, "s6a_ulr_sent");
 
     /* Create the random value to store with the session */
     sess_data = ogs_calloc(1, sizeof(*sess_data));

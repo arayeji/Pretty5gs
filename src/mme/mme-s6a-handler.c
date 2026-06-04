@@ -54,10 +54,13 @@ uint8_t mme_s6a_handle_aia(
     if (s6a_message->result_code != ER_DIAMETER_SUCCESS) {
         ogs_mme_trace_set(
                 enb_ue_find_by_id(mme_ue->enb_ue_id), mme_ue, NULL, "s6a");
-        OGS_TLOG_WARN("Authentication Information failed [%d]",
-                    s6a_message->result_code);
+        ogs_error("[%s] S6a AIA failed result=%d",
+                mme_ue->imsi_bcd, s6a_message->result_code);
+        mme_ue_progress(mme_ue, "s6a_aia_fail");
         return emm_cause_from_diameter(s6a_message->err, s6a_message->exp_err);
     }
+
+    mme_ue_progress(mme_ue, "s6a_aia_ok");
 
     mme_ue->xres_len = e_utran_vector->xres_len;
     memcpy(mme_ue->xres, e_utran_vector->xres, mme_ue->xres_len);
@@ -93,9 +96,13 @@ uint8_t mme_s6a_handle_ula(
     ogs_assert(subscription_data);
 
     if (s6a_message->result_code != ER_DIAMETER_SUCCESS) {
-        ogs_error("Update Location failed [%d]", s6a_message->result_code);
+        ogs_error("[%s] S6a ULA failed result=%d",
+                mme_ue->imsi_bcd, s6a_message->result_code);
+        mme_ue_progress(mme_ue, "s6a_ula_fail");
         return emm_cause_from_diameter(s6a_message->err, s6a_message->exp_err);
     }
+
+    mme_ue_progress(mme_ue, "s6a_ula_ok");
 
     ogs_assert(subscription_data->num_of_slice == 1);
     slice_data = &subscription_data->slice[0];
@@ -179,7 +186,7 @@ uint8_t mme_s6a_handle_ula(
             S1AP_ProcedureCode_id_InitialContextSetup;
 
         /* Update CSMAP from Tracking area update request */
-        mme_ue->csmap = mme_csmap_find_by_tai(&mme_ue->tai);
+        mme_ue->csmap = mme_csmap_find_for_ue(mme_ue);
         if (mme_ue->csmap &&
             mme_ue->network_access_mode ==
                 OGS_NETWORK_ACCESS_MODE_PACKET_AND_CIRCUIT &&

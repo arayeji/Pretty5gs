@@ -19,6 +19,8 @@
 
 #include "mme-trace.h"
 
+#include <stdarg.h>
+
 void ogs_mme_trace_set(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         const char *apn, const char *proc)
@@ -92,4 +94,43 @@ void ogs_mme_trace_from_ids(
             enb_ue_find_by_id(enb_ue_id),
             mme_ue_find_by_id(mme_ue_id),
             apn, proc);
+}
+
+static const char *mme_ue_log_id(mme_ue_t *mme_ue)
+{
+    if (!mme_ue)
+        return "-";
+    if (MME_UE_HAVE_IMSI(mme_ue))
+        return mme_ue->imsi_bcd;
+    return "-";
+}
+
+void mme_ue_progress(mme_ue_t *mme_ue, const char *step)
+{
+    ogs_assert(step);
+    ogs_error("[%s] ATTACH step: %s", mme_ue_log_id(mme_ue), step);
+}
+
+void mme_ue_debug(mme_ue_t *mme_ue, const char *fmt, ...)
+{
+    va_list ap;
+    char msg[OGS_HUGE_LEN];
+    const char *imsi = mme_ue_log_id(mme_ue);
+
+    ogs_assert(fmt);
+
+    if (!ogs_trace_filter_match(imsi) &&
+            !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+        return;
+
+    ogs_mme_trace_set(
+            mme_ue ? enb_ue_find_by_id(mme_ue->enb_ue_id) : NULL,
+            mme_ue, NULL, NULL);
+
+    va_start(ap, fmt);
+    ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+
+    ogs_log_printf(OGS_LOG_DEBUG, OGS_LOG_DOMAIN,
+            0, __FILE__, __LINE__, OGS_FUNC, 0, "[%s] %s", imsi, msg);
 }

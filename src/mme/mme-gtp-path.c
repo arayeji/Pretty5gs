@@ -22,6 +22,7 @@
 #include "mme-event.h"
 #include "mme-gn-build.h"
 #include "mme-gtp-path.h"
+#include "mme-trace.h"
 #include "mme-path.h"
 #include "s1ap-path.h"
 #include "mme-s11-build.h"
@@ -199,8 +200,23 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
         break;
     }
 
-    ogs_error("GTP Timeout : IMSI[%s] Message-Type[%d]",
-            mme_ue->imsi_bcd, type);
+    if (MME_UE_HAVE_IMSI(mme_ue)) {
+        ogs_error("GTP Timeout : IMSI[%s] Message-Type[%d]",
+                mme_ue->imsi_bcd, type);
+    } else {
+        mme_enb_t *enb = NULL;
+        sgw_ue_t *sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+
+        if (enb_ue)
+            enb = mme_enb_find_by_id(enb_ue->enb_id);
+
+        ogs_error("GTP Timeout : IMSI[-] Message-Type[%d] "
+                "MME_UE[%u] ENB:%u ENB_S1AP:%u SGW_S11:0x%x",
+                type, (unsigned)mme_ue->id,
+                enb ? enb->enb_id : 0,
+                enb_ue ? enb_ue->enb_ue_s1ap_id : 0,
+                sgw_ue ? sgw_ue->sgw_s11_teid : 0);
+    }
 }
 
 int mme_gtp_open(void)
@@ -272,6 +288,10 @@ int mme_gtp_send_create_session_request(
 
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     ogs_assert(mme_ue);
+
+    if (create_action != OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST)
+        mme_sgw_reselect_for_ue_if_needed(mme_ue);
+
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     ogs_assert(sgw_ue);
 
@@ -290,11 +310,14 @@ int mme_gtp_send_create_session_request(
         return OGS_ERROR;
     }
 
+    mme_ue_progress(mme_ue, "create_session_req");
+
     xact = ogs_gtp_xact_local_create(
             sgw_ue->gnode, &h, pkbuf, timeout,
             OGS_UINT_TO_POINTER(sess->id));
     if (!xact) {
         ogs_error("ogs_gtp_xact_local_create() failed");
+        mme_ue_progress(mme_ue, "create_session_req_fail");
         return OGS_ERROR;
     }
     xact->create_action = create_action;

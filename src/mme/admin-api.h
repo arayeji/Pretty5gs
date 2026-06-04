@@ -42,6 +42,10 @@
  *     SMF/PGW are still cleaned up via the standard cascade. The UE
  *     finds out it has been detached only on next interaction.
  *
+ *   GET /admin/trace/imsi?imsi=<prefix>   add runtime DEBUG filter
+ *   GET /admin/trace/imsi?imsi=list       list active prefixes
+ *   GET /admin/trace/imsi?force=1         clear all filters
+ *
  * Access control is NOT enforced inside the daemon - the metrics
  * port is expected to be firewalled at the host or network level.
  * Every admin call is logged with the caller's address so detaches
@@ -61,6 +65,8 @@ void mme_admin_api_register(void);
 int mme_admin_enb_detach(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len);
 int mme_admin_ue_detach(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len);
+int mme_admin_trace_imsi(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len);
 
 #ifdef __cplusplus

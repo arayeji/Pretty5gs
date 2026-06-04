@@ -190,6 +190,8 @@ static void mme_s11_create_session_fail(
         ogs_error("[%s] CreateSessionResponse failure [Cause:%d]",
                 mme_ue->imsi_bcd, fail_cause);
 
+    mme_ue_progress(mme_ue, "create_session_rsp_fail");
+
     if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST) {
         if (enb_ue) {
             mme_sess_t *sess = mme_sess_first(mme_ue);
@@ -560,8 +562,10 @@ void mme_s11_handle_create_session_response(
         session->ambr.uplink = be32toh(ambr->uplink) * 1000;
     }
 
+    mme_ue_progress(mme_ue, "create_session_rsp_ok");
+
     if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST) {
-        mme_csmap_t *csmap = mme_csmap_find_by_tai(&mme_ue->tai);
+        mme_csmap_t *csmap = mme_csmap_find_for_ue(mme_ue);
         mme_ue->csmap = csmap;
 
         if (!csmap ||

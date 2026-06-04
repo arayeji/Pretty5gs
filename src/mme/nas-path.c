@@ -258,6 +258,7 @@ int nas_eps_send_attach_reject(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     ogs_mme_trace_set(enb_ue, mme_ue,
             (sess && sess->session) ? sess->session->name : NULL,
             "attach-reject");
+    mme_ue_progress(mme_ue, "attach_reject");
     OGS_TLOG_INFO("Attach reject [EMM:%d ESM:%d]", emm_cause, esm_cause);
 
     if (sess) {

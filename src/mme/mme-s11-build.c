@@ -20,6 +20,7 @@
 #include "mme-context.h"
 #include "mme-apn.h"
 #include "mme-ambr.h"
+#include "mme-trace.h"
 
 #include "mme-s11-build.h"
 
@@ -151,12 +152,25 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
         ogs_sockaddr_t *pgw_addr = NULL;
         ogs_sockaddr_t *pgw_addr6 = NULL;
 
-        pgw_addr = mme_pgw_addr_find_by_apn_enb(
-                &mme_self()->pgw_list, AF_INET, sess);
-        pgw_addr6 = mme_pgw_addr_find_by_apn_enb(
-                &mme_self()->pgw_list, AF_INET6, sess);
+        {
+            mme_pgw_t *pgw = mme_pgw_find_for_sess(
+                    &mme_self()->pgw_list, sess);
+
+            if (!pgw) {
+                ogs_error("[%s] No SMF/PGW match for DNN[%s]",
+                        mme_ue->imsi_bcd, session->name);
+                return NULL;
+            }
+
+            mme_pgw_log_pick(mme_ue, pgw, session->name);
+            mme_ue_progress(mme_ue, "pgw_selected");
+
+            pgw_addr = mme_pgw_sockaddr_by_family(pgw, AF_INET);
+            pgw_addr6 = mme_pgw_sockaddr_by_family(pgw, AF_INET6);
+        }
         if (!pgw_addr && !pgw_addr6) {
-            ogs_error("No SMF/PGW for APN[%s]", session->name);
+            ogs_error("[%s] No SMF/PGW address for DNN[%s]",
+                    mme_ue->imsi_bcd, session->name);
             return NULL;
         }
 
