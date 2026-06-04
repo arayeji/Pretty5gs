@@ -196,9 +196,6 @@ void sgwc_s11_handle_create_session_request(
         sgwc_ue->mme_s11_teid = be32toh(ft->teid);
     }
 
-    ogs_sgwc_trace_set(sgwc_ue, NULL, "create-session");
-    OGS_TLOG_INFO("Create Session Request");
-
     /************************
      * Check SGWC-UE Context
      ************************/
@@ -255,6 +252,9 @@ void sgwc_s11_handle_create_session_request(
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
         goto cleanup;
 
+    ogs_sgwc_trace_set(sgwc_ue, NULL, apn, "create-session");
+    OGS_TLOG_INFO("Create Session Request");
+
     /* Add Session */
     sess = sgwc_sess_find_by_ebi(sgwc_ue,
             req->bearer_contexts_to_be_created[0].eps_bearer_id.u8);
@@ -278,7 +278,7 @@ void sgwc_s11_handle_create_session_request(
         sess->pgw_s5c_teid = be32toh(pgw_s5c_teid->teid);
     }
 
-    ogs_sgwc_trace_set(sgwc_ue, sess, "create-session");
+    ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
     OGS_TLOG_INFO("S11 session ready SGW-S5C=0x%x PGW-S5C=0x%x",
             sess->sgw_s5c_teid, sess->pgw_s5c_teid);
 
@@ -470,12 +470,14 @@ void sgwc_s11_handle_create_session_request(
     ogs_assert(mme_s11_teid);
     sgwc_ue->mme_s11_teid = be32toh(mme_s11_teid->teid);
 
-    /* Receive Control Plane(UL) : PGW-S5C */
-    pgw_s5c_teid = req->pgw_s5_s8_address_for_control_plane_or_pmip.data;
-    ogs_assert(pgw_s5c_teid);
-    sess->pgw_s5c_teid = be32toh(pgw_s5c_teid->teid);
+    /* Receive Control Plane(UL) : PGW-S5C (TEID may be 0 before PGW answers) */
+    if (req->pgw_s5_s8_address_for_control_plane_or_pmip.presence &&
+            req->pgw_s5_s8_address_for_control_plane_or_pmip.data) {
+        pgw_s5c_teid = req->pgw_s5_s8_address_for_control_plane_or_pmip.data;
+        sess->pgw_s5c_teid = be32toh(pgw_s5c_teid->teid);
+    }
 
-    ogs_sgwc_trace_set(sgwc_ue, sess, "create-session");
+    ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
         sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);
 
@@ -525,7 +527,7 @@ void sgwc_s11_handle_modify_bearer_request(
     req = &message->modify_bearer_request;
     ogs_assert(req);
 
-    ogs_sgwc_trace_set(sgwc_ue, NULL, "modify-bearer");
+    ogs_sgwc_trace_set(sgwc_ue, NULL, NULL, "modify-bearer");
     OGS_TLOG_INFO("Modify Bearer Request");
 
     /************************

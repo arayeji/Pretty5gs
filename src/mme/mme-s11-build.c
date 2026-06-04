@@ -156,13 +156,16 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
         pgw_addr6 = mme_pgw_addr_find_by_apn_enb(
                 &mme_self()->pgw_list, AF_INET6, sess);
         if (!pgw_addr && !pgw_addr6) {
-            pgw_addr = mme_self()->pgw_addr;
-            pgw_addr6 = mme_self()->pgw_addr6;
+            ogs_error("No SMF/PGW for APN[%s]", session->name);
+            return NULL;
         }
 
         rv = ogs_gtp2_sockaddr_to_f_teid(
                 pgw_addr, pgw_addr6, &pgw_s5c_teid, &len);
-        ogs_assert(rv == OGS_OK);
+        if (rv != OGS_OK) {
+            ogs_error("ogs_gtp2_sockaddr_to_f_teid() failed");
+            return NULL;
+        }
         req->pgw_s5_s8_address_for_control_plane_or_pmip.presence = 1;
         req->pgw_s5_s8_address_for_control_plane_or_pmip.data = &pgw_s5c_teid;
         req->pgw_s5_s8_address_for_control_plane_or_pmip.len = len;

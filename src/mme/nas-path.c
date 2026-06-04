@@ -23,6 +23,7 @@
 #include "emm-build.h"
 #include "nas-path.h"
 #include "mme-event.h"
+#include "mme-trace.h"
 #include "mme-timer.h"
 #include "mme-sm.h"
 
@@ -136,7 +137,9 @@ int nas_eps_send_attach_accept(mme_ue_t *mme_ue)
         return OGS_ERROR;
     }
 
-    ogs_debug("[%s] Attach accept", mme_ue->imsi_bcd);
+    ogs_mme_trace_set(enb_ue, mme_ue,
+            (sess && sess->session) ? sess->session->name : NULL, "attach");
+    OGS_TLOG_INFO("Attach accept (InitialContextSetupRequest sent)");
 
     esmbuf = esm_build_activate_default_bearer_context_request(
                 sess, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
@@ -192,15 +195,32 @@ int nas_eps_resend_t3450_initial_context(mme_ue_t *mme_ue)
     int rv;
     ogs_pkbuf_t *emmbuf = NULL;
     ogs_pkbuf_t *s1apbuf = NULL;
+    enb_ue_t *enb_ue = NULL;
 
     ogs_assert(mme_ue);
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (!enb_ue) {
+        ogs_warn("[%s] S1 context removed; stop T3450 ICS retransmit",
+                mme_ue->imsi_bcd);
+        CLEAR_MME_UE_TIMER(mme_ue->t3450);
+        return OGS_ERROR;
+    }
 
     if (!mme_ue->t3450.pkbuf) {
         ogs_error("No T3450 NAS buffer");
         return OGS_ERROR;
     }
 
-    emmbuf = mme_ue->t3450.pkbuf;
+    /*
+     * s1ap_build_initial_context_setup_request() takes ownership of emmbuf
+     * and frees it. Keep mme_ue->t3450.pkbuf for further T3450 retries.
+     */
+    emmbuf = ogs_pkbuf_copy(mme_ue->t3450.pkbuf);
+    if (!emmbuf) {
+        ogs_error("ogs_pkbuf_copy() failed for T3450 NAS buffer");
+        return OGS_ERROR;
+    }
 
     s1apbuf = s1ap_build_initial_context_setup_request(mme_ue, emmbuf);
     if (!s1apbuf) {
@@ -234,10 +254,12 @@ int nas_eps_send_attach_reject(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         return OGS_NOTFOUND;
     }
 
-    ogs_debug("[%s] Attach reject", mme_ue->imsi_bcd);
-    ogs_debug("    Cause[%d]", emm_cause);
-
     sess = mme_sess_first(mme_ue);
+    ogs_mme_trace_set(enb_ue, mme_ue,
+            (sess && sess->session) ? sess->session->name : NULL,
+            "attach-reject");
+    OGS_TLOG_INFO("Attach reject [EMM:%d ESM:%d]", emm_cause, esm_cause);
+
     if (sess) {
         esmbuf = esm_build_pdn_connectivity_reject(
                     sess, esm_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
@@ -604,6 +626,65 @@ int nas_eps_send_esm_information_request(mme_bearer_t *bearer)
     return rv;
 }
 
+static int nas_eps_arm_bearer_setup_timer(
+        mme_bearer_t *bearer, ogs_pkbuf_t *s1apbuf)
+{
+    ogs_assert(bearer);
+    ogs_assert(s1apbuf);
+
+    CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
+    bearer->t_bearer_setup.pkbuf = ogs_pkbuf_copy(s1apbuf);
+    if (!bearer->t_bearer_setup.pkbuf) {
+        ogs_error("ogs_pkbuf_copy(t_bearer_setup) failed");
+        return OGS_ERROR;
+    }
+
+    ogs_timer_start(bearer->t_bearer_setup.timer,
+            mme_timer_cfg(MME_TIMER_BEARER_SETUP)->duration);
+    return OGS_OK;
+}
+
+int nas_eps_resend_bearer_setup_request(mme_bearer_t *bearer)
+{
+    int rv;
+    ogs_pkbuf_t *s1apbuf = NULL;
+    mme_ue_t *mme_ue = NULL;
+    enb_ue_t *enb_ue = NULL;
+
+    ogs_assert(bearer);
+
+    if (!bearer->t_bearer_setup.pkbuf) {
+        ogs_error("No bearer-setup S1AP buffer");
+        return OGS_ERROR;
+    }
+
+    mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
+    if (!mme_ue) {
+        ogs_error("UE(mme-ue) context has already been removed");
+        return OGS_NOTFOUND;
+    }
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (!enb_ue) {
+        ogs_error("S1 context has already been removed");
+        return OGS_NOTFOUND;
+    }
+
+    s1apbuf = ogs_pkbuf_copy(bearer->t_bearer_setup.pkbuf);
+    if (!s1apbuf) {
+        ogs_error("ogs_pkbuf_copy(t_bearer_setup) failed");
+        return OGS_ERROR;
+    }
+
+    rv = nas_eps_send_to_enb(mme_ue, s1apbuf);
+    ogs_expect(rv == OGS_OK);
+
+    ogs_timer_start(bearer->t_bearer_setup.timer,
+            mme_timer_cfg(MME_TIMER_BEARER_SETUP)->duration);
+
+    return rv;
+}
+
 int nas_eps_send_activate_default_bearer_context_request(
         mme_bearer_t *bearer, int create_action)
 {
@@ -642,6 +723,9 @@ int nas_eps_send_activate_default_bearer_context_request(
         ogs_error("s1ap_build_e_rab_setup_request() failed");
         return OGS_ERROR;
     }
+
+    rv = nas_eps_arm_bearer_setup_timer(bearer, s1apbuf);
+    ogs_expect(rv == OGS_OK);
 
     rv = nas_eps_send_to_enb(mme_ue, s1apbuf);
     ogs_expect(rv == OGS_OK);
@@ -684,6 +768,9 @@ int nas_eps_send_activate_dedicated_bearer_context_request(
         ogs_error("s1ap_build_e_rab_setup_request() failed");
         return OGS_ERROR;
     }
+
+    rv = nas_eps_arm_bearer_setup_timer(bearer, s1apbuf);
+    ogs_expect(rv == OGS_OK);
 
     rv = nas_eps_send_to_enb(mme_ue, s1apbuf);
     ogs_expect(rv == OGS_OK);
@@ -789,6 +876,18 @@ int nas_eps_send_deactivate_bearer_context_request(mme_bearer_t *bearer)
         return OGS_ERROR;
     }
 
+    if (bearer->t_nas_deactivate.pkbuf) {
+        ogs_pkbuf_free(bearer->t_nas_deactivate.pkbuf);
+        bearer->t_nas_deactivate.pkbuf = NULL;
+    }
+    bearer->t_nas_deactivate.pkbuf = ogs_pkbuf_copy(s1apbuf);
+    if (!bearer->t_nas_deactivate.pkbuf) {
+        ogs_error("ogs_pkbuf_copy(t_nas_deactivate) failed");
+        ogs_pkbuf_free(s1apbuf);
+        return OGS_ERROR;
+    }
+    bearer->t_nas_deactivate.retry_count = 0;
+
     rv = nas_eps_send_to_enb(mme_ue, s1apbuf);
     ogs_expect(rv == OGS_OK);
 
@@ -810,6 +909,49 @@ int nas_eps_send_deactivate_bearer_context_request(mme_bearer_t *bearer)
                 mme_timer_cfg(MME_TIMER_NAS_DEACTIVATE_BEARER)->duration);
         ogs_debug("[%s] NAS-Deactivate watchdog armed (EBI=%d)",
                 mme_ue->imsi_bcd, bearer->ebi);
+    }
+
+    return rv;
+}
+
+int nas_eps_resend_deactivate_bearer_context_request(mme_bearer_t *bearer)
+{
+    int rv;
+    ogs_pkbuf_t *s1apbuf = NULL;
+    mme_ue_t *mme_ue = NULL;
+    enb_ue_t *enb_ue = NULL;
+
+    ogs_assert(bearer);
+
+    if (!bearer->t_nas_deactivate.pkbuf) {
+        ogs_error("No T3495 S1AP buffer");
+        return OGS_ERROR;
+    }
+
+    mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
+    if (!mme_ue) {
+        ogs_error("UE(mme-ue) context has already been removed");
+        return OGS_NOTFOUND;
+    }
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (!enb_ue) {
+        ogs_error("S1 context has already been removed");
+        return OGS_NOTFOUND;
+    }
+
+    s1apbuf = ogs_pkbuf_copy(bearer->t_nas_deactivate.pkbuf);
+    if (!s1apbuf) {
+        ogs_error("ogs_pkbuf_copy(t_nas_deactivate) failed");
+        return OGS_ERROR;
+    }
+
+    rv = nas_eps_send_to_enb(mme_ue, s1apbuf);
+    ogs_expect(rv == OGS_OK);
+
+    if (bearer->t_nas_deactivate.timer) {
+        ogs_timer_start(bearer->t_nas_deactivate.timer,
+                mme_timer_cfg(MME_TIMER_NAS_DEACTIVATE_BEARER)->duration);
     }
 
     return rv;

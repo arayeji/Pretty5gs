@@ -55,6 +55,7 @@ typedef struct ogs_trace_ctx_s {
 
 void ogs_trace_clear(void);
 void ogs_trace_set(const ogs_trace_ctx_t *ctx);
+/* Prefer ogs_trace_set() for OGS_TLOG prefixes (merge keeps stale fields). */
 void ogs_trace_merge(const ogs_trace_ctx_t *ctx);
 const ogs_trace_ctx_t *ogs_trace_get(void);
 size_t ogs_trace_format_prefix(char *buf, size_t buflen);

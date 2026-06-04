@@ -833,7 +833,7 @@ static void response_timeout(void *data)
 
         ogs_expect(OGS_OK == ogs_gtp_sendto(xact->gnode, pkbuf));
     } else {
-        ogs_warn("[%d] %s No Reponse. Give up! "
+        ogs_debug("[%d] %s No Reponse. Give up! "
                 "for step %d type %d peer [%s]:%d",
                 xact->xid,
                 xact->org == OGS_GTP_LOCAL_ORIGINATOR ? "LOCAL " : "REMOTE",

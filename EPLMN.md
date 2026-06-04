@@ -23,6 +23,17 @@ mme:
     - { mcc: 999, mnc: 35 }
 ```
 
+When `equivalent_plmn_serving_only` is **enabled** (default), if the UE’s
+serving PLMN (TAI PLMN) matches one configured EPLMN entry, **only that PLMN**
+is sent in Attach/TAU Accept instead of the full list. If there is no match,
+the full list is sent. Set `equivalent_plmn_serving_only: false` to always
+send the entire list.
+
+```yaml
+mme:
+  equivalent_plmn_serving_only: true   # default: true
+```
+
 If `equivalent_plmn` is omitted or empty, the IE is **not** sent (existing attach/TAU behaviour unchanged).
 
 Startup fails with `ogs_error()` if there are more than 15 entries or an entry lacks `mcc`/`mnc`.

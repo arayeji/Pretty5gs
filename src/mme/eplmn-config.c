@@ -100,6 +100,12 @@ void mme_eplmn_log_config(int num_of_eplmn, ogs_plmn_id_t *eplmn)
     }
 }
 
+void mme_eplmn_log_serving_only(bool serving_only)
+{
+    ogs_info("Equivalent PLMN serving_only: %s",
+            serving_only ? "enabled" : "disabled");
+}
+
 int mme_eplmn_build_nas_list(ogs_nas_plmn_list_t *nas_list,
         int num_of_eplmn, ogs_plmn_id_t *eplmn)
 {
@@ -122,4 +128,46 @@ int mme_eplmn_build_nas_list(ogs_nas_plmn_list_t *nas_list,
         ogs_nas_from_plmn_id(&nas_list->nas_plmn_id[i], &eplmn[i]);
 
     return OGS_OK;
+}
+
+int mme_eplmn_count_for_serving(const ogs_plmn_id_t *serving_plmn,
+        bool serving_only, int num_of_eplmn, ogs_plmn_id_t *eplmn)
+{
+    int i;
+
+    ogs_assert(eplmn);
+
+    if (num_of_eplmn <= 0)
+        return 0;
+
+    if (serving_only && serving_plmn) {
+        for (i = 0; i < num_of_eplmn; i++) {
+            if (memcmp(&eplmn[i], serving_plmn, OGS_PLMN_ID_LEN) == 0)
+                return 1;
+        }
+    }
+
+    return num_of_eplmn;
+}
+
+int mme_eplmn_build_nas_list_for_serving(ogs_nas_plmn_list_t *nas_list,
+        const ogs_plmn_id_t *serving_plmn, bool serving_only,
+        int num_of_eplmn, ogs_plmn_id_t *eplmn)
+{
+    int i;
+
+    ogs_assert(nas_list);
+    ogs_assert(eplmn);
+
+    if (num_of_eplmn <= 0)
+        return OGS_OK;
+
+    if (serving_only && serving_plmn) {
+        for (i = 0; i < num_of_eplmn; i++) {
+            if (memcmp(&eplmn[i], serving_plmn, OGS_PLMN_ID_LEN) == 0)
+                return mme_eplmn_build_nas_list(nas_list, 1, &eplmn[i]);
+        }
+    }
+
+    return mme_eplmn_build_nas_list(nas_list, num_of_eplmn, eplmn);
 }

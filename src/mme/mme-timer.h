@@ -41,6 +41,13 @@ typedef enum {
     MME_TIMER_T3489,
 
     /*
+     * MME-side equivalent of the eNB OAM "SAE bearer setup" timer for
+     * standalone E-RAB Setup Request (dedicated bearer, secondary PDN).
+     * Default bearer at attach uses T3450 (Initial Context Setup) instead.
+     */
+    MME_TIMER_BEARER_SETUP,
+
+    /*
      * Watchdog for DEACTIVATE EPS BEARER CONTEXT REQUEST (3GPP TS 24.301
      * §6.4.4). Not a strict T3495 implementation - we do not retransmit
      * the NAS request. When it fires the MME assumes the UE will not
@@ -74,6 +81,7 @@ typedef struct mme_timer_cfg_s {
 
 mme_timer_cfg_t *mme_timer_cfg(mme_timer_e id);
 
+void mme_timer_set(mme_timer_e id, ogs_time_t duration, int max_count);
 void mme_timer_set_t3450(ogs_time_t duration, int max_count);
 
 const char *mme_timer_get_name(mme_timer_e id);
@@ -86,6 +94,7 @@ void mme_timer_t3450_expire(void *data);
 void mme_timer_t3460_expire(void *data);
 void mme_timer_t3470_expire(void *data);
 void mme_timer_t3489_expire(void *data);
+void mme_timer_bearer_setup_expire(void *data);
 void mme_timer_nas_deactivate_bearer_expire(void *data);
 
 void mme_timer_mobile_reachable_expire(void *data);

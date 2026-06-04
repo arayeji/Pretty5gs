@@ -1119,6 +1119,35 @@ int sgwc_sess_pfcp_xact_count(
     return xact_count;
 }
 
+ogs_pfcp_xact_t *sgwc_pfcp_find_session_modify_xact(
+        sgwc_sess_t *sess, uint64_t modify_flags)
+{
+    ogs_pfcp_xact_t *pfcp_xact = NULL;
+    ogs_pool_id_t sess_id = OGS_INVALID_POOL_ID;
+
+    ogs_assert(sess);
+    ogs_assert(sess->pfcp_node);
+
+    ogs_list_for_each(&sess->pfcp_node->local_list, pfcp_xact) {
+        if (pfcp_xact->seq[0].type !=
+                OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE)
+            continue;
+        if (!(pfcp_xact->modify_flags & OGS_PFCP_MODIFY_SESSION))
+            continue;
+        if (modify_flags && modify_flags != pfcp_xact->modify_flags)
+            continue;
+
+        sess_id = OGS_POINTER_TO_UINT(pfcp_xact->data);
+        ogs_assert(sess_id >= OGS_MIN_POOL_ID && sess_id <= OGS_MAX_POOL_ID);
+        if (sess->id != sess_id)
+            continue;
+
+        return pfcp_xact;
+    }
+
+    return NULL;
+}
+
 sgwc_bearer_t *sgwc_bearer_add(sgwc_sess_t *sess)
 {
     sgwc_bearer_t *bearer = NULL;

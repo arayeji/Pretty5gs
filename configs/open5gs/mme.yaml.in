@@ -74,20 +74,38 @@ mme:
   mme_name: open5gs-mme0
   time:
 #    t3402:
-#      value: 720   # 12 minutes * 60 = 720 seconds
-#    t3396:
-#      value: 720   # 12 minutes * 60 = 720 seconds
+#      value: 720   # seconds (default: 720 = 12 min, sent in Attach/TAU Accept)
 #    t3412:
-#      value: 3240  # 54 minutes * 60 = 3240 seconds
+#      value: 600   # seconds (default: 600 = 10 min periodic TAU timer)
 #    t3423:
-#      value: 720   # 12 minutes * 60 = 720 seconds
-#  o T3450: MME timer after Attach/TAU Accept sent with
-#    InitialContextSetupRequest (NAS TS 24.301). On expiry the MME
-#    retransmits the full S1AP InitialContextSetupRequest (not only
-#    Downlink NAS Transport). Defaults: value 6 (seconds), max_count 4.
-#    t3450:
-#      value: 6
+#      value: 720   # seconds (optional, ISR CS fallback in Attach/TAU Accept)
+#    t3413:
+#      value: 6     # paging retransmit (default: 6 s)
+#      max_count: 2
+#    t3422:
+#      value: 6     # detach request retransmit (default: 6 s)
 #      max_count: 4
+#    t3450:
+#      value: 12    # after Attach/TAU Accept + ICS Request (default: 12 s)
+#      max_count: 4
+#    bearer_setup:
+#      value: 12    # eNB "SAE bearer setup" equivalent: sets t3450 (attach/ICS)
+#                   # and E-RAB Setup Request watchdog (default: 12 s)
+#      max_count: 4
+#      Aliases: sae_bearer_setup
+#    t3460:
+#      value: 6     # auth / security mode retransmit (default: 6 s)
+#      max_count: 4
+#    t3470:
+#      value: 6     # identity request retransmit (default: 6 s)
+#      max_count: 4
+#    t3489:
+#      value: 4     # ESM information request (default: 4 s)
+#      max_count: 2
+#    t3495:
+#      value: 8     # deactivate EPS bearer context request (default: 8 s)
+#      max_count: 4
+#      Alias: nas_deactivate_bearer
 
 ################################################################################
 # S1AP Server

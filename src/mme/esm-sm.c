@@ -50,6 +50,51 @@ static uint8_t gtp_cause_from_esm(uint8_t esm_cause)
     return OGS_GTP2_CAUSE_SYSTEM_FAILURE;
 }
 
+static void esm_handle_bearer_setup_timer(ogs_fsm_t *s,
+        mme_ue_t *mme_ue, mme_sess_t *sess, mme_bearer_t *bearer)
+{
+    int r;
+    enb_ue_t *enb_ue = NULL;
+    mme_bearer_t *linked_bearer = NULL;
+    sgw_ue_t *sgw_ue = NULL;
+
+    ogs_assert(s);
+    ogs_assert(mme_ue);
+    ogs_assert(sess);
+    ogs_assert(bearer);
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    linked_bearer = mme_linked_bearer(bearer);
+    ogs_assert(linked_bearer);
+
+    if (bearer->t_bearer_setup.retry_count >=
+            mme_timer_cfg(MME_TIMER_BEARER_SETUP)->max_count) {
+        ogs_warn("E-RAB setup retransmission failed "
+                "IMSI[%s] EBI[%d]", mme_ue->imsi_bcd, bearer->ebi);
+
+        if (bearer->ebi == linked_bearer->ebi) {
+            if (enb_ue && MME_HAVE_SGW_S1U_PATH(sess)) {
+                sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+                ogs_assert(sgw_ue);
+                ogs_assert(OGS_OK ==
+                    mme_gtp_send_delete_session_request(enb_ue, sgw_ue, sess,
+                        OGS_GTP_DELETE_NO_ACTION));
+            }
+            OGS_FSM_TRAN(s, esm_state_exception);
+        } else {
+            ogs_assert(OGS_OK ==
+                mme_gtp_send_create_bearer_response(bearer,
+                    OGS_GTP2_CAUSE_REQUEST_REJECTED_REASON_NOT_SPECIFIED));
+            OGS_FSM_TRAN(s, esm_state_bearer_deactivated);
+        }
+    } else {
+        bearer->t_bearer_setup.retry_count++;
+        r = nas_eps_resend_bearer_setup_request(bearer);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+    }
+}
+
 void esm_state_initial(ogs_fsm_t *s, mme_event_t *e)
 {
     ogs_assert(s);
@@ -198,6 +243,7 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
             ogs_debug("Activate default EPS bearer context accept");
             ogs_debug("    IMSI[%s] PTI[%d] EBI[%d]",
                     mme_ue->imsi_bcd, sess->pti, bearer->ebi);
+            CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
             /* Check if Initial Context Setup Response or 
              *          E-RAB Setup Response is received */
             if (MME_HAVE_ENB_S1U_PATH(bearer)) {
@@ -215,6 +261,7 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
             ogs_debug("Activate dedicated EPS bearer context accept");
             ogs_debug("    IMSI[%s] PTI[%d] EBI[%d]",
                     mme_ue->imsi_bcd, sess->pti, bearer->ebi);
+            CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
             /* Check if Initial Context Setup Response or 
              *          E-RAB Setup Response is received */
             if (MME_HAVE_ENB_S1U_PATH(bearer)) {
@@ -229,6 +276,7 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
             ogs_error("Activate dedicated EPS bearer context reject");
             ogs_error("    IMSI[%s] PTI[%d] EBI[%d]",
                     mme_ue->imsi_bcd, sess->pti, bearer->ebi);
+            CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
             activate_dedicated_eps_bearer_context_reject =
                 &message->esm.activate_dedicated_eps_bearer_context_reject;
             ogs_assert(activate_dedicated_eps_bearer_context_reject);
@@ -263,6 +311,9 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
             }
+            break;
+        case MME_TIMER_BEARER_SETUP:
+            esm_handle_bearer_setup_timer(s, mme_ue, sess, bearer);
             break;
         default:
             ogs_error("Unknown timer[%s:%d]",
@@ -395,6 +446,8 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
     case MME_EVENT_ESM_TIMER:
         switch (e->timer_id) {
         case MME_TIMER_NAS_DEACTIVATE_BEARER:
+            if (bearer->t_nas_deactivate.retry_count >=
+                    mme_timer_cfg(MME_TIMER_NAS_DEACTIVATE_BEARER)->max_count) {
             /*
              * The UE never answered our DEACTIVATE EPS BEARER CONTEXT
              * REQUEST. Give up and send the Delete Bearer Response to
@@ -432,6 +485,15 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
                         bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED));
             }
             OGS_FSM_TRAN(s, esm_state_bearer_deactivated);
+            } else {
+                bearer->t_nas_deactivate.retry_count++;
+                r = nas_eps_resend_deactivate_bearer_context_request(bearer);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+            }
+            break;
+        case MME_TIMER_BEARER_SETUP:
+            esm_handle_bearer_setup_timer(s, mme_ue, sess, bearer);
             break;
         default:
             ogs_error("Unknown timer[%s:%d]",

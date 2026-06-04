@@ -43,12 +43,16 @@ struct dict_object *ogs_diam_s6a_idr_flags = NULL;
 struct dict_object *ogs_diam_s6a_cancellation_type = NULL;
 struct dict_object *ogs_diam_s6a_subscription_data = NULL;
 struct dict_object *ogs_diam_s6a_req_eutran_auth_info = NULL;
+struct dict_object *ogs_diam_s6a_req_utran_geran_auth_info = NULL;
 struct dict_object *ogs_diam_s6a_number_of_requested_vectors = NULL;
 struct dict_object *ogs_diam_s6a_immediate_response_preferred = NULL;
 struct dict_object *ogs_diam_s6a_authentication_info = NULL;
 struct dict_object *ogs_diam_s6a_re_synchronization_info = NULL;
 struct dict_object *ogs_diam_s6a_ue_srvcc_capability = NULL;
 struct dict_object *ogs_diam_s6a_e_utran_vector = NULL;
+struct dict_object *ogs_diam_s6a_utran_vector = NULL;
+struct dict_object *ogs_diam_s6a_confidentiality_key = NULL;
+struct dict_object *ogs_diam_s6a_integrity_key = NULL;
 struct dict_object *ogs_diam_s6a_rand = NULL;
 struct dict_object *ogs_diam_s6a_xres = NULL;
 struct dict_object *ogs_diam_s6a_autn = NULL;
@@ -129,12 +133,16 @@ int ogs_diam_s6a_init(void)
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "UE-SRVCC-Capability", &ogs_diam_s6a_ue_srvcc_capability);
 
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "Requested-EUTRAN-Authentication-Info", &ogs_diam_s6a_req_eutran_auth_info);
+    CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "Requested-UTRAN-GERAN-Authentication-Info", &ogs_diam_s6a_req_utran_geran_auth_info);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "Number-Of-Requested-Vectors", &ogs_diam_s6a_number_of_requested_vectors);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "Immediate-Response-Preferred", &ogs_diam_s6a_immediate_response_preferred);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "Re-Synchronization-Info", &ogs_diam_s6a_re_synchronization_info);
 
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "Authentication-Info", &ogs_diam_s6a_authentication_info);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "E-UTRAN-Vector", &ogs_diam_s6a_e_utran_vector);
+    CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "UTRAN-Vector", &ogs_diam_s6a_utran_vector);
+    CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "Confidentiality-Key", &ogs_diam_s6a_confidentiality_key);
+    CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "Integrity-Key", &ogs_diam_s6a_integrity_key);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "RAND", &ogs_diam_s6a_rand);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "XRES", &ogs_diam_s6a_xres);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "AUTN", &ogs_diam_s6a_autn);

@@ -21,21 +21,38 @@
 #include "esm-build.h"
 #include "mme-sm.h"
 #include "mme-ambr.h"
+#include "mme-context.h"
 
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __esm_log_domain
 
-static bool esm_pdn_connectivity_reject_t3396_allowed(
-        ogs_nas_esm_cause_t esm_cause)
+static bool mme_esm_include_pdn_type_cause(
+        mme_sess_t *sess, uint8_t esm_cause)
 {
-    switch (esm_cause) {
-    case OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN:
-    case OGS_NAS_ESM_CAUSE_SERVICE_OPTION_NOT_SUPPORTED:
-    case OGS_NAS_ESM_CAUSE_REQUESTED_SERVICE_OPTION_NOT_SUBSCRIBED:
-        return true;
-    default:
+    mme_context_t *ctx = mme_self();
+
+    if (ctx->inbound_roam_suppress_pdn_type_esm_cause)
         return false;
-    }
+
+    if (ctx->inbound_roam_force_ipv4_pdn_on_home_pgw &&
+            esm_cause == OGS_NAS_ESM_CAUSE_PDN_TYPE_IPV4_ONLY_ALLOWED &&
+            sess->ue_request_type.type == OGS_NAS_EPS_PDN_TYPE_IPV4V6 &&
+            sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV4)
+        return false;
+
+    return true;
+}
+
+static void mme_esm_set_pdn_type_cause(
+        ogs_nas_eps_activate_default_eps_bearer_context_request_t *req,
+        mme_sess_t *sess, uint8_t esm_cause)
+{
+    if (!mme_esm_include_pdn_type_cause(sess, esm_cause))
+        return;
+
+    req->esm_cause = esm_cause;
+    req->presencemask |=
+        OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REQUEST_ESM_CAUSE_PRESENT;
 }
 
 ogs_pkbuf_t *esm_build_pdn_connectivity_reject(
@@ -174,6 +191,7 @@ ogs_pkbuf_t *esm_build_activate_default_bearer_context_request(
 
     memcpy(&bearer->qos, &session->qos, sizeof(ogs_qos_t));
     mme_qos_fill_bearer_bitrates(mme_ue, session, &bearer->qos);
+    mme_bearer_qos_for_s1ap(&bearer->qos);
 
     eps_qos_build(eps_qos, bearer->qos.index,
             bearer->qos.mbr.downlink, bearer->qos.mbr.uplink,
@@ -202,32 +220,24 @@ ogs_pkbuf_t *esm_build_activate_default_bearer_context_request(
     if (sess->ue_request_type.type == OGS_NAS_EPS_PDN_TYPE_IPV4V6) {
         if (sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV4) {
             pdn_address->pdn_type = OGS_PDU_SESSION_TYPE_IPV4;
-            activate_default_eps_bearer_context_request->esm_cause =
-                OGS_NAS_ESM_CAUSE_PDN_TYPE_IPV4_ONLY_ALLOWED;
-            activate_default_eps_bearer_context_request->presencemask |=
-                OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REQUEST_ESM_CAUSE_PRESENT;
+            mme_esm_set_pdn_type_cause(activate_default_eps_bearer_context_request,
+                    sess, OGS_NAS_ESM_CAUSE_PDN_TYPE_IPV4_ONLY_ALLOWED);
         } else if (sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV6) {
             pdn_address->pdn_type = OGS_PDU_SESSION_TYPE_IPV6;
-            activate_default_eps_bearer_context_request->esm_cause =
-                OGS_NAS_ESM_CAUSE_PDN_TYPE_IPV6_ONLY_ALLOWED;
-            activate_default_eps_bearer_context_request->presencemask |=
-                OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REQUEST_ESM_CAUSE_PRESENT;
+            mme_esm_set_pdn_type_cause(activate_default_eps_bearer_context_request,
+                    sess, OGS_NAS_ESM_CAUSE_PDN_TYPE_IPV6_ONLY_ALLOWED);
         }
     } else if (sess->ue_request_type.type == OGS_PDU_SESSION_TYPE_IPV4) {
         if (sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV6) {
             pdn_address->pdn_type = OGS_PDU_SESSION_TYPE_IPV6;
-            activate_default_eps_bearer_context_request->esm_cause =
-                OGS_NAS_ESM_CAUSE_PDN_TYPE_IPV6_ONLY_ALLOWED;
-            activate_default_eps_bearer_context_request->presencemask |=
-                OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REQUEST_ESM_CAUSE_PRESENT;
+            mme_esm_set_pdn_type_cause(activate_default_eps_bearer_context_request,
+                    sess, OGS_NAS_ESM_CAUSE_PDN_TYPE_IPV6_ONLY_ALLOWED);
         }
     } else if (sess->ue_request_type.type == OGS_PDU_SESSION_TYPE_IPV6) {
         if (sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV4) {
             pdn_address->pdn_type = OGS_PDU_SESSION_TYPE_IPV4;
-            activate_default_eps_bearer_context_request->esm_cause =
-                OGS_NAS_ESM_CAUSE_PDN_TYPE_IPV4_ONLY_ALLOWED;
-            activate_default_eps_bearer_context_request->presencemask |=
-                OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REQUEST_ESM_CAUSE_PRESENT;
+            mme_esm_set_pdn_type_cause(activate_default_eps_bearer_context_request,
+                    sess, OGS_NAS_ESM_CAUSE_PDN_TYPE_IPV4_ONLY_ALLOWED);
         }
     }
 

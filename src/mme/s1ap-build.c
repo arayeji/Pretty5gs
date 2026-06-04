@@ -19,6 +19,7 @@
 
 #include "mme-context.h"
 
+#include "mme-ambr.h"
 #include "mme-sm.h"
 #include "s1ap-build.h"
 
@@ -437,9 +438,10 @@ static void fill_e_rab_to_be_setup(
         pre_emptionVulnerability =
             !(bearer->qos.arp.pre_emption_vulnerability);
 
-    if (bearer->qos.mbr.downlink || bearer->qos.mbr.uplink ||
-        bearer->qos.gbr.downlink || bearer->qos.gbr.uplink) {
-        if (bearer->qos.mbr.downlink && bearer->qos.mbr.uplink &&
+    mme_bearer_qos_for_s1ap(&bearer->qos);
+
+    if (mme_epc_qci_is_gbr(bearer->qos.index) &&
+            bearer->qos.mbr.downlink && bearer->qos.mbr.uplink &&
             bearer->qos.gbr.downlink && bearer->qos.gbr.uplink) {
 
             ogs_debug("    MBR[DL:%lld,UL:%lld]",
@@ -466,17 +468,6 @@ static void fill_e_rab_to_be_setup(
                     e_RAB_GuaranteedBitrateUL, bearer->qos.gbr.uplink);
             e_rab->e_RABlevelQoSParameters.gbrQosInformation =
                     gbrQosInformation;
-
-        } else {
-            ogs_error("Missing one or more MBR/GBR parameters; "
-                    "defaulting to Non-GBR flow ");
-            ogs_error("    MBR[DL:%lld,UL:%lld]",
-                (long long)bearer->qos.mbr.downlink,
-                (long long)bearer->qos.mbr.uplink);
-            ogs_error("    GBR[DL:%lld,UL:%lld]",
-                (long long)bearer->qos.gbr.downlink,
-                (long long)bearer->qos.gbr.uplink);
-        }
     }
 
     rv = ogs_asn_ip_to_BIT_STRING(
@@ -573,15 +564,19 @@ ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
     *MME_UE_S1AP_ID = enb_ue->mme_ue_s1ap_id;
     *ENB_UE_S1AP_ID = enb_ue->enb_ue_s1ap_id;
 
-    ogs_debug("    AMBR[DL:%lld,UL:%lld]",
-        (long long)mme_ue->ambr.downlink, (long long)mme_ue->ambr.uplink);
+    {
+        ogs_bitrate_t ue_ambr = mme_ue_ambr_for_s1ap(mme_ue);
 
-    asn_uint642INTEGER(
-            &UEAggregateMaximumBitrate->uEaggregateMaximumBitRateUL,
-            mme_ue->ambr.uplink);
-    asn_uint642INTEGER(
-            &UEAggregateMaximumBitrate->uEaggregateMaximumBitRateDL,
-            mme_ue->ambr.downlink);
+        ogs_debug("    AMBR[DL:%lld,UL:%lld]",
+            (long long)ue_ambr.downlink, (long long)ue_ambr.uplink);
+
+        asn_uint642INTEGER(
+                &UEAggregateMaximumBitrate->uEaggregateMaximumBitRateUL,
+                ue_ambr.uplink);
+        asn_uint642INTEGER(
+                &UEAggregateMaximumBitrate->uEaggregateMaximumBitRateDL,
+                ue_ambr.downlink);
+    }
 
     S1AP_E_RABToBeSetupItemCtxtSUReqIEs_t *item = NULL;
     S1AP_E_RABToBeSetupItemCtxtSUReq_t *e_rab = NULL;
@@ -1505,12 +1500,14 @@ ogs_pkbuf_t *s1ap_build_e_rab_release_command(
     *ENB_UE_S1AP_ID = enb_ue->enb_ue_s1ap_id;
 
     if (UEAggregateMaximumBitrate) {
+        ogs_bitrate_t ue_ambr = mme_ue_ambr_for_s1ap(mme_ue);
+
         asn_uint642INTEGER(
                 &UEAggregateMaximumBitrate->uEaggregateMaximumBitRateUL,
-                mme_ue->ambr.uplink);
+                ue_ambr.uplink);
         asn_uint642INTEGER(
                 &UEAggregateMaximumBitrate->uEaggregateMaximumBitRateDL,
-                mme_ue->ambr.downlink);
+                ue_ambr.downlink);
     }
 
     item = CALLOC(1, sizeof(S1AP_E_RABItemIEs_t));
@@ -2457,12 +2454,16 @@ ogs_pkbuf_t *s1ap_build_handover_request(
     Cause->present = cause->present;
     Cause->choice.radioNetwork = cause->choice.radioNetwork;
 
-    asn_uint642INTEGER(
-            &UEAggregateMaximumBitrate->uEaggregateMaximumBitRateUL,
-            mme_ue->ambr.uplink);
-    asn_uint642INTEGER(
-            &UEAggregateMaximumBitrate->uEaggregateMaximumBitRateDL,
-            mme_ue->ambr.downlink);
+    {
+        ogs_bitrate_t ue_ambr = mme_ue_ambr_for_s1ap(mme_ue);
+
+        asn_uint642INTEGER(
+                &UEAggregateMaximumBitrate->uEaggregateMaximumBitRateUL,
+                ue_ambr.uplink);
+        asn_uint642INTEGER(
+                &UEAggregateMaximumBitrate->uEaggregateMaximumBitRateDL,
+                ue_ambr.downlink);
+    }
 
     ogs_list_for_each(&mme_ue->sess_list, sess) {
         ogs_list_for_each(&sess->bearer_list, bearer) {

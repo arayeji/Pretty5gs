@@ -118,6 +118,17 @@ int s1ap_send_s1_reset_ack(
 int s1ap_send_s1_reset(
         mme_enb_t *enb, S1AP_Cause_PR group, long cause);
 
+/* Format S1AP Cause for operator logs (group name + value name or number). */
+void s1ap_cause_string(char *buf, size_t buflen, S1AP_Cause_t *cause);
+
+/*
+ * Emit an INFO trace line with IMSI/APN/EBI context already set via
+ * ogs_mme_trace_set(). proc is stored in the trace prefix (e.g. attach-fail).
+ */
+void s1ap_log_ue_failure(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        mme_bearer_t *bearer, const char *apn, const char *proc,
+        const char *event, S1AP_Cause_t *cause);
+
 #ifdef __cplusplus
 }
 #endif

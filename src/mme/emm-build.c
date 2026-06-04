@@ -255,11 +255,8 @@ ogs_pkbuf_t *emm_build_attach_accept(
     } else {
         eps_network_feature_support->length = 1;
     }
-    if (ogs_global_conf()->parameter.no_ims == true) {
-    	eps_network_feature_support->ims_voice_over_ps_session_in_s1_mode = 0;
-    } else {
-    eps_network_feature_support->ims_voice_over_ps_session_in_s1_mode = 1;
-    }
+    eps_network_feature_support->ims_voice_over_ps_session_in_s1_mode =
+        mme_self()->ims_voice_over_ps_in_s1_mode ? 1 : 0;
     eps_network_feature_support->extended_protocol_configuration_options = 1;
     if (mme_self()->emergency.dnn)
         eps_network_feature_support->emergency_bearer_services_in_s1_mode = 1;
@@ -286,13 +283,21 @@ ogs_pkbuf_t *emm_build_attach_accept(
     }
 
     if (mme_self()->num_of_eplmn) {
-        ogs_assert(mme_eplmn_build_nas_list(
-                    &attach_accept->equivalent_plmns,
+        int num_eplmn = mme_eplmn_count_for_serving(&mme_ue->tai.plmn_id,
+                mme_self()->equivalent_plmn_serving_only,
+                mme_self()->num_of_eplmn, mme_self()->eplmn);
+
+        ogs_assert(mme_eplmn_build_nas_list_for_serving(
+                    &attach_accept->equivalent_plmns, &mme_ue->tai.plmn_id,
+                    mme_self()->equivalent_plmn_serving_only,
                     mme_self()->num_of_eplmn, mme_self()->eplmn) == OGS_OK);
         attach_accept->presencemask |=
             OGS_NAS_EPS_ATTACH_ACCEPT_EQUIVALENT_PLMNS_PRESENT;
-        ogs_debug("    Equivalent PLMNs[%d] included in Attach Accept",
-                mme_self()->num_of_eplmn);
+        ogs_debug("    Equivalent PLMNs[%d/%d] included in Attach Accept "
+                "(serving PLMN:%06x serving_only:%d)",
+                num_eplmn, mme_self()->num_of_eplmn,
+                ogs_plmn_id_hexdump(&mme_ue->tai.plmn_id),
+                mme_self()->equivalent_plmn_serving_only);
     }
 
     pkbuf = nas_eps_security_encode(mme_ue, &message);
@@ -712,24 +717,28 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
     } else {
         tau_accept->eps_network_feature_support.length = 1;
     }
-    if (ogs_global_conf()->parameter.no_ims == true) {
-    	tau_accept->eps_network_feature_support.
-        	ims_voice_over_ps_session_in_s1_mode = 0;
-    } else {
-        tau_accept->eps_network_feature_support.
-                ims_voice_over_ps_session_in_s1_mode = 1;
-    }
+    tau_accept->eps_network_feature_support.
+        ims_voice_over_ps_session_in_s1_mode =
+        mme_self()->ims_voice_over_ps_in_s1_mode ? 1 : 0;
     tau_accept->eps_network_feature_support.
         extended_protocol_configuration_options = 1;
 
     if (mme_self()->num_of_eplmn) {
-        ogs_assert(mme_eplmn_build_nas_list(
-                    &tau_accept->equivalent_plmns,
+        int num_eplmn = mme_eplmn_count_for_serving(&mme_ue->tai.plmn_id,
+                mme_self()->equivalent_plmn_serving_only,
+                mme_self()->num_of_eplmn, mme_self()->eplmn);
+
+        ogs_assert(mme_eplmn_build_nas_list_for_serving(
+                    &tau_accept->equivalent_plmns, &mme_ue->tai.plmn_id,
+                    mme_self()->equivalent_plmn_serving_only,
                     mme_self()->num_of_eplmn, mme_self()->eplmn) == OGS_OK);
         tau_accept->presencemask |=
             OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_EQUIVALENT_PLMNS_PRESENT;
-        ogs_debug("    Equivalent PLMNs[%d] included in TAU Accept",
-                mme_self()->num_of_eplmn);
+        ogs_debug("    Equivalent PLMNs[%d/%d] included in TAU Accept "
+                "(serving PLMN:%06x serving_only:%d)",
+                num_eplmn, mme_self()->num_of_eplmn,
+                ogs_plmn_id_hexdump(&mme_ue->tai.plmn_id),
+                mme_self()->equivalent_plmn_serving_only);
     }
 
     return nas_eps_security_encode(mme_ue, &message);

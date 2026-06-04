@@ -87,7 +87,7 @@ int mme_apn_for_gtp(
         char *buf, int buflen)
 {
     ogs_plmn_id_t oi_plmn_id;
-    bool inbound_roam = false;
+    bool roam_plmn = false;
     bool lowercase = true;
     int len;
 
@@ -96,23 +96,37 @@ int mme_apn_for_gtp(
     ogs_assert(buf);
     ogs_assert(buflen > OGS_MAX_APN_LEN);
 
-    inbound_roam = mme_ue_uses_home_pgw(session) ||
-        mme_ue_is_inbound_roam(mme_ue);
+    ogs_assert(session->name);
 
-    if (inbound_roam) {
-        lowercase = mme_self()->inbound_roam_gtp_apn_lowercase;
+    /*
+     * Home subscribers on the home PLMN: keep stock Open5GS S11 behaviour
+     * (APN-NI only, e.g. "internet"). Appending OI (internet.mnc012.mcc999.gprs)
+     * was introduced with inbound-roam work and breaks local SGWC/SMF matching.
+     *
+     * Roaming PLMN (IMSI PLMN != serving TAI PLMN): apply inbound_roam
+     * gtp_apn_format (received = NI, fqdn = NI + OI).
+     */
+    roam_plmn = mme_ue_is_inbound_roam(mme_ue);
 
-        if (mme_self()->inbound_roam_gtp_apn_format ==
-                MME_INBOUND_ROAM_GTP_APN_RECEIVED) {
-            ogs_assert(session->name);
-            ogs_cpystrn(buf, session->name, buflen);
-            len = (int)strlen(buf);
-            if (len <= 0)
-                return 0;
-            if (lowercase)
-                mme_apn_fqdn_tolower(buf);
-            return len;
-        }
+    if (!roam_plmn) {
+        ogs_cpystrn(buf, session->name, buflen);
+        len = (int)strlen(buf);
+        if (len <= 0)
+            return 0;
+        return len;
+    }
+
+    lowercase = mme_self()->inbound_roam_gtp_apn_lowercase;
+
+    if (mme_self()->inbound_roam_gtp_apn_format ==
+            MME_INBOUND_ROAM_GTP_APN_RECEIVED) {
+        ogs_cpystrn(buf, session->name, buflen);
+        len = (int)strlen(buf);
+        if (len <= 0)
+            return 0;
+        if (lowercase)
+            mme_apn_fqdn_tolower(buf);
+        return len;
     }
 
     mme_apn_oi_plmn_id(mme_ue, session, &oi_plmn_id);

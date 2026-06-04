@@ -115,12 +115,16 @@ extern struct dict_object *ogs_diam_s6a_idr_flags;
 extern struct dict_object *ogs_diam_s6a_cancellation_type;
 extern struct dict_object *ogs_diam_s6a_subscription_data;
 extern struct dict_object *ogs_diam_s6a_req_eutran_auth_info;
+extern struct dict_object *ogs_diam_s6a_req_utran_geran_auth_info;
 extern struct dict_object *ogs_diam_s6a_number_of_requested_vectors;
 extern struct dict_object *ogs_diam_s6a_immediate_response_preferred;
 extern struct dict_object *ogs_diam_s6a_authentication_info;
 extern struct dict_object *ogs_diam_s6a_re_synchronization_info;
 extern struct dict_object *ogs_diam_s6a_ue_srvcc_capability;
 extern struct dict_object *ogs_diam_s6a_e_utran_vector;
+extern struct dict_object *ogs_diam_s6a_utran_vector;
+extern struct dict_object *ogs_diam_s6a_confidentiality_key;
+extern struct dict_object *ogs_diam_s6a_integrity_key;
 extern struct dict_object *ogs_diam_s6a_rand;
 extern struct dict_object *ogs_diam_s6a_xres;
 extern struct dict_object *ogs_diam_s6a_autn;
@@ -179,8 +183,19 @@ typedef struct ogs_diam_e_utran_vector_s {
     uint8_t                 autn[OGS_AUTN_LEN];
 } ogs_diam_e_utran_vector_t;
 
+typedef struct ogs_diam_utran_vector_s {
+    uint8_t                 xres[OGS_MAX_RES_LEN];
+    uint8_t                 xres_len;
+    uint8_t                 ck[OGS_KEY_LEN];
+    uint8_t                 ik[OGS_KEY_LEN];
+    uint8_t                 rand[OGS_RAND_LEN];
+    uint8_t                 autn[OGS_AUTN_LEN];
+} ogs_diam_utran_vector_t;
+
 typedef struct ogs_diam_s6a_aia_message_s {
     ogs_diam_e_utran_vector_t e_utran_vector;
+    ogs_diam_utran_vector_t utran_vector;
+    bool utran_vector_present;
 } ogs_diam_s6a_aia_message_t;
 
 typedef struct ogs_diam_s6a_ula_message_s {

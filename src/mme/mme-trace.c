@@ -48,11 +48,10 @@ void ogs_mme_trace_set(
 
         if (MME_UE_HAVE_IMSI(mme_ue))
             ogs_cpystrn(ctx.imsi, mme_ue->imsi_bcd, sizeof(ctx.imsi));
-        if (mme_ue->mme_s11_teid)
-            ctx.mme_s11_teid = mme_ue->mme_s11_teid;
+        ctx.mme_s11_teid = mme_ue->mme_s11_teid;
 
         sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-        if (sgw_ue && sgw_ue->sgw_s11_teid)
+        if (sgw_ue)
             ctx.sgw_s11_teid = sgw_ue->sgw_s11_teid;
 
         sess = mme_sess_first(mme_ue);
@@ -81,7 +80,8 @@ void ogs_mme_trace_set(
         }
     }
 
-    ogs_trace_merge(&ctx);
+    /* Full snapshot: unset fields show "-" instead of previous UE/session data. */
+    ogs_trace_set(&ctx);
 }
 
 void ogs_mme_trace_from_ids(

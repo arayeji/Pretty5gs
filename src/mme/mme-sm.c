@@ -663,7 +663,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                     if (rv != OGS_OK)
                         ogs_warn("Failed to send SGSN Context Ack (rv %d)", rv);
                 } else
-                    ogs_warn("Originating SGSN Context xact no longer valid (%d)", e->gtp_xact_id);
+                    ogs_debug("Originating SGSN Context xact no longer valid (%d)", e->gtp_xact_id);
 
                 /* Finally reject the UE: */
                 if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {

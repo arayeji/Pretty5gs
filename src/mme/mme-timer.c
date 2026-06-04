@@ -24,37 +24,39 @@
 static mme_timer_cfg_t g_mme_timer_cfg[MAX_NUM_OF_MME_TIMER] = {
     /* Paging procedure for EPS services initiated */
     [MME_TIMER_T3413] =
-        { .have = true, .max_count = 2, .duration = ogs_time_from_sec(2) },
+        { .have = true, .max_count = 2, .duration = ogs_time_from_sec(6) },
 
     /* DETACH REQUEST sent */
     [MME_TIMER_T3422] =
-        { .have = true, .max_count = 4, .duration = ogs_time_from_sec(3) },
+        { .have = true, .max_count = 4, .duration = ogs_time_from_sec(6) },
 
     /* ATTACH ACCEPT sent
      * TRACKING AREA UPDATE ACCEPT sent with GUTI
      * TRACKING AREA UPDATE ACCEPT sent with TMSI
      * GUTI REALLOCATION COMMAND sent */
     [MME_TIMER_T3450] =
-        { .have = true, .max_count = 4, .duration = ogs_time_from_sec(6) },
+        { .have = true, .max_count = 4, .duration = ogs_time_from_sec(12) },
 
     /* AUTHENTICATION REQUEST sent
      * SECURITY MODE COMMAND sent */
     [MME_TIMER_T3460] =
-        { .have = true, .max_count = 4, .duration = ogs_time_from_sec(3) },
+        { .have = true, .max_count = 4, .duration = ogs_time_from_sec(6) },
 
     /* IDENTITY REQUEST sent */
     [MME_TIMER_T3470] =
-        { .have = true, .max_count = 4, .duration = ogs_time_from_sec(3) },
+        { .have = true, .max_count = 4, .duration = ogs_time_from_sec(6) },
 
     /* ESM INFORMATION REQUEST sent */
     [MME_TIMER_T3489] =
         { .have = true, .max_count = 2, .duration = ogs_time_from_sec(4) },
 
-    /* DEACTIVATE EPS BEARER CONTEXT REQUEST sent, waiting for
-     * Deactivate Accept from the UE. max_count=1 means: on expiry we
-     * give up, no retransmission. */
+    [MME_TIMER_BEARER_SETUP] =
+        { .have = true, .max_count = 4, .duration = ogs_time_from_sec(12) },
+
+    /* DEACTIVATE EPS BEARER CONTEXT REQUEST sent (T3495): retransmit then
+     * fall back to Delete Bearer Response if the UE stays silent. */
     [MME_TIMER_NAS_DEACTIVATE_BEARER] =
-        { .have = true, .max_count = 1, .duration = ogs_time_from_sec(5) },
+        { .have = true, .max_count = 4, .duration = ogs_time_from_sec(8) },
 
     [MME_TIMER_SGS_CLI_CONN_TO_SRV] =
         { .have = true, .duration = ogs_time_from_sec(3) },
@@ -79,12 +81,20 @@ mme_timer_cfg_t *mme_timer_cfg(mme_timer_e id)
     return &g_mme_timer_cfg[id];
 }
 
+void mme_timer_set(mme_timer_e id, ogs_time_t duration, int max_count)
+{
+    ogs_assert(id < MAX_NUM_OF_MME_TIMER);
+    ogs_assert(g_mme_timer_cfg[id].have == true);
+
+    if (duration > 0)
+        g_mme_timer_cfg[id].duration = duration;
+    if (max_count > 0)
+        g_mme_timer_cfg[id].max_count = max_count;
+}
+
 void mme_timer_set_t3450(ogs_time_t duration, int max_count)
 {
-    if (duration > 0)
-        g_mme_timer_cfg[MME_TIMER_T3450].duration = duration;
-    if (max_count > 0)
-        g_mme_timer_cfg[MME_TIMER_T3450].max_count = max_count;
+    mme_timer_set(MME_TIMER_T3450, duration, max_count);
 }
 
 const char *mme_timer_get_name(mme_timer_e id)
@@ -104,6 +114,8 @@ const char *mme_timer_get_name(mme_timer_e id)
         return "MME_TIMER_T3470";
     case MME_TIMER_T3489:
         return "MME_TIMER_T3489";
+    case MME_TIMER_BEARER_SETUP:
+        return "MME_TIMER_BEARER_SETUP";
     case MME_TIMER_NAS_DEACTIVATE_BEARER:
         return "MME_TIMER_NAS_DEACTIVATE_BEARER";
     case MME_TIMER_MOBILE_REACHABLE:
@@ -208,6 +220,11 @@ static void esm_timer_event_send(mme_timer_e timer_id, void *data)
 void mme_timer_t3489_expire(void *data)
 {
     esm_timer_event_send(MME_TIMER_T3489, data);
+}
+
+void mme_timer_bearer_setup_expire(void *data)
+{
+    esm_timer_event_send(MME_TIMER_BEARER_SETUP, data);
 }
 
 void mme_timer_nas_deactivate_bearer_expire(void *data)

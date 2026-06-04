@@ -18,9 +18,11 @@
  */
 
 #include "ogs-sctp.h"
+#include "ogs-s1ap.h"
 
 #include "mme-event.h"
 #include "mme-timer.h"
+#include "mme-trace.h"
 
 #include "nas-security.h"
 #include "nas-path.h"
@@ -1016,4 +1018,123 @@ int s1ap_send_s1_reset(mme_enb_t *enb, S1AP_Cause_PR group, long cause)
     ogs_expect(rv == OGS_OK);
 
     return rv;
+}
+
+static const char *s1ap_cause_group_name(S1AP_Cause_PR present)
+{
+    switch (present) {
+    case S1AP_Cause_PR_radioNetwork: return "radioNetwork";
+    case S1AP_Cause_PR_transport: return "transport";
+    case S1AP_Cause_PR_nas: return "nas";
+    case S1AP_Cause_PR_protocol: return "protocol";
+    case S1AP_Cause_PR_misc: return "misc";
+    default: return "unknown";
+    }
+}
+
+static const char *s1ap_cause_value_name(S1AP_Cause_t *cause)
+{
+    long v;
+
+    ogs_assert(cause);
+
+    switch (cause->present) {
+    case S1AP_Cause_PR_radioNetwork:
+        v = cause->choice.radioNetwork;
+        switch (v) {
+        case S1AP_CauseRadioNetwork_unspecified:
+            return "unspecified";
+        case S1AP_CauseRadioNetwork_radio_resources_not_available:
+            return "radio-resources-not-available";
+        case S1AP_CauseRadioNetwork_failure_in_radio_interface_procedure:
+            return "failure-in-radio-interface-procedure";
+        case S1AP_CauseRadioNetwork_unknown_E_RAB_ID:
+            return "unknown-E-RAB-ID";
+        case S1AP_CauseRadioNetwork_encryption_and_or_integrity_protection_algorithms_not_supported:
+            return "encryption-or-integrity-not-supported";
+        default:
+            return NULL;
+        }
+    case S1AP_Cause_PR_transport:
+        v = cause->choice.transport;
+        switch (v) {
+        case S1AP_CauseTransport_transport_resource_unavailable:
+            return "transport-resource-unavailable";
+        case S1AP_CauseTransport_unspecified:
+            return "unspecified";
+        default:
+            return NULL;
+        }
+    case S1AP_Cause_PR_nas:
+        v = cause->choice.nas;
+        switch (v) {
+        case S1AP_CauseNas_normal_release: return "normal-release";
+        case S1AP_CauseNas_authentication_failure: return "authentication-failure";
+        case S1AP_CauseNas_detach: return "detach";
+        case S1AP_CauseNas_unspecified: return "unspecified";
+        default: return NULL;
+        }
+    default:
+        return NULL;
+    }
+}
+
+void s1ap_cause_string(char *buf, size_t buflen, S1AP_Cause_t *cause)
+{
+    const char *group = "unknown";
+    const char *value = NULL;
+    long numeric = 0;
+    char *last = NULL;
+
+    ogs_assert(buf);
+    ogs_assert(buflen > 0);
+    buf[0] = '\0';
+    last = buf + buflen;
+
+    if (!cause) {
+        ogs_slprintf(buf, last, "missing");
+        return;
+    }
+
+    group = s1ap_cause_group_name(cause->present);
+    value = s1ap_cause_value_name(cause);
+
+    switch (cause->present) {
+    case S1AP_Cause_PR_radioNetwork:
+        numeric = cause->choice.radioNetwork;
+        break;
+    case S1AP_Cause_PR_transport:
+        numeric = cause->choice.transport;
+        break;
+    case S1AP_Cause_PR_nas:
+        numeric = cause->choice.nas;
+        break;
+    case S1AP_Cause_PR_protocol:
+        numeric = cause->choice.protocol;
+        break;
+    case S1AP_Cause_PR_misc:
+        numeric = cause->choice.misc;
+        break;
+    default:
+        ogs_slprintf(buf, last, "invalid-group[%d]", (int)cause->present);
+        return;
+    }
+
+    if (value)
+        ogs_slprintf(buf, last, "%s/%s(%ld)", group, value, numeric);
+    else
+        ogs_slprintf(buf, last, "%s/%ld", group, numeric);
+}
+
+void s1ap_log_ue_failure(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        mme_bearer_t *bearer, const char *apn, const char *proc,
+        const char *event, S1AP_Cause_t *cause)
+{
+    char cause_str[128];
+
+    (void)bearer;
+
+    s1ap_cause_string(cause_str, sizeof(cause_str), cause);
+    ogs_mme_trace_set(enb_ue, mme_ue, apn, proc ? proc : "attach-fail");
+    OGS_TLOG_INFO("%s [Cause:%s]", event, cause_str);
 }

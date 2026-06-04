@@ -96,7 +96,7 @@ void sgwc_s5c_handle_create_session_response(
 
     ogs_assert(sess);
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-    ogs_sgwc_trace_set(sgwc_ue, sess, "create-session");
+    ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
     OGS_TLOG_INFO("Create Session Response");
 
     /********************
@@ -204,7 +204,7 @@ void sgwc_s5c_handle_create_session_response(
             continue;
         }
         bearer_cause = cause->value;
-        if (bearer_cause != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+        if (!OGS_GTP2_CAUSE_IS_SUCCESS(bearer_cause)) {
             ogs_error("GTP Bearer Cause [VALUE:%d]", bearer_cause);
             ogs_gtp_send_error_message(
                     s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
@@ -213,12 +213,7 @@ void sgwc_s5c_handle_create_session_response(
         }
     }
 
-    if (session_cause != OGS_GTP2_CAUSE_REQUEST_ACCEPTED &&
-        session_cause != OGS_GTP2_CAUSE_REQUEST_ACCEPTED_PARTIALLY &&
-        session_cause !=
-            OGS_GTP2_CAUSE_NEW_PDN_TYPE_DUE_TO_NETWORK_PREFERENCE &&
-        session_cause !=
-            OGS_GTP2_CAUSE_NEW_PDN_TYPE_DUE_TO_SINGLE_ADDRESS_BEARER_ONLY) {
+    if (!OGS_GTP2_CAUSE_IS_SUCCESS(session_cause)) {
         ogs_error("GTP Cause [VALUE:%d]", session_cause);
         ogs_gtp_send_error_message(
                 s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
