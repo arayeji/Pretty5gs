@@ -688,28 +688,40 @@ static int radius_parse_access_accept(smf_sess_t *sess,
 
         if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV4) {
             if (!got_v4) {
-                ogs_warn("RADIUS: no Framed-IP-Address; "
-                        "falling back to local IPv4 pool");
+                ogs_warn("[%s] RADIUS: no Framed-IP-Address; DNN:%s; "
+                        "falling back to local IPv4 pool",
+                        smf_ue->imsi_len ? smf_ue->imsi_bcd :
+                        (smf_ue->supi ? smf_ue->supi : "-"),
+                        sess->session.name ? sess->session.name : "-");
             } else {
                 sess->session.ue_ip.addr = v4_be;
             }
         } else if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV6) {
             if (!got_v6) {
-                ogs_warn("RADIUS: no Framed-IPv6-Prefix; "
-                        "falling back to local IPv6 pool");
+                ogs_warn("[%s] RADIUS: no Framed-IPv6-Prefix; DNN:%s; "
+                        "falling back to local IPv6 pool",
+                        smf_ue->imsi_len ? smf_ue->imsi_bcd :
+                        (smf_ue->supi ? smf_ue->supi : "-"),
+                        sess->session.name ? sess->session.name : "-");
             } else {
                 memcpy(sess->session.ue_ip.addr6, v6, OGS_IPV6_LEN);
             }
         } else if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
             if (!got_v4) {
-                ogs_warn("RADIUS: no Framed-IP-Address; "
-                        "falling back to local IPv4 pool");
+                ogs_warn("[%s] RADIUS: no Framed-IP-Address; DNN:%s; "
+                        "falling back to local IPv4 pool",
+                        smf_ue->imsi_len ? smf_ue->imsi_bcd :
+                        (smf_ue->supi ? smf_ue->supi : "-"),
+                        sess->session.name ? sess->session.name : "-");
             } else {
                 sess->session.ue_ip.addr = v4_be;
             }
             if (!got_v6) {
-                ogs_warn("RADIUS: no Framed-IPv6-Prefix; "
-                        "falling back to local IPv6 pool");
+                ogs_warn("[%s] RADIUS: no Framed-IPv6-Prefix; DNN:%s; "
+                        "falling back to local IPv6 pool",
+                        smf_ue->imsi_len ? smf_ue->imsi_bcd :
+                        (smf_ue->supi ? smf_ue->supi : "-"),
+                        sess->session.name ? sess->session.name : "-");
             } else {
                 memcpy(sess->session.ue_ip.addr6, v6, OGS_IPV6_LEN);
             }
@@ -721,6 +733,18 @@ static int radius_parse_access_accept(smf_sess_t *sess,
     } else if (got_v4 || got_v6) {
         ogs_debug("RADIUS: ignoring framed UE IP/prefix from Access-Accept "
                 "(smf.radius.use_framed_ip_for_ue: false)");
+    }
+
+    if (smf_self()->radius.use_framed_ip_for_ue && (got_v4 || got_v6)) {
+        char buf1[OGS_ADDRSTRLEN];
+        char buf2[OGS_ADDRSTRLEN];
+
+        ogs_info("[%s] RADIUS framed UE IP DNN:%s IPv4:%s IPv6:%s",
+                smf_ue->imsi_len ? smf_ue->imsi_bcd :
+                (smf_ue->supi ? smf_ue->supi : "-"),
+                sess->session.name ? sess->session.name : "-",
+                got_v4 ? OGS_INET_NTOP(&v4_be, buf1) : "-",
+                got_v6 ? OGS_INET6_NTOP(v6, buf2) : "-");
     }
 
     return OGS_OK;
@@ -1327,7 +1351,7 @@ int smf_radius_authorize_for_session(smf_sess_t *sess)
                 res_len - RADIUS_HDR_LEN) != OGS_OK)
         return OGS_ERROR;
 
-    ogs_debug("RADIUS Access-Accept for IMSI[%s] DNN[%s]",
+    ogs_info("RADIUS Access-Accept for IMSI[%s] DNN[%s]",
             user, called ? called : "");
     return OGS_OK;
 }

@@ -30,6 +30,9 @@ void ogs_smf_trace_set(
         smf_ue_t *smf_ue, smf_sess_t *sess,
         const char *proc);
 
+void smf_ue_debug(smf_ue_t *smf_ue, const char *fmt, ...)
+    OGS_GNUC_PRINTF(2, 3);
+
 #ifdef __cplusplus
 }
 #endif

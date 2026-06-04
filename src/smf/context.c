@@ -1317,6 +1317,37 @@ int smf_context_parse_config(void)
                     /* handle config in sbi library */
                 } else if (!strcmp(smf_key, "metrics")) {
                     /* handle config in metrics library */
+                } else if (!strcmp(smf_key, "trace_imsi")) {
+                    ogs_yaml_iter_t trace_array, trace_iter;
+
+                    ogs_yaml_iter_recurse(&smf_iter, &trace_array);
+                    do {
+                        if (ogs_yaml_iter_type(&trace_array) ==
+                                YAML_MAPPING_NODE) {
+                            break;
+                        } else if (ogs_yaml_iter_type(&trace_array) ==
+                                YAML_SEQUENCE_NODE) {
+                            if (!ogs_yaml_iter_next(&trace_array))
+                                break;
+                            ogs_yaml_iter_recurse(&trace_array, &trace_iter);
+                        } else if (ogs_yaml_iter_type(&trace_array) ==
+                                YAML_SCALAR_NODE) {
+                            ogs_yaml_iter_recurse(&smf_iter, &trace_iter);
+                        } else
+                            ogs_assert_if_reached();
+
+                        while (ogs_yaml_iter_next(&trace_iter)) {
+                            const char *v = ogs_yaml_iter_value(&trace_iter);
+
+                            if (v && ogs_trace_filter_add(v) != OGS_OK)
+                                ogs_warn("trace_imsi: could not add `%s'", v);
+                        }
+                    } while (ogs_yaml_iter_type(&trace_array) ==
+                            YAML_SEQUENCE_NODE &&
+                            ogs_yaml_iter_next(&trace_array));
+
+                    ogs_info("trace_imsi: %d prefix(es) loaded",
+                            ogs_trace_filter_count());
                 } else
                     ogs_warn("unknown key `%s`", smf_key);
             }
@@ -2279,6 +2310,70 @@ smf_sess_t *smf_sess_add_by_pdu_session(ogs_sbi_message_t *message)
     return sess;
 }
 
+static const char *smf_ue_log_id(const smf_ue_t *smf_ue)
+{
+    if (!smf_ue)
+        return "-";
+    if (smf_ue->imsi_len > 0 && smf_ue->imsi_bcd[0])
+        return smf_ue->imsi_bcd;
+    if (smf_ue->supi)
+        return smf_ue->supi;
+    return "-";
+}
+
+static void smf_pfcp_subnet_desc(
+        const ogs_pfcp_subnet_t *subnet, char *buf, int buflen)
+{
+    char ip[OGS_ADDRSTRLEN];
+
+    ogs_assert(buf);
+    ogs_assert(buflen > 0);
+    buf[0] = '\0';
+    if (!subnet)
+        return;
+
+    if (subnet->family == AF_INET6)
+        OGS_INET6_NTOP(&subnet->sub.sub[0], ip);
+    else
+        OGS_INET_NTOP(&subnet->sub.sub[0], ip);
+
+    ogs_snprintf(buf, buflen, "%s/%u(free=%u/%u)",
+            ip, subnet->prefixlen,
+            subnet->pool.avail, subnet->pool.size);
+}
+
+static void smf_sess_log_ue_ip_fail(
+        smf_ue_t *smf_ue, smf_sess_t *sess,
+        int family, uint8_t cause_value)
+{
+    ogs_error("[%s] UE IP assign failed DNN:%s family=%d cause=%u",
+            smf_ue_log_id(smf_ue),
+            sess->session.name ? sess->session.name : "-",
+            family, cause_value);
+}
+
+static void smf_sess_log_ue_ip_ok(smf_ue_t *smf_ue, smf_sess_t *sess)
+{
+    char buf1[OGS_ADDRSTRLEN];
+    char buf2[OGS_ADDRSTRLEN];
+    char pool4[64];
+    char pool6[64];
+
+    pool4[0] = pool6[0] = '\0';
+    if (sess->ipv4)
+        smf_pfcp_subnet_desc(sess->ipv4->subnet, pool4, sizeof pool4);
+    if (sess->ipv6)
+        smf_pfcp_subnet_desc(sess->ipv6->subnet, pool6, sizeof pool6);
+
+    ogs_info("[%s] UE IP assigned DNN:%s IPv4:%s IPv6:%s pool:%s / %s",
+            smf_ue_log_id(smf_ue),
+            sess->session.name ? sess->session.name : "-",
+            sess->ipv4 ? OGS_INET_NTOP(&sess->ipv4->addr, buf1) : "-",
+            sess->ipv6 ? OGS_INET6_NTOP(&sess->ipv6->addr, buf2) : "-",
+            pool4[0] ? pool4 : "-",
+            pool6[0] ? pool6 : "-");
+}
+
 uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
 {
     ogs_pfcp_subnet_t *subnet6 = NULL;
@@ -2340,7 +2435,7 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
         sess->ipv4 = ogs_pfcp_ue_ip_alloc(&cause_value, AF_INET,
                 sess->session.name, (uint8_t *)&sess->session.ue_ip.addr);
         if (!sess->ipv4) {
-            ogs_error("ogs_pfcp_ue_ip_alloc() failed[%d]", cause_value);
+            smf_sess_log_ue_ip_fail(smf_ue, sess, AF_INET, cause_value);
             return cause_value;
         }
         sess->paa.addr = sess->ipv4->addr[0];
@@ -2350,7 +2445,7 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
         sess->ipv6 = ogs_pfcp_ue_ip_alloc(&cause_value, AF_INET6,
                 sess->session.name, sess->session.ue_ip.addr6);
         if (!sess->ipv6) {
-            ogs_error("ogs_pfcp_ue_ip_alloc() failed[%d]", cause_value);
+            smf_sess_log_ue_ip_fail(smf_ue, sess, AF_INET6, cause_value);
             return cause_value;
         }
 
@@ -2365,13 +2460,13 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
         sess->ipv4 = ogs_pfcp_ue_ip_alloc(&cause_value, AF_INET,
                 sess->session.name, (uint8_t *)&sess->session.ue_ip.addr);
         if (!sess->ipv4) {
-            ogs_error("ogs_pfcp_ue_ip_alloc() failed[%d]", cause_value);
+            smf_sess_log_ue_ip_fail(smf_ue, sess, AF_INET, cause_value);
             return cause_value;
         }
         sess->ipv6 = ogs_pfcp_ue_ip_alloc(&cause_value, AF_INET6,
                 sess->session.name, sess->session.ue_ip.addr6);
         if (!sess->ipv6) {
-            ogs_error("ogs_pfcp_ue_ip_alloc() failed[%d]", cause_value);
+            smf_sess_log_ue_ip_fail(smf_ue, sess, AF_INET6, cause_value);
             ogs_assert(cause_value != OGS_PFCP_CAUSE_REQUEST_ACCEPTED);
             if (sess->ipv4) {
                 ogs_hash_set(smf_self()->ipv4_hash,
@@ -2397,6 +2492,8 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
                 sess->session.session_type);
         ogs_assert_if_reached();
     }
+
+    smf_sess_log_ue_ip_ok(smf_ue, sess);
 
     return cause_value;
 }
