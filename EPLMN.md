@@ -12,29 +12,19 @@ Add under `mme:` in `mme.yaml` (max **15** PLMNs):
 
 ```yaml
 mme:
-  gummei:
-    - plmn_id:
-        mcc: 999
-        mnc: 70
-      mme_gid: 2
-      mme_code: 1
+  attach_accept:
+    equivalent_plmn: true
+    equivalent_plmn_serving_only: true   # default: true (Huawei-like)
   equivalent_plmn:
     - { mcc: 999, mnc: 71 }
     - { mcc: 999, mnc: 35 }
 ```
 
-When `equivalent_plmn_serving_only` is **enabled** (default), if the UE’s
-serving PLMN (TAI PLMN) matches one configured EPLMN entry, **only that PLMN**
-is sent in Attach/TAU Accept instead of the full list. If there is no match,
-the full list is sent. Set `equivalent_plmn_serving_only: false` to always
-send the entire list.
+When `attach_accept.equivalent_plmn_serving_only` is **enabled** (default), if the UE’s serving PLMN (TAI PLMN) matches one configured EPLMN entry, **only that PLMN** is sent in Attach/TAU Accept instead of the full list. If there is no match, the full list is sent.
 
-```yaml
-mme:
-  equivalent_plmn_serving_only: true   # default: true
-```
+Set `attach_accept.equivalent_plmn: false` to omit the EPLMN IE even when `equivalent_plmn:` is configured.
 
-If `equivalent_plmn` is omitted or empty, the IE is **not** sent (existing attach/TAU behaviour unchanged).
+If `equivalent_plmn` is omitted or empty, the IE is **not** sent.
 
 Startup fails with `ogs_error()` if there are more than 15 entries or an entry lacks `mcc`/`mnc`.
 
@@ -46,18 +36,15 @@ Startup fails with `ogs_error()` if there are more than 15 entries or an entry l
 Equivalent PLMNs configured: 2
   EPLMN[0]: MCC=432 MNC=11
   EPLMN[1]: MCC=432 MNC=35
+Attach/TAU Accept NAS options:
+  equivalent_plmn: enabled
+  equivalent_plmn_serving_only: enabled
 ```
 
 **MME on attach/TAU** (debug):
 
 ```
-    Equivalent PLMNs[2] included in Attach Accept
-```
-
-or
-
-```
-    Equivalent PLMNs[2] included in TAU Accept
+    Equivalent PLMNs[1/2] included in Attach Accept (serving PLMN:34f211 serving_only:1)
 ```
 
 ## Wire verification (tshark)
@@ -71,18 +58,6 @@ tshark -i any -f "sctp port 36412" \
 ```
 
 Attach Accept is `0x42`, TAU Accept is `0x49`. You should see the IE with your configured PLMNs (3 octets per PLMN).
-
-## srsUE verification
-
-1. Set srsUE `mcc` / `mnc` to the **RPLMN** (e.g. `432` / `12`).
-2. Configure the MME `equivalent_plmn` list as above.
-3. Attach and inspect the UE log:
-
-```bash
-grep -iE 'equivalent plmn|eplmn' srsue.log
-```
-
-Typical srsUE NAS output includes receipt/storage of the equivalent PLMN list after Attach Accept.
 
 ## Unit tests
 

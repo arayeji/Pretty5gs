@@ -1,7 +1,11 @@
 logger:
   file:
     path: @localstatedir@/log/open5gs/smf.log
-#  level: info   # fatal|error|warn|info(default)|debug|trace
+#  level: error   # production; UE IP / pool failures stay at error
+#  domain:
+#    smf: error
+#    pfcp: error
+#    gtp: warn
 
 global:
   max:
@@ -9,6 +13,8 @@ global:
 #    peer: 64
 
 smf:
+#  trace_imsi:        # same prefix list as MME (lib/core ogs_trace_filter)
+#    - 99970
   sbi:
     server:
       - address: 127.0.0.4
