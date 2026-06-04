@@ -49,6 +49,11 @@ void ogs_app_config_final(void)
 {
     ogs_assert(initialized == 1);
 
+    ogs_free(global_conf.milenage.k4);
+    ogs_free(global_conf.milenage.k4_file);
+    global_conf.milenage.k4 = NULL;
+    global_conf.milenage.k4_file = NULL;
+
     ogs_app_policy_conf_remove_all();
 
     ogs_pool_final(&policy_conf_pool);
@@ -425,8 +430,32 @@ int ogs_app_parse_global_conf(ogs_yaml_iter_t *parent)
                 } else
                     ogs_warn("unknown key `%s`", pool_key);
             }
+        } else if (!strcmp(global_key, "milenage")) {
+            ogs_yaml_iter_t milenage_iter;
+            ogs_yaml_iter_recurse(&global_iter, &milenage_iter);
+            while (ogs_yaml_iter_next(&milenage_iter)) {
+                const char *milenage_key = ogs_yaml_iter_key(&milenage_iter);
+                ogs_assert(milenage_key);
+                if (!strcmp(milenage_key, "k4")) {
+                    const char *v = ogs_yaml_iter_value(&milenage_iter);
+                    if (v) {
+                        ogs_free(global_conf.milenage.k4);
+                        global_conf.milenage.k4 = ogs_strdup(v);
+                    }
+                } else if (!strcmp(milenage_key, "k4_file")) {
+                    const char *v = ogs_yaml_iter_value(&milenage_iter);
+                    if (v) {
+                        ogs_free(global_conf.milenage.k4_file);
+                        global_conf.milenage.k4_file = ogs_strdup(v);
+                    }
+                } else
+                    ogs_warn("unknown key `%s`", milenage_key);
+            }
         }
     }
+
+    ogs_milenage_k4_apply_config(
+            global_conf.milenage.k4, global_conf.milenage.k4_file);
 
     rv = global_conf_validation();
     if (rv != OGS_OK) return rv;

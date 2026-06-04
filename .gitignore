@@ -1,5 +1,13 @@
 install/
 
+# Local deploy / build notes (not for public repo)
+build.md
+changes.ps1
+sync-to-server.ps1
+deploy.env.ps1
+deploy-bundle/
+.cursor/
+
 # This directory is fetched during first build and is present in this directory
 subprojects/freeDiameter
 subprojects/libtins
