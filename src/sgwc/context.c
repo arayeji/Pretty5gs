@@ -852,16 +852,16 @@ void sgwc_sess_sync_pfcp_pdr_nwi(sgwc_sess_t *sess)
     rewritten = sgwc_sgwu_nwi_rewrite_apply(sess, nwi, sizeof(nwi));
 
     /*
-     * Only push an NWI into the PFCP PDRs/FARs when an explicit rewrite rule
-     * mapped the APN to a known SGW-U network instance name.  Without a rule
-     * the raw APN string (e.g. "hiweb") would be sent as Network Instance to
-     * UPG-VPP, which looks up NWI names case-sensitively; an unknown name
-     * causes VPP to silently drop the PFCP session establishment.
-     * When no rule is configured the NWI field is left absent, which is the
-     * safe default that UPG-VPP accepts.
+     * UPG-VPP looks up Network Instance names case-sensitively.  When no
+     * rewrite rule remapped the APN to an explicit NWI name, lowercase the
+     * raw APN string so "Hiweb"/"HIWEB" becomes "hiweb" and matches the NWI
+     * as configured in VPP.
      */
-    if (!rewritten)
-        return;
+    if (!rewritten) {
+        char *p;
+        for (p = nwi; *p; p++)
+            *p = (char)tolower((unsigned char)*p);
+    }
 
     ogs_list_for_each(&sess->pfcp.pdr_list, pdr) {
         if (pdr->apn)
