@@ -503,9 +503,13 @@ void ogs_pfcp_build_update_pdr(
 
     /*
      * 3GPP TS 29.244 Table 7.5.4.2-1: PDI in Update PDR is conditional.
-     * Always include the detection identifiers so that strict UP functions
-     * (e.g., eUPF) can validate the modification. Include source_interface
-     * unconditionally and the optional UE IP / F-TEID / DNN when present.
+     * Include source_interface so that strict UP functions (e.g., eUPF)
+     * can validate the modification.
+     *
+     * Do NOT include Network Instance (NWI) here: UPG-VPP silently drops
+     * PFCP Session Modification Requests that carry a Network Instance IE
+     * inside Update PDR. NWI was already set during session establishment
+     * (Create PDR) and does not need to be repeated in modifications.
      */
     message->pdi.presence = 1;
     message->pdi.source_interface.presence = 1;
@@ -514,13 +518,6 @@ void ogs_pfcp_build_update_pdr(
     if (pdr->src_if_type_presence) {
         message->pdi.source_interface_type.presence = 1;
         message->pdi.source_interface_type.u8 = pdr->src_if_type;
-    }
-
-    if (pdr->apn) {
-        message->pdi.network_instance.presence = 1;
-        message->pdi.network_instance.len = ogs_fqdn_build(
-            pdrbuf[i].dnn, pdr->apn, strlen(pdr->apn));
-        message->pdi.network_instance.data = pdrbuf[i].dnn;
     }
 
     if (pdr->ue_ip_addr_len) {
