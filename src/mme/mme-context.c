@@ -5828,7 +5828,17 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
             }
 
             /* Phase-2 : Move Session Context from OLD to NEW MME-UE Context */
-            ogs_assert(ogs_list_empty(&mme_ue->sess_list));
+            if (!ogs_list_empty(&mme_ue->sess_list)) {
+                mme_sess_t *stale_sess = NULL, *stale_next = NULL;
+
+                ogs_warn("[%s] NEW UE has session(s) during OLD context merge; "
+                        "dropping incomplete NEW sessions",
+                        mme_ue->imsi_bcd);
+                ogs_list_for_each_safe(&mme_ue->sess_list, stale_next,
+                        stale_sess) {
+                    mme_sess_remove(stale_sess);
+                }
+            }
 
             memcpy(&mme_ue->sess_list,
                     &old_mme_ue->sess_list, sizeof(mme_ue->sess_list));
