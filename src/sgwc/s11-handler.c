@@ -805,7 +805,26 @@ void sgwc_s11_handle_delete_session_request(
      ********************/
     ogs_assert(sgwc_ue);
     ogs_assert(sess);
-    ogs_assert(sess->gnode);
+
+    /*
+     * sess->gnode is the S5C peer (PGW/SMF). It is NULL when the PDN was never
+     * fully established on S5 (e.g. PFCP establishment rejected with cause 73,
+     * or a roaming session whose PGW node was never resolved). The MME can
+     * still send a Delete Session Request for such a session; forwarding it to
+     * a NULL gnode used to abort the entire SGW-C. Instead, tear down the local
+     * context and acknowledge so the MME can release its bearer.
+     */
+    if (!sess->gnode) {
+        ogs_error("[%s] Delete Session Request for session with no S5C peer; "
+                "removing locally", sgwc_ue->imsi_bcd);
+        sgwc_sess_remove(sess);
+        ogs_gtp_send_error_message(
+                s11_xact, sgwc_ue->mme_s11_teid,
+                OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
+        return;
+    }
+
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
         sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);
     ogs_debug("    SGW_S5C_TEID[0x%x] PGW_S5C_TEID[0x%x]",
@@ -1480,14 +1499,47 @@ void sgwc_s11_handle_release_access_bearers_request(
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
         sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);
 
+    int num_of_modify = 0;
+
     ogs_list_for_each(&sgwc_ue->sess_list, sess) {
 
-        ogs_assert(ogs_list_count(&sess->bearer_list));
+        /*
+         * A session with no bearers (half-established / failed setup) has no
+         * S1-U bearer to deactivate, and a session with no PFCP node has no
+         * SGW-U to talk to. Sending a PFCP modification for either used to
+         * abort the entire SGW-C. Skip such sessions instead.
+         */
+        if (ogs_list_count(&sess->bearer_list) == 0) {
+            ogs_error("[%s] Release Access Bearers: session has no bearers, "
+                    "skipping", sgwc_ue->imsi_bcd);
+            continue;
+        }
+        if (!sess->pfcp_node) {
+            ogs_error("[%s] Release Access Bearers: session has no PFCP node, "
+                    "skipping", sgwc_ue->imsi_bcd);
+            continue;
+        }
+
         ogs_debug("    sess_id=%d xact=%p", sess->id, s11_xact);
         ogs_assert(OGS_OK ==
             sgwc_pfcp_send_session_modification_request(
                 sess, s11_xact->id, gtpbuf,
                 OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_DEACTIVATE));
+        num_of_modify++;
+    }
+
+    /*
+     * If no session could be modified (all empty / no UPF), the PFCP-response
+     * path that normally builds the Release Access Bearers Response never runs.
+     * Acknowledge the MME directly so it does not retransmit.
+     */
+    if (num_of_modify == 0) {
+        ogs_warn("[%s] Release Access Bearers: no modifiable session; "
+                "responding accepted", sgwc_ue->imsi_bcd);
+        ogs_gtp_send_error_message(
+                s11_xact, sgwc_ue->mme_s11_teid,
+                OGS_GTP2_RELEASE_ACCESS_BEARERS_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
     }
 }
 
