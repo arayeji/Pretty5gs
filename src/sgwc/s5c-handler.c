@@ -759,8 +759,18 @@ void sgwc_s5c_handle_update_bearer_request(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sess) {
-        ogs_error("No Context in TEID");
+        ogs_error("Update Bearer Request: No Context in TEID [0x%x]",
+                message->h.teid);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+    } else if (message->h.teid &&
+            !sgwc_sess_s5c_teid_matches(sess, message->h.teid)) {
+        sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        ogs_error("[%s] Stale Update Bearer Request: TEID [0x%x] "
+                "does not match SGW-S5C-TEID [0x%x]",
+                sgwc_ue ? sgwc_ue->imsi_bcd : "-",
+                message->h.teid, sess->sgw_s5c_teid);
+        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+        sess = NULL;
     } else {
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         ogs_assert(sgwc_ue);

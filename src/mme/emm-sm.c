@@ -138,6 +138,67 @@ static void emm_handle_t3450_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
     }
 }
 
+static void emm_handle_sgs_ts6_1_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
+{
+    int r;
+    enb_ue_t *enb_ue = NULL;
+
+    ogs_assert(mme_ue);
+
+    if (!mme_ue->sgs_lu_pending) {
+        ogs_debug("[%s] Stale %s; ignored",
+                mme_ue->imsi_bcd, mme_timer_get_name(MME_TIMER_SGS_TS6_1));
+        ogs_timer_stop(mme_ue->t_sgs_ts6_1);
+        return;
+    }
+
+    mme_ue->sgs_lu_pending = false;
+    ogs_timer_stop(mme_ue->t_sgs_ts6_1);
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (!enb_ue) {
+        ogs_error("[%s] Ts6-1 expired but no S1 context",
+                mme_ue->imsi_bcd);
+        return;
+    }
+
+    ogs_warn("[%s] SGSAP: Location-Update timeout (Ts6-1); EPS-only",
+            mme_ue->imsi_bcd);
+    mme_ue_progress(mme_ue, "sgsap_lu_timeout");
+
+    if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {
+        r = nas_eps_send_attach_accept(mme_ue);
+        if (r != OGS_OK)
+            mme_send_delete_session_after_attach_accept_fail(enb_ue, mme_ue);
+        ogs_expect(r == OGS_OK);
+    } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
+        if (mme_ue->nas_eps.update.active_flag) {
+            ogs_kdf_kenb(mme_ue->kasme, mme_ue->ul_count.i32,
+                    mme_ue->kenb);
+            ogs_kdf_nh_enb(mme_ue->kasme, mme_ue->kenb, mme_ue->nh);
+            mme_ue->nhcc = 1;
+
+            ogs_info("[%s] KDF update(active_flag=1)", mme_ue->imsi_bcd);
+        }
+
+        if (mme_ue->tracking_area_update_request_presencemask &
+            OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_EPS_BEARER_CONTEXT_STATUS_PRESENT) {
+            ogs_info("[%s] Ts6-1 + TAU accept(active_flag=%d, BCS)",
+                mme_ue->imsi_bcd,
+                mme_ue->nas_eps.update.active_flag);
+            mme_send_delete_session_or_tau_accept(enb_ue, mme_ue);
+        } else {
+            ogs_info("[%s] Ts6-1 + TAU accept(active_flag=%d, No BCS)",
+                mme_ue->imsi_bcd,
+                mme_ue->nas_eps.update.active_flag);
+            mme_send_tau_accept_and_check_release(enb_ue, mme_ue);
+        }
+    } else {
+        ogs_warn("[%s] Ts6-1 expired in unexpected EPS-Type[%d]",
+                mme_ue->imsi_bcd, mme_ue->nas_eps.type);
+    }
+}
+
 /*
  * Timer expiry events can be queued before a state transition clears them
  * (e.g. T3450 after ICS failure and S1 release). Drop these quietly.
@@ -171,6 +232,11 @@ static bool emm_clear_stale_timer(mme_ue_t *mme_ue, int timer_id)
         ogs_debug("[%s] Stale %s in EMM state; clearing",
                 mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
         CLEAR_MME_UE_TIMER(mme_ue->t3470);
+        return true;
+    case MME_TIMER_SGS_TS6_1:
+        ogs_debug("[%s] Stale %s in EMM state; clearing",
+                mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
+        mme_sgs_ts6_1_timer_stop(mme_ue);
         return true;
     default:
         return false;
@@ -232,6 +298,10 @@ void emm_state_de_registered(ogs_fsm_t *s, mme_event_t *e)
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
             }
+            break;
+
+        case MME_TIMER_SGS_TS6_1:
+            emm_handle_sgs_ts6_1_timer(s, mme_ue);
             break;
 
         default:
@@ -422,6 +492,10 @@ void emm_state_registered(ogs_fsm_t *s, mme_event_t *e)
 
         case MME_TIMER_T3450:
             emm_handle_t3450_timer(s, mme_ue);
+            break;
+
+        case MME_TIMER_SGS_TS6_1:
+            emm_handle_sgs_ts6_1_timer(s, mme_ue);
             break;
 
         default:
@@ -1401,6 +1475,9 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
                 ogs_assert(r != OGS_ERROR);
             }
             break;
+        case MME_TIMER_SGS_TS6_1:
+            emm_handle_sgs_ts6_1_timer(s, mme_ue);
+            break;
         default:
             if (emm_clear_stale_timer(mme_ue, e->timer_id))
                 break;
@@ -1666,6 +1743,9 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
             }
+            break;
+        case MME_TIMER_SGS_TS6_1:
+            emm_handle_sgs_ts6_1_timer(s, mme_ue);
             break;
         default:
             if (emm_clear_stale_timer(mme_ue, e->timer_id))
@@ -1942,6 +2022,9 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
         switch (e->timer_id) {
         case MME_TIMER_T3450:
             emm_handle_t3450_timer(s, mme_ue);
+            break;
+        case MME_TIMER_SGS_TS6_1:
+            emm_handle_sgs_ts6_1_timer(s, mme_ue);
             break;
         default:
             if (emm_clear_stale_timer(mme_ue, e->timer_id))

@@ -3370,6 +3370,10 @@ int mme_context_parse_config(void)
                                 !strcmp(time_key, "nas_deactivate_bearer")) {
                             mme_timer_parse_yaml(&time_iter,
                                     MME_TIMER_NAS_DEACTIVATE_BEARER);
+                        } else if (!strcmp(time_key, "sgs_ts6_1") ||
+                                !strcmp(time_key, "ts6_1")) {
+                            mme_timer_parse_yaml(&time_iter,
+                                    MME_TIMER_SGS_TS6_1);
                         } else if (!strcmp(time_key, "t3512")) {
                             /* handle config in amf */
                         } else if (!strcmp(time_key, "nf_instance")) {
@@ -5263,6 +5267,15 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     }
     mme_ue->gn.gtp_xact_id = OGS_INVALID_POOL_ID;
 
+    mme_ue->t_sgs_ts6_1 = ogs_timer_add(
+            ogs_app()->timer_mgr, mme_timer_sgs_ts6_1_expire,
+            OGS_UINT_TO_POINTER(mme_ue->id));
+    if (!mme_ue->t_sgs_ts6_1) {
+        ogs_error("ogs_timer_add() failed");
+        ogs_pool_id_free(&mme_ue_pool, mme_ue);
+        return NULL;
+    }
+
     ogs_list_init(&mme_ue->sess_list);
 
     /*
@@ -5402,6 +5415,7 @@ void mme_ue_remove(mme_ue_t *mme_ue)
     ogs_timer_delete(mme_ue->t_mobile_reachable.timer);
     ogs_timer_delete(mme_ue->t_implicit_detach.timer);
     ogs_timer_delete(mme_ue->gn.t_gn_holding);
+    ogs_timer_delete(mme_ue->t_sgs_ts6_1);
 
     mme_ue->enb_ue_id = OGS_INVALID_POOL_ID;
 

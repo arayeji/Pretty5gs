@@ -1062,6 +1062,35 @@ void sgwc_sess_remove_all(sgwc_ue_t *sgwc_ue)
         sgwc_sess_remove(sess);
 }
 
+bool sgwc_sess_s5c_teid_matches(sgwc_sess_t *sess, uint32_t teid)
+{
+    uint32_t offset, raw, low;
+
+    ogs_assert(sess);
+
+    if (!teid)
+        return false;
+
+    if (sess->sgw_s5c_teid == teid)
+        return true;
+
+    offset = sgwc_self()->inbound_roam_teid_offset;
+    if (!offset)
+        return false;
+
+    raw = sess->sgw_s5c_teid - offset;
+    if (raw == teid)
+        return true;
+
+    low = teid & 0xFFFFFFu;
+    if ((sess->sgw_s5c_teid & 0xFFFFFFu) == low)
+        return true;
+    if ((raw & 0xFFFFFFu) == low)
+        return true;
+
+    return false;
+}
+
 sgwc_sess_t* sgwc_sess_find_by_teid(uint32_t teid)
 {
     sgwc_sess_t *sess = NULL;
@@ -1072,13 +1101,17 @@ sgwc_sess_t* sgwc_sess_find_by_teid(uint32_t teid)
         return NULL;
 
     sess = sgwc_sess_find_by_seid((uint64_t)teid);
-    if (sess)
-        return sess;
+    if (sess) {
+        if (sgwc_sess_s5c_teid_matches(sess, teid))
+            return sess;
+        return NULL;
+    }
 
     /*
      * Inbound roam PGW interop: we advertise sgw_s5c_teid = raw + teid_offset,
      * but some PGWs (e.g. Huawei) send back only the low 24 bits in S5 GTP-C
-     * headers (Update Bearer Request, etc.). Retry with offset variants.
+     * headers (Update Bearer Request, etc.). Retry with offset variants only
+     * when the candidate session's SGW-S5C-TEID matches the header TEID.
      */
     offset = sgwc_self()->inbound_roam_teid_offset;
     if (!offset)
@@ -1087,14 +1120,14 @@ sgwc_sess_t* sgwc_sess_find_by_teid(uint32_t teid)
     alt = teid + offset;
     if (alt != teid) {
         sess = sgwc_sess_find_by_seid((uint64_t)alt);
-        if (sess)
+        if (sess && sgwc_sess_s5c_teid_matches(sess, teid))
             return sess;
     }
 
     alt = teid | offset;
     if (alt != teid) {
         sess = sgwc_sess_find_by_seid((uint64_t)alt);
-        if (sess)
+        if (sess && sgwc_sess_s5c_teid_matches(sess, teid))
             return sess;
     }
 

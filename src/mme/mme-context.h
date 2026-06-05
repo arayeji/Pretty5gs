@@ -927,6 +927,8 @@ struct mme_ue_s {
         CLEAR_MME_UE_TIMER((__mME)->t3470); \
         CLEAR_MME_UE_TIMER((__mME)->t_mobile_reachable); \
         CLEAR_MME_UE_TIMER((__mME)->t_implicit_detach); \
+        (__mME)->sgs_lu_pending = false; \
+        ogs_timer_stop((__mME)->t_sgs_ts6_1); \
         \
         ogs_list_for_each(&mme_ue->sess_list, sess) { \
             ogs_list_for_each(&sess->bearer_list, bearer) { \
@@ -1007,6 +1009,9 @@ struct mme_ue_s {
     } gtp_counter[MAX_NUM_OF_GTP_COUNTER];
 
     ogs_list_t      bearer_to_modify_list;
+
+    ogs_timer_t     *t_sgs_ts6_1;
+    bool            sgs_lu_pending;
 
     mme_csmap_t     *csmap;
     mme_hssmap_t    *hssmap;
