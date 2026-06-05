@@ -112,9 +112,21 @@ static void pfcp_sess_timeout(ogs_pfcp_xact_t *xact, void *data)
     case OGS_PFCP_SESSION_ESTABLISHMENT_REQUEST_TYPE:
         ogs_error("No PFCP session establishment response");
         break;
-    case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE:
+    case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE: {
+        sgwc_ue_t *sgwc_ue = NULL;
+        ogs_gtp_xact_t *s11_xact = NULL;
+
         ogs_error("No PFCP session modification response");
+        sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        s11_xact = ogs_gtp_xact_find_by_id(xact->assoc_xact_id);
+        if (sgwc_ue && s11_xact) {
+            ogs_gtp_send_error_message(
+                    s11_xact, sgwc_ue->mme_s11_teid,
+                    OGS_GTP2_MODIFY_BEARER_RESPONSE_TYPE,
+                    OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+        }
         break;
+    }
     case OGS_PFCP_SESSION_DELETION_REQUEST_TYPE:
         ogs_error("No PFCP session deletion response");
         break;
@@ -598,6 +610,37 @@ void sgwc_s11_handle_modify_bearer_request(
         }
 
         if (!current_xact) {
+            current_xact = sgwc_pfcp_find_session_modify_xact(sess,
+                    OGS_PFCP_MODIFY_SESSION|OGS_PFCP_MODIFY_DL_ONLY|
+                    OGS_PFCP_MODIFY_OUTER_HEADER_REMOVAL|
+                    OGS_PFCP_MODIFY_ACTIVATE);
+        }
+
+        /*
+         * MME retransmits Modify Bearer while PFCP modification is still
+         * in flight. Reuse the pending PFCP xact and retarget the S11 xact
+         * instead of starting a second modification (UPG-VPP answers the
+         * first XID; the duplicate orphan xact then drops the response with
+         * "invalid step[0] type[53]" in lib/pfcp/xact.c).
+         */
+        if (current_xact && current_xact->step >= 1) {
+            current_xact->assoc_xact_id = s11_xact->id;
+            if (gtpbuf) {
+                if (current_xact->gtpbuf)
+                    ogs_pkbuf_free(current_xact->gtpbuf);
+                current_xact->gtpbuf = ogs_pkbuf_copy(gtpbuf);
+                ogs_assert(current_xact->gtpbuf);
+            }
+
+            ogs_list_for_each_entry(&pfcp_xact_list, pfcp_xact, tmpnode) {
+                if (pfcp_xact == current_xact)
+                    goto next_bearer;
+            }
+            ogs_list_add(&pfcp_xact_list, &current_xact->tmpnode);
+            goto next_bearer;
+        }
+
+        if (!current_xact) {
             current_xact = ogs_pfcp_xact_local_create(
                     sess->pfcp_node, pfcp_sess_timeout,
                     OGS_UINT_TO_POINTER(sess->id));
@@ -676,6 +719,8 @@ void sgwc_s11_handle_modify_bearer_request(
 
         ogs_list_add(&current_xact->bearer_to_modify_list,
                         &bearer->to_modify_node);
+next_bearer:
+        ;
     }
 
     if (i == 0) {
@@ -725,6 +770,8 @@ void sgwc_s11_handle_modify_bearer_request(
             ogs_debug("    sess_id=%d xact=%p flags=0x%llx",
                     sess->id, pfcp_xact,
                     (unsigned long long)pfcp_xact->modify_flags);
+            if (pfcp_xact->step >= 1)
+                continue;
             sgwc_pfcp_send_bearer_to_modify_list(sess, pfcp_xact);
         }
     }
