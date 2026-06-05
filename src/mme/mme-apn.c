@@ -77,12 +77,6 @@ void mme_apn_oi_plmn_id(
     memcpy(oi_plmn_id, &mme_ue->tai.plmn_id, OGS_PLMN_ID_LEN);
 }
 
-static bool mme_ue_uses_home_pgw(ogs_session_t *session)
-{
-    ogs_assert(session);
-    return session->smf_ip.ipv4 || session->smf_ip.ipv6;
-}
-
 bool mme_ue_is_inbound_roam(mme_ue_t *mme_ue)
 {
     ogs_plmn_id_t home_plmn_id;
