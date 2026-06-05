@@ -41,6 +41,9 @@ void mme_s6a_send_ulr(enb_ue_t *enb_ue, mme_ue_t *mme_ue, uint32_t extra_ulr_fla
 /* MME Sends Purge UE Request to HSS */
 void mme_s6a_send_pur(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 
+void mme_s6a_timer_start(mme_ue_t *mme_ue, uint16_t cmd_code);
+void mme_s6a_timer_stop(mme_ue_t *mme_ue);
+
 #ifdef __cplusplus
 }
 #endif

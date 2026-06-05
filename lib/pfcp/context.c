@@ -629,36 +629,76 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                                                         remote_key, "apn") ||
                                                     !strcmp(
                                                         remote_key, "dnn")) {
-                                                ogs_yaml_iter_t dnn_iter;
-                                                ogs_yaml_iter_recurse(
-                                                        &remote_iter,
-                                                        &dnn_iter);
-                                                ogs_assert(ogs_yaml_iter_type(
-                                                            &dnn_iter) !=
-                                                        YAML_MAPPING_NODE);
+                                                yaml_node_t *dnn_node =
+                                                    yaml_document_get_node(
+                                                        document,
+                                                        remote_iter.pair->value);
 
-                                                do {
-                                                    const char *v = NULL;
-
-                                                    ogs_assert(num_of_dnn <
-                                                            OGS_MAX_NUM_OF_DNN);
-                                                    if (ogs_yaml_iter_type(
-                                                                &dnn_iter) ==
+                                                if (!dnn_node) {
+                                                    ogs_warn("Empty apn/dnn "
+                                                            "under pfcp.client");
+                                                } else if (dnn_node->type ==
                                                         YAML_SEQUENCE_NODE) {
-                                                        if (!ogs_yaml_iter_next(
-                                                                    &dnn_iter))
-                                                            break;
-                                                    }
+                                                    ogs_yaml_iter_t dnn_iter;
 
-                                                    v = ogs_yaml_iter_value(
+                                                    ogs_yaml_iter_recurse(
+                                                            &remote_iter,
                                                             &dnn_iter);
-                                                    if (v) {
-                                                        dnn[num_of_dnn] = v;
-                                                        num_of_dnn++;
+                                                    while (ogs_yaml_iter_next(
+                                                                &dnn_iter)) {
+                                                        const char *v =
+                                                            ogs_yaml_iter_value(
+                                                                    &dnn_iter);
+
+                                                        if (num_of_dnn >=
+                                                                OGS_MAX_NUM_OF_DNN) {
+                                                            ogs_warn(
+                                                                "Too many "
+                                                                "DNN/APN "
+                                                                "entries under "
+                                                                "pfcp.client "
+                                                                "(max %d); "
+                                                                "ignoring the "
+                                                                "rest",
+                                                                OGS_MAX_NUM_OF_DNN);
+                                                            break;
+                                                        }
+                                                        if (v) {
+                                                            dnn[num_of_dnn] = v;
+                                                            num_of_dnn++;
+                                                        }
                                                     }
-                                                } while (ogs_yaml_iter_type(
-                                                            &dnn_iter) ==
-                                                        YAML_SEQUENCE_NODE);
+                                                } else if (dnn_node->type ==
+                                                        YAML_SCALAR_NODE) {
+                                                    const char *v =
+                                                        (const char *)
+                                                        dnn_node->data.
+                                                        scalar.value;
+
+                                                    if (v) {
+                                                        if (num_of_dnn >=
+                                                                OGS_MAX_NUM_OF_DNN) {
+                                                            ogs_warn(
+                                                                "Too many "
+                                                                "DNN/APN "
+                                                                "entries under "
+                                                                "pfcp.client "
+                                                                "(max %d); "
+                                                                "ignoring the "
+                                                                "rest",
+                                                                OGS_MAX_NUM_OF_DNN);
+                                                        } else {
+                                                            dnn[num_of_dnn] = v;
+                                                            num_of_dnn++;
+                                                        }
+                                                    }
+                                                } else {
+                                                    ogs_warn(
+                                                        "Invalid apn/dnn "
+                                                        "under pfcp.client "
+                                                        "(expected string or "
+                                                        "list)");
+                                                }
                                             } else if (!strcmp(remote_key,
                                                         "e_cell_id")) {
                                                 ogs_yaml_iter_t e_cell_id_iter;
@@ -874,6 +914,13 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                                         ogs_cpystrn(dnn_seq[dnn_seq_n++], dv,
                                                 OGS_MAX_DNN_LEN);
                                     }
+                                    if (dnn_seq_n >= OGS_MAX_NUM_OF_DNN &&
+                                            ogs_yaml_iter_next(&dnn_sq))
+                                        ogs_warn(
+                                            "Too many DNN/APN entries under "
+                                            "session subnet (max %d); "
+                                            "ignoring the rest",
+                                            OGS_MAX_NUM_OF_DNN);
                                 } else {
                                     dnn_scalar = ogs_yaml_iter_value(
                                             &subnet_iter);

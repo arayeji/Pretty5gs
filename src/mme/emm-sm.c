@@ -199,6 +199,82 @@ static void emm_handle_sgs_ts6_1_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
     }
 }
 
+static void emm_handle_s6a_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
+{
+    int r, rv;
+    enb_ue_t *enb_ue = NULL;
+    ogs_gtp_xact_t *xact = NULL;
+    uint16_t cmd;
+    uint8_t emm_cause = OGS_NAS_EMM_CAUSE_NETWORK_FAILURE;
+
+    ogs_assert(mme_ue);
+
+    cmd = mme_ue->s6a_pending_cmd;
+    if (!cmd) {
+        ogs_debug("[%s] Stale %s; ignored",
+                mme_ue->imsi_bcd, mme_timer_get_name(MME_TIMER_S6A));
+        mme_s6a_timer_stop(mme_ue);
+        return;
+    }
+
+    mme_s6a_timer_stop(mme_ue);
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (!enb_ue) {
+        ogs_error("[%s] S6a timeout but no S1 context (cmd=%u)",
+                mme_ue->imsi_bcd, cmd);
+        return;
+    }
+
+    if (cmd == OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION) {
+        ogs_warn("[%s] S6a AIR timeout", mme_ue->imsi_bcd);
+        mme_ue_progress(mme_ue, "s6a_air_timeout");
+    } else if (cmd == OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION) {
+        ogs_warn("[%s] S6a ULR timeout", mme_ue->imsi_bcd);
+        mme_ue_progress(mme_ue, "s6a_ulr_timeout");
+    } else {
+        ogs_warn("[%s] S6a timeout for unexpected cmd=%u",
+                mme_ue->imsi_bcd, cmd);
+    }
+
+    if (cmd == OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION &&
+            mme_ue->gn.gtp_xact_id != OGS_INVALID_POOL_ID) {
+        xact = ogs_gtp_xact_find_by_id(mme_ue->gn.gtp_xact_id);
+        if (xact) {
+            rv = mme_gtp1_send_sgsn_context_ack(mme_ue,
+                    OGS_GTP1_CAUSE_AUTHENTICATION_FAILURE, xact);
+            if (rv != OGS_OK)
+                ogs_warn("Failed to send SGSN Context Ack (rv %d)", rv);
+        }
+    }
+
+    if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {
+        OGS_TLOG_INFO("Attach reject [OGS_NAS_EMM_CAUSE:%d]", emm_cause);
+        r = nas_eps_send_attach_reject(
+                enb_ue, mme_ue, emm_cause,
+                OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+    } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
+        ogs_info("[%s] TAU reject [OGS_NAS_EMM_CAUSE:%d]",
+                mme_ue->imsi_bcd, emm_cause);
+        r = nas_eps_send_tau_reject(enb_ue, mme_ue, emm_cause);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+    } else {
+        ogs_warn("[%s] S6a timeout in unexpected EPS-Type[%d]",
+                mme_ue->imsi_bcd, mme_ue->nas_eps.type);
+    }
+
+    r = s1ap_send_ue_context_release_command(enb_ue,
+            S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
+            S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
+    ogs_expect(r == OGS_OK);
+    ogs_assert(r != OGS_ERROR);
+
+    OGS_FSM_TRAN(s, &emm_state_exception);
+}
+
 /*
  * Timer expiry events can be queued before a state transition clears them
  * (e.g. T3450 after ICS failure and S1 release). Drop these quietly.
@@ -237,6 +313,11 @@ static bool emm_clear_stale_timer(mme_ue_t *mme_ue, int timer_id)
         ogs_debug("[%s] Stale %s in EMM state; clearing",
                 mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
         mme_sgs_ts6_1_timer_stop(mme_ue);
+        return true;
+    case MME_TIMER_S6A:
+        ogs_debug("[%s] Stale %s in EMM state; clearing",
+                mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
+        mme_s6a_timer_stop(mme_ue);
         return true;
     default:
         return false;
@@ -302,6 +383,9 @@ void emm_state_de_registered(ogs_fsm_t *s, mme_event_t *e)
 
         case MME_TIMER_SGS_TS6_1:
             emm_handle_sgs_ts6_1_timer(s, mme_ue);
+            break;
+        case MME_TIMER_S6A:
+            emm_handle_s6a_timer(s, mme_ue);
             break;
 
         default:
@@ -496,6 +580,9 @@ void emm_state_registered(ogs_fsm_t *s, mme_event_t *e)
 
         case MME_TIMER_SGS_TS6_1:
             emm_handle_sgs_ts6_1_timer(s, mme_ue);
+            break;
+        case MME_TIMER_S6A:
+            emm_handle_s6a_timer(s, mme_ue);
             break;
 
         default:
@@ -1478,6 +1565,9 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
         case MME_TIMER_SGS_TS6_1:
             emm_handle_sgs_ts6_1_timer(s, mme_ue);
             break;
+        case MME_TIMER_S6A:
+            emm_handle_s6a_timer(s, mme_ue);
+            break;
         default:
             if (emm_clear_stale_timer(mme_ue, e->timer_id))
                 break;
@@ -1746,6 +1836,9 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
             break;
         case MME_TIMER_SGS_TS6_1:
             emm_handle_sgs_ts6_1_timer(s, mme_ue);
+            break;
+        case MME_TIMER_S6A:
+            emm_handle_s6a_timer(s, mme_ue);
             break;
         default:
             if (emm_clear_stale_timer(mme_ue, e->timer_id))
@@ -2025,6 +2118,9 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
             break;
         case MME_TIMER_SGS_TS6_1:
             emm_handle_sgs_ts6_1_timer(s, mme_ue);
+            break;
+        case MME_TIMER_S6A:
+            emm_handle_s6a_timer(s, mme_ue);
             break;
         default:
             if (emm_clear_stale_timer(mme_ue, e->timer_id))

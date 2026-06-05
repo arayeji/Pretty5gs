@@ -133,6 +133,9 @@ mme:
 #    sgs_ts6_1:
 #      value: 10    # SGs Location Update (Ts6-1, TS 29.118); EPS-only fallback
 #      Alias: ts6_1
+#    s6a:
+#      value: 10    # S6a AIR/ULR watchdog; attach reject if HSS is silent
+#      Alias: s6a_timeout
 
 ################################################################################
 # S1AP Server

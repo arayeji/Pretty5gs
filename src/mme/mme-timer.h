@@ -72,6 +72,9 @@ typedef enum {
     /* SGs Location Update (Ts6-1, 3GPP TS 29.118 §5.2.2.2) */
     MME_TIMER_SGS_TS6_1,
 
+    /* S6a AIR/ULR watchdog (no 3GPP timer; fail attach if HSS is silent) */
+    MME_TIMER_S6A,
+
     MAX_NUM_OF_MME_TIMER,
 
 } mme_timer_e;
@@ -105,6 +108,7 @@ void mme_timer_implicit_detach_expire(void *data);
 
 void mme_timer_sgs_cli_conn_to_srv(void *data);
 void mme_timer_sgs_ts6_1_expire(void *data);
+void mme_timer_s6a_expire(void *data);
 void mme_timer_s1_holding_timer_expire(void *data);
 void mme_timer_s11_holding_timer_expire(void *data);
 void mme_timer_gn_holding_timer_expire(void *data);
