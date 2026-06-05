@@ -21,9 +21,29 @@
 
 #include "mme-event.h"
 #include "mme-sm.h"
+#include "mme-timer.h"
 #include "mme-trace.h"
 
 #include "sgsap-path.h"
+
+void mme_sgs_ts6_1_timer_start(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+    ogs_assert(mme_ue->t_sgs_ts6_1);
+
+    mme_ue->sgs_lu_pending = true;
+    ogs_timer_start(mme_ue->t_sgs_ts6_1,
+            mme_timer_cfg(MME_TIMER_SGS_TS6_1)->duration);
+}
+
+void mme_sgs_ts6_1_timer_stop(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    mme_ue->sgs_lu_pending = false;
+    if (mme_ue->t_sgs_ts6_1)
+        ogs_timer_stop(mme_ue->t_sgs_ts6_1);
+}
 
 int sgsap_open(void)
 {
@@ -126,6 +146,9 @@ int sgsap_send_location_update_request(mme_ue_t *mme_ue)
     }
     rv = sgsap_send_to_vlr(mme_ue, pkbuf);
     ogs_expect(rv == OGS_OK);
+
+    if (rv == OGS_OK)
+        mme_sgs_ts6_1_timer_start(mme_ue);
 
     return rv;
 }

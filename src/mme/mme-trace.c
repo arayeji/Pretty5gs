@@ -114,7 +114,8 @@ static bool mme_ue_progress_is_failure(const char *step)
     if (!strcmp(step, "attach_reject") ||
             !strcmp(step, "attach_accept_no_s1") ||
             !strcmp(step, "attach_accept_fail") ||
-            !strcmp(step, "sgsap_lu_reject"))
+            !strcmp(step, "sgsap_lu_reject") ||
+            !strcmp(step, "sgsap_lu_timeout"))
         return true;
 
     len = strlen(step);

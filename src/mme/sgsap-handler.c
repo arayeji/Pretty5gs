@@ -108,6 +108,8 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         goto error;
     }
 
+    mme_sgs_ts6_1_timer_stop(mme_ue);
+
     ogs_info("[%s] SGSAP: Location-Update-Accept", mme_ue->imsi_bcd);
     if (lai) {
         ogs_debug("    LAI[PLMN_ID:%06x,LAC:%d]",
@@ -286,6 +288,8 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         ogs_error("!enb_ue");
         goto error;
     }
+
+    mme_sgs_ts6_1_timer_stop(mme_ue);
 
     ogs_info("[%s] SGSAP: Location-Update-Reject [Cause:%d]",
             mme_ue->imsi_bcd, emm_cause);

@@ -257,6 +257,7 @@ void sgwc_sess_select_sgwu(sgwc_sess_t *sess);
 int sgwc_sess_remove(sgwc_sess_t *sess);
 void sgwc_sess_remove_all(sgwc_ue_t *sgwc_ue);
 
+bool sgwc_sess_s5c_teid_matches(sgwc_sess_t *sess, uint32_t teid);
 sgwc_sess_t *sgwc_sess_find_by_teid(uint32_t teid);
 sgwc_sess_t *sgwc_sess_find_by_seid(uint64_t seid);
 

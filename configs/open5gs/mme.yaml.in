@@ -130,6 +130,9 @@ mme:
 #      value: 8     # deactivate EPS bearer context request (default: 8 s)
 #      max_count: 4
 #      Alias: nas_deactivate_bearer
+#    sgs_ts6_1:
+#      value: 10    # SGs Location Update (Ts6-1, TS 29.118); EPS-only fallback
+#      Alias: ts6_1
 
 ################################################################################
 # S1AP Server

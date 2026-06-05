@@ -61,6 +61,9 @@ static mme_timer_cfg_t g_mme_timer_cfg[MAX_NUM_OF_MME_TIMER] = {
     [MME_TIMER_SGS_CLI_CONN_TO_SRV] =
         { .have = true, .duration = ogs_time_from_sec(3) },
 
+    [MME_TIMER_SGS_TS6_1] =
+        { .have = true, .duration = ogs_time_from_sec(10) },
+
     [MME_TIMER_S1_HOLDING] =
         { .have = true, .duration = ogs_time_from_sec(30) },
 
@@ -124,6 +127,8 @@ const char *mme_timer_get_name(mme_timer_e id)
         return "MME_TIMER_IMPLICIT_DETACH";
     case MME_TIMER_SGS_CLI_CONN_TO_SRV:
         return "MME_TIMER_SGS_CLI_CONN_TO_SRV";
+    case MME_TIMER_SGS_TS6_1:
+        return "MME_TIMER_SGS_TS6_1";
     case MME_TIMER_S1_HOLDING:
         return "MME_TIMER_S1_HOLDING";
     case MME_TIMER_S11_HOLDING:
@@ -247,6 +252,11 @@ void mme_timer_sgs_cli_conn_to_srv(void *data)
         ogs_error("ogs_queue_push() failed:%d", (int)rv);
         mme_event_free(e);
     }
+}
+
+void mme_timer_sgs_ts6_1_expire(void *data)
+{
+    emm_timer_event_send(MME_TIMER_SGS_TS6_1, data);
 }
 
 void mme_timer_s1_holding_timer_expire(void *data)

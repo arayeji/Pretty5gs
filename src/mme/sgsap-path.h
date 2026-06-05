@@ -43,6 +43,8 @@ int sgsap_send_to_vlr_with_sid(
 int sgsap_send_to_vlr(mme_ue_t *mme_ue, ogs_pkbuf_t *pkbuf);
 
 int sgsap_send_location_update_request(mme_ue_t *mme_ue);
+void mme_sgs_ts6_1_timer_start(mme_ue_t *mme_ue);
+void mme_sgs_ts6_1_timer_stop(mme_ue_t *mme_ue);
 int sgsap_send_tmsi_reallocation_complete(mme_ue_t *mme_ue);
 int sgsap_send_ue_activity_indication(mme_ue_t *mme_ue);
 int sgsap_send_detach_indication(mme_ue_t *mme_ue);
