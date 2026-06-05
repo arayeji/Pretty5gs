@@ -66,11 +66,12 @@ mme:
 #    Resolve home PGW from HSS MIP-Home-Agent-Host (Destination-Host/Realm)
 #    via DNS and cache the result. Set to false to skip DNS and use only
 #    mme.gtpc.client.smf / PGW list addresses. Default: true
+#  omit_indication_on_gtp_csr: false
+#    Omit GTP Indication IE on all Create Session Requests (global).
 #  inbound_roam:
 #    gtp_apn_format: fqdn          # received | fqdn (default: fqdn)
 #    gtp_apn_lowercase: false
 #    strip_pap_from_gtp_pco: false # also strips IPCP/5G PCO on home-PGW CSR
-#    omit_indication_on_gtp_csr: false
 #    force_ipv4_pdn_on_home_pgw: false
 #    zero_bearer_mbr_for_non_gbr: false
 #    gtpc_plmn_id_is_imsi_plmn: true  # plmn_id on gtpc.client = IMSI HPLMN

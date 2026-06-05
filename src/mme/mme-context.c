@@ -219,7 +219,7 @@ void mme_context_init(void)
     self.inbound_roam_gtp_apn_format = MME_INBOUND_ROAM_GTP_APN_FQDN;
     self.inbound_roam_gtp_apn_lowercase = false;
     self.inbound_roam_strip_pap_from_gtp_pco = false;
-    self.inbound_roam_omit_indication_on_gtp_csr = false;
+    self.omit_indication_on_gtp_csr = false;
     self.inbound_roam_force_ipv4_pdn_on_home_pgw = false;
     self.inbound_roam_zero_bearer_mbr_for_non_gbr = false;
     self.inbound_roam_gtpc_plmn_id_is_imsi_plmn = true;
@@ -2073,6 +2073,13 @@ int mme_context_parse_config(void)
                     ogs_info("MIP-Home-Agent-Host DNS resolve: %s",
                             self.mip_home_agent_host_dns ? "enabled" :
                             "disabled");
+                } else if (!strcmp(mme_key, "omit_indication_on_gtp_csr") ||
+                        !strcmp(mme_key, "omit_gtp_indication")) {
+                    self.omit_indication_on_gtp_csr =
+                        ogs_yaml_iter_bool(&mme_iter);
+                    ogs_info("GTP Create Session omit Indication IE: %s",
+                            self.omit_indication_on_gtp_csr ?
+                            "enabled" : "disabled");
                 } else if (!strcmp(mme_key, "inbound_roam")) {
                     ogs_yaml_iter_t roam_iter;
                     ogs_yaml_iter_recurse(&mme_iter, &roam_iter);
@@ -2107,8 +2114,10 @@ int mme_context_parse_config(void)
                         } else if (!strcmp(rk,
                                     "omit_indication_on_gtp_csr") ||
                                 !strcmp(rk, "omit_gtp_indication")) {
-                            self.inbound_roam_omit_indication_on_gtp_csr =
+                            self.omit_indication_on_gtp_csr =
                                 ogs_yaml_iter_bool(&roam_iter);
+                            ogs_warn("mme.inbound_roam.omit_indication_on_gtp_csr "
+                                    "is deprecated; use mme.omit_indication_on_gtp_csr");
                         } else if (!strcmp(rk, "force_ipv4_pdn_on_home_pgw") ||
                                 !strcmp(rk, "force_ipv4_pdn")) {
                             self.inbound_roam_force_ipv4_pdn_on_home_pgw =
@@ -2128,7 +2137,7 @@ int mme_context_parse_config(void)
                                     rk);
                     }
                     ogs_info("Inbound roam: apn=%s lowercase=%s "
-                            "sanitize_pco=%s omit_indication=%s "
+                            "sanitize_pco=%s "
                             "force_ipv4_pdn=%s non_gbr_zero_mbr=%s "
                             "gtpc_plmn_id_is_imsi_plmn=%s",
                             self.inbound_roam_gtp_apn_format ==
@@ -2137,8 +2146,6 @@ int mme_context_parse_config(void)
                             self.inbound_roam_gtp_apn_lowercase ?
                             "true" : "false",
                             self.inbound_roam_strip_pap_from_gtp_pco ?
-                            "true" : "false",
-                            self.inbound_roam_omit_indication_on_gtp_csr ?
                             "true" : "false",
                             self.inbound_roam_force_ipv4_pdn_on_home_pgw ?
                             "true" : "false",
