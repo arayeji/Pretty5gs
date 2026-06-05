@@ -25,6 +25,7 @@
 #include "mme-sm.h"
 #include "mme-context.h"
 #include "mme-path.h"
+#include "mme-trace.h"
 #include "nas-path.h"
 #include "s1ap-path.h"
 
@@ -107,7 +108,7 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         goto error;
     }
 
-    ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
+    ogs_info("[%s] SGSAP: Location-Update-Accept", mme_ue->imsi_bcd);
     if (lai) {
         ogs_debug("    LAI[PLMN_ID:%06x,LAC:%d]",
                     ogs_plmn_id_hexdump(&lai->nas_plmn_id), lai->lac);
@@ -125,9 +126,11 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {
+        mme_ue_progress(mme_ue, "sgsap_lu_accept");
         r = nas_eps_send_attach_accept(mme_ue);
+        if (r != OGS_OK)
+            mme_send_delete_session_after_attach_accept_fail(enb_ue, mme_ue);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
         if (mme_ue->nas_eps.update.active_flag) {
 
@@ -284,16 +287,15 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         goto error;
     }
 
-    ogs_debug("    IMSI[%s] CAUSE[%d]", mme_ue->imsi_bcd, emm_cause);
-    if (lai) {
-        ogs_debug("    LAI[PLMN_ID:%06x,LAC:%d]",
-                    ogs_plmn_id_hexdump(&lai->nas_plmn_id), lai->lac);
-    }
+    ogs_info("[%s] SGSAP: Location-Update-Reject [Cause:%d]",
+            mme_ue->imsi_bcd, emm_cause);
+    mme_ue_progress(mme_ue, "sgsap_lu_reject");
 
     if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {
         r = nas_eps_send_attach_accept(mme_ue);
+        if (r != OGS_OK)
+            mme_send_delete_session_after_attach_accept_fail(enb_ue, mme_ue);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
         if (mme_ue->nas_eps.update.active_flag) {
     /*

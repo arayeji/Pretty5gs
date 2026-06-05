@@ -36,6 +36,10 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed);
 void mme_send_delete_session_or_tau_accept(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 void mme_send_tau_accept_and_check_release(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 
+/* Tear down S11 session after CSR ok when Attach Accept cannot be delivered. */
+void mme_send_delete_session_after_attach_accept_fail(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue);
+
 #ifdef __cplusplus
 }
 #endif

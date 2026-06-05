@@ -172,6 +172,12 @@ typedef struct mme_context_s {
      * differs from UE request (align with home PGW / intentional IPv4).
      */
     bool            inbound_roam_suppress_pdn_type_esm_cause;
+    /*
+     * gtpc.client sgwc/smf: plmn_id means IMSI home PLMN (imsi_plmn_id).
+     * Use serving_plmn_id for visited TAI PLMN. Inbound roam UEs skip
+     * serving_plmn rules when selecting SGWC/SMF. Default: true.
+     */
+    bool            inbound_roam_gtpc_plmn_id_is_imsi_plmn;
 
     /* Cap AMBR from HSS (bps) before GTP/NAS/S1AP */
     struct {

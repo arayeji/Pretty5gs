@@ -73,6 +73,8 @@ mme:
 #    omit_indication_on_gtp_csr: false
 #    force_ipv4_pdn_on_home_pgw: false
 #    zero_bearer_mbr_for_non_gbr: false
+#    gtpc_plmn_id_is_imsi_plmn: true  # plmn_id on gtpc.client = IMSI HPLMN
+#                                     # use serving_plmn_id for visited TAI
 #    Home PGW (MIP-Home-Agent): GTP APN on S11; SGWC forwards on S5.
 #  ambr_limit:
 #    enabled: false
@@ -152,18 +154,24 @@ mme:
 # GTP-C Client
 ################################################################################
 #  o SGW selection by serving PLMN (TAI PLMN) and/or home IMSI PLMN
+#  o With inbound_roam.gtpc_plmn_id_is_imsi_plmn (default true),
+#    plmn_id on sgwc/smf means IMSI home PLMN; use serving_plmn_id for TAI.
 #  gtpc:
 #    client:
 #      sgwc:
 #        - address: 127.0.0.3
-#          plmn_id:
+#          plmn_id:              # IMSI 432/12 home subs -> this SGW
 #            mcc: 999
 #            mnc: 70
 #        - address: 127.0.0.4
-#          imsi_plmn_id:
+#          imsi_plmn_id:         # explicit IMSI PLMN (same as plmn_id above)
 #            mcc: 999
 #            mnc: 71
 #        - address: 127.0.0.5
+#          serving_plmn_id:      # visited TAI PLMN only (not inbound roam)
+#            mcc: 999
+#            mnc: 70
+#        - address: 127.0.0.6
 #
 #  o SGW selection by eNodeB TAC
 #   (either single TAC or multiple TACs, DECIMAL representation)

@@ -21,6 +21,8 @@
 #include "nas-path.h"
 #include "sgsap-path.h"
 #include "mme-gtp-path.h"
+#include "mme-path.h"
+#include "mme-trace.h"
 
 #include "esm-build.h"
 #include "esm-handler.h"
@@ -291,11 +293,17 @@ int esm_handle_information_response(
                 mme_ue->nas_eps.attach.value ==
                     OGS_NAS_ATTACH_TYPE_EPS_ATTACH) {
                 r = nas_eps_send_attach_accept(mme_ue);
+                if (r != OGS_OK)
+                    mme_send_delete_session_after_attach_accept_fail(
+                            enb_ue, mme_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             } else {
-                ogs_assert(OGS_OK ==
-                    sgsap_send_location_update_request(mme_ue));
+                mme_ue_progress(mme_ue, "attach_accept_deferred_sgs");
+                if (OGS_OK != sgsap_send_location_update_request(mme_ue)) {
+                    ogs_error("[%s] sgsap_send_location_update_request() failed",
+                            mme_ue->imsi_bcd);
+                    return OGS_ERROR;
+                }
             }
         } else {
             ogs_assert(OGS_OK ==
