@@ -99,6 +99,36 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
     }
 }
 
+static const char *mme_gtp2_message_type_name(uint8_t type)
+{
+    switch (type) {
+    case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
+        return "Create Session Request";
+    case OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE:
+        return "Create Session Response";
+    case OGS_GTP2_DELETE_SESSION_REQUEST_TYPE:
+        return "Delete Session Request";
+    case OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE:
+        return "Delete Session Response";
+    case OGS_GTP2_MODIFY_BEARER_REQUEST_TYPE:
+        return "Modify Bearer Request";
+    case OGS_GTP2_MODIFY_BEARER_RESPONSE_TYPE:
+        return "Modify Bearer Response";
+    case OGS_GTP2_RELEASE_ACCESS_BEARERS_REQUEST_TYPE:
+        return "Release Access Bearers Request";
+    case OGS_GTP2_RELEASE_ACCESS_BEARERS_RESPONSE_TYPE:
+        return "Release Access Bearers Response";
+    case OGS_GTP2_BEARER_RESOURCE_COMMAND_TYPE:
+        return "Bearer Resource Command";
+    case OGS_GTP2_CREATE_INDIRECT_DATA_FORWARDING_TUNNEL_REQUEST_TYPE:
+        return "Create Indirect Data Forwarding Tunnel Request";
+    case OGS_GTP2_DELETE_INDIRECT_DATA_FORWARDING_TUNNEL_REQUEST_TYPE:
+        return "Delete Indirect Data Forwarding Tunnel Request";
+    default:
+        return "Unknown";
+    }
+}
+
 static void timeout(ogs_gtp_xact_t *xact, void *data)
 {
     int r;
@@ -200,22 +230,54 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
         break;
     }
 
-    if (MME_UE_HAVE_IMSI(mme_ue)) {
-        ogs_error("GTP Timeout : IMSI[%s] Message-Type[%d]",
-                mme_ue->imsi_bcd, type);
-    } else {
-        mme_enb_t *enb = NULL;
+    {
+        char peer[OGS_ADDRSTRLEN];
         sgw_ue_t *sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+        const char *type_name = mme_gtp2_message_type_name(type);
 
-        if (enb_ue)
-            enb = mme_enb_find_by_id(enb_ue->enb_id);
+        if (xact && xact->gnode) {
+            if (MME_UE_HAVE_IMSI(mme_ue)) {
+                ogs_error("GTP Timeout S11 [%s]:%d IMSI[%s] "
+                        "Message-Type[%d:%s] SGW_S11_TEID[0x%x]",
+                        OGS_ADDR(&xact->gnode->addr, peer),
+                        OGS_PORT(&xact->gnode->addr),
+                        mme_ue->imsi_bcd, type, type_name,
+                        sgw_ue ? sgw_ue->sgw_s11_teid : 0);
+            } else {
+                mme_enb_t *enb = NULL;
 
-        ogs_error("GTP Timeout : IMSI[-] Message-Type[%d] "
-                "MME_UE[%u] ENB:%u ENB_S1AP:%u SGW_S11:0x%x",
-                type, (unsigned)mme_ue->id,
-                enb ? enb->enb_id : 0,
-                enb_ue ? enb_ue->enb_ue_s1ap_id : 0,
-                sgw_ue ? sgw_ue->sgw_s11_teid : 0);
+                if (enb_ue)
+                    enb = mme_enb_find_by_id(enb_ue->enb_id);
+
+                ogs_error("GTP Timeout S11 [%s]:%d IMSI[-] "
+                        "Message-Type[%d:%s] MME_UE[%u] ENB:%u "
+                        "ENB_S1AP:%u SGW_S11:0x%x",
+                        OGS_ADDR(&xact->gnode->addr, peer),
+                        OGS_PORT(&xact->gnode->addr),
+                        type, type_name, (unsigned)mme_ue->id,
+                        enb ? enb->enb_id : 0,
+                        enb_ue ? enb_ue->enb_ue_s1ap_id : 0,
+                        sgw_ue ? sgw_ue->sgw_s11_teid : 0);
+            }
+        } else if (MME_UE_HAVE_IMSI(mme_ue)) {
+            ogs_error("GTP Timeout S11 peer[unknown] IMSI[%s] "
+                    "Message-Type[%d:%s] SGW_S11_TEID[0x%x]",
+                    mme_ue->imsi_bcd, type, type_name,
+                    sgw_ue ? sgw_ue->sgw_s11_teid : 0);
+        } else {
+            mme_enb_t *enb = NULL;
+
+            if (enb_ue)
+                enb = mme_enb_find_by_id(enb_ue->enb_id);
+
+            ogs_error("GTP Timeout S11 peer[unknown] IMSI[-] "
+                    "Message-Type[%d:%s] MME_UE[%u] ENB:%u ENB_S1AP:%u "
+                    "SGW_S11:0x%x",
+                    type, type_name, (unsigned)mme_ue->id,
+                    enb ? enb->enb_id : 0,
+                    enb_ue ? enb_ue->enb_ue_s1ap_id : 0,
+                    sgw_ue ? sgw_ue->sgw_s11_teid : 0);
+        }
     }
 }
 
