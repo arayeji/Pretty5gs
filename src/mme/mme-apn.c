@@ -55,10 +55,21 @@ void mme_apn_oi_plmn_id(
      * - HSS Service-Selection carries APN-NI only (TS 29.272).
      * - MME appends APN-OI for DNS and GTP.
      * - Home PGW from subscription (MIP6-Agent-Info) -> HPLMN OI (HR).
-     * - Visited PGW (local list) while roaming -> VPLMN OI (LBO).
      * - Non-roaming -> serving PLMN OI.
+     *
+     * This network is home-routed: an inbound roamer is always served by the
+     * home PGW (which advertises the HOME PLMN NWI, e.g. mnc011), regardless of
+     * whether HSS bothered to send MIP-Home-Agent-Address. So for any roaming
+     * subscriber we stamp the HOME PLMN OI derived from the IMSI, never the
+     * serving/visited TAI PLMN. Using the visited PLMN (LBO) made the SGW-U/UPF
+     * reject sessions ("no such NWI: mcinet.mnc012...").
      */
     if (session->smf_ip.ipv4 || session->smf_ip.ipv6) {
+        memcpy(oi_plmn_id, &home_plmn_id, OGS_PLMN_ID_LEN);
+        return;
+    }
+
+    if (memcmp(&home_plmn_id, &mme_ue->tai.plmn_id, OGS_PLMN_ID_LEN) != 0) {
         memcpy(oi_plmn_id, &home_plmn_id, OGS_PLMN_ID_LEN);
         return;
     }
