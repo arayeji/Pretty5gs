@@ -21,6 +21,7 @@
 
 #include "mme-event.h"
 #include "mme-sm.h"
+#include "mme-trace.h"
 
 #include "sgsap-path.h"
 
@@ -116,8 +117,7 @@ int sgsap_send_location_update_request(mme_ue_t *mme_ue)
     ogs_pkbuf_t *pkbuf = NULL;
     ogs_assert(mme_ue);
 
-    ogs_debug("[SGSAP] LOCATION-UPDATE-REQUEST");
-    ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
+    ogs_info("[%s] SGSAP: Location-Update-Request", mme_ue->imsi_bcd);
 
     pkbuf = sgsap_build_location_update_request(mme_ue);
     if (!pkbuf) {

@@ -126,14 +126,17 @@ int nas_eps_send_attach_accept(mme_ue_t *mme_ue)
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_error("[%s] S1 context has already been removed",
+                mme_ue->imsi_bcd);
+        mme_ue_progress(mme_ue, "attach_accept_no_s1");
         return OGS_NOTFOUND;
     }
 
     sess = mme_sess_first(mme_ue);
     ogs_assert(sess);
     if (mme_sess_next(sess)) {
-        ogs_error("There should only be one SESSION");
+        ogs_error("[%s] There should only be one SESSION", mme_ue->imsi_bcd);
+        mme_ue_progress(mme_ue, "attach_accept_fail");
         return OGS_ERROR;
     }
 
@@ -144,21 +147,26 @@ int nas_eps_send_attach_accept(mme_ue_t *mme_ue)
     esmbuf = esm_build_activate_default_bearer_context_request(
                 sess, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
     if (!esmbuf) {
-        ogs_error("esm_build_activate_default_bearer_context_request() failed");
+        ogs_error("[%s] esm_build_activate_default_bearer_context_request() "
+                "failed", mme_ue->imsi_bcd);
+        mme_ue_progress(mme_ue, "attach_accept_fail");
         return OGS_ERROR;
     }
 
     emmbuf = emm_build_attach_accept(mme_ue, esmbuf);
     if (!emmbuf) {
-        ogs_error("emm_build_attach_accept() failed");
+        ogs_error("[%s] emm_build_attach_accept() failed", mme_ue->imsi_bcd);
+        mme_ue_progress(mme_ue, "attach_accept_fail");
         return OGS_ERROR;
     }
 
     CLEAR_MME_UE_TIMER(mme_ue->t3450);
     mme_ue->t3450.pkbuf = ogs_pkbuf_copy(emmbuf);
     if (!mme_ue->t3450.pkbuf) {
-        ogs_error("ogs_pkbuf_copy(mme_ue->t3450.pkbuf) failed");
+        ogs_error("[%s] ogs_pkbuf_copy(mme_ue->t3450.pkbuf) failed",
+                mme_ue->imsi_bcd);
         ogs_pkbuf_free(emmbuf);
+        mme_ue_progress(mme_ue, "attach_accept_fail");
         return OGS_ERROR;
     }
     ogs_timer_start(mme_ue->t3450.timer,
@@ -180,13 +188,20 @@ int nas_eps_send_attach_accept(mme_ue_t *mme_ue)
 
     s1apbuf = s1ap_build_initial_context_setup_request(mme_ue, emmbuf);
     if (!s1apbuf) {
-        ogs_error("s1ap_build_initial_context_setup_request() failed");
+        ogs_error("[%s] s1ap_build_initial_context_setup_request() failed",
+                mme_ue->imsi_bcd);
+        mme_ue_progress(mme_ue, "attach_accept_fail");
         return OGS_ERROR;
     }
 
     rv = nas_eps_send_to_enb(mme_ue, s1apbuf);
     ogs_expect(rv == OGS_OK);
+    if (rv != OGS_OK) {
+        mme_ue_progress(mme_ue, "attach_accept_fail");
+        return rv;
+    }
 
+    mme_ue_progress(mme_ue, "attach_accept");
     return rv;
 }
 

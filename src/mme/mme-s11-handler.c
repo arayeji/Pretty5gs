@@ -579,9 +579,12 @@ void mme_s11_handle_create_session_response(
             mme_ue->nas_eps.attach.value ==
                 OGS_NAS_ATTACH_TYPE_EPS_ATTACH) {
             r = nas_eps_send_attach_accept(mme_ue);
+            if (r != OGS_OK)
+                mme_send_delete_session_after_attach_accept_fail(
+                        enb_ue, mme_ue);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         } else {
+            mme_ue_progress(mme_ue, "attach_accept_deferred_sgs");
             if (OGS_OK != sgsap_send_location_update_request(mme_ue)) {
                 ogs_error("[%s] sgsap_send_location_update_request() failed",
                         mme_ue->imsi_bcd);

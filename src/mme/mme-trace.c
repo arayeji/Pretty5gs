@@ -111,7 +111,10 @@ static bool mme_ue_progress_is_failure(const char *step)
 
     ogs_assert(step);
 
-    if (!strcmp(step, "attach_reject"))
+    if (!strcmp(step, "attach_reject") ||
+            !strcmp(step, "attach_accept_no_s1") ||
+            !strcmp(step, "attach_accept_fail") ||
+            !strcmp(step, "sgsap_lu_reject"))
         return true;
 
     len = strlen(step);

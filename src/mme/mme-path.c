@@ -24,6 +24,7 @@
 #include "mme-path.h"
 #include "mme-fd-path.h"
 #include "mme-sm.h"
+#include "mme-trace.h"
 
 void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
 {
@@ -134,6 +135,18 @@ void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
         ogs_fatal("    Invalid OGS_NAS_EPS TYPE[%d]", mme_ue->detach_type);
         ogs_assert_if_reached();
     }
+}
+
+void mme_send_delete_session_after_attach_accept_fail(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    mme_ue_progress(mme_ue, "attach_accept_cleanup");
+
+    if (!MME_SESSION_RELEASE_PENDING(mme_ue))
+        mme_gtp_send_delete_all_sessions(
+                enb_ue, mme_ue, OGS_GTP_DELETE_NO_ACTION);
 }
 
 void mme_send_delete_session_or_mme_ue_context_release(

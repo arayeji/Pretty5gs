@@ -83,7 +83,7 @@ static bool mme_ue_uses_home_pgw(ogs_session_t *session)
     return session->smf_ip.ipv4 || session->smf_ip.ipv6;
 }
 
-static bool mme_ue_is_inbound_roam(mme_ue_t *mme_ue)
+bool mme_ue_is_inbound_roam(mme_ue_t *mme_ue)
 {
     ogs_plmn_id_t home_plmn_id;
 

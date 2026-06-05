@@ -33,7 +33,8 @@ void ogs_mme_trace_from_ids(
         ogs_pool_id_t enb_ue_id, ogs_pool_id_t mme_ue_id,
         const char *apn, const char *proc);
 
-/* Attach/SGW pipeline breadcrumbs (INFO; ERROR only for *_fail / attach_reject) */
+/* Attach/SGW pipeline breadcrumbs (INFO; ERROR for *_fail / attach_reject /
+ * attach_accept_no_s1 / attach_accept_fail / sgsap_lu_reject) */
 void mme_ue_progress(mme_ue_t *mme_ue, const char *step);
 
 /* DEBUG for one UE when IMSI is on ogs_trace_filter list (no restart) */

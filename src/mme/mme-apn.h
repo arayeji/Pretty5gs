@@ -56,6 +56,9 @@ int mme_gtp_pco_for_csr(ogs_session_t *session,
 /* Omit Indication IE on CSR when mme.inbound_roam.omit_indication_on_gtp_csr. */
 bool mme_gtp_csr_omit_indication(mme_ue_t *mme_ue, ogs_session_t *session);
 
+/* IMSI home PLMN != serving TAI PLMN (inbound roamer on this MME). */
+bool mme_ue_is_inbound_roam(mme_ue_t *mme_ue);
+
 #ifdef __cplusplus
 }
 #endif
