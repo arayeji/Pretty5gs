@@ -421,8 +421,16 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         break;
     case MME_EVENT_EMM_TIMER:
         mme_ue = mme_ue_find_by_id(e->mme_ue_id);
-        ogs_assert(mme_ue);
-        ogs_assert(OGS_FSM_STATE(&mme_ue->sm));
+        if (!mme_ue) {
+            ogs_error("EMM timer for removed MME-UE [id:%d] ignored",
+                    e->mme_ue_id);
+            break;
+        }
+        if (!OGS_FSM_STATE(&mme_ue->sm)) {
+            ogs_error("EMM timer for MME-UE [%s] with no FSM state ignored",
+                    mme_ue->imsi_bcd);
+            break;
+        }
 
         ogs_fsm_dispatch(&mme_ue->sm, e);
         break;
@@ -1005,9 +1013,17 @@ cleanup:
 
     case MME_EVENT_GN_TIMER:
         mme_ue = mme_ue_find_by_id(e->mme_ue_id);
-        ogs_assert(mme_ue);
+        if (!mme_ue) {
+            ogs_error("Gn timer for removed MME-UE [id:%d] ignored",
+                    e->mme_ue_id);
+            break;
+        }
         sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-        ogs_assert(sgw_ue);
+        if (!sgw_ue) {
+            ogs_error("Gn timer for MME-UE [%s] with no SGW-UE ignored",
+                    mme_ue->imsi_bcd);
+            break;
+        }
 
         switch (e->timer_id) {
         case MME_TIMER_GN_HOLDING:
