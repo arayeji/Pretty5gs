@@ -346,10 +346,14 @@ void ogs_pfcp_build_create_pdr(
     message->pdr_id.presence = 1;
     message->pdr_id.u16 = pdr->id;
 
-    if (pdr->precedence) { /* No precedence in Sxa */
-        message->precedence.presence = 1;
-        message->precedence.u32 = pdr->precedence;
-    }
+    /*
+     * Precedence is mandatory in Create PDR (TS 29.244).  Historically omitted
+     * on Sxa when pdr->precedence was zero; UPG-VPP rejects establishment
+     * with PFCP cause 66 (mandatory IE missing, Precedence IE 29).
+     */
+    message->precedence.presence = 1;
+    message->precedence.u32 = pdr->precedence ?
+        pdr->precedence : OGS_PFCP_DEFAULT_PDR_PRECEDENCE;
 
     message->pdi.presence = 1;
     message->pdi.source_interface.presence = 1;
