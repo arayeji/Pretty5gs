@@ -116,6 +116,18 @@ static void _gtpv2_c_recv_cb(short when, ogs_socket_t fd, void *data)
             gnode->sock = data;
             ogs_info("PGW S5-C peer learned [%s]:%u (GTP type %u)",
                     OGS_ADDR(&from, frombuf), OGS_PORT(&from), msg_type);
+
+            if (sgwc_self()->inbound_roam_gtpc_source_port) {
+                rv = ogs_gtp_connect(sgwc_self()->roam_gtpc_sock,
+                        sgwc_self()->roam_gtpc_sock6, gnode);
+            } else {
+                rv = ogs_gtp_connect(ogs_gtp_self()->gtpc_sock,
+                        ogs_gtp_self()->gtpc_sock6, gnode);
+            }
+            if (rv != OGS_OK) {
+                ogs_error("ogs_gtp_connect() failed for learned PGW [%s]:%u",
+                        OGS_ADDR(&from, frombuf), OGS_PORT(&from));
+            }
         }
     }
 
