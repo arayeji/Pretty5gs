@@ -380,6 +380,8 @@ void sgwc_sxa_handle_session_establishment_response(
         ogs_gtp_send_error_message(
                 s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
                 OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, cause_value);
+        if (sess)
+            sgwc_sess_remove(sess);
         return;
     }
 
@@ -400,11 +402,13 @@ void sgwc_sxa_handle_session_establishment_response(
             dl_tunnel->local_teid, dl_tunnel->remote_teid);
 
         if (dl_tunnel->local_addr == NULL && dl_tunnel->local_addr6 == NULL) {
+            sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
             ogs_error("No UP F-TEID");
             ogs_gtp_send_error_message(
                     s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
                     OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
                     OGS_GTP2_CAUSE_GRE_KEY_NOT_FOUND);
+            sgwc_sess_remove(sess);
             return;
         }
 
@@ -490,6 +494,7 @@ void sgwc_sxa_handle_session_establishment_response(
                     OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
                     OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING);
         }
+        sgwc_sess_remove(sess);
         return;
     }
 

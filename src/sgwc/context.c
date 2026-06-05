@@ -1064,7 +1064,41 @@ void sgwc_sess_remove_all(sgwc_ue_t *sgwc_ue)
 
 sgwc_sess_t* sgwc_sess_find_by_teid(uint32_t teid)
 {
-    return sgwc_sess_find_by_seid(teid);
+    sgwc_sess_t *sess = NULL;
+    uint32_t offset = 0;
+    uint32_t alt = 0;
+
+    if (!teid)
+        return NULL;
+
+    sess = sgwc_sess_find_by_seid((uint64_t)teid);
+    if (sess)
+        return sess;
+
+    /*
+     * Inbound roam PGW interop: we advertise sgw_s5c_teid = raw + teid_offset,
+     * but some PGWs (e.g. Huawei) send back only the low 24 bits in S5 GTP-C
+     * headers (Update Bearer Request, etc.). Retry with offset variants.
+     */
+    offset = sgwc_self()->inbound_roam_teid_offset;
+    if (!offset)
+        return NULL;
+
+    alt = teid + offset;
+    if (alt != teid) {
+        sess = sgwc_sess_find_by_seid((uint64_t)alt);
+        if (sess)
+            return sess;
+    }
+
+    alt = teid | offset;
+    if (alt != teid) {
+        sess = sgwc_sess_find_by_seid((uint64_t)alt);
+        if (sess)
+            return sess;
+    }
+
+    return NULL;
 }
 
 sgwc_sess_t *sgwc_sess_find_by_seid(uint64_t seid)
