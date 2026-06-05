@@ -94,11 +94,6 @@ void sgwc_s5c_handle_create_session_response(
     rsp = &message->create_session_response;
     ogs_assert(rsp);
 
-    ogs_assert(sess);
-    sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-    ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
-    OGS_TLOG_INFO("Create Session Response");
-
     /********************
      * Check Transaction
      ********************/
@@ -126,24 +121,24 @@ void sgwc_s5c_handle_create_session_response(
     /************************
      * Check Session Context
      *
-     * - Session could be deleted before a message is received from SMF.
+     * Session may be removed before a late PGW Create Session Response
+     * arrives (MME Delete Session, PFCP failure cleanup, etc.).
      ************************/
-    cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
-
     if (!sess) {
         ogs_error("No Context in TEID [Cause:%d]", session_cause);
-        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
-    } else {
-        sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-        ogs_assert(sgwc_ue);
-    }
-
-    if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
         ogs_gtp_send_error_message(
-                s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
-                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, cause_value);
+                s11_xact, 0,
+                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
         return;
     }
+
+    sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+    ogs_assert(sgwc_ue);
+    ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
+    OGS_TLOG_INFO("Create Session Response");
+
+    cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     /*****************************************
      * Check Mandatory/Conditional IE Missing
