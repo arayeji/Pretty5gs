@@ -289,6 +289,10 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
 
     ogs_info("[%s] SGSAP: Location-Update-Reject [Cause:%d]",
             mme_ue->imsi_bcd, emm_cause);
+    if (lai) {
+        ogs_debug("    LAI[PLMN_ID:%06x,LAC:%d]",
+                    ogs_plmn_id_hexdump(&lai->nas_plmn_id), lai->lac);
+    }
     mme_ue_progress(mme_ue, "sgsap_lu_reject");
 
     if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {

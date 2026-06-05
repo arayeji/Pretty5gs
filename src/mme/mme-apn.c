@@ -188,10 +188,7 @@ bool mme_gtp_csr_omit_indication(mme_ue_t *mme_ue, ogs_session_t *session)
     ogs_assert(mme_ue);
     ogs_assert(session);
 
-    if (!mme_self()->inbound_roam_omit_indication_on_gtp_csr)
-        return false;
-
-    return mme_ue_uses_home_pgw(session) || mme_ue_is_inbound_roam(mme_ue);
+    return mme_self()->omit_indication_on_gtp_csr;
 }
 
 int mme_gtp_pco_for_csr(ogs_session_t *session,

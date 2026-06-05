@@ -161,8 +161,8 @@ typedef struct mme_context_s {
      * when enabled (vendor PGW interop). Default: false.
      */
     bool            inbound_roam_strip_pap_from_gtp_pco;
-    /* Omit GTP Indication IE on CSR toward home PGW / inbound roam. */
-    bool            inbound_roam_omit_indication_on_gtp_csr;
+    /* Omit GTP Indication IE on all Create Session Requests (global). */
+    bool            omit_indication_on_gtp_csr;
     /* Force IPv4 PDN type on CSR when UE/HSS allow IPv4v6 (home PGW). */
     bool            inbound_roam_force_ipv4_pdn_on_home_pgw;
     /* Leave Bearer QoS MBR/GBR at zero for non-GBR (QCI 9, etc.) on CSR. */
