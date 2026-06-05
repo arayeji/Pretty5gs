@@ -19,6 +19,7 @@
 
 #include "mme-event.h"
 #include "mme-fd-path.h"
+#include "mme-timer.h"
 #include "mme-pgw-host.h"
 #include "mme-ambr.h"
 #include "mme-trace.h"
@@ -120,6 +121,8 @@ static void mme_s6a_post_failure(
 
     ogs_assert(mme_ue);
 
+    mme_s6a_timer_stop(mme_ue);
+
     s6a_message = ogs_calloc(1, sizeof(*s6a_message));
     if (!s6a_message) {
         ogs_error("Failed to allocate s6a_message");
@@ -153,6 +156,26 @@ static void mme_s6a_post_failure(
     ogs_pollset_notify(ogs_app()->pollset);
 }
 
+void mme_s6a_timer_start(mme_ue_t *mme_ue, uint16_t cmd_code)
+{
+    ogs_assert(mme_ue);
+    ogs_assert(mme_ue->t_s6a);
+    ogs_assert(cmd_code != 0);
+
+    mme_ue->s6a_pending_cmd = cmd_code;
+    ogs_timer_start(mme_ue->t_s6a, mme_timer_cfg(MME_TIMER_S6A)->duration);
+}
+
+void mme_s6a_timer_stop(mme_ue_t *mme_ue)
+{
+    if (!mme_ue)
+        return;
+
+    mme_ue->s6a_pending_cmd = 0;
+    if (mme_ue->t_s6a)
+        ogs_timer_stop(mme_ue->t_s6a);
+}
+
 static void mme_s6a_send_abort(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue, uint16_t cmd_code,
         ogs_pool_id_t gtp_xact_id, struct msg **req,
@@ -175,6 +198,8 @@ static void mme_s6a_send_abort(
 
     if (sess_data && *sess_data)
         state_cleanup(*sess_data, NULL, NULL);
+
+    mme_s6a_timer_stop(mme_ue);
 
     mme_s6a_post_failure(enb_ue, mme_ue, cmd_code,
             ER_DIAMETER_UNABLE_TO_DELIVER, gtp_xact_id);
@@ -1062,6 +1087,8 @@ static void _mme_s6a_send_air(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     /* Send the request */
     MME_S6A_CHK(fd_msg_send(&req, mme_s6a_aia_cb, svg));
 
+    mme_s6a_timer_start(mme_ue, OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION);
+
     /* Increment the counter */
     ogs_assert(pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) == 0);
     ogs_diam_stats_self()->stats.nb_sent++;
@@ -1412,6 +1439,8 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
 
     /* Send event to MME if no errors */
     if (!error) {
+        mme_s6a_timer_stop(mme_ue);
+
         e = mme_event_new(MME_EVENT_S6A_MESSAGE);
         if (!e) {
             ogs_error("Failed to create MME event");
@@ -1629,6 +1658,8 @@ void mme_s6a_send_ulr(enb_ue_t *enb_ue, mme_ue_t *mme_ue, uint32_t extra_ulr_fla
 
     /* Send the request */
     MME_S6A_CHK(fd_msg_send(&req, mme_s6a_ula_cb, svg));
+
+    mme_s6a_timer_start(mme_ue, OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION);
 
     /* Increment the counter */
     ogs_assert(pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) == 0);
@@ -1880,6 +1911,8 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
 
     /* Send event to MME if no errors */
     if (!error) {
+        mme_s6a_timer_stop(mme_ue);
+
         e = mme_event_new(MME_EVENT_S6A_MESSAGE);
         if (!e) {
             ogs_error("Failed to create MME event");
