@@ -15,11 +15,15 @@ Upstream docs: [open5gs.org](https://open5gs.org/open5gs/docs/). This README des
 | **MME lookups** | Linear scans | O(1) `enb_ue` by S1AP-ID; EBI → bearer map |
 | **SCTP** | Reconnect edge cases | Stale eNB/gNB SCTP context replaced on reconnect |
 | **TAI / PLMN** | Standard caps | Higher TAI limits; serving-only TAI; ePLMN; S1 PLMN preference |
-| **SGWC / SMF (GTP-C)** | First matching peer | Selection by `serving_plmn_id`, `imsi_plmn_id`, `plmn_id` |
+| **SGWC / SMF (GTP-C)** | First matching peer | Selection by `serving_plmn_id`, `imsi_plmn_id`, `plmn_id`; inbound roam uses IMSI PLMN by default |
 | **PGW / SMF (MME)** | First configured SMF | Same PLMN rules as SGWC under `mme.gtpc.client.smf` |
-| **Roaming** | Baseline | Inbound roam, SGW-U NWI wildcard, EPLMN serving-only, ULA tolerance, configurable T3450 |
+| **Roaming** | Baseline | Inbound roam GTP APN/OI, home-PGW interop, SGW-U NWI wildcard, EPLMN serving-only, ULA tolerance, configurable T3450 |
+| **SGs (CSFB)** | No Ts6-1 | Per-UE **Ts6-1** on SGs Location Update → EPS-only attach accept on timeout (default 10 s) |
+| **GTP CSR interop** | Always sends Indication IE | Optional global `omit_indication_on_gtp_csr` for vendor PGW/SGWC |
+| **Attach cleanup** | Limited | S11 Delete Session when Attach Accept cannot be sent after CSR ok; safe OLD→NEW UE session merge on re-attach |
+| **SGWC roam S5** | TEID offset fallback only | Stale Update Bearer TEID validated; late PGW CSR no longer aborts SGWC |
 | **Tracing** | Global log level | Per-IMSI DEBUG without restart; correlated MME/SGWC/SMF attach logs |
-| **Attach visibility** | Mostly INFO/DEBUG | `ATTACH step:` at ERROR; SGW/PGW pick logs with rule name |
+| **Attach visibility** | Mostly INFO/DEBUG | `ATTACH step:` funnel (INFO + ERROR on failures); SGW/PGW pick logs; **GTP timeout shows S11 peer** |
 | **CDR (4G)** | Partial ULI | ULI in MME/SMF/SGWC CDRs; SGWC `servedMSISDN`; higher APN / SGsAP caps |
 | **Milenage K4** | Not present | Optional Huawei HSS9860 K/OPc unwrap (**off by default**) |
 | **PCRF / Gx + PyHSS** | MongoDB `db_uri` | Optional PyHSS MySQL policy (**off by default**); YAML policy unchanged |
@@ -98,14 +102,56 @@ curl 'http://127.0.0.1:9090/admin/trace/imsi?imsi=001010000000001'
 curl 'http://127.0.0.1:9090/admin/trace/imsi?imsi=list'
 ```
 
-**SGWC / SMF PLMN selection (MME)** — put narrower `imsi_plmn_id` rows **before** `plmn_id` / `serving_plmn_id` under `mme.gtpc.client.sgwc` and `mme.gtpc.client.smf`.
+**SGWC / SMF PLMN selection (MME)** — under `mme.gtpc.client.sgwc` and `mme.gtpc.client.smf`:
+
+- `imsi_plmn_id` — match UE **home** IMSI PLMN (recommended for inbound roam PGW/SGWC rows).
+- `serving_plmn_id` — match **visited** TAI PLMN.
+- `plmn_id` — meaning depends on `inbound_roam.gtpc_plmn_id_is_imsi_plmn` (**default `true`** → IMSI PLMN; set `false` for legacy serving-PLMN behaviour).
+
+Put narrower IMSI rows **before** default / serving rows.
+
+**Inbound roam (MME)**
+
+```yaml
+mme:
+  omit_indication_on_gtp_csr: false   # global: omit GTP Indication IE on all CSRs
+  inbound_roam:
+    gtp_apn_format: fqdn              # received | fqdn
+    gtpc_plmn_id_is_imsi_plmn: true   # plmn_id on gtpc.client = IMSI HPLMN
+    strip_pap_from_gtp_pco: false
+    force_ipv4_pdn_on_home_pgw: false
+  time:
+    sgs_ts6_1:
+      value: 10                       # SGs LU timeout (Ts6-1); EPS-only fallback
+```
+
+**SGWC inbound roam (S5 TEID interop)**
+
+```yaml
+sgwc:
+  inbound_roam:
+    gtpc:
+      teid_offset: 0x80000000         # S5-C TEID offset for home PGW interop
+```
 
 **Production attach grep**
 
 ```bash
+# Attach funnel (all steps at INFO; failures at ERROR)
 grep 'ATTACH step' /var/log/open5gs/mme.log
-grep 'SGW' /var/log/open5gs/mme.log
-grep 'PGW/SMF selected' /var/log/open5gs/mme.log
+
+# Key funnel steps
+grep -E 'imsi_known|create_session_req|create_session_rsp_ok|attach_accept|attach_complete|attach_reject|attach_accept_no_s1|attach_accept_cleanup|sgsap_lu_timeout|sgsap_lu_reject' /var/log/open5gs/mme.log
+
+# SGW/PGW selection
+grep -E 'SGW confirmed|SGW reselected|PGW/SMF selected' /var/log/open5gs/mme.log
+
+# GTP timeouts (includes S11 peer IP:port and message name)
+grep 'GTP Timeout S11' /var/log/open5gs/mme.log
+
+# SGWC stale roam UBR
+grep -E 'Stale Update Bearer|No Context in TEID' /var/log/open5gs/sgwc.log
+
 grep 'UE IP assign' /var/log/open5gs/smf.log
 ```
 
