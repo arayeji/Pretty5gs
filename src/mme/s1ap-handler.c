@@ -832,35 +832,6 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
         return;
     }
 
-    if (mme_ue_from_stmsi) {
-        /* If NAS(mme_ue_t) has already been associated with
-         * older S1(enb_ue_t) context */
-        if (ECM_CONNECTED(mme_ue_from_stmsi)) {
-/*
- * Issue #2786
- *
- * In cases where the UE sends an Integrity Un-Protected Attach
- * Request or Service Request, there is an issue of sending
- * a UEContextReleaseCommand for the OLD ENB Context.
- *
- * For example, if the UE switchs off and power-on after
- * the first connection, the EPC sends a UEContextReleaseCommand.
- *
- * However, since there is no ENB context for this on the eNB,
- * the eNB does not send a UEContextReleaseComplete,
- * so the deletion of the ENB Context does not function properly.
- *
- * To solve this problem, the EPC has been modified to implicitly
- * delete the ENB Context instead of sending a UEContextReleaseCommand.
- */
-            HOLDING_S1_CONTEXT(mme_ue_from_stmsi);
-        }
-
-        enb_ue_associate_mme_ue(enb_ue, mme_ue_from_stmsi);
-        ogs_debug("Mobile Reachable timer stopped for IMSI[%s]",
-                mme_ue_from_stmsi->imsi_bcd);
-        CLEAR_MME_UE_TIMER(mme_ue_from_stmsi->t_mobile_reachable);
-    }
     memcpy(&enb_ue->saved.e_cgi.plmn_id, pLMNidentity->buf,
             sizeof(enb_ue->saved.e_cgi.plmn_id));
     memcpy(&enb_ue->saved.e_cgi.cell_id, cell_ID->buf,
