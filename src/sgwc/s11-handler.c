@@ -333,9 +333,12 @@ void sgwc_s11_handle_create_session_request(
     sgwc_sess_select_sgwu(sess);
 
     if (!sess->pfcp_node) {
-        ogs_error("[%s:%s] No PFCP-associated SGW-U (check open5gs-sgwud "
-                "and sgwc.yaml pfcp.client)",
-                sgwc_ue->imsi_bcd, sess->session.name);
+        ogs_error("[IMSI:%s PLMN:%d/%d APN:%s] No PFCP-associated SGW-U "
+                "(check open5gs-sgwud and sgwc.yaml pfcp.client)",
+                sgwc_ue->imsi_bcd,
+                ogs_plmn_id_mcc(&sess->serving_plmn_id),
+                ogs_plmn_id_mnc(&sess->serving_plmn_id),
+                sess->session.name);
         cause_value = OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING;
         goto cleanup;
     }

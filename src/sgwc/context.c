@@ -967,7 +967,11 @@ static ogs_pfcp_node_t *selected_sgwu_node(
         }
     }
 
-    ogs_error("No SGWUs are PFCP associated that are suited to RR");
+    ogs_error("No SGWUs are PFCP associated that are suited to RR "
+            "[PLMN:%d/%d APN:%s]",
+            ogs_plmn_id_mcc(&sess->serving_plmn_id),
+            ogs_plmn_id_mnc(&sess->serving_plmn_id),
+            sess->session.name ? sess->session.name : "-");
     return NULL;
 }
 
@@ -994,12 +998,24 @@ void sgwc_sess_select_sgwu(sgwc_sess_t *sess)
             ogs_debug("UE using SGW-U on IP %s",
                     ogs_sockaddr_to_string_static(node->addr_list));
         } else {
-            ogs_error("No PFCP-associated SGW-U for session [APN:%s]",
+            sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+            ogs_error("No PFCP-associated SGW-U for session "
+                    "[IMSI:%s PLMN:%d/%d TAC:%d APN:%s]",
+                    sgwc_ue ? sgwc_ue->imsi_bcd : "-",
+                    ogs_plmn_id_mcc(&sess->serving_plmn_id),
+                    ogs_plmn_id_mnc(&sess->serving_plmn_id),
+                    (sgwc_ue && sgwc_ue->uli_presence) ? sgwc_ue->e_tai.tac : 0,
                     sess->session.name ? sess->session.name : "-");
             sess->pfcp_node = NULL;
         }
     } else {
-        ogs_error("No SGW-U configured in sgwc.pfcp");
+        sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        ogs_error("No SGW-U configured in sgwc.pfcp "
+                "[IMSI:%s PLMN:%d/%d APN:%s]",
+                sgwc_ue ? sgwc_ue->imsi_bcd : "-",
+                ogs_plmn_id_mcc(&sess->serving_plmn_id),
+                ogs_plmn_id_mnc(&sess->serving_plmn_id),
+                sess->session.name ? sess->session.name : "-");
         sess->pfcp_node = NULL;
     }
 }
