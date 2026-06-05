@@ -2348,7 +2348,17 @@ int mme_context_parse_config(void)
 
                         if (mcc && mnc && num_of_tac) {
                             if (num_of_tac == 1 && start[0] == end[0]) {
-                                ogs_assert(list2->num < OGS_MAX_NUM_OF_TAI);
+                                if (list2->num >= OGS_MAX_NUM_OF_TAI) {
+                                    ogs_error("Too many single-TAC 'tai' "
+                                            "entries (%d max). Group multiple "
+                                            "TACs into one 'tai' as "
+                                            "tac: [t1, t2, ...] so they use "
+                                            "type-0 partial lists instead.",
+                                            OGS_MAX_NUM_OF_TAI);
+                                    ogs_free(start);
+                                    ogs_free(end);
+                                    return OGS_ERROR;
+                                }
 
                                 list2->type = OGS_TAI2_TYPE;
 
@@ -2412,8 +2422,15 @@ int mme_context_parse_config(void)
                                             ++count;
 
                                     } else if (start[tac] < end[tac]) {
-                                        ogs_assert(num_of_list1 <
-                                                OGS_MAX_NUM_OF_TAI);
+                                        if (num_of_list1 >=
+                                                OGS_MAX_NUM_OF_TAI) {
+                                            ogs_error("Too many TAC ranges "
+                                                    "(%d max) in 'tai'",
+                                                    OGS_MAX_NUM_OF_TAI);
+                                            ogs_free(start);
+                                            ogs_free(end);
+                                            return OGS_ERROR;
+                                        }
 
                                         list1->tai[num_of_list1].type =
                                             OGS_TAI1_TYPE;
