@@ -24,6 +24,7 @@ Upstream docs: [open5gs.org](https://open5gs.org/open5gs/docs/). This README des
 | **SGWC roam S5** | TEID offset fallback only | Stale Update Bearer TEID validated; late PGW CSR no longer aborts SGWC |
 | **Tracing** | Global log level | Per-IMSI DEBUG without restart; correlated MME/SGWC/SMF attach logs |
 | **Attach visibility** | Mostly INFO/DEBUG | `ATTACH step:` funnel (INFO + ERROR on failures); SGW/PGW pick logs; **GTP timeout shows S11 peer** |
+| **HSS / S6a ACL** | Attach-only PLMN check; unmapped IMSIs still hit default DRA realm | Block AIR/ULR before Diameter when IMSI fails `access_control`, `imsi_acl`, or `hss_map` (auto-enforced) |
 | **CDR (4G)** | Partial ULI | ULI in MME/SMF/SGWC CDRs; SGWC `servedMSISDN`; higher APN / SGsAP caps |
 | **Milenage K4** | Not present | Optional Huawei HSS9860 K/OPc unwrap (**off by default**) |
 | **PCRF / Gx + PyHSS** | MongoDB `db_uri` | Optional PyHSS MySQL policy (**off by default**); YAML policy unchanged |
@@ -100,6 +101,49 @@ mme:
 ```bash
 curl 'http://127.0.0.1:9090/admin/trace/imsi?imsi=001010000000001'
 curl 'http://127.0.0.1:9090/admin/trace/imsi?imsi=list'
+```
+
+**HSS ACL — block unknown IMSIs before S6a (AIR/ULR)**
+
+Stops attach/TAU paths from flooding HSS/DRA with authentication and update-location requests for PLMNs or IMSI ranges you do not serve. Rejection happens **before** any Diameter message is sent; the UE gets a NAS attach reject (typically `PLMN not allowed`).
+
+Enforcement is active when **any** of these are configured:
+
+| Mechanism | Config | Behaviour |
+|-----------|--------|-----------|
+| PLMN whitelist | `access_control` | Same rules as attach: listed HPLMNs allowed; others rejected (optional per-PLMN `reject_cause`, optional `default_reject_cause`) |
+| IMSI prefix whitelist | `imsi_acl` | Only IMSIs matching at least one prefix may reach HSS |
+| HSS map | `hss_map` + `require_hss_map` | Only HPLMNs listed in `hss_map` may reach HSS. **`require_hss_map` auto-enables** when `hss_map` is present unless you set `require_hss_map: false` |
+
+```yaml
+mme:
+  access_control:
+    - plmn_id: { mcc: 999, mnc: 70 }
+    - plmn_id: { mcc: 999, mnc: 71 }
+
+  hss_map:
+    - plmn_id: { mcc: 999, mnc: 70 }
+      realm: epc.mnc070.mcc999.3gppnetwork.org
+    - plmn_id: { mcc: 999, mnc: 71 }
+      realm: epc.mnc071.mcc999.3gppnetwork.org
+  # require_hss_map: true   # default when hss_map is set
+
+  # optional finer IMSI filter (in addition to access_control / hss_map):
+  # imsi_acl:
+  #   - 99970
+  #   - 00101
+```
+
+Log line when blocked:
+
+```bash
+grep 'IMSI not in ACL' /var/log/open5gs/mme.log
+```
+
+Verify binary after deploy:
+
+```bash
+strings /usr/bin/open5gs-mmed | grep 'IMSI not in ACL'
 ```
 
 **SGWC / SMF PLMN selection (MME)** — under `mme.gtpc.client.sgwc` and `mme.gtpc.client.smf`:
