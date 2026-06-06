@@ -224,8 +224,6 @@ void sgwc_s11_handle_create_session_request(
     /*****************************************
      * Check Mandatory/Conditional IE Missing
      *****************************************/
-    ogs_assert(cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
-
     if (req->imsi.presence == 0) {
         ogs_error("No IMSI");
         cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
@@ -356,7 +354,6 @@ void sgwc_s11_handle_create_session_request(
     }
 
     /* Check if selected SGW-U is associated with SGW-C */
-    ogs_assert(sess->pfcp_node);
     if (!OGS_FSM_CHECK(&sess->pfcp_node->sm, sgwc_pfcp_state_associated)) {
         ogs_error("[%s:%s] SGW-U [%s] not PFCP-associated with SGWC",
                 sgwc_ue->imsi_bcd, sess->session.name,
@@ -565,8 +562,6 @@ void sgwc_s11_handle_modify_bearer_request(
     /*****************************************
      * Check Mandatory/Conditional IE Missing
      *****************************************/
-    ogs_assert(cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
-
     for (i = 0; i < OGS_BEARER_PER_UE; i++) {
         ogs_pfcp_xact_t *current_xact = NULL;
 
@@ -680,10 +675,9 @@ void sgwc_s11_handle_modify_bearer_request(
         if (memcmp(&dl_tunnel->remote_ip, &zero_ip, sizeof(ogs_ip_t)) != 0 &&
             memcmp(&dl_tunnel->remote_ip, &remote_ip, sizeof(ogs_ip_t)) != 0) {
 
-            ogs_assert(sess->pfcp_node);
-
-            /* eNB IP is changed during handover */
-            if (sess->pfcp_node->up_function_features.empu) {
+            if (!sess->pfcp_node) {
+                ogs_warn("No PFCP node during handover End Marker check");
+            } else if (sess->pfcp_node->up_function_features.empu) {
                 current_xact->modify_flags |= OGS_PFCP_MODIFY_END_MARKER;
             } else {
                 ogs_error("SGW-U does not support End Marker");
@@ -835,8 +829,6 @@ void sgwc_s11_handle_delete_session_request(
     /*****************************************
      * Check Mandatory/Conditional IE Missing
      *****************************************/
-    ogs_assert(cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
-
     if (req->indication_flags.presence &&
         req->indication_flags.data && req->indication_flags.len) {
         indication = req->indication_flags.data;
@@ -1053,8 +1045,6 @@ void sgwc_s11_handle_create_bearer_response(
     /********************
      * Check Cause Value
      ********************/
-    ogs_assert(cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
-
     cause = rsp->bearer_contexts.cause.data;
     ogs_assert(cause);
     cause_value = cause->value;
@@ -1277,8 +1267,6 @@ void sgwc_s11_handle_update_bearer_response(
     /********************
      * Check Cause Value
      ********************/
-    ogs_assert(cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
-
     cause = rsp->bearer_contexts.cause.data;
     ogs_assert(cause);
     cause_value = cause->value;
@@ -1541,11 +1529,6 @@ void sgwc_s11_handle_release_access_bearers_request(
         return;
     }
 
-    /********************
-     * Check ALL Context
-     ********************/
-    ogs_assert(sgwc_ue);
-
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
         sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);
 
@@ -1710,11 +1693,6 @@ void sgwc_s11_handle_create_indirect_data_forwarding_tunnel_request(
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
         goto cleanup;
-
-    /********************
-     * Check ALL Context
-     ********************/
-    ogs_assert(sgwc_ue);
 
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
         sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);
@@ -2022,8 +2000,6 @@ void sgwc_s11_handle_bearer_resource_command(
     /*****************************************
      * Check Mandatory/Conditional IE Missing
      *****************************************/
-    ogs_assert(cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
-
     if (cmd->procedure_transaction_id.presence == 0) {
         ogs_error("No PTI");
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;

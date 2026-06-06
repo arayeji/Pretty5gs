@@ -623,7 +623,10 @@ static void send_router_advertisement(smf_sess_t *sess, uint8_t *ip6_dst)
     ue_ip = sess->ipv6;
     ogs_assert(ue_ip);
     subnet = ue_ip->subnet;
-    ogs_assert(subnet);
+    if (!subnet) {
+        ogs_error("Cannot build Router Advertisement: no IPv6 subnet");
+        return;
+    }
 
     /* Fetch link-local address for router advertisement */
     if (ogs_gtp_self()->link_local_addr) {

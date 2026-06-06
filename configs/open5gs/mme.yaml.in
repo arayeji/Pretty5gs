@@ -415,6 +415,14 @@ mme:
 #        mcc: 999
 #        mnc: 70
 #
+#  o Block unknown IMSIs before S6a (AIR/ULR) — stops HSS/DRA flood.
+#    Enforced when any of: access_control, imsi_acl, or hss_map (with
+#    require_hss_map, auto-enabled when hss_map is configured).
+#  imsi_acl:
+#    - 99970
+#    - 00101
+#  require_hss_map: true
+#
 #  o HSS Selection
 #    o realm and host are optional
 #    o realm will be generated from plmn_id if not provided

@@ -169,9 +169,8 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
             mme_send_tau_accept_and_check_release(enb_ue, mme_ue);
         }
     } else {
-        ogs_fatal("[%s] Invalid EPS-Type[%d]",
+        ogs_error("[%s] Invalid EPS-Type[%d]",
                 mme_ue->imsi_bcd, mme_ue->nas_eps.type);
-        ogs_assert_if_reached();
     }
 
     return;
@@ -203,9 +202,8 @@ error:
         ogs_expect(r == OGS_OK);
         ogs_assert(r != OGS_ERROR);
     } else {
-        ogs_fatal("[%s] Invalid EPS-Type[%d]",
+        ogs_error("[%s] Invalid EPS-Type[%d]",
                 mme_ue->imsi_bcd, mme_ue->nas_eps.type);
-        ogs_assert_if_reached();
     }
     mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
 }
@@ -355,9 +353,8 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
             mme_send_release_access_bearer_or_ue_context_release(enb_ue);
         }
     } else {
-        ogs_fatal("[%s] Invalid EPS-Type[%d]",
+        ogs_error("[%s] Invalid EPS-Type[%d]",
                 mme_ue->imsi_bcd, mme_ue->nas_eps.type);
-        ogs_assert_if_reached();
     }
 
     return;
@@ -757,8 +754,11 @@ void sgsap_handle_downlink_unitdata(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         ogs_nas_eps_imsi_to_bcd(nas_mobile_identity_imsi,
                 nas_mobile_identity_imsi_len, imsi_bcd);
         mme_ue = mme_ue_find_by_imsi_bcd(imsi_bcd);
-    } else
-        ogs_assert_if_reached();
+    } else {
+        ogs_error("Unknown mobile identity type [%d]",
+                nas_mobile_identity_imsi->type);
+        return;
+    }
 
     if (!mme_ue) {
         ogs_error("No UE(mme-ue) context");
@@ -783,7 +783,8 @@ void sgsap_handle_reset_indication(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     ogs_assert(vlr);
     ogs_assert(pkbuf);
 
-    ogs_assert(OGS_OK == sgsap_send_reset_ack(vlr));
+    if (sgsap_send_reset_ack(vlr) != OGS_OK)
+        ogs_error("sgsap_send_reset_ack() failed");
 }
 
 void sgsap_handle_release_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)

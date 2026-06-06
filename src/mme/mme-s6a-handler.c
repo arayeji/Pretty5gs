@@ -382,7 +382,8 @@ void mme_s6a_handle_clr(mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
             if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
-                ogs_assert(OGS_OK == sgsap_send_detach_indication(mme_ue));
+                if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
+                    ogs_error("sgsap_send_detach_indication() failed");
             } else {
                 enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
                 if (enb_ue)
@@ -411,7 +412,8 @@ void mme_s6a_handle_clr(mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
          * So, we don't have to check whether UE is IDLE or not.
          */
         if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
-            ogs_assert(OGS_OK == sgsap_send_detach_indication(mme_ue));
+            if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
+                ogs_error("sgsap_send_detach_indication() failed");
         } else {
             enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
             if (enb_ue)

@@ -554,7 +554,8 @@ void emm_state_registered(ogs_fsm_t *s, mme_event_t *e)
              */
             mme_ue->detach_type = MME_DETACH_TYPE_MME_IMPLICIT;
             if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
-                ogs_assert(OGS_OK == sgsap_send_detach_indication(mme_ue));
+                if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
+                    ogs_error("sgsap_send_detach_indication() failed");
             } else {
                 mme_send_delete_session_or_detach(
                         enb_ue_find_by_id(mme_ue->enb_ue_id), mme_ue);
@@ -1238,7 +1239,8 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             CLEAR_S1_CONTEXT(mme_ue);
 
             if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
-                ogs_assert(OGS_OK == sgsap_send_detach_indication(mme_ue));
+                if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
+                    ogs_error("sgsap_send_detach_indication() failed");
             } else {
                 mme_send_delete_session_or_detach(enb_ue, mme_ue);
             }
@@ -1531,7 +1533,8 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
             CLEAR_S1_CONTEXT(mme_ue);
 
             if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
-                ogs_assert(OGS_OK == sgsap_send_detach_indication(mme_ue));
+                if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
+                    ogs_error("sgsap_send_detach_indication() failed");
             } else {
                 mme_send_delete_session_or_detach(enb_ue, mme_ue);
             }
@@ -1800,7 +1803,8 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
             CLEAR_S1_CONTEXT(mme_ue);
 
             if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
-                ogs_assert(OGS_OK == sgsap_send_detach_indication(mme_ue));
+                if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
+                    ogs_error("sgsap_send_detach_indication() failed");
             } else {
                 mme_send_delete_session_or_detach(enb_ue, mme_ue);
             }
@@ -2095,7 +2099,8 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
             CLEAR_S1_CONTEXT(mme_ue);
 
             if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
-                ogs_assert(OGS_OK == sgsap_send_detach_indication(mme_ue));
+                if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
+                    ogs_error("sgsap_send_detach_indication() failed");
             } else {
                 mme_send_delete_session_or_detach(enb_ue, mme_ue);
             }

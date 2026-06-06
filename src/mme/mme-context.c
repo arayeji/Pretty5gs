@@ -678,6 +678,13 @@ static int mme_context_validation(void)
 
     mme_attach_accept_log_config();
 
+    if (!self.require_hss_map_explicit &&
+            ogs_list_first(&self.hssmap_list) != NULL) {
+        self.require_hss_map = true;
+        ogs_info("require_hss_map auto-enabled (%d hss_map PLMN(s))",
+                ogs_list_count(&self.hssmap_list));
+    }
+
     ogs_info("TAI type-0 partial list limit: %llu (global.max.eps_tai0_partial_list)",
             (unsigned long long)ogs_app_max_eps_tai0_partial_list());
 
@@ -3483,6 +3490,51 @@ int mme_context_parse_config(void)
                         } else
                             ogs_warn("unknown key `%s`", emerg_key);
                     }
+                } else if (!strcmp(mme_key, "require_hss_map")) {
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+
+                    self.require_hss_map_explicit = true;
+                    self.require_hss_map = v ? ogs_yaml_bool(v) : true;
+                } else if (!strcmp(mme_key, "imsi_acl")) {
+                    ogs_yaml_iter_t acl_array, acl_iter;
+
+                    self.num_of_imsi_acl = 0;
+                    ogs_yaml_iter_recurse(&mme_iter, &acl_array);
+                    do {
+                        if (ogs_yaml_iter_type(&acl_array) ==
+                                YAML_MAPPING_NODE) {
+                            break;
+                        } else if (ogs_yaml_iter_type(&acl_array) ==
+                                YAML_SEQUENCE_NODE) {
+                            if (!ogs_yaml_iter_next(&acl_array))
+                                break;
+                            ogs_yaml_iter_recurse(&acl_array, &acl_iter);
+                        } else if (ogs_yaml_iter_type(&acl_array) ==
+                                YAML_SCALAR_NODE) {
+                            ogs_yaml_iter_recurse(&mme_iter, &acl_iter);
+                        } else
+                            ogs_assert_if_reached();
+
+                        while (ogs_yaml_iter_next(&acl_iter)) {
+                            const char *v = ogs_yaml_iter_value(&acl_iter);
+
+                            if (!v || !v[0])
+                                continue;
+                            if (self.num_of_imsi_acl >= MME_MAX_IMSI_ACL) {
+                                ogs_warn("imsi_acl: list full (max %d)",
+                                        MME_MAX_IMSI_ACL);
+                                break;
+                            }
+                            ogs_cpystrn(self.imsi_acl[self.num_of_imsi_acl].prefix,
+                                    v, OGS_MAX_IMSI_BCD_LEN + 1);
+                            self.num_of_imsi_acl++;
+                        }
+                    } while (ogs_yaml_iter_type(&acl_array) ==
+                            YAML_SEQUENCE_NODE &&
+                            ogs_yaml_iter_next(&acl_array));
+
+                    ogs_info("imsi_acl: %d prefix(es) loaded",
+                            self.num_of_imsi_acl);
                 } else if (!strcmp(mme_key, "trace_imsi")) {
                     ogs_yaml_iter_t trace_array, trace_iter;
 
@@ -4311,6 +4363,106 @@ mme_hssmap_t *mme_hssmap_find_by_imsi_bcd(const char *imsi_bcd)
     }
 
     return NULL;
+}
+
+static bool mme_imsi_acl_match(const char *imsi_bcd)
+{
+    int i;
+
+    ogs_assert(imsi_bcd);
+
+    for (i = 0; i < self.num_of_imsi_acl; i++) {
+        const char *prefix = self.imsi_acl[i].prefix;
+        size_t len = strlen(prefix);
+
+        if (len > 0 && strncmp(imsi_bcd, prefix, len) == 0)
+            return true;
+    }
+
+    return false;
+}
+
+uint8_t mme_emm_cause_from_access_control_imsi_bcd(const char *imsi_bcd)
+{
+    ogs_plmn_id_t plmn_id;
+    int i;
+
+    ogs_assert(imsi_bcd);
+
+    if (self.num_of_access_control == 0)
+        return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
+
+    ogs_plmn_id_from_imsi_bcd(imsi_bcd, &plmn_id);
+
+    for (i = 0; i < self.num_of_access_control; i++) {
+        if (!memcmp(&plmn_id, &self.access_control[i].plmn_id,
+                    sizeof(ogs_plmn_id_t))) {
+            if (self.access_control[i].reject_cause)
+                return self.access_control[i].reject_cause;
+            return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
+        }
+    }
+
+    if (self.default_reject_cause)
+        return self.default_reject_cause;
+
+    return OGS_NAS_EMM_CAUSE_PLMN_NOT_ALLOWED;
+}
+
+uint8_t mme_imsi_hss_reject_emm_cause(mme_ue_t *mme_ue)
+{
+    const char *imsi;
+
+    ogs_assert(mme_ue);
+    ogs_assert(MME_UE_HAVE_IMSI(mme_ue));
+
+    imsi = mme_ue->imsi_bcd;
+
+    if (self.num_of_imsi_acl > 0 && !mme_imsi_acl_match(imsi))
+        return OGS_NAS_EMM_CAUSE_PLMN_NOT_ALLOWED;
+
+    if (self.require_hss_map && ogs_list_first(&self.hssmap_list) != NULL) {
+        if (!mme_ue->hssmap)
+            mme_ue->hssmap = mme_hssmap_find_by_imsi_bcd(imsi);
+        if (!mme_ue->hssmap)
+            return OGS_NAS_EMM_CAUSE_PLMN_NOT_ALLOWED;
+    }
+
+    if (self.num_of_access_control > 0)
+        return mme_emm_cause_from_access_control_imsi_bcd(imsi);
+
+    return OGS_NAS_EMM_CAUSE_PLMN_NOT_ALLOWED;
+}
+
+bool mme_imsi_hss_allowed(mme_ue_t *mme_ue)
+{
+    const char *imsi;
+
+    ogs_assert(mme_ue);
+
+    if (!MME_UE_HAVE_IMSI(mme_ue))
+        return true;
+
+    imsi = mme_ue->imsi_bcd;
+
+    if (self.num_of_imsi_acl > 0 && !mme_imsi_acl_match(imsi))
+        return false;
+
+    if (self.require_hss_map && ogs_list_first(&self.hssmap_list) != NULL) {
+        if (!mme_ue->hssmap)
+            mme_ue->hssmap = mme_hssmap_find_by_imsi_bcd(imsi);
+        if (!mme_ue->hssmap)
+            return false;
+    }
+
+    if (self.num_of_access_control > 0) {
+        uint8_t emm_cause =
+            mme_emm_cause_from_access_control_imsi_bcd(imsi);
+        if (emm_cause != OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED)
+            return false;
+    }
+
+    return true;
 }
 
 mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)

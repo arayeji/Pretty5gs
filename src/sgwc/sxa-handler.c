@@ -340,17 +340,29 @@ void sgwc_sxa_handle_session_establishment_response(
 
         ogs_list_for_each(&sess->pfcp.pdr_list, pdr) {
             far = pdr->far;
-            ogs_assert(far);
+            if (!far) {
+                ogs_error("No FAR for PDR");
+                pfcp_cause_value = OGS_PFCP_CAUSE_SYSTEM_FAILURE;
+                break;
+            }
 
-            if (pdr->src_if == OGS_PFCP_INTERFACE_CP_FUNCTION)
-                ogs_assert(OGS_ERROR != ogs_pfcp_setup_pdr_gtpu_node(pdr));
+            if (pdr->src_if == OGS_PFCP_INTERFACE_CP_FUNCTION &&
+                    ogs_pfcp_setup_pdr_gtpu_node(pdr) == OGS_ERROR) {
+                ogs_error("ogs_pfcp_setup_pdr_gtpu_node() failed");
+                pfcp_cause_value = OGS_PFCP_CAUSE_SYSTEM_FAILURE;
+                break;
+            }
 
             if (far->dst_if == OGS_PFCP_INTERFACE_CP_FUNCTION)
                 ogs_pfcp_far_teid_hash_set(far);
 
             tunnel = sgwc_tunnel_find_by_pdr_id(sess, pdr->id);
             if (tunnel) {
-                ogs_assert(sess->pfcp_node);
+                if (!sess->pfcp_node) {
+                    ogs_error("No PFCP node");
+                    pfcp_cause_value = OGS_PFCP_CAUSE_SYSTEM_FAILURE;
+                    break;
+                }
                 if (sess->pfcp_node->up_function_features.ftup &&
                     pdr->f_teid_len) {
                     if (tunnel->local_addr)
@@ -358,10 +370,14 @@ void sgwc_sxa_handle_session_establishment_response(
                     if (tunnel->local_addr6)
                         ogs_freeaddrinfo(tunnel->local_addr6);
 
-                    ogs_assert(OGS_OK ==
-                        ogs_pfcp_f_teid_to_sockaddr(
+                    rv = ogs_pfcp_f_teid_to_sockaddr(
                             &pdr->f_teid, pdr->f_teid_len,
-                            &tunnel->local_addr, &tunnel->local_addr6));
+                            &tunnel->local_addr, &tunnel->local_addr6);
+                    if (rv != OGS_OK) {
+                        ogs_error("ogs_pfcp_f_teid_to_sockaddr() failed");
+                        pfcp_cause_value = OGS_PFCP_CAUSE_SYSTEM_FAILURE;
+                        break;
+                    }
                     tunnel->local_teid = pdr->f_teid.teid;
                 }
             }
@@ -393,10 +409,21 @@ void sgwc_sxa_handle_session_establishment_response(
     /* Data Plane(DL) : SGW-S5U */
     i = 0;
     ogs_list_for_each(&sess->bearer_list, bearer) {
-        ogs_assert(i < OGS_BEARER_PER_UE);
+        if (i >= OGS_BEARER_PER_UE) {
+            ogs_error("Too many bearers");
+            break;
+        }
 
         dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
-        ogs_assert(dl_tunnel);
+        if (!dl_tunnel) {
+            ogs_error("No DL tunnel");
+            ogs_gtp_send_error_message(
+                    s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
+                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                    OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+            sgwc_sess_remove(sess);
+            return;
+        }
 
         ogs_debug("    SGW_S5U_TEID[%d] PGW_S5U_TEID[%d]",
             dl_tunnel->local_teid, dl_tunnel->remote_teid);
@@ -417,11 +444,29 @@ void sgwc_sxa_handle_session_establishment_response(
         memset(&sgw_s5u_teid[i], 0, sizeof(ogs_gtp2_f_teid_t));
         sgw_s5u_teid[i].teid = htobe32(dl_tunnel->local_teid);
         sgw_s5u_teid[i].interface_type = dl_tunnel->interface_type;
-        ogs_assert(dl_tunnel->local_addr || dl_tunnel->local_addr6);
+        if (!dl_tunnel->local_addr && !dl_tunnel->local_addr6) {
+            sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+            ogs_error("No local F-TEID address");
+            ogs_gtp_send_error_message(
+                    s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
+                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                    OGS_GTP2_CAUSE_GRE_KEY_NOT_FOUND);
+            sgwc_sess_remove(sess);
+            return;
+        }
         rv = ogs_gtp2_sockaddr_to_f_teid(
                 dl_tunnel->local_addr, dl_tunnel->local_addr6,
                 &sgw_s5u_teid[i], &sgw_s5u_len[i]);
-        ogs_assert(rv == OGS_OK);
+        if (rv != OGS_OK) {
+            sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+            ogs_error("ogs_gtp2_sockaddr_to_f_teid() failed");
+            ogs_gtp_send_error_message(
+                    s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
+                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                    OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+            sgwc_sess_remove(sess);
+            return;
+        }
 
         i++;
     }
@@ -438,11 +483,29 @@ void sgwc_sxa_handle_session_establishment_response(
         rv = ogs_gtp2_sockaddr_to_f_teid(
                 gtpc_addr, gtpc_addr6, &sgw_s5c_teid, &sgw_s5c_len);
     }
-    ogs_assert(rv == OGS_OK);
+    if (rv != OGS_OK) {
+        sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        ogs_error("ogs_gtp2_sockaddr_to_f_teid(S5C) failed");
+        ogs_gtp_send_error_message(
+                s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
+                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+        sgwc_sess_remove(sess);
+        return;
+    }
 
     /* UP F-SEID */
     up_f_seid = pfcp_rsp->up_f_seid.data;
-    ogs_assert(up_f_seid);
+    if (!up_f_seid) {
+        sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        ogs_error("No UP F-SEID data");
+        ogs_gtp_send_error_message(
+                s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
+                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_MANDATORY_IE_MISSING);
+        sgwc_sess_remove(sess);
+        return;
+    }
     sess->sgwu_sxa_seid = be64toh(up_f_seid->seid);
 
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
@@ -468,10 +531,26 @@ void sgwc_sxa_handle_session_establishment_response(
             pgw = ogs_gtp_node_add_by_f_teid(
                     &sgwc_self()->pgw_s5c_list,
                     pgw_s5c_teid, ogs_gtp_self()->gtpc_port);
-            ogs_assert(pgw);
+            if (!pgw) {
+                ogs_error("ogs_gtp_node_add_by_f_teid() failed");
+                ogs_gtp_send_error_message(
+                        s11_xact, sgwc_ue->mme_s11_teid,
+                        OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                        OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+                sgwc_sess_remove(sess);
+                return;
+            }
 
             rv = sgwc_gtp_connect_peer(sess, pgw);
-            ogs_assert(rv == OGS_OK);
+            if (rv != OGS_OK) {
+                ogs_error("sgwc_gtp_connect_peer() failed");
+                ogs_gtp_send_error_message(
+                        s11_xact, sgwc_ue->mme_s11_teid,
+                        OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                        OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+                sgwc_sess_remove(sess);
+                return;
+            }
         }
         /* Setup GTP Node */
         OGS_SETUP_GTP_NODE(sess, pgw);
@@ -554,7 +633,15 @@ void sgwc_sxa_handle_session_establishment_response(
             return;
         }
 
-        ogs_assert(sess->gnode);
+        if (!sess->gnode) {
+            ogs_error("No S5 peer (gnode)");
+            ogs_gtp_send_error_message(
+                    s11_xact, sgwc_ue->mme_s11_teid,
+                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                    OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+            sgwc_sess_remove(sess);
+            return;
+        }
         s5c_xact = ogs_gtp_xact_local_create(
                 sess->gnode, &send_message.h, pkbuf, sess_timeout,
                 OGS_UINT_TO_POINTER(sess->id));
@@ -607,7 +694,15 @@ void sgwc_sxa_handle_session_establishment_response(
             return;
         }
 
-        ogs_assert(sess->gnode);
+        if (!sess->gnode) {
+            ogs_error("No S5 peer (gnode)");
+            ogs_gtp_send_error_message(
+                    s11_xact, sgwc_ue->mme_s11_teid,
+                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                    OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+            sgwc_sess_remove(sess);
+            return;
+        }
         s5c_xact = ogs_gtp_xact_local_create(
                 sess->gnode, &recv_message->h, pkbuf, sess_timeout,
                 OGS_UINT_TO_POINTER(sess->id));
@@ -757,17 +852,29 @@ void sgwc_sxa_handle_session_modification_response(
 
         ogs_list_for_each_entry(&pdr_to_create_list, pdr, to_create_node) {
             far = pdr->far;
-            ogs_assert(far);
+            if (!far) {
+                ogs_error("No FAR for PDR");
+                pfcp_cause_value = OGS_PFCP_CAUSE_SYSTEM_FAILURE;
+                break;
+            }
 
-            if (pdr->src_if == OGS_PFCP_INTERFACE_CP_FUNCTION)
-                ogs_assert(OGS_ERROR != ogs_pfcp_setup_pdr_gtpu_node(pdr));
+            if (pdr->src_if == OGS_PFCP_INTERFACE_CP_FUNCTION &&
+                    ogs_pfcp_setup_pdr_gtpu_node(pdr) == OGS_ERROR) {
+                ogs_error("ogs_pfcp_setup_pdr_gtpu_node() failed");
+                pfcp_cause_value = OGS_PFCP_CAUSE_SYSTEM_FAILURE;
+                break;
+            }
 
             if (far->dst_if == OGS_PFCP_INTERFACE_CP_FUNCTION)
                 ogs_pfcp_far_teid_hash_set(far);
 
             tunnel = sgwc_tunnel_find_by_pdr_id(sess, pdr->id);
             if (tunnel) {
-                ogs_assert(sess->pfcp_node);
+                if (!sess->pfcp_node) {
+                    ogs_error("No PFCP node");
+                    pfcp_cause_value = OGS_PFCP_CAUSE_SYSTEM_FAILURE;
+                    break;
+                }
                 if (sess->pfcp_node->up_function_features.ftup &&
                     pdr->f_teid_len) {
                     if (tunnel->local_addr)
@@ -775,10 +882,14 @@ void sgwc_sxa_handle_session_modification_response(
                     if (tunnel->local_addr6)
                         ogs_freeaddrinfo(tunnel->local_addr6);
 
-                    ogs_assert(OGS_OK ==
-                        ogs_pfcp_f_teid_to_sockaddr(
+                    rv = ogs_pfcp_f_teid_to_sockaddr(
                             &pdr->f_teid, pdr->f_teid_len,
-                            &tunnel->local_addr, &tunnel->local_addr6));
+                            &tunnel->local_addr, &tunnel->local_addr6);
+                    if (rv != OGS_OK) {
+                        ogs_error("ogs_pfcp_f_teid_to_sockaddr() failed");
+                        pfcp_cause_value = OGS_PFCP_CAUSE_SYSTEM_FAILURE;
+                        break;
+                    }
                     tunnel->local_teid = pdr->f_teid.teid;
                 }
             }
@@ -848,8 +959,8 @@ void sgwc_sxa_handle_session_modification_response(
                             "removed [%d]", pfcp_xact->assoc_xact_id);
                 }
             } else {
-                ogs_fatal("Invalid modify_flags[0x%llx]", (long long)flags);
-                ogs_assert_if_reached();
+                ogs_error("Invalid modify_flags[0x%llx] on PFCP failure path",
+                        (long long)flags);
             }
         } else if (flags & OGS_PFCP_MODIFY_DEACTIVATE) {
             if (flags & OGS_PFCP_MODIFY_ERROR_INDICATION) {
@@ -862,14 +973,23 @@ void sgwc_sxa_handle_session_modification_response(
                     return;
                 }
                 sgwc_ue = sgwc_ue_find_by_id(bearer->sgwc_ue_id);
-                ogs_assert(sgwc_ue);
+                if (!sgwc_ue) {
+                    ogs_error("No UE context");
+                    ogs_pfcp_xact_commit(pfcp_xact);
+                    return;
+                }
 
-                ogs_assert(flags & OGS_PFCP_MODIFY_SESSION);
+                if (!(flags & OGS_PFCP_MODIFY_SESSION)) {
+                    ogs_error("Missing OGS_PFCP_MODIFY_SESSION flag");
+                    ogs_pfcp_xact_commit(pfcp_xact);
+                    return;
+                }
                 if (SGWC_SESSION_SYNC_DONE(sgwc_ue,
                         OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE, flags)) {
-                    ogs_assert(OGS_OK ==
-                        sgwc_gtp_send_downlink_data_notification(
-                            OGS_GTP2_CAUSE_ERROR_INDICATION_RECEIVED, bearer));
+                    if (sgwc_gtp_send_downlink_data_notification(
+                            OGS_GTP2_CAUSE_ERROR_INDICATION_RECEIVED,
+                            bearer) != OGS_OK)
+                        ogs_error("sgwc_gtp_send_downlink_data_notification() failed");
                 }
             } else {
                 s11_xact = ogs_gtp_xact_find_by_id(pfcp_xact->assoc_xact_id);
@@ -1032,11 +1152,17 @@ void sgwc_sxa_handle_session_modification_response(
             memset(&sgw_s1u_teid, 0, sizeof(ogs_gtp2_f_teid_t));
             sgw_s1u_teid.interface_type = ul_tunnel->interface_type;
             sgw_s1u_teid.teid = htobe32(ul_tunnel->local_teid);
-            ogs_assert(ul_tunnel->local_addr || ul_tunnel->local_addr6);
+            if (!ul_tunnel->local_addr && !ul_tunnel->local_addr6) {
+                ogs_error("No S1-U local F-TEID");
+                return;
+            }
             rv = ogs_gtp2_sockaddr_to_f_teid(
                     ul_tunnel->local_addr, ul_tunnel->local_addr6,
                     &sgw_s1u_teid, &len);
-            ogs_assert(rv == OGS_OK);
+            if (rv != OGS_OK) {
+                ogs_error("ogs_gtp2_sockaddr_to_f_teid() failed");
+                return;
+            }
             gtp_req->bearer_contexts.s1_u_enodeb_f_teid.presence = 1;
             gtp_req->bearer_contexts.s1_u_enodeb_f_teid.data = &sgw_s1u_teid;
             gtp_req->bearer_contexts.s1_u_enodeb_f_teid.len = len;
@@ -1050,8 +1176,10 @@ void sgwc_sxa_handle_session_modification_response(
                 return;
             }
 
-            ogs_assert(sgwc_ue->gnode);
-            ogs_assert(bearer);
+            if (!sgwc_ue->gnode || !bearer) {
+                ogs_error("Missing gnode or bearer");
+                return;
+            }
             s11_xact = ogs_gtp_xact_local_create(sgwc_ue->gnode,
                     &recv_message->h, pkbuf, bearer_timeout,
                     OGS_UINT_TO_POINTER(bearer->id));
@@ -1269,8 +1397,9 @@ void sgwc_sxa_handle_session_modification_response(
                 ogs_expect(rv == OGS_OK);
             }
         } else {
-            ogs_fatal("Invalid modify_flags[0x%llx]", (long long)flags);
-            ogs_assert_if_reached();
+            ogs_error("Invalid modify_flags[0x%llx]", (long long)flags);
+            ogs_pfcp_xact_commit(pfcp_xact);
+            return;
         }
 
     } else if (flags & OGS_PFCP_MODIFY_ACTIVATE) {
@@ -1307,7 +1436,14 @@ void sgwc_sxa_handle_session_modification_response(
             rv = ogs_gtp2_sockaddr_to_f_teid(
                     ogs_gtp_self()->gtpc_addr, ogs_gtp_self()->gtpc_addr6,
                     &sgw_s11_teid, &len);
-            ogs_assert(rv == OGS_OK);
+            if (rv != OGS_OK) {
+                ogs_error("ogs_gtp2_sockaddr_to_f_teid(S11) failed");
+                ogs_gtp_send_error_message(
+                        s11_xact, sgwc_ue->mme_s11_teid,
+                        OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                        OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+                return;
+            }
             gtp_rsp->sender_f_teid_for_control_plane.presence = 1;
             gtp_rsp->sender_f_teid_for_control_plane.data = &sgw_s11_teid;
             gtp_rsp->sender_f_teid_for_control_plane.len = len;
@@ -1316,19 +1452,43 @@ void sgwc_sxa_handle_session_modification_response(
             i = 0;
             ogs_list_for_each_entry(
                     &bearer_to_modify_list, bearer, to_modify_node) {
-                ogs_assert(i < OGS_BEARER_PER_UE);
+                if (i >= OGS_BEARER_PER_UE) {
+                    ogs_error("Too many bearers");
+                    break;
+                }
 
                 ul_tunnel = sgwc_ul_tunnel_in_bearer(bearer);
-                ogs_assert(ul_tunnel);
+                if (!ul_tunnel) {
+                    ogs_error("No UL tunnel");
+                    ogs_gtp_send_error_message(
+                            s11_xact, sgwc_ue->mme_s11_teid,
+                            OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                            OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+                    return;
+                }
 
                 memset(&sgw_s1u_teid[i], 0, sizeof(ogs_gtp2_f_teid_t));
                 sgw_s1u_teid[i].interface_type = ul_tunnel->interface_type;
                 sgw_s1u_teid[i].teid = htobe32(ul_tunnel->local_teid);
-                ogs_assert(ul_tunnel->local_addr || ul_tunnel->local_addr6);
+                if (!ul_tunnel->local_addr && !ul_tunnel->local_addr6) {
+                    ogs_error("No S1-U local F-TEID");
+                    ogs_gtp_send_error_message(
+                            s11_xact, sgwc_ue->mme_s11_teid,
+                            OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                            OGS_GTP2_CAUSE_GRE_KEY_NOT_FOUND);
+                    return;
+                }
                 rv = ogs_gtp2_sockaddr_to_f_teid(
                     ul_tunnel->local_addr, ul_tunnel->local_addr6,
                     &sgw_s1u_teid[i], &sgw_s1u_len[i]);
-                ogs_assert(rv == OGS_OK);
+                if (rv != OGS_OK) {
+                    ogs_error("ogs_gtp2_sockaddr_to_f_teid(S1U) failed");
+                    ogs_gtp_send_error_message(
+                            s11_xact, sgwc_ue->mme_s11_teid,
+                            OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                            OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+                    return;
+                }
                 gtp_rsp->bearer_contexts_created[i].s1_u_enodeb_f_teid.
                     presence = 1;
                 gtp_rsp->bearer_contexts_created[i].s1_u_enodeb_f_teid.
@@ -1485,8 +1645,8 @@ void sgwc_sxa_handle_session_modification_response(
                 }
             }
         } else {
-            ogs_fatal("Invalid modify_flags[0x%llx]", (long long)flags);
-            ogs_assert_if_reached();
+            ogs_error("Invalid modify_flags[0x%llx]", (long long)flags);
+            return;
         }
     } else if (flags & OGS_PFCP_MODIFY_DEACTIVATE) {
         if (flags & OGS_PFCP_MODIFY_ERROR_INDICATION) {
@@ -1500,12 +1660,16 @@ void sgwc_sxa_handle_session_modification_response(
 
             ogs_pfcp_xact_commit(pfcp_xact);
 
-            ogs_assert(flags & OGS_PFCP_MODIFY_SESSION);
+            if (!(flags & OGS_PFCP_MODIFY_SESSION)) {
+                ogs_error("Missing OGS_PFCP_MODIFY_SESSION flag");
+                return;
+            }
             if (SGWC_SESSION_SYNC_DONE(sgwc_ue,
                     OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE, flags)) {
-                ogs_assert(OGS_OK ==
-                    sgwc_gtp_send_downlink_data_notification(
-                        OGS_GTP2_CAUSE_ERROR_INDICATION_RECEIVED, bearer));
+                if (sgwc_gtp_send_downlink_data_notification(
+                        OGS_GTP2_CAUSE_ERROR_INDICATION_RECEIVED,
+                        bearer) != OGS_OK)
+                    ogs_error("sgwc_gtp_send_downlink_data_notification() failed");
             }
 
         } else {
@@ -1516,14 +1680,20 @@ void sgwc_sxa_handle_session_modification_response(
 
             ogs_pfcp_xact_commit(pfcp_xact);
 
-            ogs_assert(flags & OGS_PFCP_MODIFY_SESSION);
+            if (!(flags & OGS_PFCP_MODIFY_SESSION)) {
+                ogs_error("Missing OGS_PFCP_MODIFY_SESSION flag");
+                return;
+            }
             if (s11_xact && SGWC_SESSION_SYNC_DONE(sgwc_ue,
                     OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE, flags)) {
 
                 ogs_gtp2_release_access_bearers_response_t *gtp_rsp = NULL;
 
                 gtp_rsp = &send_message.release_access_bearers_response;
-                ogs_assert(gtp_rsp);
+                if (!gtp_rsp) {
+                    ogs_error("No GTP response buffer");
+                    return;
+                }
 
                 memset(&send_message, 0, sizeof(ogs_gtp2_message_t));
 
@@ -1555,8 +1725,8 @@ void sgwc_sxa_handle_session_modification_response(
             }
         }
     } else {
-        ogs_fatal("Invalid modify_flags[0x%llx]", (long long)flags);
-        ogs_assert_if_reached();
+        ogs_error("Invalid modify_flags[0x%llx]", (long long)flags);
+        return;
     }
 }
 
@@ -1637,8 +1807,8 @@ void sgwc_sxa_handle_session_deletion_response(
         teid = sess ? sess->pgw_s5c_teid : 0;
         break;
     default:
-        ogs_fatal("Unknown GTP message type [%d]", gtp_message->h.type);
-        ogs_assert_if_reached();
+        ogs_error("Unknown GTP message type [%d]", gtp_message->h.type);
+        return;
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
@@ -1767,9 +1937,22 @@ void sgwc_sxa_handle_session_report_request(
         return;
     }
 
-    ogs_assert(sess);
+    if (!sess) {
+        ogs_error("No session context");
+        ogs_pfcp_send_error_message(pfcp_xact, 0,
+                OGS_PFCP_SESSION_REPORT_RESPONSE_TYPE,
+                OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND, 0);
+        return;
+    }
+
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-    ogs_assert(sgwc_ue);
+    if (!sgwc_ue) {
+        ogs_error("No UE context");
+        ogs_pfcp_send_error_message(pfcp_xact, sess->sgwu_sxa_seid,
+                OGS_PFCP_SESSION_REPORT_RESPONSE_TYPE,
+                OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND, 0);
+        return;
+    }
 
     if (!sgwc_ue->gnode) {
         ogs_error("No SGWC-UE GTP Node");
@@ -1779,9 +1962,11 @@ void sgwc_sxa_handle_session_report_request(
         return;
     }
 
-    ogs_assert(OGS_OK ==
-        sgwc_pfcp_send_session_report_response(
-            pfcp_xact, sess, OGS_PFCP_CAUSE_REQUEST_ACCEPTED));
+    if (sgwc_pfcp_send_session_report_response(
+            pfcp_xact, sess, OGS_PFCP_CAUSE_REQUEST_ACCEPTED) != OGS_OK) {
+        ogs_error("sgwc_pfcp_send_session_report_response() failed");
+        return;
+    }
 
     report_type.value = pfcp_req->report_type.u8;
 
@@ -1800,11 +1985,12 @@ void sgwc_sxa_handle_session_report_request(
 
         ogs_list_for_each(&sess->bearer_list, bearer) {
             ogs_list_for_each(&bearer->tunnel_list, tunnel) {
-                ogs_assert(tunnel->pdr);
+                if (!tunnel || !tunnel->pdr)
+                    continue;
                 if (tunnel->pdr->id == pdr_id) {
-                    ogs_assert(OGS_OK ==
-                        sgwc_gtp_send_downlink_data_notification(
-                            OGS_GTP2_CAUSE_UNDEFINED_VALUE, bearer));
+                    if (sgwc_gtp_send_downlink_data_notification(
+                            OGS_GTP2_CAUSE_UNDEFINED_VALUE, bearer) != OGS_OK)
+                        ogs_error("sgwc_gtp_send_downlink_data_notification() failed");
                     return;
                 }
             }
@@ -1817,38 +2003,45 @@ void sgwc_sxa_handle_session_report_request(
                 &sess->pfcp, &pfcp_req->error_indication_report);
         if (far) {
             tunnel = sgwc_tunnel_find_by_far_id(sess, far->id);
-            ogs_assert(tunnel);
+            if (!tunnel) {
+                ogs_error("No tunnel for FAR");
+                return;
+            }
             bearer = sgwc_bearer_find_by_id(tunnel->bearer_id);
-            ogs_assert(bearer);
+            if (!bearer) {
+                ogs_error("No bearer for tunnel");
+                return;
+            }
             if (far->dst_if == OGS_PFCP_INTERFACE_ACCESS) {
                 ogs_warn("[%s] Error Indication from eNB", sgwc_ue->imsi_bcd);
                 ogs_list_for_each(&sgwc_ue->sess_list, sess) {
-                    ogs_assert(ogs_list_count(&sess->bearer_list));
+                    if (ogs_list_count(&sess->bearer_list) == 0)
+                        continue;
                     ogs_debug("    sess_id=%d", sess->id);
-                    ogs_assert(OGS_OK ==
-                        sgwc_pfcp_send_session_modification_request(sess,
+                    if (sgwc_pfcp_send_session_modification_request(sess,
                     /* We only use the `assoc_xact` parameter temporarily here
                      * to pass the `bearer` context. */
                             bearer->id,
                             NULL,
                             OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_DEACTIVATE|
-                            OGS_PFCP_MODIFY_ERROR_INDICATION));
+                            OGS_PFCP_MODIFY_ERROR_INDICATION) != OGS_OK)
+                        ogs_error("sgwc_pfcp_send_session_modification_request() failed");
                 }
             } else if (far->dst_if == OGS_PFCP_INTERFACE_CORE) {
                 if (sgwc_default_bearer_in_sess(sess) == bearer) {
                     ogs_error("[%s] Error Indication(Default Bearer) from SMF",
                                 sgwc_ue->imsi_bcd);
-                    ogs_assert(OGS_OK ==
-                        sgwc_pfcp_send_session_deletion_request(
-                            sess, OGS_INVALID_POOL_ID, NULL));
+                    if (sgwc_pfcp_send_session_deletion_request(
+                            sess, OGS_INVALID_POOL_ID, NULL) != OGS_OK)
+                        ogs_error("sgwc_pfcp_send_session_deletion_request() failed");
                 } else {
                     ogs_error("[%s] Error Indication(Dedicated Bearer) "
                             "from SMF", sgwc_ue->imsi_bcd);
                     ogs_debug("    bearer[EBI=%d]", bearer->ebi);
-                    ogs_assert(OGS_OK ==
-                        sgwc_pfcp_send_bearer_modification_request(
+                    if (sgwc_pfcp_send_bearer_modification_request(
                             bearer, OGS_INVALID_POOL_ID, NULL,
-                            OGS_PFCP_MODIFY_REMOVE));
+                            OGS_PFCP_MODIFY_REMOVE) != OGS_OK)
+                        ogs_error("sgwc_pfcp_send_bearer_modification_request() failed");
                 }
             } else {
                 ogs_error("Error Indication Ignored for Indirect Tunnel");

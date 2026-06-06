@@ -214,7 +214,20 @@ static void mme_s6a_send_abort(
         } \
     } while (0)
 
-static void mme_add_hss_destination(mme_ue_t *mme_ue, struct msg *req)
+static int mme_s6a_imsi_acl_check(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        uint16_t cmd_code, ogs_pool_id_t gtp_xact_id)
+{
+    if (mme_imsi_hss_allowed(mme_ue))
+        return OGS_OK;
+
+    ogs_warn("[%s] IMSI not in ACL, reject before HSS (S6a cmd %u)",
+            mme_ue->imsi_bcd, cmd_code);
+    mme_s6a_post_failure(enb_ue, mme_ue, cmd_code,
+            ER_DIAMETER_AUTHORIZATION_REJECTED, gtp_xact_id);
+    return OGS_ERROR;
+}
+
+static int mme_add_hss_destination(mme_ue_t *mme_ue, struct msg *req)
 {
     int ret;
     struct avp *avp;
@@ -233,24 +246,44 @@ static void mme_add_hss_destination(mme_ue_t *mme_ue, struct msg *req)
         realm = fd_g_config->cnf_diamrlm;
 
     ret = fd_msg_avp_new(ogs_diam_destination_realm, 0, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        return ret;
+    }
     val.os.data = (unsigned char *)realm;
     val.os.len  = strlen(realm);
     ret = fd_msg_avp_setvalue(avp, &val);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        return ret;
+    }
     ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        return ret;
+    }
 
     if (host != NULL) {
         ret = fd_msg_avp_new(ogs_diam_destination_host, 0, &avp);
-        ogs_assert(ret == 0);
+        if (ret != 0) {
+            ogs_error("Diameter operation failed (ret=%d)", ret);
+            return ret;
+        }
         val.os.data = (unsigned char *)host;
         val.os.len  = strlen(host);
         ret = fd_msg_avp_setvalue(avp, &val);
-        ogs_assert(ret == 0);
+        if (ret != 0) {
+            ogs_error("Diameter operation failed (ret=%d)", ret);
+            return ret;
+        }
         ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp);
-        ogs_assert(ret == 0);
+        if (ret != 0) {
+            ogs_error("Diameter operation failed (ret=%d)", ret);
+            return ret;
+        }
     }
+
+    return 0;
 }
 
 /* s6a process Subscription-Data from avp */
@@ -961,6 +994,7 @@ static int mme_s6a_subscription_data_from_avp(struct avp *avp,
 }
 
 /* MME Sends Authentication Information Request to HSS */
+
 static void _mme_s6a_send_air(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     ogs_nas_authentication_failure_parameter_t *authentication_failure_parameter,
     ogs_gtp_xact_t *gtp_xact)
@@ -991,7 +1025,11 @@ static void _mme_s6a_send_air(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     gtp_xact_id = gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID;
 
     ogs_debug("[MME] Authentication-Information-Request");
-    mme_ue_progress(mme_ue, "s6a_air_sent");
+
+    if (mme_s6a_imsi_acl_check(enb_ue, mme_ue,
+                OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION,
+                gtp_xact_id) != OGS_OK)
+        return;
 
     /* Clear Security Context */
     CLEAR_SECURITY_CONTEXT(mme_ue);
@@ -1029,7 +1067,7 @@ static void _mme_s6a_send_air(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     MME_S6A_CHK(fd_msg_add_origin(req, 0));
 
     /* Set the Destination-Realm & Destination-Host */
-    mme_add_hss_destination(mme_ue, req);
+    MME_S6A_CHK(mme_add_hss_destination(mme_ue, req));
 
     /* Set the User-Name AVP */
     MME_S6A_CHK(fd_msg_avp_new(ogs_diam_user_name, 0, &avp));
@@ -1085,14 +1123,25 @@ static void _mme_s6a_send_air(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     stored = 1;
 
     /* Send the request */
-    MME_S6A_CHK(fd_msg_send(&req, mme_s6a_aia_cb, svg));
+    ret = fd_msg_send(&req, mme_s6a_aia_cb, svg);
+    if (ret != 0) {
+        ogs_error("fd_msg_send AIR failed (ret=%d) IMSI[%s]",
+                ret, mme_ue->imsi_bcd);
+        goto send_error;
+    }
+
+    mme_ue_progress(mme_ue, "s6a_air_sent");
 
     mme_s6a_timer_start(mme_ue, OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION);
 
     /* Increment the counter */
-    ogs_assert(pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) == 0);
-    ogs_diam_stats_self()->stats.nb_sent++;
-    ogs_assert(pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) == 0);
+    if (pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) != 0)
+        ogs_error("pthread_mutex_lock() failed");
+    else {
+        ogs_diam_stats_self()->stats.nb_sent++;
+        if (pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) != 0)
+            ogs_error("pthread_mutex_unlock() failed");
+    }
     return;
 
 send_error:
@@ -1151,7 +1200,10 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
     ogs_debug("[MME] Authentication-Information-Answer");
 
     ret = clock_gettime(CLOCK_REALTIME, &ts);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
 
     /* Search the session, retrieve its data */
     ret = fd_msg_sess_get(fd_g_config->cnf_dict, *msg, &session, &new);
@@ -1211,10 +1263,16 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
      * Reference: RFC 6733
      */
     ret = fd_msg_search_avp(*msg, ogs_diam_result_code, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         if (!hdr->avp_value) {
             ogs_error("no Result-Code value");
             error++;
@@ -1225,14 +1283,23 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
         ogs_debug("    Result Code: %d", hdr->avp_value->i32);
     } else {
         ret = fd_msg_search_avp(*msg, ogs_diam_experimental_result, &avp);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         if (avp) {
             ret = fd_avp_search_avp(
                     avp, ogs_diam_experimental_result_code, &avpch);
-            ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
             if (avpch) {
                 ret = fd_msg_avp_hdr(avpch, &hdr);
-                ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
                 s6a_message->result_code = hdr->avp_value->i32;
                 s6a_message->exp_err = &s6a_message->result_code;
                 ogs_debug("    Experimental Result Code: %d",
@@ -1252,10 +1319,16 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
      * Reference: RFC 6733
      */
     ret = fd_msg_search_avp(*msg, ogs_diam_origin_host, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         ogs_debug("    From '%.*s'",
                 (int)hdr->avp_value->os.len, hdr->avp_value->os.data);
     } else {
@@ -1271,10 +1344,16 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
      * Reference: RFC 6733
      */
     ret = fd_msg_search_avp(*msg, ogs_diam_origin_realm, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         ogs_debug("         ('%.*s')",
                 (int)hdr->avp_value->os.len, hdr->avp_value->os.data);
     } else {
@@ -1290,9 +1369,10 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
             ogs_debug("    Experimental Result Code: %d",
                     s6a_message->result_code);
         else {
-            ogs_fatal("ERROR DIAMETER Result Code(%d)",
+            ogs_error("Diameter error answer without err/exp_err (code=%d)",
                     s6a_message->result_code);
-            ogs_assert_if_reached();
+            s6a_message->result_code = ER_DIAMETER_UNABLE_TO_DELIVER;
+            s6a_message->err = &s6a_message->result_code;
         }
         /* Continue processing even with error result code */
     } else {
@@ -1305,10 +1385,16 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
          * Reference: 3GPP TS 29.272 7.3.17
          */
         ret = fd_msg_search_avp(*msg, ogs_diam_s6a_authentication_info, &avp);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         if (avp) {
             ret = fd_msg_avp_hdr(avp, &hdr);
-            ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         } else {
             ogs_error("no_Authentication-Info");
             error++;
@@ -1323,10 +1409,16 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
          */
         ret = fd_avp_search_avp(
                 avp, ogs_diam_s6a_e_utran_vector, &avp_e_utran_vector);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         if (avp_e_utran_vector) {
             ret = fd_msg_avp_hdr(avp_e_utran_vector, &hdr);
-            ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         } else {
             ogs_error("no_E-UTRAN-Vector-Info");
             error++;
@@ -1341,10 +1433,16 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
          */
         ret = fd_avp_search_avp(avp_e_utran_vector, ogs_diam_s6a_xres,
                                 &avp_xres);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         if (avp_xres) {
             ret = fd_msg_avp_hdr(avp_xres, &hdr);
-            ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
             if (!hdr->avp_value) {
                 ogs_error("no XRES value");
                 error++;
@@ -1368,10 +1466,16 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
          */
         ret = fd_avp_search_avp(avp_e_utran_vector, ogs_diam_s6a_kasme,
                                 &avp_kasme);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         if (avp_kasme) {
             ret = fd_msg_avp_hdr(avp_kasme, &hdr);
-            ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
             if (!hdr->avp_value) {
                 ogs_error("no KASME value");
                 error++;
@@ -1393,10 +1497,16 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
          */
         ret = fd_avp_search_avp(avp_e_utran_vector, ogs_diam_s6a_rand,
                                 &avp_rand);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         if (avp_rand) {
             ret = fd_msg_avp_hdr(avp_rand, &hdr);
-            ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
             if (!hdr->avp_value) {
                 ogs_error("no RAND value");
                 error++;
@@ -1418,10 +1528,16 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
          */
         ret = fd_avp_search_avp(avp_e_utran_vector, ogs_diam_s6a_autn,
                                 &avp_autn);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         if (avp_autn) {
             ret = fd_msg_avp_hdr(avp_autn, &hdr);
-            ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
             if (!hdr->avp_value) {
                 ogs_error("no AUTN value");
                 error++;
@@ -1471,8 +1587,10 @@ cleanup:
     }
 
     /* Update statistics */
-    ogs_assert(pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) == 0);
-    if (sess_data) {
+    if (pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) != 0)
+        ogs_error("pthread_mutex_lock() failed");
+    else {
+        if (sess_data) {
         dur = ((ts.tv_sec - sess_data->ts.tv_sec) * 1000000) +
             ((ts.tv_nsec - sess_data->ts.tv_nsec) / 1000);
         if (ogs_diam_stats_self()->stats.nb_recv) {
@@ -1502,18 +1620,23 @@ cleanup:
                     (int)(ts.tv_sec + 1 - sess_data->ts.tv_sec),
                     (long)(1000000000 + ts.tv_nsec - sess_data->ts.tv_nsec)
                     / 1000);
+        }
+
+        if (error)
+            ogs_diam_stats_self()->stats.nb_errs++;
+        else
+            ogs_diam_stats_self()->stats.nb_recv++;
+
+        if (pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) != 0)
+            ogs_error("pthread_mutex_unlock() failed");
     }
-
-    if (error)
-        ogs_diam_stats_self()->stats.nb_errs++;
-    else
-        ogs_diam_stats_self()->stats.nb_recv++;
-
-    ogs_assert(pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) == 0);
 
     /* Free the message */
     ret = fd_msg_free(*msg);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
     *msg = NULL;
 
     /* Clean up session data */
@@ -1545,6 +1668,12 @@ void mme_s6a_send_ulr(enb_ue_t *enb_ue, mme_ue_t *mme_ue, uint32_t extra_ulr_fla
     }
 
     ogs_debug("[MME] Update-Location-Request");
+
+    if (mme_s6a_imsi_acl_check(enb_ue, mme_ue,
+                OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION,
+                OGS_INVALID_POOL_ID) != OGS_OK)
+        return;
+
     mme_ue_progress(mme_ue, "s6a_ulr_sent");
 
     /* Create the random value to store with the session */
@@ -1582,7 +1711,7 @@ void mme_s6a_send_ulr(enb_ue_t *enb_ue, mme_ue_t *mme_ue, uint32_t extra_ulr_fla
     MME_S6A_CHK(fd_msg_add_origin(req, 0));
 
     /* Set the Destination-Realm & Destination-Host */
-    mme_add_hss_destination(mme_ue, req);
+    MME_S6A_CHK(mme_add_hss_destination(mme_ue, req));
 
     /* Set the User-Name AVP */
     MME_S6A_CHK(fd_msg_avp_new(ogs_diam_user_name, 0, &avp));
@@ -1657,14 +1786,23 @@ void mme_s6a_send_ulr(enb_ue_t *enb_ue, mme_ue_t *mme_ue, uint32_t extra_ulr_fla
     stored = 1;
 
     /* Send the request */
-    MME_S6A_CHK(fd_msg_send(&req, mme_s6a_ula_cb, svg));
+    ret = fd_msg_send(&req, mme_s6a_ula_cb, svg);
+    if (ret != 0) {
+        ogs_error("fd_msg_send ULR failed (ret=%d) IMSI[%s]",
+                ret, mme_ue->imsi_bcd);
+        goto send_error;
+    }
 
     mme_s6a_timer_start(mme_ue, OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION);
 
     /* Increment the counter */
-    ogs_assert(pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) == 0);
+    if (pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) != 0)
+        ogs_error("pthread_mutex_lock() failed");
+    else {
     ogs_diam_stats_self()->stats.nb_sent++;
-    ogs_assert(pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) == 0);
+        if (pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) != 0)
+            ogs_error("pthread_mutex_unlock() failed");
+    }
     return;
 
 send_error:
@@ -1707,7 +1845,10 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
     ogs_debug("[MME] Update-Location-Answer");
 
     ret = clock_gettime(CLOCK_REALTIME, &ts);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
 
     /* Search the session, retrieve its data */
     ret = fd_msg_sess_get(fd_g_config->cnf_dict, *msg, &session, &new);
@@ -1767,10 +1908,16 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
      * Reference: RFC 6733
      */
     ret = fd_msg_search_avp(*msg, ogs_diam_result_code, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         if (!hdr->avp_value) {
             ogs_error("no Result-Code value");
             error++;
@@ -1781,14 +1928,23 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
         ogs_debug("    Result Code: %d", hdr->avp_value->i32);
     } else {
         ret = fd_msg_search_avp(*msg, ogs_diam_experimental_result, &avp);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         if (avp) {
             ret = fd_avp_search_avp(avp,
                     ogs_diam_experimental_result_code, &avpch);
-            ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
             if (avpch) {
                 ret = fd_msg_avp_hdr(avpch, &hdr);
-                ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
                 s6a_message->result_code = hdr->avp_value->i32;
                 s6a_message->exp_err = &s6a_message->result_code;
                 ogs_debug("    Experimental Result Code: %d",
@@ -1808,10 +1964,16 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
      * Reference: RFC 6733
      */
     ret = fd_msg_search_avp(*msg, ogs_diam_origin_host, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         ogs_debug("    From '%.*s'",
                 (int)hdr->avp_value->os.len, hdr->avp_value->os.data);
     } else {
@@ -1827,10 +1989,16 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
      * Reference: RFC 6733
      */
     ret = fd_msg_search_avp(*msg, ogs_diam_origin_realm, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         ogs_debug("         ('%.*s')",
                 (int)hdr->avp_value->os.len, hdr->avp_value->os.data);
     } else {
@@ -1845,10 +2013,16 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
      * Reference: 3GPP TS 29.272-f70
      */
     ret = fd_msg_search_avp(*msg, ogs_diam_s6a_ula_flags, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         ula_message->ula_flags = hdr->avp_value->i32;
         ogs_debug("    ULA-Flags: %d", ula_message->ula_flags);
     } else {
@@ -1867,7 +2041,10 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
      * Reference: 3GPP TS 29.272-f70
      */
     ret = fd_msg_search_avp(*msg, ogs_diam_s6a_subscription_data, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
     if (avp) {
         ret = mme_s6a_subscription_data_from_avp(avp, subscription_data,
                                                  mme_ue, &subdatamask);
@@ -1946,8 +2123,10 @@ cleanup:
     }
 
     /* Update statistics */
-    ogs_assert(pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) == 0);
-    if (sess_data) {
+    if (pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) != 0)
+        ogs_error("pthread_mutex_lock() failed");
+    else {
+        if (sess_data) {
         dur = ((ts.tv_sec - sess_data->ts.tv_sec) * 1000000) +
             ((ts.tv_nsec - sess_data->ts.tv_nsec) / 1000);
         if (ogs_diam_stats_self()->stats.nb_recv) {
@@ -1977,18 +2156,23 @@ cleanup:
                     (int)(ts.tv_sec + 1 - sess_data->ts.tv_sec),
                     (long)(1000000000 + ts.tv_nsec - sess_data->ts.tv_nsec)
                     / 1000);
+        }
+
+        if (error)
+            ogs_diam_stats_self()->stats.nb_errs++;
+        else
+            ogs_diam_stats_self()->stats.nb_recv++;
+
+        if (pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) != 0)
+            ogs_error("pthread_mutex_unlock() failed");
     }
-
-    if (error)
-        ogs_diam_stats_self()->stats.nb_errs++;
-    else
-        ogs_diam_stats_self()->stats.nb_recv++;
-
-    ogs_assert(pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) == 0);
 
     /* Free the message */
     ret = fd_msg_free(*msg);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
     *msg = NULL;
 
     /* Clean up session data */
@@ -2019,6 +2203,11 @@ void mme_s6a_send_pur(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     }
 
     ogs_debug("[MME] Purge-UE-Request");
+
+    if (!mme_imsi_hss_allowed(mme_ue)) {
+        ogs_debug("[%s] skip PUR for ACL-blocked IMSI", mme_ue->imsi_bcd);
+        return;
+    }
 
     /* Create the random value to store with the session */
     sess_data = ogs_calloc(1, sizeof(*sess_data));
@@ -2051,7 +2240,7 @@ void mme_s6a_send_pur(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     MME_S6A_CHK(fd_msg_add_origin(req, 0));
 
     /* Set the Destination-Realm & Destination-Host */
-    mme_add_hss_destination(mme_ue, req);
+    MME_S6A_CHK(mme_add_hss_destination(mme_ue, req));
 
     /* Set the User-Name AVP */
     MME_S6A_CHK(fd_msg_avp_new(ogs_diam_user_name, 0, &avp));
@@ -2075,12 +2264,21 @@ void mme_s6a_send_pur(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     stored = 1;
 
     /* Send the request */
-    MME_S6A_CHK(fd_msg_send(&req, mme_s6a_pua_cb, svg));
+    ret = fd_msg_send(&req, mme_s6a_pua_cb, svg);
+    if (ret != 0) {
+        ogs_error("fd_msg_send PUR failed (ret=%d) IMSI[%s]",
+                ret, mme_ue->imsi_bcd);
+        goto send_error;
+    }
 
     /* Increment the counter */
-    ogs_assert(pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) == 0);
+    if (pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) != 0)
+        ogs_error("pthread_mutex_lock() failed");
+    else {
     ogs_diam_stats_self()->stats.nb_sent++;
-    ogs_assert(pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) == 0);
+        if (pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) != 0)
+            ogs_error("pthread_mutex_unlock() failed");
+    }
     return;
 
 send_error:
@@ -2119,7 +2317,10 @@ static void mme_s6a_pua_cb(void *data, struct msg **msg)
     ogs_debug("[MME] Purge-UE-Answer");
 
     ret = clock_gettime(CLOCK_REALTIME, &ts);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
 
     /* Search the session, retrieve its data */
     ret = fd_msg_sess_get(fd_g_config->cnf_dict, *msg, &session, &new);
@@ -2178,10 +2379,16 @@ static void mme_s6a_pua_cb(void *data, struct msg **msg)
      * Reference: RFC 6733
      */
     ret = fd_msg_search_avp(*msg, ogs_diam_result_code, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         if (!hdr->avp_value) {
             ogs_error("no Result-Code value");
             error++;
@@ -2192,14 +2399,23 @@ static void mme_s6a_pua_cb(void *data, struct msg **msg)
         ogs_debug("    Result Code: %d", hdr->avp_value->i32);
     } else {
         ret = fd_msg_search_avp(*msg, ogs_diam_experimental_result, &avp);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         if (avp) {
             ret = fd_avp_search_avp(avp,
                     ogs_diam_experimental_result_code, &avpch);
-            ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
             if (avpch) {
                 ret = fd_msg_avp_hdr(avpch, &hdr);
-                ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
                 s6a_message->result_code = hdr->avp_value->i32;
                 s6a_message->exp_err = &s6a_message->result_code;
                 ogs_debug("    Experimental Result Code: %d",
@@ -2219,10 +2435,16 @@ static void mme_s6a_pua_cb(void *data, struct msg **msg)
      * Reference: RFC 6733
      */
     ret = fd_msg_search_avp(*msg, ogs_diam_origin_host, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         ogs_debug("    From '%.*s'",
                 (int)hdr->avp_value->os.len, hdr->avp_value->os.data);
     } else {
@@ -2238,10 +2460,16 @@ static void mme_s6a_pua_cb(void *data, struct msg **msg)
      * Reference: RFC 6733
      */
     ret = fd_msg_search_avp(*msg, ogs_diam_origin_realm, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         ogs_debug("         ('%.*s')",
                 (int)hdr->avp_value->os.len, hdr->avp_value->os.data);
     } else {
@@ -2257,10 +2485,16 @@ static void mme_s6a_pua_cb(void *data, struct msg **msg)
      * Note: This AVP is optional, so no error if not present
      */
     ret = fd_msg_search_avp(*msg, ogs_diam_s6a_pua_flags, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
         pua_message->pua_flags = hdr->avp_value->i32;
         ogs_debug("    PUA-Flags: %d", pua_message->pua_flags);
     } else {
@@ -2299,8 +2533,10 @@ cleanup:
     }
 
     /* Update statistics */
-    ogs_assert(pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) == 0);
-    if (sess_data) {
+    if (pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) != 0)
+        ogs_error("pthread_mutex_lock() failed");
+    else {
+        if (sess_data) {
         dur = ((ts.tv_sec - sess_data->ts.tv_sec) * 1000000) +
             ((ts.tv_nsec - sess_data->ts.tv_nsec) / 1000);
         if (ogs_diam_stats_self()->stats.nb_recv) {
@@ -2330,18 +2566,23 @@ cleanup:
                     (int)(ts.tv_sec + 1 - sess_data->ts.tv_sec),
                     (long)(1000000000 + ts.tv_nsec - sess_data->ts.tv_nsec)
                     / 1000);
+        }
+
+        if (error)
+            ogs_diam_stats_self()->stats.nb_errs++;
+        else
+            ogs_diam_stats_self()->stats.nb_recv++;
+
+        if (pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) != 0)
+            ogs_error("pthread_mutex_unlock() failed");
     }
-
-    if (error)
-        ogs_diam_stats_self()->stats.nb_errs++;
-    else
-        ogs_diam_stats_self()->stats.nb_recv++;
-
-    ogs_assert(pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) == 0);
 
     /* Free the message */
     ret = fd_msg_free(*msg);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto cleanup;
+    }
     *msg = NULL;
 
     /* Clean up session data */
@@ -2379,7 +2620,10 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
     /* Create answer header */
     qry = *msg;
     ret = fd_msg_new_answer_from_req(fd_g_config->cnf_dict, msg, 0);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     ans = *msg;
 
     /* Allocate message structure early for proper cleanup */
@@ -2395,7 +2639,10 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
 
     /* Get User-Name AVP */
     ret = fd_msg_search_avp(qry, ogs_diam_user_name, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     if (!avp) {
         ogs_error("User-Name AVP not found");
         result_code = OGS_DIAM_MISSING_AVP;
@@ -2403,7 +2650,10 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
     }
 
     ret = fd_msg_avp_hdr(avp, &hdr);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     if (!hdr->avp_value || !hdr->avp_value->os.data ||
             hdr->avp_value->os.len == 0) {
         ogs_error("Invalid User-Name AVP data");
@@ -2423,7 +2673,10 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
 
     /* Get Cancellation-Type AVP */
     ret = fd_msg_search_avp(qry, ogs_diam_s6a_cancellation_type, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     if (!avp) {
         ogs_error("Cancellation-Type AVP not found");
         result_code = OGS_DIAM_MISSING_AVP;
@@ -2431,46 +2684,78 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
     }
 
     ret = fd_msg_avp_hdr(avp, &hdr);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     clr_message->cancellation_type = hdr->avp_value->i32;
 
     /* Get CLR-Flags AVP (optional) */
     ret = fd_msg_search_avp(qry, ogs_diam_s6a_clr_flags, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         clr_message->clr_flags = hdr->avp_value->i32;
     }
 
     /* Set the Origin-Host, Origin-Realm, and Result-Code AVPs */
     ret = fd_msg_rescode_set(ans, (char*)"DIAMETER_SUCCESS", NULL, NULL, 1);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
     /* Set the Auth-Session-State AVP */
     ret = fd_msg_avp_new(ogs_diam_auth_session_state, 0, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     val.i32 = OGS_DIAM_AUTH_SESSION_NO_STATE_MAINTAINED;
     ret = fd_msg_avp_setvalue(avp, &val);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     ret = fd_msg_avp_add(ans, MSG_BRW_LAST_CHILD, avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
     /* Set Vendor-Specific-Application-Id AVP */
     ret = ogs_diam_message_vendor_specific_appid_set(
             ans, OGS_DIAM_S6A_APPLICATION_ID);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
     /* Send the answer */
     ret = fd_msg_send(msg, NULL, NULL);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("fd_msg_send() failed [%d] (Cancel-Location-Answer)", ret);
+        ogs_free(s6a_message);
+        return 0;
+    }
 
     ogs_debug("Cancel-Location-Answer");
 
     /* Add this value to the stats */
-    ogs_assert(pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) == 0);
+    if (pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) != 0)
+        ogs_error("pthread_mutex_lock() failed");
+    else {
     ogs_diam_stats_self()->stats.nb_echoed++;
-    ogs_assert(pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) == 0);
+        if (pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) != 0)
+            ogs_error("pthread_mutex_unlock() failed");
+    }
 
     /* Send event to MME */
     e = mme_event_new(MME_EVENT_S6A_MESSAGE);
@@ -2503,30 +2788,49 @@ error_out:
     /* Set appropriate error result code */
     if (result_code == OGS_DIAM_S6A_ERROR_USER_UNKNOWN) {
         ret = ogs_diam_message_experimental_rescode_set(ans, result_code);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     } else {
         ret = fd_msg_rescode_set(ans, (char*)"DIAMETER_UNABLE_TO_COMPLY",
                                 NULL, NULL, 1);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     }
 
     /* Set the Auth-Session-State AVP */
     ret = fd_msg_avp_new(ogs_diam_auth_session_state, 0, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     val.i32 = OGS_DIAM_AUTH_SESSION_NO_STATE_MAINTAINED;
     ret = fd_msg_avp_setvalue(avp, &val);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     ret = fd_msg_avp_add(ans, MSG_BRW_LAST_CHILD, avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
     /* Set Vendor-Specific-Application-Id AVP */
     ret = ogs_diam_message_vendor_specific_appid_set(
             ans, OGS_DIAM_S6A_APPLICATION_ID);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
     /* Send error response */
     ret = fd_msg_send(msg, NULL, NULL);
-    ogs_assert(ret == 0);
+    if (ret != 0)
+        ogs_error("fd_msg_send() failed [%d] (Insert-Subscriber-Data error)", ret);
 
     return 0;
 }
@@ -2567,7 +2871,10 @@ static int mme_s6a_idr_cb(struct msg **msg, struct avp *avp,
     /* Create answer header */
     qry = *msg;
     ret = fd_msg_new_answer_from_req(fd_g_config->cnf_dict, msg, 0);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     ans = *msg;
 
     /* Allocate message structure early for proper cleanup */
@@ -2584,7 +2891,10 @@ static int mme_s6a_idr_cb(struct msg **msg, struct avp *avp,
 
     /* Get User-Name AVP */
     ret = fd_msg_search_avp(qry, ogs_diam_user_name, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     if (!avp) {
         ogs_error("User-Name AVP not found");
         result_code = OGS_DIAM_MISSING_AVP;
@@ -2592,7 +2902,10 @@ static int mme_s6a_idr_cb(struct msg **msg, struct avp *avp,
     }
 
     ret = fd_msg_avp_hdr(avp, &hdr);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     if (!hdr->avp_value || !hdr->avp_value->os.data ||
             hdr->avp_value->os.len == 0) {
         ogs_error("Invalid User-Name AVP data");
@@ -2612,10 +2925,16 @@ static int mme_s6a_idr_cb(struct msg **msg, struct avp *avp,
 
     /* AVP: 'Subscription-Data'(1400) - Optional */
     ret = fd_msg_search_avp(qry, ogs_diam_s6a_subscription_data, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         ret = fd_msg_browse(avp, MSG_BRW_FIRST_CHILD, NULL, NULL);
         if (ret) {
             ogs_info("[%s] Subscription-Data is Empty.", imsi_bcd);
@@ -2635,10 +2954,16 @@ static int mme_s6a_idr_cb(struct msg **msg, struct avp *avp,
 
     /* AVP: 'IDR-Flags'(1490) - Optional */
     ret = fd_msg_search_avp(qry, ogs_diam_s6a_idr_flags, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     if (avp) {
         ret = fd_msg_avp_hdr(avp, &hdr);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         idr_message->idr_flags = hdr->avp_value->i32;
     }
 
@@ -2679,49 +3004,88 @@ static int mme_s6a_idr_cb(struct msg **msg, struct avp *avp,
 
         /* Set the EPS-Location-Information AVP */
         ret = fd_msg_avp_new(ogs_diam_s6a_eps_location_information, 0, &avp);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         ret = fd_msg_avp_new(ogs_diam_s6a_mme_location_information,
                 0, &avp_mme_location_information);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
         ret = fd_msg_avp_new(ogs_diam_s6a_e_utran_cell_global_identity,
                 0, &avp_e_utran_cell_global_identity);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         val.os.data = ida_ecgi;
         val.os.len  = 7;
         ret = fd_msg_avp_setvalue(avp_e_utran_cell_global_identity, &val);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         ret = fd_msg_avp_add(avp_mme_location_information,
                 MSG_BRW_LAST_CHILD, avp_e_utran_cell_global_identity);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
         ret = fd_msg_avp_new(ogs_diam_s6a_tracking_area_identity,
                 0, &avp_tracking_area_identity);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         val.os.data = ida_tai;
         val.os.len  = 5;
         ret = fd_msg_avp_setvalue(avp_tracking_area_identity, &val);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         ret = fd_msg_avp_add(avp_mme_location_information,
                 MSG_BRW_LAST_CHILD, avp_tracking_area_identity);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
         ret = fd_msg_avp_new(ogs_diam_s6a_age_of_location_information,
                 0, &avp_age_of_location_information);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         val.i32 = ida_age;
         ret = fd_msg_avp_setvalue(avp_age_of_location_information, &val);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         ret = fd_msg_avp_add(avp_mme_location_information,
                 MSG_BRW_LAST_CHILD, avp_age_of_location_information);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
         ret = fd_msg_avp_add(avp,
                 MSG_BRW_LAST_CHILD, avp_mme_location_information);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
         ret = fd_msg_avp_add(ans, MSG_BRW_LAST_CHILD, avp);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     }
 
     /* Handle EPS-User-State request */
@@ -2749,24 +3113,45 @@ static int mme_s6a_idr_cb(struct msg **msg, struct avp *avp,
         /* Set the EPS-User-State AVP */
         ret = fd_msg_avp_new(ogs_diam_s6a_eps_user_state, 0,
                              &avp_eps_user_state);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         ret = fd_msg_avp_new(ogs_diam_s6a_mme_user_state, 0,
                              &avp_mme_user_state);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         ret = fd_msg_avp_new(ogs_diam_s6a_user_state, 0, &avp_user_state);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         memset(&val, 0, sizeof(val));
         val.i32 = user_state;
         ret = fd_msg_avp_setvalue(avp_user_state, &val);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         ret = fd_msg_avp_add(avp_mme_user_state, MSG_BRW_LAST_CHILD,
                              avp_user_state);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         ret = fd_msg_avp_add(avp_eps_user_state, MSG_BRW_LAST_CHILD,
                              avp_mme_user_state);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         ret = fd_msg_avp_add(ans, MSG_BRW_LAST_CHILD, avp_eps_user_state);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     }
 
     /* Validate that we have meaningful data to process */
@@ -2780,38 +3165,65 @@ static int mme_s6a_idr_cb(struct msg **msg, struct avp *avp,
         /* Set the Origin-Host, Origin-Realm, and Result-Code AVPs */
         ret = fd_msg_rescode_set(
                 ans, (char*)"DIAMETER_UNABLE_TO_COMPLY", NULL, NULL, 1);
-        ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
         goto outnoexp;
     }
 
     /* Set the Origin-Host, Origin-Realm, and Result-Code AVPs */
     ret = fd_msg_rescode_set(ans, (char*)"DIAMETER_SUCCESS", NULL, NULL, 1);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
     /* Set the Auth-Session-State AVP */
     ret = fd_msg_avp_new(ogs_diam_auth_session_state, 0, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     val.i32 = OGS_DIAM_AUTH_SESSION_NO_STATE_MAINTAINED;
     ret = fd_msg_avp_setvalue(avp, &val);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     ret = fd_msg_avp_add(ans, MSG_BRW_LAST_CHILD, avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
     /* Set Vendor-Specific-Application-Id AVP */
     ret = ogs_diam_message_vendor_specific_appid_set(
             ans, OGS_DIAM_S6A_APPLICATION_ID);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
     /* Send the answer */
     ret = fd_msg_send(msg, NULL, NULL);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("fd_msg_send() failed [%d] (Insert-Subscriber-Data-Answer)", ret);
+        ogs_subscription_data_free(subscription_data);
+        ogs_free(s6a_message);
+        return 0;
+    }
 
     ogs_debug("Insert-Subscriber-Data-Answer");
 
     /* Add this value to the stats */
-    ogs_assert(pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) == 0);
+    if (pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) != 0)
+        ogs_error("pthread_mutex_lock() failed");
+    else {
     ogs_diam_stats_self()->stats.nb_echoed++;
-    ogs_assert(pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) == 0);
+        if (pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) != 0)
+            ogs_error("pthread_mutex_unlock() failed");
+    }
 
     /* Send event to MME */
     e = mme_event_new(MME_EVENT_S6A_MESSAGE);
@@ -2848,26 +3260,42 @@ error_out:
 
     /* Set appropriate error result code */
     ret = ogs_diam_message_experimental_rescode_set(ans, result_code);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
 outnoexp:
     /* Set the Auth-Session-State AVP */
     ret = fd_msg_avp_new(ogs_diam_auth_session_state, 0, &avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     val.i32 = OGS_DIAM_AUTH_SESSION_NO_STATE_MAINTAINED;
     ret = fd_msg_avp_setvalue(avp, &val);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
     ret = fd_msg_avp_add(ans, MSG_BRW_LAST_CHILD, avp);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
     /* Set Vendor-Specific-Application-Id AVP */
     ret = ogs_diam_message_vendor_specific_appid_set(
             ans, OGS_DIAM_S6A_APPLICATION_ID);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        goto error_out;
+    }
 
     /* Send error response */
     ret = fd_msg_send(msg, NULL, NULL);
-    ogs_assert(ret == 0);
+    if (ret != 0)
+        ogs_error("fd_msg_send() failed [%d] (Insert-Subscriber-Data error_out)", ret);
 
     return 0;
 }
@@ -2879,7 +3307,10 @@ int mme_fd_init(void)
 
     ret = ogs_diam_init(FD_MODE_CLIENT,
                 mme_self()->diam_conf_path, mme_self()->diam_config);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        return 0;
+    }
 
     /* Install objects definitions for this application */
     ret = ogs_diam_s6a_init();
@@ -2887,27 +3318,42 @@ int mme_fd_init(void)
 
     /* Create handler for sessions */
     ret = fd_sess_handler_create(&mme_s6a_reg, &state_cleanup, NULL, NULL);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        return 0;
+    }
 
     /* Specific handler for Cancel-Location-Request */
     memset(&data, 0, sizeof(data));
     data.command = ogs_diam_s6a_cmd_clr;
     ret = fd_disp_register(mme_s6a_clr_cb, DISP_HOW_CC, &data, NULL,
                 &hdl_s6a_clr);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        return 0;
+    }
 
     /* Specific handler for Insert-Subscriber-Data-Request */
     data.command = ogs_diam_s6a_cmd_idr;
     ret = fd_disp_register(mme_s6a_idr_cb, DISP_HOW_CC, &data, NULL,
                 &hdl_s6a_idr);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        return 0;
+    }
 
     /* Advertise the support for the application in the peer */
     ret = fd_disp_app_support(ogs_diam_s6a_application, ogs_diam_vendor, 1, 0);
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        return 0;
+    }
 
     ret = ogs_diam_start();
-    ogs_assert(ret == 0);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        return 0;
+    }
 
     return 0;
 }

@@ -188,9 +188,8 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
         ogs_assert(mme_ue);
         break;
     default:
-        ogs_fatal("Invalid type [%d]", type);
-        ogs_assert_if_reached();
-        break;
+        ogs_error("Invalid GTP timeout type [%d]", type);
+        return;
     }
 
     ogs_assert(mme_ue);
