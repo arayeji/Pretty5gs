@@ -4380,7 +4380,7 @@ static bool mme_imsi_acl_match(const char *imsi_bcd)
     return false;
 }
 
-uint8_t mme_emm_cause_from_access_control_imsi_bcd(const char *imsi_bcd)
+static uint8_t mme_emm_cause_from_access_control_imsi_bcd(const char *imsi_bcd)
 {
     ogs_plmn_id_t plmn_id;
     int i;
@@ -4403,31 +4403,6 @@ uint8_t mme_emm_cause_from_access_control_imsi_bcd(const char *imsi_bcd)
 
     if (self.default_reject_cause)
         return self.default_reject_cause;
-
-    return OGS_NAS_EMM_CAUSE_PLMN_NOT_ALLOWED;
-}
-
-uint8_t mme_imsi_hss_reject_emm_cause(mme_ue_t *mme_ue)
-{
-    const char *imsi;
-
-    ogs_assert(mme_ue);
-    ogs_assert(MME_UE_HAVE_IMSI(mme_ue));
-
-    imsi = mme_ue->imsi_bcd;
-
-    if (self.num_of_imsi_acl > 0 && !mme_imsi_acl_match(imsi))
-        return OGS_NAS_EMM_CAUSE_PLMN_NOT_ALLOWED;
-
-    if (self.require_hss_map && ogs_list_first(&self.hssmap_list) != NULL) {
-        if (!mme_ue->hssmap)
-            mme_ue->hssmap = mme_hssmap_find_by_imsi_bcd(imsi);
-        if (!mme_ue->hssmap)
-            return OGS_NAS_EMM_CAUSE_PLMN_NOT_ALLOWED;
-    }
-
-    if (self.num_of_access_control > 0)
-        return mme_emm_cause_from_access_control_imsi_bcd(imsi);
 
     return OGS_NAS_EMM_CAUSE_PLMN_NOT_ALLOWED;
 }

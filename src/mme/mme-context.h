@@ -1320,8 +1320,6 @@ void mme_hssmap_remove_all(void);
 mme_hssmap_t *mme_hssmap_find_by_imsi_bcd(const char *imsi_bcd);
 
 bool mme_imsi_hss_allowed(mme_ue_t *mme_ue);
-uint8_t mme_imsi_hss_reject_emm_cause(mme_ue_t *mme_ue);
-uint8_t mme_emm_cause_from_access_control_imsi_bcd(const char *imsi_bcd);
 
 mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr);
 int mme_enb_remove(mme_enb_t *enb);
