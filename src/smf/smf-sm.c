@@ -23,6 +23,7 @@
 #include "pfcp-path.h"
 #include "sbi-path.h"
 #include "s5c-handler.h"
+#include "collision-replace.h"
 #include "smf-trace.h"
 #include "gn-handler.h"
 #include "gx-handler.h"
@@ -150,7 +151,21 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             smf_metrics_inst_global_inc(SMF_METR_GLOB_CTR_S5C_RX_CREATESESSIONREQ);
             smf_metrics_inst_gtp_node_inc(smf_gnode->metrics, SMF_METR_GTP_NODE_CTR_S5C_RX_CREATESESSIONREQ);
             if (gtp2_message.h.teid == 0) {
+                smf_sess_t *old_sess = NULL;
+                smf_ue_t *collision_ue = NULL;
+
                 ogs_expect(!sess);
+                old_sess = smf_sess_find_collision_for_gtp2(&gtp2_message);
+                if (old_sess) {
+                    if (smf_sess_collision_replace_begin_gtp2(
+                            old_sess, e, &gtp2_sender_f_teid))
+                        break;
+                    collision_ue = smf_ue_find_by_id(old_sess->smf_ue_id);
+                    ogs_info("OLD Session Will Release [IMSI:%s,APN:%s]",
+                            collision_ue ? collision_ue->imsi_bcd : "-",
+                            old_sess->session.name);
+                    smf_sess_remove(old_sess);
+                }
                 sess = smf_sess_add_by_gtp2_message(&gtp2_message);
                 if (sess)
                     OGS_SETUP_GTP_NODE(sess, smf_gnode->gnode);
@@ -298,7 +313,20 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             smf_metrics_inst_global_inc(SMF_METR_GLOB_CTR_GN_RX_CREATEPDPCTXREQ);
             smf_metrics_inst_gtp_node_inc(smf_gnode->metrics, SMF_METR_GTP_NODE_CTR_GN_RX_CREATEPDPCTXREQ);
             if (gtp1_message.h.teid == 0) {
+                smf_sess_t *old_sess = NULL;
+                smf_ue_t *collision_ue = NULL;
+
                 ogs_expect(!sess);
+                old_sess = smf_sess_find_collision_for_gtp1(&gtp1_message);
+                if (old_sess) {
+                    if (smf_sess_collision_replace_begin_gtp1(old_sess, e))
+                        break;
+                    collision_ue = smf_ue_find_by_id(old_sess->smf_ue_id);
+                    ogs_warn("OLD Session Will Release [IMSI:%s,APN:%s]",
+                            collision_ue ? collision_ue->imsi_bcd : "-",
+                            old_sess->session.name);
+                    smf_sess_remove(old_sess);
+                }
                 sess = smf_sess_add_by_gtp1_message(&gtp1_message);
                 if (sess)
                     OGS_SETUP_GTP_NODE(sess, smf_gnode->gnode);

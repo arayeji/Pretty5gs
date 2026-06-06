@@ -23,6 +23,7 @@
 #include "gx-handler.h"
 #include "gy-handler.h"
 #include "n4-handler.h"
+#include "collision-replace.h"
 #include "s5c-handler.h"
 #include "nnrf-handler.h"
 #include "nsmf-handler.h"
@@ -2352,6 +2353,16 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                 pfcp_cause = smf_epc_n4_handle_session_deletion_response(
                             sess, pfcp_xact,
                             &pfcp_message->pfcp_session_deletion_response);
+
+                if (sess->collision_replace) {
+                    if (pfcp_cause != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
+                        ogs_warn("collision replace: PFCP delete cause [%d]",
+                                pfcp_cause);
+                    }
+                    smf_sess_collision_replace_complete(sess);
+                    break;
+                }
+
                 if (pfcp_cause != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
                     /* FIXME: tear down Gy and Gx */
                     ogs_assert(gtp_xact);

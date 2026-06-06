@@ -370,6 +370,20 @@ typedef struct smf_ue_s {
     int imeisv_len;
     char  imeisv_bcd[OGS_MAX_IMEISV_BCD_LEN+1];
 
+    /*
+     * Stashed Create Session / Create PDP Context while an existing session
+     * with the same IMSI+APN is torn down on the UPF (PFCP Session Deletion).
+     */
+    struct {
+        bool pending;
+        bool gtp2;
+        ogs_pkbuf_t *pkbuf;
+        ogs_pool_id_t gtp_xact_id;
+        ogs_gtp_node_t *gtp_node;
+        uint32_t peer_teid;
+        bool peer_teid_presence;
+    } collision_replace;
+
     ogs_list_t sess_list;
 } smf_ue_t;
 
@@ -482,6 +496,7 @@ typedef struct smf_sess_s {
     } sm_data;
 
     bool            epc;            /**< EPC or 5GC */
+    bool            collision_replace; /* Re-attach: wait UPF delete before new CSR */
 
     ogs_pfcp_sess_t pfcp;           /* PFCP session context */
 

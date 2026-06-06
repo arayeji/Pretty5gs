@@ -19,6 +19,7 @@
 
 #include "sbi-path.h"
 #include "pfcp-path.h"
+#include "collision-replace.h"
 
 /* Converts PFCP "Usage Report" "Report Trigger" bitmask to Gy "Reporting-Reason" AVP enum value.
  * PFCP: 3GPP TS 29.244 sec 8.2.41
@@ -451,7 +452,10 @@ static void sess_epc_timeout(ogs_pfcp_xact_t *xact, void *data)
         ogs_error("No PFCP session modification response");
         break;
     case OGS_PFCP_SESSION_DELETION_REQUEST_TYPE:
-        ogs_error("No PFCP session deletion response");
+        if (sess->collision_replace)
+            smf_sess_collision_on_pfcp_delete_timeout(sess);
+        else
+            ogs_error("No PFCP session deletion response");
         break;
     default:
         ogs_error("Not implemented [type:%d]", type);

@@ -150,6 +150,7 @@ void sgwc_s5c_handle_create_session_response(
     }
     ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
     OGS_TLOG_INFO("Create Session Response");
+    sgwc_create_session_phase(sess, sgwc_ue, "s5-create-session-rsp");
 
     if (rsp->cause.presence && rsp->cause.data &&
             !OGS_GTP2_CAUSE_IS_SUCCESS(session_cause)) {

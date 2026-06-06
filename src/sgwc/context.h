@@ -193,7 +193,24 @@ typedef struct sgwc_sess_s {
     ogs_pfcp_node_t *pfcp_node;
 
     ogs_pool_id_t   sgwc_ue_id;
+
+    /* Monotonic start time for create-session latency logging */
+    ogs_time_t      create_session_t0;
 } sgwc_sess_t;
+
+static inline void sgwc_create_session_phase(
+        sgwc_sess_t *sess, sgwc_ue_t *ue, const char *phase)
+{
+    ogs_time_t elapsed;
+
+    if (!sess || !ue || !phase || !phase[0] || !sess->create_session_t0)
+        return;
+
+    elapsed = ogs_time_now() - sess->create_session_t0;
+    ogs_info("[%s] create-session phase=%s elapsed=%llums",
+            ue->imsi_bcd, phase,
+            (unsigned long long)ogs_time_to_msec(elapsed));
+}
 
 typedef struct sgwc_bearer_s {
     ogs_lnode_t     lnode;
