@@ -5290,16 +5290,16 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
         return NULL;
     }
 
-    /*
-     * Pre-flight: if the pool is below its watermark, fire the soft-cap
-     * evictor *before* attempting allocation. The evictor only queues
-     * implicit-detach events (it doesn't free synchronously), so this
-     * one allocation still likely fails — but subsequent allocations
-     * in this attach storm will succeed once the event queue drains.
-     */
-    mme_context_evict_idle_ues(0);
-
     ogs_pool_id_calloc(&mme_ue_pool, &mme_ue);
+    if (mme_ue == NULL) {
+        /*
+         * Pool exhausted: sweep idle UEs once, then retry. Do not call the
+         * evictor on every attach — under load that is O(N) per Initial UE
+         * and can stall the main loop (looks like a hang, log stops).
+         */
+        mme_context_evict_idle_ues(0);
+        ogs_pool_id_calloc(&mme_ue_pool, &mme_ue);
+    }
     if (mme_ue == NULL) {
         static ogs_time_t last_pool_err = 0;
         ogs_time_t now = ogs_time_now();

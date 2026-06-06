@@ -220,8 +220,22 @@ static int mme_s6a_imsi_acl_check(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     if (mme_imsi_hss_allowed(mme_ue))
         return OGS_OK;
 
-    ogs_warn("[%s] IMSI not in ACL, reject before HSS (S6a cmd %u)",
-            mme_ue->imsi_bcd, cmd_code);
+    {
+        static ogs_time_t last_acl_warn = 0;
+        static uint64_t acl_reject_count = 0;
+        ogs_time_t now = ogs_time_now();
+
+        acl_reject_count++;
+        if (last_acl_warn == 0 ||
+                now - last_acl_warn > ogs_time_from_sec(1)) {
+            last_acl_warn = now;
+            ogs_warn("[%s] IMSI not in ACL, reject before HSS (S6a cmd %u) "
+                    "(%llu/s suppressed detail)",
+                    mme_ue->imsi_bcd, cmd_code,
+                    (unsigned long long)acl_reject_count);
+            acl_reject_count = 0;
+        }
+    }
     mme_s6a_post_failure(enb_ue, mme_ue, cmd_code,
             ER_DIAMETER_AUTHORIZATION_REJECTED, gtp_xact_id);
     return OGS_ERROR;
