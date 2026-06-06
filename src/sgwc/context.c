@@ -1047,6 +1047,9 @@ int sgwc_sess_remove(sgwc_sess_t *sess)
     sgwc_ue_t *sgwc_ue = NULL;
 
     ogs_assert(sess);
+
+    sgwc_sess_purge_upf(sess);
+
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
     ogs_assert(sgwc_ue);
 
