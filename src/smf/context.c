@@ -2374,20 +2374,14 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
     smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
     ogs_assert(smf_ue);
 
-    if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
-
-        /*
-         * This is the case when the HSS is set to IPv4v6 and
-         * the UE requests IPv4v6.
-         *
-         * At this time, it was changed to operate normally
-         * even when SMF has no IPv4 or IPv6 subnet.
-         *
-         * If there is no IPv6 subnet, only IPv4 IP address is assigned.
-         * If there is no IPv4 subnet, only IPv6 IP address is assigned.
-         * If there are IPv4/IPv6 subnet, IPv4/IPv6 IP address are assigned.
-         */
-
+    /*
+     * Adapt requested PDN type to configured pools (IPv4-only SMF, IMS/hiweb
+     * without IPv6, etc.). Same policy as IPv4v6 downgrade: prefer what we
+     * can assign instead of rejecting or crashing.
+     */
+    if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
+            sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
+            sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
         ogs_pfcp_subnet_t *subnet = NULL;
         ogs_pfcp_subnet_t *subnet6 = NULL;
 
@@ -2395,14 +2389,26 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
         subnet = ogs_pfcp_find_subnet_by_dnn(AF_INET, sess->session.name);
         subnet6 = ogs_pfcp_find_subnet_by_dnn(AF_INET6, sess->session.name);
 
-        if (subnet != NULL && subnet6 == NULL) {
+        if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV6 &&
+                subnet6 == NULL && subnet != NULL) {
             sess->session.session_type = OGS_PDU_SESSION_TYPE_IPV4;
-            ogs_error("[%s] No IPv6 subnet or set to /63 or /64, "
-                    "only IPv4 assigned", sess->session.name);
-        } else if (subnet == NULL && subnet6 != NULL) {
+            ogs_warn("[%s] No IPv6 subnet; IPv4 only assigned",
+                    sess->session.name);
+        } else if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV4 &&
+                subnet == NULL && subnet6 != NULL) {
             sess->session.session_type = OGS_PDU_SESSION_TYPE_IPV6;
-            ogs_error("[%s] No IPv4 subnet or set to /31 or /32, "
-                    "only IPv6 assigned", sess->session.name);
+            ogs_warn("[%s] No IPv4 subnet; IPv6 only assigned",
+                    sess->session.name);
+        } else if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
+            if (subnet != NULL && subnet6 == NULL) {
+                sess->session.session_type = OGS_PDU_SESSION_TYPE_IPV4;
+                ogs_warn("[%s] No IPv6 subnet or set to /63 or /64; "
+                        "IPv4 only assigned", sess->session.name);
+            } else if (subnet == NULL && subnet6 != NULL) {
+                sess->session.session_type = OGS_PDU_SESSION_TYPE_IPV6;
+                ogs_warn("[%s] No IPv4 subnet or set to /31 or /32; "
+                        "IPv6 only assigned", sess->session.name);
+            }
         }
     }
 
@@ -2465,6 +2471,16 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
         if (!sess->ipv6) {
             smf_sess_log_ue_ip_fail(smf_ue, sess, AF_INET6, cause_value);
             if (sess->ipv4) {
+                sess->session.session_type = OGS_PDU_SESSION_TYPE_IPV4;
+                sess->paa.session_type = OGS_PDU_SESSION_TYPE_IPV4;
+                sess->paa.addr = sess->ipv4->addr[0];
+                ogs_hash_set(smf_self()->ipv4_hash,
+                        sess->ipv4->addr, OGS_IPV4_LEN, sess);
+                ogs_warn("[%s] IPv6 unavailable; IPv4 only assigned",
+                        sess->session.name);
+                goto ue_ip_assigned;
+            }
+            if (sess->ipv4) {
                 ogs_hash_set(smf_self()->ipv4_hash,
                         sess->ipv4->addr, OGS_IPV4_LEN, NULL);
                 ogs_pfcp_ue_ip_free(sess->ipv4);
@@ -2477,14 +2493,20 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
         if (!subnet6) {
             ogs_error("[%s] UE IPv6 allocated without subnet",
                     sess->session.name);
-            ogs_hash_set(smf_self()->ipv4_hash,
-                    sess->ipv4->addr, OGS_IPV4_LEN, NULL);
-            ogs_pfcp_ue_ip_free(sess->ipv4);
-            sess->ipv4 = NULL;
             ogs_hash_set(smf_self()->ipv6_hash,
                     sess->ipv6->addr, OGS_IPV6_DEFAULT_PREFIX_LEN >> 3, NULL);
             ogs_pfcp_ue_ip_free(sess->ipv6);
             sess->ipv6 = NULL;
+            if (sess->ipv4) {
+                sess->session.session_type = OGS_PDU_SESSION_TYPE_IPV4;
+                sess->paa.session_type = OGS_PDU_SESSION_TYPE_IPV4;
+                sess->paa.addr = sess->ipv4->addr[0];
+                ogs_hash_set(smf_self()->ipv4_hash,
+                        sess->ipv4->addr, OGS_IPV4_LEN, sess);
+                ogs_warn("[%s] IPv6 subnet missing after alloc; "
+                        "IPv4 only assigned", sess->session.name);
+                goto ue_ip_assigned;
+            }
             return OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
         }
 
@@ -2501,6 +2523,7 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
         return OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
     }
 
+ue_ip_assigned:
     smf_sess_log_ue_ip_ok(smf_ue, sess);
 
     return cause_value;

@@ -48,12 +48,14 @@ libmme_sources = files('''
     mme-sm.h
     mme-path.h
     mme-trace.h
+    mme-roam-access.h
     metrics.h
 
     mme-init.c
     mme-event.c
     mme-timer.c
     mme-context.c
+    mme-roam-access.c
     eplmn-config.c
     mme-apn.c
     mme-ambr.c

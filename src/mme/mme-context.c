@@ -23,6 +23,7 @@
 #include "mme-pgw-host.h"
 #include "eplmn-config.h"
 #include "mme-event.h"
+#include "mme-roam-access.h"
 #include "mme-timer.h"
 #include "mme-trace.h"
 #include "nas-path.h"
@@ -86,6 +87,66 @@ static void mme_gtpc_client_parse_plmn_id_key(
         bool *imsi_plmn_parsed, ogs_plmn_id_t *imsi_plmn);
 static bool mme_ue_inbound_roam_on_tai(
         mme_ue_t *mme_ue, const ogs_eps_tai_t *tai);
+
+static void mme_access_control_tac_add(
+        mme_access_control_t *ac, uint16_t tac)
+{
+    ogs_assert(ac);
+
+    if (!ac->tac_hash)
+        ac->tac_hash = ogs_hash_make();
+    ogs_hash_set(ac->tac_hash, &tac, sizeof(tac), (void *)(intptr_t)1);
+}
+
+static void mme_access_control_enb_add(
+        mme_access_control_t *ac, uint32_t enb_id)
+{
+    ogs_assert(ac);
+
+    if (!ac->enb_id_hash)
+        ac->enb_id_hash = ogs_hash_make();
+    ogs_hash_set(ac->enb_id_hash, &enb_id, sizeof(enb_id),
+            (void *)(intptr_t)1);
+}
+
+static uint32_t mme_yaml_parse_uint32(const char *v)
+{
+    ogs_assert(v);
+
+    if (v[0] == '0' && (v[1] == 'x' || v[1] == 'X'))
+        return (uint32_t)ogs_uint64_from_string_hexadecimal((char *)v);
+
+    return (uint32_t)strtoul(v, NULL, 10);
+}
+
+static void mme_access_control_parse_uint32_list(
+        ogs_yaml_iter_t *iter, mme_access_control_t *ac, bool enb)
+{
+    ogs_yaml_iter_t list_iter;
+
+    ogs_assert(iter);
+    ogs_assert(ac);
+
+    ogs_yaml_iter_recurse(iter, &list_iter);
+    ogs_assert(ogs_yaml_iter_type(&list_iter) != YAML_MAPPING_NODE);
+
+    do {
+        const char *v = NULL;
+
+        if (ogs_yaml_iter_type(&list_iter) == YAML_SEQUENCE_NODE) {
+            if (!ogs_yaml_iter_next(&list_iter))
+                break;
+        }
+        v = ogs_yaml_iter_value(&list_iter);
+        if (!v)
+            continue;
+
+        if (enb)
+            mme_access_control_enb_add(ac, mme_yaml_parse_uint32(v));
+        else
+            mme_access_control_tac_add(ac, (uint16_t)mme_yaml_parse_uint32(v));
+    } while (ogs_yaml_iter_type(&list_iter) == YAML_SEQUENCE_NODE);
+}
 
 static bool mme_sgw_is_default(const mme_sgw_t *sgw);
 static bool compare_sgw_info(
@@ -258,6 +319,8 @@ void mme_context_final(void)
     mme_served_tai_list0_free_all();
 
     mme_pgw_host_cache_final();
+
+    mme_access_control_free_all();
 
     ogs_assert(self.enb_addr_hash);
     ogs_hash_destroy(self.enb_addr_hash);
@@ -2490,54 +2553,107 @@ int mme_context_parse_config(void)
                         ogs_assert(self.num_of_access_control <
                                 OGS_MAX_NUM_OF_PLMN_PER_MME);
 
-                        while (ogs_yaml_iter_next(&access_control_iter)) {
-                            const char *mnc = NULL, *mcc = NULL;
-                            int reject_cause = 0;
-                            const char *access_control_key =
-                                ogs_yaml_iter_key(&access_control_iter);
-                            ogs_assert(access_control_key);
-                            if (!strcmp(access_control_key,
-                                        "default_reject_cause")) {
-                                const char *v = ogs_yaml_iter_value(
-                                        &access_control_iter);
-                                if (v) self.default_reject_cause = atoi(v);
-                            } else if (!strcmp(access_control_key, "plmn_id")) {
-                                ogs_yaml_iter_t plmn_id_iter;
+                        {
+                            mme_access_control_t *ac =
+                                &self.access_control[
+                                    self.num_of_access_control];
+                            bool entry_configured = false;
+                            int entry_reject_cause = 0;
 
-                                ogs_yaml_iter_recurse(&access_control_iter,
-                                        &plmn_id_iter);
-                                while (ogs_yaml_iter_next(&plmn_id_iter)) {
-                                    const char *plmn_id_key =
-                                        ogs_yaml_iter_key(&plmn_id_iter);
-                                    ogs_assert(plmn_id_key);
-                                    if (!strcmp(plmn_id_key, "reject_cause")) {
-                                        const char *v = ogs_yaml_iter_value(
-                                                &plmn_id_iter);
-                                        if (v) reject_cause = atoi(v);
-                                    } else if (!strcmp(plmn_id_key, "mcc")) {
-                                        mcc = ogs_yaml_iter_value(
-                                                &plmn_id_iter);
-                                    } else if (!strcmp(plmn_id_key, "mnc")) {
-                                        mnc = ogs_yaml_iter_value(
-                                                &plmn_id_iter);
+                            memset(ac, 0, sizeof(*ac));
+
+                            while (ogs_yaml_iter_next(&access_control_iter)) {
+                                const char *mnc = NULL, *mcc = NULL;
+                                int reject_cause = 0;
+                                const char *access_control_key =
+                                    ogs_yaml_iter_key(&access_control_iter);
+                                ogs_assert(access_control_key);
+                                if (!strcmp(access_control_key,
+                                            "default_reject_cause")) {
+                                    const char *v = ogs_yaml_iter_value(
+                                            &access_control_iter);
+                                    if (v) self.default_reject_cause = atoi(v);
+                                } else if (!strcmp(access_control_key,
+                                            "reject_cause")) {
+                                    const char *v = ogs_yaml_iter_value(
+                                            &access_control_iter);
+                                    if (v) entry_reject_cause = atoi(v);
+                                } else if (!strcmp(access_control_key,
+                                            "imsi_prefix")) {
+                                    const char *v = ogs_yaml_iter_value(
+                                            &access_control_iter);
+                                    if (v) {
+                                        ogs_cpystrn(ac->imsi_prefix, v,
+                                                sizeof(ac->imsi_prefix));
+                                        entry_configured = true;
                                     }
-                                }
+                                } else if (!strcmp(access_control_key,
+                                            "plmn_id")) {
+                                    ogs_yaml_iter_t plmn_id_iter;
 
-                                if (mcc && mnc) {
-                                    ogs_plmn_id_build(
-                                        &self.access_control[
-                                            self.num_of_access_control].
-                                                plmn_id,
-                                        atoi(mcc), atoi(mnc), strlen(mnc));
-                                    if (reject_cause)
-                                        self.access_control[
-                                            self.num_of_access_control].
-                                                reject_cause = reject_cause;
-                                    self.num_of_access_control++;
-                                }
-                            } else
-                                ogs_warn("unknown key `%s`",
-                                        access_control_key);
+                                    ogs_yaml_iter_recurse(&access_control_iter,
+                                            &plmn_id_iter);
+                                    while (ogs_yaml_iter_next(&plmn_id_iter)) {
+                                        const char *plmn_id_key =
+                                            ogs_yaml_iter_key(&plmn_id_iter);
+                                        ogs_assert(plmn_id_key);
+                                        if (!strcmp(plmn_id_key,
+                                                    "reject_cause")) {
+                                            const char *v =
+                                                ogs_yaml_iter_value(
+                                                        &plmn_id_iter);
+                                            if (v) reject_cause = atoi(v);
+                                        } else if (!strcmp(plmn_id_key,
+                                                    "mcc")) {
+                                            mcc = ogs_yaml_iter_value(
+                                                    &plmn_id_iter);
+                                        } else if (!strcmp(plmn_id_key,
+                                                    "mnc")) {
+                                            mnc = ogs_yaml_iter_value(
+                                                    &plmn_id_iter);
+                                        }
+                                    }
+
+                                    if (mcc && mnc) {
+                                        ogs_plmn_id_build(&ac->plmn_id,
+                                                atoi(mcc), atoi(mnc),
+                                                strlen(mnc));
+                                        ac->plmn_id_configured = true;
+                                        entry_configured = true;
+                                        if (reject_cause)
+                                            entry_reject_cause = reject_cause;
+                                    }
+                                } else if (!strcmp(access_control_key, "tac")) {
+                                    mme_access_control_parse_uint32_list(
+                                            &access_control_iter, ac, false);
+                                } else if (!strcmp(access_control_key,
+                                            "enb_id")) {
+                                    mme_access_control_parse_uint32_list(
+                                            &access_control_iter, ac, true);
+                                } else
+                                    ogs_warn("unknown key `%s`",
+                                            access_control_key);
+                            }
+
+                            if (entry_configured) {
+                                if (entry_reject_cause)
+                                    ac->reject_cause = entry_reject_cause;
+                                ogs_info("access_control[%d] imsi_prefix=%s "
+                                        "plmn=%06x tac=%u enb=%u",
+                                        self.num_of_access_control,
+                                        ac->imsi_prefix[0] ?
+                                            ac->imsi_prefix : "-",
+                                        ac->plmn_id_configured ?
+                                            ogs_plmn_id_hexdump(&ac->plmn_id) :
+                                            0,
+                                        ac->tac_hash ?
+                                            (unsigned)ogs_hash_count(
+                                                ac->tac_hash) : 0,
+                                        ac->enb_id_hash ?
+                                            (unsigned)ogs_hash_count(
+                                                ac->enb_id_hash) : 0);
+                                self.num_of_access_control++;
+                            }
                         }
 
                     } while (ogs_yaml_iter_type(&access_control_array) ==
@@ -4380,31 +4496,74 @@ static bool mme_imsi_acl_match(const char *imsi_bcd)
     return false;
 }
 
-static uint8_t mme_emm_cause_from_access_control_imsi_bcd(const char *imsi_bcd)
+static bool mme_access_control_imsi_prefix_match(const char *imsi_bcd)
 {
-    ogs_plmn_id_t plmn_id;
     int i;
 
     ogs_assert(imsi_bcd);
 
-    if (self.num_of_access_control == 0)
-        return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
-
-    ogs_plmn_id_from_imsi_bcd(imsi_bcd, &plmn_id);
-
     for (i = 0; i < self.num_of_access_control; i++) {
-        if (!memcmp(&plmn_id, &self.access_control[i].plmn_id,
-                    sizeof(ogs_plmn_id_t))) {
-            if (self.access_control[i].reject_cause)
-                return self.access_control[i].reject_cause;
-            return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
-        }
+        mme_access_control_t *entry = &self.access_control[i];
+        size_t len;
+
+        if (!entry->imsi_prefix[0])
+            continue;
+
+        len = strlen(entry->imsi_prefix);
+        if (len > 0 && strncmp(imsi_bcd, entry->imsi_prefix, len) == 0)
+            return true;
     }
 
-    if (self.default_reject_cause)
-        return self.default_reject_cause;
+    return false;
+}
 
-    return OGS_NAS_EMM_CAUSE_PLMN_NOT_ALLOWED;
+uint8_t mme_emm_cause_from_access_control_imsi_bcd(const char *imsi_bcd)
+{
+    mme_access_control_t *ac = NULL;
+    ogs_plmn_id_t plmn_id;
+    int i, best = -1;
+    bool has_plmn_acl = false;
+
+    ogs_assert(imsi_bcd);
+
+    for (i = 0; i < self.num_of_access_control; i++) {
+        mme_access_control_t *entry = &self.access_control[i];
+
+        if (entry->imsi_prefix[0])
+            continue;
+
+        if (!entry->plmn_id_configured)
+            continue;
+
+        has_plmn_acl = true;
+
+        ogs_plmn_id_from_imsi_bcd(imsi_bcd, &plmn_id);
+        if (!memcmp(&plmn_id, &entry->plmn_id, sizeof(ogs_plmn_id_t)))
+            best = i;
+    }
+
+    if (!has_plmn_acl)
+        return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
+
+    if (best < 0) {
+        /*
+         * IMSIs covered by imsi_prefix entries are checked on the inbound-roam
+         * path (prefix + optional TAC/eNB). Their home PLMN (e.g. 999-70) is
+         * intentionally not listed in plmn_id home ACL (999-70/432-46).
+         */
+        if (mme_access_control_imsi_prefix_match(imsi_bcd))
+            return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
+
+        if (self.default_reject_cause)
+            return self.default_reject_cause;
+        return OGS_NAS_EMM_CAUSE_PLMN_NOT_ALLOWED;
+    }
+
+    ac = &self.access_control[best];
+    if (ac->reject_cause)
+        return ac->reject_cause;
+
+    return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
 }
 
 bool mme_imsi_hss_allowed(mme_ue_t *mme_ue)

@@ -87,10 +87,8 @@ void ogs_fsm_init(void *fsm, void *init, void *fini, void *event)
     if (sm->init) {
         (*sm->init)(sm, e);
 
-        if (sm->init != sm->state) {
-            ogs_assert(sm->state);
+        if (sm->init != sm->state && sm->state)
             fsm_entry(sm, sm->state, e);
-        }
     }
 }
 
@@ -126,7 +124,11 @@ void ogs_fsm_dispatch(void *fsm, void *event)
     if (e)
         (*tmp)(sm, e);
 
-    if (sm->state != tmp)
+    /*
+     * ENTRY handlers may finalize the FSM (e.g. SMF session teardown via
+     * ogs_fsm_fini), leaving sm->state NULL. Do not attempt another transition.
+     */
+    if (sm->state != tmp && sm->state)
         fsm_change(fsm, tmp, sm->state, e);
 }
 

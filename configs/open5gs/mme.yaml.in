@@ -405,19 +405,19 @@ mme:
 #        mnc: 09
 #      tac: [70, 80]
 #
-#  o Access Control
+#  o Access Control (optional HPLMN whitelist + inbound-roam IMSI prefix / TAC / eNB)
 #  access_control:
 #    - default_reject_cause: 13
-#    - plmn_id:
-#        reject_cause: 15
-#        mcc: 001
-#        mnc: 01
-#    - plmn_id:
-#        mcc: 002
-#        mnc: 02
-#    - plmn_id:
+#    - imsi_prefix: "00101"       # inbound roam only; longest prefix match
+#      reject_cause: 13
+#      tac: [10003, 10012]        # optional; omit = all TACs OK for this prefix
+#      enb_id: [260003, 450004]   # optional; omit = all eNB IDs OK
+#    - plmn_id:                   # all subscribers: whole HPLMN (999-70)
 #        mcc: 999
-#        mnc: 70
+#        mnc: 71
+#  Generate from CSV:
+#    python scripts/gen_roam_access_from_csv.py \\
+#      --csv "roam-sites.example.csv" --prefix 00101 --output roam-access.yaml
 #
 #  o Block unknown IMSIs before S6a (AIR/ULR) — stops HSS/DRA flood.
 #    Enforced when any of: access_control, imsi_acl, or hss_map (with
