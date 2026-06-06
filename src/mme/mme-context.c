@@ -3491,10 +3491,8 @@ int mme_context_parse_config(void)
                             ogs_warn("unknown key `%s`", emerg_key);
                     }
                 } else if (!strcmp(mme_key, "require_hss_map")) {
-                    const char *v = ogs_yaml_iter_value(&mme_iter);
-
                     self.require_hss_map_explicit = true;
-                    self.require_hss_map = v ? ogs_yaml_bool(v) : true;
+                    self.require_hss_map = ogs_yaml_iter_bool(&mme_iter);
                 } else if (!strcmp(mme_key, "imsi_acl")) {
                     ogs_yaml_iter_t acl_array, acl_iter;
 
