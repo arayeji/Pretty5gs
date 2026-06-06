@@ -785,6 +785,30 @@ cleanup:
 
         rv = ogs_gtp_xact_receive(gnode, &gtp_message.h, &xact);
         if (rv != OGS_OK) {
+            char peer[OGS_ADDRSTRLEN];
+            mme_ue_t *ue_hint = NULL;
+            uint32_t sqn = gtp_message.h.teid_presence ?
+                gtp_message.h.sqn : gtp_message.h.sqn_only;
+
+            if (gtp_message.h.teid_presence && gtp_message.h.teid)
+                ue_hint = mme_ue_find_by_s11_local_teid(gtp_message.h.teid);
+
+            ogs_error("S11 GTP receive dropped [%s]:%d type[%u] "
+                    "teid[0x%x] sqn[0x%x] rv=%d%s",
+                    OGS_ADDR(&gnode->addr, peer),
+                    OGS_PORT(&gnode->addr),
+                    gtp_message.h.type,
+                    gtp_message.h.teid_presence ? gtp_message.h.teid : 0,
+                    sqn, rv,
+                    (ue_hint && MME_UE_HAVE_IMSI(ue_hint)) ? "" : " IMSI[-]");
+            if (ue_hint && MME_UE_HAVE_IMSI(ue_hint)) {
+                ogs_error("    IMSI[%s] (late Create Session Response or "
+                        "invalid GTP transaction step?)",
+                        ue_hint->imsi_bcd);
+                if (gtp_message.h.type ==
+                        OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE)
+                    mme_ue_progress(ue_hint, "create_session_rsp_late");
+            }
             ogs_pkbuf_free(pkbuf);
             break;
         }

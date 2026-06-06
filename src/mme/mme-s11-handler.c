@@ -256,6 +256,13 @@ void mme_s11_handle_create_session_response(
     sess = mme_sess_find_by_id(OGS_POINTER_TO_UINT(xact->data));
     if (sess)
         mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
+    else if (mme_ue_from_teid)
+        mme_ue = mme_ue_from_teid;
+
+    if (mme_ue && MME_UE_HAVE_IMSI(mme_ue))
+        ogs_info("[%s] S11 Create Session Response received "
+                "(create_action=%d local_s11_teid=0x%x)",
+                mme_ue->imsi_bcd, create_action, xact->local_teid);
     enb_ue = enb_ue_find_by_id(xact->enb_ue_id);
 
     rv = ogs_gtp_xact_commit(xact);

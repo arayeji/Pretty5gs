@@ -22,6 +22,7 @@
 #include "ga-writer.h"
 #include "gtp-path.h"
 #include "pfcp-path.h"
+#include "collision-replace.h"
 
 static smf_context_t self;
 static ogs_diam_config_t g_diam_conf;
@@ -1673,6 +1674,8 @@ void smf_ue_remove(smf_ue_t *smf_ue)
 {
     ogs_assert(smf_ue);
 
+    smf_ue_collision_abort(smf_ue);
+
     /*
      * Hold the dump lock for the whole teardown - /pdu-info drills
      * into smf_ue->sess_list and each session's bearer/PDR/QER
@@ -2017,13 +2020,6 @@ smf_sess_t *smf_sess_add_by_gtp1_message(ogs_gtp1_message_t *message)
         }
     }
 
-    sess = smf_sess_find_by_apn(smf_ue, apn, req->rat_type.u8);
-    if (sess) {
-        ogs_warn("OLD Session Will Release [IMSI:%s,APN:%s]",
-                smf_ue->imsi_bcd, sess->session.name);
-        smf_sess_remove(sess);
-    }
-
     sess = smf_sess_add_by_apn(smf_ue, apn, req->rat_type.u8);
     if (!sess) {
         ogs_free(full_apn);
@@ -2096,13 +2092,6 @@ smf_sess_t *smf_sess_add_by_gtp2_message(ogs_gtp2_message_t *message)
             ogs_free(full_apn);
             return NULL;
         }
-    }
-
-    sess = smf_sess_find_by_apn(smf_ue, apn, req->rat_type.u8);
-    if (sess) {
-        ogs_info("OLD Session Will Release [IMSI:%s,APN:%s]",
-                smf_ue->imsi_bcd, sess->session.name);
-        smf_sess_remove(sess);
     }
 
     sess = smf_sess_add_by_apn(smf_ue, apn, req->rat_type.u8);

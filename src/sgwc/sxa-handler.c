@@ -512,6 +512,7 @@ void sgwc_sxa_handle_session_establishment_response(
     ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
     OGS_TLOG_INFO("PFCP session established SGWU-SEID=0x%llx",
             (unsigned long long)sess->sgwu_sxa_seid);
+    sgwc_create_session_phase(sess, sgwc_ue, "pfcp-establish-ok");
 
     /* Receive Control Plane(UL) : PGW-S5C */
     if (create_session_request->
@@ -1566,6 +1567,7 @@ indirect_fail:
 
             ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
             OGS_TLOG_INFO("Create Session Response sent to MME");
+            sgwc_create_session_phase(sess, sgwc_ue, "s11-rsp-sent");
 
         } else if (flags & OGS_PFCP_MODIFY_DL_ONLY) {
             if (SGWC_SESSION_SYNC_DONE(sgwc_ue,

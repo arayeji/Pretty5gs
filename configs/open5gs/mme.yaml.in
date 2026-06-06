@@ -97,6 +97,10 @@ mme:
     short: Next
   mme_name: open5gs-mme0
   time:
+#    message:
+#      duration: 15000   # milliseconds (default: 10000). Drives GTP/PFCP/SBI
+#                        # retransmit timers on this daemon. GTP S11 give-up is
+#                        # ~75% of this (3 retries). Also set on sgwc and smf.
 #    t3402:
 #      value: 720   # seconds (default: 720 = 12 min, sent in Attach/TAU Accept)
 #    t3412:

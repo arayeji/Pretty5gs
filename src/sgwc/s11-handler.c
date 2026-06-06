@@ -495,6 +495,8 @@ void sgwc_s11_handle_create_session_request(
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
         sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);
 
+    sess->create_session_t0 = ogs_time_now();
+
     ogs_assert(OGS_OK ==
         sgwc_pfcp_send_session_establishment_request(
             sess, s11_xact->id, gtpbuf, 0));

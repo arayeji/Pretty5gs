@@ -115,7 +115,8 @@ static bool mme_ue_progress_is_failure(const char *step)
             !strcmp(step, "attach_accept_no_s1") ||
             !strcmp(step, "attach_accept_fail") ||
             !strcmp(step, "sgsap_lu_reject") ||
-            !strcmp(step, "sgsap_lu_timeout"))
+            !strcmp(step, "sgsap_lu_timeout") ||
+            !strcmp(step, "create_session_rsp_late"))
         return true;
 
     len = strlen(step);
