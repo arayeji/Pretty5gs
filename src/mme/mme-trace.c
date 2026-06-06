@@ -137,6 +137,69 @@ void mme_ue_progress(mme_ue_t *mme_ue, const char *step)
         ogs_info("[%s] ATTACH step: %s", imsi, step);
 }
 
+static enb_ue_t *mme_ue_service_resolve_enb(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue)
+{
+    if (enb_ue)
+        return enb_ue;
+    if (mme_ue && mme_ue->enb_ue_id != OGS_INVALID_POOL_ID)
+        return enb_ue_find_by_id(mme_ue->enb_ue_id);
+    return NULL;
+}
+
+static void mme_ue_service_vlog(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue, int level,
+        const char *fmt, va_list ap)
+{
+    char prefix[OGS_TRACE_PREFIX_BUFSIZE];
+    char msg[OGS_HUGE_LEN];
+
+    ogs_assert(fmt);
+
+    enb_ue = mme_ue_service_resolve_enb(mme_ue, enb_ue);
+    ogs_mme_trace_set(enb_ue, mme_ue, NULL, "service-req");
+    ogs_trace_format_prefix(prefix, sizeof(prefix));
+
+    ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
+    ogs_log_printf(level, OGS_LOG_DOMAIN,
+            0, __FILE__, __LINE__, OGS_FUNC, 0, "%s %s", prefix, msg);
+}
+
+void mme_ue_service_info(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue, const char *fmt, ...)
+{
+    va_list ap;
+
+    ogs_assert(fmt);
+
+    va_start(ap, fmt);
+    mme_ue_service_vlog(mme_ue, enb_ue, OGS_LOG_INFO, fmt, ap);
+    va_end(ap);
+}
+
+void mme_ue_service_error(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue, const char *fmt, ...)
+{
+    va_list ap;
+
+    ogs_assert(fmt);
+
+    va_start(ap, fmt);
+    mme_ue_service_vlog(mme_ue, enb_ue, OGS_LOG_ERROR, fmt, ap);
+    va_end(ap);
+}
+
+void mme_ue_service_progress(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue, const char *step)
+{
+    ogs_assert(step);
+
+    if (mme_ue_progress_is_failure(step))
+        mme_ue_service_error(mme_ue, enb_ue, "SERVICE step: %s", step);
+    else
+        mme_ue_service_info(mme_ue, enb_ue, "SERVICE step: %s", step);
+}
+
 void mme_ue_debug(mme_ue_t *mme_ue, const char *fmt, ...)
 {
     va_list ap;

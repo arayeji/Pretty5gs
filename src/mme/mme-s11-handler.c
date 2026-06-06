@@ -706,6 +706,8 @@ void mme_s11_handle_modify_bearer_response(
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+        if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST)
+            mme_ue_service_progress(mme_ue, enb_ue, "mbr_fail");
         if (enb_ue)
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
         else
@@ -720,6 +722,8 @@ void mme_s11_handle_modify_bearer_response(
 
     if (session_cause != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
         ogs_error("[%s] GTP Cause [VALUE:%d]", mme_ue->imsi_bcd, session_cause);
+        if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST)
+            mme_ue_service_progress(mme_ue, enb_ue, "mbr_fail");
         if (enb_ue)
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
         else
@@ -748,6 +752,11 @@ void mme_s11_handle_modify_bearer_response(
         ogs_assert(r != OGS_ERROR);
         break;
     default:
+        if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST) {
+            mme_ue_service_info(mme_ue, enb_ue,
+                    "S11 Modify Bearer Response accepted");
+            mme_ue_service_progress(mme_ue, enb_ue, "mbr_ok");
+        }
         break;
     }
 }

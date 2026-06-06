@@ -37,6 +37,16 @@ void ogs_mme_trace_from_ids(
  * attach_accept_no_s1 / attach_accept_fail / sgsap_lu_reject) */
 void mme_ue_progress(mme_ue_t *mme_ue, const char *step);
 
+/* Service-request logs with full trace prefix (IMSI, TEIDs, S1AP IDs) */
+void mme_ue_service_progress(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue, const char *step);
+void mme_ue_service_info(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue, const char *fmt, ...)
+    OGS_GNUC_PRINTF(3, 4);
+void mme_ue_service_error(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue, const char *fmt, ...)
+    OGS_GNUC_PRINTF(3, 4);
+
 /* DEBUG for one UE when IMSI is on ogs_trace_filter list (no restart) */
 void mme_ue_debug(mme_ue_t *mme_ue, const char *fmt, ...)
     OGS_GNUC_PRINTF(2, 3);

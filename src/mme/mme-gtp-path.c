@@ -483,6 +483,22 @@ int mme_gtp_send_modify_bearer_request(
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
+    if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST) {
+        enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+
+        if (rv == OGS_OK) {
+            char buf[OGS_ADDRSTRLEN];
+
+            mme_ue_service_info(mme_ue, enb_ue,
+                    "S11 Modify Bearer -> at [%s]:%d",
+                    OGS_ADDR(&sgw_ue->gnode->addr, buf),
+                    OGS_PORT(&sgw_ue->gnode->addr));
+            mme_ue_service_progress(mme_ue, enb_ue, "mbr_req");
+        } else {
+            mme_ue_service_progress(mme_ue, enb_ue, "mbr_req_fail");
+        }
+    }
+
     return rv;
 }
 

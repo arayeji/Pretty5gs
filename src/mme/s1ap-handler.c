@@ -1333,9 +1333,18 @@ void s1ap_handle_initial_context_setup_response(
         }
 
         if (ogs_list_count(&mme_ue->bearer_to_modify_list)) {
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_modify_bearer_request(
-                    enb_ue, mme_ue, uli_presence, 0));
+            if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST)
+                mme_ue_service_progress(mme_ue, enb_ue, "ics_rsp");
+
+            if (mme_gtp_send_modify_bearer_request(
+                    enb_ue, mme_ue, uli_presence, 0) != OGS_OK) {
+                if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST)
+                    mme_ue_service_progress(mme_ue, enb_ue, "mbr_req_fail");
+            }
+        } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST) {
+            mme_ue_service_error(mme_ue, enb_ue,
+                    "InitialContextSetupResponse: no bearer to modify");
+            mme_ue_service_progress(mme_ue, enb_ue, "ics_rsp_no_bearer");
         }
     }
 
@@ -1421,6 +1430,9 @@ void s1ap_handle_initial_context_setup_failure(
     }
 
     if (mme_ue) {
+        if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST)
+            mme_ue_service_progress(mme_ue, enb_ue, "ics_fail");
+
         /*
          * if T3450 is running, Attach complete will be sent.
          * So, we need to clear all the timer at this point.

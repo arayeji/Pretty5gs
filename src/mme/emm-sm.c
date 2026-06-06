@@ -654,6 +654,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
 
         if (message->emm.h.security_header_type
                 == OGS_NAS_SECURITY_HEADER_FOR_SERVICE_REQUEST_MESSAGE) {
+            ogs_mme_trace_set(enb_ue, mme_ue, NULL, "service-req");
             OGS_TLOG_INFO("Service request");
 
             if (state != EMM_COMMON_STATE_REGISTERED) {
@@ -722,8 +723,16 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             CLEAR_S1_CONTEXT(mme_ue);
 
             r = s1ap_send_initial_context_setup_request(mme_ue);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
+            if (r != OGS_OK) {
+                mme_ue_service_error(mme_ue, enb_ue,
+                        "InitialContextSetupRequest failed");
+                mme_ue_service_progress(mme_ue, enb_ue, "ics_fail");
+                MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
+                break;
+            }
+            mme_ue_service_info(mme_ue, enb_ue,
+                    "InitialContextSetupRequest sent");
+            mme_ue_service_progress(mme_ue, enb_ue, "ics_sent");
             OGS_FSM_TRAN(s, &emm_state_registered);
             break;
         }
