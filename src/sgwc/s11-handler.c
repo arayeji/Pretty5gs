@@ -661,6 +661,11 @@ void sgwc_s11_handle_modify_bearer_request(
         /* Data Plane(DL) : eNB-S1U */
         enb_s1u_teid =
             req->bearer_contexts_to_be_modified[i].s1_u_enodeb_f_teid.data;
+        if (!enb_s1u_teid) {
+            ogs_error("No eNB-S1U F-TEID data");
+            cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
+            goto cleanup;
+        }
         dl_tunnel->remote_teid = be32toh(enb_s1u_teid->teid);
 
         rv = ogs_gtp2_f_teid_to_ip(enb_s1u_teid, &remote_ip);
@@ -747,8 +752,10 @@ next_bearer:
 
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
         sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);
-    ogs_debug("    ENB_S1U_TEID[%d] SGW_S1U_TEID[%d]",
-        dl_tunnel->remote_teid, dl_tunnel->local_teid);
+    if (dl_tunnel) {
+        ogs_debug("    ENB_S1U_TEID[%d] SGW_S1U_TEID[%d]",
+            dl_tunnel->remote_teid, dl_tunnel->local_teid);
+    }
 
     ogs_list_for_each_entry(&pfcp_xact_list, pfcp_xact, tmpnode) {
         if (pfcp_xact->modify_flags & OGS_PFCP_MODIFY_SESSION) {
