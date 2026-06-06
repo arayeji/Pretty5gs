@@ -199,6 +199,19 @@ typedef struct mme_context_s {
         ogs_plmn_id_t plmn_id;
     } access_control[OGS_MAX_NUM_OF_PLMN_PER_MME];
 
+    /*
+     * IMSI ACL for HSS (S6a): block AIR/ULR when IMSI is not allowed.
+     * Checked against imsi_acl prefixes, access_control PLMNs, and
+     * hss_map when require_hss_map is enabled.
+     */
+#define MME_MAX_IMSI_ACL 64
+    bool            require_hss_map;
+    bool            require_hss_map_explicit;
+    int             num_of_imsi_acl;
+    struct {
+        char prefix[OGS_MAX_IMSI_BCD_LEN + 1];
+    } imsi_acl[MME_MAX_IMSI_ACL];
+
     /* defined in 'nas_ies.h'
      * #define NAS_SECURITY_ALGORITHMS_EIA0        0
      * #define NAS_SECURITY_ALGORITHMS_128_EEA1    1
@@ -1305,6 +1318,10 @@ void mme_hssmap_remove(mme_hssmap_t *hssmap);
 void mme_hssmap_remove_all(void);
 
 mme_hssmap_t *mme_hssmap_find_by_imsi_bcd(const char *imsi_bcd);
+
+bool mme_imsi_hss_allowed(mme_ue_t *mme_ue);
+uint8_t mme_imsi_hss_reject_emm_cause(mme_ue_t *mme_ue);
+uint8_t mme_emm_cause_from_access_control_imsi_bcd(const char *imsi_bcd);
 
 mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr);
 int mme_enb_remove(mme_enb_t *enb);

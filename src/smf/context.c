@@ -2450,7 +2450,15 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
         }
 
         subnet6 = sess->ipv6->subnet;
-        ogs_assert(subnet6);
+        if (!subnet6) {
+            ogs_error("[%s] UE IPv6 allocated without subnet",
+                    sess->session.name);
+            ogs_hash_set(smf_self()->ipv6_hash,
+                    sess->ipv6->addr, OGS_IPV6_DEFAULT_PREFIX_LEN >> 3, NULL);
+            ogs_pfcp_ue_ip_free(sess->ipv6);
+            sess->ipv6 = NULL;
+            return OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
+        }
 
         sess->paa.len = OGS_IPV6_DEFAULT_PREFIX_LEN;
         memcpy(sess->paa.addr6, sess->ipv6->addr, OGS_IPV6_LEN);
@@ -2467,7 +2475,6 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
                 sess->session.name, sess->session.ue_ip.addr6);
         if (!sess->ipv6) {
             smf_sess_log_ue_ip_fail(smf_ue, sess, AF_INET6, cause_value);
-            ogs_assert(cause_value != OGS_PFCP_CAUSE_REQUEST_ACCEPTED);
             if (sess->ipv4) {
                 ogs_hash_set(smf_self()->ipv4_hash,
                         sess->ipv4->addr, OGS_IPV4_LEN, NULL);
@@ -2478,7 +2485,19 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
         }
 
         subnet6 = sess->ipv6->subnet;
-        ogs_assert(subnet6);
+        if (!subnet6) {
+            ogs_error("[%s] UE IPv6 allocated without subnet",
+                    sess->session.name);
+            ogs_hash_set(smf_self()->ipv4_hash,
+                    sess->ipv4->addr, OGS_IPV4_LEN, NULL);
+            ogs_pfcp_ue_ip_free(sess->ipv4);
+            sess->ipv4 = NULL;
+            ogs_hash_set(smf_self()->ipv6_hash,
+                    sess->ipv6->addr, OGS_IPV6_DEFAULT_PREFIX_LEN >> 3, NULL);
+            ogs_pfcp_ue_ip_free(sess->ipv6);
+            sess->ipv6 = NULL;
+            return OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
+        }
 
         sess->paa.both.addr = sess->ipv4->addr[0];
         sess->paa.both.len = OGS_IPV6_DEFAULT_PREFIX_LEN;
@@ -2488,9 +2507,9 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
         ogs_hash_set(smf_self()->ipv6_hash,
                 sess->ipv6->addr, OGS_IPV6_DEFAULT_PREFIX_LEN >> 3, sess);
     } else {
-        ogs_fatal("Invalid sess->session.session_type[%d]",
+        ogs_error("Invalid sess->session.session_type[%d]",
                 sess->session.session_type);
-        ogs_assert_if_reached();
+        return OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
     }
 
     smf_sess_log_ue_ip_ok(smf_ue, sess);

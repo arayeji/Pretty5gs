@@ -1612,15 +1612,17 @@ void mme_s11_handle_release_access_bearers_response(
                 /* All ENB_UE context
                  * where PartOfS1_interface was requested
                  * REMOVED */
-                if (!enb->s1_reset_ack) {
-                    ogs_warn("No S1 Reset Ack buffer (eNB[%u])",
-                            enb->enb_id);
+                if (!enb || !enb->s1_reset_ack) {
+                    ogs_warn("s1_reset_ack missing, skip (eNB[%u])",
+                            enb ? enb->enb_id : 0);
                     return;
                 }
                 r = s1ap_send_to_enb(
                         enb, enb->s1_reset_ack, S1AP_NON_UE_SIGNALLING);
-                ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
+                if (r != OGS_OK) {
+                    ogs_warn("s1ap_send_to_enb() failed [%d]", r);
+                    return;
+                }
 
                 /* Clear S1-Reset Ack Buffer */
                 enb->s1_reset_ack = NULL;
@@ -1909,7 +1911,10 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
 
             bearer->sgw_dl_teid = be32toh(teid->teid);
             rv = ogs_gtp2_f_teid_to_ip(teid, &bearer->sgw_dl_ip);
-            ogs_assert(rv == OGS_OK);
+            if (rv != OGS_OK) {
+                ogs_error("Invalid S4-U SGSN F-TEID");
+                return;
+            }
         }
         if (rsp->bearer_contexts[i].s2b_u_epdg_f_teid_5.presence) {
             teid = rsp->bearer_contexts[i].s2b_u_epdg_f_teid_5.data;
@@ -1917,7 +1922,10 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
 
             bearer->sgw_ul_teid = be32toh(teid->teid);
             rv = ogs_gtp2_f_teid_to_ip(teid, &bearer->sgw_ul_ip);
-            ogs_assert(rv == OGS_OK);
+            if (rv != OGS_OK) {
+                ogs_error("Invalid S2b-U ePDG F-TEID");
+                return;
+            }
         }
     }
 

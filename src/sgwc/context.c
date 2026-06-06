@@ -655,7 +655,11 @@ sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len)
 
     /* Set SGW-S11-TEID */
     ogs_pool_alloc(&sgwc_s11_teid_pool, &sgwc_ue->sgw_s11_teid_node);
-    ogs_assert(sgwc_ue->sgw_s11_teid_node);
+    if (!sgwc_ue->sgw_s11_teid_node) {
+        ogs_error("SGW-S11-TEID pool exhausted");
+        ogs_pool_id_free(&sgwc_ue_pool, sgwc_ue);
+        return NULL;
+    }
 
     sgwc_ue->sgw_s11_teid = *(sgwc_ue->sgw_s11_teid_node);
 
@@ -895,7 +899,12 @@ sgwc_sess_t *sgwc_sess_add(sgwc_ue_t *sgwc_ue, char *apn)
 
     /* Set TEID & SEID */
     ogs_pool_alloc(&sgwc_sxa_seid_pool, &sess->sgwc_sxa_seid_node);
-    ogs_assert(sess->sgwc_sxa_seid_node);
+    if (!sess->sgwc_sxa_seid_node) {
+        ogs_error("SGW-SXA-SEID pool exhausted");
+        ogs_pfcp_pool_final(&sess->pfcp);
+        ogs_pool_id_free(&sgwc_sess_pool, sess);
+        return NULL;
+    }
 
     sess->sgw_s5c_teid = *(sess->sgwc_sxa_seid_node);
     sess->sgwc_sxa_seid = *(sess->sgwc_sxa_seid_node);

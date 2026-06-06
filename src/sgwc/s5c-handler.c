@@ -46,9 +46,15 @@ static void bearer_timeout(ogs_gtp_xact_t *xact, void *data)
     }
 
     sess = sgwc_sess_find_by_id(bearer->sess_id);
-    ogs_assert(sess);
+    if (!sess) {
+        ogs_error("Session has already been removed");
+        return;
+    }
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-    ogs_assert(sgwc_ue);
+    if (!sgwc_ue) {
+        ogs_error("UE context has already been removed");
+        return;
+    }
 
     switch (type) {
     case OGS_GTP2_UPDATE_BEARER_REQUEST_TYPE:
@@ -134,17 +140,31 @@ void sgwc_s5c_handle_create_session_response(
     }
 
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-    ogs_assert(sgwc_ue);
+    if (!sgwc_ue) {
+        ogs_error("No UE Context [Cause:%d]", session_cause);
+        ogs_gtp_send_error_message(
+                s11_xact, 0,
+                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
+        return;
+    }
     ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
     OGS_TLOG_INFO("Create Session Response");
+
+    if (rsp->cause.presence && rsp->cause.data &&
+            !OGS_GTP2_CAUSE_IS_SUCCESS(session_cause)) {
+        ogs_error("GTP Cause from PGW [VALUE:%d]", session_cause);
+        ogs_gtp_send_error_message(
+                s11_xact, sgwc_ue->mme_s11_teid,
+                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, session_cause);
+        return;
+    }
 
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     /*****************************************
      * Check Mandatory/Conditional IE Missing
      *****************************************/
-    ogs_assert(cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
-
     if (rsp->pgw_s5_s8__s2a_s2b_f_teid_for_pmip_based_interface_or_for_gtp_based_control_plane_interface.presence == 0) {
         ogs_error("No GTP TEID [Cause:%d]", session_cause);
         cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
@@ -185,8 +205,6 @@ void sgwc_s5c_handle_create_session_response(
     /********************
      * Check Cause Value
      ********************/
-    ogs_assert(cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
-
     for (i = 0; i < OGS_BEARER_PER_UE; i++) {
         ogs_gtp2_cause_t *cause = NULL;
         if (rsp->bearer_contexts_created[i].cause.presence == 0) {
@@ -391,7 +409,10 @@ void sgwc_s5c_handle_modify_bearer_response(
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-        ogs_assert(sgwc_ue);
+        if (!sgwc_ue) {
+            ogs_error("No UE Context");
+            cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+        }
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
@@ -409,8 +430,6 @@ void sgwc_s5c_handle_modify_bearer_response(
     /*****************************************
      * Check Mandatory/Conditional IE Missing
      *****************************************/
-    ogs_assert(cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
-
     if (rsp->cause.presence == 0) {
         ogs_error("No Cause [VALUE:%d]", session_cause);
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
@@ -431,8 +450,6 @@ void sgwc_s5c_handle_modify_bearer_response(
     /********************
      * Check Cause Value
      ********************/
-    ogs_assert(cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
-
     if (session_cause != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
         ogs_error("GTP Cause [VALUE:%d]", session_cause);
         if (modify_action == OGS_GTP_MODIFY_IN_PATH_SWITCH_REQUEST)
@@ -557,7 +574,10 @@ void sgwc_s5c_handle_delete_session_response(
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-        ogs_assert(sgwc_ue);
+        if (!sgwc_ue) {
+            ogs_error("No UE Context");
+            cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+        }
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
@@ -570,8 +590,6 @@ void sgwc_s5c_handle_delete_session_response(
     /********************
      * Check Cause Value
      ********************/
-    ogs_assert(cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
-
     if (rsp->cause.presence == 0) {
         ogs_error("No Cause [VALUE:%d]", session_cause);
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
@@ -638,7 +656,10 @@ void sgwc_s5c_handle_create_bearer_request(
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-        ogs_assert(sgwc_ue);
+        if (!sgwc_ue) {
+            ogs_error("No UE Context");
+            cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+        }
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
@@ -650,8 +671,6 @@ void sgwc_s5c_handle_create_bearer_request(
     /*****************************************
      * Check Mandatory/Conditional IE Missing
      *****************************************/
-    ogs_assert(cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
-
     if (req->linked_eps_bearer_id.presence == 0) {
         ogs_error("No Linked EBI");
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
@@ -773,18 +792,16 @@ void sgwc_s5c_handle_update_bearer_request(
         sess = NULL;
     } else {
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-        ogs_assert(sgwc_ue);
-
-        if (req->bearer_contexts.presence == 0) {
+        if (!sgwc_ue) {
+            ogs_error("Update Bearer Request: No UE Context");
+            cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+        } else if (req->bearer_contexts.presence == 0) {
             ogs_error("No Bearer");
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
-        }
-        if (req->bearer_contexts.eps_bearer_id.presence == 0) {
+        } else if (req->bearer_contexts.eps_bearer_id.presence == 0) {
             ogs_error("No EPS Bearer ID");
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
-        }
-
-        if (cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+        } else {
             bearer = sgwc_bearer_find_by_sess_ebi(sess,
                         req->bearer_contexts.eps_bearer_id.u8);
             if (!bearer) {
@@ -801,13 +818,21 @@ void sgwc_s5c_handle_update_bearer_request(
         return;
     }
 
-    /********************
-     * Check ALL Context
-     ********************/
-    ogs_assert(sess);
-    ogs_assert(bearer);
-    ogs_assert(sgwc_ue);
-    ogs_assert(sgwc_ue->gnode);
+    if (!sess || !bearer || !sgwc_ue) {
+        ogs_error("Update Bearer Request: missing context after validation");
+        ogs_gtp_send_error_message(s5c_xact, sess ? sess->pgw_s5c_teid : 0,
+                OGS_GTP2_UPDATE_BEARER_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
+        return;
+    }
+
+    if (!sgwc_ue->gnode) {
+        ogs_error("[%s] Update Bearer Request: no S11 peer", sgwc_ue->imsi_bcd);
+        ogs_gtp_send_error_message(s5c_xact, sess->pgw_s5c_teid,
+                OGS_GTP2_UPDATE_BEARER_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+        return;
+    }
 
     ogs_debug("    EBI[%d]", bearer->ebi);
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
@@ -884,7 +909,10 @@ void sgwc_s5c_handle_delete_bearer_request(
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-        ogs_assert(sgwc_ue);
+        if (!sgwc_ue) {
+            ogs_error("No UE Context");
+            cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+        }
 
         if (req->linked_eps_bearer_id.presence == 0 &&
             req->eps_bearer_ids.presence == 0) {
@@ -943,13 +971,21 @@ void sgwc_s5c_handle_delete_bearer_request(
         return;
     }
 
-    /********************
-     * Check ALL Context
-     ********************/
-    ogs_assert(sess);
-    ogs_assert(bearer);
-    ogs_assert(sgwc_ue);
-    ogs_assert(sgwc_ue->gnode);
+    if (!sess || !bearer || !sgwc_ue) {
+        ogs_error("Delete Bearer Request: missing context after validation");
+        ogs_gtp_send_error_message(s5c_xact, sess ? sess->pgw_s5c_teid : 0,
+                OGS_GTP2_DELETE_BEARER_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
+        return;
+    }
+
+    if (!sgwc_ue->gnode) {
+        ogs_error("[%s] Delete Bearer Request: no S11 peer", sgwc_ue->imsi_bcd);
+        ogs_gtp_send_error_message(s5c_xact, sess->pgw_s5c_teid,
+                OGS_GTP2_DELETE_BEARER_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+        return;
+    }
 
     ogs_debug("    EBI[%d]", bearer->ebi);
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
@@ -1052,7 +1088,10 @@ void sgwc_s5c_handle_bearer_resource_failure_indication(
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-        ogs_assert(sgwc_ue);
+        if (!sgwc_ue) {
+            ogs_error("No UE Context");
+            cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+        }
     }
 
     /********************
