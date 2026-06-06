@@ -75,6 +75,15 @@ typedef struct served_gummei_s {
     uint8_t         mme_code[CODE_PER_MME];
 } served_gummei_t;
 
+typedef struct mme_access_control_s {
+    int reject_cause;
+    ogs_plmn_id_t plmn_id;
+    bool plmn_id_configured;
+    char imsi_prefix[OGS_MAX_IMSI_BCD_LEN + 1];
+    ogs_hash_t *tac_hash;
+    ogs_hash_t *enb_id_hash;
+} mme_access_control_t;
+
 typedef struct mme_context_s {
     const char          *diam_conf_path;  /* MME Diameter conf path */
     ogs_diam_config_t   *diam_config;     /* MME Diameter config */
@@ -191,13 +200,10 @@ typedef struct mme_context_s {
     int             num_of_eplmn;
     ogs_plmn_id_t   eplmn[OGS_NAS_MAX_PLMN];
 
-    /* Access Control */
+    /* Access Control (HPLMN / IMSI prefix whitelist; optional TAC/eNB for inbound roam) */
     int             default_reject_cause;
     int             num_of_access_control;
-    struct {
-        int reject_cause;
-        ogs_plmn_id_t plmn_id;
-    } access_control[OGS_MAX_NUM_OF_PLMN_PER_MME];
+    mme_access_control_t access_control[OGS_MAX_NUM_OF_PLMN_PER_MME];
 
     /*
      * IMSI ACL for HSS (S6a): block AIR/ULR when IMSI is not allowed.
@@ -1320,6 +1326,8 @@ void mme_hssmap_remove_all(void);
 mme_hssmap_t *mme_hssmap_find_by_imsi_bcd(const char *imsi_bcd);
 
 bool mme_imsi_hss_allowed(mme_ue_t *mme_ue);
+
+uint8_t mme_emm_cause_from_access_control_imsi_bcd(const char *imsi_bcd);
 
 mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr);
 int mme_enb_remove(mme_enb_t *enb);

@@ -112,15 +112,21 @@ Enforcement is active when **any** of these are configured:
 
 | Mechanism | Config | Behaviour |
 |-----------|--------|-----------|
-| PLMN whitelist | `access_control` | Same rules as attach: listed HPLMNs allowed; others rejected (optional per-PLMN `reject_cause`, optional `default_reject_cause`) |
+| PLMN whitelist | `access_control` (`plmn_id`) | Listed HPLMNs allowed for **all** subscribers; others rejected (optional `reject_cause`, `default_reject_cause`) |
+| Inbound roam site list | `access_control` (`imsi_prefix` + optional `tac` / `enb_id`) | **Inbound roam only** (IMSI HPLMN ≠ serving TAI PLMN): IMSI must match prefix; if `tac` / `enb_id` are set, UE location must match |
 | IMSI prefix whitelist | `imsi_acl` | Only IMSIs matching at least one prefix may reach HSS |
 | HSS map | `hss_map` + `require_hss_map` | Only HPLMNs listed in `hss_map` may reach HSS. **`require_hss_map` auto-enables** when `hss_map` is present unless you set `require_hss_map: false` |
 
 ```yaml
 mme:
   access_control:
-    - plmn_id: { mcc: 999, mnc: 70 }
+    - plmn_id: { mcc: 999, mnc: 70 }   # home / all subscribers
     - plmn_id: { mcc: 999, mnc: 71 }
+    - default_reject_cause: 13
+    - imsi_prefix: "00101"              # inbound roam only
+      reject_cause: 13
+      tac: [10003, 10012]              # optional; omit = any TAC for this prefix
+      enb_id: [260003, 450004]        # optional; omit = any eNB for this prefix
 
   hss_map:
     - plmn_id: { mcc: 999, mnc: 70 }
@@ -135,10 +141,21 @@ mme:
   #   - 00101
 ```
 
-Log line when blocked:
+Generate `access_control` from a site CSV (TAC + eNodeB columns):
 
 ```bash
-grep 'IMSI not in ACL' /var/log/open5gs/mme.log
+python scripts/gen_roam_access_from_csv.py \
+  --csv "roam-sites.example.csv" \
+  --prefix 00101 \
+  --output configs/open5gs/roam-access.yaml
+```
+
+Merge with home PLMN rows in `configs/open5gs/mme-access-final.yaml` (example template with `mme.time.message.duration` and PLMN 999-70 / 432-46).
+
+Log lines when blocked:
+
+```bash
+grep -E 'inbound roam|access_control|IMSI not in ACL' /var/log/open5gs/mme.log
 ```
 
 Verify binary after deploy:

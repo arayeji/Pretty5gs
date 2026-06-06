@@ -28,11 +28,33 @@
 #include "mme-gtp-path.h"
 
 #include "emm-handler.h"
+#include "mme-roam-access.h"
 
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __emm_log_domain
 
-static uint8_t emm_cause_from_access_control(mme_ue_t *mme_ue);
+static uint8_t emm_inbound_roam_access_reject(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue, const char *imsi_bcd,
+        bool tau)
+{
+    int r;
+    uint8_t emm_cause;
+
+    emm_cause = mme_inbound_roam_access_emm_cause(mme_ue, enb_ue);
+    if (emm_cause == OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED)
+        return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
+
+    ogs_error("[%s] Rejected by inbound roam access policy [emm_cause:%d]",
+            imsi_bcd, emm_cause);
+    if (tau)
+        r = nas_eps_send_tau_reject(enb_ue, mme_ue, emm_cause);
+    else
+        r = nas_eps_send_attach_reject(enb_ue, mme_ue,
+                emm_cause, OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
+    ogs_expect(r == OGS_OK);
+    ogs_assert(r != OGS_ERROR);
+    return emm_cause;
+}
 
 int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         ogs_nas_eps_attach_request_t *attach_request, ogs_pkbuf_t *pkbuf)
@@ -227,9 +249,20 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         memcpy(&mme_ue->nas_mobile_identity_imsi,
             &eps_mobile_identity->imsi, eps_mobile_identity->length);
 
-        emm_cause = emm_cause_from_access_control(mme_ue);
+        ogs_nas_eps_imsi_to_bcd(
+            &eps_mobile_identity->imsi, eps_mobile_identity->length,
+            imsi_bcd);
+
+        emm_cause = mme_emm_cause_from_access_control_imsi_bcd(imsi_bcd);
         if (emm_cause != OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED) {
-            ogs_error("Rejected by PLMN-ID access control");
+            ogs_plmn_id_t home_plmn_id;
+            char home_plmn[OGS_PLMNIDSTRLEN];
+
+            ogs_plmn_id_from_imsi_bcd(imsi_bcd, &home_plmn_id);
+            ogs_plmn_id_to_string(&home_plmn_id, home_plmn);
+            ogs_error("[%s] Rejected by PLMN-ID access control "
+                    "[home_plmn:%s emm_cause:%d]",
+                    imsi_bcd, home_plmn, emm_cause);
             r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                     emm_cause, OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
             ogs_expect(r == OGS_OK);
@@ -237,10 +270,11 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
             return OGS_ERROR;
         }
 
-        ogs_nas_eps_imsi_to_bcd(
-            &eps_mobile_identity->imsi, eps_mobile_identity->length,
-            imsi_bcd);
         mme_ue_set_imsi(mme_ue, imsi_bcd);
+
+        if (emm_inbound_roam_access_reject(enb_ue, mme_ue, imsi_bcd, false) !=
+                OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED)
+            return OGS_ERROR;
 
         ogs_debug("    IMSI[%s]", imsi_bcd);
 
@@ -465,9 +499,19 @@ int emm_handle_identity_response(
         memcpy(&mme_ue->nas_mobile_identity_imsi,
             &mobile_identity->imsi, mobile_identity->length);
 
-        emm_cause = emm_cause_from_access_control(mme_ue);
+        ogs_nas_eps_imsi_to_bcd(
+            &mobile_identity->imsi, mobile_identity->length, imsi_bcd);
+
+        emm_cause = mme_emm_cause_from_access_control_imsi_bcd(imsi_bcd);
         if (emm_cause != OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED) {
-            ogs_error("Rejected by PLMN-ID access control");
+            ogs_plmn_id_t home_plmn_id;
+            char home_plmn[OGS_PLMNIDSTRLEN];
+
+            ogs_plmn_id_from_imsi_bcd(imsi_bcd, &home_plmn_id);
+            ogs_plmn_id_to_string(&home_plmn_id, home_plmn);
+            ogs_error("[%s] Rejected by PLMN-ID access control "
+                    "[home_plmn:%s emm_cause:%d]",
+                    imsi_bcd, home_plmn, emm_cause);
             r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                     emm_cause, OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
             ogs_expect(r == OGS_OK);
@@ -475,9 +519,11 @@ int emm_handle_identity_response(
             return OGS_ERROR;
         }
 
-        ogs_nas_eps_imsi_to_bcd(
-            &mobile_identity->imsi, mobile_identity->length, imsi_bcd);
         mme_ue_set_imsi(mme_ue, imsi_bcd);
+
+        if (emm_inbound_roam_access_reject(enb_ue, mme_ue, imsi_bcd, false) !=
+                OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED)
+            return OGS_ERROR;
 
         if (mme_ue->imsi_len != OGS_MAX_IMSI_LEN) {
             ogs_error("Invalid IMSI LEN[%d]", mme_ue->imsi_len);
@@ -764,6 +810,13 @@ int emm_handle_tau_request(
     }
     ogs_debug("    SERVED_TAI_INDEX[%d]", served_tai_index);
 
+    if (MME_UE_HAVE_IMSI(mme_ue)) {
+        if (emm_inbound_roam_access_reject(
+                enb_ue, mme_ue, mme_ue->imsi_bcd, true) !=
+                OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED)
+            return OGS_ERROR;
+    }
+
     /* Store UE specific information */
     if (tau_request->presencemask &
         OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_LAST_VISITED_REGISTERED_TAI_PRESENT) {
@@ -979,46 +1032,4 @@ int emm_handle_security_mode_complete(
     }
 
     return OGS_OK;
-}
-
-static uint8_t emm_cause_from_access_control(mme_ue_t *mme_ue)
-{
-    ogs_nas_mobile_identity_imsi_t *nas_mobile_identity_imsi = NULL;
-    int i;
-
-    ogs_assert(mme_ue);
-    nas_mobile_identity_imsi = &mme_ue->nas_mobile_identity_imsi;
-
-    /* No Access Control */
-    if (mme_self()->num_of_access_control == 0)
-        return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
-
-    for (i = 0; i < mme_self()->num_of_access_control; i++) {
-        if ((nas_mobile_identity_imsi->digit1 ==
-                mme_self()->access_control[i].plmn_id.mcc1 &&
-             nas_mobile_identity_imsi->digit2 ==
-                mme_self()->access_control[i].plmn_id.mcc2 &&
-             nas_mobile_identity_imsi->digit3 ==
-                mme_self()->access_control[i].plmn_id.mcc3) &&
-           ((nas_mobile_identity_imsi->digit4 ==
-                mme_self()->access_control[i].plmn_id.mnc2 &&
-             nas_mobile_identity_imsi->digit5 ==
-                 mme_self()->access_control[i].plmn_id.mnc3) ||
-            (nas_mobile_identity_imsi->digit4 ==
-                 mme_self()->access_control[i].plmn_id.mnc1 &&
-             nas_mobile_identity_imsi->digit5 ==
-                 mme_self()->access_control[i].plmn_id.mnc2 &&
-             nas_mobile_identity_imsi->digit6 ==
-                 mme_self()->access_control[i].plmn_id.mnc3))) {
-            if (mme_self()->access_control[i].reject_cause)
-                return mme_self()->access_control[i].reject_cause;
-            else
-                return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
-        }
-    }
-
-    if (mme_self()->default_reject_cause)
-        return mme_self()->default_reject_cause;
-
-    return OGS_NAS_EMM_CAUSE_PLMN_NOT_ALLOWED;
 }
