@@ -1223,11 +1223,25 @@ void sgwc_sxa_handle_session_modification_response(
             memset(&sgw_s5u_teid, 0, sizeof(ogs_gtp2_f_teid_t));
             sgw_s5u_teid.interface_type = OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U;
             sgw_s5u_teid.teid = htobe32(dl_tunnel->local_teid);
-            ogs_assert(dl_tunnel->local_addr || dl_tunnel->local_addr6);
+            if (!dl_tunnel->local_addr && !dl_tunnel->local_addr6) {
+                ogs_error("No S5-U local F-TEID");
+                ogs_gtp_send_error_message(
+                        s5c_xact, sess->pgw_s5c_teid,
+                        OGS_GTP2_CREATE_BEARER_RESPONSE_TYPE,
+                        OGS_GTP2_CAUSE_GRE_KEY_NOT_FOUND);
+                return;
+            }
             rv = ogs_gtp2_sockaddr_to_f_teid(
                     dl_tunnel->local_addr, dl_tunnel->local_addr6,
                     &sgw_s5u_teid, &len);
-            ogs_assert(rv == OGS_OK);
+            if (rv != OGS_OK) {
+                ogs_error("ogs_gtp2_sockaddr_to_f_teid(S5U) failed");
+                ogs_gtp_send_error_message(
+                        s5c_xact, sess->pgw_s5c_teid,
+                        OGS_GTP2_CREATE_BEARER_RESPONSE_TYPE,
+                        OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+                return;
+            }
             gtp_rsp->bearer_contexts.s5_s8_u_sgw_f_teid.presence = 1;
             gtp_rsp->bearer_contexts.s5_s8_u_sgw_f_teid.data = &sgw_s5u_teid;
             gtp_rsp->bearer_contexts.s5_s8_u_sgw_f_teid.len = len;
@@ -1318,17 +1332,29 @@ void sgwc_sxa_handle_session_modification_response(
                         if (tunnel->interface_type ==
                             OGS_GTP2_F_TEID_SGW_GTP_U_FOR_DL_DATA_FORWARDING) {
 
+                            if (!tunnel->local_addr && !tunnel->local_addr6) {
+                                ogs_error("No local F-TEID for DL indirect "
+                                        "forwarding tunnel [EBI:%d]",
+                                        bearer->ebi);
+                                cause.value = OGS_GTP2_CAUSE_SYSTEM_FAILURE;
+                                goto indirect_fail;
+                            }
+
                             memset(&rsp_dl_teid[i],
                                     0, sizeof(ogs_gtp2_f_teid_t));
                             rsp_dl_teid[i].interface_type =
                                 tunnel->interface_type;
                             rsp_dl_teid[i].teid = htobe32(tunnel->local_teid);
-                            ogs_assert(
-                                    tunnel->local_addr || tunnel->local_addr6);
                             rv = ogs_gtp2_sockaddr_to_f_teid(
                                 tunnel->local_addr, tunnel->local_addr6,
                                 &rsp_dl_teid[i], &len);
-                            ogs_assert(rv == OGS_OK);
+                            if (rv != OGS_OK) {
+                                ogs_error("ogs_gtp2_sockaddr_to_f_teid(DL "
+                                        "indirect) failed [EBI:%d]",
+                                        bearer->ebi);
+                                cause.value = OGS_GTP2_CAUSE_SYSTEM_FAILURE;
+                                goto indirect_fail;
+                            }
                             gtp_rsp->bearer_contexts[i].
                                 s4_u_sgsn_f_teid.presence = 1;
                             gtp_rsp->bearer_contexts[i].
@@ -1339,17 +1365,29 @@ void sgwc_sxa_handle_session_modification_response(
                         } else if (tunnel->interface_type ==
                             OGS_GTP2_F_TEID_SGW_GTP_U_FOR_UL_DATA_FORWARDING) {
 
+                            if (!tunnel->local_addr && !tunnel->local_addr6) {
+                                ogs_error("No local F-TEID for UL indirect "
+                                        "forwarding tunnel [EBI:%d]",
+                                        bearer->ebi);
+                                cause.value = OGS_GTP2_CAUSE_SYSTEM_FAILURE;
+                                goto indirect_fail;
+                            }
+
                             memset(&rsp_ul_teid[i],
                                 0, sizeof(ogs_gtp2_f_teid_t));
                             rsp_ul_teid[i].teid = htobe32(tunnel->local_teid);
                             rsp_ul_teid[i].interface_type =
                                 tunnel->interface_type;
-                            ogs_assert(
-                                    tunnel->local_addr || tunnel->local_addr6);
                             rv = ogs_gtp2_sockaddr_to_f_teid(
                                 tunnel->local_addr, tunnel->local_addr6,
                                 &rsp_ul_teid[i], &len);
-                            ogs_assert(rv == OGS_OK);
+                            if (rv != OGS_OK) {
+                                ogs_error("ogs_gtp2_sockaddr_to_f_teid(UL "
+                                        "indirect) failed [EBI:%d]",
+                                        bearer->ebi);
+                                cause.value = OGS_GTP2_CAUSE_SYSTEM_FAILURE;
+                                goto indirect_fail;
+                            }
                             gtp_rsp->bearer_contexts[i].
                                 s2b_u_epdg_f_teid_5.presence = 1;
                             gtp_rsp->bearer_contexts[i].
@@ -1375,6 +1413,15 @@ void sgwc_sxa_handle_session_modification_response(
                         gtp_rsp->bearer_contexts[i].cause.data = &cause;
                         gtp_rsp->bearer_contexts[i].cause.len = sizeof(cause);
                     }
+                }
+
+indirect_fail:
+                if (cause.value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+                    ogs_gtp_send_error_message(
+                            s11_xact, sgwc_ue->mme_s11_teid,
+                            OGS_GTP2_CREATE_INDIRECT_DATA_FORWARDING_TUNNEL_RESPONSE_TYPE,
+                            cause.value);
+                    return;
                 }
 
                 send_message.h.type =
@@ -1889,9 +1936,10 @@ void sgwc_sxa_handle_session_deletion_response(
     }
 
 cleanup:
-    if (sess)
+    if (sess) {
+        sess->sgwu_sxa_seid = 0;
         sgwc_sess_remove(sess);
-    else
+    } else
         ogs_error("No Session");
 }
 

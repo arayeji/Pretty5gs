@@ -553,6 +553,26 @@ int sgwc_pfcp_send_session_deletion_request(
     return rv;
 }
 
+void sgwc_sess_purge_upf(sgwc_sess_t *sess)
+{
+    sgwc_ue_t *sgwc_ue = NULL;
+    uint64_t sgwu_seid = 0;
+
+    if (!sess || !sess->sgwu_sxa_seid || !sess->pfcp_node)
+        return;
+
+    sgwu_seid = sess->sgwu_sxa_seid;
+    sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+    if (sgwc_pfcp_send_session_deletion_request(
+            sess, OGS_INVALID_POOL_ID, NULL) != OGS_OK) {
+        ogs_warn("[%s] Orphan PFCP session purge failed (SGWU-SEID=0x%llx)",
+                sgwc_ue ? sgwc_ue->imsi_bcd : "-",
+                (unsigned long long)sgwu_seid);
+    }
+
+    sess->sgwu_sxa_seid = 0;
+}
+
 int sgwc_pfcp_send_session_report_response(
         ogs_pfcp_xact_t *xact, sgwc_sess_t *sess, uint8_t cause)
 {
