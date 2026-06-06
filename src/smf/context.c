@@ -1902,7 +1902,7 @@ smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)
  * Decode GTP APN IE and derive APN-NI for session.name (subnet, UPF, Gx).
  * Roaming CSR often carries a full APN (e.g. internet.mnc070.mcc999.gprs).
  */
-static bool smf_gtp_apn_parse(
+bool smf_gtp_apn_parse(
         char *apn_ni, char **full_apn_out,
         void *apn_data, int apn_len)
 {

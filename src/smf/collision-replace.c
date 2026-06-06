@@ -23,7 +23,7 @@
 #include "smf-sm.h"
 #include "smf-trace.h"
 
-void smf_ue_collision_clear(smf_ue_t *smf_ue)
+static void smf_ue_collision_clear(smf_ue_t *smf_ue)
 {
     ogs_assert(smf_ue);
 
@@ -257,7 +257,6 @@ void smf_sess_collision_replace_complete(smf_sess_t *old_sess)
     smf_event_t ev;
     ogs_gtp2_message_t gtp2_message;
     ogs_gtp1_message_t gtp1_message;
-    ogs_gtp_xact_t *gtp_xact = NULL;
     ogs_pkbuf_t *pkbuf = NULL;
     int rv;
 
@@ -273,7 +272,6 @@ void smf_sess_collision_replace_complete(smf_sess_t *old_sess)
     }
 
     pkbuf = smf_ue->collision_replace.pkbuf;
-    gtp_xact = ogs_gtp_xact_find_by_id(smf_ue->collision_replace.gtp_xact_id);
 
     old_sess->collision_replace = false;
     smf_sess_remove(old_sess);

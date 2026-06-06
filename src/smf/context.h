@@ -1002,6 +1002,10 @@ void smf_sess_set_paging_n1n2message_location(
 void smf_sess_remove(smf_sess_t *sess);
 void smf_sess_remove_all(smf_ue_t *smf_ue);
 
+bool smf_gtp_apn_parse(
+        char *apn_ni, char **full_apn_out,
+        void *apn_data, int apn_len);
+
 smf_sess_t *smf_sess_find(uint32_t index);
 smf_sess_t *smf_sess_find_by_teid(uint32_t teid);
 smf_sess_t *smf_sess_find_by_seid(uint64_t seid);
