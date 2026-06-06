@@ -31,25 +31,26 @@ Upstream docs: [open5gs.org](https://open5gs.org/open5gs/docs/). This README des
 
 ## Build and install
 
-Same as Open5GS (Meson/Ninja). Use **one prefix** for all libs and binaries (do not mix `/usr/lib` and `/usr/local/lib`).
+Use **`build.sh`** (release by default). One prefix for all libs and binaries (do not mix `/usr/lib` and `/usr/local/lib`).
 
 ```bash
-meson setup build --prefix=/usr
+./build.sh                                    # release compile only
+MYSQL_PCRF=1 PREFIX=/usr INSTALL=1 ./build.sh # release + install + restart EPC daemons
+BUILDTYPE=debug ./build.sh                    # debug symbols for gdb
+```
+
+Manual Meson (same as `./build.sh` defaults):
+
+```bash
+meson setup build --prefix=/usr --buildtype=release
 ninja -C build
 sudo ninja -C build install
 sudo ldconfig
 ```
 
-After any change under `lib/app/` or `lib/crypt/`, always run **`ninja install`** (or copy **both** `libogsapp` and `libogscrypt` from the same build). Partial installs cause `undefined symbol: ogs_milenage_k4_apply_config` on every daemon.
+See **`build.md`** for the full server recipe (PyHSS MySQL, debug vs release, verify).
 
-Verify:
-
-```bash
-ldd /usr/bin/open5gs-sgwcd | grep -E 'ogsapp|ogscrypt'
-nm -D /usr/lib/x86_64-linux-gnu/libogscrypt.so.2 | grep ogs_milenage_k4_apply_config
-```
-
-PyHSS MySQL on PCRF requires `meson setup build -Dmysql_pcrf=true` and MySQL client dev packages.
+After any change under `lib/app/` or `lib/crypt/`, always run **`ninja install`** from the same build. Partial installs cause missing `libogsapp`/`libogscrypt` symbols on every daemon.
 
 ## Optional features (disabled by default)
 
