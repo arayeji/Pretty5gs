@@ -157,6 +157,14 @@ int ogs_pfcp_sendto(ogs_pfcp_node_t *node, ogs_pkbuf_t *pkbuf)
     } else
         ogs_assert_if_reached();
 
+    if (sock->fd == INVALID_SOCKET) {
+        char buf[OGS_ADDRSTRLEN];
+
+        ogs_error("ogs_pfcp_sendto(): PFCP socket closed peer [%s]:%d",
+                OGS_ADDR(addr, buf), OGS_PORT(addr));
+        return OGS_ERROR;
+    }
+
     sent = ogs_sendto(sock->fd, pkbuf->data, pkbuf->len, 0, addr);
     if (sent < 0 || sent != pkbuf->len) {
         if (ogs_socket_errno != OGS_EAGAIN) {

@@ -20,6 +20,7 @@
 #include "sbi-path.h"
 #include "pfcp-path.h"
 #include "collision-replace.h"
+#include "smf-trace.h"
 
 /* Converts PFCP "Usage Report" "Report Trigger" bitmask to Gy "Reporting-Reason" AVP enum value.
  * PFCP: 3GPP TS 29.244 sec 8.2.41
@@ -293,8 +294,19 @@ static void sess_5gc_timeout(ogs_pfcp_xact_t *xact, void *data)
     ogs_assert(smf_ue);
 
     switch (type) {
-    case OGS_PFCP_SESSION_ESTABLISHMENT_REQUEST_TYPE:
-        ogs_warn("No PFCP session establishment response");
+    case OGS_PFCP_SESSION_ESTABLISHMENT_REQUEST_TYPE: {
+        char sgw_peer[OGS_ADDRSTRLEN];
+        char upf_peer[OGS_ADDRSTRLEN];
+        const char *apn = sess->session.name ? sess->session.name : "-";
+
+        smf_log_sgw_peer(sgw_peer, sizeof(sgw_peer), sess);
+        smf_log_upf_peer(upf_peer, sizeof(upf_peer), sess);
+        ogs_error("[%s] N4 timeout: no Session Establishment Response "
+                "APN[%s] PSI[%d] SGW[%s] UPF[%s] smf_seid[0x%llx]",
+                smf_log_id(smf_ue), apn, sess->psi,
+                sgw_peer[0] ? sgw_peer : "-",
+                upf_peer[0] ? upf_peer : "-",
+                (unsigned long long)sess->smf_n4_seid);
 
         e = smf_event_new(SMF_EVT_N4_TIMER);
         ogs_assert(e);
@@ -308,24 +320,58 @@ static void sess_5gc_timeout(ogs_pfcp_xact_t *xact, void *data)
             ogs_event_free(e);
         }
         break;
-    case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE:
-        strerror = ogs_msprintf("[%s:%d] No PFCP session modification response",
-                smf_ue->supi, sess->psi);
-        ogs_assert(strerror);
+    }
+    case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE: {
+        char sgw_peer[OGS_ADDRSTRLEN];
+        char upf_peer[OGS_ADDRSTRLEN];
+        const char *apn = sess->session.name ? sess->session.name : "-";
 
-        ogs_error("%s", strerror);
+        smf_log_sgw_peer(sgw_peer, sizeof(sgw_peer), sess);
+        smf_log_upf_peer(upf_peer, sizeof(upf_peer), sess);
+        ogs_error("[%s] N4 timeout: no Session Modification Response "
+                "APN[%s] PSI[%d] SGW[%s] UPF[%s] smf_seid[0x%llx]",
+                smf_log_id(smf_ue), apn, sess->psi,
+                sgw_peer[0] ? sgw_peer : "-",
+                upf_peer[0] ? upf_peer : "-",
+                (unsigned long long)sess->smf_n4_seid);
+
         if (stream) {
+            strerror = ogs_msprintf(
+                    "[%s] PSI[%d] N4 modification timeout APN[%s] SGW[%s] UPF[%s]",
+                    smf_log_id(smf_ue), sess->psi, apn,
+                    sgw_peer[0] ? sgw_peer : "-",
+                    upf_peer[0] ? upf_peer : "-");
+        } else {
+            strerror = NULL;
+        }
+
+        if (strerror) {
+            ogs_error("%s", strerror);
             smf_sbi_send_sm_context_update_error_log(
                 stream, OGS_SBI_HTTP_STATUS_GATEWAY_TIMEOUT, strerror, NULL);
+            ogs_free(strerror);
         }
-        ogs_free(strerror);
         break;
+    }
     case OGS_PFCP_SESSION_DELETION_REQUEST_TYPE:
         trigger = xact->delete_trigger;
         ogs_assert(trigger);
 
-        strerror = ogs_msprintf("[%s:%d] No PFCP session deletion response[%d]",
-                smf_ue->supi, sess->psi, trigger);
+        {
+            char sgw_peer[OGS_ADDRSTRLEN];
+            char upf_peer[OGS_ADDRSTRLEN];
+            const char *apn = sess->session.name ? sess->session.name : "-";
+
+            smf_log_sgw_peer(sgw_peer, sizeof(sgw_peer), sess);
+            smf_log_upf_peer(upf_peer, sizeof(upf_peer), sess);
+            strerror = ogs_msprintf(
+                    "[%s] N4 deletion timeout PSI[%d] trigger[%d] "
+                    "APN[%s] SGW[%s] UPF[%s] smf_seid[0x%llx]",
+                    smf_log_id(smf_ue), sess->psi, trigger, apn,
+                    sgw_peer[0] ? sgw_peer : "-",
+                    upf_peer[0] ? upf_peer : "-",
+                    (unsigned long long)sess->smf_n4_seid);
+        }
         ogs_assert(strerror);
 
         ogs_error("%s", strerror);

@@ -40,6 +40,7 @@
 #include "pfcp-path.h"
 #include "s5c-build.h"
 #include "gn-build.h"
+#include "smf-trace.h"
 
 static bool check_if_router_solicit(ogs_pkbuf_t *pkbuf);
 static void send_router_advertisement(smf_sess_t *sess, uint8_t *ip6_dst);
@@ -760,17 +761,35 @@ static void bearer_timeout(ogs_gtp_xact_t *xact, void *data)
     ogs_assert(smf_ue);
 
     switch (type) {
-    case OGS_GTP2_DELETE_BEARER_REQUEST_TYPE:
-        ogs_error("[%s] No Delete Bearer Response", smf_ue->imsi_bcd);
+    case OGS_GTP2_DELETE_BEARER_REQUEST_TYPE: {
+        char sgw_peer[OGS_ADDRSTRLEN];
+        char upf_peer[OGS_ADDRSTRLEN];
+
+        smf_log_sgw_peer(sgw_peer, sizeof(sgw_peer), sess);
+        smf_log_upf_peer(upf_peer, sizeof(upf_peer), sess);
+        ogs_error("[%s] S5 timeout: no Delete Bearer Response "
+                "APN[%s] EBI[%d] SGW[%s] UPF[%s]",
+                smf_log_id(smf_ue),
+                sess->session.name ? sess->session.name : "-",
+                bearer->ebi,
+                sgw_peer[0] ? sgw_peer : "-",
+                upf_peer[0] ? upf_peer : "-");
         ogs_assert(OGS_OK ==
             smf_epc_pfcp_send_one_bearer_modification_request(
                 bearer, OGS_INVALID_POOL_ID, OGS_PFCP_MODIFY_REMOVE,
                 OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED,
                 OGS_GTP2_CAUSE_UNDEFINED_VALUE));
         break;
-    default:
-        ogs_error("GTP Timeout : IMSI[%s] Message-Type[%d]",
-                smf_ue->imsi_bcd, type);
+    }
+    default: {
+        char sgw_peer[OGS_ADDRSTRLEN];
+
+        smf_log_sgw_peer(sgw_peer, sizeof(sgw_peer), sess);
+        ogs_error("[%s] S5 timeout: message-type[%d] APN[%s] SGW[%s]",
+                smf_log_id(smf_ue), type,
+                sess->session.name ? sess->session.name : "-",
+                sgw_peer[0] ? sgw_peer : "-");
         break;
+    }
     }
 }

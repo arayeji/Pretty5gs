@@ -97,3 +97,54 @@ void smf_ue_debug(smf_ue_t *smf_ue, const char *fmt, ...)
     ogs_log_printf(OGS_LOG_DEBUG, OGS_LOG_DOMAIN,
             0, __FILE__, __LINE__, OGS_FUNC, 0, "[%s] %s", id, msg);
 }
+
+const char *smf_log_id(smf_ue_t *smf_ue)
+{
+    if (!smf_ue)
+        return "-";
+    if (smf_ue->imsi_len > 0 && smf_ue->imsi_bcd[0])
+        return smf_ue->imsi_bcd;
+    if (smf_ue->supi)
+        return smf_ue->supi;
+    return "-";
+}
+
+void smf_log_sgw_peer(char *buf, size_t buflen, smf_sess_t *sess)
+{
+    char ipbuf[OGS_ADDRSTRLEN];
+
+    ogs_assert(buf);
+    ogs_assert(buflen > 0);
+    buf[0] = '\0';
+
+    if (!sess)
+        return;
+
+    if (sess->sgw_s5c_ip.ipv4)
+        ogs_snprintf(buf, buflen, "%s:2123 TEID[0x%x]",
+                OGS_INET_NTOP(&sess->sgw_s5c_ip.addr, ipbuf),
+                sess->sgw_s5c_teid);
+    else if (sess->sgw_s5c_ip.ipv6)
+        ogs_snprintf(buf, buflen, "%s:2123 TEID[0x%x]",
+                OGS_INET6_NTOP(sess->sgw_s5c_ip.addr6, ipbuf),
+                sess->sgw_s5c_teid);
+    else if (sess->sgw_s5c_teid)
+        ogs_snprintf(buf, buflen, "TEID[0x%x]", sess->sgw_s5c_teid);
+}
+
+void smf_log_upf_peer(char *buf, size_t buflen, smf_sess_t *sess)
+{
+    char *peer = NULL;
+
+    ogs_assert(buf);
+    ogs_assert(buflen > 0);
+    buf[0] = '\0';
+
+    if (!sess || !sess->pfcp_node)
+        return;
+
+    peer = ogs_sockaddr_to_string_static(sess->pfcp_node->addr_list);
+    if (peer)
+        ogs_snprintf(buf, buflen, "%s seid[0x%llx]",
+                peer, (unsigned long long)sess->upf_n4_seid);
+}
