@@ -2130,14 +2130,20 @@ smf_sess_t *smf_sess_add_by_psi(smf_ue_t *smf_ue, uint8_t psi)
     smf_pf_precedence_pool_init(sess);
 
     sess->index = ogs_pool_index(&smf_sess_pool, sess);
-    ogs_assert(sess->index > 0 && sess->index <= ogs_app()->pool.sess);
+    if (sess->index <= 0 || sess->index > ogs_app()->pool.sess) {
+        ogs_error("Invalid session pool index [%d]", sess->index);
+        goto fail;
+    }
 
     /* -1 means "no RADIUS server pinned yet". */
     sess->radius.server_idx = -1;
 
     /* Set TEID & SEID */
     ogs_pool_alloc(&smf_n4_seid_pool, &sess->smf_n4_seid_node);
-    ogs_assert(sess->smf_n4_seid_node);
+    if (!sess->smf_n4_seid_node) {
+        ogs_error("Could not allocate SMF-N4-SEID");
+        goto fail;
+    }
 
     sess->smf_n4_teid = *(sess->smf_n4_seid_node);
     sess->smf_n4_seid = *(sess->smf_n4_seid_node);
@@ -2147,11 +2153,17 @@ smf_sess_t *smf_sess_add_by_psi(smf_ue_t *smf_ue, uint8_t psi)
 
     /* Set SmContextRef in 5GC */
     sess->sm_context_ref = ogs_msprintf("%d", sess->index);
-    ogs_assert(sess->sm_context_ref);
+    if (!sess->sm_context_ref) {
+        ogs_error("Could not allocate sm_context_ref");
+        goto fail;
+    }
 
     /* Set PduSessionRef in 5GC */
     sess->pdu_session_ref = ogs_msprintf("%d", sess->index);
-    ogs_assert(sess->pdu_session_ref);
+    if (!sess->pdu_session_ref) {
+        ogs_error("Could not allocate pdu_session_ref");
+        goto fail;
+    }
 
     /* Create BAR in PFCP Session */
     ogs_pfcp_bar_new(&sess->pfcp);
@@ -2180,6 +2192,29 @@ smf_sess_t *smf_sess_add_by_psi(smf_ue_t *smf_ue, uint8_t psi)
     stats_add_smf_session();
 
     return sess;
+
+fail:
+    if (sess->smf_n4_seid_node) {
+        ogs_hash_set(self.smf_n4_seid_hash, &sess->smf_n4_seid,
+                sizeof(sess->smf_n4_seid), NULL);
+        ogs_pool_free(&smf_n4_seid_pool, sess->smf_n4_seid_node);
+        sess->smf_n4_seid_node = NULL;
+    }
+    if (sess->sm_context_ref) {
+        ogs_free(sess->sm_context_ref);
+        sess->sm_context_ref = NULL;
+    }
+    if (sess->pdu_session_ref) {
+        ogs_free(sess->pdu_session_ref);
+        sess->pdu_session_ref = NULL;
+    }
+    if (sess->pfcp.bar)
+        ogs_pfcp_bar_delete(sess->pfcp.bar);
+    ogs_pfcp_pool_final(&sess->pfcp);
+    smf_qfi_pool_final(sess);
+    smf_pf_precedence_pool_final(sess);
+    ogs_pool_id_free(&smf_sess_pool, sess);
+    return NULL;
 }
 
 smf_sess_t *smf_sess_add_by_sm_context(ogs_sbi_message_t *message)
@@ -2479,12 +2514,6 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
                 ogs_warn("[%s] IPv6 unavailable; IPv4 only assigned",
                         sess->session.name);
                 goto ue_ip_assigned;
-            }
-            if (sess->ipv4) {
-                ogs_hash_set(smf_self()->ipv4_hash,
-                        sess->ipv4->addr, OGS_IPV4_LEN, NULL);
-                ogs_pfcp_ue_ip_free(sess->ipv4);
-                sess->ipv4 = NULL;
             }
             return cause_value;
         }
@@ -3678,7 +3707,11 @@ int smf_bearer_remove(smf_bearer_t *bearer)
     smf_sess_t *sess = NULL;
     ogs_assert(bearer);
     sess = smf_sess_find_by_id(bearer->sess_id);
-    ogs_assert(sess);
+    if (!sess) {
+        ogs_error("Session already removed [bearer_id:%d sess_id:%d]",
+                bearer->id, bearer->sess_id);
+        return OGS_ERROR;
+    }
 
     ogs_list_remove(&sess->bearer_list, bearer);
 

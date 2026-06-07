@@ -184,6 +184,17 @@ void sgwc_sxa_handle_unexpected_modification_response(
     if (sess_id >= OGS_MIN_POOL_ID && sess_id <= OGS_MAX_POOL_ID)
         est_sess = sgwc_sess_find_by_id(sess_id);
 
+    if (s11_xact && est_sess) {
+        sgwc_ue_t *xact_ue = sgwc_ue_find_by_id(est_sess->sgwc_ue_id);
+
+        if (!xact_ue || s11_xact->local_teid != xact_ue->sgw_s11_teid ||
+                s11_xact->assoc_xact_id != pfcp_xact->id) {
+            ogs_warn("Stale S11 xact ignored (pfcp_xid=%u s11_id=%d)",
+                    pfcp_xact->xid, pfcp_xact->assoc_xact_id);
+            s11_xact = NULL;
+        }
+    }
+
     sess = rsp_sess ? rsp_sess : est_sess;
 
     /*
