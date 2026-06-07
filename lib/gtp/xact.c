@@ -43,6 +43,51 @@ static void response_timeout(void *data);
 static void holding_timeout(void *data);
 static void peer_timeout(void *data);
 
+static uint32_t ogs_gtp2_sqn_key(uint32_t sqn)
+{
+    return be32toh(sqn) & 0xffffff;
+}
+
+/*
+ * Match an incoming GTPv2 message to a LOCAL outstanding transaction.
+ * Use the full 24-bit sequence number, not xid alone: under heavy S5 load
+ * many in-flight Create Session transactions can share the same xid window
+ * while the low sequence octet differs. Also skip completed transactions
+ * (step != expect_step) so a late response does not attach to the wrong sess.
+ */
+static ogs_gtp_xact_t *ogs_gtp2_xact_find_local(
+        ogs_list_t *list, uint32_t xid, uint32_t sqn, int expect_step)
+{
+    ogs_gtp_xact_t *xact = NULL;
+    uint32_t rx_key = ogs_gtp2_sqn_key(sqn);
+
+    ogs_list_for_each(list, xact) {
+        if (xact->gtp_version != 2 || xact->xid != xid)
+            continue;
+        if (xact->org != OGS_GTP_LOCAL_ORIGINATOR)
+            continue;
+        if (!xact->sqn || ogs_gtp2_sqn_key(xact->sqn) != rx_key)
+            continue;
+        if (expect_step >= 0 && xact->step != expect_step)
+            continue;
+        return xact;
+    }
+
+    return NULL;
+}
+
+static bool ogs_gtp2_xact_is_local_reply(
+        ogs_gtp_xact_stage_t stage, uint32_t xid)
+{
+    if (stage == GTP_XACT_INTERMEDIATE_STAGE)
+        return true;
+
+    if (stage == GTP_XACT_FINAL_STAGE && !(xid & OGS_GTP_CMD_XACT_ID))
+        return true;
+
+    return false;
+}
+
 static void ogs_gtp_xact_log_state(
         const ogs_gtp_xact_t *xact, uint8_t type, const char *why)
 {
@@ -522,9 +567,11 @@ int ogs_gtp_xact_update_tx(ogs_gtp_xact_t *xact,
         h->teid_presence = 1;
         h->teid = htobe32(hdesc->teid);
         h->sqn = OGS_GTP2_XID_TO_SQN(xact->xid);
+        xact->sqn = h->sqn;
     } else {
         h->teid_presence = 0;
         h->sqn_only = OGS_GTP2_XID_TO_SQN(xact->xid);
+        xact->sqn = h->sqn_only;
     }
     h->length = htobe16(pkbuf->len - 4);
 
@@ -1097,24 +1144,48 @@ int ogs_gtp_xact_receive(
     }
 
     ogs_assert(list);
-    ogs_list_for_each(list, new) {
-        if (new->gtp_version == 2 && new->xid == xid) {
-            ogs_debug("[%d] %s Find GTPv%u peer [%s]:%d",
-                    new->xid,
-                    new->org == OGS_GTP_LOCAL_ORIGINATOR ? "LOCAL " : "REMOTE",
-                    new->gtp_version,
-                    OGS_ADDR(&gnode->addr, buf),
-                    OGS_PORT(&gnode->addr));
-            break;
-        }
-    }
 
-    if (!new) {
-        ogs_debug("[%d] Cannot find xact type %u from GTPv2 peer [%s]:%d",
-                  xid, type, OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
-        new = ogs_gtp_xact_remote_create(gnode, 2, sqn);
+    if (list == &gnode->local_list && ogs_gtp2_xact_is_local_reply(stage, xid)) {
+        /*
+         * Reply to a request we sent (Create Session Response on S5, etc.).
+         * Must match the exact sequence number and an outstanding step-1
+         * local transaction. Do not fall back to remote_create: that always
+         * fails update_rx() and drops the response under load.
+         */
+        new = ogs_gtp2_xact_find_local(list, xid, sqn, 1);
+        if (!new) {
+            ogs_warn("[sqn:0x%x] No local GTPv2 xact for type %u "
+                    "from peer [%s]:%d (late or orphan response?)",
+                    ogs_gtp2_sqn_key(sqn), type,
+                    OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
+            return OGS_ERROR;
+        }
+    } else {
+        ogs_gtp_xact_t *iter = NULL;
+
+        new = NULL;
+        ogs_list_for_each(list, iter) {
+            if (iter->gtp_version == 2 && iter->xid == xid) {
+                new = iter;
+                ogs_debug("[%d] %s Find GTPv%u peer [%s]:%d",
+                        new->xid,
+                        new->org == OGS_GTP_LOCAL_ORIGINATOR ?
+                            "LOCAL " : "REMOTE",
+                        new->gtp_version,
+                        OGS_ADDR(&gnode->addr, buf),
+                        OGS_PORT(&gnode->addr));
+                break;
+            }
+        }
+
+        if (!new) {
+            ogs_debug("[%d] Cannot find xact type %u from GTPv2 peer [%s]:%d",
+                    xid, type, OGS_ADDR(&gnode->addr, buf),
+                    OGS_PORT(&gnode->addr));
+            new = ogs_gtp_xact_remote_create(gnode, 2, sqn);
+        }
+        ogs_assert(new);
     }
-    ogs_assert(new);
 
     ogs_debug("[%d] %s Receive peer [%s]:%d",
             new->xid,

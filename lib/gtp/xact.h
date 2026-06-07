@@ -90,6 +90,7 @@ typedef struct ogs_gtp_xact_s {
                                          local or remote */
 
     uint32_t        xid;            /**< Transaction ID */
+    uint32_t        sqn;            /**< GTPv2 sequence (network byte order) */
     ogs_gtp_node_t  *gnode;         /**< Relevant GTP node context */
 
     void (*cb)(ogs_gtp_xact_t *, void *); /**< Local timer expiration handler */
