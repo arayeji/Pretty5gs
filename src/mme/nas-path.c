@@ -1085,8 +1085,12 @@ int nas_eps_send_tau_accept(
         ogs_pkbuf_t *s1apbuf = NULL;
         s1apbuf = s1ap_build_initial_context_setup_request(mme_ue, emmbuf);
         if (!s1apbuf) {
-            ogs_error("s1ap_build_initial_context_setup_request() failed");
-            return OGS_ERROR;
+            ogs_error("[%s] s1ap_build_initial_context_setup_request() failed; "
+                    "fallback to DownlinkNASTransport",
+                    mme_ue->imsi_bcd);
+            rv = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
+            ogs_expect(rv == OGS_OK);
+            return rv;
         }
 
         rv = nas_eps_send_to_enb(mme_ue, s1apbuf);
@@ -1094,8 +1098,13 @@ int nas_eps_send_tau_accept(
     } else if (procedureCode == S1AP_ProcedureCode_id_downlinkNASTransport) {
         rv = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
         ogs_expect(rv == OGS_OK);
-    } else
-        ogs_assert_if_reached();
+    } else {
+        ogs_error("[%s] Unexpected S1AP procedure for TAU accept [%ld]; "
+                "using DownlinkNASTransport",
+                mme_ue->imsi_bcd, (long)procedureCode);
+        rv = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
+        ogs_expect(rv == OGS_OK);
+    }
 
     return rv;
 }

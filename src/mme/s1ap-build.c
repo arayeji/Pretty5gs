@@ -410,7 +410,20 @@ ogs_pkbuf_t *s1ap_build_downlink_nas_transport(
     return ogs_s1ap_encode(&pdu);
 }
 
-static void fill_e_rab_to_be_setup(
+static bool mme_bearer_sgw_s1u_ready(mme_bearer_t *bearer)
+{
+    ogs_assert(bearer);
+
+    if (bearer->sgw_s1u_ip.ipv4 || bearer->sgw_s1u_ip.ipv6)
+        return true;
+
+    ogs_error("Bearer EBI[%d] SGW-S1U-TEID[0x%x] has no transport address "
+            "(Create Session may have failed or bearer is stale)",
+            bearer->ebi, bearer->sgw_s1u_teid);
+    return false;
+}
+
+static int fill_e_rab_to_be_setup(
         S1AP_E_RABToBeSetupItemCtxtSUReq_t *e_rab, mme_bearer_t *bearer)
 {
     int rv;
@@ -418,6 +431,9 @@ static void fill_e_rab_to_be_setup(
 
     ogs_assert(e_rab);
     ogs_assert(bearer);
+
+    if (!mme_bearer_sgw_s1u_ready(bearer))
+        return OGS_ERROR;
 
     e_rab->e_RAB_ID = bearer->ebi;
     e_rab->e_RABlevelQoSParameters.qCI = bearer->qos.index;
@@ -472,9 +488,12 @@ static void fill_e_rab_to_be_setup(
 
     rv = ogs_asn_ip_to_BIT_STRING(
             &bearer->sgw_s1u_ip, &e_rab->transportLayerAddress);
-    ogs_assert(rv == OGS_OK);
+    if (rv != OGS_OK)
+        return OGS_ERROR;
+
     ogs_asn_uint32_to_OCTET_STRING(
             bearer->sgw_s1u_teid, &e_rab->gTP_TEID);
+    return OGS_OK;
 }
 
 ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
@@ -598,6 +617,13 @@ ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
             bearer = ogs_list_first(&sess->bearer_list);
 
         if (sess && bearer) {
+            if (!mme_bearer_sgw_s1u_ready(bearer)) {
+                ogs_error("[%s] Cannot build ICS for attach: "
+                        "default bearer EBI[%d] missing SGW S1-U",
+                        mme_ue->imsi_bcd, bearer->ebi);
+                return NULL;
+            }
+
             item = CALLOC(1, sizeof(S1AP_E_RABToBeSetupItemCtxtSUReqIEs_t));
             ASN_SEQUENCE_ADD(&E_RABToBeSetupListCtxtSUReq->list, item);
 
@@ -607,7 +633,8 @@ ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
 
             e_rab = &item->value.choice.E_RABToBeSetupItemCtxtSUReq;
 
-            fill_e_rab_to_be_setup(e_rab, bearer);
+            if (fill_e_rab_to_be_setup(e_rab, bearer) != OGS_OK)
+                return NULL;
 
             if (emmbuf && emmbuf->len) {
                 ogs_debug("    NASPdu[%p:%d]", emmbuf, emmbuf->len);
@@ -657,6 +684,9 @@ ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
                     continue;
                 }
 
+                if (!mme_bearer_sgw_s1u_ready(bearer))
+                    continue;
+
                 item = CALLOC(1, sizeof(S1AP_E_RABToBeSetupItemCtxtSUReqIEs_t));
                 ASN_SEQUENCE_ADD(&E_RABToBeSetupListCtxtSUReq->list, item);
 
@@ -666,7 +696,8 @@ ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
 
                 e_rab = &item->value.choice.E_RABToBeSetupItemCtxtSUReq;
 
-                fill_e_rab_to_be_setup(e_rab, bearer);
+                if (fill_e_rab_to_be_setup(e_rab, bearer) != OGS_OK)
+                    return NULL;
 
                 if (emmbuf && emmbuf->len) {
                     ogs_debug("    NASPdu[%p:%d]", emmbuf, emmbuf->len);
@@ -686,6 +717,13 @@ ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
                 }
             }
         }
+    }
+
+    if (!E_RABToBeSetupListCtxtSUReq->list.count &&
+            mme_ue->nas_eps.type != MME_EPS_TYPE_ATTACH_REQUEST) {
+        ogs_warn("[%s] ICS has no E-RAB with valid SGW S1-U; "
+                "skip bearer setup in InitialContextSetupRequest",
+                mme_ue->imsi_bcd);
     }
 
     if (emmbuf && emmbuf->len) {
@@ -1257,7 +1295,11 @@ ogs_pkbuf_t *s1ap_build_e_rab_setup_request(
 
     rv = ogs_asn_ip_to_BIT_STRING(
             &bearer->sgw_s1u_ip, &e_rab->transportLayerAddress);
-    ogs_assert(rv == OGS_OK);
+    if (rv != OGS_OK) {
+        ogs_error("E-RAB Setup Request: bearer EBI[%d] has no SGW S1-U address",
+                bearer->ebi);
+        return NULL;
+    }
     ogs_asn_uint32_to_OCTET_STRING(bearer->sgw_s1u_teid, &e_rab->gTP_TEID);
     ogs_debug("    SGW-S1U-TEID[%d]", bearer->sgw_s1u_teid);
 
@@ -1962,8 +2004,13 @@ ogs_pkbuf_t *s1ap_build_path_switch_ack(
 
                 e_rab->e_RAB_ID = bearer->ebi;
 
-                ogs_assert(OGS_OK == ogs_asn_ip_to_BIT_STRING(
-                        &bearer->sgw_s1u_ip, &e_rab->transportLayerAddress));
+                if (!mme_bearer_sgw_s1u_ready(bearer))
+                    continue;
+
+                if (ogs_asn_ip_to_BIT_STRING(
+                        &bearer->sgw_s1u_ip,
+                        &e_rab->transportLayerAddress) != OGS_OK)
+                    continue;
                 ogs_asn_uint32_to_OCTET_STRING(
                         bearer->sgw_s1u_teid, &e_rab->gTP_TEID);
             }
@@ -2528,9 +2575,13 @@ ogs_pkbuf_t *s1ap_build_handover_request(
                         gbrQosInformation;
             }
 
+            if (!mme_bearer_sgw_s1u_ready(bearer))
+                continue;
+
             rv = ogs_asn_ip_to_BIT_STRING(
                     &bearer->sgw_s1u_ip, &e_rab->transportLayerAddress);
-            ogs_assert(rv == OGS_OK);
+            if (rv != OGS_OK)
+                continue;
             ogs_asn_uint32_to_OCTET_STRING(
                     bearer->sgw_s1u_teid, &e_rab->gTP_TEID);
             ogs_debug("    SGW-S1U-TEID[%d]", bearer->sgw_s1u_teid);
