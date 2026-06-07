@@ -18,6 +18,7 @@
  */
 
 #include "pfcp-path.h"
+#include "s11-handler.h"
 
 static void pfcp_node_fsm_init(ogs_pfcp_node_t *node, bool try_to_associate)
 {
@@ -245,9 +246,19 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
     case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE:
         ogs_error("No PFCP session modification response");
         break;
-    case OGS_PFCP_SESSION_DELETION_REQUEST_TYPE:
+    case OGS_PFCP_SESSION_DELETION_REQUEST_TYPE: {
+        sgwc_ue_t *sgwc_ue = NULL;
+
         ogs_error("No PFCP session deletion response");
+        if (sess) {
+            sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+            if (sgwc_ue && sgwc_ue->csr_replace_sess_id == sess->id) {
+                sgwc_csr_replace_continue(sgwc_ue, sess, false);
+                return;
+            }
+        }
         break;
+    }
     default:
         ogs_error("Not implemented [type:%d]", type);
         break;

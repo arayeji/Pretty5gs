@@ -20,10 +20,40 @@
 #include "context.h"
 #include "pfcp-path.h"
 #include "gtp-path.h"
+#include "s11-handler.h"
 #include "sxa-handler.h"
 #include "ga-writer.h"
 #include "sgwc-trace.h"
 #include "sgwc-gtp-interop.h"
+
+static void sgwc_log_urr_report(
+        const char *phase, sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess,
+        uint32_t urr_id, ogs_pfcp_volume_measurement_t *volume,
+        uint32_t duration_s, ogs_pfcp_tlv_usage_report_trigger_t *trigger_tlv)
+{
+    ogs_pfcp_usage_report_trigger_t rep_trig;
+    uint64_t ul = 0, dl = 0;
+
+    if (volume) {
+        if (volume->ulvol)
+            ul = volume->uplink_volume;
+        if (volume->dlvol)
+            dl = volume->downlink_volume;
+    }
+
+    memset(&rep_trig, 0, sizeof(rep_trig));
+    if (trigger_tlv && trigger_tlv->presence)
+        ogs_pfcp_parse_usage_report_trigger(&rep_trig, trigger_tlv);
+
+    ogs_info("[SGWC-URR:%s] IMSI:%s APN:%s urr_id=%u UL=%llu DL=%llu dur=%us "
+            "trigger(time:%u vol:%u term:%u periodic:%u)",
+            phase,
+            (sgwc_ue && sgwc_ue->imsi_bcd[0]) ? sgwc_ue->imsi_bcd : "-",
+            sess ? sess->session.name : "-",
+            urr_id, (unsigned long long)ul, (unsigned long long)dl, duration_s,
+            rep_trig.time_threshold, rep_trig.volume_threshold,
+            rep_trig.termination_report, rep_trig.periodic_reporting);
+}
 
 static uint8_t gtp_cause_from_pfcp(uint8_t pfcp_cause)
 {
@@ -1830,7 +1860,27 @@ void sgwc_sxa_handle_session_deletion_response(
 
     ogs_pfcp_xact_commit(pfcp_xact);
 
-    if (!gtp_message) goto cleanup;
+    if (!gtp_message) {
+        sgwc_ue_t *sgwc_ue = NULL;
+        bool proceed = false;
+
+        if (sess)
+            sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+
+        if (sgwc_ue && sess &&
+                sgwc_ue->csr_replace_sess_id == sess->id) {
+            if (cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
+                proceed = true;
+            else if (pfcp_rsp->cause.presence &&
+                    pfcp_rsp->cause.u8 ==
+                        OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND)
+                proceed = true;
+
+            sgwc_csr_replace_continue(sgwc_ue, sess, proceed);
+            return;
+        }
+        goto cleanup;
+    }
 
     if (gtp_message->h.type == OGS_GTP2_DELETE_SESSION_REQUEST_TYPE) {
         /*
@@ -1881,6 +1931,8 @@ void sgwc_sxa_handle_session_deletion_response(
 
     ogs_assert(sess);
 
+    sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+
     /* Final usage report on session deletion (interval deltas). */
     {
         unsigned int ui;
@@ -1910,6 +1962,11 @@ void sgwc_sxa_handle_session_deletion_response(
                     &volume, &use_rep->volume_measurement);
             if (use_rep->volume_measurement.len != decoded)
                 continue;
+
+            sgwc_log_urr_report("final", sgwc_ue, sess, urr_id, &volume,
+                    use_rep->duration_measurement.presence ?
+                        use_rep->duration_measurement.u32 : 0,
+                    &use_rep->usage_report_trigger);
 
             sgwc_sess_usage_accumulate(sess,
                     volume.ulvol ? volume.uplink_volume : 0,
@@ -2141,6 +2198,11 @@ void sgwc_sxa_handle_session_report_request(
                 ogs_error("Invalid Volume Measurement");
                 continue;
             }
+
+            sgwc_log_urr_report("interim", sgwc_ue, sess, urr_id, &volume,
+                    use_rep->duration_measurement.presence ?
+                        use_rep->duration_measurement.u32 : 0,
+                    &use_rep->usage_report_trigger);
 
             sgwc_sess_usage_accumulate(sess,
                     volume.ulvol ? volume.uplink_volume : 0,

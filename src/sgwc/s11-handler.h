@@ -29,6 +29,12 @@ extern "C" {
 void sgwc_s11_handle_create_session_request(
         sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *s11_xact,
         ogs_pkbuf_t *gtpbuf, ogs_gtp2_message_t *message);
+
+bool sgwc_csr_replace_start(
+        sgwc_ue_t *sgwc_ue, sgwc_sess_t *old_sess,
+        ogs_gtp_xact_t *s11_xact, ogs_pkbuf_t *gtpbuf);
+void sgwc_csr_replace_continue(
+        sgwc_ue_t *sgwc_ue, sgwc_sess_t *old_sess, bool proceed);
 void sgwc_s11_handle_modify_bearer_request(
         sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *s11_xact,
         ogs_pkbuf_t *gtpbuf, ogs_gtp2_message_t *message);

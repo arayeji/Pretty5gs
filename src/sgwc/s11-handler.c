@@ -176,7 +176,7 @@ static uint8_t pfcp_cause_from_gtp(uint8_t gtp_cause)
     return OGS_PFCP_CAUSE_SYSTEM_FAILURE;
 }
 
-void sgwc_s11_handle_create_session_request(
+static void sgwc_s11_create_session_proceed(
         sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *s11_xact,
         ogs_pkbuf_t *gtpbuf, ogs_gtp2_message_t *message)
 {
@@ -195,102 +195,22 @@ void sgwc_s11_handle_create_session_request(
     ogs_gtp2_bearer_qos_t bearer_qos;
     char apn[OGS_MAX_APN_LEN+1];
 
+    ogs_assert(sgwc_ue);
     ogs_assert(s11_xact);
     ogs_assert(gtpbuf);
     ogs_assert(message);
     req = &message->create_session_request;
     ogs_assert(req);
 
-    if (sgwc_ue && req->sender_f_teid_for_control_plane.presence &&
-            req->sender_f_teid_for_control_plane.data) {
-        ogs_gtp2_f_teid_t *ft =
-            req->sender_f_teid_for_control_plane.data;
-        sgwc_ue->mme_s11_teid = be32toh(ft->teid);
-    }
-
-    /************************
-     * Check SGWC-UE Context
-     ************************/
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
-    if (!sgwc_ue) {
-        ogs_error("No Context");
-        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
-    }
-
-    if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
-        goto cleanup;
-
-    /*****************************************
-     * Check Mandatory/Conditional IE Missing
-     *****************************************/
-    if (req->imsi.presence == 0) {
-        ogs_error("No IMSI");
-        cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
-    }
-    if (req->bearer_contexts_to_be_created[0].presence == 0) {
-        ogs_error("No Bearer");
-        cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
-    }
-    if (req->bearer_contexts_to_be_created[0].eps_bearer_id.presence == 0) {
-        ogs_error("No EPS Bearer ID");
-        cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
-    }
-    if (req->bearer_contexts_to_be_created[0].bearer_level_qos.presence == 0) {
-        ogs_error("No Bearer QoS");
-        cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
-    }
-    if (req->access_point_name.presence == 0) {
-        ogs_error("No APN");
-        cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
-    } else {
-        if (ogs_fqdn_parse(apn, req->access_point_name.data,
+    if (ogs_fqdn_parse(apn, req->access_point_name.data,
             ogs_min(req->access_point_name.len, OGS_MAX_APN_LEN)) <= 0) {
-            ogs_error("Invalid APN");
-            cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
-        }
-    }
-    if (req->sender_f_teid_for_control_plane.presence == 0) {
-        ogs_error("No Sender F-TEID");
-        cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
-    }
-    if (req->pgw_s5_s8_address_for_control_plane_or_pmip.presence == 0) {
-        ogs_error("No PGW IP");
-        cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
-    }
-
-    if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
+        ogs_error("Invalid APN");
+        cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
         goto cleanup;
-
-    ogs_sgwc_trace_set(sgwc_ue, NULL, apn, "create-session");
-    OGS_TLOG_INFO("Create Session Request");
-
-    /* Add Session */
-    sess = sgwc_sess_find_by_ebi(sgwc_ue,
-            req->bearer_contexts_to_be_created[0].eps_bearer_id.u8);
-    if (sess) {
-        ogs_gtp_xact_t *pending_s5 = NULL;
-
-        /*
-         * MME retransmits Create Session Request (~7s) while SGWC still
-         * waits on S5/PFCP. Do not tear down the in-flight session.
-         */
-        if (s11_xact && s11_xact->assoc_xact_id)
-            pending_s5 = ogs_gtp_xact_find_by_id(s11_xact->assoc_xact_id);
-        if (pending_s5 &&
-                pending_s5->seq[0].type ==
-                    OGS_GTP2_CREATE_SESSION_REQUEST_TYPE) {
-            ogs_info("[%s] duplicate Create Session Request while S5 "
-                    "pending - ignoring (EBI=%d)",
-                    sgwc_ue->imsi_bcd,
-                    req->bearer_contexts_to_be_created[0].eps_bearer_id.u8);
-            return;
-        }
-
-        ogs_info("OLD Session Release [IMSI:%s,APN:%s]",
-                sgwc_ue->imsi_bcd, sess->session.name);
-        sgwc_sess_remove(sess);
     }
+
     sess = sgwc_sess_add(sgwc_ue, apn);
     ogs_assert(sess);
 
@@ -532,6 +452,237 @@ cleanup:
             sgwc_ue ? sgwc_ue->imsi_bcd : "-", cause_value);
     if (sess)
         sgwc_sess_remove(sess);
+
+    ogs_gtp_send_error_message(
+            s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
+            OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+            cause_value);
+}
+
+bool sgwc_csr_replace_start(
+        sgwc_ue_t *sgwc_ue, sgwc_sess_t *old_sess,
+        ogs_gtp_xact_t *s11_xact, ogs_pkbuf_t *gtpbuf)
+{
+    ogs_assert(sgwc_ue);
+    ogs_assert(old_sess);
+    ogs_assert(s11_xact);
+    ogs_assert(gtpbuf);
+
+    if (sgwc_ue->csr_replace_s11_xact_id != OGS_INVALID_POOL_ID) {
+        ogs_warn("[%s] CSR replace already pending", sgwc_ue->imsi_bcd);
+        return false;
+    }
+
+    if (!old_sess->sgwu_sxa_seid || !old_sess->pfcp_node) {
+        ogs_error("[%s] CSR replace without UP session", sgwc_ue->imsi_bcd);
+        return false;
+    }
+
+    sgwc_ue->csr_replace_s11_xact_id = s11_xact->id;
+    sgwc_ue->csr_replace_gtpbuf = ogs_pkbuf_copy(gtpbuf);
+    if (!sgwc_ue->csr_replace_gtpbuf) {
+        ogs_error("[%s] ogs_pkbuf_copy() failed", sgwc_ue->imsi_bcd);
+        sgwc_ue->csr_replace_s11_xact_id = OGS_INVALID_POOL_ID;
+        return false;
+    }
+    sgwc_ue->csr_replace_sess_id = old_sess->id;
+
+    if (sgwc_pfcp_send_session_deletion_request(
+            old_sess, OGS_INVALID_POOL_ID, NULL) != OGS_OK) {
+        ogs_error("[%s] PFCP Session Deletion failed for CSR replace",
+                sgwc_ue->imsi_bcd);
+        ogs_pkbuf_free(sgwc_ue->csr_replace_gtpbuf);
+        sgwc_ue->csr_replace_gtpbuf = NULL;
+        sgwc_ue->csr_replace_s11_xact_id = OGS_INVALID_POOL_ID;
+        sgwc_ue->csr_replace_sess_id = OGS_INVALID_POOL_ID;
+        return false;
+    }
+
+    ogs_info("[%s] CSR replace: waiting for PFCP Session Deletion "
+            "(EBI collision, SGWU-SEID=0x%llx)",
+            sgwc_ue->imsi_bcd,
+            (unsigned long long)old_sess->sgwu_sxa_seid);
+    return true;
+}
+
+void sgwc_csr_replace_continue(
+        sgwc_ue_t *sgwc_ue, sgwc_sess_t *old_sess, bool proceed)
+{
+    ogs_gtp_xact_t *s11_xact = NULL;
+    ogs_pkbuf_t *gtpbuf = NULL;
+    ogs_gtp2_message_t message;
+    int rv;
+
+    ogs_assert(sgwc_ue);
+    ogs_assert(old_sess);
+
+    s11_xact = ogs_gtp_xact_find_by_id(sgwc_ue->csr_replace_s11_xact_id);
+    gtpbuf = sgwc_ue->csr_replace_gtpbuf;
+
+    sgwc_ue->csr_replace_s11_xact_id = OGS_INVALID_POOL_ID;
+    sgwc_ue->csr_replace_gtpbuf = NULL;
+    sgwc_ue->csr_replace_sess_id = OGS_INVALID_POOL_ID;
+
+    old_sess->sgwu_sxa_seid = 0;
+    sgwc_sess_remove(old_sess);
+
+    if (!proceed || !s11_xact || !gtpbuf) {
+        if (s11_xact) {
+            ogs_gtp_send_error_message(
+                    s11_xact, sgwc_ue->mme_s11_teid,
+                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                    OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+        }
+        if (gtpbuf)
+            ogs_pkbuf_free(gtpbuf);
+        return;
+    }
+
+    rv = ogs_gtp2_parse_msg(&message, gtpbuf);
+    if (rv != OGS_OK) {
+        ogs_error("[%s] ogs_gtp2_parse_msg() failed", sgwc_ue->imsi_bcd);
+        ogs_gtp_send_error_message(
+                s11_xact, sgwc_ue->mme_s11_teid,
+                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_INVALID_MESSAGE_FORMAT);
+        ogs_pkbuf_free(gtpbuf);
+        return;
+    }
+
+    sgwc_s11_create_session_proceed(sgwc_ue, s11_xact, gtpbuf, &message);
+    ogs_pkbuf_free(gtpbuf);
+}
+
+void sgwc_s11_handle_create_session_request(
+        sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *s11_xact,
+        ogs_pkbuf_t *gtpbuf, ogs_gtp2_message_t *message)
+{
+    uint8_t cause_value = 0;
+
+    sgwc_sess_t *sess = NULL;
+
+    ogs_gtp2_create_session_request_t *req = NULL;
+
+    char apn[OGS_MAX_APN_LEN+1];
+
+    ogs_assert(s11_xact);
+    ogs_assert(gtpbuf);
+    ogs_assert(message);
+    req = &message->create_session_request;
+    ogs_assert(req);
+
+    if (sgwc_ue && req->sender_f_teid_for_control_plane.presence &&
+            req->sender_f_teid_for_control_plane.data) {
+        ogs_gtp2_f_teid_t *ft =
+            req->sender_f_teid_for_control_plane.data;
+        sgwc_ue->mme_s11_teid = be32toh(ft->teid);
+    }
+
+    /************************
+     * Check SGWC-UE Context
+     ************************/
+    cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
+
+    if (!sgwc_ue) {
+        ogs_error("No Context");
+        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+    }
+
+    if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
+        goto cleanup;
+
+    /*****************************************
+     * Check Mandatory/Conditional IE Missing
+     *****************************************/
+    if (req->imsi.presence == 0) {
+        ogs_error("No IMSI");
+        cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
+    }
+    if (req->bearer_contexts_to_be_created[0].presence == 0) {
+        ogs_error("No Bearer");
+        cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
+    }
+    if (req->bearer_contexts_to_be_created[0].eps_bearer_id.presence == 0) {
+        ogs_error("No EPS Bearer ID");
+        cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
+    }
+    if (req->bearer_contexts_to_be_created[0].bearer_level_qos.presence == 0) {
+        ogs_error("No Bearer QoS");
+        cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
+    }
+    if (req->access_point_name.presence == 0) {
+        ogs_error("No APN");
+        cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
+    } else {
+        if (ogs_fqdn_parse(apn, req->access_point_name.data,
+            ogs_min(req->access_point_name.len, OGS_MAX_APN_LEN)) <= 0) {
+            ogs_error("Invalid APN");
+            cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
+        }
+    }
+    if (req->sender_f_teid_for_control_plane.presence == 0) {
+        ogs_error("No Sender F-TEID");
+        cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
+    }
+    if (req->pgw_s5_s8_address_for_control_plane_or_pmip.presence == 0) {
+        ogs_error("No PGW IP");
+        cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
+    }
+
+    if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
+        goto cleanup;
+
+    ogs_sgwc_trace_set(sgwc_ue, NULL, apn, "create-session");
+    OGS_TLOG_INFO("Create Session Request");
+
+    sess = sgwc_sess_find_by_ebi(sgwc_ue,
+            req->bearer_contexts_to_be_created[0].eps_bearer_id.u8);
+    if (sess) {
+        ogs_gtp_xact_t *pending_s5 = NULL;
+
+        /*
+         * MME retransmits Create Session Request (~7s) while SGWC still
+         * waits on S5/PFCP. Do not tear down the in-flight session.
+         */
+        if (s11_xact && s11_xact->assoc_xact_id)
+            pending_s5 = ogs_gtp_xact_find_by_id(s11_xact->assoc_xact_id);
+        if (pending_s5 &&
+                pending_s5->seq[0].type ==
+                    OGS_GTP2_CREATE_SESSION_REQUEST_TYPE) {
+            ogs_info("[%s] duplicate Create Session Request while S5 "
+                    "pending - ignoring (EBI=%d)",
+                    sgwc_ue->imsi_bcd,
+                    req->bearer_contexts_to_be_created[0].eps_bearer_id.u8);
+            return;
+        }
+
+        if (sgwc_ue->csr_replace_s11_xact_id != OGS_INVALID_POOL_ID) {
+            ogs_info("[%s] duplicate Create Session Request while CSR "
+                    "replace pending - ignoring (EBI=%d)",
+                    sgwc_ue->imsi_bcd,
+                    req->bearer_contexts_to_be_created[0].eps_bearer_id.u8);
+            return;
+        }
+
+        if (sess->sgwu_sxa_seid && sess->pfcp_node) {
+            if (sgwc_csr_replace_start(sgwc_ue, sess, s11_xact, gtpbuf))
+                return;
+            cause_value = OGS_GTP2_CAUSE_SYSTEM_FAILURE;
+            goto cleanup;
+        }
+
+        ogs_info("OLD Session Release [IMSI:%s,APN:%s]",
+                sgwc_ue->imsi_bcd, sess->session.name);
+        sgwc_sess_remove(sess);
+    }
+
+    sgwc_s11_create_session_proceed(sgwc_ue, s11_xact, gtpbuf, message);
+    return;
+
+cleanup:
+    ogs_assert(cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
+    ogs_error("[%s] Create Session failed before SGW-U/SMF [GTP cause:%u]",
+            sgwc_ue ? sgwc_ue->imsi_bcd : "-", cause_value);
 
     ogs_gtp_send_error_message(
             s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,

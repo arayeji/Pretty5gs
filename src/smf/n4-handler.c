@@ -29,6 +29,35 @@
 #include "radius-path.h"
 #include "ga-writer.h"
 
+static void smf_log_urr_report(
+        const char *phase, smf_ue_t *smf_ue, smf_sess_t *sess,
+        uint32_t urr_id, ogs_pfcp_volume_measurement_t *volume,
+        uint32_t duration_s, ogs_pfcp_tlv_usage_report_trigger_t *trigger_tlv)
+{
+    ogs_pfcp_usage_report_trigger_t rep_trig;
+    uint64_t ul = 0, dl = 0;
+
+    if (volume) {
+        if (volume->ulvol)
+            ul = volume->uplink_volume;
+        if (volume->dlvol)
+            dl = volume->downlink_volume;
+    }
+
+    memset(&rep_trig, 0, sizeof(rep_trig));
+    if (trigger_tlv && trigger_tlv->presence)
+        ogs_pfcp_parse_usage_report_trigger(&rep_trig, trigger_tlv);
+
+    ogs_info("[SMF-URR:%s] IMSI:%s APN:%s urr_id=%u UL=%llu DL=%llu dur=%us "
+            "trigger(time:%u vol:%u term:%u periodic:%u)",
+            phase,
+            smf_ue ? (smf_ue->supi ? smf_ue->supi : smf_ue->imsi_bcd) : "-",
+            sess ? sess->session.name : "-",
+            urr_id, (unsigned long long)ul, (unsigned long long)dl, duration_s,
+            rep_trig.time_threshold, rep_trig.volume_threshold,
+            rep_trig.termination_report, rep_trig.periodic_reporting);
+}
+
 uint8_t gtp_cause_from_pfcp(uint8_t pfcp_cause, uint8_t gtp_version)
 {
     switch (gtp_version) {
@@ -1546,6 +1575,7 @@ uint8_t smf_epc_n4_handle_session_deletion_response(
         smf_sess_t *sess, ogs_pfcp_xact_t *xact,
         ogs_pfcp_session_deletion_response_t *rsp)
 {
+    smf_ue_t *smf_ue = NULL;
     smf_bearer_t *bearer = NULL;
     unsigned int i;
 
@@ -1568,6 +1598,7 @@ uint8_t smf_epc_n4_handle_session_deletion_response(
 
     ogs_assert(sess);
 
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
     bearer = smf_default_bearer_in_sess(sess);
     for (i = 0; i < OGS_ARRAY_SIZE(rsp->usage_report); i++) {
         ogs_pfcp_tlv_usage_report_session_deletion_response_t *use_rep =
@@ -1589,6 +1620,12 @@ uint8_t smf_epc_n4_handle_session_deletion_response(
             ogs_error("Invalid Volume Measurement");
             continue;
         }
+
+        smf_log_urr_report("final", smf_ue, sess, urr_id, &volume,
+                use_rep->duration_measurement.presence ?
+                    use_rep->duration_measurement.u32 : 0,
+                &use_rep->usage_report_trigger);
+
         if (volume.ulvol)
             sess->gy.ul_octets += volume.uplink_volume;
         if (volume.dlvol)
@@ -1785,6 +1822,12 @@ uint8_t smf_n4_handle_session_report_request(
                 ogs_error("Invalid Volume Measurement");
                 continue;
             }
+
+            smf_log_urr_report("interim", smf_ue, sess, urr_id, &volume,
+                    use_rep->duration_measurement.presence ?
+                        use_rep->duration_measurement.u32 : 0,
+                    &use_rep->usage_report_trigger);
+
             if (volume.ulvol)
                 sess->gy.ul_octets += volume.uplink_volume;
             if (volume.dlvol)

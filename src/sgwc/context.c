@@ -673,6 +673,10 @@ sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len)
 
     ogs_list_init(&sgwc_ue->sess_list);
 
+    sgwc_ue->csr_replace_s11_xact_id = OGS_INVALID_POOL_ID;
+    sgwc_ue->csr_replace_gtpbuf = NULL;
+    sgwc_ue->csr_replace_sess_id = OGS_INVALID_POOL_ID;
+
     ogs_hash_set(self.imsi_ue_hash, sgwc_ue->imsi, sgwc_ue->imsi_len, sgwc_ue);
 
     ogs_list_add(&self.sgw_ue_list, sgwc_ue);
@@ -698,6 +702,13 @@ int sgwc_ue_remove(sgwc_ue_t *sgwc_ue)
         ogs_pkbuf_free(sgwc_ue->uli_pkbuf);
         sgwc_ue->uli_pkbuf = NULL;
     }
+
+    if (sgwc_ue->csr_replace_gtpbuf) {
+        ogs_pkbuf_free(sgwc_ue->csr_replace_gtpbuf);
+        sgwc_ue->csr_replace_gtpbuf = NULL;
+    }
+    sgwc_ue->csr_replace_s11_xact_id = OGS_INVALID_POOL_ID;
+    sgwc_ue->csr_replace_sess_id = OGS_INVALID_POOL_ID;
 
     sgwc_sess_remove_all(sgwc_ue);
 
