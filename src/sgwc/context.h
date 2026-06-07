@@ -147,6 +147,15 @@ typedef struct sgwc_ue_s {
     ogs_list_t      sess_list;
 
     ogs_gtp_node_t  *gnode;
+
+    /*
+     * Deferred Create Session while replacing an existing session (EBI
+     * collision): wait for PFCP Session Deletion on the old session before
+     * allocating a new one (avoids SEID reuse while UPF still has old session).
+     */
+    ogs_pool_id_t   csr_replace_s11_xact_id;
+    ogs_pkbuf_t     *csr_replace_gtpbuf;
+    ogs_pool_id_t   csr_replace_sess_id;
 } sgwc_ue_t;
 
 #define SGWC_SESS(pfcp_sess) ogs_container_of(pfcp_sess, sgwc_sess_t, pfcp)
