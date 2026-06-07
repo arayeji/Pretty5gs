@@ -41,7 +41,7 @@ static bool sgwc_gtpc_is_s5_pgw_message(uint8_t type)
     }
 }
 
-static void _gtpv2_c_recv_cb(short when, ogs_socket_t fd, void *data)
+static int sgwc_gtpc_recv_one(ogs_sock_t *sock)
 {
     sgwc_event_t *e = NULL;
     int rv;
@@ -51,18 +51,23 @@ static void _gtpv2_c_recv_cb(short when, ogs_socket_t fd, void *data)
     ogs_gtp_node_t *gnode = NULL;
     char frombuf[OGS_ADDRSTRLEN];
 
-    ogs_assert(fd != INVALID_SOCKET);
+    ogs_assert(sock);
+    ogs_assert(sock->fd != INVALID_SOCKET);
 
     pkbuf = ogs_pkbuf_alloc(NULL, OGS_MAX_SDU_LEN);
     ogs_assert(pkbuf);
     ogs_pkbuf_put(pkbuf, OGS_MAX_SDU_LEN);
 
-    size = ogs_recvfrom(fd, pkbuf->data, pkbuf->len, 0, &from);
+    size = ogs_recvfrom(sock->fd, pkbuf->data, pkbuf->len, 0, &from);
     if (size <= 0) {
-        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
-                "ogs_recvfrom() failed");
         ogs_pkbuf_free(pkbuf);
-        return;
+        if (size < 0 && ogs_socket_errno_would_block())
+            return 0;
+        if (size < 0) {
+            ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
+                    "ogs_recvfrom() failed");
+        }
+        return -1;
     }
 
     ogs_pkbuf_trim(pkbuf, size);
@@ -111,9 +116,9 @@ static void _gtpv2_c_recv_cb(short when, ogs_socket_t fd, void *data)
                         "ignoring msg!",
                         OGS_ADDR(&from, frombuf), OGS_PORT(&from));
                 ogs_pkbuf_free(pkbuf);
-                return;
+                return -1;
             }
-            gnode->sock = data;
+            gnode->sock = sock;
             ogs_info("PGW S5-C peer learned [%s]:%u (GTP type %u)",
                     OGS_ADDR(&from, frombuf), OGS_PORT(&from), msg_type);
 
@@ -143,9 +148,9 @@ static void _gtpv2_c_recv_cb(short when, ogs_socket_t fd, void *data)
                 ogs_error("Failed to create new gnode(%s:%u), mempool full, ignoring msg!",
                           OGS_ADDR(&from, frombuf), OGS_PORT(&from));
                 ogs_pkbuf_free(pkbuf);
-                return;
+                return -1;
             }
-            gnode->sock = data;
+            gnode->sock = sock;
         }
         e = sgwc_event_new(SGWC_EVT_S11_MESSAGE);
         ogs_assert(e);
@@ -159,7 +164,21 @@ static void _gtpv2_c_recv_cb(short when, ogs_socket_t fd, void *data)
         ogs_error("ogs_queue_push() failed:%d", (int)rv);
         ogs_pkbuf_free(e->pkbuf);
         sgwc_event_free(e);
+        return -1;
     }
+
+    return 1;
+}
+
+static void _gtpv2_c_recv_cb(short when, ogs_socket_t fd, void *data)
+{
+    ogs_sock_t *sock = data;
+
+    ogs_assert(fd != INVALID_SOCKET);
+    ogs_assert(sock);
+
+    while (sgwc_gtpc_recv_one(sock) > 0)
+        ;
 }
 
 static ogs_sockaddr_t *sgwc_gtpc_sa_with_port(
