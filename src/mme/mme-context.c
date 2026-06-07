@@ -3940,10 +3940,21 @@ mme_sgw_t *mme_sgw_find_by_addr(const ogs_sockaddr_t *addr)
 
     ogs_list_for_each(&self.sgw_list, sgw) {
         if (ogs_sockaddr_is_equal(&sgw->gnode.addr, addr) == true)
-            break;
+            return sgw;
     }
 
-    return sgw;
+    /*
+     * SGWC inbound roam may reply from inbound_roam.gtpc.source_port (not
+     * gtpc.server.port). Match configured SGW by IP as well.
+     */
+    ogs_list_for_each(&self.sgw_list, sgw) {
+        if (sgw->gnode.sa_list &&
+                ogs_sockaddr_check_any_match(
+                    sgw->gnode.sa_list, NULL, addr, false) == true)
+            return sgw;
+    }
+
+    return NULL;
 }
 
 mme_pgw_t *mme_pgw_add(ogs_sockaddr_t *addr)
