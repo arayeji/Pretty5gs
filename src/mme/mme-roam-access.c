@@ -107,10 +107,28 @@ void mme_access_control_free_all(void)
         mme_access_control_t *ac = &self->access_control[i];
 
         if (ac->tac_hash) {
+            ogs_hash_index_t *hi;
+
+            for (hi = ogs_hash_first(ac->tac_hash); hi;
+                    hi = ogs_hash_next(hi)) {
+                void *key;
+
+                ogs_hash_this(hi, (const void **)&key, NULL, NULL);
+                ogs_free(key);
+            }
             ogs_hash_destroy(ac->tac_hash);
             ac->tac_hash = NULL;
         }
         if (ac->enb_id_hash) {
+            ogs_hash_index_t *hi;
+
+            for (hi = ogs_hash_first(ac->enb_id_hash); hi;
+                    hi = ogs_hash_next(hi)) {
+                void *key;
+
+                ogs_hash_this(hi, (const void **)&key, NULL, NULL);
+                ogs_free(key);
+            }
             ogs_hash_destroy(ac->enb_id_hash);
             ac->enb_id_hash = NULL;
         }

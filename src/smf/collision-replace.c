@@ -20,6 +20,7 @@
 #include "collision-replace.h"
 
 #include "gtp-path.h"
+#include "pfcp-path.h"
 #include "smf-sm.h"
 #include "smf-trace.h"
 
@@ -113,7 +114,6 @@ static bool smf_sess_collision_replace_begin(
         smf_sess_t *old_sess, smf_ue_t *smf_ue, smf_event_t *e,
         bool gtp2, ogs_gtp2_sender_f_teid_t *sender_f_teid)
 {
-    smf_event_t ev;
     ogs_pkbuf_t *pkbuf_copy = NULL;
 
     ogs_assert(old_sess);
@@ -169,17 +169,15 @@ static bool smf_sess_collision_replace_begin(
     char buf4[OGS_ADDRSTRLEN];
 
     ogs_info("[%s] OLD Session collision replace DNN:%s IPv4:%s "
-            "(UPF SEID=0x%llx): PFCP delete before new session",
+            "(UPF SEID=0x%llx): best-effort PFCP delete, proceeding",
             smf_ue->imsi_bcd,
             old_sess->session.name ? old_sess->session.name : "-",
             old_sess->ipv4 ?
                 OGS_INET_NTOP(&old_sess->ipv4->addr, buf4) : "-",
             (unsigned long long)old_sess->upf_n4_seid);
 
-    memset(&ev, 0, sizeof(ev));
-    ev.sess_id = old_sess->id;
-    ev.gtp_xact_id = OGS_INVALID_POOL_ID;
-    ogs_fsm_tran(&old_sess->sm, smf_gsm_state_wait_pfcp_deletion, &ev);
+    smf_epc_pfcp_send_session_deletion_best_effort(old_sess);
+    smf_sess_collision_replace_complete(old_sess);
 
     return true;
 }
@@ -309,8 +307,8 @@ void smf_sess_collision_replace_complete(smf_sess_t *old_sess)
         ev.pkbuf = pkbuf;
         ev.gnode = NULL;
 
-        smf_ue_collision_clear(smf_ue);
         ogs_fsm_dispatch(&new_sess->sm, &ev);
+        smf_ue_collision_clear(smf_ue);
         return;
     }
 
@@ -340,8 +338,8 @@ void smf_sess_collision_replace_complete(smf_sess_t *old_sess)
     ev.pkbuf = pkbuf;
     ev.gnode = NULL;
 
-    smf_ue_collision_clear(smf_ue);
     ogs_fsm_dispatch(&new_sess->sm, &ev);
+    smf_ue_collision_clear(smf_ue);
 }
 
 void smf_sess_collision_on_pfcp_delete_timeout(smf_sess_t *sess)

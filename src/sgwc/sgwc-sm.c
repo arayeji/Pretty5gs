@@ -144,6 +144,12 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         ogs_assert(gnode);
 
         rv = ogs_gtp_xact_receive(gnode, &gtp_message.h, &gtp_xact);
+        if (rv == OGS_RETRY) {
+            ogs_debug("S11 GTP duplicate request ignored (type=%u)",
+                    gtp_message.h.type);
+            ogs_pkbuf_free(recvbuf);
+            break;
+        }
         if (rv != OGS_OK) {
             ogs_pkbuf_free(recvbuf);
             break;
@@ -170,10 +176,17 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
             break;
         case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
             if (gtp_message.h.teid == 0) {
-                ogs_expect(!sgwc_ue);
-                sgwc_ue = sgwc_ue_add_by_message(&gtp_message);
-                if (sgwc_ue)
-                    OGS_SETUP_GTP_NODE(sgwc_ue, gnode);
+                if (!sgwc_ue &&
+                        gtp_message.create_session_request.imsi.presence) {
+                    sgwc_ue = sgwc_ue_find_by_imsi(
+                            gtp_message.create_session_request.imsi.data,
+                            gtp_message.create_session_request.imsi.len);
+                }
+                if (!sgwc_ue) {
+                    sgwc_ue = sgwc_ue_add_by_message(&gtp_message);
+                    if (sgwc_ue)
+                        OGS_SETUP_GTP_NODE(sgwc_ue, gnode);
+                }
             }
             sgwc_s11_handle_create_session_request(
                     sgwc_ue, gtp_xact, recvbuf, &gtp_message);

@@ -269,6 +269,24 @@ void sgwc_s11_handle_create_session_request(
     sess = sgwc_sess_find_by_ebi(sgwc_ue,
             req->bearer_contexts_to_be_created[0].eps_bearer_id.u8);
     if (sess) {
+        ogs_gtp_xact_t *pending_s5 = NULL;
+
+        /*
+         * MME retransmits Create Session Request (~7s) while SGWC still
+         * waits on S5/PFCP. Do not tear down the in-flight session.
+         */
+        if (s11_xact && s11_xact->assoc_xact_id)
+            pending_s5 = ogs_gtp_xact_find_by_id(s11_xact->assoc_xact_id);
+        if (pending_s5 &&
+                pending_s5->seq[0].type ==
+                    OGS_GTP2_CREATE_SESSION_REQUEST_TYPE) {
+            ogs_info("[%s] duplicate Create Session Request while S5 "
+                    "pending - ignoring (EBI=%d)",
+                    sgwc_ue->imsi_bcd,
+                    req->bearer_contexts_to_be_created[0].eps_bearer_id.u8);
+            return;
+        }
+
         ogs_info("OLD Session Release [IMSI:%s,APN:%s]",
                 sgwc_ue->imsi_bcd, sess->session.name);
         sgwc_sess_remove(sess);
