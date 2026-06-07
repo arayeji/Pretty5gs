@@ -467,6 +467,23 @@ static bool radius_canon_framed_route(const uint8_t *val, size_t vlen,
 /* Parse Framed-IP-Address, Framed-IPv6-Prefix, Framed-Route,
  * Framed-IPv6-Route and Class AVPs from Access-Accept attributes
  * into the session. */
+static bool smf_subscription_ue_ip_v4(const ogs_ip_t *ip)
+{
+    uint32_t zero = 0;
+
+    ogs_assert(ip);
+    return ip->ipv4 && memcmp(&ip->addr, &zero, sizeof(zero)) != 0;
+}
+
+static bool smf_subscription_ue_ip_v6(const ogs_ip_t *ip)
+{
+    uint8_t zero[OGS_IPV6_LEN];
+
+    ogs_assert(ip);
+    memset(zero, 0, sizeof(zero));
+    return ip->ipv6 && memcmp(ip->addr6, zero, sizeof(zero)) != 0;
+}
+
 static int radius_parse_access_accept(smf_sess_t *sess,
         const uint8_t *attrs, size_t attrs_len)
 {
@@ -695,50 +712,61 @@ static int radius_parse_access_accept(smf_sess_t *sess,
         }
     }
 
-    /* Apply framed addresses into sess->session.ue_ip (PFCP UE address).
-     * Missing Framed-IP-Address / Framed-IPv6-Prefix does not fail auth;
-     * smf_sess_set_ue_ip() assigns from the local pool instead. */
+    /* UE IP priority: HSS/UDM subscription (already in sess->session.ue_ip),
+     * then RADIUS Framed-IP / Framed-IPv6-Prefix per family, then pool in
+     * smf_sess_set_ue_ip() when an address is still unset. */
     if (smf_self()->radius.use_framed_ip_for_ue) {
-        memset(&sess->session.ue_ip, 0, sizeof(sess->session.ue_ip));
+        ogs_ip_t *ue_ip = &sess->session.ue_ip;
+        const char *imsi = smf_ue && smf_ue->imsi_len ? smf_ue->imsi_bcd :
+            (smf_ue && smf_ue->supi ? smf_ue->supi : "-");
+        const char *dnn = sess->session.name ? sess->session.name : "-";
 
         if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV4) {
-            if (!got_v4) {
+            if (smf_subscription_ue_ip_v4(ue_ip)) {
+                ogs_debug("[%s] RADIUS: keeping subscription/HSS IPv4 DNN:%s",
+                        imsi, dnn);
+            } else if (got_v4) {
+                ue_ip->ipv4 = 1;
+                ue_ip->addr = v4_be;
+            } else {
                 ogs_warn("[%s] RADIUS: no Framed-IP-Address; DNN:%s; "
                         "falling back to local IPv4 pool",
-                        smf_ue->imsi_len ? smf_ue->imsi_bcd :
-                        (smf_ue->supi ? smf_ue->supi : "-"),
-                        sess->session.name ? sess->session.name : "-");
-            } else {
-                sess->session.ue_ip.addr = v4_be;
+                        imsi, dnn);
             }
         } else if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV6) {
-            if (!got_v6) {
+            if (smf_subscription_ue_ip_v6(ue_ip)) {
+                ogs_debug("[%s] RADIUS: keeping subscription/HSS IPv6 DNN:%s",
+                        imsi, dnn);
+            } else if (got_v6) {
+                ue_ip->ipv6 = 1;
+                memcpy(ue_ip->addr6, v6, OGS_IPV6_LEN);
+            } else {
                 ogs_warn("[%s] RADIUS: no Framed-IPv6-Prefix; DNN:%s; "
                         "falling back to local IPv6 pool",
-                        smf_ue->imsi_len ? smf_ue->imsi_bcd :
-                        (smf_ue->supi ? smf_ue->supi : "-"),
-                        sess->session.name ? sess->session.name : "-");
-            } else {
-                memcpy(sess->session.ue_ip.addr6, v6, OGS_IPV6_LEN);
+                        imsi, dnn);
             }
         } else if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
-            if (!got_v4) {
+            if (smf_subscription_ue_ip_v4(ue_ip)) {
+                ogs_debug("[%s] RADIUS: keeping subscription/HSS IPv4 DNN:%s",
+                        imsi, dnn);
+            } else if (got_v4) {
+                ue_ip->ipv4 = 1;
+                ue_ip->addr = v4_be;
+            } else {
                 ogs_warn("[%s] RADIUS: no Framed-IP-Address; DNN:%s; "
                         "falling back to local IPv4 pool",
-                        smf_ue->imsi_len ? smf_ue->imsi_bcd :
-                        (smf_ue->supi ? smf_ue->supi : "-"),
-                        sess->session.name ? sess->session.name : "-");
-            } else {
-                sess->session.ue_ip.addr = v4_be;
+                        imsi, dnn);
             }
-            if (!got_v6) {
+            if (smf_subscription_ue_ip_v6(ue_ip)) {
+                ogs_debug("[%s] RADIUS: keeping subscription/HSS IPv6 DNN:%s",
+                        imsi, dnn);
+            } else if (got_v6) {
+                ue_ip->ipv6 = 1;
+                memcpy(ue_ip->addr6, v6, OGS_IPV6_LEN);
+            } else {
                 ogs_warn("[%s] RADIUS: no Framed-IPv6-Prefix; DNN:%s; "
                         "falling back to local IPv6 pool",
-                        smf_ue->imsi_len ? smf_ue->imsi_bcd :
-                        (smf_ue->supi ? smf_ue->supi : "-"),
-                        sess->session.name ? sess->session.name : "-");
-            } else {
-                memcpy(sess->session.ue_ip.addr6, v6, OGS_IPV6_LEN);
+                        imsi, dnn);
             }
         } else {
             ogs_error("RADIUS: unsupported PDU session type %u",
@@ -754,7 +782,8 @@ static int radius_parse_access_accept(smf_sess_t *sess,
         char buf1[OGS_ADDRSTRLEN];
         char buf2[OGS_ADDRSTRLEN];
 
-        ogs_info("[%s] RADIUS framed UE IP DNN:%s IPv4:%s IPv6:%s",
+        ogs_info("[%s] RADIUS framed UE IP DNN:%s IPv4:%s IPv6:%s "
+                "(applied only where subscription/HSS had no static IP)",
                 smf_ue->imsi_len ? smf_ue->imsi_bcd :
                 (smf_ue->supi ? smf_ue->supi : "-"),
                 sess->session.name ? sess->session.name : "-",

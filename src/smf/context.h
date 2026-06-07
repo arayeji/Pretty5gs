@@ -163,11 +163,11 @@ typedef struct smf_radius_config_s {
     uint32_t pod_teardown_timeout_ms;
 
     /*
-     * When true (default), Framed-IP-Address / Framed-IPv6-Prefix from
-     * Access-Accept are applied to sess->session.ue_ip when present;
-     * missing framed addresses fall back to the SMF local IP pool.
+     * When true (default), UE IP priority is: HSS/UDM subscription static
+     * IP first, then Framed-IP-Address / Framed-IPv6-Prefix from RADIUS
+     * Access-Accept (per address family), then the SMF local IP pool.
      * When false, RADIUS may still authenticate and supply Class/routes,
-     * but UE IP comes from the PDN subscription / SMF pool only.
+     * but framed addresses are not used for UE IP assignment.
      */
     bool use_framed_ip_for_ue;
 
