@@ -74,7 +74,8 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
     case 2:
         sgw = mme_sgw_find_by_addr(&from);
         if (!sgw) {
-            ogs_error("Unknown SGW : %s", OGS_ADDR(&from, buf));
+            ogs_error("Unknown SGW [%s]:%d",
+                    OGS_ADDR(&from, buf), OGS_PORT(&from));
             ogs_pkbuf_free(pkbuf);
             return;
         }
