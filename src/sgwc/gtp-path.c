@@ -145,8 +145,13 @@ static int sgwc_gtpc_recv_one(ogs_sock_t *sock)
         if (!gnode) {
             gnode = ogs_gtp_node_add_by_addr(&sgwc_self()->mme_s11_list, &from);
             if (!gnode) {
-                ogs_error("Failed to create new gnode(%s:%u), mempool full, ignoring msg!",
-                          OGS_ADDR(&from, frombuf), OGS_PORT(&from));
+                uint8_t msg_type = 0;
+
+                if (pkbuf->len >= sizeof(ogs_gtp2_header_t))
+                    msg_type = ((ogs_gtp2_header_t *)pkbuf->data)->type;
+                ogs_error("Failed to create MME gnode [%s]:%u mempool full "
+                        "GTPv2 type[%u] — ignoring",
+                        OGS_ADDR(&from, frombuf), OGS_PORT(&from), msg_type);
                 ogs_pkbuf_free(pkbuf);
                 return -1;
             }

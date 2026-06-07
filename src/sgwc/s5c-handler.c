@@ -24,6 +24,24 @@
 
 #include "s5c-handler.h"
 
+static void sgwc_log_no_s11_xact(
+        sgwc_sess_t *sess, ogs_gtp_xact_t *s5c_xact, const char *msg)
+{
+    sgwc_ue_t *sgwc_ue = NULL;
+    char pgw_peer[OGS_ADDRSTRLEN];
+    char mme_peer[OGS_ADDRSTRLEN];
+
+    if (sess)
+        sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+    sgwc_log_pgw_peer(pgw_peer, sizeof(pgw_peer), sess);
+    sgwc_log_mme_peer(mme_peer, sizeof(mme_peer), sgwc_ue);
+    ogs_error("[%s] No S11 xact for %s PGW[%s] MME[%s] assoc_s11_xact[%u] "
+            "SGW-S5C[0x%x]",
+            sgwc_log_imsi(sgwc_ue), msg, pgw_peer, mme_peer,
+            s5c_xact ? s5c_xact->assoc_xact_id : 0,
+            sess ? sess->sgw_s5c_teid : 0);
+}
+
 static void bearer_timeout(ogs_gtp_xact_t *xact, void *data)
 {
     sgwc_bearer_t *bearer = NULL;
@@ -110,8 +128,7 @@ void sgwc_s5c_handle_create_session_response(
     ogs_expect(rv == OGS_OK);
 
     if (!s11_xact) {
-        ogs_error("No S11 Transaction (assoc_xact_id=%u)",
-                s5c_xact->assoc_xact_id);
+        sgwc_log_no_s11_xact(sess, s5c_xact, "S5 Create Session Response");
         return;
     }
 
@@ -154,7 +171,16 @@ void sgwc_s5c_handle_create_session_response(
 
     if (rsp->cause.presence && rsp->cause.data &&
             !OGS_GTP2_CAUSE_IS_SUCCESS(session_cause)) {
-        ogs_error("GTP Cause from PGW [VALUE:%d]", session_cause);
+        char pgw_peer[OGS_ADDRSTRLEN];
+        char mme_peer[OGS_ADDRSTRLEN];
+        const char *apn = sess->session.name ? sess->session.name : "-";
+
+        sgwc_log_pgw_peer(pgw_peer, sizeof(pgw_peer), sess);
+        sgwc_log_mme_peer(mme_peer, sizeof(mme_peer), sgwc_ue);
+        ogs_error("[%s] Create Session rejected by PGW[%s] MME[%s] "
+                "APN[%s] gtp_cause[%u] SGW-S5C[0x%x] PGW-S5C[0x%x]",
+                sgwc_log_imsi(sgwc_ue), pgw_peer, mme_peer, apn,
+                session_cause, sess->sgw_s5c_teid, sess->pgw_s5c_teid);
         ogs_gtp_send_error_message(
                 s11_xact, sgwc_ue->mme_s11_teid,
                 OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, session_cause);
@@ -383,8 +409,7 @@ void sgwc_s5c_handle_modify_bearer_response(
     ogs_expect(rv == OGS_OK);
 
     if (!s11_xact) {
-        ogs_error("No S11 Transaction (assoc_xact_id=%u)",
-                s5c_xact->assoc_xact_id);
+        sgwc_log_no_s11_xact(sess, s5c_xact, "S5 Modify Bearer Response");
         return;
     }
     modify_action = s5c_xact->modify_action;
@@ -549,8 +574,7 @@ void sgwc_s5c_handle_delete_session_response(
     ogs_expect(rv == OGS_OK);
 
     if (!s11_xact) {
-        ogs_error("No S11 Transaction (assoc_xact_id=%u)",
-                s5c_xact->assoc_xact_id);
+        sgwc_log_no_s11_xact(sess, s5c_xact, "S5 Delete Session Response");
         return;
     }
 
@@ -1074,8 +1098,8 @@ void sgwc_s5c_handle_bearer_resource_failure_indication(
     ogs_expect(rv == OGS_OK);
 
     if (!s11_xact) {
-        ogs_error("No S11 Transaction (assoc_xact_id=%u)",
-                s5c_xact->assoc_xact_id);
+        sgwc_log_no_s11_xact(sess, s5c_xact,
+                "S5 Bearer Resource Failure Indication");
         return;
     }
 

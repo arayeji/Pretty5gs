@@ -21,6 +21,7 @@
 
 #include "mme-ambr.h"
 #include "mme-sm.h"
+#include "mme-trace.h"
 #include "s1ap-build.h"
 
 ogs_pkbuf_t *s1ap_build_setup_rsp(mme_enb_t *enb)
@@ -417,9 +418,18 @@ static bool mme_bearer_sgw_s1u_ready(mme_bearer_t *bearer)
     if (bearer->sgw_s1u_ip.ipv4 || bearer->sgw_s1u_ip.ipv6)
         return true;
 
-    ogs_error("Bearer EBI[%d] SGW-S1U-TEID[0x%x] has no transport address "
-            "(Create Session may have failed or bearer is stale)",
-            bearer->ebi, bearer->sgw_s1u_teid);
+    {
+        mme_ue_t *mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
+        mme_sess_t *sess = mme_sess_find_by_id(bearer->sess_id);
+        char pgw_peer[64];
+
+        mme_log_pgw_peer(pgw_peer, sizeof(pgw_peer), sess);
+        ogs_error("[%s] Bearer EBI[%d] SGW-S1U-TEID[0x%x] missing transport "
+                "APN[%s] PGW[%s] (Create Session failed or stale bearer)",
+                mme_log_imsi(mme_ue), bearer->ebi, bearer->sgw_s1u_teid,
+                sess && sess->session ? sess->session->name : "-",
+                pgw_peer[0] ? pgw_peer : "-");
+    }
     return false;
 }
 
@@ -618,9 +628,17 @@ ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
 
         if (sess && bearer) {
             if (!mme_bearer_sgw_s1u_ready(bearer)) {
-                ogs_error("[%s] Cannot build ICS for attach: "
-                        "default bearer EBI[%d] missing SGW S1-U",
-                        mme_ue->imsi_bcd, bearer->ebi);
+                char pgw_peer[64];
+                sgw_ue_t *sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+
+                mme_log_pgw_peer(pgw_peer, sizeof(pgw_peer), sess);
+                ogs_error("[%s] Cannot build ICS for attach: default bearer "
+                        "EBI[%d] missing SGW S1-U APN[%s] PGW[%s] "
+                        "SGW_S11_TEID[0x%x]",
+                        mme_log_imsi(mme_ue), bearer->ebi,
+                        sess->session ? sess->session->name : "-",
+                        pgw_peer[0] ? pgw_peer : "-",
+                        sgw_ue ? sgw_ue->sgw_s11_teid : 0);
                 return NULL;
             }
 

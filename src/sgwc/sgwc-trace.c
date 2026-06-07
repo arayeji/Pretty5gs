@@ -71,3 +71,58 @@ void ogs_sgwc_trace_set(
 
     ogs_trace_set(&ctx);
 }
+
+const char *sgwc_log_imsi(sgwc_ue_t *sgwc_ue)
+{
+    if (sgwc_ue && sgwc_ue->imsi_bcd[0])
+        return sgwc_ue->imsi_bcd;
+    return "-";
+}
+
+void sgwc_log_mme_peer(char *buf, size_t buflen, sgwc_ue_t *sgwc_ue)
+{
+    char ipbuf[OGS_ADDRSTRLEN];
+
+    ogs_assert(buf);
+    ogs_assert(buflen > 0);
+    buf[0] = '\0';
+
+    if (!sgwc_ue || !sgwc_ue->gnode)
+        return;
+
+    ogs_snprintf(buf, buflen, "[%s]:%d",
+            OGS_ADDR(&sgwc_ue->gnode->addr, ipbuf),
+            OGS_PORT(&sgwc_ue->gnode->addr));
+}
+
+void sgwc_log_pgw_peer(char *buf, size_t buflen, sgwc_sess_t *sess)
+{
+    char ipbuf[OGS_ADDRSTRLEN];
+
+    ogs_assert(buf);
+    ogs_assert(buflen > 0);
+    buf[0] = '\0';
+
+    if (!sess || !sess->gnode)
+        return;
+
+    ogs_snprintf(buf, buflen, "[%s]:%d TEID[0x%x]",
+            OGS_ADDR(&sess->gnode->addr, ipbuf),
+            OGS_PORT(&sess->gnode->addr), sess->pgw_s5c_teid);
+}
+
+void sgwc_log_sgwu_peer(char *buf, size_t buflen, sgwc_sess_t *sess)
+{
+    char *peer = NULL;
+
+    ogs_assert(buf);
+    ogs_assert(buflen > 0);
+    buf[0] = '\0';
+
+    if (!sess || !sess->pfcp_node)
+        return;
+
+    peer = ogs_sockaddr_to_string_static(sess->pfcp_node->addr_list);
+    if (peer)
+        ogs_cpystrn(buf, peer, buflen);
+}

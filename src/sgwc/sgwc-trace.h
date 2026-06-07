@@ -30,6 +30,11 @@ void ogs_sgwc_trace_set(
         sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess,
         const char *apn, const char *proc);
 
+const char *sgwc_log_imsi(sgwc_ue_t *sgwc_ue);
+void sgwc_log_mme_peer(char *buf, size_t buflen, sgwc_ue_t *sgwc_ue);
+void sgwc_log_pgw_peer(char *buf, size_t buflen, sgwc_sess_t *sess);
+void sgwc_log_sgwu_peer(char *buf, size_t buflen, sgwc_sess_t *sess);
+
 #ifdef __cplusplus
 }
 #endif
