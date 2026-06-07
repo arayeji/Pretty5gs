@@ -120,12 +120,32 @@ static void sess_timeout(ogs_gtp_xact_t *xact, void *data)
     type = xact->seq[0].type;
 
     switch (type) {
-    case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
-        ogs_error("[%s] No Create Session Response", sgwc_ue->imsi_bcd);
-        ogs_assert(OGS_OK ==
-            sgwc_pfcp_send_session_deletion_request(
-                sess, OGS_INVALID_POOL_ID, NULL));
+    case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE: {
+        ogs_gtp_xact_t *s11_xact = NULL;
+        char peer[OGS_ADDRSTRLEN];
+
+        s11_xact = ogs_gtp_xact_find_by_id(xact->assoc_xact_id);
+        if (xact->gnode) {
+            ogs_error("[%s] S5 timeout: no Create Session Response from "
+                    "SMF/PGW [%s]:%d",
+                    sgwc_ue->imsi_bcd,
+                    OGS_ADDR(&xact->gnode->addr, peer),
+                    OGS_PORT(&xact->gnode->addr));
+        } else {
+            ogs_error("[%s] S5 timeout: no Create Session Response "
+                    "(SMF/PGW peer unknown)", sgwc_ue->imsi_bcd);
+        }
+
+        if (s11_xact) {
+            ogs_gtp_send_error_message(
+                    s11_xact, sgwc_ue->mme_s11_teid,
+                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                    OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+        }
+
+        sgwc_sess_remove(sess);
         break;
+    }
     default:
         ogs_error("GTP Timeout : IMSI[%s] Message-Type[%d]",
                 sgwc_ue->imsi_bcd, type);
@@ -428,12 +448,24 @@ void sgwc_sxa_handle_session_establishment_response(
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+        char sgwu_peer[OGS_ADDRSTRLEN];
+
         if (sess) sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-        ogs_error("[%s] PFCP Session Establishment failed [PFCP cause:%u] "
-                "-> S11 Create Session cause:%u",
-                sgwc_ue ? sgwc_ue->imsi_bcd : "-",
-                pfcp_rsp->cause.presence ? pfcp_rsp->cause.u8 : 0,
-                cause_value);
+        if (sess && sess->pfcp_node) {
+            ogs_error("[%s] SGW-U rejected PFCP Session Establishment "
+                    "[%s]:%d [PFCP cause:%u] -> S11 cause:%u",
+                    sgwc_ue ? sgwc_ue->imsi_bcd : "-",
+                    OGS_ADDR(&sess->pfcp_node->addr, sgwu_peer),
+                    OGS_PORT(&sess->pfcp_node->addr),
+                    pfcp_rsp->cause.presence ? pfcp_rsp->cause.u8 : 0,
+                    cause_value);
+        } else {
+            ogs_error("[%s] SGW-U rejected PFCP Session Establishment "
+                    "[PFCP cause:%u] -> S11 cause:%u",
+                    sgwc_ue ? sgwc_ue->imsi_bcd : "-",
+                    pfcp_rsp->cause.presence ? pfcp_rsp->cause.u8 : 0,
+                    cause_value);
+        }
         ogs_gtp_send_error_message(
                 s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
                 OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, cause_value);

@@ -18,6 +18,7 @@
  */
 
 #include "pfcp-path.h"
+#include "gtp-path.h"
 #include "s11-handler.h"
 
 static void pfcp_node_fsm_init(ogs_pfcp_node_t *node, bool try_to_associate)
@@ -240,12 +241,49 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
     }
 
     switch (type) {
-    case OGS_PFCP_SESSION_ESTABLISHMENT_REQUEST_TYPE:
-        ogs_error("No PFCP session establishment response");
+    case OGS_PFCP_SESSION_ESTABLISHMENT_REQUEST_TYPE: {
+        sgwc_ue_t *sgwc_ue = NULL;
+        ogs_gtp_xact_t *s11_xact = NULL;
+        char peer[OGS_ADDRSTRLEN];
+
+        sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        if (sess->pfcp_node) {
+            ogs_error("[%s] Sxa timeout: no PFCP Session Establishment "
+                    "Response from SGW-U [%s]:%d",
+                    sgwc_ue ? sgwc_ue->imsi_bcd : "-",
+                    OGS_ADDR(&sess->pfcp_node->addr, peer),
+                    OGS_PORT(&sess->pfcp_node->addr));
+        } else {
+            ogs_error("[%s] Sxa timeout: no PFCP Session Establishment "
+                    "Response from SGW-U",
+                    sgwc_ue ? sgwc_ue->imsi_bcd : "-");
+        }
+
+        s11_xact = ogs_gtp_xact_find_by_id(xact->assoc_xact_id);
+        if (sgwc_ue && s11_xact) {
+            ogs_gtp_send_error_message(
+                    s11_xact, sgwc_ue->mme_s11_teid,
+                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                    OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+        }
+
+        sgwc_sess_remove(sess);
         break;
-    case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE:
-        ogs_error("No PFCP session modification response");
+    }
+    case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE: {
+        char peer[OGS_ADDRSTRLEN];
+
+        if (sess->pfcp_node) {
+            ogs_error("Sxa timeout: no PFCP Session Modification Response "
+                    "from SGW-U [%s]:%d",
+                    OGS_ADDR(&sess->pfcp_node->addr, peer),
+                    OGS_PORT(&sess->pfcp_node->addr));
+        } else {
+            ogs_error("Sxa timeout: no PFCP Session Modification Response "
+                    "from SGW-U");
+        }
         break;
+    }
     case OGS_PFCP_SESSION_DELETION_REQUEST_TYPE: {
         sgwc_ue_t *sgwc_ue = NULL;
 
