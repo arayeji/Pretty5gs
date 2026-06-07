@@ -448,15 +448,14 @@ void sgwc_sxa_handle_session_establishment_response(
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-        char sgwu_peer[OGS_ADDRSTRLEN];
-
         if (sess) sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         if (sess && sess->pfcp_node) {
+            char *sgwu_peer = ogs_sockaddr_to_string_static(
+                    sess->pfcp_node->addr_list);
             ogs_error("[%s] SGW-U rejected PFCP Session Establishment "
-                    "[%s]:%d [PFCP cause:%u] -> S11 cause:%u",
+                    "%s [PFCP cause:%u] -> S11 cause:%u",
                     sgwc_ue ? sgwc_ue->imsi_bcd : "-",
-                    OGS_ADDR(&sess->pfcp_node->addr, sgwu_peer),
-                    OGS_PORT(&sess->pfcp_node->addr),
+                    sgwu_peer ? sgwu_peer : "(unknown)",
                     pfcp_rsp->cause.presence ? pfcp_rsp->cause.u8 : 0,
                     cause_value);
         } else {

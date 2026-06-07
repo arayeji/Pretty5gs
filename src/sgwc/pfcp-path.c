@@ -244,15 +244,15 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
     case OGS_PFCP_SESSION_ESTABLISHMENT_REQUEST_TYPE: {
         sgwc_ue_t *sgwc_ue = NULL;
         ogs_gtp_xact_t *s11_xact = NULL;
-        char peer[OGS_ADDRSTRLEN];
 
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         if (sess->pfcp_node) {
+            char *sgwu_peer = ogs_sockaddr_to_string_static(
+                    sess->pfcp_node->addr_list);
             ogs_error("[%s] Sxa timeout: no PFCP Session Establishment "
-                    "Response from SGW-U [%s]:%d",
+                    "Response from SGW-U %s",
                     sgwc_ue ? sgwc_ue->imsi_bcd : "-",
-                    OGS_ADDR(&sess->pfcp_node->addr, peer),
-                    OGS_PORT(&sess->pfcp_node->addr));
+                    sgwu_peer ? sgwu_peer : "(unknown)");
         } else {
             ogs_error("[%s] Sxa timeout: no PFCP Session Establishment "
                     "Response from SGW-U",
@@ -271,13 +271,12 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
         break;
     }
     case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE: {
-        char peer[OGS_ADDRSTRLEN];
-
         if (sess->pfcp_node) {
+            char *sgwu_peer = ogs_sockaddr_to_string_static(
+                    sess->pfcp_node->addr_list);
             ogs_error("Sxa timeout: no PFCP Session Modification Response "
-                    "from SGW-U [%s]:%d",
-                    OGS_ADDR(&sess->pfcp_node->addr, peer),
-                    OGS_PORT(&sess->pfcp_node->addr));
+                    "from SGW-U %s",
+                    sgwu_peer ? sgwu_peer : "(unknown)");
         } else {
             ogs_error("Sxa timeout: no PFCP Session Modification Response "
                     "from SGW-U");
