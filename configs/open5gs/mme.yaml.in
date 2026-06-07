@@ -27,6 +27,17 @@ mme:
   s1ap:
     server:
       - address: 127.0.0.2
+#        option:
+#          so_rcvbuf: 1048576   # 1 MiB per accepted eNB SCTP socket (Linux doubles)
+#          so_sndbuf: 1048576
+#          sctp_nodelay: true
+#          sctp:
+#            spp_hbinterval: 30000
+#            srto_initial: 3000
+#            srto_min: 1000
+#            srto_max: 10000
+#            sinit_num_ostreams: 30
+#            sinit_max_instreams: 30
   gtpc:
     server:
       - address: 127.0.0.2

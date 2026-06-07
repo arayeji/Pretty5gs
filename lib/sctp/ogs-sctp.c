@@ -22,6 +22,14 @@
 
 int __ogs_sctp_domain;
 
+bool ogs_sctp_recv_would_block(int size)
+{
+    if (size >= 0)
+        return false;
+
+    return ogs_socket_errno_would_block();
+}
+
 static void sctp_write_callback(short when, ogs_socket_t fd, void *data);
 
 int ogs_sctp_recvdata(ogs_sock_t *sock, void *msg, size_t len,

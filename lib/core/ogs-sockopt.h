@@ -51,6 +51,10 @@ typedef struct ogs_sockopt_s {
     } so_linger;
 
     const char *so_bindtodevice;
+
+    /* 0 = leave unset (SCTP accepted sockets use OGS_SCTP_CONNECTED_* defaults) */
+    int so_rcvbuf;
+    int so_sndbuf;
 } ogs_sockopt_t;
 
 void ogs_sockopt_init(ogs_sockopt_t *option);
@@ -61,6 +65,7 @@ int ogs_listen_reusable(ogs_socket_t fd, int on);
 int ogs_tcp_nodelay(ogs_socket_t fd, int on);
 int ogs_so_linger(ogs_socket_t fd, int l_linger);
 int ogs_bind_to_device(ogs_socket_t fd, const char *device);
+int ogs_sock_buffer(ogs_socket_t fd, int rcvbuf, int sndbuf);
 
 #ifdef __cplusplus
 }

@@ -48,6 +48,14 @@ extern int __ogs_sctp_domain;
 #define OGS_SCTP_SGSAP_PPID             0
 #define OGS_SCTP_NGAP_PPID              60
 
+/*
+ * Default socket buffers for accepted SCTP associations (eNB/gNB).
+ * Linux doubles the value passed to setsockopt(), so 1 MiB here
+ * typically yields ~2 MiB kernel buffer per direction.
+ */
+#define OGS_SCTP_CONNECTED_SO_RCVBUF    (1048576)
+#define OGS_SCTP_CONNECTED_SO_SNDBUF    (1048576)
+
 #define ogs_sctp_ppid_in_pkbuf(__pkBUF)         (__pkBUF)->param[0]
 #define ogs_sctp_stream_no_in_pkbuf(__pkBUF)    (__pkBUF)->param[1]
 
@@ -120,6 +128,8 @@ int ogs_sctp_listen(ogs_sock_t *sock);
 int ogs_sctp_peer_addr_params(ogs_sock_t *sock, ogs_sockopt_t *option);
 int ogs_sctp_rto_info(ogs_sock_t *sock, ogs_sockopt_t *option);
 int ogs_sctp_initmsg(ogs_sock_t *sock, ogs_sockopt_t *option);
+int ogs_sctp_tune_connected(ogs_sock_t *sock, ogs_sockopt_t *option);
+bool ogs_sctp_recv_would_block(int size);
 int ogs_sctp_nodelay(ogs_sock_t *sock, int on);
 int ogs_sctp_so_linger(ogs_sock_t *sock, int l_linger);
 

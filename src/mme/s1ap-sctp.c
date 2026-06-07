@@ -28,8 +28,39 @@ static void usrsctp_recv_handler(struct socket *socket, void *data, int flags);
 static void lksctp_accept_handler(short when, ogs_socket_t fd, void *data);
 #endif
 
-void s1ap_accept_handler(ogs_sock_t *sock);
-void s1ap_recv_handler(ogs_sock_t *sock);
+static int s1ap_accept_handler(ogs_sock_t *sock);
+static int s1ap_recv_handler(ogs_sock_t *sock);
+
+static ogs_sockopt_t s1ap_default_sockopt;
+static bool s1ap_default_sockopt_ready = false;
+
+static ogs_sockopt_t *s1ap_default_option(void)
+{
+    if (!s1ap_default_sockopt_ready) {
+        ogs_sockopt_init(&s1ap_default_sockopt);
+        s1ap_default_sockopt_ready = true;
+    }
+    return &s1ap_default_sockopt;
+}
+
+static ogs_sockopt_t *mme_s1ap_server_option(ogs_sock_t *listen)
+{
+    ogs_socknode_t *node = NULL;
+
+    if (!listen)
+        return s1ap_default_option();
+
+    ogs_list_for_each(&mme_self()->s1ap_list, node) {
+        if (node->sock == listen)
+            return node->option ? node->option : s1ap_default_option();
+    }
+    ogs_list_for_each(&mme_self()->s1ap_list6, node) {
+        if (node->sock == listen)
+            return node->option ? node->option : s1ap_default_option();
+    }
+
+    return s1ap_default_option();
+}
 
 ogs_sock_t *s1ap_server(ogs_socknode_t *node)
 {
@@ -49,6 +80,7 @@ ogs_sock_t *s1ap_server(ogs_socknode_t *node)
 #else
     sock = ogs_sctp_server(SOCK_STREAM, node->addr, node->option);
     if (!sock) return NULL;
+    ogs_nonblocking(sock->fd);
     poll = ogs_pollset_add(ogs_app()->pollset,
             OGS_POLLIN, sock->fd, lksctp_accept_handler, sock);
     ogs_assert(poll);
@@ -73,7 +105,8 @@ void s1ap_recv_upcall(short when, ogs_socket_t fd, void *data)
     sock = data;
     ogs_assert(sock);
 
-    s1ap_recv_handler(sock);
+    while (s1ap_recv_handler(sock) > 0)
+        ;
 }
 
 #if HAVE_USRSCTP
@@ -83,7 +116,8 @@ static void usrsctp_recv_handler(struct socket *socket, void *data, int flags)
 
     while ((events = usrsctp_get_events(socket)) &&
            (events & SCTP_EVENT_READ)) {
-        s1ap_recv_handler((ogs_sock_t *)socket);
+        if (s1ap_recv_handler((ogs_sock_t *)socket) <= 0)
+            break;
     }
 }
 #else
@@ -92,35 +126,45 @@ static void lksctp_accept_handler(short when, ogs_socket_t fd, void *data)
     ogs_assert(data);
     ogs_assert(fd != INVALID_SOCKET);
 
-    s1ap_accept_handler(data);
+    while (s1ap_accept_handler(data) > 0)
+        ;
 }
 #endif
 
-void s1ap_accept_handler(ogs_sock_t *sock)
+static int s1ap_accept_handler(ogs_sock_t *sock)
 {
     char buf[OGS_ADDRSTRLEN];
     ogs_sock_t *new = NULL;
+    ogs_sockaddr_t *addr = NULL;
 
     ogs_assert(sock);
 
     new = ogs_sock_accept(sock);
-    if (new) {
-        ogs_sockaddr_t *addr = NULL;
+    if (!new) {
+        if (ogs_socket_errno_would_block())
+            return 0;
+        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno, "accept() failed");
+        return -1;
+    }
 
-        addr = ogs_calloc(1, sizeof(ogs_sockaddr_t));
-        ogs_assert(addr);
-        memcpy(addr, &new->remote_addr, sizeof(ogs_sockaddr_t));
+    if (ogs_sctp_tune_connected(new, mme_s1ap_server_option(sock)) != OGS_OK) {
+        ogs_error("ogs_sctp_tune_connected() failed");
+        ogs_sock_destroy(new);
+        return -1;
+    }
 
-        ogs_info("eNB-S1 accepted[%s]:%d in s1_path module", 
+    addr = ogs_calloc(1, sizeof(ogs_sockaddr_t));
+    ogs_assert(addr);
+    memcpy(addr, &new->remote_addr, sizeof(ogs_sockaddr_t));
+
+    ogs_info("eNB-S1 accepted[%s]:%d in s1_path module",
             OGS_ADDR(addr, buf), OGS_PORT(addr));
 
-        s1ap_event_push(MME_EVENT_S1AP_LO_ACCEPT, new, addr, NULL, 0, 0);
-    } else {
-        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno, "accept() failed");
-    }
+    s1ap_event_push(MME_EVENT_S1AP_LO_ACCEPT, new, addr, NULL, 0, 0);
+    return 1;
 }
 
-void s1ap_recv_handler(ogs_sock_t *sock)
+static int s1ap_recv_handler(ogs_sock_t *sock)
 {
     ogs_pkbuf_t *pkbuf;
     int size;
@@ -136,11 +180,18 @@ void s1ap_recv_handler(ogs_sock_t *sock)
     ogs_pkbuf_put(pkbuf, OGS_MAX_SDU_LEN);
     size = ogs_sctp_recvmsg(
             sock, pkbuf->data, pkbuf->len, &from, &sinfo, &flags);
-    if (size < 0 || size >= OGS_MAX_SDU_LEN) {
+    if (size < 0) {
+        ogs_pkbuf_free(pkbuf);
+        if (ogs_sctp_recv_would_block(size))
+            return 0;
         ogs_error("ogs_sctp_recvmsg(%d) failed(%d:%s)",
                 size, errno, strerror(errno));
+        return -1;
+    }
+    if (size >= OGS_MAX_SDU_LEN) {
+        ogs_error("ogs_sctp_recvmsg(%d) too large", size);
         ogs_pkbuf_free(pkbuf);
-        return;
+        return -1;
     }
 
     if (flags & MSG_NOTIFICATION) {
@@ -150,7 +201,7 @@ void s1ap_recv_handler(ogs_sock_t *sock)
         switch(not->sn_header.sn_type) {
         case SCTP_ASSOC_CHANGE :
             ogs_debug("SCTP_ASSOC_CHANGE:"
-                    "[T:%d, F:0x%x, S:%d, I/O:%d/%d]", 
+                    "[T:%d, F:0x%x, S:%d, I/O:%d/%d]",
                     not->sn_assoc_change.sac_type,
                     not->sn_assoc_change.sac_flags,
                     not->sn_assoc_change.sac_state,
@@ -219,13 +270,13 @@ void s1ap_recv_handler(ogs_sock_t *sock)
             break;
 
         case SCTP_PEER_ADDR_CHANGE:
-            ogs_warn("SCTP_PEER_ADDR_CHANGE:[T:%d, F:0x%x, S:%d]", 
+            ogs_warn("SCTP_PEER_ADDR_CHANGE:[T:%d, F:0x%x, S:%d]",
                     not->sn_paddr_change.spc_type,
                     not->sn_paddr_change.spc_flags,
                     not->sn_paddr_change.spc_error);
             break;
         case SCTP_REMOTE_ERROR:
-            ogs_warn("SCTP_REMOTE_ERROR:[T:%d, F:0x%x, S:%d]", 
+            ogs_warn("SCTP_REMOTE_ERROR:[T:%d, F:0x%x, S:%d]",
                     not->sn_remote_error.sre_type,
                     not->sn_remote_error.sre_flags,
                     not->sn_remote_error.sre_error);
@@ -243,11 +294,12 @@ void s1ap_recv_handler(ogs_sock_t *sock)
         memcpy(addr, &from, sizeof(ogs_sockaddr_t));
 
         s1ap_event_push(MME_EVENT_S1AP_MESSAGE, sock, addr, pkbuf, 0, 0);
-        return;
+        return 1;
     } else {
         ogs_error("ogs_sctp_recvmsg(%d) failed(%d:%s-0x%x)",
                 size, errno, strerror(errno), flags);
     }
 
     ogs_pkbuf_free(pkbuf);
+    return 1;
 }
