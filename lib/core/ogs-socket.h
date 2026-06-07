@@ -71,6 +71,8 @@ ssize_t ogs_recvfrom(ogs_socket_t fd,
 
 int ogs_closesocket(ogs_socket_t fd);
 
+bool ogs_socket_errno_would_block(void);
+
 #ifdef __cplusplus
 }
 #endif

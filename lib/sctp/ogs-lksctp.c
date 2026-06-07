@@ -485,8 +485,10 @@ int ogs_sctp_recvmsg(ogs_sock_t *sock, void *msg, size_t len,
     size = sctp_recvmsg(sock->fd, msg, len, &addr.sa, &addrlen,
                 &sndrcvinfo, &flags);
     if (size < 0) {
-        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
-                "sctp_recvmsg(%d) failed", size);
+        if (!ogs_sctp_recv_would_block(size)) {
+            ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
+                    "sctp_recvmsg(%d) failed", size);
+        }
         return size;
     }
 
@@ -896,4 +898,56 @@ int ogs_sctp_so_linger(ogs_sock_t *sock, int l_linger)
 {
     ogs_assert(sock);
     return ogs_so_linger(sock->fd, l_linger);
+}
+
+int ogs_sctp_tune_connected(ogs_sock_t *sock, ogs_sockopt_t *option)
+{
+    ogs_sockopt_t default_option;
+    int rcv, snd;
+    int rv;
+
+    ogs_assert(sock);
+
+    if (!option) {
+        ogs_sockopt_init(&default_option);
+        option = &default_option;
+    }
+
+    rv = ogs_nonblocking(sock->fd);
+    ogs_assert(rv == OGS_OK);
+
+    rv = ogs_closeonexec(sock->fd);
+    ogs_assert(rv == OGS_OK);
+
+    /*
+     * Accepted one-to-one SCTP sockets do not inherit SCTP_EVENTS
+     * subscription from the listen socket. Without this, COMM_LOST
+     * and SHUTDOWN notifications never reach userspace and eNB
+     * contexts outlive their associations.
+     */
+    rv = subscribe_to_events(sock);
+    ogs_assert(rv == OGS_OK);
+
+    rcv = option->so_rcvbuf > 0 ?
+            option->so_rcvbuf : OGS_SCTP_CONNECTED_SO_RCVBUF;
+    snd = option->so_sndbuf > 0 ?
+            option->so_sndbuf : OGS_SCTP_CONNECTED_SO_SNDBUF;
+    rv = ogs_sock_buffer(sock->fd, rcv, snd);
+    if (rv != OGS_OK) {
+        ogs_warn("ogs_sock_buffer(rcv=%d,snd=%d) failed on accepted SCTP",
+                rcv, snd);
+    }
+
+    rv = ogs_sctp_peer_addr_params(sock, option);
+    ogs_assert(rv == OGS_OK);
+
+    rv = ogs_sctp_rto_info(sock, option);
+    ogs_assert(rv == OGS_OK);
+
+    if (option->sctp_nodelay) {
+        rv = ogs_sctp_nodelay(sock, true);
+        ogs_assert(rv == OGS_OK);
+    }
+
+    return OGS_OK;
 }

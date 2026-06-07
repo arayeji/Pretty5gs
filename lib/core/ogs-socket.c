@@ -260,3 +260,16 @@ int ogs_closesocket(ogs_socket_t fd)
 
     return OGS_OK;
 }
+
+bool ogs_socket_errno_would_block(void)
+{
+#if defined(_WIN32)
+    return ogs_socket_errno == OGS_EAGAIN;
+#else
+#if defined(EAGAIN) && defined(EWOULDBLOCK) && (EAGAIN == EWOULDBLOCK)
+    return errno == EAGAIN;
+#else
+    return errno == EAGAIN || errno == EWOULDBLOCK;
+#endif
+#endif
+}

@@ -560,3 +560,43 @@ int ogs_sctp_so_linger(ogs_sock_t *sock, int l_linger)
 
     return OGS_OK;
 }
+
+int ogs_sctp_tune_connected(ogs_sock_t *sock, ogs_sockopt_t *option)
+{
+    struct socket *socket = (struct socket *)sock;
+    ogs_sockopt_t default_option;
+    int rcv, snd;
+    int rv;
+
+    ogs_assert(socket);
+
+    if (!option) {
+        ogs_sockopt_init(&default_option);
+        option = &default_option;
+    }
+
+    usrsctp_set_non_blocking(socket, 1);
+
+    rcv = option->so_rcvbuf > 0 ?
+            option->so_rcvbuf : OGS_SCTP_CONNECTED_SO_RCVBUF;
+    snd = option->so_sndbuf > 0 ?
+            option->so_sndbuf : OGS_SCTP_CONNECTED_SO_SNDBUF;
+    rv = ogs_sock_buffer(usrsctp_socket_getfd(socket), rcv, snd);
+    if (rv != OGS_OK) {
+        ogs_warn("ogs_sock_buffer(rcv=%d,snd=%d) failed on accepted SCTP",
+                rcv, snd);
+    }
+
+    rv = ogs_sctp_peer_addr_params(sock, option);
+    ogs_assert(rv == OGS_OK);
+
+    rv = ogs_sctp_rto_info(sock, option);
+    ogs_assert(rv == OGS_OK);
+
+    if (option->sctp_nodelay) {
+        rv = ogs_sctp_nodelay(sock, true);
+        ogs_assert(rv == OGS_OK);
+    }
+
+    return OGS_OK;
+}

@@ -857,6 +857,13 @@ int ogs_app_parse_sockopt_config(
         } else if (!strcmp(sockopt_key, "so_bindtodevice")) {
             option->so_bindtodevice = ogs_yaml_iter_value(&sockopt_iter);
 
+        } else if (!strcmp(sockopt_key, "so_rcvbuf")) {
+            const char *v = ogs_yaml_iter_value(&sockopt_iter);
+            if (v) option->so_rcvbuf = atoi(v);
+        } else if (!strcmp(sockopt_key, "so_sndbuf")) {
+            const char *v = ogs_yaml_iter_value(&sockopt_iter);
+            if (v) option->so_sndbuf = atoi(v);
+
         } else {
             ogs_error("unknown key `%s`", sockopt_key);
             return OGS_ERROR;

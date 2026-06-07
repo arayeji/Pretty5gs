@@ -173,6 +173,33 @@ int ogs_so_linger(ogs_socket_t fd, int l_linger)
     return OGS_OK;
 }
 
+int ogs_sock_buffer(ogs_socket_t fd, int rcvbuf, int sndbuf)
+{
+    ogs_assert(fd != INVALID_SOCKET);
+
+    if (rcvbuf > 0) {
+        int rc = setsockopt(fd, SOL_SOCKET, SO_RCVBUF,
+                (void *)&rcvbuf, sizeof(rcvbuf));
+        if (rc != OGS_OK) {
+            ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
+                    "setsockopt(SOL_SOCKET, SO_RCVBUF, %d) failed", rcvbuf);
+            return OGS_ERROR;
+        }
+    }
+
+    if (sndbuf > 0) {
+        int rc = setsockopt(fd, SOL_SOCKET, SO_SNDBUF,
+                (void *)&sndbuf, sizeof(sndbuf));
+        if (rc != OGS_OK) {
+            ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
+                    "setsockopt(SOL_SOCKET, SO_SNDBUF, %d) failed", sndbuf);
+            return OGS_ERROR;
+        }
+    }
+
+    return OGS_OK;
+}
+
 int ogs_bind_to_device(ogs_socket_t fd, const char *device)
 {
 #if defined(SO_BINDTODEVICE) && !defined(_WIN32)
