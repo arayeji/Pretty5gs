@@ -78,8 +78,15 @@ int sgsap_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
 {
     int sent;
 
-    ogs_assert(sock);
     ogs_assert(pkbuf);
+
+    if (!sock || sock->fd == INVALID_SOCKET) {
+        ogs_error("SGsAP send failed: VLR SCTP socket not connected "
+                "(stream[%d] len[%d])",
+                stream_no, pkbuf ? (int)pkbuf->len : 0);
+        ogs_pkbuf_free(pkbuf);
+        return OGS_ERROR;
+    }
 
     sent = ogs_sctp_sendmsg(sock, pkbuf->data, pkbuf->len,
             NULL, OGS_SCTP_SGSAP_PPID, stream_no);
@@ -97,12 +104,21 @@ int sgsap_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
 int sgsap_send_to_vlr_with_sid(
         mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
 {
-    ogs_sock_t *sock = NULL;;
+    ogs_sock_t *sock = NULL;
 
     ogs_assert(vlr);
     ogs_assert(pkbuf);
+
     sock = vlr->sock;
-    ogs_assert(sock);
+    if (!sock || sock->fd == INVALID_SOCKET) {
+        ogs_error("SGsAP not sent: VLR SCTP down VLR[%s] stream[%d] "
+                "(VLR association lost or not established)",
+                ogs_sockaddr_to_string_static(vlr->sa_list) ?
+                    ogs_sockaddr_to_string_static(vlr->sa_list) : "-",
+                stream_no);
+        ogs_pkbuf_free(pkbuf);
+        return OGS_ERROR;
+    }
 
     ogs_debug("    StreamNO[%d] VLR-IP[%s]",
             stream_no, ogs_sockaddr_to_string_static(vlr->sa_list));
@@ -119,9 +135,19 @@ int sgsap_send_to_vlr(mme_ue_t *mme_ue, ogs_pkbuf_t *pkbuf)
 
     ogs_assert(mme_ue);
     csmap = mme_ue->csmap;
-    ogs_assert(csmap);
+    if (!csmap) {
+        ogs_error("[%s] SGsAP not sent: no CSMAP (no VLR mapping for TAI)",
+                mme_log_imsi(mme_ue));
+        ogs_pkbuf_free(pkbuf);
+        return OGS_ERROR;
+    }
     vlr = csmap->vlr;
-    ogs_assert(vlr);
+    if (!vlr) {
+        ogs_error("[%s] SGsAP not sent: CSMAP has no VLR",
+                mme_log_imsi(mme_ue));
+        ogs_pkbuf_free(pkbuf);
+        return OGS_ERROR;
+    }
 
     ogs_debug("    TAI[PLMN_ID:%06x,TAC:%d]",
                 ogs_plmn_id_hexdump(&csmap->tai.nas_plmn_id), csmap->tai.tac);

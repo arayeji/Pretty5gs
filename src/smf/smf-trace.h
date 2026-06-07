@@ -33,6 +33,10 @@ void ogs_smf_trace_set(
 void smf_ue_debug(smf_ue_t *smf_ue, const char *fmt, ...)
     OGS_GNUC_PRINTF(2, 3);
 
+const char *smf_log_id(smf_ue_t *smf_ue);
+void smf_log_sgw_peer(char *buf, size_t buflen, smf_sess_t *sess);
+void smf_log_upf_peer(char *buf, size_t buflen, smf_sess_t *sess);
+
 #ifdef __cplusplus
 }
 #endif

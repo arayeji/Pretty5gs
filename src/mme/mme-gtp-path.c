@@ -28,6 +28,36 @@
 #include "mme-s11-build.h"
 #include "mme-sm.h"
 
+static const char *mme_gtp2_message_type_name(uint8_t type)
+{
+    switch (type) {
+    case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
+        return "Create Session Request";
+    case OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE:
+        return "Create Session Response";
+    case OGS_GTP2_DELETE_SESSION_REQUEST_TYPE:
+        return "Delete Session Request";
+    case OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE:
+        return "Delete Session Response";
+    case OGS_GTP2_MODIFY_BEARER_REQUEST_TYPE:
+        return "Modify Bearer Request";
+    case OGS_GTP2_MODIFY_BEARER_RESPONSE_TYPE:
+        return "Modify Bearer Response";
+    case OGS_GTP2_RELEASE_ACCESS_BEARERS_REQUEST_TYPE:
+        return "Release Access Bearers Request";
+    case OGS_GTP2_RELEASE_ACCESS_BEARERS_RESPONSE_TYPE:
+        return "Release Access Bearers Response";
+    case OGS_GTP2_BEARER_RESOURCE_COMMAND_TYPE:
+        return "Bearer Resource Command";
+    case OGS_GTP2_CREATE_INDIRECT_DATA_FORWARDING_TUNNEL_REQUEST_TYPE:
+        return "Create Indirect Data Forwarding Tunnel Request";
+    case OGS_GTP2_DELETE_INDIRECT_DATA_FORWARDING_TUNNEL_REQUEST_TYPE:
+        return "Delete Indirect Data Forwarding Tunnel Request";
+    default:
+        return "Unknown";
+    }
+}
+
 static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
 {
     int rv;
@@ -115,36 +145,6 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
         ogs_error("ogs_queue_push() failed:%d", (int)rv);
         ogs_pkbuf_free(e->pkbuf);
         mme_event_free(e);
-    }
-}
-
-static const char *mme_gtp2_message_type_name(uint8_t type)
-{
-    switch (type) {
-    case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
-        return "Create Session Request";
-    case OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE:
-        return "Create Session Response";
-    case OGS_GTP2_DELETE_SESSION_REQUEST_TYPE:
-        return "Delete Session Request";
-    case OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE:
-        return "Delete Session Response";
-    case OGS_GTP2_MODIFY_BEARER_REQUEST_TYPE:
-        return "Modify Bearer Request";
-    case OGS_GTP2_MODIFY_BEARER_RESPONSE_TYPE:
-        return "Modify Bearer Response";
-    case OGS_GTP2_RELEASE_ACCESS_BEARERS_REQUEST_TYPE:
-        return "Release Access Bearers Request";
-    case OGS_GTP2_RELEASE_ACCESS_BEARERS_RESPONSE_TYPE:
-        return "Release Access Bearers Response";
-    case OGS_GTP2_BEARER_RESOURCE_COMMAND_TYPE:
-        return "Bearer Resource Command";
-    case OGS_GTP2_CREATE_INDIRECT_DATA_FORWARDING_TUNNEL_REQUEST_TYPE:
-        return "Create Indirect Data Forwarding Tunnel Request";
-    case OGS_GTP2_DELETE_INDIRECT_DATA_FORWARDING_TUNNEL_REQUEST_TYPE:
-        return "Delete Indirect Data Forwarding Tunnel Request";
-    default:
-        return "Unknown";
     }
 }
 

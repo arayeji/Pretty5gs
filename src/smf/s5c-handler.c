@@ -45,23 +45,49 @@ static void pfcp_sess_timeout(ogs_pfcp_xact_t *xact, void *data)
 
     sess = smf_sess_find_by_id(sess_id);
     if (!sess) {
-        ogs_error("Session has already been removed [%d]", type);
+        ogs_error("PFCP timeout: session[%u] removed type[%u]", sess_id, type);
         return;
     }
 
-    switch (type) {
-    case OGS_PFCP_SESSION_ESTABLISHMENT_REQUEST_TYPE:
-        ogs_error("No PFCP session establishment response");
-        break;
-    case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE:
-        ogs_error("No PFCP session modification response");
-        break;
-    case OGS_PFCP_SESSION_DELETION_REQUEST_TYPE:
-        ogs_error("No PFCP session deletion response");
-        break;
-    default:
-        ogs_error("Not implemented [type:%d]", type);
-        break;
+    {
+        smf_ue_t *smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+        char sgw_peer[OGS_ADDRSTRLEN];
+        char upf_peer[OGS_ADDRSTRLEN];
+        const char *apn = sess->session.name ? sess->session.name : "-";
+
+        smf_log_sgw_peer(sgw_peer, sizeof(sgw_peer), sess);
+        smf_log_upf_peer(upf_peer, sizeof(upf_peer), sess);
+
+        switch (type) {
+        case OGS_PFCP_SESSION_ESTABLISHMENT_REQUEST_TYPE:
+            ogs_error("[%s] N4 timeout: no Session Establishment Response "
+                    "APN[%s] SGW[%s] UPF[%s] smf_seid[0x%llx]",
+                    smf_log_id(smf_ue), apn,
+                    sgw_peer[0] ? sgw_peer : "-",
+                    upf_peer[0] ? upf_peer : "-",
+                    (unsigned long long)sess->smf_n4_seid);
+            break;
+        case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE:
+            ogs_error("[%s] N4 timeout: no Session Modification Response "
+                    "APN[%s] SGW[%s] UPF[%s] smf_seid[0x%llx]",
+                    smf_log_id(smf_ue), apn,
+                    sgw_peer[0] ? sgw_peer : "-",
+                    upf_peer[0] ? upf_peer : "-",
+                    (unsigned long long)sess->smf_n4_seid);
+            break;
+        case OGS_PFCP_SESSION_DELETION_REQUEST_TYPE:
+            ogs_error("[%s] N4 timeout: no Session Deletion Response "
+                    "APN[%s] SGW[%s] UPF[%s] smf_seid[0x%llx]",
+                    smf_log_id(smf_ue), apn,
+                    sgw_peer[0] ? sgw_peer : "-",
+                    upf_peer[0] ? upf_peer : "-",
+                    (unsigned long long)sess->smf_n4_seid);
+            break;
+        default:
+            ogs_error("[%s] N4 timeout: not implemented type[%u] APN[%s]",
+                    smf_log_id(smf_ue), type, apn);
+            break;
+        }
     }
 }
 
@@ -285,15 +311,21 @@ uint8_t smf_s5c_handle_create_session_request(
     smf_sess_select_upf(sess);
 
     if (!sess->pfcp_node) {
-        ogs_error("[%s:%s] No UPF available for session",
-                  smf_ue->imsi_bcd, sess->session.name);
+        ogs_error("[%s] No UPF available APN[%s]",
+                smf_log_id(smf_ue),
+                sess->session.name ? sess->session.name : "-");
         return OGS_GTP2_CAUSE_SYSTEM_FAILURE;
     }
 
     /* Check if selected PGW is associated with SMF */
     if (!OGS_FSM_CHECK(&sess->pfcp_node->sm, smf_pfcp_state_associated)) {
-        ogs_error("[%s:%s] selected UPF is not assocated with SMF",
-                  smf_ue->imsi_bcd, sess->session.name);
+        char upf_peer[OGS_ADDRSTRLEN];
+
+        smf_log_upf_peer(upf_peer, sizeof(upf_peer), sess);
+        ogs_error("[%s] selected UPF not associated APN[%s] UPF[%s]",
+                smf_log_id(smf_ue),
+                sess->session.name ? sess->session.name : "-",
+                upf_peer[0] ? upf_peer : "-");
         return OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING;
     }
 

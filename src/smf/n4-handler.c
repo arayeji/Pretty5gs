@@ -23,6 +23,7 @@
 #include "gtp-path.h"
 #include "n4-handler.h"
 #include "binding.h"
+#include "smf-trace.h"
 #include "sbi-path.h"
 #include "ngap-path.h"
 #include "fd-path.h"
@@ -196,19 +197,49 @@ uint8_t smf_5gc_n4_handle_session_establishment_response(
     ogs_pfcp_xact_commit(xact);
 
     if (rsp->up_f_seid.presence == 0) {
-        ogs_error("No UP F-SEID");
+        char sgw_peer[OGS_ADDRSTRLEN];
+        char upf_peer[OGS_ADDRSTRLEN];
+        smf_ue_t *smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+
+        smf_log_sgw_peer(sgw_peer, sizeof(sgw_peer), sess);
+        smf_log_upf_peer(upf_peer, sizeof(upf_peer), sess);
+        ogs_error("[%s] PFCP Session Establishment Response: no UP F-SEID "
+                "APN[%s] SGW[%s] UPF[%s] smf_seid[0x%llx]",
+                smf_log_id(smf_ue),
+                sess->session.name ? sess->session.name : "-",
+                sgw_peer[0] ? sgw_peer : "-",
+                upf_peer[0] ? upf_peer : "-",
+                (unsigned long long)sess->smf_n4_seid);
         cause_value = OGS_PFCP_CAUSE_MANDATORY_IE_MISSING;
     }
 
     if (rsp->cause.presence) {
         if (rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
-            ogs_error("PFCP Cause [%d] : Not Accepted", rsp->cause.u8);
+            char sgw_peer[OGS_ADDRSTRLEN];
+            char upf_peer[OGS_ADDRSTRLEN];
+            smf_ue_t *smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+
+            smf_log_sgw_peer(sgw_peer, sizeof(sgw_peer), sess);
+            smf_log_upf_peer(upf_peer, sizeof(upf_peer), sess);
+            ogs_error("[%s] PFCP Session Establishment rejected cause[%u] "
+                    "APN[%s] SGW[%s] UPF[%s] smf_seid[0x%llx]",
+                    smf_log_id(smf_ue), rsp->cause.u8,
+                    sess->session.name ? sess->session.name : "-",
+                    sgw_peer[0] ? sgw_peer : "-",
+                    upf_peer[0] ? upf_peer : "-",
+                    (unsigned long long)sess->smf_n4_seid);
             cause_value = rsp->cause.u8;
             smf_metrics_inst_by_cause_add(cause_value,
                     SMF_METR_CTR_SM_N4SESSIONESTABFAIL, 1);
         }
     } else {
-        ogs_error("No Cause");
+        smf_ue_t *smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+
+        ogs_error("[%s] PFCP Session Establishment Response: no Cause "
+                "APN[%s] smf_seid[0x%llx]",
+                smf_log_id(smf_ue),
+                sess->session.name ? sess->session.name : "-",
+                (unsigned long long)sess->smf_n4_seid);
         cause_value = OGS_PFCP_CAUSE_MANDATORY_IE_MISSING;
     }
 
