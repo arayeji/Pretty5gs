@@ -39,10 +39,27 @@ void ogs_sgwc_trace_set(
     }
 
     if (sess) {
+        char ipbuf[OGS_ADDRSTRLEN];
+        ogs_ip_t ip;
+
         if (sess->session.name)
             ogs_cpystrn(ctx.apn, sess->session.name, sizeof(ctx.apn));
         ctx.sgw_s5c_teid = sess->sgw_s5c_teid;
         ctx.pgw_s5c_teid = sess->pgw_s5c_teid;
+
+        if (sess->gnode)
+            ogs_cpystrn(ctx.pgw_ip, OGS_ADDR(&sess->gnode->addr, ipbuf),
+                    sizeof(ctx.pgw_ip));
+
+        if (sess->paa.session_type &&
+                ogs_paa_to_ip(&sess->paa, &ip) == OGS_OK) {
+            if (ip.ipv4)
+                ogs_cpystrn(ctx.ue_ip, OGS_INET_NTOP(&ip.addr, ipbuf),
+                        sizeof(ctx.ue_ip));
+            else if (ip.ipv6)
+                ogs_cpystrn(ctx.ue_ip, OGS_INET6_NTOP(ip.addr6, ipbuf),
+                        sizeof(ctx.ue_ip));
+        }
 
         ogs_list_for_each(&sess->bearer_list, bearer) {
             ctx.ebi = bearer->ebi;

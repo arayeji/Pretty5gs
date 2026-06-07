@@ -85,6 +85,8 @@ void ogs_trace_merge(const ogs_trace_ctx_t *ctx)
     if (ctx->ebi)
         self.ebi = ctx->ebi;
 
+    if (ctx->pgw_ip[0])
+        trace_copy_str(self.pgw_ip, sizeof(self.pgw_ip), ctx->pgw_ip);
     if (ctx->ue_ip[0])
         trace_copy_str(self.ue_ip, sizeof(self.ue_ip), ctx->ue_ip);
 
@@ -267,7 +269,7 @@ size_t ogs_trace_format_prefix(char *buf, size_t buflen)
 
     return ogs_snprintf(buf, buflen,
             "[IMSI:%s ENB:%s ENB_S1AP:%s MME_S1AP:%s EBI:%s "
-            "MME_S11:%s SGW_S11:%s SGW_S5:%s PGW_S5:%s "
+            "MME_S11:%s SGW_S11:%s SGW_S5:%s PGW_S5:%s PGW_IP:%s "
             "IP:%s APN:%s PROC:%s]",
             self.imsi[0] ? self.imsi : "-",
             enb_id,
@@ -278,6 +280,7 @@ size_t ogs_trace_format_prefix(char *buf, size_t buflen)
             sgw_s11,
             sgw_s5,
             pgw_s5,
+            self.pgw_ip[0] ? self.pgw_ip : "-",
             self.ue_ip[0] ? self.ue_ip : "-",
             self.apn[0] ? self.apn : "-",
             self.proc[0] ? self.proc : "-");
