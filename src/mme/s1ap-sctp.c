@@ -286,6 +286,9 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
                     flags, not->sn_header.sn_type);
             break;
         }
+
+        ogs_pkbuf_free(pkbuf);
+        return 1;
     } else if (flags & MSG_EOR) {
         ogs_pkbuf_trim(pkbuf, size);
 
@@ -295,11 +298,13 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
 
         s1ap_event_push(MME_EVENT_S1AP_MESSAGE, sock, addr, pkbuf, 0, 0);
         return 1;
+    } else if (size == 0 && ogs_socket_errno_would_block()) {
+        ogs_pkbuf_free(pkbuf);
+        return 0;
     } else {
         ogs_error("ogs_sctp_recvmsg(%d) failed(%d:%s-0x%x)",
                 size, errno, strerror(errno), flags);
+        ogs_pkbuf_free(pkbuf);
+        return -1;
     }
-
-    ogs_pkbuf_free(pkbuf);
-    return 1;
 }

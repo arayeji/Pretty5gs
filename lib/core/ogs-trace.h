@@ -38,6 +38,7 @@ typedef struct ogs_trace_ctx_s {
     char imsi[OGS_TRACE_IMSI_LEN];
     char apn[OGS_TRACE_APN_LEN];
     char proc[OGS_TRACE_PROC_LEN];
+    char pgw_ip[OGS_TRACE_IP_LEN];
     char ue_ip[OGS_TRACE_IP_LEN];
 
     uint32_t enb_id;
