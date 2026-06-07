@@ -407,7 +407,12 @@ void sgwc_s11_handle_create_session_request(
         }
 
         bearer = sgwc_bearer_add(sess);
-        ogs_assert(bearer);
+        if (!bearer) {
+            ogs_error("[%s] Could not allocate bearer context",
+                    sgwc_ue->imsi_bcd);
+            cause_value = OGS_GTP2_CAUSE_NO_RESOURCES_AVAILABLE;
+            goto cleanup;
+        }
 
         /* Set Bearer EBI */
         bearer->ebi = req->bearer_contexts_to_be_created[i].eps_bearer_id.u8;

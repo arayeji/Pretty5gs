@@ -1208,7 +1208,8 @@ int sgwc_sess_pfcp_xact_count(
         ogs_pfcp_node_t *pfcp_node = sess->pfcp_node;
         ogs_pfcp_xact_t *pfcp_xact = NULL;
 
-        ogs_assert(pfcp_node);
+        if (!pfcp_node)
+            continue;
         ogs_list_for_each(&pfcp_node->local_list, pfcp_xact) {
             ogs_pool_id_t sess_id = OGS_INVALID_POOL_ID;
 

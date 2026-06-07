@@ -46,6 +46,24 @@ static ogs_list_t *mme_csmap_plmn_bucket(
 static void mme_csmap_plmn_attach(mme_csmap_t *csmap);
 static void mme_csmap_plmn_detach(mme_csmap_t *csmap);
 static void mme_csmap_plmn_hash_clear(void);
+static void mme_ue_add_abort(mme_ue_t *mme_ue);
+
+static uint16_t mme_yaml_parse_port(const char *v, uint16_t default_port)
+{
+    long port;
+    char *end = NULL;
+
+    if (!v || !*v)
+        return default_port;
+
+    port = strtol(v, &end, 10);
+    if (*end != '\0' || port <= 0 || port > 65535) {
+        ogs_warn("Invalid port `%s`, using default %u", v, default_port);
+        return default_port;
+    }
+
+    return (uint16_t)port;
+}
 
 int __mme_log_domain;
 int __emm_log_domain;
@@ -70,6 +88,45 @@ static OGS_POOL(mme_bearer_pool, mme_bearer_t);
 static OGS_POOL(mme_emerg_pool, mme_emerg_t);
 
 static OGS_POOL(m_tmsi_pool, mme_m_tmsi_t);
+
+static void mme_ue_add_abort(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    if (mme_ue->mme_s11_teid_node) {
+        ogs_hash_set(self.mme_s11_teid_hash,
+                &mme_ue->mme_s11_teid, sizeof(mme_ue->mme_s11_teid), NULL);
+        ogs_pool_free(&mme_s11_teid_pool, mme_ue->mme_s11_teid_node);
+    }
+    if (mme_ue->gn.mme_gn_teid_node) {
+        ogs_hash_set(self.mme_gn_teid_hash,
+                &mme_ue->gn.mme_gn_teid, sizeof(mme_ue->gn.mme_gn_teid), NULL);
+        ogs_pool_free(&mme_gn_teid_pool, mme_ue->gn.mme_gn_teid_node);
+    }
+
+    if (mme_ue->t3413.timer)
+        ogs_timer_delete(mme_ue->t3413.timer);
+    if (mme_ue->t3422.timer)
+        ogs_timer_delete(mme_ue->t3422.timer);
+    if (mme_ue->t3450.timer)
+        ogs_timer_delete(mme_ue->t3450.timer);
+    if (mme_ue->t3460.timer)
+        ogs_timer_delete(mme_ue->t3460.timer);
+    if (mme_ue->t3470.timer)
+        ogs_timer_delete(mme_ue->t3470.timer);
+    if (mme_ue->t_mobile_reachable.timer)
+        ogs_timer_delete(mme_ue->t_mobile_reachable.timer);
+    if (mme_ue->t_implicit_detach.timer)
+        ogs_timer_delete(mme_ue->t_implicit_detach.timer);
+    if (mme_ue->gn.t_gn_holding)
+        ogs_timer_delete(mme_ue->gn.t_gn_holding);
+    if (mme_ue->t_sgs_ts6_1)
+        ogs_timer_delete(mme_ue->t_sgs_ts6_1);
+    if (mme_ue->t_s6a)
+        ogs_timer_delete(mme_ue->t_s6a);
+
+    ogs_pool_id_free(&mme_ue_pool, mme_ue);
+}
 
 static int context_initialized = 0;
 
@@ -1000,7 +1057,7 @@ int mme_context_parse_config(void)
                                         } else if (!strcmp(conn_key, "port")) {
                                             const char *v =
                                                 ogs_yaml_iter_value(&conn_iter);
-                                            if (v) port = atoi(v);
+                                            if (v) port = mme_yaml_parse_port(v, port);
                                         } else if (!strcmp(conn_key, "tc_timer")) {
                                             const char *v =
                                                 ogs_yaml_iter_value(&conn_iter);
@@ -1292,7 +1349,7 @@ int mme_context_parse_config(void)
                                                 const char *v =
                                                     ogs_yaml_iter_value(
                                                             &sgwc_iter);
-                                                if (v) port = atoi(v);
+                                                if (v) port = mme_yaml_parse_port(v, port);
                                             } else if (!strcmp(
                                                         sgwc_key, "tac")) {
                                                 ogs_yaml_iter_t tac_iter;
@@ -1354,9 +1411,15 @@ int mme_context_parse_config(void)
                                                             &e_cell_id_iter))
                                                             break;
                                                     }
-                                                    ogs_assert(
-                                                            num_of_e_cell_id <
-                                                        OGS_MAX_NUM_OF_CELL_ID);
+                                                    if (num_of_e_cell_id >=
+                                                            OGS_MAX_NUM_OF_CELL_ID) {
+                                                        ogs_warn("e_cell_id limit "
+                                                                "(%d) reached; "
+                                                                "extra entries "
+                                                                "ignored",
+                                                                OGS_MAX_NUM_OF_CELL_ID);
+                                                        break;
+                                                    }
                                                     v = ogs_yaml_iter_value(
                                                             &e_cell_id_iter);
                                                     if (v) {
@@ -1541,7 +1604,7 @@ int mme_context_parse_config(void)
                                                 const char *v =
                                                     ogs_yaml_iter_value(
                                                             &smf_iter);
-                                                if (v) port = atoi(v);
+                                                if (v) port = mme_yaml_parse_port(v, port);
                                             } else if (!strcmp(
                                                         smf_key, "apn")) {
                                                 ogs_yaml_iter_t apn_iter;
@@ -1632,9 +1695,15 @@ int mme_context_parse_config(void)
                                                             &e_cell_id_iter))
                                                             break;
                                                     }
-                                                    ogs_assert(
-                                                            num_of_e_cell_id <
-                                                        OGS_MAX_NUM_OF_CELL_ID);
+                                                    if (num_of_e_cell_id >=
+                                                            OGS_MAX_NUM_OF_CELL_ID) {
+                                                        ogs_warn("e_cell_id limit "
+                                                                "(%d) reached; "
+                                                                "extra entries "
+                                                                "ignored",
+                                                                OGS_MAX_NUM_OF_CELL_ID);
+                                                        break;
+                                                    }
                                                     v = ogs_yaml_iter_value(
                                                             &e_cell_id_iter);
                                                     if (v) {
@@ -1814,7 +1883,7 @@ int mme_context_parse_config(void)
                                                 const char *v =
                                                     ogs_yaml_iter_value(
                                                             &sgsn_iter);
-                                                if (v) port = atoi(v);
+                                                if (v) port = mme_yaml_parse_port(v, port);
                                             } else if (!strcmp(sgsn_key,
                                                         "routes")) {
                                                 ogs_yaml_iter_t routes_array;
@@ -2969,7 +3038,11 @@ int mme_context_parse_config(void)
                                     const char *imsi_prefix;
                                 } *map = ogs_calloc(
                                         max_csmap, sizeof(struct csmap_entry_s));
-                                ogs_assert(map);
+                                if (!map) {
+                                    ogs_error("Could not allocate csmap buffer "
+                                            "(max_csmap=%d)", max_csmap);
+                                    return OGS_ERROR;
+                                }
                                 int map_num = 0;
                                 ogs_sockaddr_t *addr = NULL, *local_addr = NULL;
                                 int family = AF_UNSPEC;
@@ -3076,7 +3149,7 @@ int mme_context_parse_config(void)
                                         const char *v =
                                             ogs_yaml_iter_value(&client_iter);
                                         if (v) {
-                                            port = atoi(v);
+                                            port = mme_yaml_parse_port(v, port);
                                             self.sgsap_port = port;
                                         }
                                     } else if (!strcmp(client_key, "option")) {
@@ -5502,7 +5575,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t3413.timer) {
         ogs_error("ogs_timer_add() failed");
-        ogs_pool_id_free(&mme_ue_pool, mme_ue);
+        mme_ue_add_abort(mme_ue);
         return NULL;
     }
     mme_ue->t3413.pkbuf = NULL;
@@ -5511,7 +5584,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t3422.timer) {
         ogs_error("ogs_timer_add() failed");
-        ogs_pool_id_free(&mme_ue_pool, mme_ue);
+        mme_ue_add_abort(mme_ue);
         return NULL;
     }
     mme_ue->t3422.pkbuf = NULL;
@@ -5520,7 +5593,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t3450.timer) {
         ogs_error("ogs_timer_add() failed");
-        ogs_pool_id_free(&mme_ue_pool, mme_ue);
+        mme_ue_add_abort(mme_ue);
         return NULL;
     }
     mme_ue->t3450.pkbuf = NULL;
@@ -5529,7 +5602,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t3460.timer) {
         ogs_error("ogs_timer_add() failed");
-        ogs_pool_id_free(&mme_ue_pool, mme_ue);
+        mme_ue_add_abort(mme_ue);
         return NULL;
     }
     mme_ue->t3460.pkbuf = NULL;
@@ -5538,7 +5611,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t3470.timer) {
         ogs_error("ogs_timer_add() failed");
-        ogs_pool_id_free(&mme_ue_pool, mme_ue);
+        mme_ue_add_abort(mme_ue);
         return NULL;
     }
     mme_ue->t3470.pkbuf = NULL;
@@ -5547,7 +5620,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t_mobile_reachable.timer) {
         ogs_error("ogs_timer_add() failed");
-        ogs_pool_id_free(&mme_ue_pool, mme_ue);
+        mme_ue_add_abort(mme_ue);
         return NULL;
     }
     mme_ue->t_mobile_reachable.pkbuf = NULL;
@@ -5556,7 +5629,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t_implicit_detach.timer) {
         ogs_error("ogs_timer_add() failed");
-        ogs_pool_id_free(&mme_ue_pool, mme_ue);
+        mme_ue_add_abort(mme_ue);
         return NULL;
     }
     mme_ue->t_implicit_detach.pkbuf = NULL;
@@ -5566,7 +5639,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (! mme_ue->gn.t_gn_holding) {
         ogs_error("ogs_timer_add() failed");
-        ogs_pool_id_free(&mme_ue_pool, mme_ue);
+        mme_ue_add_abort(mme_ue);
         return NULL;
     }
     mme_ue->gn.gtp_xact_id = OGS_INVALID_POOL_ID;
@@ -5576,7 +5649,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t_sgs_ts6_1) {
         ogs_error("ogs_timer_add() failed");
-        ogs_pool_id_free(&mme_ue_pool, mme_ue);
+        mme_ue_add_abort(mme_ue);
         return NULL;
     }
 
@@ -5585,7 +5658,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t_s6a) {
         ogs_error("ogs_timer_add() failed");
-        ogs_pool_id_free(&mme_ue_pool, mme_ue);
+        mme_ue_add_abort(mme_ue);
         return NULL;
     }
 
@@ -5605,14 +5678,22 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
 
     /* Set MME-S11-TEID */
     ogs_pool_alloc(&mme_s11_teid_pool, &mme_ue->mme_s11_teid_node);
-    ogs_assert(mme_ue->mme_s11_teid_node);
+    if (!mme_ue->mme_s11_teid_node) {
+        ogs_error("Could not allocate MME-S11-TEID");
+        mme_ue_add_abort(mme_ue);
+        return NULL;
+    }
     mme_ue->mme_s11_teid = *(mme_ue->mme_s11_teid_node);
     ogs_hash_set(self.mme_s11_teid_hash,
             &mme_ue->mme_s11_teid, sizeof(mme_ue->mme_s11_teid), mme_ue);
 
     /* Set MME-Gn-TEID */
     ogs_pool_alloc(&mme_gn_teid_pool, &mme_ue->gn.mme_gn_teid_node);
-    ogs_assert(mme_ue->gn.mme_gn_teid_node);
+    if (!mme_ue->gn.mme_gn_teid_node) {
+        ogs_error("Could not allocate MME-Gn-TEID");
+        mme_ue_add_abort(mme_ue);
+        return NULL;
+    }
     mme_ue->gn.mme_gn_teid = *(mme_ue->gn.mme_gn_teid_node);
     ogs_hash_set(self.mme_gn_teid_hash,
             &mme_ue->gn.mme_gn_teid, sizeof(mme_ue->gn.mme_gn_teid), mme_ue);
@@ -5628,11 +5709,24 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
             mme_self()->sgw = ogs_list_last(&mme_self()->sgw_list);
         mme_self()->sgw = selected_sgw_node(mme_self()->sgw, enb_ue);
     }
-    ogs_assert(mme_self()->sgw);
+    if (!mme_self()->sgw) {
+        ogs_error("No SGW configured");
+        mme_ue_add_abort(mme_ue);
+        return NULL;
+    }
 
     sgw_ue = sgw_ue_add(mme_self()->sgw);
-    ogs_assert(sgw_ue);
-    ogs_assert(sgw_ue->gnode);
+    if (!sgw_ue) {
+        ogs_error("Could not allocate sgw_ue context");
+        mme_ue_add_abort(mme_ue);
+        return NULL;
+    }
+    if (!sgw_ue->gnode) {
+        ogs_error("SGW has no gnode");
+        sgw_ue_remove(sgw_ue);
+        mme_ue_add_abort(mme_ue);
+        return NULL;
+    }
 
     sgw_ue_associate_mme_ue(sgw_ue, mme_ue);
 
@@ -6715,7 +6809,8 @@ void mme_bearer_remove(mme_bearer_t *bearer)
             mme_ue->ebi_to_bearer_id[bearer->ebi] == bearer->id)
         mme_ue->ebi_to_bearer_id[bearer->ebi] = OGS_INVALID_POOL_ID;
 
-    ogs_expect(OGS_OK == mme_ebi_free(mme_ue, bearer->ebi));
+    if (OGS_OK != mme_ebi_free(mme_ue, bearer->ebi))
+        ogs_warn("EBI free failed [ebi:%d]", bearer->ebi);
 
     ogs_list_for_each_entry_safe(&bearer->update.xact_list,
             next_xact, xact, to_update_node) {
