@@ -64,22 +64,34 @@ static void gtp_remote_peer_timeout(ogs_gtp_xact_t *xact, void *data)
 {
     char buf[OGS_ADDRSTRLEN];
     mme_bearer_t *bearer = NULL;
+    mme_ue_t *mme_ue = NULL;
     uint8_t type;
 
     ogs_assert(xact);
+    ogs_assert(data);
     type = xact->seq[xact->step-1].type;
 
-    ogs_error("[%d] %s Peer Timeout for step %d type %d peer [%s]:%d",
+    bearer = mme_bearer_find_by_id(OGS_POINTER_TO_UINT(data));
+    if (bearer) {
+        mme_sess_t *sess = mme_sess_find_by_id(bearer->sess_id);
+
+        if (sess)
+            mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
+    }
+
+    ogs_error("[%d] %s Peer Timeout step %d type %d peer [%s]:%d IMSI[%s] "
+            "EBI[%d]",
             xact->xid,
-            xact->org == OGS_GTP_LOCAL_ORIGINATOR ? "LOCAL " : "REMOTE",
+            xact->org == OGS_GTP_LOCAL_ORIGINATOR ? "LOCAL" : "REMOTE",
             xact->step, type,
             OGS_ADDR(&xact->gnode->addr, buf),
-            OGS_PORT(&xact->gnode->addr));
+            OGS_PORT(&xact->gnode->addr),
+            mme_log_imsi(mme_ue), bearer ? bearer->ebi : 0);
 
-    ogs_assert(data);
-    bearer = mme_bearer_find_by_id(OGS_POINTER_TO_UINT(data));
     if (!bearer) {
-        ogs_error("Bearer has already been removed [%d]", type);
+        ogs_error("Bearer has already been removed type[%d] peer [%s]:%d",
+                type, OGS_ADDR(&xact->gnode->addr, buf),
+                OGS_PORT(&xact->gnode->addr));
         return;
     }
 

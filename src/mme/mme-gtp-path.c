@@ -74,8 +74,26 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
     case 2:
         sgw = mme_sgw_find_by_addr(&from);
         if (!sgw) {
-            ogs_error("Unknown SGW [%s]:%d",
-                    OGS_ADDR(&from, buf), OGS_PORT(&from));
+            uint8_t gtp_type = 0;
+            uint32_t teid = 0;
+            mme_ue_t *hint_ue = NULL;
+            const char *imsi = "-";
+
+            if (pkbuf->len >= sizeof(ogs_gtp2_header_t)) {
+                ogs_gtp2_header_t *h = (ogs_gtp2_header_t *)pkbuf->data;
+
+                gtp_type = h->type;
+                teid = be32toh(h->teid);
+                if (teid)
+                    hint_ue = mme_ue_find_by_s11_local_teid(teid);
+            }
+            if (hint_ue)
+                imsi = mme_log_imsi(hint_ue);
+
+            ogs_error("Unknown SGW [%s]:%d IMSI[%s] GTPv2 type[%u:%s] "
+                    "TEID[0x%x] (check mme.gtpc.client.sgwc / roam port)",
+                    OGS_ADDR(&from, buf), OGS_PORT(&from), imsi,
+                    gtp_type, mme_gtp2_message_type_name(gtp_type), teid);
             ogs_pkbuf_free(pkbuf);
             return;
         }
@@ -155,8 +173,13 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
                 mme_ue_id <= OGS_MAX_POOL_ID);
         mme_ue = mme_ue_find_by_id(mme_ue_id);
         if (!mme_ue) {
-            ogs_error("MME-UE[%d] has already been removed [%d]",
-                    mme_ue_id, type);
+            char peer[OGS_ADDRSTRLEN];
+
+            ogs_error("GTP timeout: MME-UE[%u] removed type[%u:%s] SGW[%s]:%d",
+                    mme_ue_id, type, mme_gtp2_message_type_name(type),
+                    xact && xact->gnode ?
+                        OGS_ADDR(&xact->gnode->addr, peer) : "-",
+                    xact && xact->gnode ? OGS_PORT(&xact->gnode->addr) : 0);
             return;
         }
         break;
@@ -166,8 +189,14 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
         ogs_assert(sess_id >= OGS_MIN_POOL_ID && sess_id <= OGS_MAX_POOL_ID);
         sess = mme_sess_find_by_id(sess_id);
         if (!sess) {
-            ogs_error("Session[%d] has already been removed [%d]",
-                    sess_id, type);
+            char peer[OGS_ADDRSTRLEN];
+
+            ogs_error("GTP timeout: Session[%u] removed type[%u:%s] "
+                    "SGW[%s]:%d",
+                    sess_id, type, mme_gtp2_message_type_name(type),
+                    xact && xact->gnode ?
+                        OGS_ADDR(&xact->gnode->addr, peer) : "-",
+                    xact && xact->gnode ? OGS_PORT(&xact->gnode->addr) : 0);
             return;
         }
         mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
@@ -179,8 +208,14 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
                 bearer_id <= OGS_MAX_POOL_ID);
         bearer = mme_bearer_find_by_id(bearer_id);
         if (!bearer) {
-            ogs_error("Bearer[%d] has already been removed [%d]",
-                    bearer_id, type);
+            char peer[OGS_ADDRSTRLEN];
+
+            ogs_error("GTP timeout: Bearer[%u] removed type[%u:%s] "
+                    "SGW[%s]:%d",
+                    bearer_id, type, mme_gtp2_message_type_name(type),
+                    xact && xact->gnode ?
+                        OGS_ADDR(&xact->gnode->addr, peer) : "-",
+                    xact && xact->gnode ? OGS_PORT(&xact->gnode->addr) : 0);
             return;
         }
         sess = mme_sess_find_by_id(bearer->sess_id);
@@ -216,7 +251,14 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
         } else {
-            ogs_warn("No S1 Context");
+            uint16_t tac = 0;
+            uint32_t cell_id = 0, enb_id = 0;
+
+            mme_log_radio(mme_ue, enb_ue, &tac, &cell_id, &enb_id);
+            ogs_warn("[%s] GTP timeout: no S1 context type[%u:%s] "
+                    "TAC[0x%04x] eNB_ID[0x%x] cell[0x%x]",
+                    mme_log_imsi(mme_ue), type,
+                    mme_gtp2_message_type_name(type), tac, enb_id, cell_id);
         }
         break;
     case OGS_GTP2_BEARER_RESOURCE_COMMAND_TYPE:
@@ -225,8 +267,16 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
     default:
         if (enb_ue)
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
-        else
-            ogs_error("No S1 Context");
+        else {
+            uint16_t tac = 0;
+            uint32_t cell_id = 0, enb_id = 0;
+
+            mme_log_radio(mme_ue, enb_ue, &tac, &cell_id, &enb_id);
+            ogs_error("[%s] GTP timeout: no S1 context type[%u:%s] "
+                    "TAC[0x%04x] eNB_ID[0x%x] cell[0x%x]",
+                    mme_log_imsi(mme_ue), type,
+                    mme_gtp2_message_type_name(type), tac, enb_id, cell_id);
+        }
         break;
     }
 
@@ -377,7 +427,17 @@ int mme_gtp_send_create_session_request(
 
     pkbuf = mme_s11_build_create_session_request(h.type, sess, create_action);
     if (!pkbuf) {
-        ogs_error("mme_s11_build_create_session_request() failed");
+        char sgw_peer[OGS_ADDRSTRLEN];
+        char pgw_peer[64];
+        const char *apn = sess->session ? sess->session->name : "-";
+
+        mme_log_pgw_peer(pgw_peer, sizeof(pgw_peer), sess);
+        ogs_error("[%s] mme_s11_build_create_session_request() failed "
+                "APN[%s] SGW[%s]:%d PGW[%s] create_action[%d]",
+                mme_log_imsi(mme_ue), apn,
+                OGS_ADDR(&sgw_ue->gnode->addr, sgw_peer),
+                OGS_PORT(&sgw_ue->gnode->addr),
+                pgw_peer[0] ? pgw_peer : "-", create_action);
         return OGS_ERROR;
     }
 
@@ -400,8 +460,9 @@ int mme_gtp_send_create_session_request(
                     gnode);
             if (rv != OGS_OK) {
                 ogs_error("[%s] S11 Create Session not sent: "
-                        "ogs_gtp_connect() failed for SGW",
-                        MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+                        "ogs_gtp_connect() failed SGW[%s]:%d",
+                        mme_log_imsi(mme_ue),
+                        OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
                 ogs_pkbuf_free(pkbuf);
                 mme_ue_progress(mme_ue, "create_session_req_fail");
                 return OGS_ERROR;

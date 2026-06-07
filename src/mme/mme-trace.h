@@ -51,6 +51,14 @@ void mme_ue_service_error(
 void mme_ue_debug(mme_ue_t *mme_ue, const char *fmt, ...)
     OGS_GNUC_PRINTF(2, 3);
 
+/* Context strings for ogs_error/ogs_warn (IMSI, peers, radio) */
+const char *mme_log_imsi(mme_ue_t *mme_ue);
+void mme_log_gtp_peer(char *buf, size_t buflen, ogs_gtp_node_t *gnode);
+void mme_log_pgw_peer(char *buf, size_t buflen, mme_sess_t *sess);
+void mme_log_radio(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue,
+        uint16_t *tac, uint32_t *cell_id, uint32_t *enb_id);
+
 #ifdef __cplusplus
 }
 #endif

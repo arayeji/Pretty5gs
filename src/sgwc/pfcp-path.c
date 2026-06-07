@@ -20,6 +20,7 @@
 #include "pfcp-path.h"
 #include "gtp-path.h"
 #include "s11-handler.h"
+#include "sgwc-trace.h"
 
 static void pfcp_node_fsm_init(ogs_pfcp_node_t *node, bool try_to_associate)
 {
@@ -247,16 +248,23 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
 
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         if (sess->pfcp_node) {
-            char *sgwu_peer = ogs_sockaddr_to_string_static(
-                    sess->pfcp_node->addr_list);
+            char sgwu_peer[OGS_ADDRSTRLEN];
+
+            sgwc_log_sgwu_peer(sgwu_peer, sizeof(sgwu_peer), sess);
             ogs_error("[%s] Sxa timeout: no PFCP Session Establishment "
-                    "Response from SGW-U %s",
-                    sgwc_ue ? sgwc_ue->imsi_bcd : "-",
-                    sgwu_peer ? sgwu_peer : "(unknown)");
+                    "Response from SGW-U %s sess_id[%d] sx_seid[0x%llx] "
+                    "s11_xact[%u]",
+                    sgwc_log_imsi(sgwc_ue),
+                    sgwu_peer[0] ? sgwu_peer : "(unknown)",
+                    sess->id, (unsigned long long)sess->sgwc_sxa_seid,
+                    xact->assoc_xact_id);
         } else {
             ogs_error("[%s] Sxa timeout: no PFCP Session Establishment "
-                    "Response from SGW-U",
-                    sgwc_ue ? sgwc_ue->imsi_bcd : "-");
+                    "Response from SGW-U sess_id[%d] sx_seid[0x%llx] "
+                    "s11_xact[%u]",
+                    sgwc_log_imsi(sgwc_ue), sess->id,
+                    (unsigned long long)sess->sgwc_sxa_seid,
+                    xact->assoc_xact_id);
         }
 
         s11_xact = ogs_gtp_xact_find_by_id(xact->assoc_xact_id);
@@ -271,28 +279,30 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
         break;
     }
     case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE: {
-        if (sess->pfcp_node) {
-            char *sgwu_peer = ogs_sockaddr_to_string_static(
-                    sess->pfcp_node->addr_list);
-            ogs_error("Sxa timeout: no PFCP Session Modification Response "
-                    "from SGW-U %s",
-                    sgwu_peer ? sgwu_peer : "(unknown)");
-        } else {
-            ogs_error("Sxa timeout: no PFCP Session Modification Response "
-                    "from SGW-U");
-        }
+        sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        char sgwu_peer[OGS_ADDRSTRLEN];
+
+        sgwc_log_sgwu_peer(sgwu_peer, sizeof(sgwu_peer), sess);
+        ogs_error("[%s] Sxa timeout: no PFCP Session Modification Response "
+                "from SGW-U %s sess_id[%d] sx_seid[0x%llx]",
+                sgwc_log_imsi(sgwc_ue),
+                sgwu_peer[0] ? sgwu_peer : "(unknown)",
+                sess->id, (unsigned long long)sess->sgwc_sxa_seid);
         break;
     }
     case OGS_PFCP_SESSION_DELETION_REQUEST_TYPE: {
-        sgwc_ue_t *sgwc_ue = NULL;
+        sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        char sgwu_peer[OGS_ADDRSTRLEN];
 
-        ogs_error("No PFCP session deletion response");
-        if (sess) {
-            sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-            if (sgwc_ue && sgwc_ue->csr_replace_sess_id == sess->id) {
-                sgwc_csr_replace_continue(sgwc_ue, sess, false);
-                return;
-            }
+        sgwc_log_sgwu_peer(sgwu_peer, sizeof(sgwu_peer), sess);
+        ogs_error("[%s] Sxa timeout: no PFCP Session Deletion Response "
+                "from SGW-U %s sess_id[%d] sgwu_seid[0x%llx]",
+                sgwc_log_imsi(sgwc_ue),
+                sgwu_peer[0] ? sgwu_peer : "(unknown)",
+                sess->id, (unsigned long long)sess->sgwu_sxa_seid);
+        if (sgwc_ue && sgwc_ue->csr_replace_sess_id == sess->id) {
+            sgwc_csr_replace_continue(sgwc_ue, sess, false);
+            return;
         }
         break;
     }

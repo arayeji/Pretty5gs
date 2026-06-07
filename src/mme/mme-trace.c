@@ -224,3 +224,76 @@ void mme_ue_debug(mme_ue_t *mme_ue, const char *fmt, ...)
     ogs_log_printf(OGS_LOG_DEBUG, OGS_LOG_DOMAIN,
             0, __FILE__, __LINE__, OGS_FUNC, 0, "[%s] %s", imsi, msg);
 }
+
+const char *mme_log_imsi(mme_ue_t *mme_ue)
+{
+    return mme_ue_log_id(mme_ue);
+}
+
+void mme_log_gtp_peer(char *buf, size_t buflen, ogs_gtp_node_t *gnode)
+{
+    char ipbuf[OGS_ADDRSTRLEN];
+
+    ogs_assert(buf);
+    ogs_assert(buflen > 0);
+
+    buf[0] = '\0';
+    if (!gnode)
+        return;
+
+    ogs_snprintf(buf, buflen, "[%s]:%d",
+            OGS_ADDR(&gnode->addr, ipbuf), OGS_PORT(&gnode->addr));
+}
+
+void mme_log_pgw_peer(char *buf, size_t buflen, mme_sess_t *sess)
+{
+    char ipbuf[OGS_ADDRSTRLEN];
+
+    ogs_assert(buf);
+    ogs_assert(buflen > 0);
+    buf[0] = '\0';
+
+    if (!sess)
+        return;
+
+    if (sess->pgw_s5c_ip.ipv4)
+        ogs_snprintf(buf, buflen, "%s:2123",
+                OGS_INET_NTOP(&sess->pgw_s5c_ip.addr, ipbuf));
+    else if (sess->pgw_s5c_ip.ipv6)
+        ogs_snprintf(buf, buflen, "%s:2123",
+                OGS_INET6_NTOP(sess->pgw_s5c_ip.addr6, ipbuf));
+    else if (sess->pgw_s5c_teid)
+        ogs_snprintf(buf, buflen, "TEID[0x%x]", sess->pgw_s5c_teid);
+}
+
+void mme_log_radio(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue,
+        uint16_t *tac, uint32_t *cell_id, uint32_t *enb_id)
+{
+    mme_enb_t *enb = NULL;
+
+    if (tac)
+        *tac = 0;
+    if (cell_id)
+        *cell_id = 0;
+    if (enb_id)
+        *enb_id = 0;
+
+    if (mme_ue && mme_ue->tai.tac) {
+        if (tac)
+            *tac = mme_ue->tai.tac;
+        if (cell_id)
+            *cell_id = mme_ue->e_cgi.cell_id;
+    } else if (enb_ue) {
+        if (tac)
+            *tac = enb_ue->saved.tai.tac;
+        if (cell_id)
+            *cell_id = enb_ue->saved.e_cgi.cell_id;
+    }
+
+    if (enb_ue) {
+        enb = mme_enb_find_by_id(enb_ue->enb_id);
+        if (enb && enb_id)
+            *enb_id = enb->enb_id;
+    }
+}

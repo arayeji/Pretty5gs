@@ -5721,19 +5721,30 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
         mme_self()->sgw = selected_sgw_node(mme_self()->sgw, enb_ue);
     }
     if (!mme_self()->sgw) {
-        ogs_error("No SGW configured");
+        uint16_t tac = 0;
+        uint32_t cell_id = 0, enb_id = 0;
+
+        mme_log_radio(NULL, enb_ue, &tac, &cell_id, &enb_id);
+        ogs_error("No SGW configured TAC[0x%04x] eNB_ID[0x%x] cell[0x%x]",
+                tac, enb_id, cell_id);
         mme_ue_add_abort(mme_ue);
         return NULL;
     }
 
     sgw_ue = sgw_ue_add(mme_self()->sgw);
     if (!sgw_ue) {
-        ogs_error("Could not allocate sgw_ue context");
+        char sgw_peer[OGS_ADDRSTRLEN];
+
+        ogs_error("[%s] Could not allocate sgw_ue SGW[%s]:%d",
+                mme_log_imsi(mme_ue),
+                OGS_ADDR(mme_self()->sgw->gnode.sa_list, sgw_peer),
+                mme_self()->sgw->gnode.sa_list ?
+                    OGS_PORT(mme_self()->sgw->gnode.sa_list) : 0);
         mme_ue_add_abort(mme_ue);
         return NULL;
     }
     if (!sgw_ue->gnode) {
-        ogs_error("SGW has no gnode");
+        ogs_error("[%s] SGW has no gnode after pick", mme_log_imsi(mme_ue));
         sgw_ue_remove(sgw_ue);
         mme_ue_add_abort(mme_ue);
         return NULL;

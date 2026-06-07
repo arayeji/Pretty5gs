@@ -22,6 +22,7 @@
 #include "gtp-path.h"
 #include "s11-handler.h"
 #include "sxa-handler.h"
+#include "sgwc-trace.h"
 #include "ga-writer.h"
 #include "sgwc-trace.h"
 #include "sgwc-gtp-interop.h"
@@ -448,23 +449,23 @@ void sgwc_sxa_handle_session_establishment_response(
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+        char sgwu_peer[OGS_ADDRSTRLEN];
+        char mme_peer[OGS_ADDRSTRLEN];
+        char pgw_peer[OGS_ADDRSTRLEN];
+
         if (sess) sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-        if (sess && sess->pfcp_node) {
-            char *sgwu_peer = ogs_sockaddr_to_string_static(
-                    sess->pfcp_node->addr_list);
-            ogs_error("[%s] SGW-U rejected PFCP Session Establishment "
-                    "%s [PFCP cause:%u] -> S11 cause:%u",
-                    sgwc_ue ? sgwc_ue->imsi_bcd : "-",
-                    sgwu_peer ? sgwu_peer : "(unknown)",
-                    pfcp_rsp->cause.presence ? pfcp_rsp->cause.u8 : 0,
-                    cause_value);
-        } else {
-            ogs_error("[%s] SGW-U rejected PFCP Session Establishment "
-                    "[PFCP cause:%u] -> S11 cause:%u",
-                    sgwc_ue ? sgwc_ue->imsi_bcd : "-",
-                    pfcp_rsp->cause.presence ? pfcp_rsp->cause.u8 : 0,
-                    cause_value);
-        }
+        sgwc_log_sgwu_peer(sgwu_peer, sizeof(sgwu_peer), sess);
+        sgwc_log_mme_peer(mme_peer, sizeof(mme_peer), sgwc_ue);
+        sgwc_log_pgw_peer(pgw_peer, sizeof(pgw_peer), sess);
+        ogs_error("[%s] SGW-U rejected PFCP Session Establishment "
+                "SGW-U[%s] MME[%s] PGW[%s] PFCP cause[%u] -> S11 cause[%u] "
+                "sess_id[%d]",
+                sgwc_log_imsi(sgwc_ue),
+                sgwu_peer[0] ? sgwu_peer : "-",
+                mme_peer[0] ? mme_peer : "-",
+                pgw_peer[0] ? pgw_peer : "-",
+                pfcp_rsp->cause.presence ? pfcp_rsp->cause.u8 : 0,
+                cause_value, sess ? sess->id : 0);
         ogs_gtp_send_error_message(
                 s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
                 OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, cause_value);
