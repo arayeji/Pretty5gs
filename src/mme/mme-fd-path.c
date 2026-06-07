@@ -121,7 +121,12 @@ static void mme_s6a_post_failure(
 
     ogs_assert(mme_ue);
 
-    mme_s6a_timer_stop(mme_ue);
+    /*
+     * Do not call mme_s6a_timer_stop() here. ogs_timer_* is owned by the
+     * MME main thread; stopping from a freeDiameter worker races the timer
+     * rbtree and can SIGSEGV (see mme_s6a_aia_cb backtrace). The main
+     * thread stops the timer when it handles MME_EVENT_S6A_MESSAGE.
+     */
 
     s6a_message = ogs_calloc(1, sizeof(*s6a_message));
     if (!s6a_message) {
@@ -168,6 +173,9 @@ void mme_s6a_timer_start(mme_ue_t *mme_ue, uint16_t cmd_code)
 
 void mme_s6a_timer_stop(mme_ue_t *mme_ue)
 {
+    /*
+     * Must run on the MME main thread only (ogs_timer_mgr is not locked).
+     */
     if (!mme_ue)
         return;
 
@@ -198,8 +206,6 @@ static void mme_s6a_send_abort(
 
     if (sess_data && *sess_data)
         state_cleanup(*sess_data, NULL, NULL);
-
-    mme_s6a_timer_stop(mme_ue);
 
     mme_s6a_post_failure(enb_ue, mme_ue, cmd_code,
             ER_DIAMETER_UNABLE_TO_DELIVER, gtp_xact_id);
@@ -1569,8 +1575,6 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
 
     /* Send event to MME if no errors */
     if (!error) {
-        mme_s6a_timer_stop(mme_ue);
-
         e = mme_event_new(MME_EVENT_S6A_MESSAGE);
         if (!e) {
             ogs_error("Failed to create MME event");
@@ -2102,8 +2106,6 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
 
     /* Send event to MME if no errors */
     if (!error) {
-        mme_s6a_timer_stop(mme_ue);
-
         e = mme_event_new(MME_EVENT_S6A_MESSAGE);
         if (!e) {
             ogs_error("Failed to create MME event");

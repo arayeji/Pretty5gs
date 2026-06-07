@@ -651,6 +651,12 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             goto cleanup;
         }
 
+        /*
+         * Stop the S6a watchdog here on the main thread. Diameter answer
+         * callbacks must not call ogs_timer_stop() (not thread-safe).
+         */
+        mme_s6a_timer_stop(mme_ue);
+
         enb_ue = enb_ue_find_by_id(e->enb_ue_id);
         /*
          * The 'enb_ue' context is not checked
