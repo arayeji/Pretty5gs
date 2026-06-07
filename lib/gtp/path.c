@@ -87,6 +87,10 @@ int ogs_gtp_send(ogs_gtp_node_t *gnode, ogs_pkbuf_t *pkbuf)
     ogs_assert(pkbuf);
     sock = gnode->sock;
     ogs_assert(sock);
+    if (sock->fd == INVALID_SOCKET) {
+        ogs_error("ogs_gtp_send(): socket closed");
+        return OGS_ERROR;
+    }
 
     sent = ogs_send(sock->fd, pkbuf->data, pkbuf->len, 0);
     if (sent < 0 || sent != pkbuf->len) {
@@ -110,6 +114,10 @@ int ogs_gtp_sendto(ogs_gtp_node_t *gnode, ogs_pkbuf_t *pkbuf)
     ogs_assert(pkbuf);
     sock = gnode->sock;
     ogs_assert(sock);
+    if (sock->fd == INVALID_SOCKET) {
+        ogs_error("ogs_gtp_sendto(): socket closed");
+        return OGS_ERROR;
+    }
     addr = &gnode->addr;
     ogs_assert(addr);
 

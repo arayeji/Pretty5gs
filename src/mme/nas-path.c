@@ -133,7 +133,13 @@ int nas_eps_send_attach_accept(mme_ue_t *mme_ue)
     }
 
     sess = mme_sess_first(mme_ue);
-    ogs_assert(sess);
+    if (!sess) {
+        ogs_error("[%s] No session for attach accept (Create Session may have "
+                "failed or session was removed)",
+                mme_ue->imsi_bcd);
+        mme_ue_progress(mme_ue, "attach_accept_no_sess");
+        return OGS_NOTFOUND;
+    }
     if (mme_sess_next(sess)) {
         ogs_error("[%s] There should only be one SESSION", mme_ue->imsi_bcd);
         mme_ue_progress(mme_ue, "attach_accept_fail");
