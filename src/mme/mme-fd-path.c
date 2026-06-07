@@ -2624,6 +2624,7 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
 
     /* Initialize variables */
     result_code = 0;
+    ans = NULL;
     e = NULL;
     mme_ue = NULL;
     s6a_message = NULL;
@@ -2638,7 +2639,7 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
     ret = fd_msg_new_answer_from_req(fd_g_config->cnf_dict, msg, 0);
     if (ret != 0) {
         ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto error_out;
+        return 0;
     }
     ans = *msg;
 
@@ -2801,6 +2802,9 @@ error_out:
         ogs_free(s6a_message);
     }
 
+    if (!ans)
+        return 0;
+
     /* Set appropriate error result code */
     if (result_code == OGS_DIAM_S6A_ERROR_USER_UNKNOWN) {
         ret = ogs_diam_message_experimental_rescode_set(ans, result_code);
@@ -2873,6 +2877,7 @@ static int mme_s6a_idr_cb(struct msg **msg, struct avp *avp,
     /* Initialize variables */
     result_code = 0;
     has_subscriber_data = false;
+    ans = NULL;
     e = NULL;
     mme_ue = NULL;
     s6a_message = NULL;
@@ -2889,7 +2894,7 @@ static int mme_s6a_idr_cb(struct msg **msg, struct avp *avp,
     ret = fd_msg_new_answer_from_req(fd_g_config->cnf_dict, msg, 0);
     if (ret != 0) {
         ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto error_out;
+        return 0;
     }
     ans = *msg;
 
@@ -3273,6 +3278,9 @@ error_out:
         }
         ogs_free(s6a_message);
     }
+
+    if (!ans)
+        return 0;
 
     /* Set appropriate error result code */
     ret = ogs_diam_message_experimental_rescode_set(ans, result_code);
