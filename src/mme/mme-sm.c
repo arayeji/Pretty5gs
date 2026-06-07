@@ -437,9 +437,19 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
     case MME_EVENT_ESM_MESSAGE:
         mme_ue = mme_ue_find_by_id(e->mme_ue_id);
-        ogs_assert(mme_ue);
-
         pkbuf = e->pkbuf;
+        if (!mme_ue) {
+            /*
+             * A queued PDN Connectivity Request can outlive the MME-UE
+             * (e.g. inbound roam attach reject after Identity Response
+             * frees the context while S6a/attach still pushed ESM).
+             */
+            ogs_error("ESM message for removed MME-UE [id:%d] ignored",
+                    e->mme_ue_id);
+            if (pkbuf)
+                ogs_pkbuf_free(pkbuf);
+            break;
+        }
         ogs_assert(pkbuf);
         if (ogs_nas_esm_decode(&nas_message, pkbuf) != OGS_OK) {
             ogs_error("ogs_nas_esm_decode() failed");
