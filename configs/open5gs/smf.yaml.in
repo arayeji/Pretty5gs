@@ -141,9 +141,9 @@ smf:
 #    # forces local PFCP session deletion so the UPF tunnel is torn down and
 #    # RADIUS Accounting-Stop is still emitted. 0 disables the watchdog.
 #    pod_teardown_timeout_ms: 5000
-#    # When false, Framed-IP-Address / Framed-IPv6-Prefix in Access-Accept are
-#    # ignored for UE assignment (not sent as UE IP in PFCP); subscription/pool
-#    # still applies. Class, routes, and accounting are unchanged.
+#    # UE IP priority when true (default): HSS/UDM static IP, then RADIUS
+#    # Framed-IP / Framed-IPv6-Prefix, then local subnet pool. When false,
+#    # RADIUS still auth/accounting but framed addresses are not used for UE IP.
 #    use_framed_ip_for_ue: true
 #
 #  Ga / GTP' offline charging CDR writer.
