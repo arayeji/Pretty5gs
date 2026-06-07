@@ -928,6 +928,60 @@ int smf_epc_pfcp_send_one_bearer_modification_request(
     return rv;
 }
 
+static void smf_pfcp_best_effort_timeout(ogs_pfcp_xact_t *xact, void *data)
+{
+    (void)data;
+
+    ogs_assert(xact);
+    ogs_debug("best-effort PFCP delete finished (type=%u, no session wait)",
+            xact->seq[0].type);
+}
+
+int smf_epc_pfcp_send_session_deletion_best_effort(smf_sess_t *sess)
+{
+    int rv;
+    ogs_pkbuf_t *n4buf = NULL;
+    ogs_pfcp_header_t h;
+    ogs_pfcp_xact_t *xact = NULL;
+
+    ogs_assert(sess);
+
+    if (!sess->pfcp_node || !sess->upf_n4_seid)
+        return OGS_OK;
+
+    xact = ogs_pfcp_xact_local_create(
+            sess->pfcp_node, smf_pfcp_best_effort_timeout, NULL);
+    if (!xact) {
+        ogs_error("ogs_pfcp_xact_local_create() failed");
+        return OGS_ERROR;
+    }
+
+    xact->epc = true;
+    xact->assoc_xact_id = OGS_INVALID_POOL_ID;
+    xact->local_seid = sess->smf_n4_seid;
+
+    memset(&h, 0, sizeof(ogs_pfcp_header_t));
+    h.type = OGS_PFCP_SESSION_DELETION_REQUEST_TYPE;
+    h.seid = sess->upf_n4_seid;
+
+    n4buf = smf_n4_build_session_deletion_request(h.type, sess);
+    if (!n4buf) {
+        ogs_error("smf_n4_build_session_deletion_request() failed");
+        return OGS_ERROR;
+    }
+
+    rv = ogs_pfcp_xact_update_tx(xact, &h, n4buf);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_pfcp_xact_update_tx() failed");
+        return OGS_ERROR;
+    }
+
+    rv = ogs_pfcp_xact_commit(xact);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
 int smf_epc_pfcp_send_session_deletion_request(
         smf_sess_t *sess, ogs_pool_id_t gtp_xact_id)
 {

@@ -59,6 +59,7 @@ int smf_epc_pfcp_send_one_bearer_modification_request(
         uint64_t flags, uint8_t gtp_pti, uint8_t gtp_cause);
 int smf_epc_pfcp_send_session_deletion_request(
         smf_sess_t *sess, ogs_pool_id_t gtp_xact_id);
+int smf_epc_pfcp_send_session_deletion_best_effort(smf_sess_t *sess);
 
 int smf_epc_pfcp_send_deactivation(smf_sess_t *sess, uint8_t gtp_cause);
 

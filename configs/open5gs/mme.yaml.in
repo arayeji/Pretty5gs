@@ -417,7 +417,8 @@ mme:
 #        mnc: 71
 #  Generate from CSV:
 #    python scripts/gen_roam_access_from_csv.py \\
-#      --csv "roam-sites.example.csv" --prefix 00101 --output roam-access.yaml
+#      --csv "configs/open5gs/roam-sites.example.csv" --prefix 00101 --prefix 99970 \\
+#          --output configs/open5gs/roam-access.generated.yaml
 #
 #  o Block unknown IMSIs before S6a (AIR/ULR) — stops HSS/DRA flood.
 #    Enforced when any of: access_control, imsi_acl, or hss_map (with

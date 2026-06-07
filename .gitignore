@@ -6,6 +6,12 @@ build.md
 deploy-bundle/
 .cursor/
 
+# Inbound-roam site allow-list (generated locally from CSV; do not commit)
+configs/open5gs/roam-sites.example.csv
+configs/open5gs/roam-access.yaml
+configs/open5gs/roam-access.generated.yaml
+configs/open5gs/mme-access-final.yaml
+
 # This directory is fetched during first build and is present in this directory
 subprojects/freeDiameter
 subprojects/libtins

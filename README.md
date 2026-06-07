@@ -145,12 +145,12 @@ Generate `access_control` from a site CSV (TAC + eNodeB columns):
 
 ```bash
 python scripts/gen_roam_access_from_csv.py \
-  --csv "roam-sites.example.csv" \
-  --prefix 00101 \
-  --output configs/open5gs/roam-access.yaml
+  --csv "configs/open5gs/roam-sites.example.csv" \
+  --prefix 00101 --prefix 99970 \
+  --output configs/open5gs/roam-access.generated.yaml
 ```
 
-Merge with home PLMN rows in `configs/open5gs/mme-access-final.yaml` (example template with `mme.time.message.duration` and PLMN 999-70 / 432-46).
+Output is **gitignored** (`configs/open5gs/roam-access.generated.yaml`). It is a full `mme:` fragment — merge into `/etc/open5gs/mme.yaml` or splice `mme.access_control`. Prefix `00101` = home PLMN (999-70), `99970` = 999-71 inbound roamers.
 
 Log lines when blocked:
 
