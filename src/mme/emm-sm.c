@@ -23,6 +23,7 @@
 #include "s1ap-handler.h"
 #include "mme-gn-handler.h"
 #include "mme-fd-path.h"
+#include "mme-path.h"
 #include "emm-handler.h"
 #include "emm-build.h"
 #include "esm-handler.h"
@@ -533,7 +534,7 @@ void emm_state_registered(ogs_fsm_t *s, mme_event_t *e)
          * timer T3346.
          */
             ogs_timer_start(mme_ue->t_implicit_detach.timer,
-                ogs_time_from_sec(mme_self()->time.t3412.value + 240));
+                ogs_time_from_sec(mme_time_implicit_detach_duration()));
             break;
 
         case MME_TIMER_IMPLICIT_DETACH:

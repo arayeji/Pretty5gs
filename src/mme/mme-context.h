@@ -260,6 +260,10 @@ typedef struct mme_context_s {
         struct {
             ogs_time_t value;       /* Timer Value(Seconds) */
         } t3402, t3396, t3412, t3423;
+        struct {
+            ogs_time_t mobile_reachable_margin; /* default 240s (TS 24.301) */
+            ogs_time_t implicit_detach_margin;  /* default 240s (TS 24.301) */
+        } idle;
     } time;
 
     struct {

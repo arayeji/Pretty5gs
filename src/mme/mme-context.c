@@ -694,6 +694,8 @@ static int mme_context_prepare(void)
 
     self.time.t3402.value = 720;  /* 12 minutes */
     self.time.t3412.value = 600;  /* 10 minutes */
+    self.time.idle.mobile_reachable_margin = 240; /* TS 24.301 +4 min */
+    self.time.idle.implicit_detach_margin = 240;
 
     mme_attach_accept_set_defaults();
 
@@ -3563,6 +3565,32 @@ int mme_context_parse_config(void)
                                         self.time.t3423.value = atoll(v);
                                 } else
                                     ogs_warn("unknown key `%s`", t3423_key);
+                            }
+                        } else if (!strcmp(time_key, "idle")) {
+                            ogs_yaml_iter_t idle_iter;
+                            ogs_yaml_iter_recurse(&time_iter, &idle_iter);
+
+                            while (ogs_yaml_iter_next(&idle_iter)) {
+                                const char *idle_key =
+                                    ogs_yaml_iter_key(&idle_iter);
+                                ogs_assert(idle_key);
+
+                                if (!strcmp(idle_key,
+                                            "mobile_reachable_margin")) {
+                                    const char *v =
+                                        ogs_yaml_iter_value(&idle_iter);
+                                    if (v)
+                                        self.time.idle.mobile_reachable_margin =
+                                            atoll(v);
+                                } else if (!strcmp(idle_key,
+                                            "implicit_detach_margin")) {
+                                    const char *v =
+                                        ogs_yaml_iter_value(&idle_iter);
+                                    if (v)
+                                        self.time.idle.implicit_detach_margin =
+                                            atoll(v);
+                                } else
+                                    ogs_warn("unknown key `%s`", idle_key);
                             }
                         } else if (!strcmp(time_key, "t3413")) {
                             mme_timer_parse_yaml(&time_iter, MME_TIMER_T3413);

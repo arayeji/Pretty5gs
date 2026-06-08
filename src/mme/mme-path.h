@@ -40,6 +40,10 @@ void mme_send_tau_accept_and_check_release(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 void mme_send_delete_session_after_attach_accept_fail(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 
+ogs_time_t mme_time_mobile_reachable_duration(void);
+ogs_time_t mme_time_implicit_detach_duration(void);
+void mme_mobile_reachable_start(mme_ue_t *mme_ue);
+
 #ifdef __cplusplus
 }
 #endif

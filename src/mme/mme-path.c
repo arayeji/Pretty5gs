@@ -482,3 +482,39 @@ void mme_send_tau_accept_and_check_release(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
         mme_send_release_access_bearer_or_ue_context_release(enb_ue);
     }
 }
+
+ogs_time_t mme_time_mobile_reachable_duration(void)
+{
+    return mme_self()->time.t3412.value +
+        mme_self()->time.idle.mobile_reachable_margin;
+}
+
+ogs_time_t mme_time_implicit_detach_duration(void)
+{
+    /*
+     * TS 24.301 5.3.5: if ISR is activated, implicit detach timer is
+     * 4 minutes greater than T3423. Open5GS uses configured t3423 when set.
+     */
+    if (mme_self()->time.t3423.value)
+        return mme_self()->time.t3423.value +
+            mme_self()->time.idle.implicit_detach_margin;
+
+    return mme_self()->time.t3412.value +
+        mme_self()->time.idle.implicit_detach_margin;
+}
+
+void mme_mobile_reachable_start(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    CLEAR_MME_UE_ALL_TIMERS(mme_ue);
+
+    if (!OGS_FSM_CHECK(&mme_ue->sm, emm_state_registered))
+        return;
+
+    ogs_info("Mobile Reachable timer started for IMSI[%s]",
+            mme_ue->imsi_bcd);
+
+    ogs_timer_start(mme_ue->t_mobile_reachable.timer,
+            ogs_time_from_sec(mme_time_mobile_reachable_duration()));
+}
