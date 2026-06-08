@@ -43,7 +43,10 @@ mme:
       - address: 127.0.0.2
 #    recovery: 1       # base GTP-C Recovery IE; incremented each mmed start
 #    echo_interval: 60  # S11 Echo Request period in seconds (default: 60)
-#                       # SIGHUP reload: echo_interval + mme.time.* only
+#                       # SIGHUP reload: mme.time.*, echo_interval, and
+#                       # add-only lists (tai, hss_map, access_control,
+#                       # imsi_acl, equivalent_plmn, sgwc/smf selection rules,
+#                       # trace_imsi, emergency, attach_accept scalars)
     client:
       sgwc:
         - address: 127.0.0.3

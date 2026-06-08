@@ -74,6 +74,30 @@ int mme_eplmn_parse_config(ogs_yaml_iter_t *parent,
     return OGS_OK;
 }
 
+int mme_eplmn_add_if_new(int *num_of_eplmn, ogs_plmn_id_t *eplmn,
+        const ogs_plmn_id_t *candidate)
+{
+    int i;
+
+    ogs_assert(num_of_eplmn);
+    ogs_assert(eplmn);
+    ogs_assert(candidate);
+
+    for (i = 0; i < *num_of_eplmn; i++) {
+        if (memcmp(&eplmn[i], candidate, OGS_PLMN_ID_LEN) == 0)
+            return 0;
+    }
+
+    if (*num_of_eplmn >= OGS_NAS_MAX_PLMN) {
+        ogs_warn("equivalent_plmn list full (max %d)", OGS_NAS_MAX_PLMN);
+        return 0;
+    }
+
+    eplmn[*num_of_eplmn] = *candidate;
+    (*num_of_eplmn)++;
+    return 1;
+}
+
 int mme_eplmn_validate(int num_of_eplmn)
 {
     if (num_of_eplmn < 0 || num_of_eplmn > OGS_NAS_MAX_PLMN) {
