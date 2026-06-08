@@ -41,6 +41,8 @@ mme:
   gtpc:
     server:
       - address: 127.0.0.2
+#    recovery: 1       # base GTP-C Recovery IE; incremented each mmed start
+#    echo_interval: 60  # S11 Echo Request period in seconds (default: 60)
     client:
       sgwc:
         - address: 127.0.0.3
