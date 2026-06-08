@@ -44,6 +44,13 @@ typedef struct sgwc_sgwu_nwi_rewrite_rule_s {
     char *replace;
 } sgwc_sgwu_nwi_rewrite_rule_t;
 
+typedef struct sgwc_mme_peer_s {
+    ogs_gtp_node_t *gnode;
+    uint8_t peer_recovery;
+    bool peer_recovery_valid;
+    ogs_timer_t *t_echo;
+} sgwc_mme_peer_t;
+
 /*
  * Ga / GTP' offline SGW-CDR writer (see lib/cdr/framing.h).
  * Records use OGS_CDR_FORMAT_BER_SGW in the spool header.
@@ -81,6 +88,7 @@ typedef struct sgwc_context_s {
 
     /* GTPv2-C Recovery counter (TS 29.274) for Echo/CSR interop */
     uint8_t gtpc_recovery;
+    uint32_t gtpc_echo_interval; /* S11 echo period in seconds (0=60) */
 
     /*
      * Inbound roam S5: optional local UDP bind (source port only).
@@ -261,6 +269,13 @@ void sgwc_context_final(void);
 sgwc_context_t *sgwc_self(void);
 
 int sgwc_context_parse_config(void);
+
+sgwc_mme_peer_t *sgwc_mme_peer_get(ogs_gtp_node_t *gnode);
+void sgwc_mme_peer_attach(ogs_gtp_node_t *gnode);
+void sgwc_mme_peer_detach(ogs_gtp_node_t *gnode);
+bool sgwc_mme_recovery_update(sgwc_mme_peer_t *peer, uint8_t recovery);
+void sgwc_mme_echo_schedule(sgwc_mme_peer_t *peer);
+void sgwc_mme_echo_reschedule_all(void);
 
 sgwc_ue_t *sgwc_ue_add_by_message(ogs_gtp2_message_t *message);
 sgwc_ue_t *sgwc_ue_find_by_imsi(uint8_t *imsi, int imsi_len);

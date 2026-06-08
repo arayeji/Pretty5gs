@@ -102,6 +102,9 @@ const char *mme_event_get_name(mme_event_t *e)
     case MME_EVENT_GN_TIMER:
         return "MME_EVENT_GN_TIMER";
 
+    case MME_EVENT_CONFIG_RELOAD:
+        return "MME_EVENT_CONFIG_RELOAD";
+
     case MME_EVENT_ADMIN_DETACH_ENB:
         return "MME_EVENT_ADMIN_DETACH_ENB";
     case MME_EVENT_ADMIN_DETACH_UE:

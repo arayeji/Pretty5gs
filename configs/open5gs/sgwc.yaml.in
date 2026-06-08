@@ -29,6 +29,7 @@ sgwc:
     server:
       - address: 127.0.0.3
         port: 2123
+#    echo_interval: 60  # S11 Echo Request to each MME peer (default: 60)
   #
   # GTP-U (all sessions): force SGWC F-TEID (CH=0) instead of SGW-U FTUP.
   #
@@ -72,10 +73,12 @@ sgwc:
 ################################################################################
 #  o Listen on IPv4 and IPv6
 #  o GTP-C listen port (default 2123). S11; PGW S5 destination stays 2123.
+#  o echo_interval: periodic S11 Echo to each known MME (TS 29.274 recovery)
 #  gtpc:
 #    server:
 #      - address: 127.0.0.3
 #        port: 2123
+#    echo_interval: 60
 #      - address: fd69:f21d:873c:fa::2
 #
 ################################################################################

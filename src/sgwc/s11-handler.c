@@ -23,6 +23,61 @@
 
 #include "s11-handler.h"
 
+static bool sgwc_s11_message_recovery(
+        ogs_gtp2_message_t *message, uint8_t *recovery)
+{
+    ogs_gtp2_tlv_recovery_t *tlv = NULL;
+
+    ogs_assert(message);
+    ogs_assert(recovery);
+
+    switch (message->h.type) {
+    case OGS_GTP2_ECHO_REQUEST_TYPE:
+        tlv = &message->echo_request.recovery;
+        break;
+    case OGS_GTP2_ECHO_RESPONSE_TYPE:
+        tlv = &message->echo_response.recovery;
+        break;
+    case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
+        tlv = &message->create_session_request.recovery;
+        break;
+    case OGS_GTP2_MODIFY_BEARER_REQUEST_TYPE:
+        tlv = &message->modify_bearer_request.recovery;
+        break;
+    case OGS_GTP2_CREATE_INDIRECT_DATA_FORWARDING_TUNNEL_REQUEST_TYPE:
+        tlv = &message->create_indirect_data_forwarding_tunnel_request.recovery;
+        break;
+    case OGS_GTP2_MODIFY_ACCESS_BEARERS_REQUEST_TYPE:
+        tlv = &message->modify_access_bearers_request.recovery;
+        break;
+    default:
+        return false;
+    }
+
+    if (!tlv->presence)
+        return false;
+
+    *recovery = tlv->u8;
+    return true;
+}
+
+void sgwc_s11_check_peer_recovery(
+        ogs_gtp_node_t *gnode, ogs_gtp2_message_t *message)
+{
+    sgwc_mme_peer_t *peer = NULL;
+    uint8_t recovery = 0;
+
+    ogs_assert(gnode);
+    ogs_assert(message);
+
+    if (!sgwc_s11_message_recovery(message, &recovery))
+        return;
+
+    peer = sgwc_mme_peer_get(gnode);
+    if (peer)
+        sgwc_mme_recovery_update(peer, recovery);
+}
+
 static void gtp_sess_timeout(ogs_gtp_xact_t *xact, void *data)
 {
     sgwc_sess_t *sess = NULL;

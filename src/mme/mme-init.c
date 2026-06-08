@@ -38,6 +38,24 @@
 #include "mme-admin-watcher.h"
 #endif
 
+static void mme_sighup_handler(void)
+{
+    mme_event_t *e = NULL;
+    int rv;
+
+    e = mme_event_new(MME_EVENT_CONFIG_RELOAD);
+    ogs_assert(e);
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        mme_event_free(e);
+        return;
+    }
+
+    ogs_pollset_notify(ogs_app()->pollset);
+}
+
 static ogs_thread_t *thread;
 static void mme_main(void *data);
 
@@ -74,6 +92,8 @@ int mme_initialize(void)
 
     rv = mme_context_parse_config();
     if (rv != OGS_OK) return rv;
+
+    ogs_app_sighup_handler_set(mme_sighup_handler);
 
     ogs_metrics_context_open(ogs_metrics_self());
 

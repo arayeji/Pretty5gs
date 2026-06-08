@@ -1290,6 +1290,8 @@ void mme_context_final(void);
 mme_context_t *mme_self(void);
 
 int mme_context_parse_config(void);
+void mme_context_reload_runtime(void);
+void mme_sgw_echo_reschedule_all(void);
 
 mme_sgsn_t *mme_sgsn_add(ogs_sockaddr_t *addr);
 void mme_sgsn_remove(mme_sgsn_t *sgsn);

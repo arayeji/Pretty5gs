@@ -331,15 +331,21 @@ void sgwc_context_init(void)
             SGWC_CDR_TRIG_STOP;
     self.cdr_local_seq = 0;
     self.gtpc_recovery = 1;
+    self.gtpc_echo_interval = 0;
 
     context_initialized = 1;
 }
 
 void sgwc_context_final(void)
 {
+    ogs_gtp_node_t *gnode = NULL, *next_gnode = NULL;
+
     ogs_assert(context_initialized == 1);
 
     sgwc_ue_remove_all();
+
+    ogs_list_for_each_safe(&self.mme_s11_list, next_gnode, gnode)
+        sgwc_mme_peer_detach(gnode);
 
     ogs_assert(self.imsi_ue_hash);
     ogs_hash_destroy(self.imsi_ue_hash);
@@ -368,6 +374,132 @@ void sgwc_context_final(void)
 sgwc_context_t *sgwc_self(void)
 {
     return &self;
+}
+
+static bool sgwc_mme_recovery_is_restart(uint8_t stored, uint8_t received)
+{
+    if (received > stored)
+        return true;
+    if (received < stored && (uint8_t)(stored - received) > 127)
+        return true;
+    return false;
+}
+
+static void sgwc_mme_purge_sessions(ogs_gtp_node_t *gnode)
+{
+    sgwc_ue_t *sgwc_ue = NULL, *next = NULL;
+    char buf[OGS_ADDRSTRLEN];
+
+    ogs_assert(gnode);
+
+    ogs_warn("MME [%s]:%d recovery restart: purging SGWC sessions",
+            OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
+
+    ogs_list_for_each_safe(&self.sgw_ue_list, next, sgwc_ue) {
+        if (sgwc_ue->gnode != gnode)
+            continue;
+
+        ogs_warn("[%s] MME recovery restart: remove UE context",
+                sgwc_ue->imsi_bcd);
+        sgwc_ue_remove(sgwc_ue);
+    }
+}
+
+sgwc_mme_peer_t *sgwc_mme_peer_get(ogs_gtp_node_t *gnode)
+{
+    ogs_assert(gnode);
+    return gnode->data_ptr;
+}
+
+void sgwc_mme_peer_attach(ogs_gtp_node_t *gnode)
+{
+    sgwc_mme_peer_t *peer = NULL;
+
+    ogs_assert(gnode);
+
+    if (gnode->data_ptr)
+        return;
+
+    peer = ogs_calloc(1, sizeof(*peer));
+    ogs_assert(peer);
+    peer->gnode = gnode;
+    gnode->data_ptr = peer;
+}
+
+void sgwc_mme_peer_detach(ogs_gtp_node_t *gnode)
+{
+    sgwc_mme_peer_t *peer = NULL;
+
+    ogs_assert(gnode);
+
+    peer = gnode->data_ptr;
+    if (!peer)
+        return;
+
+    if (peer->t_echo) {
+        ogs_timer_delete(peer->t_echo);
+        peer->t_echo = NULL;
+    }
+
+    gnode->data_ptr = NULL;
+    ogs_free(peer);
+}
+
+bool sgwc_mme_recovery_update(sgwc_mme_peer_t *peer, uint8_t recovery)
+{
+    ogs_gtp_node_t *gnode = NULL;
+    char buf[OGS_ADDRSTRLEN];
+
+    ogs_assert(peer);
+    gnode = peer->gnode;
+    ogs_assert(gnode);
+
+    if (!peer->peer_recovery_valid) {
+        peer->peer_recovery = recovery;
+        peer->peer_recovery_valid = true;
+        ogs_info("MME [%s]:%d recovery=%u (initial)",
+                OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr),
+                recovery);
+        return false;
+    }
+
+    if (!sgwc_mme_recovery_is_restart(peer->peer_recovery, recovery)) {
+        peer->peer_recovery = recovery;
+        return false;
+    }
+
+    ogs_warn("MME [%s]:%d recovery changed %u -> %u",
+            OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr),
+            peer->peer_recovery, recovery);
+    peer->peer_recovery = recovery;
+    sgwc_mme_purge_sessions(gnode);
+    return true;
+}
+
+void sgwc_mme_echo_schedule(sgwc_mme_peer_t *peer)
+{
+    ogs_time_t interval;
+
+    ogs_assert(peer);
+    ogs_assert(peer->t_echo);
+
+    interval = sgwc_self()->gtpc_echo_interval ?
+        ogs_time_from_sec(sgwc_self()->gtpc_echo_interval) :
+        ogs_time_from_sec(60);
+
+    ogs_timer_start(peer->t_echo, interval);
+}
+
+void sgwc_mme_echo_reschedule_all(void)
+{
+    ogs_gtp_node_t *gnode = NULL;
+    sgwc_mme_peer_t *peer = NULL;
+
+    ogs_list_for_each(&self.mme_s11_list, gnode) {
+        peer = sgwc_mme_peer_get(gnode);
+        if (peer && peer->t_echo)
+            sgwc_mme_echo_schedule(peer);
+    }
 }
 
 static int sgwc_context_prepare(void)
@@ -408,7 +540,17 @@ int sgwc_context_parse_config(void)
                 const char *sgwc_key = ogs_yaml_iter_key(&sgwc_iter);
                 ogs_assert(sgwc_key);
                 if (!strcmp(sgwc_key, "gtpc")) {
-                    /* handle config in gtp library */
+                    ogs_yaml_iter_t gtpc_iter;
+                    ogs_yaml_iter_recurse(&sgwc_iter, &gtpc_iter);
+                    while (ogs_yaml_iter_next(&gtpc_iter)) {
+                        const char *gtpc_key = ogs_yaml_iter_key(&gtpc_iter);
+                        ogs_assert(gtpc_key);
+                        if (!strcmp(gtpc_key, "echo_interval")) {
+                            const char *v = ogs_yaml_iter_value(&gtpc_iter);
+                            if (v)
+                                self.gtpc_echo_interval = atoi(v);
+                        }
+                    }
                 } else if (!strcmp(sgwc_key, "gtpu")) {
                     ogs_yaml_iter_t gtpu_iter;
                     ogs_yaml_iter_recurse(&sgwc_iter, &gtpu_iter);

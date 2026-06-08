@@ -36,7 +36,10 @@ static void sgwc_handle_echo_request(
 static void sgwc_handle_echo_response(
         ogs_gtp_xact_t *s11_xact, ogs_gtp2_echo_response_t *rsp)
 {
-    /* Not Implemented */
+    ogs_assert(s11_xact);
+    ogs_assert(rsp);
+
+    ogs_debug("[SGW] Receiving Echo Response");
 }
 
 
@@ -154,6 +157,8 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
             ogs_pkbuf_free(recvbuf);
             break;
         }
+
+        sgwc_s11_check_peer_recovery(gnode, &gtp_message);
 
         if (gtp_message.h.teid_presence && gtp_message.h.teid != 0)
             /* Cause is not "Context not found" */

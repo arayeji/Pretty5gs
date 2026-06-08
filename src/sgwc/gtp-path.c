@@ -157,6 +157,7 @@ static int sgwc_gtpc_recv_one(ogs_sock_t *sock)
             }
             gnode->sock = sock;
         }
+        sgwc_mme_peer_setup(gnode);
         e = sgwc_event_new(SGWC_EVT_S11_MESSAGE);
         ogs_assert(e);
         e->gnode = gnode;
@@ -348,6 +349,48 @@ int sgwc_gtp_open(void)
     ogs_assert(ogs_gtp_self()->gtpc_addr || ogs_gtp_self()->gtpc_addr6);
 
     return sgwc_roam_gtpc_open();
+}
+
+void sgwc_gtp_send_mme_echo(ogs_gtp_node_t *gnode)
+{
+    ogs_assert(gnode);
+    ogs_gtp2_send_echo_request(
+            gnode, sgwc_self()->gtpc_recovery, 0);
+}
+
+void sgwc_timer_mme_echo(void *data)
+{
+    sgwc_mme_peer_t *peer = data;
+
+    ogs_assert(peer);
+    ogs_assert(peer->gnode);
+
+    sgwc_gtp_send_mme_echo(peer->gnode);
+    sgwc_mme_echo_schedule(peer);
+}
+
+void sgwc_mme_peer_setup(ogs_gtp_node_t *gnode)
+{
+    sgwc_mme_peer_t *peer = NULL;
+    char buf[OGS_ADDRSTRLEN];
+
+    ogs_assert(gnode);
+
+    sgwc_mme_peer_attach(gnode);
+    peer = sgwc_mme_peer_get(gnode);
+    ogs_assert(peer);
+
+    if (!peer->t_echo) {
+        peer->t_echo = ogs_timer_add(
+                ogs_app()->timer_mgr, sgwc_timer_mme_echo, peer);
+        ogs_assert(peer->t_echo);
+
+        ogs_info("SGWC S11 MME peer: [%s]:%d",
+                OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
+
+        sgwc_gtp_send_mme_echo(gnode);
+        sgwc_mme_echo_schedule(peer);
+    }
 }
 
 void sgwc_gtp_close(void)

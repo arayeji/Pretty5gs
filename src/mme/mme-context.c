@@ -34,8 +34,6 @@
 #include "mme-gtp-path.h"
 #include "mme-apn.h"
 
-void mme_timer_sgw_echo(void *data);
-
 #define MAX_CELL_PER_ENB            8
 
 static mme_context_t self;
@@ -696,6 +694,7 @@ static int mme_context_prepare(void)
     self.diam_config->cnf_port_tls = DIAMETER_SECURE_PORT;
 
     self.time.t3402.value = 720;  /* 12 minutes */
+    self.time.t3396.value = 720;  /* 12 minutes */
     self.time.t3412.value = 600;  /* 10 minutes */
     self.time.idle.mobile_reachable_margin = 240; /* TS 24.301 +4 min */
     self.time.idle.implicit_detach_margin = 240;
@@ -4130,6 +4129,168 @@ void mme_sgw_echo_schedule(mme_sgw_t *sgw)
         ogs_time_from_sec(60);
 
     ogs_timer_start(sgw->t_echo, interval);
+}
+
+void mme_sgw_echo_reschedule_all(void)
+{
+    mme_sgw_t *sgw = NULL;
+
+    ogs_list_for_each(&self.sgw_list, sgw)
+        mme_sgw_echo_schedule(sgw);
+}
+
+static void mme_time_config_parse(ogs_yaml_iter_t *time_iter)
+{
+    ogs_yaml_iter_t t3402_iter, t3396_iter, t3412_iter, t3423_iter;
+    ogs_yaml_iter_t idle_iter, t3346_iter;
+
+    ogs_assert(time_iter);
+
+    while (ogs_yaml_iter_next(time_iter)) {
+        const char *time_key = ogs_yaml_iter_key(time_iter);
+        ogs_assert(time_key);
+        if (!strcmp(time_key, "t3402")) {
+            ogs_yaml_iter_recurse(time_iter, &t3402_iter);
+            while (ogs_yaml_iter_next(&t3402_iter)) {
+                const char *key = ogs_yaml_iter_key(&t3402_iter);
+                ogs_assert(key);
+                if (!strcmp(key, "value")) {
+                    const char *v = ogs_yaml_iter_value(&t3402_iter);
+                    if (v)
+                        self.time.t3402.value = atoll(v);
+                } else
+                    ogs_warn("unknown key `%s`", key);
+            }
+        } else if (!strcmp(time_key, "t3396")) {
+            ogs_yaml_iter_recurse(time_iter, &t3396_iter);
+            while (ogs_yaml_iter_next(&t3396_iter)) {
+                const char *key = ogs_yaml_iter_key(&t3396_iter);
+                ogs_assert(key);
+                if (!strcmp(key, "value")) {
+                    const char *v = ogs_yaml_iter_value(&t3396_iter);
+                    if (v)
+                        self.time.t3396.value = atoll(v);
+                } else
+                    ogs_warn("unknown key `%s`", key);
+            }
+        } else if (!strcmp(time_key, "t3412")) {
+            ogs_yaml_iter_recurse(time_iter, &t3412_iter);
+            while (ogs_yaml_iter_next(&t3412_iter)) {
+                const char *key = ogs_yaml_iter_key(&t3412_iter);
+                ogs_assert(key);
+                if (!strcmp(key, "value")) {
+                    const char *v = ogs_yaml_iter_value(&t3412_iter);
+                    if (v)
+                        self.time.t3412.value = atoll(v);
+                } else
+                    ogs_warn("unknown key `%s`", key);
+            }
+        } else if (!strcmp(time_key, "t3423")) {
+            ogs_yaml_iter_recurse(time_iter, &t3423_iter);
+            while (ogs_yaml_iter_next(&t3423_iter)) {
+                const char *key = ogs_yaml_iter_key(&t3423_iter);
+                ogs_assert(key);
+                if (!strcmp(key, "value")) {
+                    const char *v = ogs_yaml_iter_value(&t3423_iter);
+                    if (v)
+                        self.time.t3423.value = atoll(v);
+                } else
+                    ogs_warn("unknown key `%s`", key);
+            }
+        } else if (!strcmp(time_key, "idle")) {
+            ogs_yaml_iter_recurse(time_iter, &idle_iter);
+            while (ogs_yaml_iter_next(&idle_iter)) {
+                const char *key = ogs_yaml_iter_key(&idle_iter);
+                ogs_assert(key);
+                if (!strcmp(key, "mobile_reachable_margin")) {
+                    const char *v = ogs_yaml_iter_value(&idle_iter);
+                    if (v)
+                        self.time.idle.mobile_reachable_margin = atoll(v);
+                } else if (!strcmp(key, "implicit_detach_margin")) {
+                    const char *v = ogs_yaml_iter_value(&idle_iter);
+                    if (v)
+                        self.time.idle.implicit_detach_margin = atoll(v);
+                } else
+                    ogs_warn("unknown key `%s`", key);
+            }
+        } else if (!strcmp(time_key, "t3346")) {
+            ogs_yaml_iter_recurse(time_iter, &t3346_iter);
+            while (ogs_yaml_iter_next(&t3346_iter)) {
+                const char *key = ogs_yaml_iter_key(&t3346_iter);
+                ogs_assert(key);
+                if (!strcmp(key, "value")) {
+                    const char *v = ogs_yaml_iter_value(&t3346_iter);
+                    if (v)
+                        self.time.t3346.value = atoll(v);
+                } else if (!strcmp(key, "include_any_reject")) {
+                    self.time.t3346.include_any_reject =
+                        ogs_yaml_iter_bool(&t3346_iter);
+                } else
+                    ogs_warn("unknown key `%s`", key);
+            }
+        } else if (!strcmp(time_key, "bearer_setup") ||
+                !strcmp(time_key, "sae_bearer_setup")) {
+            mme_bearer_setup_time_parse_yaml(time_iter);
+        } else if (!strcmp(time_key, "s11_holding")) {
+            mme_timer_parse_yaml(time_iter, MME_TIMER_S11_HOLDING);
+        } else
+            ogs_warn("unknown key `%s` in mme.time (runtime reload)", time_key);
+    }
+}
+
+void mme_context_reload_runtime(void)
+{
+    yaml_document_t *document = NULL;
+    ogs_yaml_iter_t root_iter;
+    bool found = false;
+
+    document = ogs_app()->document;
+    if (!document) {
+        ogs_warn("No configuration document for runtime reload");
+        return;
+    }
+
+    ogs_yaml_iter_init(&root_iter, document);
+    while (ogs_yaml_iter_next(&root_iter)) {
+        const char *root_key = ogs_yaml_iter_key(&root_iter);
+        ogs_assert(root_key);
+        if (!strcmp(root_key, "mme")) {
+            ogs_yaml_iter_t mme_iter;
+            ogs_yaml_iter_recurse(&root_iter, &mme_iter);
+            while (ogs_yaml_iter_next(&mme_iter)) {
+                const char *mme_key = ogs_yaml_iter_key(&mme_iter);
+                ogs_assert(mme_key);
+                if (!strcmp(mme_key, "time")) {
+                    mme_time_config_parse(&mme_iter);
+                    found = true;
+                } else if (!strcmp(mme_key, "gtpc")) {
+                    ogs_yaml_iter_t gtpc_iter;
+                    ogs_yaml_iter_recurse(&mme_iter, &gtpc_iter);
+                    while (ogs_yaml_iter_next(&gtpc_iter)) {
+                        const char *gtpc_key = ogs_yaml_iter_key(&gtpc_iter);
+                        ogs_assert(gtpc_key);
+                        if (!strcmp(gtpc_key, "echo_interval")) {
+                            const char *v = ogs_yaml_iter_value(&gtpc_iter);
+                            if (v)
+                                self.gtpc_echo_interval = atoi(v);
+                            found = true;
+                        } else if (!strcmp(gtpc_key, "recovery")) {
+                            ogs_warn("mme.gtpc.recovery ignored on SIGHUP "
+                                    "(only applied at daemon start)");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (found) {
+        ogs_info("MME runtime config reloaded (mme.time.*, "
+                "mme.gtpc.echo_interval)");
+        mme_sgw_echo_reschedule_all();
+    } else {
+        ogs_warn("No reloadable MME keys found in configuration");
+    }
 }
 
 mme_pgw_t *mme_pgw_add(ogs_sockaddr_t *addr)
