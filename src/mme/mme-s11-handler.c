@@ -172,19 +172,36 @@ static void gtp_remote_peer_timeout(ogs_gtp_xact_t *xact, void *data)
 void mme_s11_handle_echo_request(
         ogs_gtp_xact_t *xact, ogs_gtp2_echo_request_t *req)
 {
+    mme_sgw_t *sgw = NULL;
+
     ogs_assert(xact);
     ogs_assert(req);
 
     ogs_debug("Receiving Echo Request");
-    /* FIXME : Before implementing recovery counter correctly,
-     *         I'll re-use the recovery value in request message */
-    ogs_gtp2_send_echo_response(xact, req->recovery.u8, 0);
+
+    sgw = mme_sgw_find_by_addr(&xact->gnode->addr);
+    if (sgw && req->recovery.presence)
+        mme_sgw_recovery_update(sgw, req->recovery.u8);
+
+    ogs_gtp2_send_echo_response(xact, mme_self()->gtpc_recovery, 0);
 }
 
 void mme_s11_handle_echo_response(
         ogs_gtp_xact_t *xact, ogs_gtp2_echo_response_t *rsp)
 {
-    /* Not Implemented */
+    mme_sgw_t *sgw = NULL;
+
+    ogs_assert(xact);
+    ogs_assert(rsp);
+
+    ogs_debug("Receiving Echo Response");
+
+    if (!rsp->recovery.presence)
+        return;
+
+    sgw = mme_sgw_find_by_addr(&xact->gnode->addr);
+    if (sgw)
+        mme_sgw_recovery_update(sgw, rsp->recovery.u8);
 }
 
 static void mme_s11_create_session_fail(

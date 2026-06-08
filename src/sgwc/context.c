@@ -587,6 +587,11 @@ int sgwc_context_parse_config(void)
     rv = sgwc_context_validation();
     if (rv != OGS_OK) return rv;
 
+    self.gtpc_recovery++;
+    if (self.gtpc_recovery == 0)
+        self.gtpc_recovery = 1;
+    ogs_info("SGWC GTP-C recovery counter: %u", self.gtpc_recovery);
+
     return OGS_OK;
 }
 

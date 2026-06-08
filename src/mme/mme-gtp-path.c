@@ -381,6 +381,9 @@ int mme_gtp_open(void)
         }
         ogs_info("MME S11 peer configured: [%s]:%d",
                 OGS_ADDR(&sgw->gnode.addr, buf), OGS_PORT(&sgw->gnode.addr));
+
+        mme_gtp_send_sgw_echo(sgw);
+        mme_sgw_echo_schedule(sgw);
     }
 
     ogs_list_for_each(&mme_self()->sgsn_list, sgsn) {
@@ -397,6 +400,22 @@ void mme_gtp_close(void)
 {
     ogs_socknode_remove_all(&ogs_gtp_self()->gtpc_list);
     ogs_socknode_remove_all(&ogs_gtp_self()->gtpc_list6);
+}
+
+void mme_gtp_send_sgw_echo(mme_sgw_t *sgw)
+{
+    ogs_assert(sgw);
+    ogs_gtp2_send_echo_request(
+            &sgw->gnode, mme_self()->gtpc_recovery, 0);
+}
+
+void mme_timer_sgw_echo(void *data)
+{
+    mme_sgw_t *sgw = data;
+
+    ogs_assert(sgw);
+    mme_gtp_send_sgw_echo(sgw);
+    mme_sgw_echo_schedule(sgw);
 }
 
 int mme_gtp_send_create_session_request(

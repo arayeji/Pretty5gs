@@ -28,6 +28,8 @@ extern "C" {
 
 int mme_gtp_open(void);
 void mme_gtp_close(void);
+void mme_timer_sgw_echo(void *data);
+void mme_gtp_send_sgw_echo(mme_sgw_t *sgw);
 
 int mme_gtp_send_create_session_request(
         enb_ue_t *enb_ue, mme_sess_t *sess, int create_action);

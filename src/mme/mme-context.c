@@ -34,6 +34,8 @@
 #include "mme-gtp-path.h"
 #include "mme-apn.h"
 
+void mme_timer_sgw_echo(void *data);
+
 #define MAX_CELL_PER_ENB            8
 
 static mme_context_t self;
@@ -699,6 +701,9 @@ static int mme_context_prepare(void)
     self.time.idle.implicit_detach_margin = 240;
     self.time.t3346.value = 0;
     self.time.t3346.include_any_reject = false;
+
+    self.gtpc_recovery = 1;
+    self.gtpc_echo_interval = 0;
 
     mme_attach_accept_set_defaults();
 
@@ -2043,6 +2048,14 @@ int mme_context_parse_config(void)
                                 } else
                                     ogs_warn("unknown key `%s`", client_key);
                             }
+                        } else if (!strcmp(gtpc_key, "recovery")) {
+                            const char *v = ogs_yaml_iter_value(&gtpc_iter);
+                            if (v)
+                                self.gtpc_recovery = (uint8_t)atoi(v);
+                        } else if (!strcmp(gtpc_key, "echo_interval")) {
+                            const char *v = ogs_yaml_iter_value(&gtpc_iter);
+                            if (v)
+                                self.gtpc_echo_interval = atoi(v);
                         } else
                             ogs_warn("unknown key `%s`", gtpc_key);
                     }
@@ -3840,6 +3853,11 @@ int mme_context_parse_config(void)
     rv = mme_context_validation();
     if (rv != OGS_OK) return rv;
 
+    self.gtpc_recovery++;
+    if (self.gtpc_recovery == 0)
+        self.gtpc_recovery = 1;
+    ogs_info("MME GTP-C recovery counter: %u", self.gtpc_recovery);
+
     return OGS_OK;
 }
 
@@ -3965,6 +3983,15 @@ mme_sgw_t *mme_sgw_add(ogs_sockaddr_t *addr)
 
     ogs_list_init(&sgw->sgw_ue_list);
 
+    sgw->t_echo = ogs_timer_add(
+            ogs_app()->timer_mgr, mme_timer_sgw_echo, sgw);
+    if (!sgw->t_echo) {
+        ogs_error("ogs_timer_add() failed for SGW echo");
+        ogs_free(sgw->tac);
+        ogs_pool_free(&mme_sgw_pool, sgw);
+        return NULL;
+    }
+
     ogs_list_add(&self.sgw_list, sgw);
 
     return sgw;
@@ -3975,6 +4002,11 @@ void mme_sgw_remove(mme_sgw_t *sgw)
     ogs_assert(sgw);
 
     ogs_list_remove(&self.sgw_list, sgw);
+
+    if (sgw->t_echo) {
+        ogs_timer_delete(sgw->t_echo);
+        sgw->t_echo = NULL;
+    }
 
     ogs_gtp_xact_delete_all(&sgw->gnode);
     ogs_freeaddrinfo(sgw->gnode.sa_list);
@@ -4015,6 +4047,89 @@ mme_sgw_t *mme_sgw_find_by_addr(const ogs_sockaddr_t *addr)
     }
 
     return NULL;
+}
+
+static bool mme_sgw_recovery_is_restart(uint8_t stored, uint8_t received)
+{
+    if (received > stored)
+        return true;
+    if (received < stored && (uint8_t)(stored - received) > 127)
+        return true;
+    return false;
+}
+
+static void mme_sgw_purge_sessions(mme_sgw_t *sgw)
+{
+    sgw_ue_t *sgw_ue = NULL, *next = NULL;
+    mme_ue_t *mme_ue = NULL;
+    enb_ue_t *enb_ue = NULL;
+    char buf[OGS_ADDRSTRLEN];
+
+    ogs_assert(sgw);
+
+    ogs_warn("SGW [%s]:%d recovery restart: purging MME sessions",
+            OGS_ADDR(&sgw->gnode.addr, buf), OGS_PORT(&sgw->gnode.addr));
+
+    ogs_list_for_each_safe(&sgw->sgw_ue_list, next, sgw_ue) {
+        mme_ue = mme_ue_find_by_id(sgw_ue->mme_ue_id);
+        if (!mme_ue) {
+            ogs_warn("Orphan sgw_ue without mme_ue: remove");
+            sgw_ue_remove(sgw_ue);
+            continue;
+        }
+
+        if (mme_ue->sgw_ue_id != sgw_ue->id)
+            continue;
+
+        enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+        ogs_warn("[%s] SGW recovery restart: implicit detach",
+                mme_ue->imsi_bcd);
+
+        mme_ue->detach_type = MME_DETACH_TYPE_MME_IMPLICIT;
+        mme_send_delete_session_or_detach(enb_ue, mme_ue);
+    }
+}
+
+bool mme_sgw_recovery_update(mme_sgw_t *sgw, uint8_t recovery)
+{
+    char buf[OGS_ADDRSTRLEN];
+
+    ogs_assert(sgw);
+
+    if (!sgw->peer_recovery_valid) {
+        sgw->peer_recovery = recovery;
+        sgw->peer_recovery_valid = true;
+        ogs_info("SGW [%s]:%d recovery=%u (initial)",
+                OGS_ADDR(&sgw->gnode.addr, buf), OGS_PORT(&sgw->gnode.addr),
+                recovery);
+        return false;
+    }
+
+    if (!mme_sgw_recovery_is_restart(sgw->peer_recovery, recovery)) {
+        sgw->peer_recovery = recovery;
+        return false;
+    }
+
+    ogs_warn("SGW [%s]:%d recovery changed %u -> %u",
+            OGS_ADDR(&sgw->gnode.addr, buf), OGS_PORT(&sgw->gnode.addr),
+            sgw->peer_recovery, recovery);
+    sgw->peer_recovery = recovery;
+    mme_sgw_purge_sessions(sgw);
+    return true;
+}
+
+void mme_sgw_echo_schedule(mme_sgw_t *sgw)
+{
+    ogs_time_t interval;
+
+    ogs_assert(sgw);
+    ogs_assert(sgw->t_echo);
+
+    interval = mme_self()->gtpc_echo_interval ?
+        ogs_time_from_sec(mme_self()->gtpc_echo_interval) :
+        ogs_time_from_sec(60);
+
+    ogs_timer_start(sgw->t_echo, interval);
 }
 
 mme_pgw_t *mme_pgw_add(ogs_sockaddr_t *addr)

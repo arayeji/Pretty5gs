@@ -97,6 +97,9 @@ typedef struct mme_context_s {
     ogs_list_t      sgw_list;       /* SGW GTPv2C Client List */
     mme_sgw_t       *sgw;           /* Iterator for SGW round-robin */
 
+    uint8_t         gtpc_recovery;  /* MME GTP-C Recovery IE (S11) */
+    uint32_t        gtpc_echo_interval; /* S11 echo period in seconds (0=60) */
+
     ogs_list_t      sgsn_list;       /* SGW GTPv1C Client List */
 
     ogs_list_t      pgw_list;       /* PGW GTPC Client List */
@@ -301,6 +304,11 @@ typedef struct mme_sgw_s {
     ogs_plmn_id_t   imsi_plmn_id;
 
     ogs_list_t      sgw_ue_list;
+
+    /* TS 29.274 Recovery: peer restart detection on S11 */
+    uint8_t         peer_recovery;
+    bool            peer_recovery_valid;
+    ogs_timer_t     *t_echo;
 } mme_sgw_t;
 
 typedef struct mme_pgw_s {
@@ -1294,6 +1302,8 @@ mme_sgw_t *mme_sgw_add(ogs_sockaddr_t *addr);
 void mme_sgw_remove(mme_sgw_t *sgw);
 void mme_sgw_remove_all(void);
 mme_sgw_t *mme_sgw_find_by_addr(const ogs_sockaddr_t *addr);
+bool mme_sgw_recovery_update(mme_sgw_t *sgw, uint8_t recovery);
+void mme_sgw_echo_schedule(mme_sgw_t *sgw);
 
 mme_pgw_t *mme_pgw_add(ogs_sockaddr_t *addr);
 void mme_pgw_remove(mme_pgw_t *pgw);
