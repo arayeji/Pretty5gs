@@ -28,8 +28,11 @@ extern "C" {
 
 typedef struct mme_ue_s mme_ue_t;
 typedef struct enb_ue_s enb_ue_t;
+typedef struct mme_access_control_s mme_access_control_t;
 
 void mme_access_control_free_all(void);
+bool mme_access_control_tac_add(mme_access_control_t *ac, uint16_t tac);
+bool mme_access_control_enb_add(mme_access_control_t *ac, uint32_t enb_id);
 
 /*
  * Inbound roam only: IMSI prefix / PLMN whitelist plus optional TAC / eNB-ID

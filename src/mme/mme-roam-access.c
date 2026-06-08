@@ -98,6 +98,46 @@ static uint8_t mme_access_control_inbound_reject_cause(
     return default_cause;
 }
 
+#include "mme-context.h"
+
+bool mme_access_control_tac_add(mme_access_control_t *ac, uint16_t tac)
+{
+    uint16_t *key;
+
+    ogs_assert(ac);
+
+    if (!ac->tac_hash)
+        ac->tac_hash = ogs_hash_make();
+
+    if (ogs_hash_get(ac->tac_hash, &tac, sizeof(tac)))
+        return false;
+
+    key = ogs_calloc(1, sizeof(*key));
+    ogs_assert(key);
+    *key = tac;
+    ogs_hash_set(ac->tac_hash, key, sizeof(*key), (void *)(intptr_t)1);
+    return true;
+}
+
+bool mme_access_control_enb_add(mme_access_control_t *ac, uint32_t enb_id)
+{
+    uint32_t *key;
+
+    ogs_assert(ac);
+
+    if (!ac->enb_id_hash)
+        ac->enb_id_hash = ogs_hash_make();
+
+    if (ogs_hash_get(ac->enb_id_hash, &enb_id, sizeof(enb_id)))
+        return false;
+
+    key = ogs_calloc(1, sizeof(*key));
+    ogs_assert(key);
+    *key = enb_id;
+    ogs_hash_set(ac->enb_id_hash, key, sizeof(*key), (void *)(intptr_t)1);
+    return true;
+}
+
 void mme_access_control_free_all(void)
 {
     mme_context_t *self = mme_self();

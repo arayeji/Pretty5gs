@@ -147,44 +147,6 @@ static void mme_gtpc_client_parse_plmn_id_key(
 static bool mme_ue_inbound_roam_on_tai(
         mme_ue_t *mme_ue, const ogs_eps_tai_t *tai);
 
-static void mme_access_control_tac_add(
-        mme_access_control_t *ac, uint16_t tac)
-{
-    uint16_t *key;
-
-    ogs_assert(ac);
-
-    if (!ac->tac_hash)
-        ac->tac_hash = ogs_hash_make();
-
-    if (ogs_hash_get(ac->tac_hash, &tac, sizeof(tac)))
-        return;
-
-    key = ogs_calloc(1, sizeof(*key));
-    ogs_assert(key);
-    *key = tac;
-    ogs_hash_set(ac->tac_hash, key, sizeof(*key), (void *)(intptr_t)1);
-}
-
-static void mme_access_control_enb_add(
-        mme_access_control_t *ac, uint32_t enb_id)
-{
-    uint32_t *key;
-
-    ogs_assert(ac);
-
-    if (!ac->enb_id_hash)
-        ac->enb_id_hash = ogs_hash_make();
-
-    if (ogs_hash_get(ac->enb_id_hash, &enb_id, sizeof(enb_id)))
-        return;
-
-    key = ogs_calloc(1, sizeof(*key));
-    ogs_assert(key);
-    *key = enb_id;
-    ogs_hash_set(ac->enb_id_hash, key, sizeof(*key), (void *)(intptr_t)1);
-}
-
 static uint32_t mme_yaml_parse_uint32(const char *v)
 {
     ogs_assert(v);
