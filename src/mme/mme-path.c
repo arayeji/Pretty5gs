@@ -503,6 +503,83 @@ ogs_time_t mme_time_implicit_detach_duration(void)
         mme_self()->time.idle.implicit_detach_margin;
 }
 
+static void mme_idle_timer_durations_for_ue(mme_ue_t *mme_ue,
+        ogs_time_t *mobile, ogs_time_t *implicit)
+{
+    ogs_time_t t3346 = 0;
+
+    ogs_assert(mobile);
+    ogs_assert(implicit);
+
+    *mobile = mme_time_mobile_reachable_duration();
+    *implicit = mme_time_implicit_detach_duration();
+
+    if (!mme_ue || !mme_ue->idle_t3346)
+        return;
+
+    t3346 = mme_ue->idle_t3346;
+    if (t3346 <= mme_self()->time.t3412.value)
+        return;
+
+    /*
+     * TS 24.301 5.3.5: when T3346 > T3412 is sent in TAU/Service Reject,
+     * mobile reachable + implicit detach shall exceed T3346.
+     */
+    if (*mobile + *implicit <= t3346) {
+        *implicit = t3346 - *mobile + 1;
+        if (*mobile + *implicit <= t3346)
+            *mobile = t3346 - *implicit + 1;
+    }
+}
+
+ogs_time_t mme_time_mobile_reachable_duration_for_ue(mme_ue_t *mme_ue)
+{
+    ogs_time_t mobile = 0, implicit = 0;
+
+    mme_idle_timer_durations_for_ue(mme_ue, &mobile, &implicit);
+    return mobile;
+}
+
+ogs_time_t mme_time_implicit_detach_duration_for_ue(mme_ue_t *mme_ue)
+{
+    ogs_time_t mobile = 0, implicit = 0;
+
+    mme_idle_timer_durations_for_ue(mme_ue, &mobile, &implicit);
+    return implicit;
+}
+
+bool mme_t3346_should_include(ogs_nas_emm_cause_t emm_cause)
+{
+    if (!mme_self()->time.t3346.value)
+        return false;
+
+    if (mme_self()->time.t3346.include_any_reject)
+        return true;
+
+    return emm_cause == OGS_NAS_EMM_CAUSE_CONGESTION;
+}
+
+void mme_idle_t3346_clear(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+    mme_ue->idle_t3346 = 0;
+}
+
+void mme_t3346_on_reject_sent(mme_ue_t *mme_ue, ogs_nas_emm_cause_t emm_cause)
+{
+    ogs_assert(mme_ue);
+
+    if (!mme_t3346_should_include(emm_cause))
+        return;
+
+    mme_ue->idle_t3346 = mme_self()->time.t3346.value;
+    ogs_info("[%s] T3346 backoff active (%ld s) after EMM reject cause[%d]",
+            mme_ue->imsi_bcd, (long)mme_ue->idle_t3346, emm_cause);
+
+    if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_registered) && ECM_IDLE(mme_ue))
+        mme_mobile_reachable_start(mme_ue);
+}
+
 void mme_mobile_reachable_start(mme_ue_t *mme_ue)
 {
     ogs_assert(mme_ue);
@@ -516,5 +593,6 @@ void mme_mobile_reachable_start(mme_ue_t *mme_ue)
             mme_ue->imsi_bcd);
 
     ogs_timer_start(mme_ue->t_mobile_reachable.timer,
-            ogs_time_from_sec(mme_time_mobile_reachable_duration()));
+            ogs_time_from_sec(
+                mme_time_mobile_reachable_duration_for_ue(mme_ue)));
 }

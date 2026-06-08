@@ -20,6 +20,7 @@
 #include "nas-security.h"
 #include "emm-build.h"
 #include "mme-sm.h"
+#include "mme-path.h"
 #include "eplmn-config.h"
 
 #undef OGS_LOG_DOMAIN
@@ -769,6 +770,18 @@ ogs_pkbuf_t *emm_build_tau_reject(
 
     tau_reject->emm_cause = emm_cause;
 
+    if (mme_t3346_should_include(emm_cause)) {
+        if (ogs_nas_gprs_timer_from_sec(&tau_reject->t3346_value.t,
+                    mme_self()->time.t3346.value) == OGS_OK) {
+            tau_reject->t3346_value.length = 1;
+            tau_reject->presencemask |=
+                OGS_NAS_EPS_TRACKING_AREA_UPDATE_REJECT_T3346_VALUE_PRESENT;
+        } else {
+            ogs_error("Invalid T3346 value [%ld]",
+                    (long)mme_self()->time.t3346.value);
+        }
+    }
+
     return ogs_nas_eps_plain_encode(&message);
 }
 
@@ -785,6 +798,18 @@ ogs_pkbuf_t *emm_build_service_reject(
     message.emm.h.message_type = OGS_NAS_EPS_SERVICE_REJECT;
 
     service_reject->emm_cause = emm_cause;
+
+    if (mme_t3346_should_include(emm_cause)) {
+        if (ogs_nas_gprs_timer_from_sec(&service_reject->t3346_value.t,
+                    mme_self()->time.t3346.value) == OGS_OK) {
+            service_reject->t3346_value.length = 1;
+            service_reject->presencemask |=
+                OGS_NAS_EPS_SERVICE_REJECT_T3346_VALUE_PRESENT;
+        } else {
+            ogs_error("Invalid T3346 value [%ld]",
+                    (long)mme_self()->time.t3346.value);
+        }
+    }
 
     return ogs_nas_eps_plain_encode(&message);
 }

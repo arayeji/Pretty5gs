@@ -264,6 +264,10 @@ typedef struct mme_context_s {
             ogs_time_t mobile_reachable_margin; /* default 240s (TS 24.301) */
             ogs_time_t implicit_detach_margin;  /* default 240s (TS 24.301) */
         } idle;
+        struct {
+            ogs_time_t value;       /* T3346 seconds (optional, GPRS timer 2) */
+            bool include_any_reject; /* if false, only congestion (#22) rejects */
+        } t3346;
     } time;
 
     struct {
@@ -831,6 +835,7 @@ struct mme_ue_s {
      * candidates first when the mme_ue_pool runs low.
      */
     ogs_time_t      idle_since;
+    ogs_time_t      idle_t3346; /* active T3346 backoff (seconds), 0 if none */
 
 #define HOLDING_S1_CONTEXT(__mME) \
     do { \

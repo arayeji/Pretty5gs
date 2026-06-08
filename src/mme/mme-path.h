@@ -42,6 +42,11 @@ void mme_send_delete_session_after_attach_accept_fail(
 
 ogs_time_t mme_time_mobile_reachable_duration(void);
 ogs_time_t mme_time_implicit_detach_duration(void);
+ogs_time_t mme_time_mobile_reachable_duration_for_ue(mme_ue_t *mme_ue);
+ogs_time_t mme_time_implicit_detach_duration_for_ue(mme_ue_t *mme_ue);
+bool mme_t3346_should_include(ogs_nas_emm_cause_t emm_cause);
+void mme_t3346_on_reject_sent(mme_ue_t *mme_ue, ogs_nas_emm_cause_t emm_cause);
+void mme_idle_t3346_clear(mme_ue_t *mme_ue);
 void mme_mobile_reachable_start(mme_ue_t *mme_ue);
 
 #ifdef __cplusplus
