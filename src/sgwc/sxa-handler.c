@@ -2248,6 +2248,31 @@ void sgwc_sxa_handle_session_report_request(
 
         sgwc_ga_cdr_session_interim(sess, interval_duration_s);
 
+    } else if (report_type.user_plane_inactivity_report) {
+        bearer = sgwc_default_bearer_in_sess(sess);
+        if (!bearer) {
+            ogs_warn("[%s] User-plane inactivity: no default bearer",
+                    sgwc_ue->imsi_bcd);
+            return;
+        }
+
+        ogs_warn("[%s] User-plane inactivity reported by UPF",
+                sgwc_ue->imsi_bcd);
+
+        if (ogs_list_count(&sess->bearer_list) > 0) {
+            if (sgwc_pfcp_send_session_modification_request(sess,
+                    OGS_INVALID_POOL_ID, NULL,
+                    OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_DEACTIVATE) !=
+                    OGS_OK)
+                ogs_error("sgwc_pfcp_send_session_modification_request() "
+                        "failed");
+        }
+
+        if (sgwc_gtp_send_downlink_data_notification(
+                OGS_GTP2_CAUSE_PDN_CONNECTION_INACTIVITY_TIMER_EXPIRES,
+                bearer) != OGS_OK)
+            ogs_error("sgwc_gtp_send_downlink_data_notification() failed");
+
     } else {
         ogs_error("Not supported Report Type[%d]", report_type.value);
     }

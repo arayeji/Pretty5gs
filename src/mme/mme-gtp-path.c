@@ -272,10 +272,12 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
             uint32_t cell_id = 0, enb_id = 0;
 
             mme_log_radio(mme_ue, enb_ue, &tac, &cell_id, &enb_id);
-            ogs_error("[%s] GTP timeout: no S1 context type[%u:%s] "
-                    "TAC[0x%04x] eNB_ID[0x%x] cell[0x%x]",
+            ogs_warn("[%s] GTP timeout: no S1 context type[%u:%s] "
+                    "TAC[0x%04x] eNB_ID[0x%x] cell[0x%x]; "
+                    "starting mobile reachable timer",
                     mme_log_imsi(mme_ue), type,
                     mme_gtp2_message_type_name(type), tac, enb_id, cell_id);
+            mme_mobile_reachable_start(mme_ue);
         }
         break;
     }

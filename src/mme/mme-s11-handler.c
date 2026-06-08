@@ -29,6 +29,7 @@
 #include "mme-fd-path.h"
 #include "sgsap-path.h"
 #include "mme-path.h"
+#include "mme-path.h"
 
 #include "mme-s11-build.h"
 #include "mme-s11-handler.h"
@@ -1582,8 +1583,7 @@ void mme_s11_handle_release_access_bearers_response(
             ogs_error("ENB-S1 Context has already been removed");
         }
     } else if (action == OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_LO_CONNREFUSED) {
-    /* enb_ue_unlink() and enb_ue_remove() has already been executed.
-     * So, there is no `enb_ue` context */
+        mme_mobile_reachable_start(mme_ue);
 
     } else if (action == OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_RESET_ALL) {
     /*
@@ -1606,6 +1606,7 @@ void mme_s11_handle_release_access_bearers_response(
 
             enb_ue_deassociate_mme_ue(enb_ue, mme_ue);
             enb_ue_remove(enb_ue);
+            mme_mobile_reachable_start(mme_ue);
 
             if (enb && ogs_list_count(&enb->enb_ue_list) == 0) {
                 r = s1ap_send_s1_reset_ack(enb, NULL);
@@ -1626,6 +1627,7 @@ void mme_s11_handle_release_access_bearers_response(
 
             enb_ue_deassociate_mme_ue(enb_ue, mme_ue);
             enb_ue_remove(enb_ue);
+            mme_mobile_reachable_start(mme_ue);
 
             if (enb) {
                 ogs_list_for_each(&enb->enb_ue_list, iter) {
@@ -1740,6 +1742,17 @@ void mme_s11_handle_downlink_data_notification(
         ogs_assert(cause);
 
         cause_value = cause->value;
+    }
+
+    if (cause_value ==
+            OGS_GTP2_CAUSE_PDN_CONNECTION_INACTIVITY_TIMER_EXPIRES) {
+        ogs_warn("[%s] PDN connection inactivity reported by SGW",
+                mme_ue->imsi_bcd);
+        mme_mobile_reachable_start(mme_ue);
+        ogs_assert(OGS_OK ==
+            mme_gtp_send_downlink_data_notification_ack(
+                bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED));
+        return;
     }
 /*
  * 5.3.4.2 in Spec 23.401

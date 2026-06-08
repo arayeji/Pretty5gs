@@ -118,6 +118,9 @@ mme:
 #      value: 600   # seconds (default: 600 = 10 min periodic TAU timer)
 #    t3423:
 #      value: 720   # seconds (optional, ISR CS fallback in Attach/TAU Accept)
+#    idle:
+#      mobile_reachable_margin: 240  # seconds added to t3412 (TS 24.301 +4min)
+#      implicit_detach_margin: 240    # added to t3412 or t3423 when set
 #    t3413:
 #      value: 6     # paging retransmit (default: 6 s)
 #      max_count: 2
