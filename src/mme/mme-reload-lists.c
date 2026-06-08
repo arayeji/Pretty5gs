@@ -19,6 +19,8 @@
 
 #include "ogs-gtp.h"
 #include "mme-context.h"
+#include "mme-gtp-path.h"
+#include "mme-roam-access.h"
 #include "eplmn-config.h"
 #include "mme-reload-lists.h"
 
@@ -254,45 +256,6 @@ static mme_access_control_t *reload_access_control_find(
     return NULL;
 }
 
-static void reload_access_control_tac_add(mme_access_control_t *ac, uint16_t tac)
-{
-    uint16_t *key;
-
-    ogs_assert(ac);
-
-    if (!ac->tac_hash)
-        ac->tac_hash = ogs_hash_make();
-
-    if (ogs_hash_get(ac->tac_hash, &tac, sizeof(tac)))
-        return;
-
-    key = ogs_calloc(1, sizeof(*key));
-    ogs_assert(key);
-    *key = tac;
-    ogs_hash_set(ac->tac_hash, key, sizeof(*key), (void *)(intptr_t)1);
-    mme_reload_lists_changed++;
-}
-
-static void reload_access_control_enb_add(
-        mme_access_control_t *ac, uint32_t enb_id)
-{
-    uint32_t *key;
-
-    ogs_assert(ac);
-
-    if (!ac->enb_id_hash)
-        ac->enb_id_hash = ogs_hash_make();
-
-    if (ogs_hash_get(ac->enb_id_hash, &enb_id, sizeof(enb_id)))
-        return;
-
-    key = ogs_calloc(1, sizeof(*key));
-    ogs_assert(key);
-    *key = enb_id;
-    ogs_hash_set(ac->enb_id_hash, key, sizeof(*key), (void *)(intptr_t)1);
-    mme_reload_lists_changed++;
-}
-
 static void reload_access_control_parse_uint32_list(
         ogs_yaml_iter_t *iter, mme_access_control_t *ac, bool enb)
 {
@@ -302,7 +265,10 @@ static void reload_access_control_parse_uint32_list(
     ogs_assert(ac);
 
     ogs_yaml_iter_recurse(iter, &list_iter);
-    ogs_assert(ogs_yaml_iter_type(&list_iter) != YAML_MAPPING_NODE);
+    if (ogs_yaml_iter_type(&list_iter) == YAML_MAPPING_NODE) {
+        ogs_warn("SIGHUP: access_control tac/enb list must be a sequence");
+        return;
+    }
 
     do {
         const char *v = NULL;
@@ -316,10 +282,14 @@ static void reload_access_control_parse_uint32_list(
         if (!v)
             continue;
 
-        if (enb)
-            reload_access_control_enb_add(ac, reload_yaml_parse_uint32(v));
-        else
-            reload_access_control_tac_add(ac, (uint16_t)reload_yaml_parse_uint32(v));
+        if (enb) {
+            if (mme_access_control_enb_add(ac, reload_yaml_parse_uint32(v)))
+                mme_reload_lists_changed++;
+        } else {
+            if (mme_access_control_tac_add(ac,
+                        (uint16_t)reload_yaml_parse_uint32(v)))
+                mme_reload_lists_changed++;
+        }
     } while (ogs_yaml_iter_type(&list_iter) == YAML_SEQUENCE_NODE);
 }
 
@@ -527,8 +497,10 @@ static int reload_hss_map_add_only(ogs_yaml_iter_t *mme_iter)
             ogs_yaml_iter_recurse(&hss_map_array, &hss_map_iter);
         } else if (ogs_yaml_iter_type(&hss_map_array) == YAML_SCALAR_NODE) {
             break;
-        } else
-            ogs_assert_if_reached();
+        } else {
+            ogs_warn("SIGHUP: unexpected YAML node in hss_map reload");
+            break;
+        }
 
         while (ogs_yaml_iter_next(&hss_map_iter)) {
             const char *mnc = NULL, *mcc = NULL;
@@ -600,8 +572,10 @@ static int reload_imsi_acl_add_only(ogs_yaml_iter_t *mme_iter)
             ogs_yaml_iter_recurse(&acl_array, &acl_iter);
         } else if (ogs_yaml_iter_type(&acl_array) == YAML_SCALAR_NODE) {
             ogs_yaml_iter_recurse(mme_iter, &acl_iter);
-        } else
-            ogs_assert_if_reached();
+        } else {
+            ogs_warn("SIGHUP: unexpected YAML node in imsi_acl reload");
+            break;
+        }
 
         while (ogs_yaml_iter_next(&acl_iter)) {
             const char *v = ogs_yaml_iter_value(&acl_iter);
@@ -658,8 +632,10 @@ static int reload_access_control_add_only(ogs_yaml_iter_t *mme_iter)
         } else if (ogs_yaml_iter_type(&access_control_array) ==
                 YAML_SCALAR_NODE) {
             break;
-        } else
-            ogs_assert_if_reached();
+        } else {
+            ogs_warn("SIGHUP: unexpected YAML node in access_control reload");
+            break;
+        }
 
         while (ogs_yaml_iter_next(&access_control_iter)) {
             const char *mnc = NULL, *mcc = NULL;
@@ -806,8 +782,10 @@ static int reload_equivalent_plmn_add_only(ogs_yaml_iter_t *mme_iter)
             ogs_yaml_iter_recurse(&eplmn_array, &eplmn_iter);
         } else if (ogs_yaml_iter_type(&eplmn_array) == YAML_SCALAR_NODE) {
             break;
-        } else
-            ogs_assert_if_reached();
+        } else {
+            ogs_warn("SIGHUP: unexpected YAML node in equivalent_plmn reload");
+            break;
+        }
 
         while (ogs_yaml_iter_next(&eplmn_iter)) {
             const char *eplmn_key = ogs_yaml_iter_key(&eplmn_iter);
@@ -868,7 +846,8 @@ static int reload_served_tai_add_only(ogs_yaml_iter_t *mme_iter)
         } else {
             ogs_free(start);
             ogs_free(end);
-            ogs_assert_if_reached();
+            ogs_warn("SIGHUP: unexpected YAML node in served TAI reload");
+            break;
         }
 
         while (ogs_yaml_iter_next(&tai_iter)) {
@@ -967,8 +946,10 @@ static int reload_trace_imsi_add_only(ogs_yaml_iter_t *mme_iter)
             ogs_yaml_iter_recurse(&trace_array, &trace_iter);
         } else if (ogs_yaml_iter_type(&trace_array) == YAML_SCALAR_NODE) {
             ogs_yaml_iter_recurse(mme_iter, &trace_iter);
-        } else
-            ogs_assert_if_reached();
+        } else {
+            ogs_warn("SIGHUP: unexpected YAML node in trace_imsi reload");
+            break;
+        }
 
         while (ogs_yaml_iter_next(&trace_iter)) {
             const char *v = ogs_yaml_iter_value(&trace_iter);
@@ -1028,8 +1009,10 @@ static int reload_emergency_add_only(ogs_yaml_iter_t *mme_iter)
                 } else if (ogs_yaml_iter_type(&number_array) ==
                         YAML_SCALAR_NODE) {
                     break;
-                } else
-                    ogs_assert_if_reached();
+                } else {
+                    ogs_warn("SIGHUP: unexpected YAML node in emergency reload");
+                    break;
+                }
 
                 while (ogs_yaml_iter_next(&number_iter)) {
                     const char *number_key = ogs_yaml_iter_key(&number_iter);
@@ -1141,7 +1124,8 @@ static int reload_gtpc_client_entry_add_only(
             break;
         } else {
             ogs_free(tac);
-            ogs_assert_if_reached();
+            ogs_warn("SIGHUP: unexpected YAML node in gtpc client reload");
+            break;
         }
 
         while (ogs_yaml_iter_next(&client_iter)) {
@@ -1248,12 +1232,34 @@ static int reload_gtpc_client_entry_add_only(
         if (!pgw) {
             sgw = mme_sgw_find_by_addr(addr);
             if (!sgw) {
+                char peer_buf[OGS_ADDRSTRLEN];
+                int rv;
+
                 sgw = mme_sgw_add(addr);
-                ogs_assert(sgw);
+                if (!sgw) {
+                    ogs_error("SIGHUP: failed to allocate SGW entry");
+                    ogs_free(tac);
+                    continue;
+                }
+
+                rv = ogs_gtp_connect(
+                        ogs_gtp_self()->gtpc_sock, ogs_gtp_self()->gtpc_sock6,
+                        &sgw->gnode);
+                if (rv != OGS_OK) {
+                    ogs_error("SIGHUP: gtp_connect() failed for SGW [%s]:%d",
+                            OGS_ADDR(sgw->gnode.sa_list, peer_buf),
+                            OGS_PORT(sgw->gnode.sa_list));
+                    mme_sgw_remove(sgw);
+                    ogs_free(tac);
+                    continue;
+                }
+
+                ogs_info("SIGHUP: sgwc peer added [%s]:%d",
+                        OGS_ADDR(&sgw->gnode.addr, peer_buf),
+                        OGS_PORT(&sgw->gnode.addr));
+                mme_gtp_send_sgw_echo(sgw);
                 mme_sgw_echo_schedule(sgw);
-                added++;
                 mme_reload_lists_changed++;
-                ogs_info("SIGHUP: sgwc peer added");
             } else {
                 ogs_freeaddrinfo(addr);
             }
@@ -1277,8 +1283,11 @@ static int reload_gtpc_client_entry_add_only(
             pgw_node = reload_pgw_find_by_addr(addr);
             if (!pgw_node) {
                 pgw_node = mme_pgw_add(addr);
-                ogs_assert(pgw_node);
-                added++;
+                if (!pgw_node) {
+                    ogs_error("SIGHUP: failed to allocate PGW entry");
+                    ogs_free(tac);
+                    continue;
+                }
                 mme_reload_lists_changed++;
                 ogs_info("SIGHUP: smf/pgw peer added");
             } else {
