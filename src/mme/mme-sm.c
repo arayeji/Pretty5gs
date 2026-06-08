@@ -604,7 +604,10 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
     case MME_EVENT_ESM_TIMER:
         bearer = mme_bearer_find_by_id(e->bearer_id);
-        ogs_assert(bearer);
+        if (!bearer) {
+            ogs_warn("Bearer has already been removed [%d]", e->bearer_id);
+            break;
+        }
         ogs_assert(OGS_FSM_STATE(&bearer->sm));
 
         ogs_fsm_dispatch(&bearer->sm, e);

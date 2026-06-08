@@ -1996,10 +1996,28 @@ void sgwc_s11_handle_create_indirect_data_forwarding_tunnel_request(
         }
     }
 
+    int num_of_modify = 0;
+
     ogs_list_for_each(&sgwc_ue->sess_list, sess) {
         bool has_indirect = false;
 
-        ogs_assert(ogs_list_count(&sess->bearer_list));
+        if (ogs_list_count(&sess->bearer_list) == 0) {
+            ogs_warn("[%s] Create Indirect Data Forwarding: session has no "
+                    "bearers APN[%s] sess_id[%d], skipping (stale session?)",
+                    sgwc_log_imsi(sgwc_ue),
+                    sess->session.name ? sess->session.name : "-",
+                    sess->id);
+            continue;
+        }
+        if (!sess->pfcp_node) {
+            ogs_warn("[%s] Create Indirect Data Forwarding: session has no "
+                    "PFCP node APN[%s] sess_id[%d], skipping",
+                    sgwc_log_imsi(sgwc_ue),
+                    sess->session.name ? sess->session.name : "-",
+                    sess->id);
+            continue;
+        }
+
         ogs_list_for_each(&sess->bearer_list, bearer) {
             ogs_list_for_each(&bearer->tunnel_list, tunnel) {
                 if ((tunnel->interface_type ==
@@ -2015,10 +2033,18 @@ void sgwc_s11_handle_create_indirect_data_forwarding_tunnel_request(
 
         if (has_indirect == true) {
             ogs_debug("    sess_id=%d xact=%p", sess->id, s11_xact);
-            ogs_assert(OGS_OK ==
-                sgwc_pfcp_send_session_modification_request(
+            rv = sgwc_pfcp_send_session_modification_request(
                     sess, s11_xact->id, gtpbuf,
-                    OGS_PFCP_MODIFY_INDIRECT|OGS_PFCP_MODIFY_CREATE));
+                    OGS_PFCP_MODIFY_INDIRECT|OGS_PFCP_MODIFY_CREATE);
+            if (rv != OGS_OK) {
+                ogs_error("[%s] PFCP modification failed for indirect "
+                        "forwarding APN[%s] sess_id[%d]",
+                        sgwc_log_imsi(sgwc_ue),
+                        sess->session.name ? sess->session.name : "-",
+                        sess->id);
+            } else {
+                num_of_modify++;
+            }
         } else {
             ogs_error("No Indirect Tunnel");
             ogs_error("    UE IMSI[%s] APN[%s]",
@@ -2033,6 +2059,13 @@ void sgwc_s11_handle_create_indirect_data_forwarding_tunnel_request(
                 }
             }
         }
+    }
+
+    if (num_of_modify == 0) {
+        ogs_error("[%s] Create Indirect Data Forwarding: no modifiable session",
+                sgwc_log_imsi(sgwc_ue));
+        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+        goto cleanup;
     }
 
     return;
