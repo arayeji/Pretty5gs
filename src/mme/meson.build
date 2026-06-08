@@ -20,6 +20,7 @@ libmme_sources = files('''
     mme-timer.h
     mme-context.h
     eplmn-config.h
+    mme-reload-lists.h
     mme-apn.h
     mme-ambr.h
     mme-pgw-host.h
@@ -55,6 +56,7 @@ libmme_sources = files('''
     mme-event.c
     mme-timer.c
     mme-context.c
+    mme-reload-lists.c
     mme-roam-access.c
     eplmn-config.c
     mme-apn.c

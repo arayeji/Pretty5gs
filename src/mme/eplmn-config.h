@@ -39,6 +39,8 @@ int mme_eplmn_build_nas_list_for_serving(ogs_nas_plmn_list_t *nas_list,
         int num_of_eplmn, ogs_plmn_id_t *eplmn);
 int mme_eplmn_count_for_serving(const ogs_plmn_id_t *serving_plmn,
         bool serving_only, int num_of_eplmn, ogs_plmn_id_t *eplmn);
+int mme_eplmn_add_if_new(int *num_of_eplmn, ogs_plmn_id_t *eplmn,
+        const ogs_plmn_id_t *candidate);
 
 #ifdef __cplusplus
 }

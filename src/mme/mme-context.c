@@ -28,6 +28,7 @@
 #include "mme-timer.h"
 #include "mme-trace.h"
 #include "nas-path.h"
+#include "mme-reload-lists.h"
 #include "s1ap-path.h"
 #include "s1ap-handler.h"
 #include "mme-sm.h"
@@ -4243,6 +4244,9 @@ void mme_context_reload_runtime(void)
     yaml_document_t *document = NULL;
     ogs_yaml_iter_t root_iter;
     bool found = false;
+    int lists_added = 0;
+
+    mme_reload_lists_changed = 0;
 
     if (ogs_app_config_reload() != OGS_OK) {
         ogs_warn("Configuration reload failed; keeping previous config");
@@ -4284,14 +4288,24 @@ void mme_context_reload_runtime(void)
                                     "(only applied at daemon start)");
                         }
                     }
+                    lists_added += mme_reload_gtpc_client_add_only(&mme_iter);
+                } else {
+                    lists_added += mme_reload_lists_key_add_only(
+                            mme_key, &mme_iter);
                 }
             }
         }
     }
 
-    if (found) {
-        ogs_info("MME runtime config reloaded (mme.time.*, "
-                "mme.gtpc.echo_interval)");
+    if (!self.require_hss_map_explicit &&
+            ogs_list_first(&self.hssmap_list) != NULL) {
+        self.require_hss_map = true;
+    }
+
+    if (found || lists_added > 0 || mme_reload_lists_changed > 0) {
+        ogs_info("MME runtime config reloaded (time/gtpc + add-only lists, "
+                "%d list change(s))",
+                lists_added + mme_reload_lists_changed);
         mme_sgw_echo_reschedule_all();
     } else {
         ogs_warn("No reloadable MME keys found in configuration");
