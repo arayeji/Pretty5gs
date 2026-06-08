@@ -837,6 +837,8 @@ cleanup:
             break;
         }
 
+        mme_s11_check_peer_recovery(gnode, &gtp_message);
+
         /*
          * 5.5.2 in spec 29.274
          *
@@ -1317,6 +1319,10 @@ cleanup:
         ogs_assert(OGS_FSM_STATE(&vlr->sm));
 
         ogs_fsm_dispatch(&vlr->sm, e);
+        break;
+
+    case MME_EVENT_CONFIG_RELOAD:
+        mme_context_reload_runtime();
         break;
 
     default:

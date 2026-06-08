@@ -108,6 +108,110 @@ ogs_app_pool_dump_cb_t ogs_app_pool_dump_cb_get(void)
 static int read_config(void);
 static int parse_config(void);
 
+static ogs_app_sighup_handler_t sighup_handler = NULL;
+
+void ogs_app_sighup_handler_set(ogs_app_sighup_handler_t handler)
+{
+    sighup_handler = handler;
+}
+
+void ogs_app_sighup_handler_invoke(void)
+{
+    if (sighup_handler)
+        sighup_handler();
+}
+
+int ogs_app_config_reload(void)
+{
+    FILE *file;
+    yaml_parser_t parser;
+    yaml_document_t *new_document = NULL;
+    yaml_document_t *old_document = NULL;
+
+    ogs_assert(ogs_app()->file);
+
+    file = fopen(ogs_app()->file, "rb");
+    if (!file) {
+        ogs_error("cannot open file `%s`", ogs_app()->file);
+        return OGS_ERROR;
+    }
+
+    ogs_assert(yaml_parser_initialize(&parser));
+    yaml_parser_set_input_file(&parser, file);
+
+    new_document = calloc(1, sizeof(yaml_document_t));
+    if (!yaml_parser_load(&parser, new_document)) {
+        ogs_error("Failed to parse configuration file '%s'", ogs_app()->file);
+        switch (parser.error) {
+        case YAML_MEMORY_ERROR:
+            ogs_error("Memory error: Not enough memory for parsing");
+            break;
+        case YAML_READER_ERROR:
+            if (parser.problem_value != -1)
+                ogs_error("Reader error - %s: #%X at %zd", parser.problem,
+                    parser.problem_value, parser.problem_offset);
+            else
+                ogs_error("Reader error - %s at %zd", parser.problem,
+                    parser.problem_offset);
+            break;
+        case YAML_SCANNER_ERROR:
+            if (parser.context)
+                ogs_error("Scanner error - %s at line %zu, column %zu "
+                        "%s at line %zu, column %zu", parser.context,
+                        parser.context_mark.line+1,
+                        parser.context_mark.column+1,
+                        parser.problem, parser.problem_mark.line+1,
+                        parser.problem_mark.column+1);
+            else
+                ogs_error("Scanner error - %s at line %zu, column %zu",
+                        parser.problem, parser.problem_mark.line+1,
+                        parser.problem_mark.column+1);
+            break;
+        case YAML_PARSER_ERROR:
+            if (parser.context)
+                ogs_error("Parser error - %s at line %zu, column %zu "
+                        "%s at line %zu, column %zu", parser.context,
+                        parser.context_mark.line+1,
+                        parser.context_mark.column+1,
+                        parser.problem, parser.problem_mark.line+1,
+                        parser.problem_mark.column+1);
+            else
+                ogs_error("Parser error - %s at line %zu, column %zu",
+                        parser.problem, parser.problem_mark.line+1,
+                        parser.problem_mark.column+1);
+            break;
+        default:
+            ogs_assert_if_reached();
+            break;
+        }
+
+        free(new_document);
+        yaml_parser_delete(&parser);
+        ogs_assert(!fclose(file));
+        return OGS_ERROR;
+    }
+
+    old_document = ogs_app()->document;
+    ogs_app()->document = new_document;
+
+    if (old_document) {
+        yaml_document_delete(old_document);
+        free(old_document);
+    }
+
+    yaml_parser_delete(&parser);
+    ogs_assert(!fclose(file));
+
+    ogs_info("Configuration reloaded: '%s'", ogs_app()->file);
+
+    return OGS_OK;
+}
+
+int ogs_app_config_read(void)
+{
+    return ogs_app_config_reload();
+}
+
 int ogs_app_initialize(
         const char *version, const char *default_config,
         const char *const argv[])

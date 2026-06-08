@@ -34,7 +34,12 @@ int ogs_app_initialize(
 void ogs_app_terminate(void);
 
 int ogs_app_config_read(void);
+int ogs_app_config_reload(void);
 void ogs_app_setup_log(void);
+
+typedef void (*ogs_app_sighup_handler_t)(void);
+void ogs_app_sighup_handler_set(ogs_app_sighup_handler_t handler);
+void ogs_app_sighup_handler_invoke(void);
 
 /*
  * Pool stats dump hook.

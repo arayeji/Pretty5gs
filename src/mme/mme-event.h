@@ -53,6 +53,8 @@ typedef enum {
     MME_EVENT_GN_MESSAGE,
     MME_EVENT_GN_TIMER,
 
+    MME_EVENT_CONFIG_RELOAD,
+
     /*
      * Admin operations injected by the Prometheus HTTP admin
      * endpoints (POST /admin/...). The HTTP handler runs on the
@@ -126,6 +128,7 @@ typedef struct mme_event_s {
     char admin_mcc[4];
     char admin_mnc[4];
     int admin_tac;
+
 } mme_event_t;
 
 OGS_STATIC_ASSERT(OGS_EVENT_SIZE >= sizeof(mme_event_t));

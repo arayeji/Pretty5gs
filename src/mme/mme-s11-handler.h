@@ -26,6 +26,10 @@
 extern "C" {
 #endif
 
+void mme_s11_check_peer_recovery(
+        ogs_gtp_node_t *gnode, ogs_gtp2_message_t *message);
+void mme_s11_handle_sgw_context_lost(mme_ue_t *mme_ue, uint8_t gtp_cause);
+
 void mme_s11_handle_echo_request(
         ogs_gtp_xact_t *xact, ogs_gtp2_echo_request_t *req);
 void mme_s11_handle_echo_response(

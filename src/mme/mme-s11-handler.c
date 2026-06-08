@@ -61,6 +61,88 @@ static uint8_t esm_cause_from_gtp(uint8_t gtp_cause)
     return OGS_NAS_ESM_CAUSE_NETWORK_FAILURE;
 }
 
+static bool mme_s11_message_recovery(
+        ogs_gtp2_message_t *message, uint8_t *recovery)
+{
+    ogs_gtp2_tlv_recovery_t *tlv = NULL;
+
+    ogs_assert(message);
+    ogs_assert(recovery);
+
+    switch (message->h.type) {
+    case OGS_GTP2_ECHO_REQUEST_TYPE:
+        tlv = &message->echo_request.recovery;
+        break;
+    case OGS_GTP2_ECHO_RESPONSE_TYPE:
+        tlv = &message->echo_response.recovery;
+        break;
+    case OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE:
+        tlv = &message->create_session_response.recovery;
+        break;
+    case OGS_GTP2_MODIFY_BEARER_RESPONSE_TYPE:
+        tlv = &message->modify_bearer_response.recovery;
+        break;
+    case OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE:
+        tlv = &message->delete_session_response.recovery;
+        break;
+    case OGS_GTP2_RELEASE_ACCESS_BEARERS_RESPONSE_TYPE:
+        tlv = &message->release_access_bearers_response.recovery;
+        break;
+    case OGS_GTP2_MODIFY_BEARER_FAILURE_INDICATION_TYPE:
+        tlv = &message->modify_bearer_failure_indication.recovery;
+        break;
+    case OGS_GTP2_DELETE_BEARER_FAILURE_INDICATION_TYPE:
+        tlv = &message->delete_bearer_failure_indication.recovery;
+        break;
+    case OGS_GTP2_CREATE_INDIRECT_DATA_FORWARDING_TUNNEL_RESPONSE_TYPE:
+        tlv = &message->create_indirect_data_forwarding_tunnel_response.recovery;
+        break;
+    case OGS_GTP2_DELETE_INDIRECT_DATA_FORWARDING_TUNNEL_RESPONSE_TYPE:
+        tlv = &message->delete_indirect_data_forwarding_tunnel_response.recovery;
+        break;
+    default:
+        return false;
+    }
+
+    if (!tlv->presence)
+        return false;
+
+    *recovery = tlv->u8;
+    return true;
+}
+
+void mme_s11_check_peer_recovery(
+        ogs_gtp_node_t *gnode, ogs_gtp2_message_t *message)
+{
+    mme_sgw_t *sgw = NULL;
+    uint8_t recovery = 0;
+
+    ogs_assert(gnode);
+    ogs_assert(message);
+
+    if (!mme_s11_message_recovery(message, &recovery))
+        return;
+
+    sgw = mme_sgw_find_by_addr(&gnode->addr);
+    if (sgw)
+        mme_sgw_recovery_update(sgw, recovery);
+}
+
+void mme_s11_handle_sgw_context_lost(mme_ue_t *mme_ue, uint8_t gtp_cause)
+{
+    enb_ue_t *enb_ue = NULL;
+
+    ogs_assert(mme_ue);
+    ogs_assert(gtp_cause == OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
+
+    ogs_warn("[%s] SGW CONTEXT_NOT_FOUND: implicit detach",
+            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+
+    mme_ue->detach_type = MME_DETACH_TYPE_MME_IMPLICIT;
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    mme_send_delete_session_or_detach(enb_ue, mme_ue);
+}
+
 static void gtp_remote_peer_timeout(ogs_gtp_xact_t *xact, void *data)
 {
     char buf[OGS_ADDRSTRLEN];
@@ -172,16 +254,10 @@ static void gtp_remote_peer_timeout(ogs_gtp_xact_t *xact, void *data)
 void mme_s11_handle_echo_request(
         ogs_gtp_xact_t *xact, ogs_gtp2_echo_request_t *req)
 {
-    mme_sgw_t *sgw = NULL;
-
     ogs_assert(xact);
     ogs_assert(req);
 
     ogs_debug("Receiving Echo Request");
-
-    sgw = mme_sgw_find_by_addr(&xact->gnode->addr);
-    if (sgw && req->recovery.presence)
-        mme_sgw_recovery_update(sgw, req->recovery.u8);
 
     ogs_gtp2_send_echo_response(xact, mme_self()->gtpc_recovery, 0);
 }
@@ -189,19 +265,10 @@ void mme_s11_handle_echo_request(
 void mme_s11_handle_echo_response(
         ogs_gtp_xact_t *xact, ogs_gtp2_echo_response_t *rsp)
 {
-    mme_sgw_t *sgw = NULL;
-
     ogs_assert(xact);
     ogs_assert(rsp);
 
     ogs_debug("Receiving Echo Response");
-
-    if (!rsp->recovery.presence)
-        return;
-
-    sgw = mme_sgw_find_by_addr(&xact->gnode->addr);
-    if (sgw)
-        mme_sgw_recovery_update(sgw, rsp->recovery.u8);
 }
 
 static void mme_s11_create_session_fail(
@@ -440,6 +507,10 @@ void mme_s11_handle_create_session_response(
 
     if (!OGS_GTP2_CAUSE_IS_SUCCESS(session_cause)) {
         ogs_error("[%s] GTP Cause [VALUE:%d]", mme_ue->imsi_bcd, session_cause);
+        if (session_cause == OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND) {
+            mme_s11_handle_sgw_context_lost(mme_ue, session_cause);
+            return;
+        }
         fail_cause = session_cause;
         fail_reason = "Session Cause not accepted";
         goto fail;
@@ -660,6 +731,10 @@ void mme_s11_handle_create_session_response(
     return;
 
 fail:
+    if (fail_cause == OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND) {
+        mme_s11_handle_sgw_context_lost(mme_ue, fail_cause);
+        return;
+    }
     mme_s11_create_session_fail(enb_ue, mme_ue,
             create_action, fail_cause, fail_reason);
     return;
@@ -725,6 +800,10 @@ void mme_s11_handle_modify_bearer_response(
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+        if (cause_value == OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND) {
+            mme_s11_handle_sgw_context_lost(mme_ue, cause_value);
+            return;
+        }
         if (enb_ue)
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
         else
@@ -759,6 +838,10 @@ void mme_s11_handle_modify_bearer_response(
 
     if (session_cause != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
         ogs_error("[%s] GTP Cause [VALUE:%d]", mme_ue->imsi_bcd, session_cause);
+        if (session_cause == OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND) {
+            mme_s11_handle_sgw_context_lost(mme_ue, session_cause);
+            return;
+        }
         if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST)
             mme_ue_service_progress(mme_ue, enb_ue, "mbr_fail");
         if (enb_ue)
@@ -881,8 +964,13 @@ void mme_s11_handle_delete_session_response(
         ogs_assert(cause);
 
         cause_value = cause->value;
-        if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
+        if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
             ogs_error("GTP Cause [VALUE:%d] - Ignored", cause_value);
+            if (cause_value == OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND && mme_ue) {
+                mme_s11_handle_sgw_context_lost(mme_ue, cause_value);
+                return;
+            }
+        }
     }
 
     /********************
@@ -1569,8 +1657,13 @@ void mme_s11_handle_release_access_bearers_response(
         ogs_assert(cause);
 
         cause_value = cause->value;
-        if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
+        if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
             ogs_error("GTP Cause [VALUE:%d, ACTION:%d]", cause_value, action);
+            if (cause_value == OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND) {
+                mme_s11_handle_sgw_context_lost(mme_ue, cause_value);
+                return;
+            }
+        }
     }
 
     /********************

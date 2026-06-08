@@ -57,6 +57,10 @@ static int check_signal(int signum)
         return 1;
     case SIGHUP:
         ogs_info("SIGHUP received");
+        if (ogs_app_config_reload() == OGS_OK)
+            ogs_app_sighup_handler_invoke();
+        else
+            ogs_warn("Configuration reload failed; keeping previous config");
         ogs_log_cycle();
 
         break;
