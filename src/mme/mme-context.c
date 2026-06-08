@@ -4244,6 +4244,11 @@ void mme_context_reload_runtime(void)
     ogs_yaml_iter_t root_iter;
     bool found = false;
 
+    if (ogs_app_config_reload() != OGS_OK) {
+        ogs_warn("Configuration reload failed; keeping previous config");
+        return;
+    }
+
     document = ogs_app()->document;
     if (!document) {
         ogs_warn("No configuration document for runtime reload");

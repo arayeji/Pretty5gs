@@ -133,6 +133,7 @@ static int sgwc_gtpc_recv_one(ogs_sock_t *sock)
                 ogs_error("ogs_gtp_connect() failed for learned PGW [%s]:%u",
                         OGS_ADDR(&from, frombuf), OGS_PORT(&from));
             }
+            sgwc_pgw_peer_setup(gnode);
         }
     }
 
@@ -391,6 +392,108 @@ void sgwc_mme_peer_setup(ogs_gtp_node_t *gnode)
         sgwc_gtp_send_mme_echo(gnode);
         sgwc_mme_echo_schedule(peer);
     }
+}
+
+void sgwc_gtp_send_pgw_echo(ogs_gtp_node_t *gnode)
+{
+    ogs_assert(gnode);
+    ogs_gtp2_send_echo_request(
+            gnode, sgwc_self()->gtpc_recovery, 0);
+}
+
+void sgwc_timer_pgw_echo(void *data)
+{
+    sgwc_pgw_peer_t *peer = data;
+
+    ogs_assert(peer);
+    ogs_assert(peer->gnode);
+
+    sgwc_gtp_send_pgw_echo(peer->gnode);
+    sgwc_pgw_echo_schedule(peer);
+}
+
+void sgwc_pgw_peer_setup(ogs_gtp_node_t *gnode)
+{
+    sgwc_pgw_peer_t *peer = NULL;
+    char buf[OGS_ADDRSTRLEN];
+
+    ogs_assert(gnode);
+
+    sgwc_pgw_peer_attach(gnode);
+    peer = sgwc_pgw_peer_get(gnode);
+    ogs_assert(peer);
+
+    if (!peer->t_echo) {
+        peer->t_echo = ogs_timer_add(
+                ogs_app()->timer_mgr, sgwc_timer_pgw_echo, peer);
+        ogs_assert(peer->t_echo);
+
+        ogs_info("SGWC S5 PGW peer: [%s]:%d",
+                OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
+
+        sgwc_gtp_send_pgw_echo(gnode);
+        sgwc_pgw_echo_schedule(peer);
+    }
+}
+
+int sgwc_gtp_send_network_delete_session(
+        sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess)
+{
+    int rv;
+    sgwc_bearer_t *bearer = NULL;
+
+    ogs_gtp2_message_t gtp_message;
+    ogs_gtp2_delete_session_request_t *req = NULL;
+
+    ogs_gtp2_header_t h;
+    ogs_pkbuf_t *pkbuf = NULL;
+    ogs_gtp_xact_t *xact = NULL;
+
+    ogs_assert(sgwc_ue);
+    ogs_assert(sess);
+
+    if (!sgwc_ue->gnode) {
+        ogs_error("[%s] No S11 peer for network Delete Session Request",
+                sgwc_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
+
+    bearer = sgwc_default_bearer_in_sess(sess);
+    if (!bearer) {
+        ogs_error("[%s] No bearer for network Delete Session Request",
+                sgwc_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
+
+    memset(&gtp_message, 0, sizeof(ogs_gtp2_message_t));
+    req = &gtp_message.delete_session_request;
+    req->linked_eps_bearer_id.presence = 1;
+    req->linked_eps_bearer_id.u8 = bearer->ebi;
+
+    gtp_message.h.type = OGS_GTP2_DELETE_SESSION_REQUEST_TYPE;
+
+    pkbuf = ogs_gtp2_build_msg(&gtp_message);
+    if (!pkbuf) {
+        ogs_error("ogs_gtp2_build_msg() failed");
+        return OGS_ERROR;
+    }
+
+    memset(&h, 0, sizeof(ogs_gtp2_header_t));
+    h.type = OGS_GTP2_DELETE_SESSION_REQUEST_TYPE;
+    h.teid = sgwc_ue->mme_s11_teid;
+
+    xact = ogs_gtp_xact_local_create(
+            sgwc_ue->gnode, &h, pkbuf, NULL, NULL);
+    if (!xact) {
+        ogs_error("ogs_gtp_xact_local_create() failed");
+        return OGS_ERROR;
+    }
+    xact->local_teid = sgwc_ue->sgw_s11_teid;
+
+    rv = ogs_gtp_xact_commit(xact);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
 }
 
 void sgwc_gtp_close(void)

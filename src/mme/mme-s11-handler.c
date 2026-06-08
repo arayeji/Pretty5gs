@@ -965,11 +965,11 @@ void mme_s11_handle_delete_session_response(
 
         cause_value = cause->value;
         if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+            /*
+             * CONTEXT_NOT_FOUND during Delete Session Response is benign
+             * (SGW already dropped the session). Do not re-enter detach.
+             */
             ogs_error("GTP Cause [VALUE:%d] - Ignored", cause_value);
-            if (cause_value == OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND && mme_ue) {
-                mme_s11_handle_sgw_context_lost(mme_ue, cause_value);
-                return;
-            }
         }
     }
 

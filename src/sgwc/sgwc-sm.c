@@ -172,6 +172,9 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
              * locally stored in xact when sending the original request: */
             sgwc_ue = sgwc_ue_find_by_teid(gtp_xact->local_teid);
 
+        if (sgwc_ue)
+            OGS_SETUP_GTP_NODE(sgwc_ue, gnode);
+
         switch(gtp_message.h.type) {
         case OGS_GTP2_ECHO_REQUEST_TYPE:
             sgwc_handle_echo_request(gtp_xact, &gtp_message.echo_request);
@@ -187,12 +190,11 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
                             gtp_message.create_session_request.imsi.data,
                             gtp_message.create_session_request.imsi.len);
                 }
-                if (!sgwc_ue) {
+                if (!sgwc_ue)
                     sgwc_ue = sgwc_ue_add_by_message(&gtp_message);
-                    if (sgwc_ue)
-                        OGS_SETUP_GTP_NODE(sgwc_ue, gnode);
-                }
             }
+            if (sgwc_ue)
+                OGS_SETUP_GTP_NODE(sgwc_ue, gnode);
             sgwc_s11_handle_create_session_request(
                     sgwc_ue, gtp_xact, recvbuf, &gtp_message);
             break;
@@ -265,6 +267,8 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
             ogs_pkbuf_free(recvbuf);
             break;
         }
+
+        sgwc_s5_check_peer_recovery(gnode, &gtp_message);
 
         if (gtp_message.h.teid_presence && gtp_message.h.teid != 0)
             sess = sgwc_sess_find_by_teid(gtp_message.h.teid);

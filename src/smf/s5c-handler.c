@@ -106,9 +106,7 @@ void smf_s5c_handle_echo_request(
     ogs_assert(req);
 
     ogs_debug("[PGW] Receiving Echo Request");
-    /* FIXME : Before implementing recovery counter correctly,
-     *         I'll re-use the recovery value in request message */
-    ogs_gtp2_send_echo_response(xact, req->recovery.u8, 0);
+    ogs_gtp2_send_echo_response(xact, smf_self()->gtpc_recovery, 0);
 }
 
 void smf_s5c_handle_echo_response(

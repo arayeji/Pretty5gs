@@ -335,6 +335,9 @@ typedef struct smf_context_s {
      */
     uint32_t cdr_local_seq;
 
+    /* GTPv2-C Recovery counter (TS 29.274) for Echo/CSR interop */
+    uint8_t gtpc_recovery;
+
 #define SMF_UE_IS_LAST_SESSION(__sMF) \
      ((__sMF) && (ogs_list_count(&(__sMF)->sess_list)) == 1)
     ogs_list_t      smf_ue_list;

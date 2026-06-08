@@ -57,10 +57,12 @@ static int check_signal(int signum)
         return 1;
     case SIGHUP:
         ogs_info("SIGHUP received");
-        if (ogs_app_config_reload() == OGS_OK)
-            ogs_app_sighup_handler_invoke();
-        else
-            ogs_warn("Configuration reload failed; keeping previous config");
+        /*
+         * Reload YAML on the daemon main thread (via the registered handler),
+         * not here — swapping ogs_app()->document from the signal thread races
+         * with config lookups on the event-loop thread.
+         */
+        ogs_app_sighup_handler_invoke();
         ogs_log_cycle();
 
         break;
