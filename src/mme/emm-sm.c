@@ -534,7 +534,8 @@ void emm_state_registered(ogs_fsm_t *s, mme_event_t *e)
          * timer T3346.
          */
             ogs_timer_start(mme_ue->t_implicit_detach.timer,
-                ogs_time_from_sec(mme_time_implicit_detach_duration()));
+                ogs_time_from_sec(
+                    mme_time_implicit_detach_duration_for_ue(mme_ue)));
             break;
 
         case MME_TIMER_IMPLICIT_DETACH:

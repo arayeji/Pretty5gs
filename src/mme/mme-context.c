@@ -23,6 +23,7 @@
 #include "mme-pgw-host.h"
 #include "eplmn-config.h"
 #include "mme-event.h"
+#include "mme-path.h"
 #include "mme-roam-access.h"
 #include "mme-timer.h"
 #include "mme-trace.h"
@@ -696,6 +697,8 @@ static int mme_context_prepare(void)
     self.time.t3412.value = 600;  /* 10 minutes */
     self.time.idle.mobile_reachable_margin = 240; /* TS 24.301 +4 min */
     self.time.idle.implicit_detach_margin = 240;
+    self.time.t3346.value = 0;
+    self.time.t3346.include_any_reject = false;
 
     mme_attach_accept_set_defaults();
 
@@ -804,8 +807,16 @@ static int mme_context_validation(void)
     }
     if (self.time.t3423.value && /* Optional */
         ogs_nas_gprs_timer_from_sec(&gprs_timer, self.time.t3423.value) !=
-        OGS_OK) {
+            OGS_OK) {
         ogs_error("Not support GPRS Timer [%d]", (int)self.time.t3423.value);
+        return OGS_ERROR;
+    }
+
+    if (self.time.t3346.value &&
+        ogs_nas_gprs_timer_from_sec(&gprs_timer, self.time.t3346.value) !=
+            OGS_OK) {
+        ogs_error("Not support GPRS Timer 2 (T3346) [%d]",
+                (int)self.time.t3346.value);
         return OGS_ERROR;
     }
 
@@ -3591,6 +3602,27 @@ int mme_context_parse_config(void)
                                             atoll(v);
                                 } else
                                     ogs_warn("unknown key `%s`", idle_key);
+                            }
+                        } else if (!strcmp(time_key, "t3346")) {
+                            ogs_yaml_iter_t t3346_iter;
+                            ogs_yaml_iter_recurse(&time_iter, &t3346_iter);
+
+                            while (ogs_yaml_iter_next(&t3346_iter)) {
+                                const char *t3346_key =
+                                    ogs_yaml_iter_key(&t3346_iter);
+                                ogs_assert(t3346_key);
+
+                                if (!strcmp(t3346_key, "value")) {
+                                    const char *v =
+                                        ogs_yaml_iter_value(&t3346_iter);
+                                    if (v)
+                                        self.time.t3346.value = atoll(v);
+                                } else if (!strcmp(t3346_key,
+                                            "include_any_reject")) {
+                                    self.time.t3346.include_any_reject =
+                                        ogs_yaml_iter_bool(&t3346_iter);
+                                } else
+                                    ogs_warn("unknown key `%s`", t3346_key);
                             }
                         } else if (!strcmp(time_key, "t3413")) {
                             mme_timer_parse_yaml(&time_iter, MME_TIMER_T3413);
@@ -6456,6 +6488,7 @@ void enb_ue_associate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     /* UE is back to ECM-CONNECTED — drop the idle stamp so the LRU
      * evictor only considers UEs that are genuinely idle. */
     mme_ue->idle_since = 0;
+    mme_idle_t3346_clear(mme_ue);
 }
 
 void enb_ue_deassociate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)

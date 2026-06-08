@@ -26,6 +26,7 @@
 #include "mme-trace.h"
 #include "mme-timer.h"
 #include "mme-sm.h"
+#include "mme-path.h"
 
 int nas_eps_send_to_enb(mme_ue_t *mme_ue, ogs_pkbuf_t *pkbuf)
 {
@@ -1137,6 +1138,9 @@ int nas_eps_send_tau_reject(
     rv = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
     ogs_expect(rv == OGS_OK);
 
+    if (rv == OGS_OK)
+        mme_t3346_on_reject_sent(mme_ue, emm_cause);
+
     return rv;
 }
 
@@ -1167,6 +1171,9 @@ int nas_eps_send_service_reject(
 
     rv = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
     ogs_expect(rv == OGS_OK);
+
+    if (rv == OGS_OK)
+        mme_t3346_on_reject_sent(mme_ue, emm_cause);
 
     return rv;
 }
