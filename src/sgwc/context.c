@@ -20,6 +20,7 @@
 #include <yaml.h>
 
 #include "context.h"
+#include "gtp-path.h"
 #include "ga-writer.h"
 
 static sgwc_context_t self;
@@ -347,6 +348,9 @@ void sgwc_context_final(void)
     ogs_list_for_each_safe(&self.mme_s11_list, next_gnode, gnode)
         sgwc_mme_peer_detach(gnode);
 
+    ogs_list_for_each_safe(&self.pgw_s5c_list, next_gnode, gnode)
+        sgwc_pgw_peer_detach(gnode);
+
     ogs_assert(self.imsi_ue_hash);
     ogs_hash_destroy(self.imsi_ue_hash);
     ogs_assert(self.sgw_s11_teid_hash);
@@ -499,6 +503,139 @@ void sgwc_mme_echo_reschedule_all(void)
         peer = sgwc_mme_peer_get(gnode);
         if (peer && peer->t_echo)
             sgwc_mme_echo_schedule(peer);
+    }
+}
+
+static bool sgwc_pgw_recovery_is_restart(uint8_t stored, uint8_t received)
+{
+    if (received > stored)
+        return true;
+    if (received < stored && (uint8_t)(stored - received) > 127)
+        return true;
+    return false;
+}
+
+static void sgwc_pgw_purge_sessions(ogs_gtp_node_t *gnode)
+{
+    sgwc_ue_t *sgwc_ue = NULL, *next_ue = NULL;
+    sgwc_sess_t *sess = NULL, *next_sess = NULL;
+    char buf[OGS_ADDRSTRLEN];
+
+    ogs_assert(gnode);
+
+    ogs_warn("PGW [%s]:%d recovery restart: purging SGWC sessions",
+            OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
+
+    ogs_list_for_each_safe(&self.sgw_ue_list, next_ue, sgwc_ue) {
+        ogs_list_for_each_safe(&sgwc_ue->sess_list, next_sess, sess) {
+            if (sess->gnode != gnode)
+                continue;
+
+            ogs_warn("[%s] PGW recovery restart: delete session",
+                    sgwc_ue->imsi_bcd);
+            sgwc_gtp_send_network_delete_session(sgwc_ue, sess);
+            sgwc_sess_remove(sess);
+        }
+
+        if (ogs_list_empty(&sgwc_ue->sess_list))
+            sgwc_ue_remove(sgwc_ue);
+    }
+}
+
+sgwc_pgw_peer_t *sgwc_pgw_peer_get(ogs_gtp_node_t *gnode)
+{
+    ogs_assert(gnode);
+    return gnode->data_ptr;
+}
+
+void sgwc_pgw_peer_attach(ogs_gtp_node_t *gnode)
+{
+    sgwc_pgw_peer_t *peer = NULL;
+
+    ogs_assert(gnode);
+
+    if (gnode->data_ptr)
+        return;
+
+    peer = ogs_calloc(1, sizeof(*peer));
+    ogs_assert(peer);
+    peer->gnode = gnode;
+    gnode->data_ptr = peer;
+}
+
+void sgwc_pgw_peer_detach(ogs_gtp_node_t *gnode)
+{
+    sgwc_pgw_peer_t *peer = NULL;
+
+    ogs_assert(gnode);
+
+    peer = gnode->data_ptr;
+    if (!peer)
+        return;
+
+    if (peer->t_echo) {
+        ogs_timer_delete(peer->t_echo);
+        peer->t_echo = NULL;
+    }
+
+    gnode->data_ptr = NULL;
+    ogs_free(peer);
+}
+
+bool sgwc_pgw_recovery_update(sgwc_pgw_peer_t *peer, uint8_t recovery)
+{
+    ogs_gtp_node_t *gnode = NULL;
+    char buf[OGS_ADDRSTRLEN];
+
+    ogs_assert(peer);
+    gnode = peer->gnode;
+    ogs_assert(gnode);
+
+    if (!peer->peer_recovery_valid) {
+        peer->peer_recovery = recovery;
+        peer->peer_recovery_valid = true;
+        ogs_info("PGW [%s]:%d recovery=%u (initial)",
+                OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr),
+                recovery);
+        return false;
+    }
+
+    if (!sgwc_pgw_recovery_is_restart(peer->peer_recovery, recovery)) {
+        peer->peer_recovery = recovery;
+        return false;
+    }
+
+    ogs_warn("PGW [%s]:%d recovery changed %u -> %u",
+            OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr),
+            peer->peer_recovery, recovery);
+    peer->peer_recovery = recovery;
+    sgwc_pgw_purge_sessions(gnode);
+    return true;
+}
+
+void sgwc_pgw_echo_schedule(sgwc_pgw_peer_t *peer)
+{
+    ogs_time_t interval;
+
+    ogs_assert(peer);
+    ogs_assert(peer->t_echo);
+
+    interval = sgwc_self()->gtpc_echo_interval ?
+        ogs_time_from_sec(sgwc_self()->gtpc_echo_interval) :
+        ogs_time_from_sec(60);
+
+    ogs_timer_start(peer->t_echo, interval);
+}
+
+void sgwc_pgw_echo_reschedule_all(void)
+{
+    ogs_gtp_node_t *gnode = NULL;
+    sgwc_pgw_peer_t *peer = NULL;
+
+    ogs_list_for_each(&self.pgw_s5c_list, gnode) {
+        peer = sgwc_pgw_peer_get(gnode);
+        if (peer && peer->t_echo)
+            sgwc_pgw_echo_schedule(peer);
     }
 }
 

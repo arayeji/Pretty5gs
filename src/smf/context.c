@@ -109,6 +109,8 @@ void smf_context_init(void)
     self.n1n2message_hash = ogs_hash_make();
     ogs_assert(self.n1n2message_hash);
 
+    self.gtpc_recovery = 1;
+
     context_initialized = 1;
 }
 
@@ -1357,6 +1359,11 @@ int smf_context_parse_config(void)
 
     rv = smf_context_validation();
     if (rv != OGS_OK) return rv;
+
+    self.gtpc_recovery++;
+    if (self.gtpc_recovery == 0)
+        self.gtpc_recovery = 1;
+    ogs_info("SMF GTP-C recovery counter: %u", self.gtpc_recovery);
 
     return OGS_OK;
 }

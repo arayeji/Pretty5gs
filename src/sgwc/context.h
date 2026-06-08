@@ -51,6 +51,13 @@ typedef struct sgwc_mme_peer_s {
     ogs_timer_t *t_echo;
 } sgwc_mme_peer_t;
 
+typedef struct sgwc_pgw_peer_s {
+    ogs_gtp_node_t *gnode;
+    uint8_t peer_recovery;
+    bool peer_recovery_valid;
+    ogs_timer_t *t_echo;
+} sgwc_pgw_peer_t;
+
 /*
  * Ga / GTP' offline SGW-CDR writer (see lib/cdr/framing.h).
  * Records use OGS_CDR_FORMAT_BER_SGW in the spool header.
@@ -276,6 +283,13 @@ void sgwc_mme_peer_detach(ogs_gtp_node_t *gnode);
 bool sgwc_mme_recovery_update(sgwc_mme_peer_t *peer, uint8_t recovery);
 void sgwc_mme_echo_schedule(sgwc_mme_peer_t *peer);
 void sgwc_mme_echo_reschedule_all(void);
+
+sgwc_pgw_peer_t *sgwc_pgw_peer_get(ogs_gtp_node_t *gnode);
+void sgwc_pgw_peer_attach(ogs_gtp_node_t *gnode);
+void sgwc_pgw_peer_detach(ogs_gtp_node_t *gnode);
+bool sgwc_pgw_recovery_update(sgwc_pgw_peer_t *peer, uint8_t recovery);
+void sgwc_pgw_echo_schedule(sgwc_pgw_peer_t *peer);
+void sgwc_pgw_echo_reschedule_all(void);
 
 sgwc_ue_t *sgwc_ue_add_by_message(ogs_gtp2_message_t *message);
 sgwc_ue_t *sgwc_ue_find_by_imsi(uint8_t *imsi, int imsi_len);

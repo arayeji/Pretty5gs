@@ -24,6 +24,58 @@
 
 #include "s5c-handler.h"
 
+static bool sgwc_s5_message_recovery(
+        ogs_gtp2_message_t *message, uint8_t *recovery)
+{
+    ogs_gtp2_tlv_recovery_t *tlv = NULL;
+
+    ogs_assert(message);
+    ogs_assert(recovery);
+
+    switch (message->h.type) {
+    case OGS_GTP2_ECHO_REQUEST_TYPE:
+        tlv = &message->echo_request.recovery;
+        break;
+    case OGS_GTP2_ECHO_RESPONSE_TYPE:
+        tlv = &message->echo_response.recovery;
+        break;
+    case OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE:
+        tlv = &message->create_session_response.recovery;
+        break;
+    case OGS_GTP2_MODIFY_BEARER_RESPONSE_TYPE:
+        tlv = &message->modify_bearer_response.recovery;
+        break;
+    case OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE:
+        tlv = &message->delete_session_response.recovery;
+        break;
+    default:
+        return false;
+    }
+
+    if (!tlv->presence)
+        return false;
+
+    *recovery = tlv->u8;
+    return true;
+}
+
+void sgwc_s5_check_peer_recovery(
+        ogs_gtp_node_t *gnode, ogs_gtp2_message_t *message)
+{
+    sgwc_pgw_peer_t *peer = NULL;
+    uint8_t recovery = 0;
+
+    ogs_assert(gnode);
+    ogs_assert(message);
+
+    if (!sgwc_s5_message_recovery(message, &recovery))
+        return;
+
+    peer = sgwc_pgw_peer_get(gnode);
+    if (peer)
+        sgwc_pgw_recovery_update(peer, recovery);
+}
+
 static void sgwc_log_no_s11_xact(
         sgwc_sess_t *sess, ogs_gtp_xact_t *s5c_xact, const char *msg)
 {
@@ -362,6 +414,7 @@ void sgwc_s5c_handle_create_session_response(
     }
     /* Setup GTP Node */
     OGS_SETUP_GTP_NODE(sess, pgw);
+    sgwc_pgw_peer_setup(pgw);
 
     if (rsp->pdn_connection_charging_id.presence)
         sess->charging_id = rsp->pdn_connection_charging_id.u32;

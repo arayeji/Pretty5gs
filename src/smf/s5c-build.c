@@ -72,6 +72,9 @@ ogs_pkbuf_t *smf_s5c_build_create_session_response(
     if (sess->ue_session_type != sess->session.session_type)
         cause.value = OGS_GTP2_CAUSE_NEW_PDN_TYPE_DUE_TO_NETWORK_PREFERENCE;
 
+    rsp->recovery.presence = 1;
+    rsp->recovery.u8 = smf_self()->gtpc_recovery;
+
     /* Control Plane(UL) : SMF-S5C */
     memset(&smf_s5c_teid, 0, sizeof(ogs_gtp2_f_teid_t));
     switch (sess->gtp_rat_type) {
@@ -312,7 +315,8 @@ ogs_pkbuf_t *smf_s5c_build_delete_session_response(
     rsp->cause.len = sizeof(cause);
     rsp->cause.data = &cause;
 
-    /* Recovery */
+    rsp->recovery.presence = 1;
+    rsp->recovery.u8 = smf_self()->gtpc_recovery;
 
     /* PCO (when UE sent PCO, or when smf.mtu is set — MTU may be injected) */
     if ((sess->gtp.ue_pco.presence && sess->gtp.ue_pco.len &&
@@ -397,6 +401,9 @@ ogs_pkbuf_t *smf_s5c_build_modify_bearer_response(
     rsp->cause.presence = 1;
     rsp->cause.data = &cause;
     rsp->cause.len = sizeof(cause);
+
+    rsp->recovery.presence = 1;
+    rsp->recovery.u8 = smf_self()->gtpc_recovery;
 
     if (sgw_relocation == true) {
 

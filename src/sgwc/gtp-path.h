@@ -33,6 +33,12 @@ void sgwc_gtp_send_mme_echo(ogs_gtp_node_t *gnode);
 void sgwc_timer_mme_echo(void *data);
 void sgwc_mme_peer_setup(ogs_gtp_node_t *gnode);
 
+void sgwc_gtp_send_pgw_echo(ogs_gtp_node_t *gnode);
+void sgwc_timer_pgw_echo(void *data);
+void sgwc_pgw_peer_setup(ogs_gtp_node_t *gnode);
+int sgwc_gtp_send_network_delete_session(
+        sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess);
+
 bool sgwc_gtpc_roam_port_enabled(void);
 int sgwc_gtp_connect_peer(sgwc_sess_t *sess, ogs_gtp_node_t *gnode);
 void sgwc_gtpc_f_teid_addr(

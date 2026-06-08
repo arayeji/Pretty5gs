@@ -26,6 +26,9 @@
 extern "C" {
 #endif
 
+void sgwc_s5_check_peer_recovery(
+        ogs_gtp_node_t *gnode, ogs_gtp2_message_t *message);
+
 void sgwc_s5c_handle_create_session_response(
         sgwc_sess_t *sess, ogs_gtp_xact_t *s5c_xact,
         ogs_pkbuf_t *gtpbuf, ogs_gtp2_message_t *message);
