@@ -235,8 +235,9 @@ sudo systemctl reload open5gs-smfd
 | **Add-only peers** | `smf.pfcp.client.upf[]` | New UPF PFCP peers associate immediately |
 | **Add-only** | `smf.trace_imsi` | Append IMSI trace prefixes |
 | **Scalars** | `smf.dns`, `smf.mtu` | Updated for subsequent sessions |
+| **Full replace** | `smf.cdr`, `smf.radius` | Same safe path as admin API: CDR writer close/reopen; RADIUS farm + optional PoD listener swap |
 
-**Not reloadable:** `smf.pfcp.server`, `smf.gtpc.server`, `smf.sbi.server`, metrics listen addresses. RADIUS/CDR can still be hot-pushed via the **admin API** watcher (`tools/admin-api/README.md`).
+**Not reloadable:** `smf.pfcp.server`, `smf.gtpc.server`, `smf.sbi.server`, metrics listen addresses. Admin API watcher remains an alternative for the same CDR/RADIUS keys.
 
 **Runtime config reload (SGWC)**
 

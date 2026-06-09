@@ -20,6 +20,8 @@
 #include "context.h"
 #include "smf-reload-lists.h"
 #include "pfcp-path.h"
+#include "radius-path.h"
+#include "ga-writer.h"
 #include "ogs-trace.h"
 
 int smf_reload_lists_changed = 0;
@@ -482,6 +484,210 @@ static int smf_reload_trace_imsi_add_only(ogs_yaml_iter_t *smf_iter)
     return added;
 }
 
+static void smf_reload_parse_cdr(ogs_yaml_iter_t *smf_iter, smf_cdr_config_t *cfg)
+{
+    ogs_yaml_iter_t c_iter;
+
+    ogs_assert(smf_iter);
+    ogs_assert(cfg);
+
+    memset(cfg, 0, sizeof(*cfg));
+    cfg->rotate_max_records = 100;
+    cfg->rotate_max_bytes = 65536;
+    cfg->rotate_max_seconds = 30;
+    cfg->triggers = SMF_CDR_TRIG_START | SMF_CDR_TRIG_INTERIM | SMF_CDR_TRIG_STOP;
+
+    ogs_yaml_iter_recurse(smf_iter, &c_iter);
+    while (ogs_yaml_iter_next(&c_iter)) {
+        const char *ck = ogs_yaml_iter_key(&c_iter);
+        const char *cv = ogs_yaml_iter_value(&c_iter);
+
+        ogs_assert(ck);
+        if (!strcmp(ck, "enabled")) {
+            cfg->enabled = ogs_yaml_iter_bool(&c_iter);
+        } else if (!strcmp(ck, "spool_dir") ||
+                !strcmp(ck, "directory")) {
+            cfg->spool_dir = cv;
+        } else if (!strcmp(ck, "node_id") ||
+                !strcmp(ck, "nodeid")) {
+            cfg->node_id = cv;
+        } else if (!strcmp(ck, "local_address") ||
+                !strcmp(ck, "pgw_address")) {
+            cfg->local_address = cv;
+        } else if (!strcmp(ck, "max_records")) {
+            if (cv) cfg->rotate_max_records = (uint32_t)atoi(cv);
+        } else if (!strcmp(ck, "max_bytes")) {
+            if (cv) cfg->rotate_max_bytes = (uint32_t)atoi(cv);
+        } else if (!strcmp(ck, "max_seconds")) {
+            if (cv) cfg->rotate_max_seconds = (uint32_t)atoi(cv);
+        } else if (!strcmp(ck, "triggers")) {
+            uint32_t t = 0;
+
+            if (cv) {
+                const char *p = cv;
+
+                while (*p) {
+                    while (*p == ' ' || *p == ',') p++;
+                    if (!strncmp(p, "start", 5)) {
+                        t |= SMF_CDR_TRIG_START; p += 5;
+                    } else if (!strncmp(p, "interim", 7)) {
+                        t |= SMF_CDR_TRIG_INTERIM; p += 7;
+                    } else if (!strncmp(p, "stop", 4)) {
+                        t |= SMF_CDR_TRIG_STOP; p += 4;
+                    } else {
+                        while (*p && *p != ',') p++;
+                    }
+                }
+            }
+            if (t) cfg->triggers = t;
+        }
+    }
+}
+
+static bool smf_reload_parse_radius(
+        ogs_yaml_iter_t *smf_iter, smf_radius_config_t *cfg)
+{
+    ogs_yaml_iter_t r_iter;
+
+    ogs_assert(smf_iter);
+    ogs_assert(cfg);
+
+    memset(cfg, 0, sizeof(*cfg));
+    cfg->auth_port = 1812;
+    cfg->acct_port = 1813;
+    cfg->timeout_ms = 3000;
+    cfg->retry = 3;
+    cfg->pod_port = 3799;
+    cfg->pod_teardown_timeout_ms = 5000;
+    cfg->use_framed_ip_for_ue = true;
+    cfg->select_mode = SMF_RADIUS_SELECT_PRIMARY_FAILOVER;
+
+    ogs_yaml_iter_recurse(smf_iter, &r_iter);
+    while (ogs_yaml_iter_next(&r_iter)) {
+        const char *rk = ogs_yaml_iter_key(&r_iter);
+        const char *rv = ogs_yaml_iter_value(&r_iter);
+
+        ogs_assert(rk);
+        if (!strcmp(rk, "enabled")) {
+            cfg->enabled = ogs_yaml_iter_bool(&r_iter);
+        } else if (!strcmp(rk, "server")) {
+            cfg->server = rv;
+        } else if (!strcmp(rk, "auth_port")) {
+            if (rv) cfg->auth_port = (uint16_t)atoi(rv);
+        } else if (!strcmp(rk, "acct_port")) {
+            if (rv) cfg->acct_port = (uint16_t)atoi(rv);
+        } else if (!strcmp(rk, "port")) {
+            if (rv) {
+                int p = atoi(rv);
+
+                cfg->auth_port = (uint16_t)p;
+                cfg->acct_port = (uint16_t)(p + 1);
+            }
+        } else if (!strcmp(rk, "secret") || !strcmp(rk, "community")) {
+            cfg->secret = rv;
+        } else if (!strcmp(rk, "nas_identifier")) {
+            cfg->nas_id = rv;
+        } else if (!strcmp(rk, "nas_ip")) {
+            cfg->nas_ip = rv;
+        } else if (!strcmp(rk, "timeout")) {
+            if (rv) cfg->timeout_ms = (unsigned)atoi(rv);
+        } else if (!strcmp(rk, "retry")) {
+            if (rv) cfg->retry = atoi(rv);
+        } else if (!strcmp(rk, "acct_interim_interval")) {
+            if (rv) cfg->acct_interim_interval = (unsigned)atoi(rv);
+        } else if (!strcmp(rk, "pod_enabled") || !strcmp(rk, "pod")) {
+            cfg->pod_enabled = ogs_yaml_iter_bool(&r_iter);
+        } else if (!strcmp(rk, "pod_bind") || !strcmp(rk, "pod_address")) {
+            cfg->pod_bind = rv;
+        } else if (!strcmp(rk, "pod_port")) {
+            if (rv) cfg->pod_port = (uint16_t)atoi(rv);
+        } else if (!strcmp(rk, "pod_secret")) {
+            cfg->pod_secret = rv;
+        } else if (!strcmp(rk, "pod_teardown_timeout_ms") ||
+                !strcmp(rk, "pod_teardown_timeout")) {
+            if (rv) cfg->pod_teardown_timeout_ms = (uint32_t)atoi(rv);
+        } else if (!strcmp(rk, "use_framed_ip_for_ue")) {
+            cfg->use_framed_ip_for_ue = ogs_yaml_iter_bool(&r_iter);
+        } else if (!strcmp(rk, "select") || !strcmp(rk, "select_mode")) {
+            if (rv && !strcmp(rv, "hash_imsi"))
+                cfg->select_mode = SMF_RADIUS_SELECT_HASH_IMSI;
+            else
+                cfg->select_mode = SMF_RADIUS_SELECT_PRIMARY_FAILOVER;
+        } else if (!strcmp(rk, "servers")) {
+            ogs_yaml_iter_t s_arr;
+
+            ogs_yaml_iter_recurse(&r_iter, &s_arr);
+            while (ogs_yaml_iter_type(&s_arr) == YAML_SEQUENCE_NODE) {
+                ogs_yaml_iter_t s_map;
+                smf_radius_server_t *d;
+
+                if (!ogs_yaml_iter_next(&s_arr))
+                    break;
+                if (cfg->num_servers >= SMF_MAX_RADIUS_SERVERS)
+                    break;
+
+                d = &cfg->servers[cfg->num_servers];
+                d->auth_port = 1812;
+                d->acct_port = 1813;
+                d->is_primary = true;
+                d->weight = 1;
+
+                ogs_yaml_iter_recurse(&s_arr, &s_map);
+                while (ogs_yaml_iter_next(&s_map)) {
+                    const char *sk = ogs_yaml_iter_key(&s_map);
+                    const char *sv = ogs_yaml_iter_value(&s_map);
+
+                    if (!sk)
+                        continue;
+                    if (!strcmp(sk, "host") || !strcmp(sk, "address") ||
+                            !strcmp(sk, "server")) {
+                        d->host = sv;
+                    } else if (!strcmp(sk, "auth_port")) {
+                        if (sv) d->auth_port = (uint16_t)atoi(sv);
+                    } else if (!strcmp(sk, "acct_port")) {
+                        if (sv) d->acct_port = (uint16_t)atoi(sv);
+                    } else if (!strcmp(sk, "port")) {
+                        if (sv) {
+                            int p = atoi(sv);
+
+                            d->auth_port = (uint16_t)p;
+                            d->acct_port = (uint16_t)(p + 1);
+                        }
+                    } else if (!strcmp(sk, "secret") ||
+                            !strcmp(sk, "community")) {
+                        d->secret = sv;
+                    } else if (!strcmp(sk, "role")) {
+                        d->is_primary = !sv || strcmp(sv, "secondary") != 0;
+                    } else if (!strcmp(sk, "weight")) {
+                        if (sv) d->weight = atoi(sv);
+                    }
+                }
+
+                if (!d->host || !d->secret)
+                    continue;
+                cfg->num_servers++;
+            }
+        }
+    }
+
+    if (!cfg->enabled)
+        return true;
+
+    if (cfg->num_servers == 0) {
+        if (!cfg->server || !cfg->secret || !cfg->secret[0])
+            return false;
+        cfg->servers[0].host = cfg->server;
+        cfg->servers[0].auth_port = cfg->auth_port ? cfg->auth_port : 1812;
+        cfg->servers[0].acct_port = cfg->acct_port ? cfg->acct_port : 1813;
+        cfg->servers[0].secret = cfg->secret;
+        cfg->servers[0].is_primary = true;
+        cfg->servers[0].weight = 1;
+        cfg->num_servers = 1;
+    }
+
+    return true;
+}
+
 void smf_context_reload_runtime(void)
 {
     yaml_document_t *document = NULL;
@@ -584,6 +790,24 @@ void smf_context_reload_runtime(void)
                                 "(bind address)");
                     }
                 }
+            } else if (!strcmp(smf_key, "radius")) {
+                smf_radius_config_t cfg;
+
+                if (smf_reload_parse_radius(&smf_iter, &cfg)) {
+                    (void)smf_radius_apply_runtime(&cfg);
+                    smf_reload_lists_changed++;
+                    found = true;
+                } else {
+                    ogs_warn("SIGHUP: smf.radius invalid; keeping previous "
+                            "RADIUS config");
+                }
+            } else if (!strcmp(smf_key, "cdr")) {
+                smf_cdr_config_t cfg;
+
+                smf_reload_parse_cdr(&smf_iter, &cfg);
+                (void)smf_ga_writer_apply_runtime(&cfg);
+                smf_reload_lists_changed++;
+                found = true;
             }
         }
     }
