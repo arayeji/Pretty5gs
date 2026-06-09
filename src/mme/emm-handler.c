@@ -28,6 +28,7 @@
 #include "mme-gtp-path.h"
 
 #include "emm-handler.h"
+#include "metrics.h"
 #include "mme-roam-access.h"
 
 #undef OGS_LOG_DOMAIN
@@ -301,6 +302,8 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
 
     OGS_NAS_STORE_DATA(
             &mme_ue->pdn_connectivity_request, esm_message_container);
+
+    mme_metrics_attach_attempt(mme_ue);
 
     return OGS_OK;
 }

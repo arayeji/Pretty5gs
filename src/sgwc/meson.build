@@ -30,6 +30,7 @@ libsgwc_sources = files('''
     ga-writer.h
     sgwc-trace.h
     sgwc-gtp-interop.h
+    metrics.h
 
     init.c
     event.c
@@ -47,16 +48,18 @@ libsgwc_sources = files('''
     ga-writer.c
     sgwc-trace.c
     sgwc-gtp-interop.c
+    metrics.c
+    ../../lib/metrics/prometheus/json_pager.c
 '''.split())
 
 libsgwc = static_library('sgwc',
     sources : libsgwc_sources,
-    dependencies : libpfcp_dep,
+    dependencies : [libmetrics_dep, libpfcp_dep],
     install : false)
 
 libsgwc_dep = declare_dependency(
     link_with : libsgwc,
-    dependencies : libpfcp_dep)
+    dependencies : [libmetrics_dep, libpfcp_dep])
 
 sgwc_sources = files('''
     app.c

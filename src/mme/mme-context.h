@@ -707,6 +707,8 @@ struct mme_ue_s {
      */
     bool            ue_context_will_remove;
 
+    bool            metrics_registered;
+
     /* Memento of context fields */
     mme_ue_memento_t memento;
 

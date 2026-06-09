@@ -21,6 +21,7 @@
 #include "pfcp-path.h"
 #include "ga-writer.h"
 #include "sgwc-trace.h"
+#include "metrics.h"
 
 #include "s5c-handler.h"
 
@@ -414,6 +415,7 @@ void sgwc_s5c_handle_create_session_response(
     }
     /* Setup GTP Node */
     OGS_SETUP_GTP_NODE(sess, pgw);
+    sgwc_metrics_session_active_inc(sess);
     sgwc_pgw_peer_setup(pgw);
 
     if (rsp->pdn_connection_charging_id.presence)

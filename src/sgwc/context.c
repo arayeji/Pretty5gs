@@ -22,6 +22,7 @@
 #include "context.h"
 #include "gtp-path.h"
 #include "ga-writer.h"
+#include "metrics.h"
 
 static sgwc_context_t self;
 
@@ -965,6 +966,8 @@ sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len)
 
     ogs_list_add(&self.sgw_ue_list, sgwc_ue);
 
+    sgwc_metrics_ue_active_inc(sgwc_ue);
+
     ogs_debug("[Added] Number of SGWC-UEs is now %d",
             ogs_list_count(&self.sgw_ue_list));
 
@@ -974,6 +977,9 @@ sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len)
 int sgwc_ue_remove(sgwc_ue_t *sgwc_ue)
 {
     ogs_assert(sgwc_ue);
+
+    if (sgwc_ue->imsi_len)
+        sgwc_metrics_ue_active_dec(sgwc_ue);
 
     ogs_list_remove(&self.sgw_ue_list, sgwc_ue);
 
@@ -1342,6 +1348,9 @@ int sgwc_sess_remove(sgwc_sess_t *sess)
     sgwc_ue_t *sgwc_ue = NULL;
 
     ogs_assert(sess);
+
+    if (sess->gnode)
+        sgwc_metrics_session_active_dec(sess);
 
     sgwc_sess_purge_upf(sess);
 

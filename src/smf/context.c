@@ -23,6 +23,7 @@
 #include "gtp-path.h"
 #include "pfcp-path.h"
 #include "collision-replace.h"
+#include "metrics.h"
 
 static smf_context_t self;
 static ogs_diam_config_t g_diam_conf;
@@ -1520,6 +1521,13 @@ static int smf_ue_set_imsi_bcd(smf_ue_t *smf_ue, const char *imsi_bcd)
     ogs_hash_set(self.imsi_hash,
             smf_ue->imsi, smf_ue->imsi_len, smf_ue);
 
+    {
+        ogs_plmn_id_t plmn_id;
+        ogs_plmn_id_from_imsi_bcd(smf_ue->imsi_bcd, &plmn_id);
+        smf_metrics_inst_by_plmn_add(&plmn_id,
+                SMF_METR_BY_PLMN_GAUGE_UE_ACTIVE, 1);
+    }
+
     return OGS_OK;
 }
 
@@ -1702,6 +1710,12 @@ void smf_ue_remove(smf_ue_t *smf_ue)
         ogs_free(smf_ue->gpsi);
 
     if (smf_ue->imsi_len) {
+        ogs_plmn_id_t plmn_id;
+
+        ogs_plmn_id_from_imsi_bcd(smf_ue->imsi_bcd, &plmn_id);
+        smf_metrics_inst_by_plmn_add(&plmn_id,
+                SMF_METR_BY_PLMN_GAUGE_UE_ACTIVE, -1);
+
         ogs_hash_set(self.imsi_hash, smf_ue->imsi, smf_ue->imsi_len, NULL);
     }
 

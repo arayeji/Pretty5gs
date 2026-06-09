@@ -10,7 +10,8 @@ Upstream docs: [open5gs.org](https://open5gs.org/open5gs/docs/). This README des
 |------|----------|-------------|
 | **RADIUS (SMF)** | Basic support | Multi-server RADIUS, framed IP, Framed-Route / Framed-IPv6-Route, accounting, admin API controls |
 | **PFCP / SMF pools** | Standard pools | Multi-DNN subnets sharing one UE pool; pool-exhaustion logs with IMSI/DNN |
-| **Admin HTTP API** | Limited | MME/SMF `:9090` — metrics under load, per-IMSI trace, RADIUS/subnet tuning |
+| **Admin HTTP API** | Limited | MME/SMF/SGWC `:9090` — metrics under load, per-IMSI trace, RADIUS/subnet tuning |
+| **Production metrics** | Global gauges only on MME; SMF/UPF 5G-style | Per-PLMN attach/auth/registered UE (MME), SGWC UE/session by PGW, SMF UE by PLMN, UPF sessions by CP peer (SGWU/PGWU) |
 | **MME scale** | Fixed large pools | Configurable per-UE pool multipliers, peak stats, SIGUSR1 pool dump, soft-cap LRU |
 | **MME lookups** | Linear scans | O(1) `enb_ue` by S1AP-ID; EBI → bearer map |
 | **SCTP** | Reconnect edge cases | Stale eNB/gNB SCTP context replaced on reconnect |
@@ -194,6 +195,50 @@ sgwc:
   inbound_roam:
     gtpc:
       teid_offset: 0x80000000         # S5-C TEID offset for home PGW interop
+```
+
+**Prometheus metrics (MME / SGWC / SMF / UPF)**
+
+Each NF exposes OpenMetrics on `GET /metrics` (default listener in YAML `metrics.server`, typically port **9090**). SGWC now has a metrics HTTP server — add `metrics` to `sgwc.yaml` if your live config predates this fork.
+
+| NF | Gauge / counter | Labels | Meaning |
+|----|-----------------|--------|---------|
+| MME | `mme_attach_attempt_total` | `plmnid` | Attach requests accepted for processing |
+| MME | `mme_attach_success_total` | `plmnid` | Attach completed (registered) |
+| MME | `mme_attach_reject_total` | `plmnid`, `cause` | Attach reject sent (EMM cause) |
+| MME | `mme_auth_request_total` | `plmnid` | Authentication requests sent |
+| MME | `mme_auth_success_total` | `plmnid` | Authentication responses OK |
+| MME | `mme_auth_fail_total` | `plmnid` | Authentication reject / failure |
+| MME | `mme_ue_registered` | `plmnid` | Currently registered UEs (home PLMN from IMSI) |
+| MME | `mme_ue_lost_total` | `reason` | Registered UE removed (`ue_detach`, `mme_explicit`, `hss_explicit`, `mme_implicit`, `hss_implicit`, `other`) |
+| SGWC | `sgwc_ue_active` | `plmnid` | UEs with S11 context |
+| SGWC | `sgwc_session_active` | `plmnid`, `pgw_addr` | Active PDN sessions per PGW/SMF S5-C peer |
+| SMF | `smf_ue_active` | `plmnid` | UEs with at least one SMF context |
+| UPF | `upf_sessionnbr_by_cp` | `cp_addr` | PFCP sessions per control-plane peer (SGWC on SGWU, SMF on PGWU) |
+
+PLMN labels use IMSI home PLMN (`ogs_plmn_id_from_imsi_bcd`). On SGWC, session PLMN falls back to `serving_plmn_id` when set.
+
+Example scrape config (Prometheus):
+
+```yaml
+scrape_configs:
+  - job_name: open5gs
+    static_configs:
+      - targets:
+          - 127.0.0.2:9090   # mme
+          - 127.0.0.3:9090   # sgwc
+          - 127.0.0.4:9090   # smf
+          - 127.0.0.6:9090   # upf (SGWU instance)
+          - 127.0.0.7:9090   # upf (PGWU instance, if separate)
+```
+
+Quick check:
+
+```bash
+curl -s http://127.0.0.2:9090/metrics | grep -E '^mme_ue_registered|^mme_attach_'
+curl -s http://127.0.0.3:9090/metrics | grep '^sgwc_'
+curl -s http://127.0.0.4:9090/metrics | grep '^smf_ue_active'
+curl -s http://127.0.0.6:9090/metrics | grep '^upf_sessionnbr_by_cp'
 ```
 
 **Production attach grep**

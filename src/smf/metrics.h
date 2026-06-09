@@ -98,6 +98,16 @@ typedef enum smf_metric_type_by_cause_s {
 
 void smf_metrics_inst_by_cause_add(
     int cause, smf_metric_type_by_cause_t t, int val);
+
+/* BY PLMN */
+typedef enum smf_metric_type_by_plmn_s {
+    SMF_METR_BY_PLMN_GAUGE_UE_ACTIVE = 0,
+    _SMF_METR_BY_PLMN_MAX,
+} smf_metric_type_by_plmn_t;
+
+void smf_metrics_inst_by_plmn_add(
+    ogs_plmn_id_t *plmn, smf_metric_type_by_plmn_t t, int val);
+
 void smf_metrics_init(void);
 void smf_metrics_final(void);
 

@@ -25,6 +25,10 @@ global:
 #    triggers: start,interim,stop
 #
 sgwc:
+  metrics:
+    server:
+      - address: 127.0.0.3
+        port: 9090
   gtpc:
     server:
       - address: 127.0.0.3

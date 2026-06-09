@@ -22,6 +22,9 @@
 #include "gtp-path.h"
 #include "pfcp-path.h"
 #include "ga-writer.h"
+#include "metrics.h"
+#include "ogs-metrics.h"
+#include "metrics/prometheus/json_pager.h"
 
 static ogs_thread_t *thread;
 static void sgwc_main(void *data);
@@ -35,6 +38,8 @@ int sgwc_initialize(void)
 #define APP_NAME "sgwc"
     rv = ogs_app_parse_local_conf(APP_NAME);
     if (rv != OGS_OK) return rv;
+
+    sgwc_metrics_init();
 
     ogs_gtp_context_init(ogs_app()->pool.nf * OGS_MAX_NUM_OF_GTPU_RESOURCE);
     ogs_pfcp_context_init();
@@ -61,6 +66,9 @@ int sgwc_initialize(void)
     rv = sgwc_context_parse_config();
     if (rv != OGS_OK) return rv;
 
+    rv = ogs_metrics_context_parse_config(APP_NAME);
+    if (rv != OGS_OK) return rv;
+
     rv = sgwc_gtp_open();
     if (rv != OGS_OK) return rv;
 
@@ -69,6 +77,8 @@ int sgwc_initialize(void)
 
     rv = sgwc_ga_writer_open();
     if (rv != OGS_OK) return rv;
+
+    ogs_metrics_context_open(ogs_metrics_self());
 
     thread = ogs_thread_create(sgwc_main, NULL);
     if (!thread) return OGS_ERROR;
@@ -86,10 +96,14 @@ void sgwc_terminate(void)
 
     ogs_thread_destroy(thread);
 
+    ogs_metrics_context_close(ogs_metrics_self());
+
     sgwc_gtp_close();
     sgwc_pfcp_close();
 
     sgwc_ga_writer_close();
+
+    sgwc_metrics_final();
 
     sgwc_context_final();
 

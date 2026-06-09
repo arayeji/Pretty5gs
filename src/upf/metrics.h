@@ -60,6 +60,15 @@ typedef enum upf_metric_type_by_dnn_s {
 void upf_metrics_inst_by_dnn_add(
     char *dnn, upf_metric_type_by_dnn_t t, int val);
 
+/* BY CP */
+typedef enum upf_metric_type_by_cp_s {
+    UPF_METR_BY_CP_GAUGE_SESSIONNBR = 0,
+    _UPF_METR_BY_CP_MAX,
+} upf_metric_type_by_cp_t;
+
+void upf_metrics_inst_by_cp_add(
+    const char *cp_addr, upf_metric_type_by_cp_t t, int val);
+
 void upf_metrics_init(void);
 void upf_metrics_final(void);
 

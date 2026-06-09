@@ -7,6 +7,8 @@
 extern "C" {
 #endif
 
+typedef struct mme_ue_s mme_ue_t;
+
 /* GLOBAL */
 typedef enum mme_metric_type_global_s {
     MME_METR_GLOB_GAUGE_ENB_UE,
@@ -27,6 +29,38 @@ static inline void mme_metrics_inst_global_inc(mme_metric_type_global_t t)
 { ogs_metrics_inst_inc(mme_metrics_inst_global[t]); }
 static inline void mme_metrics_inst_global_dec(mme_metric_type_global_t t)
 { ogs_metrics_inst_dec(mme_metrics_inst_global[t]); }
+
+/* BY PLMN */
+typedef enum mme_metric_type_by_plmn_s {
+    MME_METR_BY_PLMN_CTR_ATTACH_ATTEMPT = 0,
+    MME_METR_BY_PLMN_CTR_ATTACH_SUCCESS,
+    MME_METR_BY_PLMN_CTR_AUTH_REQUEST,
+    MME_METR_BY_PLMN_CTR_AUTH_SUCCESS,
+    MME_METR_BY_PLMN_CTR_AUTH_FAIL,
+    MME_METR_BY_PLMN_GAUGE_UE_REGISTERED,
+    _MME_METR_BY_PLMN_MAX,
+} mme_metric_type_by_plmn_t;
+
+/* BY PLMN and CAUSE */
+typedef enum mme_metric_type_by_plmn_cause_s {
+    MME_METR_BY_PLMN_CAUSE_CTR_ATTACH_REJECT = 0,
+    _MME_METR_BY_PLMN_CAUSE_MAX,
+} mme_metric_type_by_plmn_cause_t;
+
+/* BY REASON */
+typedef enum mme_metric_type_by_reason_s {
+    MME_METR_BY_REASON_CTR_UE_LOST = 0,
+    _MME_METR_BY_REASON_MAX,
+} mme_metric_type_by_reason_t;
+
+void mme_metrics_attach_attempt(mme_ue_t *mme_ue);
+void mme_metrics_attach_success(mme_ue_t *mme_ue);
+void mme_metrics_attach_reject(mme_ue_t *mme_ue, uint8_t emm_cause);
+void mme_metrics_auth_request(mme_ue_t *mme_ue);
+void mme_metrics_auth_success(mme_ue_t *mme_ue);
+void mme_metrics_auth_fail(mme_ue_t *mme_ue);
+void mme_metrics_ue_registered_inc(mme_ue_t *mme_ue);
+void mme_metrics_on_ue_remove(mme_ue_t *mme_ue);
 
 void mme_metrics_init(void);
 void mme_metrics_final(void);
