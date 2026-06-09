@@ -48,7 +48,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--csv", required=True, type=Path)
     ap.add_argument("--prefix", action="append", required=True,
-                    help="IMSI BCD prefix (e.g. 00101 for PLMN 999-70 roamers)")
+                    help="IMSI BCD prefix (e.g. 00101 for example roam PLMN)")
     ap.add_argument("--output", type=Path, help="Write YAML fragment here")
     ap.add_argument("--plmn", action="append", metavar="MCC-MNC",
                     help="Home PLMN allow-list entry, e.g. 999-70 (repeatable)")

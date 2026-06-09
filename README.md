@@ -121,10 +121,10 @@ Enforcement is active when **any** of these are configured:
 ```yaml
 mme:
   access_control:
-    - plmn_id: { mcc: 999, mnc: 70 }   # home / all subscribers
+    - plmn_id: { mcc: 999, mnc: 70 }   # home / all subscribers (example)
     - plmn_id: { mcc: 999, mnc: 71 }
     - default_reject_cause: 13
-    - imsi_prefix: "00101"              # inbound roam only
+    - imsi_prefix: "00101"              # inbound roam only (example)
       reject_cause: 13
       tac: [10003, 10012]              # optional; omit = any TAC for this prefix
       enb_id: [260003, 450004]        # optional; omit = any eNB for this prefix
@@ -151,7 +151,7 @@ python scripts/gen_roam_access_from_csv.py \
   --output configs/open5gs/roam-access.generated.yaml
 ```
 
-Output is **gitignored** (`configs/open5gs/roam-access.generated.yaml`). It is a full `mme:` fragment — merge into `/etc/open5gs/mme.yaml` or splice `mme.access_control`. Prefix `00101` = home PLMN (999-70), `99970` = 999-71 inbound roamers.
+Output is **gitignored** (`configs/open5gs/roam-access.generated.yaml`). It is a full `mme:` fragment — merge into `/etc/open5gs/mme.yaml` or splice `mme.access_control`. Use your real IMSI prefixes and PLMNs only in private server config, not in git.
 
 Log lines when blocked:
 

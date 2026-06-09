@@ -74,4 +74,4 @@ fi
 echo "--- Recent Diameter peer / routing (tail) ---"
 grep -iE 'rt_default|hss01|ROUTING ERROR|CONNECT|DISCONNECT' /var/log/open5gs/mme.log 2>/dev/null | tail -15 || true
 
-echo "Done. Test a 999-70 attach; expect no 'No remaining suitable candidate'."
+echo "Done. Test an attach; expect no 'No remaining suitable candidate'."
