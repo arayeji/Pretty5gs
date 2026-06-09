@@ -519,7 +519,7 @@ typedef struct smf_metric_key_by_plmn_s {
     smf_metric_type_by_plmn_t   t;
 } smf_metric_key_by_plmn_t;
 
-void smf_metrics_init_by_plmn(void)
+static void smf_metrics_init_by_plmn(void)
 {
     metrics_hash_by_plmn = ogs_hash_make();
     ogs_assert(metrics_hash_by_plmn);
