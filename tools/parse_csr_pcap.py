@@ -101,11 +101,11 @@ def main():
         src, dst = p[IP].src, p[IP].dst
         top, bearer = top_and_bearer(ies)
 
-        if src == "127.0.0.1" and dst == "127.0.0.2":
+        if src == "127.0.0.2" and dst == "127.0.0.3":
             o5_top |= top
             o5_bearer |= bearer
             o5_frame = (i + 1, ies)
-        if src == "203.0.113.2":
+        if src == "203.0.113.1":
             ref_top |= top
             ref_bearer |= bearer
             ref_frame = (i + 1, ies)
@@ -134,7 +134,7 @@ def main():
         print()
 
     print_frame("Open5GS MME -> SGWC", o5_frame)
-    print_frame("Reference (203.0.113.2 -> PGW/SMF)", ref_frame)
+    print_frame("Reference (203.0.113.1 -> PGW/SMF)", ref_frame)
 
     # Map F-TEID names
     def normalize_top(s):
