@@ -30,6 +30,7 @@ Upstream docs: [open5gs.org](https://open5gs.org/open5gs/docs/). This README des
 | **Milenage K4** | Not present | Optional Huawei HSS9860 K/OPc unwrap (**off by default**) |
 | **PCRF / Gx + PyHSS** | MongoDB `db_uri` | Optional PyHSS MySQL policy (**off by default**); YAML policy unchanged |
 | **Runtime config reload (MME)** | Restart for any YAML change | **SIGHUP** reload: timers, GTP echo interval, add-only lists (TAI, ACL, peers, trace) without dropping UEs |
+| **Runtime config reload (SMF / SGWC)** | Restart for bind addresses | **SIGHUP** reload: SMF session subnets/APN pools, UPF peers; SGWC roam/TEID/CDR/NWI/SGW-U peers (add-only lists) |
 
 ## Build and install
 
@@ -198,7 +199,7 @@ sgwc:
       teid_offset: 0x80000000         # S5-C TEID offset for home PGW interop
 ```
 
-**Runtime config reload (MME only)**
+**Runtime config reload (MME)**
 
 Edit `/etc/open5gs/mme.yaml`, then reload without restarting the daemon (attached UEs stay up):
 
@@ -219,7 +220,41 @@ On success, `mme.log` shows `MME runtime config reloaded` and lines like `SIGHUP
 
 **Not reloadable via SIGHUP** (daemon restart required): removing or editing existing list entries, `mme.gtpc.recovery`, SCTP/S1 bind addresses, pool sizes, and most other `mme:` keys. If reload fails, the previous config is kept (`Configuration reload failed` in the log).
 
-SMF RADIUS/Ga and CGF GTP' peer changes can be pushed through the **admin API** file watcher — see `tools/admin-api/README.md`. Other NFs (SGWC, SMF, UPF) do not implement MME-style SIGHUP reload yet.
+**Runtime config reload (SMF)**
+
+Edit `/etc/open5gs/smf.yaml`, then:
+
+```bash
+sudo systemctl reload open5gs-smfd
+# or: sudo kill -HUP "$(pidof open5gs-smfd)"
+```
+
+| Reload type | Keys | Behaviour |
+|-------------|------|-----------|
+| **Add-only IP pools** | `smf.session[]` (`subnet`, `dnn`/`apn`, `gateway`, `range`, `dev`) | New UE IP pools for APN(s); existing pools unchanged |
+| **Add-only peers** | `smf.pfcp.client.upf[]` | New UPF PFCP peers associate immediately |
+| **Add-only** | `smf.trace_imsi` | Append IMSI trace prefixes |
+| **Scalars** | `smf.dns`, `smf.mtu` | Updated for subsequent sessions |
+
+**Not reloadable:** `smf.pfcp.server`, `smf.gtpc.server`, `smf.sbi.server`, metrics listen addresses. RADIUS/CDR can still be hot-pushed via the **admin API** watcher (`tools/admin-api/README.md`).
+
+**Runtime config reload (SGWC)**
+
+Edit `/etc/open5gs/sgwc.yaml`, then:
+
+```bash
+sudo systemctl reload open5gs-sgwcd
+# or: sudo kill -HUP "$(pidof open5gs-sgwcd)"
+```
+
+| Reload type | Keys | Behaviour |
+|-------------|------|-----------|
+| **Scalars** | `sgwc.gtpc.echo_interval`, `sgwc.gtpu.*`, `sgwc.inbound_roam.gtpc` (except source port), `sgwc.inbound_roam.gtpu.*`, `sgwc.cdr` (except spool_dir) | Applied in memory |
+| **Add-only lists** | `sgwc.sgwu_nwi_rewrite`, `sgwc.pfcp.client.sgwu[]` / `sgwc.sgwu[]` | New NWI rewrite rules and SGW-U PFCP peers |
+
+**Not reloadable:** `sgwc.gtpc.server`, `sgwc.pfcp.server`, `sgwc.metrics.server`, `sgwc.inbound_roam.gtpc.source_port` (extra S5 bind socket — restart required).
+
+SMF RADIUS/Ga and CGF GTP' peer changes can also be pushed through the **admin API** file watcher — see `tools/admin-api/README.md`.
 
 **Prometheus metrics (MME / SGWC / SMF / UPF)**
 

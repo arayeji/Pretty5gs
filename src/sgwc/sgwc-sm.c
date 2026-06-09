@@ -19,6 +19,8 @@
 
 #include "s11-handler.h"
 #include "s5c-handler.h"
+#include "context.h"
+#include "sgwc-reload-lists.h"
 
 #include "gtp-path.h"
 #include "pfcp-path.h"
@@ -325,6 +327,9 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
             break;
         }
         ogs_pkbuf_free(recvbuf);
+        break;
+    case SGWC_EVT_CONFIG_RELOAD:
+        sgwc_context_reload_runtime();
         break;
     default:
         ogs_error("No handler for event %s", sgwc_event_get_name(e));

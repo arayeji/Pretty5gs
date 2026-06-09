@@ -49,6 +49,10 @@ int sgwc_pfcp_send_session_deletion_request(
 int sgwc_pfcp_send_session_report_response(
         ogs_pfcp_xact_t *xact, sgwc_sess_t *sess, uint8_t cause);
 
+ogs_pfcp_node_t *sgwc_pfcp_admin_add_sgwu_peer(
+        ogs_sockaddr_t *addr,
+        const char **dnns, int num_of_dnns);
+
 #ifdef __cplusplus
 }
 #endif

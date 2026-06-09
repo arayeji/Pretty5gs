@@ -18,6 +18,7 @@
  */
 
 #include "context.h"
+#include "event.h"
 #include "fd-path.h"
 #include "gtp-path.h"
 #include "pfcp-path.h"
@@ -28,12 +29,31 @@
 #include "ogs-metrics.h"
 #include "metrics/prometheus/json_pager.h"
 #include "pdu-info.h"
+#include "smf-reload-lists.h"
 #ifdef OPEN5GS_ADMIN_WATCHER
 #include "smf-admin-watcher.h"
 #endif
 
 static ogs_thread_t *thread;
 static void smf_main(void *data);
+
+static void smf_sighup_handler(void)
+{
+    smf_event_t *e = NULL;
+    int rv;
+
+    e = smf_event_new(SMF_EVT_CONFIG_RELOAD);
+    ogs_assert(e);
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        ogs_event_free(e);
+        return;
+    }
+
+    ogs_pollset_notify(ogs_app()->pollset);
+}
 
 static int initialized = 0;
 
@@ -100,6 +120,8 @@ int smf_initialize(void)
 
     rv = smf_ga_writer_open();
     if (rv != 0) return OGS_ERROR;
+
+    ogs_app_sighup_handler_set(smf_sighup_handler);
 
     thread = ogs_thread_create(smf_main, NULL);
     if (!thread) return OGS_ERROR;

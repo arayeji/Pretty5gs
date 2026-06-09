@@ -43,6 +43,8 @@ typedef enum {
     SGWC_EVT_SXA_TIMER,
     SGWC_EVT_SXA_NO_HEARTBEAT,
 
+    SGWC_EVT_CONFIG_RELOAD,
+
     SGWC_EVT_TOP,
 
 } sgwc_event_e;

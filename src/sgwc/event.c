@@ -80,6 +80,9 @@ const char *sgwc_event_get_name(sgwc_event_t *e)
     case SGWC_EVT_SXA_NO_HEARTBEAT:
         return "SGWC_EVT_SXA_NO_HEARTBEAT";
 
+    case SGWC_EVT_CONFIG_RELOAD:
+        return "SGWC_EVT_CONFIG_RELOAD";
+
     default: 
        break;
     }

@@ -80,6 +80,9 @@ const char *smf_event_get_name(smf_event_t *e)
     case SMF_EVT_SESSION_RELEASE:
         return "SMF_EVT_SESSION_RELEASE";
 
+    case SMF_EVT_CONFIG_RELOAD:
+        return "SMF_EVT_CONFIG_RELOAD";
+
     default:
        break;
     }

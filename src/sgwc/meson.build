@@ -30,12 +30,14 @@ libsgwc_sources = files('''
     ga-writer.h
     sgwc-trace.h
     sgwc-gtp-interop.h
+    sgwc-reload-lists.h
     metrics.h
 
     init.c
     event.c
     timer.c
     context.c 
+    sgwc-reload-lists.c
     gtp-path.c
     s11-build.c
     s11-handler.c
