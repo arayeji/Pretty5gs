@@ -64,6 +64,8 @@ typedef enum {
 
     SMF_EVT_SESSION_RELEASE,
 
+    SMF_EVT_CONFIG_RELOAD,
+
     SMF_EVT_TOP,
 
 } smf_event_e;

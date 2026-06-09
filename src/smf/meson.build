@@ -76,12 +76,14 @@ libsmf_sources = files('''
     pdu-info.h
     radius-path.h
     ga-writer.h
+    smf-reload-lists.h
     collision-replace.h
 
     init.c
     event.c
     timer.c
     context.c
+    smf-reload-lists.c
     collision-replace.c
     smf-trace.c
     smf-sm.c

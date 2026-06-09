@@ -18,6 +18,7 @@
  */
 
 #include "context.h"
+#include "event.h"
 
 #include "gtp-path.h"
 #include "pfcp-path.h"
@@ -26,8 +27,28 @@
 #include "ogs-metrics.h"
 #include "metrics/prometheus/json_pager.h"
 
+#include "sgwc-reload-lists.h"
+
 static ogs_thread_t *thread;
 static void sgwc_main(void *data);
+
+static void sgwc_sighup_handler(void)
+{
+    sgwc_event_t *e = NULL;
+    int rv;
+
+    e = sgwc_event_new(SGWC_EVT_CONFIG_RELOAD);
+    ogs_assert(e);
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        sgwc_event_free(e);
+        return;
+    }
+
+    ogs_pollset_notify(ogs_app()->pollset);
+}
 
 static int initialized = 0;
 
@@ -79,6 +100,8 @@ int sgwc_initialize(void)
     if (rv != OGS_OK) return rv;
 
     ogs_metrics_context_open(ogs_metrics_self());
+
+    ogs_app_sighup_handler_set(sgwc_sighup_handler);
 
     thread = ogs_thread_create(sgwc_main, NULL);
     if (!thread) return OGS_ERROR;

@@ -659,3 +659,38 @@ int sgwc_pfcp_send_session_report_response(
 
     return rv;
 }
+
+ogs_pfcp_node_t *sgwc_pfcp_admin_add_sgwu_peer(
+        ogs_sockaddr_t *addr,
+        const char **dnns, int num_of_dnns)
+{
+    ogs_pfcp_node_t *node = NULL;
+    int i;
+
+    ogs_assert(addr);
+
+    node = ogs_pfcp_node_new(addr);
+    if (!node) {
+        ogs_error("sgwc_pfcp_admin_add_sgwu_peer: node_new failed");
+        return NULL;
+    }
+
+    ogs_list_add(&ogs_pfcp_self()->pfcp_peer_list, node);
+
+    if (dnns && num_of_dnns > 0) {
+        if (num_of_dnns > OGS_MAX_NUM_OF_DNN)
+            num_of_dnns = OGS_MAX_NUM_OF_DNN;
+        for (i = 0; i < num_of_dnns; i++) {
+            if (dnns[i])
+                node->dnn[i] = ogs_strdup(dnns[i]);
+        }
+        node->num_of_dnn = num_of_dnns;
+    }
+
+    pfcp_node_fsm_init(node, true);
+
+    ogs_info("sgwc_pfcp_admin_add_sgwu_peer: added SGW-U peer "
+            "(num_of_dnn=%u)", (unsigned)node->num_of_dnn);
+
+    return node;
+}

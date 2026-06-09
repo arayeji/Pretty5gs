@@ -18,6 +18,7 @@
  */
 
 #include "context.h"
+#include "smf-reload-lists.h"
 #include "gtp-path.h"
 #include "fd-path.h"
 #include "pfcp-path.h"
@@ -1473,6 +1474,10 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         }
 
         ogs_fsm_dispatch(&sess->sm, e);
+        break;
+
+    case SMF_EVT_CONFIG_RELOAD:
+        smf_context_reload_runtime();
         break;
 
     default:
