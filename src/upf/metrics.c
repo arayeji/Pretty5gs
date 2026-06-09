@@ -321,6 +321,8 @@ int upf_metrics_free_inst_by_dnn(ogs_metrics_inst_t **inst)
     return upf_metrics_free_inst(inst, _UPF_METR_BY_DNN_MAX);
 }
 
+void upf_metrics_init_by_cp(void);
+
 /* BY_CP */
 const char *labels_cp[] = {
     "cp_addr"

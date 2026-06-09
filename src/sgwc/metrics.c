@@ -23,14 +23,12 @@ typedef struct sgwc_metric_key_by_plmn_pgw_s {
     sgwc_metric_type_by_plmn_pgw_t      t;
 } sgwc_metric_key_by_plmn_pgw_t;
 
-static int sgwc_metrics_init_inst(ogs_metrics_inst_t **inst, ogs_metrics_spec_t **specs,
-        unsigned int len, unsigned int num_labels, const char **labels)
-{
-    unsigned int i;
-    for (i = 0; i < len; i++)
-        inst[i] = ogs_metrics_inst_new(specs[i], num_labels, labels);
-    return OGS_OK;
-}
+extern ogs_metrics_spec_t *sgwc_metrics_spec_by_plmn[_SGWC_METR_BY_PLMN_MAX];
+extern ogs_hash_t *metrics_hash_by_plmn;
+extern sgwc_metrics_spec_def_t sgwc_metrics_spec_def_by_plmn[_SGWC_METR_BY_PLMN_MAX];
+extern ogs_metrics_spec_t *sgwc_metrics_spec_by_plmn_pgw[_SGWC_METR_BY_PLMN_PGW_MAX];
+extern ogs_hash_t *metrics_hash_by_plmn_pgw;
+extern sgwc_metrics_spec_def_t sgwc_metrics_spec_def_by_plmn_pgw[_SGWC_METR_BY_PLMN_PGW_MAX];
 
 static int sgwc_metrics_init_spec(ogs_metrics_context_t *ctx,
         ogs_metrics_spec_t **dst, sgwc_metrics_spec_def_t *src, unsigned int len)
@@ -229,7 +227,7 @@ SGWC_METR_BY_PLMN_GAUGE_ENTRY(
     "Active UEs per IMSI PLMN on SGWC")
 };
 
-void sgwc_metrics_init_by_plmn(void)
+static void sgwc_metrics_init_by_plmn(void)
 {
     metrics_hash_by_plmn = ogs_hash_make();
     ogs_assert(metrics_hash_by_plmn);
@@ -259,7 +257,7 @@ SGWC_METR_BY_PLMN_PGW_GAUGE_ENTRY(
     "Active sessions per IMSI PLMN and PGW on SGWC")
 };
 
-void sgwc_metrics_init_by_plmn_pgw(void)
+static void sgwc_metrics_init_by_plmn_pgw(void)
 {
     metrics_hash_by_plmn_pgw = ogs_hash_make();
     ogs_assert(metrics_hash_by_plmn_pgw);
