@@ -29,6 +29,7 @@ Upstream docs: [open5gs.org](https://open5gs.org/open5gs/docs/). This README des
 | **CDR (4G)** | Partial ULI | ULI in MME/SMF/SGWC CDRs; SGWC `servedMSISDN`; higher APN / SGsAP caps |
 | **Milenage K4** | Not present | Optional Huawei HSS9860 K/OPc unwrap (**off by default**) |
 | **PCRF / Gx + PyHSS** | MongoDB `db_uri` | Optional PyHSS MySQL policy (**off by default**); YAML policy unchanged |
+| **Runtime config reload (MME)** | Restart for any YAML change | **SIGHUP** reload: timers, GTP echo interval, add-only lists (TAI, ACL, peers, trace) without dropping UEs |
 
 ## Build and install
 
@@ -196,6 +197,29 @@ sgwc:
     gtpc:
       teid_offset: 0x80000000         # S5-C TEID offset for home PGW interop
 ```
+
+**Runtime config reload (MME only)**
+
+Edit `/etc/open5gs/mme.yaml`, then reload without restarting the daemon (attached UEs stay up):
+
+```bash
+sudo systemctl reload open5gs-mmed
+# or: sudo kill -HUP "$(pidof open5gs-mmed)"
+```
+
+On success, `mme.log` shows `MME runtime config reloaded` and lines like `SIGHUP: sgwc peer added` or `SIGHUP: trace_imsi added`.
+
+| Reload type | Keys | Behaviour |
+|-------------|------|-----------|
+| **Scalars** | `mme.time` (`t3402`, `t3396`, `t3412`, `t3423`, `idle`, `t3346`, `bearer_setup`, `s11_holding`) | Re-read from YAML; applies to **new** timer starts |
+| **Scalars** | `mme.gtpc.echo_interval` | Reschedules S11 GTP echo to all SGWC peers |
+| **Add-only lists** | `tai`, `access_control`, `hss_map`, `equivalent_plmn`, `imsi_acl`, `trace_imsi`, `emergency` | **Append** new entries only; existing rows are never removed |
+| **Add-only peers** | `mme.gtpc.client.sgwc`, `mme.gtpc.client.smf` | New address/port rows connect immediately; can add `tac`, `apn`, `e_cell_id` on existing peers |
+| **Policy scalars** | `attach_accept`, `equivalent_plmn_serving_only`, `ims_voice_over_ps_in_s1_mode`, `tai_list_in_accept`, `require_hss_map`, `ambr_limit` | Updated in memory for subsequent attach/TAU |
+
+**Not reloadable via SIGHUP** (daemon restart required): removing or editing existing list entries, `mme.gtpc.recovery`, SCTP/S1 bind addresses, pool sizes, and most other `mme:` keys. If reload fails, the previous config is kept (`Configuration reload failed` in the log).
+
+SMF RADIUS/Ga and CGF GTP' peer changes can be pushed through the **admin API** file watcher — see `tools/admin-api/README.md`. Other NFs (SGWC, SMF, UPF) do not implement MME-style SIGHUP reload yet.
 
 **Prometheus metrics (MME / SGWC / SMF / UPF)**
 
