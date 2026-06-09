@@ -385,7 +385,7 @@ MME_METR_BY_PLMN_GAUGE_ENTRY(
     "Registered UEs per IMSI PLMN")
 };
 
-void mme_metrics_init_by_plmn(void)
+static void mme_metrics_init_by_plmn(void)
 {
     metrics_hash_by_plmn = ogs_hash_make();
     ogs_assert(metrics_hash_by_plmn);
@@ -415,7 +415,7 @@ MME_METR_BY_PLMN_CAUSE_CTR_ENTRY(
     "Attach rejections per IMSI PLMN and EMM cause")
 };
 
-void mme_metrics_init_by_plmn_cause(void)
+static void mme_metrics_init_by_plmn_cause(void)
 {
     metrics_hash_by_plmn_cause = ogs_hash_make();
     ogs_assert(metrics_hash_by_plmn_cause);
@@ -444,7 +444,7 @@ MME_METR_BY_REASON_CTR_ENTRY(
     "UE removals by detach reason")
 };
 
-void mme_metrics_init_by_reason(void)
+static void mme_metrics_init_by_reason(void)
 {
     metrics_hash_by_reason = ogs_hash_make();
     ogs_assert(metrics_hash_by_reason);
