@@ -1,0 +1,35 @@
+#ifndef SGWC_METRICS_H
+#define SGWC_METRICS_H
+
+#include "ogs-metrics.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct sgwc_ue_s sgwc_ue_t;
+typedef struct sgwc_sess_s sgwc_sess_t;
+
+typedef enum sgwc_metric_type_by_plmn_s {
+    SGWC_METR_BY_PLMN_GAUGE_UE_ACTIVE = 0,
+    _SGWC_METR_BY_PLMN_MAX,
+} sgwc_metric_type_by_plmn_t;
+
+typedef enum sgwc_metric_type_by_plmn_pgw_s {
+    SGWC_METR_BY_PLMN_PGW_GAUGE_SESSION_ACTIVE = 0,
+    _SGWC_METR_BY_PLMN_PGW_MAX,
+} sgwc_metric_type_by_plmn_pgw_t;
+
+void sgwc_metrics_ue_active_inc(sgwc_ue_t *sgwc_ue);
+void sgwc_metrics_ue_active_dec(sgwc_ue_t *sgwc_ue);
+void sgwc_metrics_session_active_inc(sgwc_sess_t *sess);
+void sgwc_metrics_session_active_dec(sgwc_sess_t *sess);
+
+void sgwc_metrics_init(void);
+void sgwc_metrics_final(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* SGWC_METRICS_H */

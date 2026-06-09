@@ -28,6 +28,7 @@
 #include "emm-build.h"
 #include "esm-handler.h"
 #include "nas-path.h"
+#include "metrics.h"
 #include "nas-security.h"
 #include "s1ap-path.h"
 #include "sgsap-types.h"
@@ -1432,6 +1433,8 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
                 break;
             }
 
+            mme_metrics_auth_success(mme_ue);
+
             OGS_FSM_TRAN(&mme_ue->sm, &emm_state_security_mode);
             break;
         case OGS_NAS_EPS_AUTHENTICATION_FAILURE:
@@ -1981,6 +1984,10 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
                 ogs_assert(OGS_OK ==
                     sgsap_send_tmsi_reallocation_complete(mme_ue));
             }
+
+            mme_metrics_attach_success(mme_ue);
+            mme_metrics_ue_registered_inc(mme_ue);
+            mme_ue->metrics_registered = true;
 
             OGS_FSM_TRAN(s, &emm_state_registered);
             break;

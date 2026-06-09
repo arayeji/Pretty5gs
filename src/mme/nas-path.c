@@ -27,6 +27,7 @@
 #include "mme-timer.h"
 #include "mme-sm.h"
 #include "mme-path.h"
+#include "metrics.h"
 
 int nas_eps_send_to_enb(mme_ue_t *mme_ue, ogs_pkbuf_t *pkbuf)
 {
@@ -283,6 +284,8 @@ int nas_eps_send_attach_reject(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     mme_ue_progress(mme_ue, "attach_reject");
     OGS_TLOG_INFO("Attach reject [EMM:%d ESM:%d]", emm_cause, esm_cause);
 
+    mme_metrics_attach_reject(mme_ue, emm_cause);
+
     if (sess) {
         esmbuf = esm_build_pdn_connectivity_reject(
                     sess, esm_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
@@ -388,6 +391,9 @@ int nas_eps_send_authentication_request(mme_ue_t *mme_ue)
     rv = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
     ogs_expect(rv == OGS_OK);
 
+    if (rv == OGS_OK)
+        mme_metrics_auth_request(mme_ue);
+
     return rv;
 }
 
@@ -453,6 +459,8 @@ int nas_eps_send_authentication_reject(mme_ue_t *mme_ue)
     }
 
     ogs_debug("[%s] Authentication reject", mme_ue->imsi_bcd);
+
+    mme_metrics_auth_fail(mme_ue);
 
     emmbuf = emm_build_authentication_reject();
     if (!emmbuf) {

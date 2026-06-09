@@ -321,6 +321,70 @@ int upf_metrics_free_inst_by_dnn(ogs_metrics_inst_t **inst)
     return upf_metrics_free_inst(inst, _UPF_METR_BY_DNN_MAX);
 }
 
+/* BY_CP */
+const char *labels_cp[] = {
+    "cp_addr"
+};
+
+#define UPF_METR_BY_CP_GAUGE_ENTRY(_id, _name, _desc) \
+    [_id] = { \
+        .type = OGS_METRICS_METRIC_TYPE_GAUGE, \
+        .name = _name, \
+        .description = _desc, \
+        .num_labels = OGS_ARRAY_SIZE(labels_cp), \
+        .labels = labels_cp, \
+    },
+ogs_metrics_spec_t *upf_metrics_spec_by_cp[_UPF_METR_BY_CP_MAX];
+ogs_hash_t *metrics_hash_by_cp = NULL;
+upf_metrics_spec_def_t upf_metrics_spec_def_by_cp[_UPF_METR_BY_CP_MAX] = {
+UPF_METR_BY_CP_GAUGE_ENTRY(
+    UPF_METR_BY_CP_GAUGE_SESSIONNBR,
+    "upf_sessionnbr_by_cp",
+    "Active sessions per CP peer IP on UPF")
+};
+typedef struct upf_metric_key_by_cp_s {
+    char                        cp_addr[OGS_ADDRSTRLEN];
+    upf_metric_type_by_cp_t     t;
+} upf_metric_key_by_cp_t;
+
+void upf_metrics_init_by_cp(void)
+{
+    metrics_hash_by_cp = ogs_hash_make();
+    ogs_assert(metrics_hash_by_cp);
+}
+
+void upf_metrics_inst_by_cp_add(const char *cp_addr,
+        upf_metric_type_by_cp_t t, int val)
+{
+    ogs_metrics_inst_t *metrics = NULL;
+    upf_metric_key_by_cp_t *cp_key;
+
+    ogs_assert(cp_addr);
+
+    cp_key = ogs_calloc(1, sizeof(*cp_key));
+    ogs_assert(cp_key);
+
+    ogs_cpystrn(cp_key->cp_addr, cp_addr, sizeof(cp_key->cp_addr));
+    cp_key->t = t;
+
+    metrics = ogs_hash_get(metrics_hash_by_cp,
+            cp_key, sizeof(*cp_key));
+
+    if (!metrics) {
+        metrics = ogs_metrics_inst_new(upf_metrics_spec_by_cp[t],
+                upf_metrics_spec_def_by_cp->num_labels,
+                (const char *[]){ cp_key->cp_addr });
+
+        ogs_assert(metrics);
+        ogs_hash_set(metrics_hash_by_cp,
+                cp_key, sizeof(*cp_key), metrics);
+    } else {
+        ogs_free(cp_key);
+    }
+
+    ogs_metrics_inst_add(metrics, val);
+}
+
 void upf_metrics_init(void)
 {
     ogs_metrics_context_t *ctx = ogs_metrics_self();
@@ -334,11 +398,14 @@ void upf_metrics_init(void)
             upf_metrics_spec_def_by_cause, _UPF_METR_BY_CAUSE_MAX);
     upf_metrics_init_spec(ctx, upf_metrics_spec_by_dnn,
             upf_metrics_spec_def_by_dnn, _UPF_METR_BY_DNN_MAX);
+    upf_metrics_init_spec(ctx, upf_metrics_spec_by_cp,
+            upf_metrics_spec_def_by_cp, _UPF_METR_BY_CP_MAX);
 
     upf_metrics_init_inst_global();
     upf_metrics_init_by_qfi();
     upf_metrics_init_by_cause();
     upf_metrics_init_by_dnn();
+    upf_metrics_init_by_cp();
 }
 
 void upf_metrics_final(void)
@@ -389,6 +456,17 @@ void upf_metrics_final(void)
             //ogs_free(val);
         }
         ogs_hash_destroy(metrics_hash_by_dnn);
+    }
+    if (metrics_hash_by_cp) {
+        for (hi = ogs_hash_first(metrics_hash_by_cp); hi; hi = ogs_hash_next(hi)) {
+            upf_metric_key_by_cp_t *key =
+                (upf_metric_key_by_cp_t *)ogs_hash_this_key(hi);
+
+            ogs_hash_set(metrics_hash_by_cp, key, sizeof(*key), NULL);
+
+            ogs_free(key);
+        }
+        ogs_hash_destroy(metrics_hash_by_cp);
     }
 
     ogs_metrics_context_final();

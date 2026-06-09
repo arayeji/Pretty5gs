@@ -33,6 +33,7 @@
 #include "s1ap-handler.h"
 #include "mme-sm.h"
 #include "mme-gtp-path.h"
+#include "metrics.h"
 #include "mme-apn.h"
 
 #define MAX_CELL_PER_ENB            8
@@ -6113,6 +6114,7 @@ void mme_ue_remove(mme_ue_t *mme_ue)
      * thread re-acquires it, this mme_ue is gone from the list.
      */
     ogs_metrics_dump_lock();
+    mme_metrics_on_ue_remove(mme_ue);
     ogs_list_remove(&self.mme_ue_list, mme_ue);
 
     mme_ue_fsm_fini(mme_ue);
