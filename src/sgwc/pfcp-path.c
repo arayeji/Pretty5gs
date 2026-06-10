@@ -611,6 +611,62 @@ int sgwc_pfcp_send_session_deletion_request(
     return rv;
 }
 
+static void sgwc_pfcp_orphan_purge_timeout(ogs_pfcp_xact_t *xact, void *data)
+{
+    (void)data;
+
+    ogs_assert(xact);
+    ogs_debug("orphan PFCP session purge finished (type=%u)",
+            xact->seq[0].type);
+}
+
+static int sgwc_pfcp_send_orphan_session_purge(
+        sgwc_sess_t *sess, uint64_t sgwu_sxa_seid)
+{
+    int rv;
+    ogs_pkbuf_t *sxabuf = NULL;
+    ogs_pfcp_header_t h;
+    ogs_pfcp_xact_t *xact = NULL;
+
+    ogs_assert(sess);
+    ogs_assert(sess->pfcp_node);
+    ogs_assert(sgwu_sxa_seid);
+
+    xact = ogs_pfcp_xact_local_create(
+            sess->pfcp_node, sgwc_pfcp_orphan_purge_timeout, NULL);
+    if (!xact) {
+        ogs_error("ogs_pfcp_xact_local_create() failed");
+        return OGS_ERROR;
+    }
+
+    xact->delete_trigger = OGS_PFCP_DELETE_TRIGGER_ORPHAN_PURGE;
+    xact->assoc_xact_id = OGS_INVALID_POOL_ID;
+    xact->local_seid = 0;
+
+    memset(&h, 0, sizeof(ogs_pfcp_header_t));
+    h.type = OGS_PFCP_SESSION_DELETION_REQUEST_TYPE;
+    h.seid = sgwu_sxa_seid;
+
+    sxabuf = sgwc_sxa_build_session_deletion_request(h.type, sess);
+    if (!sxabuf) {
+        ogs_error("sgwc_sxa_build_session_deletion_request() failed");
+        ogs_pfcp_xact_delete(xact);
+        return OGS_ERROR;
+    }
+
+    rv = ogs_pfcp_xact_update_tx(xact, &h, sxabuf);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_pfcp_xact_update_tx() failed");
+        ogs_pfcp_xact_delete(xact);
+        return OGS_ERROR;
+    }
+
+    rv = ogs_pfcp_xact_commit(xact);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
 void sgwc_sess_purge_upf(sgwc_sess_t *sess)
 {
     sgwc_ue_t *sgwc_ue = NULL;
@@ -621,14 +677,13 @@ void sgwc_sess_purge_upf(sgwc_sess_t *sess)
 
     sgwu_seid = sess->sgwu_sxa_seid;
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-    if (sgwc_pfcp_send_session_deletion_request(
-            sess, OGS_INVALID_POOL_ID, NULL) != OGS_OK) {
+    sess->sgwu_sxa_seid = 0;
+
+    if (sgwc_pfcp_send_orphan_session_purge(sess, sgwu_seid) != OGS_OK) {
         ogs_warn("[%s] Orphan PFCP session purge failed (SGWU-SEID=0x%llx)",
                 sgwc_ue ? sgwc_ue->imsi_bcd : "-",
                 (unsigned long long)sgwu_seid);
     }
-
-    sess->sgwu_sxa_seid = 0;
 }
 
 int sgwc_pfcp_send_session_report_response(

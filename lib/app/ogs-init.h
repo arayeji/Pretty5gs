@@ -35,6 +35,8 @@ void ogs_app_terminate(void);
 
 int ogs_app_config_read(void);
 int ogs_app_config_reload(void);
+void ogs_app_config_document_lock(void);
+void ogs_app_config_document_unlock(void);
 void ogs_app_setup_log(void);
 
 typedef void (*ogs_app_sighup_handler_t)(void);

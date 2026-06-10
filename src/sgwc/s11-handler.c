@@ -170,14 +170,16 @@ static void pfcp_sess_timeout(ogs_pfcp_xact_t *xact, void *data)
     case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE: {
         sgwc_ue_t *sgwc_ue = NULL;
         ogs_gtp_xact_t *s11_xact = NULL;
+        uint8_t gtp_rsp_type = 0;
 
         ogs_error("No PFCP session modification response");
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         s11_xact = ogs_gtp_xact_find_by_id(xact->assoc_xact_id);
-        if (sgwc_ue && s11_xact) {
+        if (sgwc_ue && s11_xact && s11_xact->seq[0].type) {
+            gtp_rsp_type = s11_xact->seq[0].type + 1;
             ogs_gtp_send_error_message(
                     s11_xact, sgwc_ue->mme_s11_teid,
-                    OGS_GTP2_MODIFY_BEARER_RESPONSE_TYPE,
+                    gtp_rsp_type,
                     OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
         }
         break;
@@ -703,7 +705,8 @@ void sgwc_s11_handle_create_session_request(
             pending_s5 = ogs_gtp_xact_find_by_id(s11_xact->assoc_xact_id);
         if (pending_s5 &&
                 pending_s5->seq[0].type ==
-                    OGS_GTP2_CREATE_SESSION_REQUEST_TYPE) {
+                    OGS_GTP2_CREATE_SESSION_REQUEST_TYPE &&
+                pending_s5->assoc_xact_id == s11_xact->id) {
             ogs_info("[%s] duplicate Create Session Request while S5 "
                     "pending - ignoring (EBI=%d)",
                     sgwc_ue->imsi_bcd,

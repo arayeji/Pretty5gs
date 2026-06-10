@@ -417,9 +417,8 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
 
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
-            if (mme_ue->ue_context_will_remove &&
-                    !OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
-                OGS_FSM_TRAN(&mme_ue->sm, &emm_state_ue_context_will_remove);
+            if (mme_ue->ue_context_will_remove)
+                mme_ue_enter_ue_context_will_remove(mme_ue);
         }
 
         ogs_pkbuf_free(pkbuf);
@@ -442,9 +441,8 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
 
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
-            if (mme_ue->ue_context_will_remove &&
-                    !OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
-                OGS_FSM_TRAN(&mme_ue->sm, &emm_state_ue_context_will_remove);
+            if (mme_ue->ue_context_will_remove)
+                mme_ue_enter_ue_context_will_remove(mme_ue);
         }
         break;
 

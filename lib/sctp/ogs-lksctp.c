@@ -914,10 +914,12 @@ int ogs_sctp_tune_connected(ogs_sock_t *sock, ogs_sockopt_t *option)
     }
 
     rv = ogs_nonblocking(sock->fd);
-    ogs_assert(rv == OGS_OK);
+    if (rv != OGS_OK)
+        return OGS_ERROR;
 
     rv = ogs_closeonexec(sock->fd);
-    ogs_assert(rv == OGS_OK);
+    if (rv != OGS_OK)
+        return OGS_ERROR;
 
     /*
      * Accepted one-to-one SCTP sockets do not inherit SCTP_EVENTS
@@ -926,7 +928,8 @@ int ogs_sctp_tune_connected(ogs_sock_t *sock, ogs_sockopt_t *option)
      * contexts outlive their associations.
      */
     rv = subscribe_to_events(sock);
-    ogs_assert(rv == OGS_OK);
+    if (rv != OGS_OK)
+        return OGS_ERROR;
 
     rcv = option->so_rcvbuf > 0 ?
             option->so_rcvbuf : OGS_SCTP_CONNECTED_SO_RCVBUF;
@@ -939,14 +942,17 @@ int ogs_sctp_tune_connected(ogs_sock_t *sock, ogs_sockopt_t *option)
     }
 
     rv = ogs_sctp_peer_addr_params(sock, option);
-    ogs_assert(rv == OGS_OK);
+    if (rv != OGS_OK)
+        return OGS_ERROR;
 
     rv = ogs_sctp_rto_info(sock, option);
-    ogs_assert(rv == OGS_OK);
+    if (rv != OGS_OK)
+        return OGS_ERROR;
 
     if (option->sctp_nodelay) {
         rv = ogs_sctp_nodelay(sock, true);
-        ogs_assert(rv == OGS_OK);
+        if (rv != OGS_OK)
+            return OGS_ERROR;
     }
 
     return OGS_OK;

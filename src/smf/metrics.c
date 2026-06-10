@@ -445,7 +445,7 @@ SMF_METR_BY_CAUSE_CTR_ENTRY(
 void smf_metrics_init_by_cause(void);
 int smf_metrics_free_inst_by_cause(ogs_metrics_inst_t **inst);
 typedef struct smf_metric_key_by_cause_s {
-    int                         cause;
+    uint8_t                     cause;
     smf_metric_type_by_cause_t  t;
 } smf_metric_key_by_cause_t;
 
@@ -464,15 +464,16 @@ void smf_metrics_inst_by_cause_add(int cause,
     cause_key = ogs_calloc(1, sizeof(*cause_key));
     ogs_assert(cause_key);
 
-    cause_key->cause = cause;
+    cause_key->cause = (uint8_t)cause;
     cause_key->t = t;
 
     metrics = ogs_hash_get(metrics_hash_by_cause,
             cause_key, sizeof(*cause_key));
 
     if (!metrics) {
-        char cause_str[4];
-        ogs_snprintf(cause_str, sizeof(cause_str), "%d", cause);
+        char cause_str[8];
+        ogs_snprintf(cause_str, sizeof(cause_str), "%u",
+                (unsigned)cause_key->cause);
 
         metrics = ogs_metrics_inst_new(smf_metrics_spec_by_cause[t],
                 smf_metrics_spec_def_by_cause->num_labels,

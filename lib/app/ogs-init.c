@@ -34,6 +34,20 @@ int __ogs_app_domain;
  * main.c SIGHUP handling); metrics only reads the document at startup.
  */
 static yaml_document_t *config_document_retired = NULL;
+static ogs_thread_mutex_t config_document_mutex;
+static bool config_document_mutex_ready = false;
+
+void ogs_app_config_document_lock(void)
+{
+    if (config_document_mutex_ready)
+        ogs_thread_mutex_lock(&config_document_mutex);
+}
+
+void ogs_app_config_document_unlock(void)
+{
+    if (config_document_mutex_ready)
+        ogs_thread_mutex_unlock(&config_document_mutex);
+}
 
 /*
  * Raise the open-files soft limit up to the hard limit.
@@ -199,6 +213,8 @@ int ogs_app_config_reload(void)
         return OGS_ERROR;
     }
 
+    ogs_app_config_document_lock();
+
     if (config_document_retired) {
         yaml_document_delete(config_document_retired);
         free(config_document_retired);
@@ -208,6 +224,8 @@ int ogs_app_config_reload(void)
     old_document = ogs_app()->document;
     ogs_app()->document = new_document;
     config_document_retired = old_document;
+
+    ogs_app_config_document_unlock();
 
     yaml_parser_delete(&parser);
     ogs_assert(!fclose(file));
@@ -238,6 +256,9 @@ int ogs_app_initialize(
 
     ogs_core_initialize();
     ogs_app_setup_log();
+
+    ogs_thread_mutex_init(&config_document_mutex);
+    config_document_mutex_ready = true;
 
     ogs_app_context_init();
     ogs_app_config_init();
@@ -375,10 +396,19 @@ int ogs_app_initialize(
 
 void ogs_app_terminate(void)
 {
+    ogs_app_config_document_lock();
+
     if (config_document_retired) {
         yaml_document_delete(config_document_retired);
         free(config_document_retired);
         config_document_retired = NULL;
+    }
+
+    ogs_app_config_document_unlock();
+
+    if (config_document_mutex_ready) {
+        ogs_thread_mutex_destroy(&config_document_mutex);
+        config_document_mutex_ready = false;
     }
 
     ogs_app_config_final();

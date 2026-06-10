@@ -298,9 +298,21 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
 
         s1ap_event_push(MME_EVENT_S1AP_MESSAGE, sock, addr, pkbuf, 0, 0);
         return 1;
-    } else if (size == 0 && ogs_socket_errno_would_block()) {
+    } else if (size == 0) {
         ogs_pkbuf_free(pkbuf);
-        return 0;
+
+        if (ogs_socket_errno_would_block())
+            return 0;
+
+        ogs_warn("SCTP recv returned 0 (peer shutdown)");
+
+        addr = ogs_calloc(1, sizeof(ogs_sockaddr_t));
+        if (addr) {
+            memcpy(addr, &from, sizeof(ogs_sockaddr_t));
+            s1ap_event_push(MME_EVENT_S1AP_LO_CONNREFUSED,
+                    sock, addr, NULL, 0, 0);
+        }
+        return -1;
     } else {
         ogs_error("ogs_sctp_recvmsg(%d) failed(%d:%s-0x%x)",
                 size, errno, strerror(errno), flags);

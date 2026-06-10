@@ -174,11 +174,15 @@ int ogs_metrics_context_parse_config(const char *local)
     ogs_yaml_iter_t root_iter;
     int idx = 0;
 
+    ogs_app_config_document_lock();
     document = ogs_app()->document;
     ogs_assert(document);
 
     rv = ogs_metrics_context_prepare();
-    if (rv != OGS_OK) return rv;
+    if (rv != OGS_OK) {
+        ogs_app_config_document_unlock();
+        return rv;
+    }
 
     ogs_yaml_iter_init(&root_iter, document);
     while (ogs_yaml_iter_next(&root_iter)) {
@@ -356,6 +360,7 @@ int ogs_metrics_context_parse_config(const char *local)
         }
     }
 
+    ogs_app_config_document_unlock();
     return OGS_OK;
 }
 

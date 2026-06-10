@@ -26,6 +26,8 @@
 extern "C" {
 #endif
 
+void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue);
+
 void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 void mme_send_delete_session_or_mme_ue_context_release(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue);

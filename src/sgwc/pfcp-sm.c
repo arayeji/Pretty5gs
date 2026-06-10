@@ -350,6 +350,12 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
         case OGS_PFCP_SESSION_DELETION_RESPONSE_TYPE:
             if (!message->h.seid_presence) ogs_error("No SEID");
 
+            if (xact->delete_trigger ==
+                    OGS_PFCP_DELETE_TRIGGER_ORPHAN_PURGE) {
+                ogs_pfcp_xact_commit(xact);
+                break;
+            }
+
             sgwc_sxa_handle_session_deletion_response(
                 sess, xact, e->gtp_message,
                 &message->pfcp_session_deletion_response);
