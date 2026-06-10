@@ -22,7 +22,6 @@
 #include "pfcp-path.h"
 #include "radius-path.h"
 #include "ga-writer.h"
-#include "ogs-trace.h"
 
 volatile int smf_reload_lists_changed = 0;
 
@@ -139,12 +138,17 @@ static bool smf_reload_subnet_exists(
     if (!ipstr || !mask_or_numbits)
         return false;
 
+    int probe_prefix = 0;
+
     if (ogs_ipsubnet(&probe, ipstr, mask_or_numbits) != OGS_OK)
         return false;
 
+    if (mask_or_numbits)
+        probe_prefix = atoi(mask_or_numbits);
+
     ogs_list_for_each(&ogs_pfcp_self()->subnet_list, subnet) {
         if (subnet->family != probe.family ||
-                subnet->prefixlen != probe.prefixlen)
+                subnet->prefixlen != (uint8_t)probe_prefix)
             continue;
         if (memcmp(subnet->sub.sub, probe.sub, sizeof(probe.sub)) != 0)
             continue;
@@ -359,7 +363,7 @@ static int smf_reload_upf_peer_entry_add_only(ogs_yaml_iter_t *upf_array)
         uint16_t tac[OGS_MAX_NUM_OF_TAI];
         uint8_t num_of_tac = 0;
         const char *dnn[OGS_MAX_NUM_OF_DNN];
-        uint8_t num_of_dnn = 0;
+        int num_of_dnn = 0;
         ogs_sockaddr_t *addr = NULL;
         ogs_pfcp_node_t *node = NULL;
         int rv;

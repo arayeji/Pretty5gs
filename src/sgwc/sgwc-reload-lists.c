@@ -173,7 +173,7 @@ static int sgwc_reload_sgwu_peer_add_only(ogs_yaml_iter_t *sgwu_array)
         uint16_t tac[OGS_MAX_NUM_OF_TAI];
         uint8_t num_of_tac = 0;
         const char *dnn[OGS_MAX_NUM_OF_DNN];
-        uint8_t num_of_dnn = 0;
+        int num_of_dnn = 0;
         ogs_sockaddr_t *addr = NULL;
         ogs_pfcp_node_t *node = NULL;
         int rv;
