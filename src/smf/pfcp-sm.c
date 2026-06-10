@@ -334,6 +334,11 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
         case OGS_PFCP_SESSION_DELETION_RESPONSE_TYPE:
             if (!message->h.seid_presence) ogs_error("No SEID");
 
+            if (xact->delete_trigger == OGS_PFCP_DELETE_TRIGGER_BEST_EFFORT) {
+                ogs_pfcp_xact_commit(xact);
+                break;
+            }
+
             if (!sess) {
                 ogs_gtp_xact_t *gtp_xact =
                     ogs_gtp_xact_find_by_id(xact->assoc_xact_id);

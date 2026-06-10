@@ -26,6 +26,23 @@
 #include "mme-sm.h"
 #include "mme-trace.h"
 
+void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue)
+{
+    mme_event_t e;
+
+    ogs_assert(mme_ue);
+
+    if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
+        return;
+
+    mme_ue->ue_context_will_remove = true;
+
+    memset(&e, 0, sizeof(e));
+    e.id = OGS_FSM_USER_SIG;
+    e.mme_ue_id = mme_ue->id;
+    ogs_fsm_tran(&mme_ue->sm, &emm_state_ue_context_will_remove, &e);
+}
+
 void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
 {
     int r, xact_count;
@@ -181,9 +198,7 @@ void mme_send_delete_session_or_mme_ue_context_release(
              */
             ogs_warn("[%s] No S1 Context - defer UE removal to FSM",
                     mme_ue->imsi_bcd);
-            mme_ue->ue_context_will_remove = true;
-            if (!OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
-                OGS_FSM_TRAN(&mme_ue->sm, &emm_state_ue_context_will_remove);
+            mme_ue_enter_ue_context_will_remove(mme_ue);
         }
     }
 }

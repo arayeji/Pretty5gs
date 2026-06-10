@@ -1005,6 +1005,7 @@ int smf_epc_pfcp_send_session_deletion_best_effort(smf_sess_t *sess)
     xact->epc = true;
     xact->assoc_xact_id = OGS_INVALID_POOL_ID;
     xact->local_seid = sess->smf_n4_seid;
+    xact->delete_trigger = OGS_PFCP_DELETE_TRIGGER_BEST_EFFORT;
 
     memset(&h, 0, sizeof(ogs_pfcp_header_t));
     h.type = OGS_PFCP_SESSION_DELETION_REQUEST_TYPE;
@@ -1013,12 +1014,14 @@ int smf_epc_pfcp_send_session_deletion_best_effort(smf_sess_t *sess)
     n4buf = smf_n4_build_session_deletion_request(h.type, sess);
     if (!n4buf) {
         ogs_error("smf_n4_build_session_deletion_request() failed");
+        ogs_pfcp_xact_delete(xact);
         return OGS_ERROR;
     }
 
     rv = ogs_pfcp_xact_update_tx(xact, &h, n4buf);
     if (rv != OGS_OK) {
         ogs_error("ogs_pfcp_xact_update_tx() failed");
+        ogs_pfcp_xact_delete(xact);
         return OGS_ERROR;
     }
 

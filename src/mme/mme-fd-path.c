@@ -1602,6 +1602,7 @@ cleanup:
     /* Free s6a_message if it wasn't transferred to event */
     if (s6a_message) {
         ogs_free(s6a_message);
+        s6a_message = NULL;
     }
 
     /* Update statistics */
@@ -1653,7 +1654,7 @@ cleanup:
     ret = fd_msg_free(*msg);
     if (ret != 0) {
         ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto cleanup;
+        return;
     }
     *msg = NULL;
 
@@ -2134,8 +2135,10 @@ cleanup:
         /* Free subscription data if it was allocated */
         if (subscription_data) {
             ogs_subscription_data_free(subscription_data);
+            subscription_data = NULL;
         }
         ogs_free(s6a_message);
+        s6a_message = NULL;
     }
 
     /* Update statistics */
@@ -2187,7 +2190,7 @@ cleanup:
     ret = fd_msg_free(*msg);
     if (ret != 0) {
         ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto cleanup;
+        return;
     }
     *msg = NULL;
 
@@ -2546,6 +2549,7 @@ cleanup:
     /* Free s6a_message if it wasn't transferred to event */
     if (s6a_message) {
         ogs_free(s6a_message);
+        s6a_message = NULL;
     }
 
     /* Update statistics */
@@ -2597,7 +2601,7 @@ cleanup:
     ret = fd_msg_free(*msg);
     if (ret != 0) {
         ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto cleanup;
+        return;
     }
     *msg = NULL;
 
