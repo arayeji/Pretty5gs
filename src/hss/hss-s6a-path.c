@@ -57,6 +57,41 @@ static void state_cleanup(struct sess_state *sess_data, os0_t sid, void *opaque)
     ogs_free(sess_data);
 }
 
+static bool hss_s6a_user_name_to_imsi_bcd(
+        struct avp_hdr *hdr, char *imsi_bcd, size_t imsi_bcd_len)
+{
+    char *user_name = NULL;
+    size_t i, j = 0;
+    bool rc = false;
+
+    ogs_assert(imsi_bcd);
+
+    if (!hdr || !hdr->avp_value || !hdr->avp_value->os.data ||
+            hdr->avp_value->os.len == 0 || imsi_bcd_len == 0)
+        return false;
+
+    user_name = ogs_strndup(
+            (char *)hdr->avp_value->os.data, hdr->avp_value->os.len);
+    if (!user_name)
+        return false;
+
+    imsi_bcd[0] = '\0';
+    for (i = 0; user_name[i]; i++) {
+        if (user_name[i] >= '0' && user_name[i] <= '9') {
+            if (j + 1 >= imsi_bcd_len)
+                goto done;
+            imsi_bcd[j++] = user_name[i];
+        }
+    }
+    imsi_bcd[j] = '\0';
+
+    rc = ogs_imsi_bcd_is_valid(imsi_bcd);
+
+done:
+    ogs_free(user_name);
+    return rc;
+}
+
 static int hss_s6a_air_add_os_avp(struct avp *group, struct dict_object *avp_obj,
         uint8_t *data, size_t len)
 {
