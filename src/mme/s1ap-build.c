@@ -639,6 +639,7 @@ ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
                         sess->session ? sess->session->name : "-",
                         pgw_peer[0] ? pgw_peer : "-",
                         sgw_ue ? sgw_ue->sgw_s11_teid : 0);
+                ogs_s1ap_free(&pdu);
                 return NULL;
             }
 
@@ -651,8 +652,10 @@ ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
 
             e_rab = &item->value.choice.E_RABToBeSetupItemCtxtSUReq;
 
-            if (fill_e_rab_to_be_setup(e_rab, bearer) != OGS_OK)
+            if (fill_e_rab_to_be_setup(e_rab, bearer) != OGS_OK) {
+                ogs_s1ap_free(&pdu);
                 return NULL;
+            }
 
             if (emmbuf && emmbuf->len) {
                 ogs_debug("    NASPdu[%p:%d]", emmbuf, emmbuf->len);
@@ -714,8 +717,10 @@ ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
 
                 e_rab = &item->value.choice.E_RABToBeSetupItemCtxtSUReq;
 
-                if (fill_e_rab_to_be_setup(e_rab, bearer) != OGS_OK)
+                if (fill_e_rab_to_be_setup(e_rab, bearer) != OGS_OK) {
+                    ogs_s1ap_free(&pdu);
                     return NULL;
+                }
 
                 if (emmbuf && emmbuf->len) {
                     ogs_debug("    NASPdu[%p:%d]", emmbuf, emmbuf->len);

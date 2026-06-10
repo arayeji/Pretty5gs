@@ -21,7 +21,22 @@
 #include "sgwc-reload-lists.h"
 #include "pfcp-path.h"
 
-int sgwc_reload_lists_changed = 0;
+volatile int sgwc_reload_lists_changed = 0;
+
+static char *sgwc_reload_owned_cdr_node_id;
+static char *sgwc_reload_owned_cdr_local_address;
+
+static void sgwc_reload_replace_cdr_string(const char **field, char **owned,
+        const char *cv)
+{
+    char *dup = (cv && cv[0]) ? ogs_strdup(cv) : NULL;
+    char *old = *owned;
+
+    *field = dup;
+    *owned = dup;
+    if (old)
+        ogs_free(old);
+}
 
 static bool sgwc_reload_nwi_rule_key(const char *key)
 {
@@ -337,11 +352,13 @@ static void sgwc_reload_cdr_scalars(ogs_yaml_iter_t *sgwc_iter)
                     "(restart required)");
         } else if (!strcmp(ck, "node_id") ||
                 !strcmp(ck, "nodeid")) {
-            self->cdr.node_id = cv;
+            sgwc_reload_replace_cdr_string(&self->cdr.node_id,
+                    &sgwc_reload_owned_cdr_node_id, cv);
             sgwc_reload_lists_changed++;
         } else if (!strcmp(ck, "local_address") ||
                 !strcmp(ck, "sgw_address")) {
-            self->cdr.local_address = cv;
+            sgwc_reload_replace_cdr_string(&self->cdr.local_address,
+                    &sgwc_reload_owned_cdr_local_address, cv);
             sgwc_reload_lists_changed++;
         } else if (!strcmp(ck, "interim_interval_s") ||
                 !strcmp(ck, "interim_interval")) {

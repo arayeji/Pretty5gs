@@ -28,6 +28,14 @@
 int __ogs_app_domain;
 
 /*
+ * Previous YAML document kept until the next successful reload so any
+ * config strings copied from the prior document remain valid across one
+ * reload cycle. Reload itself must run on the daemon main thread (see
+ * main.c SIGHUP handling); metrics only reads the document at startup.
+ */
+static yaml_document_t *config_document_retired = NULL;
+
+/*
  * Raise the open-files soft limit up to the hard limit.
  *
  * Without this, daemons launched outside systemd (manual `./open5gs-mmed`
@@ -191,13 +199,15 @@ int ogs_app_config_reload(void)
         return OGS_ERROR;
     }
 
+    if (config_document_retired) {
+        yaml_document_delete(config_document_retired);
+        free(config_document_retired);
+        config_document_retired = NULL;
+    }
+
     old_document = ogs_app()->document;
     ogs_app()->document = new_document;
-
-    if (old_document) {
-        yaml_document_delete(old_document);
-        free(old_document);
-    }
+    config_document_retired = old_document;
 
     yaml_parser_delete(&parser);
     ogs_assert(!fclose(file));
@@ -365,6 +375,12 @@ int ogs_app_initialize(
 
 void ogs_app_terminate(void)
 {
+    if (config_document_retired) {
+        yaml_document_delete(config_document_retired);
+        free(config_document_retired);
+        config_document_retired = NULL;
+    }
+
     ogs_app_config_final();
     ogs_app_context_final();
 

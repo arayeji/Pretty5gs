@@ -28,7 +28,7 @@ extern "C" {
 
 void sgwc_context_reload_runtime(void);
 
-extern int sgwc_reload_lists_changed;
+extern volatile int sgwc_reload_lists_changed;
 
 #ifdef __cplusplus
 }
