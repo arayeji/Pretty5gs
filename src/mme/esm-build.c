@@ -26,6 +26,18 @@
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __esm_log_domain
 
+static bool esm_pdn_connectivity_reject_t3396_allowed(uint8_t esm_cause)
+{
+    switch (esm_cause) {
+    case OGS_NAS_ESM_CAUSE_OPERATOR_DETERMINED_BARRING:
+    case OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES:
+    case OGS_NAS_ESM_CAUSE_NETWORK_FAILURE:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static bool mme_esm_include_pdn_type_cause(
         mme_sess_t *sess, uint8_t esm_cause)
 {

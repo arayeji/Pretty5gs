@@ -35,6 +35,35 @@
 #include "mme-path.h"
 #include "mme-sm.h"
 
+static enb_ue_t *s1ap_find_enb_ue_by_message_ue_ids(
+        mme_enb_t *enb,
+        S1AP_MME_UE_S1AP_ID_t *mme_ue_s1ap_id,
+        S1AP_ENB_UE_S1AP_ID_t *enb_ue_s1ap_id)
+{
+    enb_ue_t *enb_ue = NULL;
+
+    ogs_assert(enb);
+
+    if (enb_ue_s1ap_id)
+        enb_ue = enb_ue_find_by_enb_ue_s1ap_id(enb, *enb_ue_s1ap_id);
+
+    if (!enb_ue && mme_ue_s1ap_id)
+        enb_ue = enb_ue_find_by_mme_ue_s1ap_id(*mme_ue_s1ap_id);
+
+    if (!enb_ue)
+        return NULL;
+
+    if (mme_ue_s1ap_id && *mme_ue_s1ap_id &&
+            enb_ue->mme_ue_s1ap_id != (uint32_t)*mme_ue_s1ap_id)
+        return NULL;
+
+    if (enb_ue_s1ap_id && *enb_ue_s1ap_id &&
+            enb_ue->enb_ue_s1ap_id != (uint32_t)*enb_ue_s1ap_id)
+        return NULL;
+
+    return enb_ue;
+}
+
 static bool maximum_number_of_enbs_is_reached(void)
 {
     /*
