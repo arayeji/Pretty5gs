@@ -406,6 +406,7 @@ int sgwc_pfcp_send_session_establishment_request(
         xact->gtpbuf = ogs_pkbuf_copy(gtpbuf);
         if (!xact->gtpbuf) {
             ogs_error("ogs_pkbuf_copy() failed");
+            ogs_pfcp_xact_delete(xact);
             return OGS_ERROR;
         }
     }
@@ -490,6 +491,7 @@ int sgwc_pfcp_send_session_modification_request(
         xact->gtpbuf = ogs_pkbuf_copy(gtpbuf);
         if (!xact->gtpbuf) {
             ogs_error("ogs_pkbuf_copy() failed");
+            ogs_pfcp_xact_delete(xact);
             return OGS_ERROR;
         }
     }
@@ -531,6 +533,7 @@ int sgwc_pfcp_send_bearer_modification_request(
         xact->gtpbuf = ogs_pkbuf_copy(gtpbuf);
         if (!xact->gtpbuf) {
             ogs_error("ogs_pkbuf_copy() failed");
+            ogs_pfcp_xact_delete(xact);
             return OGS_ERROR;
         }
     }
@@ -584,6 +587,7 @@ int sgwc_pfcp_send_session_deletion_request(
         xact->gtpbuf = ogs_pkbuf_copy(gtpbuf);
         if (!xact->gtpbuf) {
             ogs_error("ogs_pkbuf_copy() failed");
+            ogs_pfcp_xact_delete(xact);
             return OGS_ERROR;
         }
     }
