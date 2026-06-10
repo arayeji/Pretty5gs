@@ -2800,6 +2800,7 @@ error_out:
     /* Free s6a_message if it wasn't transferred to event */
     if (s6a_message) {
         ogs_free(s6a_message);
+        s6a_message = NULL;
     }
 
     if (!ans)
@@ -2808,35 +2809,35 @@ error_out:
     /* Set appropriate error result code */
     if (result_code == OGS_DIAM_S6A_ERROR_USER_UNKNOWN) {
         ret = ogs_diam_message_experimental_rescode_set(ans, result_code);
-    if (ret != 0) {
-        ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto error_out;
-    }
+        if (ret != 0) {
+            ogs_error("Diameter operation failed (ret=%d)", ret);
+            return 0;
+        }
     } else {
         ret = fd_msg_rescode_set(ans, (char*)"DIAMETER_UNABLE_TO_COMPLY",
                                 NULL, NULL, 1);
-    if (ret != 0) {
-        ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto error_out;
-    }
+        if (ret != 0) {
+            ogs_error("Diameter operation failed (ret=%d)", ret);
+            return 0;
+        }
     }
 
     /* Set the Auth-Session-State AVP */
     ret = fd_msg_avp_new(ogs_diam_auth_session_state, 0, &avp);
     if (ret != 0) {
         ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto error_out;
+        return 0;
     }
     val.i32 = OGS_DIAM_AUTH_SESSION_NO_STATE_MAINTAINED;
     ret = fd_msg_avp_setvalue(avp, &val);
     if (ret != 0) {
         ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto error_out;
+        return 0;
     }
     ret = fd_msg_avp_add(ans, MSG_BRW_LAST_CHILD, avp);
     if (ret != 0) {
         ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto error_out;
+        return 0;
     }
 
     /* Set Vendor-Specific-Application-Id AVP */
@@ -2844,13 +2845,13 @@ error_out:
             ans, OGS_DIAM_S6A_APPLICATION_ID);
     if (ret != 0) {
         ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto error_out;
+        return 0;
     }
 
     /* Send error response */
     ret = fd_msg_send(msg, NULL, NULL);
     if (ret != 0)
-        ogs_error("fd_msg_send() failed [%d] (Insert-Subscriber-Data error)", ret);
+        ogs_error("fd_msg_send() failed [%d] (Cancel-Location error)", ret);
 
     return 0;
 }
@@ -3275,8 +3276,10 @@ error_out:
     if (s6a_message) {
         if (subscription_data) {
             ogs_subscription_data_free(subscription_data);
+            subscription_data = NULL;
         }
         ogs_free(s6a_message);
+        s6a_message = NULL;
     }
 
     if (!ans)
@@ -3286,7 +3289,7 @@ error_out:
     ret = ogs_diam_message_experimental_rescode_set(ans, result_code);
     if (ret != 0) {
         ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto error_out;
+        return 0;
     }
 
 outnoexp:
@@ -3294,18 +3297,18 @@ outnoexp:
     ret = fd_msg_avp_new(ogs_diam_auth_session_state, 0, &avp);
     if (ret != 0) {
         ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto error_out;
+        return 0;
     }
     val.i32 = OGS_DIAM_AUTH_SESSION_NO_STATE_MAINTAINED;
     ret = fd_msg_avp_setvalue(avp, &val);
     if (ret != 0) {
         ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto error_out;
+        return 0;
     }
     ret = fd_msg_avp_add(ans, MSG_BRW_LAST_CHILD, avp);
     if (ret != 0) {
         ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto error_out;
+        return 0;
     }
 
     /* Set Vendor-Specific-Application-Id AVP */
@@ -3313,7 +3316,7 @@ outnoexp:
             ans, OGS_DIAM_S6A_APPLICATION_ID);
     if (ret != 0) {
         ogs_error("Diameter operation failed (ret=%d)", ret);
-        goto error_out;
+        return 0;
     }
 
     /* Send error response */

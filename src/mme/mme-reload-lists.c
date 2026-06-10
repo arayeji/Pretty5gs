@@ -182,7 +182,7 @@ static int reload_served_tai_add_one(
 static int reload_served_tai_add_range(
         const ogs_plmn_id_t *plmn_id, uint16_t start, uint16_t end)
 {
-    uint16_t tac;
+    uint32_t tac;
     int added = 0;
 
     ogs_assert(plmn_id);
@@ -191,7 +191,7 @@ static int reload_served_tai_add_range(
         return 0;
 
     for (tac = start; tac <= end; tac++)
-        added += reload_served_tai_add_one(plmn_id, tac);
+        added += reload_served_tai_add_one(plmn_id, (uint16_t)tac);
 
     return added;
 }

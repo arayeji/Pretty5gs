@@ -459,6 +459,7 @@ void sgwc_s5c_handle_modify_bearer_response(
      ********************/
     ogs_assert(s5c_xact);
     s11_xact = ogs_gtp_xact_find_by_id(s5c_xact->assoc_xact_id);
+    modify_action = s5c_xact->modify_action;
 
     rv = ogs_gtp_xact_commit(s5c_xact);
     ogs_expect(rv == OGS_OK);
@@ -467,7 +468,6 @@ void sgwc_s5c_handle_modify_bearer_response(
         sgwc_log_no_s11_xact(sess, s5c_xact, "S5 Modify Bearer Response");
         return;
     }
-    modify_action = s5c_xact->modify_action;
 
     /************************
      * Getting Cause Value

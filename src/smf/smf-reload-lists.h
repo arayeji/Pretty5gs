@@ -28,7 +28,7 @@ extern "C" {
 
 void smf_context_reload_runtime(void);
 
-extern int smf_reload_lists_changed;
+extern volatile int smf_reload_lists_changed;
 
 #ifdef __cplusplus
 }
