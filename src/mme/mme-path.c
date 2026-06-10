@@ -155,7 +155,9 @@ void mme_send_delete_session_or_mme_ue_context_release(
     int r, xact_count = 0;
 
     ogs_assert(mme_ue);
-    ogs_assert(enb_ue);
+
+    if (!enb_ue)
+        enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
 
     xact_count = mme_ue_xact_count(mme_ue, OGS_GTP_LOCAL_ORIGINATOR);
 
@@ -172,7 +174,16 @@ void mme_send_delete_session_or_mme_ue_context_release(
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
         } else {
-            ogs_warn("[%s] No S1 Context", mme_ue->imsi_bcd);
+            /*
+             * No S1 context exists (eNB UE context already gone).
+             *
+             * Defer UE removal to EMM FSM by setting ue_context_will_remove.
+             */
+            ogs_warn("[%s] No S1 Context - defer UE removal to FSM",
+                    mme_ue->imsi_bcd);
+            mme_ue->ue_context_will_remove = true;
+            if (!OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
+                OGS_FSM_TRAN(&mme_ue->sm, &emm_state_ue_context_will_remove);
         }
     }
 }

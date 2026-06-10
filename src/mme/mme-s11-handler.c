@@ -309,10 +309,7 @@ static void mme_s11_create_session_fail(
         ogs_assert(r != OGS_ERROR);
     }
 
-    if (enb_ue)
-        mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
-    else
-        ogs_error("No S1 Context");
+    mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
 }
 
 void mme_s11_handle_create_session_response(
