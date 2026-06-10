@@ -4590,6 +4590,9 @@ void mme_vlr_remove(mme_vlr_t *vlr)
 
     mme_vlr_close(vlr);
 
+    if (vlr->t_conn)
+        ogs_timer_delete(vlr->t_conn);
+
     ogs_freeaddrinfo(vlr->sa_list);
     ogs_freeaddrinfo(vlr->local_sa_list);
     if (vlr->option)

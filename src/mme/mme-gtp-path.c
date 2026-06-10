@@ -500,6 +500,7 @@ int mme_gtp_send_create_session_request(
             OGS_UINT_TO_POINTER(sess->id));
     if (!xact) {
         ogs_error("ogs_gtp_xact_local_create() failed");
+        ogs_pkbuf_free(pkbuf);
         mme_ue_progress(mme_ue, "create_session_req_fail");
         return OGS_ERROR;
     }
@@ -554,6 +555,7 @@ int mme_gtp_send_modify_bearer_request(
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!xact) {
         ogs_error("ogs_gtp_xact_local_create() failed");
+        ogs_pkbuf_free(pkbuf);
         return OGS_ERROR;
     }
     xact->modify_action = modify_action;
@@ -615,6 +617,7 @@ int mme_gtp_send_delete_session_request(
             OGS_UINT_TO_POINTER(sess->id));
     if (!xact) {
         ogs_error("ogs_gtp_xact_local_create() failed");
+        ogs_pkbuf_free(s11buf);
         return OGS_ERROR;
     }
     xact->delete_action = action;
@@ -854,6 +857,7 @@ int mme_gtp_send_release_access_bearers_request(
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!xact) {
         ogs_error("ogs_gtp_xact_local_create() failed");
+        ogs_pkbuf_free(pkbuf);
         return OGS_ERROR;
     }
     xact->release_action = action;
@@ -996,6 +1000,7 @@ int mme_gtp_send_create_indirect_data_forwarding_tunnel_request(
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!xact) {
         ogs_error("ogs_gtp_xact_local_create() failed");
+        ogs_pkbuf_free(pkbuf);
         return OGS_ERROR;
     }
     xact->local_teid = mme_ue->gn.mme_gn_teid;
@@ -1038,6 +1043,7 @@ int mme_gtp_send_delete_indirect_data_forwarding_tunnel_request(
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!xact) {
         ogs_error("ogs_gtp_xact_local_create() failed");
+        ogs_pkbuf_free(pkbuf);
         return OGS_ERROR;
     }
     xact->delete_indirect_action = action;
@@ -1082,6 +1088,7 @@ int mme_gtp_send_bearer_resource_command(
             OGS_UINT_TO_POINTER(bearer->id));
     if (!xact) {
         ogs_error("ogs_gtp_xact_local_create() failed");
+        ogs_pkbuf_free(pkbuf);
         return OGS_ERROR;
     }
     xact->xid |= OGS_GTP_CMD_XACT_ID;

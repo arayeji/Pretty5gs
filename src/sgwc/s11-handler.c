@@ -1136,6 +1136,7 @@ void sgwc_s11_handle_delete_session_request(
                 OGS_UINT_TO_POINTER(sess->id));
         if (!s5c_xact) {
             ogs_error("ogs_gtp_xact_local_create() failed");
+            ogs_pkbuf_free(gtpbuf);
             return;
         }
         s5c_xact->local_teid = sess->sgw_s5c_teid;
@@ -2318,6 +2319,7 @@ void sgwc_s11_handle_bearer_resource_command(
             OGS_UINT_TO_POINTER(bearer->id));
     if (!s5c_xact) {
         ogs_error("ogs_gtp_xact_local_create() failed");
+        ogs_pkbuf_free(pkbuf);
         return;
     }
     s5c_xact->local_teid = sess->sgw_s5c_teid;

@@ -560,12 +560,14 @@ int smf_pfcp_send_modify_list(
     n4buf = (*modify_list)(h.type, sess, xact);
     if (!n4buf) {
         ogs_error("modify_list() failed");
+        ogs_pfcp_xact_delete(xact);
         return OGS_ERROR;
     }
 
     rv = ogs_pfcp_xact_update_tx(xact, &h, n4buf);
     if (rv != OGS_OK) {
         ogs_error("ogs_pfcp_xact_update_tx() failed");
+        ogs_pfcp_xact_delete(xact);
         return OGS_ERROR;
     }
 
@@ -575,9 +577,12 @@ int smf_pfcp_send_modify_list(
         return OGS_OK;
     } else {
         rv = ogs_pfcp_xact_commit(xact);
-        ogs_expect(rv == OGS_OK);
+        if (rv != OGS_OK) {
+            ogs_pfcp_xact_delete(xact);
+            return OGS_ERROR;
+        }
 
-        return rv;
+        return OGS_OK;
     }
 }
 
@@ -644,12 +649,14 @@ int smf_5gc_pfcp_send_session_establishment_request(
     n4buf = smf_n4_build_session_establishment_request(h.type, sess, xact);
     if (!n4buf) {
         ogs_error("smf_n4_build_session_establishment_request() failed");
+        ogs_pfcp_xact_delete(xact);
         return OGS_ERROR;
     }
 
     rv = ogs_pfcp_xact_update_tx(xact, &h, n4buf);
     if (rv != OGS_OK) {
         ogs_error("ogs_pfcp_xact_update_tx() failed");
+        ogs_pfcp_xact_delete(xact);
         return OGS_ERROR;
     }
 
@@ -878,12 +885,14 @@ int smf_epc_pfcp_send_session_establishment_request(
     n4buf = smf_n4_build_session_establishment_request(h.type, sess, xact);
     if (!n4buf) {
         ogs_error("smf_n4_build_session_establishment_request() failed");
+        ogs_pfcp_xact_delete(xact);
         return OGS_ERROR;
     }
 
     rv = ogs_pfcp_xact_update_tx(xact, &h, n4buf);
     if (rv != OGS_OK) {
         ogs_error("ogs_pfcp_xact_update_tx() failed");
+        ogs_pfcp_xact_delete(xact);
         return OGS_ERROR;
     }
 
@@ -921,6 +930,7 @@ int smf_epc_pfcp_send_all_pdr_modification_request(
         xact->gtpbuf = ogs_pkbuf_copy(gtpbuf);
         if (!xact->gtpbuf) {
             ogs_error("ogs_pkbuf_copy() failed");
+            ogs_pfcp_xact_delete(xact);
             return OGS_ERROR;
         }
     }
@@ -1081,12 +1091,14 @@ int smf_epc_pfcp_send_session_deletion_request(
     n4buf = smf_n4_build_session_deletion_request(h.type, sess);
     if (!n4buf) {
         ogs_error("smf_n4_build_session_deletion_request() failed");
+        ogs_pfcp_xact_delete(xact);
         return OGS_ERROR;
     }
 
     rv = ogs_pfcp_xact_update_tx(xact, &h, n4buf);
     if (rv != OGS_OK) {
         ogs_error("ogs_pfcp_xact_update_tx() failed");
+        ogs_pfcp_xact_delete(xact);
         return OGS_ERROR;
     }
 
