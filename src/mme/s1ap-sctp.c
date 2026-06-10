@@ -299,10 +299,12 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
         s1ap_event_push(MME_EVENT_S1AP_MESSAGE, sock, addr, pkbuf, 0, 0);
         return 1;
     } else if (size == 0) {
+        /*
+         * SCTP one-to-one: recv returning 0 is peer shutdown. Do not consult
+         * errno — a stale EAGAIN would make us return 0 and leave a dead
+         * association on the poll loop.
+         */
         ogs_pkbuf_free(pkbuf);
-
-        if (ogs_socket_errno_would_block())
-            return 0;
 
         ogs_warn("SCTP recv returned 0 (peer shutdown)");
 
