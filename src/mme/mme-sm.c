@@ -414,7 +414,12 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
         ogs_fsm_dispatch(&mme_ue->sm, e);
         if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_exception)) {
+            enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+            if (mme_ue->ue_context_will_remove &&
+                    !OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
+                OGS_FSM_TRAN(&mme_ue->sm, &emm_state_ue_context_will_remove);
         }
 
         ogs_pkbuf_free(pkbuf);
@@ -437,6 +442,9 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
 
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+            if (mme_ue->ue_context_will_remove &&
+                    !OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
+                OGS_FSM_TRAN(&mme_ue->sm, &emm_state_ue_context_will_remove);
         }
         break;
 

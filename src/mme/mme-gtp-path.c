@@ -639,8 +639,13 @@ void mme_gtp_send_delete_all_sessions(
 
     ogs_assert(mme_ue);
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
     ogs_assert(action);
+
+    if (!sgw_ue) {
+        ogs_list_for_each_safe(&mme_ue->sess_list, next_sess, sess)
+            MME_SESS_CLEAR(sess);
+        return;
+    }
 
     ogs_list_for_each_safe(&mme_ue->sess_list, next_sess, sess) {
         if (MME_HAVE_SGW_S1U_PATH(sess)) {
