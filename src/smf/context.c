@@ -2672,6 +2672,12 @@ void smf_sess_remove(smf_sess_t *sess)
         ogs_free(sess->sm_context_ref);
     if (sess->sm_context_status_uri)
         ogs_free(sess->sm_context_status_uri);
+    if (sess->gx_sid)
+        ogs_free(sess->gx_sid);
+    if (sess->gy_sid)
+        ogs_free(sess->gy_sid);
+    if (sess->s6b_sid)
+        ogs_free(sess->s6b_sid);
     if (sess->namf.client)
         ogs_sbi_client_remove(sess->namf.client);
 
