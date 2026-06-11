@@ -185,5 +185,11 @@ void ogs_timer_mgr_expire(ogs_timer_mgr_t *manager)
         ogs_timer_stop(this);
         if (this->cb)
             this->cb(this->data);
+        /*
+         * Reclaim one-shot timers here instead of ogs_timer_delete() inside
+         * the callback (forbidden — see comment above).
+         */
+        if (!this->running)
+            ogs_pool_free(&manager->pool, this);
     }
 }

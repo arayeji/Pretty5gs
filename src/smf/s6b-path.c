@@ -23,9 +23,9 @@ static struct session_handler *smf_s6b_reg = NULL;
 static struct disp_hdl *hdl_s6b_fb = NULL;
 
 struct sess_state {
-    smf_sess_t *sess;
     os0_t       s6b_sid;             /* S6B Session-Id */
 
+    ogs_pool_id_t sess_id;
     ogs_pool_id_t xact_id;
 
     struct timespec ts; /* Time of sending the message */
@@ -56,6 +56,7 @@ static __inline__ struct sess_state *new_state(os0_t sid)
         ogs_thread_mutex_unlock(&sess_state_mutex);
         return NULL;
     }
+    new->sess_id = OGS_INVALID_POOL_ID;
 
     ogs_thread_mutex_unlock(&sess_state_mutex);
 
@@ -188,7 +189,7 @@ void smf_s6b_send_aar(smf_sess_t *sess, ogs_gtp_xact_t *xact)
         ogs_debug("    Retrieve session: [%s]", sess_data->s6b_sid);
 
     /* Update session state */
-    sess_data->sess = sess;
+    sess_data->sess_id = sess->id;
     sess_data->xact_id = xact ? xact->id : OGS_INVALID_POOL_ID;
 
     /* Set Origin-Host & Origin-Realm */
@@ -413,13 +414,15 @@ static void smf_s6b_aaa_cb(void *data, struct msg **msg)
 
     ogs_debug("    Retrieve its data: [%s]", sess_data->s6b_sid);
 
-    if (!sess_data->sess) {
+    if (sess_data->sess_id == OGS_INVALID_POOL_ID) {
         ogs_warn("No Session");
         goto cleanup;
     }
-    sess = smf_sess_find_active_by_id(sess_data->sess->id);
+    sess = smf_sess_find_active_by_id(sess_data->sess_id);
     if (!sess) {
-        ogs_warn("Session already removed [%d]", (int)sess_data->sess->id);
+        ogs_warn("Session already removed [%d]", (int)sess_data->sess_id);
+        state_cleanup(sess_data, NULL, NULL);
+        sess_data = NULL;
         goto cleanup;
     }
 
@@ -525,26 +528,28 @@ cleanup:
     /* Update statistics and cleanup */
     ogs_assert(pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) == 0);
 
-    /* Calculate response time */
-    dur = ((ts.tv_sec - sess_data->ts.tv_sec) * 1000000) +
-        ((ts.tv_nsec - sess_data->ts.tv_nsec) / 1000);
+    if (sess_data) {
+        /* Calculate response time */
+        dur = ((ts.tv_sec - sess_data->ts.tv_sec) * 1000000) +
+            ((ts.tv_nsec - sess_data->ts.tv_nsec) / 1000);
 
-    if (ogs_diam_stats_self()->stats.nb_recv) {
-        /* Update average response time */
-        ogs_diam_stats_self()->stats.avg =
-            (ogs_diam_stats_self()->stats.avg *
-             ogs_diam_stats_self()->stats.nb_recv + dur) /
-            (ogs_diam_stats_self()->stats.nb_recv + 1);
+        if (ogs_diam_stats_self()->stats.nb_recv) {
+            /* Update average response time */
+            ogs_diam_stats_self()->stats.avg =
+                (ogs_diam_stats_self()->stats.avg *
+                 ogs_diam_stats_self()->stats.nb_recv + dur) /
+                (ogs_diam_stats_self()->stats.nb_recv + 1);
 
-        /* Update min/max response times */
-        if (dur < ogs_diam_stats_self()->stats.shortest)
+            /* Update min/max response times */
+            if (dur < ogs_diam_stats_self()->stats.shortest)
+                ogs_diam_stats_self()->stats.shortest = dur;
+            if (dur > ogs_diam_stats_self()->stats.longest)
+                ogs_diam_stats_self()->stats.longest = dur;
+        } else {
             ogs_diam_stats_self()->stats.shortest = dur;
-        if (dur > ogs_diam_stats_self()->stats.longest)
             ogs_diam_stats_self()->stats.longest = dur;
-    } else {
-        ogs_diam_stats_self()->stats.shortest = dur;
-        ogs_diam_stats_self()->stats.longest = dur;
-        ogs_diam_stats_self()->stats.avg = dur;
+            ogs_diam_stats_self()->stats.avg = dur;
+        }
     }
 
     /* Update error/success counters */
@@ -653,7 +658,7 @@ void smf_s6b_send_str(smf_sess_t *sess, ogs_gtp_xact_t *xact, uint32_t cause)
     ogs_debug("    Retrieve session: [%s]", sess_data->s6b_sid);
 
     /* Update session state */
-    sess_data->sess = sess;
+    sess_data->sess_id = sess->id;
     sess_data->xact_id = xact ? xact->id : OGS_INVALID_POOL_ID;
 
     /* Set Origin-Host & Origin-Realm */
@@ -766,13 +771,15 @@ static void smf_s6b_sta_cb(void *data, struct msg **msg)
 
     ogs_debug("    Retrieve its data: [%s]", sess_data->s6b_sid);
 
-    if (!sess_data->sess) {
+    if (sess_data->sess_id == OGS_INVALID_POOL_ID) {
         ogs_warn("No Session");
         goto cleanup;
     }
-    sess = smf_sess_find_active_by_id(sess_data->sess->id);
+    sess = smf_sess_find_active_by_id(sess_data->sess_id);
     if (!sess) {
-        ogs_warn("Session already removed [%d]", (int)sess_data->sess->id);
+        ogs_warn("Session already removed [%d]", (int)sess_data->sess_id);
+        state_cleanup(sess_data, NULL, NULL);
+        sess_data = NULL;
         goto cleanup;
     }
 
