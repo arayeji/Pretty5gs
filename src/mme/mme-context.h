@@ -278,7 +278,7 @@ typedef struct mme_context_s {
     } emergency;
 
     /*
-     * Operator maintenance window (/admin/maintenance/*). Rejects new EPS
+     * Operator maintenance window (HTTP /admin/maintenance). Rejects new EPS
      * attach and additional PDN connectivity; drain detaches all UEs.
      */
     bool maintenance_mode;
