@@ -1376,6 +1376,11 @@ int smf_radius_authorize_for_session(smf_sess_t *sess)
         }
     }
 
+    if (smf_sess_find_by_id(sess->id) != sess) {
+        ogs_warn("RADIUS: session removed during Access-Request");
+        return OGS_ERROR;
+    }
+
     if (radius_verify_response(req_auth, res, res_len,
                 picked_secret ? picked_secret : "") != OGS_OK) {
         ogs_warn("RADIUS Access-Accept/Reject authenticator mismatch");

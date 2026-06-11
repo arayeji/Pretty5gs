@@ -101,7 +101,10 @@ void ogs_fsm_tran(void *fsm, void *state, void *event)
     ogs_assert(sm);
 
     tmp = sm->state;
-    ogs_assert(tmp);
+    if (!tmp) {
+        ogs_error("FSM transition ignored: state is NULL");
+        return;
+    }
 
     sm->state = state;
     ogs_assert(sm->state);
@@ -119,7 +122,10 @@ void ogs_fsm_dispatch(void *fsm, void *event)
     ogs_assert(sm);
 
     tmp = sm->state;
-    ogs_assert(tmp);
+    if (!tmp) {
+        ogs_error("FSM dispatch ignored: state is NULL");
+        return;
+    }
 
     if (e)
         (*tmp)(sm, e);
