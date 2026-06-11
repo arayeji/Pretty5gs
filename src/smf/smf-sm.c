@@ -36,6 +36,28 @@
 #include "nsmf-handler.h"
 #include "binding.h"
 
+static void smf_admin_drain_sessions(int admin_force)
+{
+    smf_ue_t *ue = NULL, *next_ue = NULL;
+    smf_sess_t *sess = NULL, *next_sess = NULL;
+    int count = 0;
+    int rv;
+
+    ogs_list_for_each_safe(&smf_self()->smf_ue_list, next_ue, ue) {
+        ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
+            rv = smf_epc_pfcp_send_session_deletion_best_effort(sess);
+            ogs_expect(rv == OGS_OK);
+            if (admin_force)
+                smf_sess_remove(sess);
+            count++;
+        }
+        if (admin_force && ogs_list_empty(&ue->sess_list))
+            smf_ue_remove(ue);
+    }
+    ogs_info("admin maintenance: %s %d sessions",
+            admin_force ? "removed" : "initiated drain for", count);
+}
+
 void smf_state_initial(ogs_fsm_t *s, smf_event_t *e)
 {
     smf_sm_debug(e);
@@ -151,6 +173,15 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
             smf_metrics_inst_global_inc(SMF_METR_GLOB_CTR_S5C_RX_CREATESESSIONREQ);
             smf_metrics_inst_gtp_node_inc(smf_gnode->metrics, SMF_METR_GTP_NODE_CTR_S5C_RX_CREATESESSIONREQ);
+            if (smf_self()->maintenance_mode && gtp2_message.h.teid == 0) {
+                ogs_warn("Create Session rejected: SMF maintenance mode");
+                ogs_gtp2_send_error_message(gtp_xact,
+                        gtp2_sender_f_teid.teid_presence ?
+                            gtp2_sender_f_teid.teid : 0,
+                        OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                        OGS_GTP2_CAUSE_NO_RESOURCES_AVAILABLE);
+                break;
+            }
             if (gtp2_message.h.teid == 0) {
                 smf_sess_t *old_sess = NULL;
                 smf_ue_t *collision_ue = NULL;
@@ -313,6 +344,13 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         case OGS_GTP1_CREATE_PDP_CONTEXT_REQUEST_TYPE:
             smf_metrics_inst_global_inc(SMF_METR_GLOB_CTR_GN_RX_CREATEPDPCTXREQ);
             smf_metrics_inst_gtp_node_inc(smf_gnode->metrics, SMF_METR_GTP_NODE_CTR_GN_RX_CREATEPDPCTXREQ);
+            if (smf_self()->maintenance_mode && gtp1_message.h.teid == 0) {
+                ogs_warn("Create PDP Context rejected: SMF maintenance mode");
+                ogs_gtp1_send_error_message(gtp_xact, 0,
+                        OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE,
+                        OGS_GTP1_CAUSE_NO_RESOURCES_AVAILABLE);
+                break;
+            }
             if (gtp1_message.h.teid == 0) {
                 smf_sess_t *old_sess = NULL;
                 smf_ue_t *collision_ue = NULL;
@@ -607,6 +645,15 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                         break;
 
                     DEFAULT
+                        if (smf_self()->maintenance_mode) {
+                            ogs_warn("PDU session create rejected: "
+                                    "SMF maintenance mode");
+                            smf_sbi_send_sm_context_create_error(stream,
+                                    OGS_SBI_HTTP_STATUS_SERVICE_UNAVAILABLE,
+                                    OGS_SBI_APP_ERRNO_NULL,
+                                    "SMF maintenance mode", NULL, NULL);
+                            break;
+                        }
                         sess = smf_sess_add_by_sm_context(&sbi_message);
                         if (!sess) {
                             ogs_error("smf_sess_add_by_sbi_message() failed");
@@ -676,6 +723,16 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                         break;
 
                     DEFAULT
+                        if (smf_self()->maintenance_mode) {
+                            ogs_warn("PDU session create rejected: "
+                                    "SMF maintenance mode");
+                            smf_sbi_send_pdu_session_create_error(stream,
+                                    OGS_SBI_HTTP_STATUS_SERVICE_UNAVAILABLE,
+                                    OGS_SBI_APP_ERRNO_NULL,
+                                    OGS_5GSM_CAUSE_INSUFFICIENT_RESOURCES,
+                                    "SMF maintenance mode", NULL, NULL);
+                            break;
+                        }
                         sess = smf_sess_add_by_pdu_session(&sbi_message);
                         if (!sess) {
                             ogs_error("smf_sess_add_by_sbi_message() failed");
@@ -1495,7 +1552,8 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
 
     case SMF_EVT_ADMIN_MAINTENANCE_ENABLE:
         smf_self()->maintenance_mode = true;
-        ogs_info("admin maintenance: enabled");
+        ogs_info("admin maintenance: enabled (force drain all sessions)");
+        smf_admin_drain_sessions(1);
         break;
 
     case SMF_EVT_ADMIN_MAINTENANCE_DISABLE:
@@ -1504,31 +1562,11 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         break;
 
     case SMF_EVT_ADMIN_MAINTENANCE_DRAIN:
-    {
-        smf_ue_t *ue = NULL, *next_ue = NULL;
-        smf_sess_t *sess = NULL, *next_sess = NULL;
-        int drained = 0;
-
         smf_self()->maintenance_mode = true;
         ogs_info("admin maintenance drain: mode=%s",
                 e->admin_force ? "force" : "graceful");
-
-        ogs_list_for_each_safe(&smf_self()->smf_ue_list, next_ue, ue) {
-            ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
-                rv = smf_epc_pfcp_send_session_deletion_best_effort(sess);
-                ogs_expect(rv == OGS_OK);
-                if (e->admin_force)
-                    smf_sess_remove(sess);
-                else
-                    drained++;
-            }
-            if (e->admin_force && ogs_list_empty(&ue->sess_list))
-                smf_ue_remove(ue);
-        }
-        ogs_info("admin maintenance drain: initiated for %d sessions",
-                drained);
+        smf_admin_drain_sessions(e->admin_force);
         break;
-    }
 
     default:
         ogs_error("No handler for event %s", smf_event_get_name(e));
