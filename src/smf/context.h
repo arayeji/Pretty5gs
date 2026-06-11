@@ -1015,6 +1015,10 @@ bool smf_gtp_apn_parse(
 smf_sess_t *smf_sess_find(uint32_t index);
 smf_sess_t *smf_sess_find_by_teid(uint32_t teid);
 smf_sess_t *smf_sess_find_by_seid(uint64_t seid);
+/* Pool entry still linked on the UE sess_list (not mid-teardown). */
+smf_sess_t *smf_sess_find_active_by_id(ogs_pool_id_t id);
+smf_sess_t *smf_sess_find_active_by_seid(uint64_t seid);
+#define smf_sess_find_active_by_teid(teid) smf_sess_find_active_by_seid(teid)
 smf_sess_t *smf_sess_find_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type);
 smf_sess_t *smf_sess_find_by_psi(smf_ue_t *smf_ue, uint8_t psi);
 smf_sess_t *smf_sess_find_by_charging_id(uint32_t charging_id);

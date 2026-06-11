@@ -108,7 +108,7 @@ void smf_pfcp_state_will_associate(ogs_fsm_t *s, smf_event_t *e)
             ogs_pfcp_cp_send_association_setup_request(node, node_timeout);
             break;
         case SMF_TIMER_PFCP_NO_ESTABLISHMENT_RESPONSE:
-            sess = smf_sess_find_by_id(e->sess_id);
+            sess = smf_sess_find_active_by_id(e->sess_id);
             if (!sess) {
                 ogs_warn("Session has already been removed");
                 break;
@@ -116,7 +116,7 @@ void smf_pfcp_state_will_associate(ogs_fsm_t *s, smf_event_t *e)
             ogs_fsm_dispatch(&sess->sm, e);
             break;
         case SMF_TIMER_PFCP_NO_DELETION_RESPONSE:
-            sess = smf_sess_find_by_id(e->sess_id);
+            sess = smf_sess_find_active_by_id(e->sess_id);
             if (!sess) {
                 ogs_warn("Session has already been removed");
                 break;
@@ -215,14 +215,14 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
         ogs_assert(xact);
 
         if (message->h.seid_presence && message->h.seid != 0) {
-               sess = smf_sess_find_by_seid(message->h.seid);
+               sess = smf_sess_find_active_by_seid(message->h.seid);
         } else if (xact->local_seid) { /* rx no SEID or SEID=0 */
             /* 3GPP TS 29.244 7.2.2.4.2: we receive SEID=0 under some
              * conditions, such as cause "Session context not found". In those
              * cases, we still want to identify the local session which
              * originated the message, so try harder by using the SEID we
              * locally stored in xact when sending the original request: */
-            sess = smf_sess_find_by_seid(xact->local_seid);
+            sess = smf_sess_find_active_by_seid(xact->local_seid);
         }
         if (sess)
             e->sess_id = sess->id;
@@ -322,6 +322,12 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
         case OGS_PFCP_SESSION_MODIFICATION_RESPONSE_TYPE:
             if (!message->h.seid_presence) ogs_error("No SEID");
 
+            if (!sess) {
+                ogs_error("No Session");
+                ogs_pfcp_xact_commit(xact);
+                break;
+            }
+
             if (xact->epc)
                 smf_epc_n4_handle_session_modification_response(
                     sess, xact, e->gtp2_message,
@@ -390,7 +396,7 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
                 ogs_pfcp_send_heartbeat_request(node, node_timeout));
             break;
         case SMF_TIMER_PFCP_NO_ESTABLISHMENT_RESPONSE:
-            sess = smf_sess_find_by_id(e->sess_id);
+            sess = smf_sess_find_active_by_id(e->sess_id);
             if (!sess) {
                 ogs_warn("Session has already been removed");
                 break;
@@ -398,7 +404,7 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
             ogs_fsm_dispatch(&sess->sm, e);
             break;
         case SMF_TIMER_PFCP_NO_DELETION_RESPONSE:
-            sess = smf_sess_find_by_id(e->sess_id);
+            sess = smf_sess_find_active_by_id(e->sess_id);
             if (!sess) {
                 ogs_warn("Session has already been removed");
                 break;

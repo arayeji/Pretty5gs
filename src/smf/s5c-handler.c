@@ -43,7 +43,7 @@ static void pfcp_sess_timeout(ogs_pfcp_xact_t *xact, void *data)
     sess_id = OGS_POINTER_TO_UINT(data);
     ogs_assert(sess_id >= OGS_MIN_POOL_ID && sess_id <= OGS_MAX_POOL_ID);
 
-    sess = smf_sess_find_by_id(sess_id);
+    sess = smf_sess_find_active_by_id(sess_id);
     if (!sess) {
         ogs_error("PFCP timeout: session[%u] removed type[%u]", sess_id, type);
         return;
