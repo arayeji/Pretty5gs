@@ -12,9 +12,15 @@
 #ifndef OGS_RELOAD_AUDIT_H
 #define OGS_RELOAD_AUDIT_H
 
-#include "ogs-compat.h"
-
 #include <stdbool.h>
+#include <time.h>
+
+#if defined(__GNUC__)
+#define OGS_RELOAD_AUDIT_PRINTF(fmt, arg) \
+    __attribute__((format(printf, fmt, arg)))
+#else
+#define OGS_RELOAD_AUDIT_PRINTF(fmt, arg)
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -22,11 +28,28 @@ extern "C" {
 
 #define OGS_RELOAD_AUDIT_MAX_LINES 128
 #define OGS_RELOAD_AUDIT_LINE_LEN  384
+#define OGS_RELOAD_AUDIT_NF_LEN    16
+
+typedef struct ogs_reload_audit_snapshot_s {
+    bool valid;
+    time_t finished_at;
+    bool ok;
+    char nf[OGS_RELOAD_AUDIT_NF_LEN];
+    int change_count;
+    int line_count;
+    char lines[OGS_RELOAD_AUDIT_MAX_LINES][OGS_RELOAD_AUDIT_LINE_LEN];
+} ogs_reload_audit_snapshot_t;
 
 void ogs_reload_audit_begin(void);
-void ogs_reload_audit_note(const char *fmt, ...) OGS_GNUC_PRINTF(1, 2);
-void ogs_reload_audit_warn(const char *fmt, ...) OGS_GNUC_PRINTF(1, 2);
+void ogs_reload_audit_note(const char *fmt, ...) OGS_RELOAD_AUDIT_PRINTF(1, 2);
+void ogs_reload_audit_warn(const char *fmt, ...) OGS_RELOAD_AUDIT_PRINTF(1, 2);
 void ogs_reload_audit_finish(const char *nf, bool yaml_ok);
+void ogs_reload_audit_record_startup(const char *nf);
+
+const ogs_reload_audit_snapshot_t *ogs_reload_audit_get_last(void);
+
+struct cJSON;
+void ogs_reload_audit_snapshot_to_json(struct cJSON *parent);
 
 #ifdef __cplusplus
 }

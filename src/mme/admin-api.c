@@ -26,6 +26,7 @@
 #include "mme-event.h"
 
 #include "admin-api.h"   /* pulls in ogs-metrics.h */
+#include "runtime-config.h"
 
 #include <stdarg.h>
 #include <string.h>
@@ -346,7 +347,7 @@ int mme_admin_maintenance_status(const ogs_metrics_query_t *q,
 
 void mme_admin_api_register(void)
 {
-    ogs_metrics_register_custom_ep(ogs_metrics_config_file_dump,
+    ogs_metrics_register_custom_ep(mme_dump_runtime_config,
             "/admin/config");
     ogs_metrics_register_custom_ep(mme_dump_maintenance_status,
             "/admin/maintenance");

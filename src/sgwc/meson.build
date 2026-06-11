@@ -52,18 +52,20 @@ libsgwc_sources = files('''
     sgwc-trace.c
     sgwc-gtp-interop.c
     admin-api.c
+    runtime-config.c
+    ../../lib/app/ogs-reload-audit-json.c
     metrics.c
     ../../lib/metrics/prometheus/json_pager.c
 '''.split())
 
 libsgwc = static_library('sgwc',
     sources : libsgwc_sources,
-    dependencies : [libmetrics_dep, libpfcp_dep],
+    dependencies : [libmetrics_dep, libpfcp_dep, libsbi_dep],
     install : false)
 
 libsgwc_dep = declare_dependency(
     link_with : libsgwc,
-    dependencies : [libmetrics_dep, libpfcp_dep])
+    dependencies : [libmetrics_dep, libpfcp_dep, libsbi_dep])
 
 sgwc_sources = files('''
     app.c

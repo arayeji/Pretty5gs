@@ -169,9 +169,6 @@ typedef struct ogs_metrics_custom_ep_s {
 void ogs_metrics_register_custom_ep(ogs_metrics_custom_ep_hdlr_t handler,
         const char *endpoint);
 
-size_t ogs_metrics_config_file_dump(char *buf, size_t buflen,
-        size_t page, size_t page_size, const ogs_metrics_query_t *q);
-
 /*
  * Admin endpoints (POST/GET). Restricted to loopback and private/local
  * client addresses (see prometheus/context.c); /metrics is not gated.

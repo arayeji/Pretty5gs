@@ -19,7 +19,7 @@
 /*
  *
  * Connected MME UEs (LTE) JSON dumper for the Prometheus HTTP server (/ue-info).
- * - supi, cm_state, enb_info, location, ambr, slices, pdn_count
+ * - supi, cm_state, enb_info, location, ambr, sgw, pdn (with pgw), pdn_count
  * - pager: /ue-info?page=0&page_size=100 (0-based, page=-1 without paging) Default: page=0 page_size=100=MAXSIZE
  *
  * path: http://MME_IP:9090/ue-info
@@ -51,9 +51,19 @@
  *         "downlink": 1000000000,
  *         "uplink": 1000000000
  *       },
+ *       "sgw": {
+ *         "address": "172.16.28.85",
+ *         "port": 2123,
+ *         "s11_teid": 12345
+ *       },
  *       "pdn": [
  *         {
  *           "apn": "internet",
+ *           "pgw": {
+ *             "address": "10.0.0.5",
+ *             "s5c_teid": 67890,
+ *             "config_selected": "10.0.0.1"
+ *           },
  *           "qos_flows": [
  *             {
  *               "ebi": 5
@@ -120,6 +130,122 @@ size_t mme_dump_ue_info(char *buf, size_t buflen,
 static inline const char *cm_state_str(const mme_ue_t *ue)
 {
     return (ue && ECM_CONNECTED(ue)) ? "connected" : "idle";
+}
+
+static bool ogs_ip_to_string(const ogs_ip_t *ip, char *buf, size_t buflen)
+{
+    char ipbuf[OGS_ADDRSTRLEN];
+
+    if (!ip || !buf || buflen == 0)
+        return false;
+
+    buf[0] = '\0';
+
+    if (ip->ipv4) {
+        ogs_cpystrn(buf, OGS_INET_NTOP(&ip->addr, ipbuf), buflen);
+        return true;
+    }
+    if (ip->ipv6) {
+        ogs_cpystrn(buf, OGS_INET6_NTOP(ip->addr6, ipbuf), buflen);
+        return true;
+    }
+
+    return false;
+}
+
+static cJSON *build_sgw(const mme_ue_t *ue)
+{
+    sgw_ue_t *sgw_ue = NULL;
+    mme_sgw_t *sgw = NULL;
+    cJSON *o = NULL;
+    char addr[OGS_ADDRSTRLEN];
+
+    if (!ue)
+        return NULL;
+
+    sgw_ue = sgw_ue_find_by_id(ue->sgw_ue_id);
+    if (!sgw_ue || !sgw_ue->sgw)
+        return NULL;
+
+    sgw = sgw_ue->sgw;
+    if (!sgw->gnode.sa_list)
+        return NULL;
+
+    o = cJSON_CreateObject();
+    if (!o)
+        return NULL;
+
+    OGS_ADDR(sgw->gnode.sa_list, addr);
+    if (!cJSON_AddStringToObject(o, "address", addr))
+        goto fail;
+
+    if (!cJSON_AddNumberToObject(o, "port",
+                (double)OGS_PORT(sgw->gnode.sa_list)))
+        goto fail;
+
+    if (sgw_ue->sgw_s11_teid) {
+        if (!cJSON_AddNumberToObject(o, "s11_teid",
+                    (double)sgw_ue->sgw_s11_teid))
+            goto fail;
+    }
+
+    return o;
+
+fail:
+    cJSON_Delete(o);
+    return NULL;
+}
+
+static cJSON *build_pgw(const mme_sess_t *sess)
+{
+    cJSON *o = NULL;
+    char runtime_addr[OGS_ADDRSTRLEN];
+    char config_addr[OGS_ADDRSTRLEN];
+    mme_pgw_t *pgw = NULL;
+    bool has_runtime = false;
+    bool has_config = false;
+
+    if (!sess)
+        return NULL;
+
+    if (sess->pgw_s5c_ip.ipv4 || sess->pgw_s5c_ip.ipv6)
+        has_runtime = ogs_ip_to_string(
+                &sess->pgw_s5c_ip, runtime_addr, sizeof(runtime_addr));
+
+    pgw = mme_pgw_find_for_sess(&mme_self()->pgw_list, sess);
+    if (pgw && pgw->sa_list) {
+        OGS_ADDR(pgw->sa_list, config_addr);
+        has_config = true;
+    }
+
+    if (!has_runtime && !has_config && !sess->pgw_s5c_teid)
+        return NULL;
+
+    o = cJSON_CreateObject();
+    if (!o)
+        return NULL;
+
+    if (has_runtime) {
+        if (!cJSON_AddStringToObject(o, "address", runtime_addr))
+            goto fail;
+    }
+
+    if (sess->pgw_s5c_teid) {
+        if (!cJSON_AddNumberToObject(o, "s5c_teid",
+                    (double)sess->pgw_s5c_teid))
+            goto fail;
+    }
+
+    if (has_config) {
+        if (!cJSON_AddStringToObject(o, "config_selected", config_addr))
+            goto fail;
+    }
+
+    return o;
+
+fail:
+    cJSON_Delete(o);
+    return NULL;
 }
 
 static cJSON *build_enb(const mme_ue_t *ue)
@@ -270,6 +396,12 @@ static cJSON *build_pdn_array(const mme_ue_t *ue)
         const char *state = bearer_count ? "active" : "unknown";
         if (!cJSON_AddStringToObject(it, "pdu_state", state)) { cJSON_Delete(it); goto oom_all; }
 
+        {
+            cJSON *pgw = build_pgw(sess);
+            if (pgw)
+                cJSON_AddItemToObjectCS(it, "pgw", pgw);
+        }
+
         cJSON_AddItemToArray(arr, it);
     }
 
@@ -312,6 +444,13 @@ static cJSON *ue_to_json(const mme_ue_t *ue)
         cJSON *ambr = build_ambr(ue);
         if (!ambr) goto end;
         cJSON_AddItemToObjectCS(o, "ambr", ambr);
+    }
+
+    /* selected SGW (S11) */
+    {
+        cJSON *sgw = build_sgw(ue);
+        if (sgw)
+            cJSON_AddItemToObjectCS(o, "sgw", sgw);
     }
 
     /* pdn + pdn_count */

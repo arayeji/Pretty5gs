@@ -12,7 +12,7 @@
 #include "ogs-reload-audit.h"
 
 #include "ogs-core.h"
-#include "ogs-init.h"
+#include "ogs-context.h"
 
 #include <stdarg.h>
 #include <string.h>
@@ -20,6 +20,38 @@
 static char reload_audit_lines[OGS_RELOAD_AUDIT_MAX_LINES]
         [OGS_RELOAD_AUDIT_LINE_LEN];
 static int reload_audit_count = 0;
+
+static ogs_reload_audit_snapshot_t reload_audit_last;
+
+static int reload_audit_shown_count(void)
+{
+    if (reload_audit_count <= 0)
+        return 0;
+    if (reload_audit_count > OGS_RELOAD_AUDIT_MAX_LINES)
+        return OGS_RELOAD_AUDIT_MAX_LINES;
+    return reload_audit_count;
+}
+
+static void reload_audit_save_last(const char *nf, bool yaml_ok)
+{
+    int i;
+    int shown = reload_audit_shown_count();
+
+    ogs_assert(nf);
+
+    memset(&reload_audit_last, 0, sizeof(reload_audit_last));
+    reload_audit_last.valid = true;
+    reload_audit_last.finished_at = (time_t)ogs_time_to_sec(ogs_time_now());
+    reload_audit_last.ok = yaml_ok;
+    ogs_cpystrn(reload_audit_last.nf, nf, sizeof(reload_audit_last.nf));
+    reload_audit_last.change_count = reload_audit_count;
+    reload_audit_last.line_count = shown;
+
+    for (i = 0; i < shown; i++) {
+        ogs_cpystrn(reload_audit_last.lines[i], reload_audit_lines[i],
+                sizeof(reload_audit_last.lines[i]));
+    }
+}
 
 static void reload_audit_push(const char *line, bool warn)
 {
@@ -80,6 +112,32 @@ void ogs_reload_audit_warn(const char *fmt, ...)
     reload_audit_push(buf, true);
 }
 
+void ogs_reload_audit_record_startup(const char *nf)
+{
+    ogs_assert(nf);
+
+    memset(&reload_audit_last, 0, sizeof(reload_audit_last));
+    reload_audit_last.valid = true;
+    reload_audit_last.finished_at = (time_t)ogs_time_to_sec(ogs_time_now());
+    reload_audit_last.ok = true;
+    ogs_cpystrn(reload_audit_last.nf, nf, sizeof(reload_audit_last.nf));
+    reload_audit_last.change_count = 0;
+    reload_audit_last.line_count = 1;
+    ogs_cpystrn(reload_audit_last.lines[0],
+            "initial config from startup",
+            sizeof(reload_audit_last.lines[0]));
+
+    ogs_info("%s: initial runtime config loaded (file=%s)",
+            nf, ogs_app()->file ? ogs_app()->file : "(none)");
+}
+
+const ogs_reload_audit_snapshot_t *ogs_reload_audit_get_last(void)
+{
+    if (!reload_audit_last.valid)
+        return NULL;
+    return &reload_audit_last;
+}
+
 void ogs_reload_audit_finish(const char *nf, bool yaml_ok)
 {
     int i;
@@ -98,6 +156,7 @@ void ogs_reload_audit_finish(const char *nf, bool yaml_ok)
         if (yaml_ok)
             ogs_info("%s SIGHUP: no reloadable keys changed "
                     "(runtime config unchanged)", nf);
+        reload_audit_save_last(nf, yaml_ok);
         reload_audit_count = 0;
         return;
     }
@@ -115,5 +174,7 @@ void ogs_reload_audit_finish(const char *nf, bool yaml_ok)
                 nf, reload_audit_count - OGS_RELOAD_AUDIT_MAX_LINES);
 
     ogs_info("%s SIGHUP: %d change(s) listed above", nf, shown);
+
+    reload_audit_save_last(nf, yaml_ok);
     reload_audit_count = 0;
 }
