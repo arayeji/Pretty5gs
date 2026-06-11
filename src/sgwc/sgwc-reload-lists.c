@@ -100,7 +100,7 @@ static int sgwc_reload_nwi_add_only(ogs_yaml_iter_t *parent_iter)
         rule->replace = ogs_strdup(replace);
         ogs_assert(rule->match && rule->replace);
         ogs_list_add(&sgwc_self()->sgwu_nwi_rewrite_list, rule);
-        ogs_info("SIGHUP: sgwu_nwi_rewrite added [%s] -> [%s]",
+        ogs_reload_audit_note(" sgwu_nwi_rewrite added [%s] -> [%s]",
                 rule->match, rule->replace);
         added++;
         sgwc_reload_lists_changed++;
@@ -291,7 +291,7 @@ static int sgwc_reload_sgwu_peer_add_only(ogs_yaml_iter_t *sgwu_array)
         if (num_of_tac)
             memcpy(node->tac, tac, sizeof(node->tac));
 
-        ogs_info("SIGHUP: SGW-U peer added [%s]:%d",
+        ogs_reload_audit_note(" SGW-U peer added [%s]:%d",
                 ogs_sockaddr_to_string_static(addr), OGS_PORT(addr));
         added++;
         sgwc_reload_lists_changed++;
@@ -325,7 +325,7 @@ static int sgwc_reload_pfcp_sgwu_add_only(ogs_yaml_iter_t *pfcp_iter)
                 }
             }
         } else if (!strcmp(pfcp_key, "server")) {
-            ogs_warn("SIGHUP: sgwc.pfcp.server ignored (bind address)");
+            ogs_reload_audit_warn("sgwc.pfcp.server ignored (bind address)");
         }
     }
 
@@ -346,9 +346,11 @@ static void sgwc_reload_cdr_scalars(ogs_yaml_iter_t *sgwc_iter)
         if (!strcmp(ck, "enabled")) {
             self->cdr.enabled = ogs_yaml_iter_bool(&c_iter);
             sgwc_reload_lists_changed++;
+            ogs_reload_audit_note("sgwc.cdr.enabled=%s",
+                    self->cdr.enabled ? "true" : "false");
         } else if (!strcmp(ck, "spool_dir") ||
                 !strcmp(ck, "directory")) {
-            ogs_warn("SIGHUP: sgwc.cdr.spool_dir change ignored "
+            ogs_reload_audit_warn("sgwc.cdr.spool_dir change ignored "
                     "(restart required)");
         } else if (!strcmp(ck, "node_id") ||
                 !strcmp(ck, "nodeid")) {
@@ -430,7 +432,7 @@ static void sgwc_reload_inbound_roam(ogs_yaml_iter_t *sgwc_iter)
                 if (!strcmp(gk, "source_port") ||
                         !strcmp(gk, "send_port") ||
                         !strcmp(gk, "port")) {
-                    ogs_warn("SIGHUP: sgwc.inbound_roam.gtpc.source_port "
+                    ogs_reload_audit_warn("sgwc.inbound_roam.gtpc.source_port "
                             "ignored (bind address; restart required)");
                 } else if (!strcmp(gk, "teid_offset")) {
                     if (gv) {
@@ -479,18 +481,26 @@ void sgwc_context_reload_runtime(void)
     sgwc_context_t *self = sgwc_self();
     bool found = false;
     int lists_added = 0;
+    bool yaml_ok = false;
 
+    ogs_reload_audit_begin();
     sgwc_reload_lists_changed = 0;
 
     if (ogs_app_config_reload() != OGS_OK) {
         ogs_warn("Configuration reload failed; keeping previous config");
+        ogs_reload_audit_warn("YAML parse failed; previous config kept");
+        ogs_reload_audit_finish("SGWC", false);
         ogs_log_cycle();
         return;
     }
 
+    yaml_ok = true;
+
     document = ogs_app()->document;
     if (!document) {
         ogs_warn("No configuration document for runtime reload");
+        ogs_reload_audit_warn("no configuration document after reload");
+        ogs_reload_audit_finish("SGWC", false);
         ogs_log_cycle();
         return;
     }
@@ -520,9 +530,12 @@ void sgwc_context_reload_runtime(void)
                     if (gk && !strcmp(gk, "echo_interval") && gv) {
                         self->gtpc_echo_interval = (uint32_t)atoi(gv);
                         sgwc_reload_lists_changed++;
+                        ogs_reload_audit_note(
+                                "sgwc.gtpc.echo_interval=%u",
+                                self->gtpc_echo_interval);
                         found = true;
                     } else if (gk && !strcmp(gk, "server")) {
-                        ogs_warn("SIGHUP: sgwc.gtpc.server ignored "
+                        ogs_reload_audit_warn("sgwc.gtpc.server ignored "
                                 "(bind address)");
                     }
                 }
@@ -540,6 +553,7 @@ void sgwc_context_reload_runtime(void)
                             &self->gtpu_teid_range);
                     sgwc_reload_lists_changed++;
                 }
+                ogs_reload_audit_note("sgwc.gtpu settings reloaded");
                 found = true;
             } else if (sgwc_reload_nwi_rule_key(sgwc_key)) {
                 lists_added += sgwc_reload_nwi_add_only(&sgwc_iter);
@@ -558,12 +572,9 @@ void sgwc_context_reload_runtime(void)
         }
     }
 
-    if (found || lists_added > 0 || sgwc_reload_lists_changed > 0) {
-        ogs_info("SGWC runtime config reloaded (%d list change(s))",
-                lists_added + sgwc_reload_lists_changed);
-    } else {
-        ogs_warn("No reloadable SGWC keys found in configuration");
-    }
+    (void)found;
+    (void)lists_added;
 
+    ogs_reload_audit_finish("SGWC", yaml_ok);
     ogs_log_cycle();
 }

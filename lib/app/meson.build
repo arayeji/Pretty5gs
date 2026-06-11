@@ -27,6 +27,7 @@ libapp_sources = files('''
     ogs-context.c
     ogs-config.c
     ogs-init.c
+    ogs-reload-audit.c
 '''.split())
 
 yaml_dep = dependency('yaml-0.1')

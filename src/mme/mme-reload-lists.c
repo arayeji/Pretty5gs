@@ -154,13 +154,13 @@ static int reload_served_tai_add_one(
         list2->tai[list2->num].tac = tac;
         list2->num++;
         mme_reload_lists_changed++;
-        ogs_info("SIGHUP: served TAI added PLMN=%06x TAC=0x%04x",
+        ogs_reload_audit_note(" served TAI added PLMN=%06x TAC=0x%04x",
                 ogs_plmn_id_hexdump(plmn_id), tac);
         return 1;
     }
 
     if (self->num_of_served_tai >= OGS_MAX_NUM_OF_SUPPORTED_TA) {
-        ogs_warn("SIGHUP: served TAI list full (max %d)",
+        ogs_reload_audit_warn("served TAI list full (max %d)",
                 OGS_MAX_NUM_OF_SUPPORTED_TA);
         return 0;
     }
@@ -174,7 +174,7 @@ static int reload_served_tai_add_one(
     list2->num = 1;
     self->num_of_served_tai++;
     mme_reload_lists_changed++;
-    ogs_info("SIGHUP: served TAI added PLMN=%06x TAC=0x%04x",
+    ogs_reload_audit_note(" served TAI added PLMN=%06x TAC=0x%04x",
             ogs_plmn_id_hexdump(plmn_id), tac);
     return 1;
 }
@@ -266,7 +266,7 @@ static void reload_access_control_parse_uint32_list(
 
     ogs_yaml_iter_recurse(iter, &list_iter);
     if (ogs_yaml_iter_type(&list_iter) == YAML_MAPPING_NODE) {
-        ogs_warn("SIGHUP: access_control tac/enb list must be a sequence");
+        ogs_reload_audit_warn("access_control tac/enb list must be a sequence");
         return;
     }
 
@@ -347,7 +347,7 @@ static void reload_sgw_tac_add(mme_sgw_t *sgw, uint16_t tac)
         return;
 
     if (sgw->num_of_tac >= (int)ogs_global_conf()->max.tai) {
-        ogs_warn("SIGHUP: sgwc tac list full on peer");
+        ogs_reload_audit_warn("sgwc tac list full on peer");
         return;
     }
 
@@ -363,7 +363,7 @@ static void reload_sgw_ecell_add(mme_sgw_t *sgw, uint32_t e_cell_id)
         return;
 
     if (sgw->num_of_e_cell_id >= OGS_MAX_NUM_OF_CELL_ID) {
-        ogs_warn("SIGHUP: sgwc e_cell_id list full on peer");
+        ogs_reload_audit_warn("sgwc e_cell_id list full on peer");
         return;
     }
 
@@ -408,7 +408,7 @@ static void reload_pgw_tac_add(mme_pgw_t *pgw, uint16_t tac)
         return;
 
     if (pgw->num_of_tac >= (int)ogs_global_conf()->max.tai) {
-        ogs_warn("SIGHUP: smf tac list full on peer");
+        ogs_reload_audit_warn("smf tac list full on peer");
         return;
     }
 
@@ -427,7 +427,7 @@ static void reload_pgw_apn_add(mme_pgw_t *pgw, const char *apn)
         return;
 
     if (pgw->num_of_apn >= OGS_MAX_NUM_OF_APN) {
-        ogs_warn("SIGHUP: smf apn list full on peer");
+        ogs_reload_audit_warn("smf apn list full on peer");
         return;
     }
 
@@ -459,7 +459,7 @@ static void reload_pgw_ecell_add(mme_pgw_t *pgw, uint32_t e_cell_id)
         return;
 
     if (pgw->num_of_e_cell_id >= OGS_MAX_NUM_OF_CELL_ID) {
-        ogs_warn("SIGHUP: smf e_cell_id list full on peer");
+        ogs_reload_audit_warn("smf e_cell_id list full on peer");
         return;
     }
 
@@ -498,7 +498,7 @@ static int reload_hss_map_add_only(ogs_yaml_iter_t *mme_iter)
         } else if (ogs_yaml_iter_type(&hss_map_array) == YAML_SCALAR_NODE) {
             break;
         } else {
-            ogs_warn("SIGHUP: unexpected YAML node in hss_map reload");
+            ogs_reload_audit_warn("unexpected YAML node in hss_map reload");
             break;
         }
 
@@ -542,7 +542,7 @@ static int reload_hss_map_add_only(ogs_yaml_iter_t *mme_iter)
                         ogs_assert(hssmap);
                         added++;
                         mme_reload_lists_changed++;
-                        ogs_info("SIGHUP: hss_map added PLMN=%06x",
+                        ogs_reload_audit_note(" hss_map added PLMN=%06x",
                                 ogs_plmn_id_hexdump(&plmn_id));
                     }
 
@@ -573,7 +573,7 @@ static int reload_imsi_acl_add_only(ogs_yaml_iter_t *mme_iter)
         } else if (ogs_yaml_iter_type(&acl_array) == YAML_SCALAR_NODE) {
             ogs_yaml_iter_recurse(mme_iter, &acl_iter);
         } else {
-            ogs_warn("SIGHUP: unexpected YAML node in imsi_acl reload");
+            ogs_reload_audit_warn("unexpected YAML node in imsi_acl reload");
             break;
         }
 
@@ -585,7 +585,7 @@ static int reload_imsi_acl_add_only(ogs_yaml_iter_t *mme_iter)
             if (reload_imsi_acl_has_prefix(v))
                 continue;
             if (self->num_of_imsi_acl >= MME_MAX_IMSI_ACL) {
-                ogs_warn("SIGHUP: imsi_acl list full (max %d)", MME_MAX_IMSI_ACL);
+                ogs_reload_audit_warn("imsi_acl list full (max %d)", MME_MAX_IMSI_ACL);
                 break;
             }
 
@@ -594,7 +594,7 @@ static int reload_imsi_acl_add_only(ogs_yaml_iter_t *mme_iter)
             self->num_of_imsi_acl++;
             added++;
             mme_reload_lists_changed++;
-            ogs_info("SIGHUP: imsi_acl added prefix `%s'", v);
+            ogs_reload_audit_note(" imsi_acl added prefix `%s'", v);
         }
     } while (ogs_yaml_iter_type(&acl_array) == YAML_SEQUENCE_NODE &&
             ogs_yaml_iter_next(&acl_array));
@@ -633,7 +633,7 @@ static int reload_access_control_add_only(ogs_yaml_iter_t *mme_iter)
                 YAML_SCALAR_NODE) {
             break;
         } else {
-            ogs_warn("SIGHUP: unexpected YAML node in access_control reload");
+            ogs_reload_audit_warn("unexpected YAML node in access_control reload");
             break;
         }
 
@@ -694,7 +694,7 @@ static int reload_access_control_add_only(ogs_yaml_iter_t *mme_iter)
                     if (!ac) {
                         if (self->num_of_access_control >=
                                 OGS_MAX_NUM_OF_PLMN_PER_MME) {
-                            ogs_warn("SIGHUP: access_control list full");
+                            ogs_reload_audit_warn("access_control list full");
                             break;
                         }
                         ac = &self->access_control[
@@ -712,7 +712,7 @@ static int reload_access_control_add_only(ogs_yaml_iter_t *mme_iter)
                         self->num_of_access_control++;
                         added++;
                         mme_reload_lists_changed++;
-                        ogs_info("SIGHUP: access_control entry added");
+                        ogs_reload_audit_note(" access_control entry added");
                     }
                 }
 
@@ -733,7 +733,7 @@ static int reload_access_control_add_only(ogs_yaml_iter_t *mme_iter)
             if (!ac) {
                 if (self->num_of_access_control >=
                         OGS_MAX_NUM_OF_PLMN_PER_MME) {
-                    ogs_warn("SIGHUP: access_control list full");
+                    ogs_reload_audit_warn("access_control list full");
                     continue;
                 }
                 ac = &self->access_control[self->num_of_access_control];
@@ -750,7 +750,7 @@ static int reload_access_control_add_only(ogs_yaml_iter_t *mme_iter)
                 self->num_of_access_control++;
                 added++;
                 mme_reload_lists_changed++;
-                ogs_info("SIGHUP: access_control entry added");
+                ogs_reload_audit_note(" access_control entry added");
             }
         }
 
@@ -783,7 +783,7 @@ static int reload_equivalent_plmn_add_only(ogs_yaml_iter_t *mme_iter)
         } else if (ogs_yaml_iter_type(&eplmn_array) == YAML_SCALAR_NODE) {
             break;
         } else {
-            ogs_warn("SIGHUP: unexpected YAML node in equivalent_plmn reload");
+            ogs_reload_audit_warn("unexpected YAML node in equivalent_plmn reload");
             break;
         }
 
@@ -804,7 +804,7 @@ static int reload_equivalent_plmn_add_only(ogs_yaml_iter_t *mme_iter)
         if (mme_eplmn_add_if_new(&self->num_of_eplmn, self->eplmn, &plmn_id)) {
             added++;
             mme_reload_lists_changed++;
-            ogs_info("SIGHUP: equivalent_plmn added PLMN=%06x",
+            ogs_reload_audit_note(" equivalent_plmn added PLMN=%06x",
                     ogs_plmn_id_hexdump(&plmn_id));
         }
     } while (ogs_yaml_iter_type(&eplmn_array) == YAML_SEQUENCE_NODE);
@@ -846,7 +846,7 @@ static int reload_served_tai_add_only(ogs_yaml_iter_t *mme_iter)
         } else {
             ogs_free(start);
             ogs_free(end);
-            ogs_warn("SIGHUP: unexpected YAML node in served TAI reload");
+            ogs_reload_audit_warn("unexpected YAML node in served TAI reload");
             break;
         }
 
@@ -947,7 +947,7 @@ static int reload_trace_imsi_add_only(ogs_yaml_iter_t *mme_iter)
         } else if (ogs_yaml_iter_type(&trace_array) == YAML_SCALAR_NODE) {
             ogs_yaml_iter_recurse(mme_iter, &trace_iter);
         } else {
-            ogs_warn("SIGHUP: unexpected YAML node in trace_imsi reload");
+            ogs_reload_audit_warn("unexpected YAML node in trace_imsi reload");
             break;
         }
 
@@ -958,13 +958,13 @@ static int reload_trace_imsi_add_only(ogs_yaml_iter_t *mme_iter)
             if (!v || !v[0])
                 continue;
             if (ogs_trace_filter_add(v) != OGS_OK) {
-                ogs_warn("SIGHUP: trace_imsi could not add `%s'", v);
+                ogs_reload_audit_warn("trace_imsi could not add `%s'", v);
                 continue;
             }
             if (ogs_trace_filter_count() > count_before) {
                 added++;
                 mme_reload_lists_changed++;
-                ogs_info("SIGHUP: trace_imsi added `%s'", v);
+                ogs_reload_audit_note(" trace_imsi added `%s'", v);
             }
         }
     } while (ogs_yaml_iter_type(&trace_array) == YAML_SEQUENCE_NODE &&
@@ -1010,7 +1010,7 @@ static int reload_emergency_add_only(ogs_yaml_iter_t *mme_iter)
                         YAML_SCALAR_NODE) {
                     break;
                 } else {
-                    ogs_warn("SIGHUP: unexpected YAML node in emergency reload");
+                    ogs_reload_audit_warn("unexpected YAML node in emergency reload");
                     break;
                 }
 
@@ -1070,7 +1070,7 @@ static int reload_emergency_add_only(ogs_yaml_iter_t *mme_iter)
                     if (mme_emerg_add(categories, digits)) {
                         added++;
                         mme_reload_lists_changed++;
-                        ogs_info("SIGHUP: emergency number added `%s'",
+                        ogs_reload_audit_note(" emergency number added `%s'",
                                 digits);
                     }
                 }
@@ -1124,7 +1124,7 @@ static int reload_gtpc_client_entry_add_only(
             break;
         } else {
             ogs_free(tac);
-            ogs_warn("SIGHUP: unexpected YAML node in gtpc client reload");
+            ogs_reload_audit_warn("unexpected YAML node in gtpc client reload");
             break;
         }
 
@@ -1254,7 +1254,7 @@ static int reload_gtpc_client_entry_add_only(
                     continue;
                 }
 
-                ogs_info("SIGHUP: sgwc peer added [%s]:%d",
+                ogs_reload_audit_note(" sgwc peer added [%s]:%d",
                         OGS_ADDR(&sgw->gnode.addr, peer_buf),
                         OGS_PORT(&sgw->gnode.addr));
                 mme_gtp_send_sgw_echo(sgw);
@@ -1289,7 +1289,7 @@ static int reload_gtpc_client_entry_add_only(
                     continue;
                 }
                 mme_reload_lists_changed++;
-                ogs_info("SIGHUP: smf/pgw peer added");
+                ogs_reload_audit_note(" smf/pgw peer added");
             } else {
                 ogs_freeaddrinfo(addr);
             }

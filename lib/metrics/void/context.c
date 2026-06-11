@@ -102,3 +102,15 @@ void ogs_metrics_inst_reset(ogs_metrics_inst_t *inst)
 void ogs_metrics_inst_add(ogs_metrics_inst_t *inst, int val)
 {
 }
+
+size_t ogs_metrics_config_file_dump(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
+{
+    (void)page;
+    (void)page_size;
+    (void)q;
+    if (!buf || buflen == 0)
+        return 0;
+    return (size_t)snprintf(buf, buflen,
+            "{\"error\":\"metrics not enabled\"}\n");
+}
