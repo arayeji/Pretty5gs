@@ -1042,7 +1042,11 @@ void ogs_metrics_inst_add(ogs_metrics_inst_t *inst, int val)
 {
     switch (inst->spec->type) {
     case OGS_METRICS_METRIC_TYPE_COUNTER:
-        ogs_assert(val >= 0);
+        if (val < 0) {
+            ogs_warn("Counter %s: negative increment %d ignored",
+                    inst->spec->name, val);
+            return;
+        }
         prom_counter_add(inst->spec->prom, (double)val, (const char **)inst->label_values);
         break;
     case OGS_METRICS_METRIC_TYPE_GAUGE:
@@ -1052,7 +1056,11 @@ void ogs_metrics_inst_add(ogs_metrics_inst_t *inst, int val)
             prom_gauge_sub(inst->spec->prom, (double)-1.0*(double)val, (const char **)inst->label_values);
         break;
     case OGS_METRICS_METRIC_TYPE_HISTOGRAM:
-        ogs_assert(val >= 0);
+        if (val < 0) {
+            ogs_warn("Histogram %s: negative observe %d ignored",
+                    inst->spec->name, val);
+            return;
+        }
         prom_histogram_observe(inst->spec->prom, (double)val, (const char **)inst->label_values);
         break;
     default:
