@@ -26,6 +26,9 @@
 extern "C" {
 #endif
 
+/* Invalid/missing Result-Code (0) from malformed CCA or Gx peer loss. */
+uint32_t smf_diameter_failure_code(uint32_t code);
+
 uint32_t smf_gx_handle_cca_initial_request(
         smf_sess_t *sess, ogs_diam_gx_message_t *gx_message,
         ogs_gtp_xact_t *gtp_xact);

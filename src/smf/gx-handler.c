@@ -25,6 +25,15 @@
 #include "gx-handler.h"
 #include "binding.h"
 
+uint32_t smf_diameter_failure_code(uint32_t code)
+{
+    if (code == ER_DIAMETER_SUCCESS)
+        return ER_DIAMETER_SUCCESS;
+    if (code != 0)
+        return code;
+    return ER_DIAMETER_UNABLE_TO_DELIVER;
+}
+
 /* Returns ER_DIAMETER_SUCCESS on success, Diameter error code on failue. */
 uint32_t smf_gx_handle_cca_initial_request(
         smf_sess_t *sess, ogs_diam_gx_message_t *gx_message,
@@ -51,9 +60,11 @@ uint32_t smf_gx_handle_cca_initial_request(
     ogs_debug("    SGW_S5C_TEID[0x%x] PGW_S5C_TEID[0x%x]",
             sess->sgw_s5c_teid, sess->smf_n4_teid);
 
-    if (gx_message->result_code != ER_DIAMETER_SUCCESS)
-        return gx_message->err ? *gx_message->err :
-                                 ER_DIAMETER_AUTHENTICATION_REJECTED;
+    if (gx_message->result_code != ER_DIAMETER_SUCCESS) {
+        uint32_t err = gx_message->err ? *gx_message->err :
+                gx_message->result_code;
+        return smf_diameter_failure_code(err);
+    }
 
 
     sess->policy.num_of_pcc_rule = gx_message->session_data.num_of_pcc_rule;
