@@ -7,6 +7,7 @@ their own ports configured under `<nf>.metrics`).
 ## Conventions used below
 
 - `MME=http://10.233.65.222:9091` — replace with your daemon's metrics URL.
+- `SGWC=http://10.233.65.222:9090` — SGWC metrics URL (`sgwc.metrics` in yaml).
 - `AMF=http://10.233.65.222:9090`
 - `SMF=http://10.233.65.222:9092`
 - All endpoints accept **both** `GET` and (where mutating) `POST`. `GET` is
@@ -369,7 +370,100 @@ You only need to call `/admin/ue/detach` on the MME.
 
 ---
 
-## 9. Server tunables (env vars)
+## 9. Maintenance mode — MME, SGWC, SMF (`/admin/maintenance`)
+
+Block **new** registrations while you drain existing subscribers for a planned
+upgrade or restart. Available on the MME, SGWC, and SMF metrics HTTP servers
+(same port and firewall rules as the other `/admin/*` endpoints).
+
+While maintenance is enabled:
+
+| NF    | Blocks |
+|-------|--------|
+| MME   | New EPS attach and additional PDN connectivity (EMM #22 congestion) |
+| SGWC  | New S11 Create Session (GTPv2 cause #73 no resources) |
+| SMF   | New S5 Create Session (GTPv2 cause #73 no resources) |
+
+Drain tears down existing state with standard signalling (graceful by default).
+On the MME that is the same path as `/admin/ue/detach` for every UE (NAS Detach
++ S11 Delete Session, which cascades to SGWC/SMF). SGWC drain sends PFCP
+session deletion to SGW-U and Delete Session on S5. SMF drain sends best-effort
+PFCP session deletion to the UPF.
+
+### Endpoints (each NF)
+
+| Method | Path | Meaning |
+|--------|------|---------|
+| `GET`  | `/admin/maintenance` | JSON status (`maintenance` flag + count) |
+| `POST` | `/admin/maintenance/enable` | Turn maintenance on (reject new sessions) |
+| `POST` | `/admin/maintenance/disable` | Turn maintenance off (normal operation) |
+| `GET`/`POST` | `/admin/maintenance/drain[?force=1]` | Enable maintenance **and** start draining all UEs/sessions |
+
+Status response shapes:
+
+```json
+{"maintenance":false,"ue_count":42}          // MME
+{"maintenance":false,"session_count":42}     // SGWC, SMF
+```
+
+### `force` on drain
+
+| `force`    | MME drain | SGWC / SMF drain |
+|------------|-----------|------------------|
+| `0` (def.) | MME-initiated explicit detach per UE (NAS + S1 release) | PFCP/GTP delete signalling; contexts removed when peers respond |
+| `1`        | Implicit detach (no NAS to UE); SGW/SMF still cleaned up | Immediate local session/UE context purge after starting delete |
+
+### Planned maintenance workflow
+
+Run on all three NFs before restarting daemons. **Enable maintenance first**
+so new attaches are rejected while the drain runs.
+
+```bash
+MME=http://10.233.65.222:9091
+SGWC=http://10.233.65.222:9090
+SMF=http://10.233.65.222:9092
+
+# 1. Block new users
+curl -s -X POST "$MME/admin/maintenance/enable"
+curl -s -X POST "$SGWC/admin/maintenance/enable"
+curl -s -X POST "$SMF/admin/maintenance/enable"
+
+# 2. Graceful drain — start with MME (cascades Delete Session to SGW/SMF)
+curl -s -X POST "$MME/admin/maintenance/drain"
+
+# 3. Wait until counts reach zero (idle UEs may need paging — allow a few minutes)
+watch -n5 'curl -s $MME/admin/maintenance; echo; curl -s $SGWC/admin/maintenance; echo; curl -s $SMF/admin/maintenance'
+
+# 4. Clean up any stragglers on SGW/SMF
+curl -s -X POST "$SGWC/admin/maintenance/drain"
+curl -s -X POST "$SMF/admin/maintenance/drain"
+
+# 5. Restart daemons, then re-open for service
+sudo systemctl restart open5gs-mmed open5gs-sgwcd open5gs-smfd
+curl -s -X POST "$MME/admin/maintenance/disable"
+curl -s -X POST "$SGWC/admin/maintenance/disable"
+curl -s -X POST "$SMF/admin/maintenance/disable"
+```
+
+Hard cutoff (no NAS notification to handsets):
+
+```bash
+curl -s -X POST "$MME/admin/maintenance/drain?force=1"
+```
+
+### Audit log lines
+
+```text
+[mme]  INFO: admin maintenance: enabled
+[mme]  INFO: admin maintenance drain: mode=graceful
+[mme]  INFO: admin maintenance drain: queued detach for 42 UEs
+[sgwc] INFO: admin maintenance drain: initiated for 38 sessions
+[smf]  INFO: admin maintenance drain: initiated for 38 sessions
+```
+
+---
+
+## 10. Server tunables (env vars)
 
 Set on the MME/AMF/SMF systemd unit (`Environment=KEY=val`) or
 `/etc/default/open5gs-mmed`. Defaults are sized for thousands of peers.
@@ -391,7 +485,7 @@ applied values:
 
 ---
 
-## 10. Quick recipes
+## 11. Quick recipes
 
 ### "Which eNB owns IMSI X?"
 
@@ -413,6 +507,16 @@ curl -s "$MME/ue-info?enb_id=121465&page_size=100000" \
 ENB=121465
 # Graceful eNB detach is enough — it releases every UE on that eNB for you.
 curl -s "$MME/admin/enb/detach?enb_id=$ENB"
+```
+
+### "Drain all subscribers before an upgrade (maintenance window)"
+
+See **§9** for the full MME → SGWC → SMF sequence. Short form:
+
+```bash
+for url in $MME $SGWC $SMF; do curl -s -X POST "$url/admin/maintenance/enable"; done
+curl -s -X POST "$MME/admin/maintenance/drain"
+# poll /admin/maintenance on each NF until counts are 0, then restart daemons
 ```
 
 ### "Find which SMF holds the session with UE IP X"
