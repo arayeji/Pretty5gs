@@ -2631,6 +2631,9 @@ void smf_sess_remove(smf_sess_t *sess)
 
     ogs_list_remove(&smf_ue->sess_list, sess);
 
+    ogs_hash_set(self.smf_n4_seid_hash, &sess->smf_n4_seid,
+            sizeof(sess->smf_n4_seid), NULL);
+
     memset(&e, 0, sizeof(e));
     e.sess_id = sess->id;
     ogs_fsm_fini(&sess->sm, &e);
@@ -2648,9 +2651,6 @@ void smf_sess_remove(smf_sess_t *sess)
     for (i = 0; i < sess->policy.num_of_pcc_rule; i++)
         OGS_PCC_RULE_FREE(&sess->policy.pcc_rule[i]);
     sess->policy.num_of_pcc_rule = 0;
-
-    ogs_hash_set(self.smf_n4_seid_hash, &sess->smf_n4_seid,
-            sizeof(sess->smf_n4_seid), NULL);
 
     if (sess->ipv4) {
         ogs_hash_set(self.ipv4_hash, sess->ipv4->addr, OGS_IPV4_LEN, NULL);
@@ -2812,6 +2812,52 @@ smf_sess_t *smf_sess_find_by_teid(uint32_t teid)
 smf_sess_t *smf_sess_find_by_seid(uint64_t seid)
 {
     return ogs_hash_get(self.smf_n4_seid_hash, &seid, sizeof(seid));
+}
+
+static bool smf_sess_on_ue_list(const smf_sess_t *sess)
+{
+    smf_ue_t *smf_ue = NULL;
+    smf_sess_t *iter = NULL;
+
+    if (!sess)
+        return false;
+
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+    if (!smf_ue)
+        return false;
+
+    ogs_list_for_each(&smf_ue->sess_list, iter) {
+        if (iter == sess)
+            return true;
+    }
+
+    return false;
+}
+
+smf_sess_t *smf_sess_find_active_by_id(ogs_pool_id_t id)
+{
+    smf_sess_t *sess = smf_sess_find_by_id(id);
+
+    if (!sess)
+        return NULL;
+
+    if (!smf_sess_on_ue_list(sess))
+        return NULL;
+
+    return sess;
+}
+
+smf_sess_t *smf_sess_find_active_by_seid(uint64_t seid)
+{
+    smf_sess_t *sess = smf_sess_find_by_seid(seid);
+
+    if (!sess)
+        return NULL;
+
+    if (!smf_sess_on_ue_list(sess))
+        return NULL;
+
+    return sess;
 }
 
 smf_sess_t *smf_sess_find_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)

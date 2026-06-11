@@ -131,7 +131,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         e->gtp_xact_id = gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID;
 
         if (gtp2_message.h.teid_presence && gtp2_message.h.teid != 0)
-            sess = smf_sess_find_by_teid(gtp2_message.h.teid);
+            sess = smf_sess_find_active_by_teid(gtp2_message.h.teid);
 
         if (!sess && gtp_xact->local_teid) /* rx no TEID or TEID=0 */
             /* 3GPP TS 29.274 5.5.2: we receive TEID=0 under some
@@ -139,7 +139,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
              * cases, we still want to identify the local session which
              * originated the message, so try harder by using the TEID we
              * locally stored in xact when sending the original request: */
-            sess = smf_sess_find_by_teid(gtp_xact->local_teid);
+            sess = smf_sess_find_active_by_teid(gtp_xact->local_teid);
 
         switch(gtp2_message.h.type) {
         case OGS_GTP2_ECHO_REQUEST_TYPE:
@@ -293,7 +293,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         e->gtp1_message = &gtp1_message;
 
         if (gtp1_message.h.teid != 0) {
-            sess = smf_sess_find_by_teid(gtp1_message.h.teid);
+            sess = smf_sess_find_active_by_teid(gtp1_message.h.teid);
         }
 
         rv = ogs_gtp1_xact_receive(smf_gnode->gnode, &gtp1_message.h, &gtp_xact);
@@ -373,8 +373,12 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         gx_message = e->gx_message;
         ogs_assert(gx_message);
 
-        sess = smf_sess_find_by_id(e->sess_id);
-        ogs_assert(sess);
+        sess = smf_sess_find_active_by_id(e->sess_id);
+        if (!sess) {
+            ogs_warn("Session already removed [%s]", smf_event_get_name(e));
+            ogs_free(gx_message);
+            break;
+        }
 
         switch(gx_message->cmd_code) {
         case OGS_DIAM_GX_CMD_CODE_CREDIT_CONTROL:
@@ -408,8 +412,12 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         gy_message = e->gy_message;
         ogs_assert(gy_message);
 
-        sess = smf_sess_find_by_id(e->sess_id);
-        ogs_assert(sess);
+        sess = smf_sess_find_active_by_id(e->sess_id);
+        if (!sess) {
+            ogs_warn("Session already removed [%s]", smf_event_get_name(e));
+            ogs_free(gy_message);
+            break;
+        }
 
         switch(gy_message->cmd_code) {
         case OGS_DIAM_GY_CMD_CODE_CREDIT_CONTROL:
@@ -430,8 +438,12 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         ogs_assert(e);
         s6b_message = e->s6b_message;
         ogs_assert(s6b_message);
-        sess = smf_sess_find_by_id(e->sess_id);
-        ogs_assert(sess);
+        sess = smf_sess_find_active_by_id(e->sess_id);
+        if (!sess) {
+            ogs_warn("Session already removed [%s]", smf_event_get_name(e));
+            ogs_free(s6b_message);
+            break;
+        }
 
         switch(s6b_message->cmd_code) {
         case OGS_DIAM_S6B_CMD_AUTHENTICATION_AUTHORIZATION:

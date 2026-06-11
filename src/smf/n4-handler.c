@@ -333,8 +333,18 @@ void smf_5gc_n4_handle_session_modification_response(
     ogs_assert(rsp);
 
     flags = xact->modify_flags;
-    ogs_assert(flags);
+    if (!flags) {
+        ogs_warn("PFCP modification response with no modify_flags (stale?)");
+        ogs_pfcp_xact_commit(xact);
+        return;
+    }
     trigger = xact->delete_trigger;
+
+    if (!sess) {
+        ogs_error("No Context");
+        ogs_pfcp_xact_commit(xact);
+        return;
+    }
 
     /* 'stream' could be NULL in smf_qos_flow_binding() */
     if (xact->assoc_stream_id >= OGS_MIN_POOL_ID &&
@@ -1353,14 +1363,25 @@ void smf_epc_n4_handle_session_modification_response(
 
     ogs_debug("Session Modification Response [epc]");
 
+    flags = xact->modify_flags;
+    if (!flags) {
+        ogs_warn("PFCP modification response with no modify_flags (stale?)");
+        ogs_pfcp_xact_commit(xact);
+        return;
+    }
+
+    if (!sess) {
+        ogs_error("No Context");
+        ogs_pfcp_xact_commit(xact);
+        return;
+    }
+
     if (flags & OGS_PFCP_MODIFY_SESSION) {
         /* If smf_epc_pfcp_send_pdr_modification_request() is called */
     } else {
         /* If smf_epc_pfcp_send_bearer_modification_request() is called */
         bearer = smf_bearer_find_by_id(OGS_POINTER_TO_UINT(xact->data));
     }
-    flags = xact->modify_flags;
-    ogs_assert(flags);
 
     /* OGS_PFCP_MODIFY_URR: Modification Response was originally triggered by
        PFCP Session Report Request, xact->assoc_xact is not a gtp_xact. No
@@ -1375,11 +1396,6 @@ void smf_epc_n4_handle_session_modification_response(
 
     ogs_pfcp_xact_commit(xact);
 
-    if (!sess) {
-        ogs_error("No Context");
-        return;
-    }
-
     if (rsp->cause.presence) {
         if (rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
             ogs_error("PFCP Cause [%d] : Not Accepted", rsp->cause.u8);
@@ -1389,8 +1405,6 @@ void smf_epc_n4_handle_session_modification_response(
         ogs_error("No Cause");
         return;
     }
-
-    ogs_assert(sess);
 
     pfcp_cause_value = OGS_PFCP_CAUSE_REQUEST_ACCEPTED;
     for (i = 0; i < OGS_MAX_NUM_OF_PDR; i++) {
