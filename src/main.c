@@ -61,9 +61,11 @@ static int check_signal(int signum)
          * Reload YAML on the daemon main thread (via the registered handler),
          * not here — swapping ogs_app()->document from the signal thread races
          * with config lookups on the event-loop thread.
+         *
+         * ogs_log_cycle() must also run on the main thread (after reload);
+         * calling it here races with active logging and can abort on fopen().
          */
         ogs_app_sighup_handler_invoke();
-        ogs_log_cycle();
 
         break;
     case SIGUSR1:

@@ -484,12 +484,14 @@ void sgwc_context_reload_runtime(void)
 
     if (ogs_app_config_reload() != OGS_OK) {
         ogs_warn("Configuration reload failed; keeping previous config");
+        ogs_log_cycle();
         return;
     }
 
     document = ogs_app()->document;
     if (!document) {
         ogs_warn("No configuration document for runtime reload");
+        ogs_log_cycle();
         return;
     }
 
@@ -562,4 +564,6 @@ void sgwc_context_reload_runtime(void)
     } else {
         ogs_warn("No reloadable SGWC keys found in configuration");
     }
+
+    ogs_log_cycle();
 }
