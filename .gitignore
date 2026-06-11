@@ -2,9 +2,26 @@ install/
 
 # Local deploy / build notes (not for public repo)
 build.md
+build.md.utf8
 *.ps1
 deploy-bundle/
+server-sync/
 .cursor/
+
+# Local pcap / attach debug scripts and scratch output
+pfcp-out.txt
+tools/analyze_kkkk_pcap.py
+tools/analyze_pcap_paa.py
+tools/analyze_s1ap_attach.py
+tools/trace_imsi_pcap.py
+
+# Local SGsAP map tooling (generated from operator spreadsheets)
+configs/open5gs/sgsap-csmap-merge-example.yaml
+scripts/gen_sgsap_csmap_from_tac_lac_xlsx.py
+
+# Empty / one-off webui deploy stubs
+webui/deploy-subscriber-fix.sh
+webui/fix-production-webui.sh
 
 # Inbound-roam site allow-list (generated locally from CSV; do not commit)
 configs/open5gs/roam-sites.example.csv
