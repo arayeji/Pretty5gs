@@ -687,6 +687,12 @@ static void response_timeout(void *data)
                 xact->step, xact->seq[xact->step-1].type,
                 ogs_sockaddr_to_string_static(xact->node->addr_list));
 
+        /*
+         * tm_response is the firing timer; ogs_timer_mgr_expire() reclaims it
+         * after this callback returns.
+         */
+        xact->tm_response = NULL;
+
         if (xact->cb)
             xact->cb(xact, xact->data);
 
@@ -728,6 +734,11 @@ static void holding_timeout(void *data)
                 xact->org == OGS_PFCP_LOCAL_ORIGINATOR ? "LOCAL " : "REMOTE",
                 xact->step, xact->seq[xact->step-1].type,
                 ogs_sockaddr_to_string_static(xact->node->addr_list));
+        /*
+         * tm_holding is the firing timer; ogs_timer_mgr_expire() reclaims it
+         * after this callback returns.
+         */
+        xact->tm_holding = NULL;
         ogs_pfcp_xact_delete(xact);
     }
 }
