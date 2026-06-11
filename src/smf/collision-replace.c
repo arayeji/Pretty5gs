@@ -188,9 +188,14 @@ bool smf_sess_collision_replace_begin_gtp2(
 {
     smf_ue_t *smf_ue = NULL;
 
-    ogs_assert(old_sess);
-    smf_ue = smf_ue_find_by_id(old_sess->smf_ue_id);
-    ogs_assert(smf_ue);
+    old_sess = smf_sess_find_active_by_id(old_sess ? old_sess->id :
+            OGS_INVALID_POOL_ID);
+    if (!old_sess)
+        return false;
+
+    smf_ue = smf_ue_find_active(old_sess->smf_ue_id);
+    if (!smf_ue)
+        return false;
 
     if (!smf_sess_upf_established(old_sess))
         return false;
@@ -204,9 +209,14 @@ bool smf_sess_collision_replace_begin_gtp1(
 {
     smf_ue_t *smf_ue = NULL;
 
-    ogs_assert(old_sess);
-    smf_ue = smf_ue_find_by_id(old_sess->smf_ue_id);
-    ogs_assert(smf_ue);
+    old_sess = smf_sess_find_active_by_id(old_sess ? old_sess->id :
+            OGS_INVALID_POOL_ID);
+    if (!old_sess)
+        return false;
+
+    smf_ue = smf_ue_find_active(old_sess->smf_ue_id);
+    if (!smf_ue)
+        return false;
 
     if (!smf_sess_upf_established(old_sess))
         return false;
@@ -257,10 +267,20 @@ void smf_sess_collision_replace_complete(smf_sess_t *old_sess)
     ogs_gtp1_message_t gtp1_message;
     ogs_pkbuf_t *pkbuf = NULL;
     int rv;
+    ogs_pool_id_t old_sess_id;
 
-    ogs_assert(old_sess);
+    if (!old_sess)
+        return;
 
-    smf_ue = smf_ue_find_by_id(old_sess->smf_ue_id);
+    old_sess_id = old_sess->id;
+    old_sess = smf_sess_find_active_by_id(old_sess_id);
+    if (!old_sess) {
+        ogs_warn("collision replace complete on removed session "
+                "(sess_id=%d)", (int)old_sess_id);
+        return;
+    }
+
+    smf_ue = smf_ue_find_active(old_sess->smf_ue_id);
     if (!smf_ue || !smf_ue->collision_replace.pending) {
         ogs_warn("collision replace complete without pending context "
                 "(sess_id=%d)", (int)old_sess->id);
@@ -345,13 +365,23 @@ void smf_sess_collision_replace_complete(smf_sess_t *old_sess)
 void smf_sess_collision_on_pfcp_delete_timeout(smf_sess_t *sess)
 {
     smf_ue_t *smf_ue = NULL;
+    ogs_pool_id_t sess_id;
 
-    ogs_assert(sess);
+    if (!sess)
+        return;
 
     if (!sess->collision_replace)
         return;
 
-    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+    sess_id = sess->id;
+    sess = smf_sess_find_active_by_id(sess_id);
+    if (!sess) {
+        ogs_warn("collision replace timeout on removed session "
+                "(sess_id=%d)", (int)sess_id);
+        return;
+    }
+
+    smf_ue = smf_ue_find_active(sess->smf_ue_id);
     ogs_warn("[%s] collision replace: PFCP delete timeout, "
             "continuing with new session",
             smf_ue && smf_ue->imsi_bcd[0] ? smf_ue->imsi_bcd : "-");

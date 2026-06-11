@@ -1064,9 +1064,9 @@ static void smf_gy_cca_cb(void *data, struct msg **msg)
         goto cleanup;
     }
 
-    sess = smf_sess_find_by_id(sess_data->sess_id);
+    sess = smf_sess_find_active_by_id(sess_data->sess_id);
     if (!sess) {
-        ogs_error("Session not found: %d", sess_data->sess_id);
+        ogs_warn("Session already removed [%d]", sess_data->sess_id);
         error++;
         goto cleanup;
     }
@@ -1386,9 +1386,9 @@ static int smf_gy_rar_cb(struct msg **msg, struct avp *avp,
     }
 
     /* Get Session Information */
-    sess = smf_sess_find_by_id(sess_data->sess_id);
+    sess = smf_sess_find_active_by_id(sess_data->sess_id);
     if (!sess) {
-        ogs_error("Session not found: %d", sess_data->sess_id);
+        ogs_warn("Session already removed [%d]", sess_data->sess_id);
         result_code = OGS_DIAM_UNKNOWN_SESSION_ID;
         goto error_out;
     }

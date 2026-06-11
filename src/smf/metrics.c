@@ -307,6 +307,30 @@ void smf_metrics_inst_by_slice_add(ogs_plmn_id_t *plmn,
     ogs_metrics_inst_add(metrics, val);
 }
 
+void smf_metrics_session_active_inc(smf_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    if (sess->metrics_session_counted)
+        return;
+
+    smf_metrics_inst_by_slice_add(&sess->serving_plmn_id, &sess->s_nssai,
+            SMF_METR_GAUGE_SM_SESSIONNBR, 1);
+    sess->metrics_session_counted = 1;
+}
+
+void smf_metrics_session_active_dec(smf_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    if (!sess->metrics_session_counted)
+        return;
+
+    smf_metrics_inst_by_slice_add(&sess->serving_plmn_id, &sess->s_nssai,
+            SMF_METR_GAUGE_SM_SESSIONNBR, -1);
+    sess->metrics_session_counted = 0;
+}
+
 int smf_metrics_free_inst_by_slice(ogs_metrics_inst_t **inst)
 {
     return smf_metrics_free_inst(inst, _SMF_METR_BY_SLICE_MAX);
