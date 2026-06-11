@@ -1639,13 +1639,6 @@ void mme_s11_handle_release_access_bearers_response(
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     ogs_assert(sgw_ue);
 
-    /***********************
-     * Check MME-UE Context
-     ***********************/
-    if (!mme_ue_from_teid) {
-        ogs_error("No Context in TEID [ACTION:%d]", action);
-    }
-
     /********************
      * Check Cause Value
      ********************/
@@ -1654,13 +1647,21 @@ void mme_s11_handle_release_access_bearers_response(
         ogs_assert(cause);
 
         cause_value = cause->value;
+        if (cause_value == OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND) {
+            ogs_debug("SGW CONTEXT_NOT_FOUND (TEID=0) [ACTION:%d]", action);
+            mme_s11_handle_sgw_context_lost(mme_ue, cause_value);
+            return;
+        }
         if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
             ogs_error("GTP Cause [VALUE:%d, ACTION:%d]", cause_value, action);
-            if (cause_value == OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND) {
-                mme_s11_handle_sgw_context_lost(mme_ue, cause_value);
-                return;
-            }
         }
+    }
+
+    /***********************
+     * Check MME-UE Context
+     ***********************/
+    if (!mme_ue_from_teid) {
+        ogs_warn("No Context in TEID [ACTION:%d]", action);
     }
 
     /********************
