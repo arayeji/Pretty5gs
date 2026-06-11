@@ -20,8 +20,11 @@ their own ports configured under `<nf>.metrics`).
   uses `strtoull(value, NULL, 0)`.
 - `force=...` (admin endpoints) accepts `1`, `true`, `yes`, `on`
   (case-insensitive). Everything else means *graceful* (the default).
-- The server is **not** ACL'd internally; firewall the metrics port at the
-  host (`iptables`/`nftables`) or upstream load balancer.
+- **`/admin/*` endpoints** (detach, maintenance, trace, …) accept clients only
+  from **local/private addresses**: IPv4 loopback (`127.0.0.0/8`), RFC1918
+  (`10/8`, `172.16/12`, `192.168/16`), IPv6 loopback (`::1`), link-local, and
+  unique-local. Other clients receive `403 Forbidden`. **`/metrics`**, `/ue-info`,
+  `/enb-info`, `/pdu-info`, and `/` are **not** gated — firewall those if needed.
 
 ## Response envelope
 
@@ -394,7 +397,8 @@ PFCP session deletion to the UPF.
 
 | Method | Path | Meaning |
 |--------|------|---------|
-| `GET`  | `/admin/maintenance` | JSON status (`maintenance` flag + count) |
+| `GET`  | `/admin/maintenance` | JSON status (`maintenance` flag + count) — alias |
+| `GET`  | `/admin/maintenance/status` | Same JSON status (preferred admin route) |
 | `POST` | `/admin/maintenance/enable` | Turn maintenance on (reject new sessions) |
 | `POST` | `/admin/maintenance/disable` | Turn maintenance off (normal operation) |
 | `GET`/`POST` | `/admin/maintenance/drain[?force=1]` | Enable maintenance **and** start draining all UEs/sessions |
@@ -432,7 +436,7 @@ curl -s -X POST "$SMF/admin/maintenance/enable"
 curl -s -X POST "$MME/admin/maintenance/drain"
 
 # 3. Wait until counts reach zero (idle UEs may need paging — allow a few minutes)
-watch -n5 'curl -s $MME/admin/maintenance; echo; curl -s $SGWC/admin/maintenance; echo; curl -s $SMF/admin/maintenance'
+watch -n5 'curl -s $MME/admin/maintenance/status; echo; curl -s $SGWC/admin/maintenance/status; echo; curl -s $SMF/admin/maintenance/status'
 
 # 4. Clean up any stragglers on SGW/SMF
 curl -s -X POST "$SGWC/admin/maintenance/drain"

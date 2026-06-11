@@ -131,6 +131,23 @@ size_t sgwc_dump_maintenance_status(char *buf, size_t buflen,
     return (size_t)((size_t)written < buflen ? (size_t)written : buflen - 1);
 }
 
+static int sgwc_admin_maintenance_status(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    size_t n;
+
+    (void)q;
+
+    n = sgwc_dump_maintenance_status(body, body_cap, 0, 0, NULL);
+    if (n == 0) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_INTERNAL_ERROR, "status encode failed");
+        return ADMIN_HTTP_INTERNAL_ERROR;
+    }
+    *body_len = n;
+    return 200;
+}
+
 void sgwc_admin_api_register(void)
 {
     ogs_metrics_register_custom_ep(sgwc_dump_maintenance_status,
@@ -144,4 +161,7 @@ void sgwc_admin_api_register(void)
     ogs_metrics_register_admin_ep(sgwc_admin_maintenance_drain,
             "/admin/maintenance/drain",
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
+    ogs_metrics_register_admin_ep(sgwc_admin_maintenance_status,
+            "/admin/maintenance/status",
+            OGS_METRICS_ADMIN_METHOD_GET);
 }

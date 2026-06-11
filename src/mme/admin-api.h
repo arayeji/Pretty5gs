@@ -47,7 +47,8 @@
  *   GET /admin/trace/imsi?force=1         clear all filters
  *
  *   GET  /admin/maintenance
- *        JSON status: maintenance flag + ue_count.
+ *   GET  /admin/maintenance/status
+ *        JSON status: maintenance flag + ue_count (local clients only).
  *
  *   POST /admin/maintenance/enable
  *   POST /admin/maintenance/disable
@@ -88,6 +89,8 @@ int mme_admin_maintenance_enable(const ogs_metrics_query_t *q,
 int mme_admin_maintenance_disable(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len);
 int mme_admin_maintenance_drain(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len);
+int mme_admin_maintenance_status(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len);
 
 #ifdef __cplusplus

@@ -33,6 +33,7 @@
 #include "metrics/ogs-metrics.h"
 
 #include <netdb.h> /* AI_PASSIVE */
+#include <netinet/in.h>
 #include <arpa/inet.h> /* inet_ntop for admin peer logging */
 #include <stdlib.h> /* getenv, atoi */
 #include "prom.h"
@@ -335,6 +336,78 @@ static void format_client_addr(struct MHD_Connection *connection,
     }
 }
 
+/*
+ * /admin/* is restricted to loopback and RFC1918 (private) client
+ * addresses. /metrics, /ue-info, and other dumpers stay open to any
+ * client that can reach the listener (firewall as needed).
+ */
+static bool metrics_client_is_local(struct MHD_Connection *connection)
+{
+    const union MHD_ConnectionInfo *ci = MHD_get_connection_info(
+            connection, MHD_CONNECTION_INFO_CLIENT_ADDRESS);
+    const struct sockaddr *sa = NULL;
+    const uint8_t *b = NULL;
+
+    if (!ci || !ci->client_addr)
+        return false;
+
+    sa = (const struct sockaddr *)ci->client_addr;
+
+    if (sa->sa_family == AF_INET) {
+        const struct sockaddr_in *sin = (const struct sockaddr_in *)sa;
+        uint32_t addr = ntohl(sin->sin_addr.s_addr);
+
+        if ((addr & 0xff000000u) == 0x7f000000u) /* 127.0.0.0/8 */
+            return true;
+        if ((addr & 0xff000000u) == 0x0a000000u) /* 10.0.0.0/8 */
+            return true;
+        if ((addr & 0xfff00000u) == 0xac100000u) /* 172.16.0.0/12 */
+            return true;
+        if ((addr & 0xffff0000u) == 0xc0a80000u) /* 192.168.0.0/16 */
+            return true;
+        return false;
+    }
+
+    if (sa->sa_family == AF_INET6) {
+        const struct sockaddr_in6 *sin6 = (const struct sockaddr_in6 *)sa;
+
+        if (IN6_IS_ADDR_LOOPBACK(&sin6->sin6_addr))
+            return true;
+
+        /* Unique local (fc00::/7) and link-local (fe80::/10) */
+        b = (const uint8_t *)&sin6->sin6_addr;
+        if (b[0] == 0xfc || b[0] == 0xfd)
+            return true;
+        if (b[0] == 0xfe && (b[1] & 0xc0) == 0x80)
+            return true;
+        return false;
+    }
+
+    return false;
+}
+
+static bool metrics_path_is_admin(const char *url)
+{
+    return url && strncmp(url, "/admin/", 7) == 0;
+}
+
+static _MHD_Result metrics_forbid_non_local_admin(
+        struct MHD_Connection *connection, const char *url)
+{
+    char peer[128] = "";
+
+    if (!metrics_path_is_admin(url))
+        return (_MHD_Result)MHD_NO;
+
+    if (metrics_client_is_local(connection))
+        return (_MHD_Result)MHD_NO;
+
+    format_client_addr(connection, peer, sizeof(peer));
+    ogs_warn("admin: denied non-local client %s for %s",
+            peer[0] ? peer : "unknown", url);
+    return reply_text(connection, MHD_HTTP_FORBIDDEN, "Forbidden\n");
+}
+
 static _MHD_Result reply_text(struct MHD_Connection *connection,
                               unsigned int status, const char *body)
 {
@@ -356,12 +429,13 @@ static _MHD_Result serve_admin(struct MHD_Connection *connection,
         return reply_text(connection, MHD_HTTP_METHOD_NOT_ALLOWED,
                 "Method Not Allowed\n");
 
-    /*
-     * No loopback ACL: admin endpoints are reachable from anywhere
-     * the listener is bound to. The operator is expected to firewall
-     * the metrics port (default 9091) at the host or network level.
-     * We log every invocation so detaches are auditable.
-     */
+    {
+        _MHD_Result denied = metrics_forbid_non_local_admin(
+                connection, ep->endpoint);
+        if (denied)
+            return denied;
+    }
+
     ogs_metrics_query_t q;
     fill_query_from_connection(connection, &q);
 
@@ -499,6 +573,10 @@ mhd_server_access_handler(void *cls, struct MHD_Connection *connection,
     ogs_metrics_custom_ep_t *node = NULL;
     ogs_list_for_each(&ogs_metrics_self()->custom_eps, node) {
         if (!strcmp(node->endpoint, url)) {
+            _MHD_Result denied = metrics_forbid_non_local_admin(
+                    connection, url);
+            if (denied)
+                return denied;
             return serve_json_from_dumper(connection,
                     node->handler,
                     page, page_size, &q);
