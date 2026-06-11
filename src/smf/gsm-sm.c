@@ -513,7 +513,11 @@ void smf_gsm_state_wait_epc_auth_initial(ogs_fsm_t *s, smf_event_t *e)
         case OGS_DIAM_GX_CMD_CODE_CREDIT_CONTROL:
             switch(gx_message->cc_request_type) {
             case OGS_DIAM_GX_CC_REQUEST_TYPE_INITIAL_REQUEST:
-                ogs_assert(gtp_xact);
+                if (!gtp_xact) {
+                    ogs_warn("GTP transaction already removed on Gx CCA initial");
+                    sess->sm_data.gx_ccr_init_in_flight = false;
+                    goto test_can_proceed;
+                }
                 diam_err = smf_gx_handle_cca_initial_request(sess,
                                 gx_message, gtp_xact);
                 sess->sm_data.gx_ccr_init_in_flight = false;
@@ -533,7 +537,11 @@ void smf_gsm_state_wait_epc_auth_initial(ogs_fsm_t *s, smf_event_t *e)
         case OGS_DIAM_GY_CMD_CODE_CREDIT_CONTROL:
             switch(gy_message->cc_request_type) {
             case OGS_DIAM_GY_CC_REQUEST_TYPE_INITIAL_REQUEST:
-                ogs_assert(gtp_xact);
+                if (!gtp_xact) {
+                    ogs_warn("GTP transaction already removed on Gy CCA initial");
+                    sess->sm_data.gy_ccr_init_in_flight = false;
+                    goto test_can_proceed;
+                }
                 diam_err = smf_gy_handle_cca_initial_request(sess,
                                 gy_message, gtp_xact, &need_gy_terminate);
                 sess->sm_data.gy_ccr_init_in_flight = false;
@@ -2435,7 +2443,12 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
 
                 if (pfcp_cause != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
                     /* FIXME: tear down Gy and Gx */
-                    ogs_assert(gtp_xact);
+                    if (!gtp_xact) {
+                        ogs_warn("GTP transaction already removed on "
+                                "PFCP deletion failure");
+                        OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
+                        break;
+                    }
                     gtp_cause = gtp_cause_from_pfcp(
                             pfcp_cause, gtp_xact->gtp_version);
                     send_gtp_delete_err_msg(sess, gtp_xact, gtp_cause);
