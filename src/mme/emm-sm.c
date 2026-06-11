@@ -41,7 +41,11 @@
 #define OGS_LOG_DOMAIN __emm_log_domain
 
 #define MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s) do {                  \
-    if ((mme_ue)->can_restore_context) {                                \
+    if (mme_self()->maintenance_mode) {                                 \
+        OGS_FSM_TRAN((s), &emm_state_ue_context_will_remove);           \
+        ogs_warn("[%s] Failure during maintenance; removing UE "        \
+                 "context.", (mme_ue)->imsi_bcd);                       \
+    } else if ((mme_ue)->can_restore_context) {                         \
         /* Restore context if allowed */                                \
         mme_ue_restore_memento((mme_ue), &((mme_ue)->memento));         \
         (mme_ue)->security_context_available = 1;                       \

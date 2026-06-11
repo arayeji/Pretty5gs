@@ -653,7 +653,8 @@ int emm_handle_service_request(
     ogs_assert(mme_ue);
     ogs_assert(enb_ue);
 
-    if (mme_self()->maintenance_mode) {
+    if (mme_self()->maintenance_mode &&
+            mme_ue->paging.type != MME_PAGING_TYPE_DETACH_TO_UE) {
         int r;
         ogs_warn("[%s] Service request rejected: MME maintenance mode",
                 mme_ue->imsi_bcd);

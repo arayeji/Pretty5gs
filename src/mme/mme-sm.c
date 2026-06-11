@@ -1306,8 +1306,8 @@ cleanup:
 
     case MME_EVENT_ADMIN_MAINTENANCE_ENABLE:
         mme_self()->maintenance_mode = true;
-        ogs_info("admin maintenance: enabled");
-        mme_admin_queue_detach_all_ues(0);
+        ogs_info("admin maintenance: enabled (implicit detach all UEs)");
+        mme_admin_queue_detach_all_ues(1);
         break;
 
     case MME_EVENT_ADMIN_MAINTENANCE_DISABLE:
