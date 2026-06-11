@@ -39,6 +39,49 @@ static ogs_gtp_xact_stage_t ogs_gtp1_xact_get_stage(uint8_t type, uint32_t xid);
 static int ogs_gtp_xact_delete(ogs_gtp_xact_t *xact);
 static int ogs_gtp_xact_update_rx(ogs_gtp_xact_t *xact, uint8_t type);
 
+static bool ogs_gtp_xact_on_list(ogs_gtp_xact_t *xact)
+{
+    ogs_gtp_xact_t *iter = NULL;
+    ogs_list_t *list = NULL;
+
+    if (!xact || !xact->gnode)
+        return false;
+
+    list = xact->org == OGS_GTP_LOCAL_ORIGINATOR ?
+        &xact->gnode->local_list : &xact->gnode->remote_list;
+
+    ogs_list_for_each(list, iter) {
+        if (iter == xact)
+            return true;
+    }
+
+    return false;
+}
+
+static ogs_gtp_xact_t *ogs_gtp_xact_find_by_id_for_timer(ogs_pool_id_t id)
+{
+    ogs_gtp_xact_t *xact = NULL;
+
+    if (id < OGS_MIN_POOL_ID || id > OGS_MAX_POOL_ID)
+        return NULL;
+
+    xact = ogs_gtp_xact_find_by_id(id);
+    if (!xact)
+        return NULL;
+
+    if (xact->id != id) {
+        ogs_warn("Stale GTP Transaction [%d] (pool id mismatch)", (int)id);
+        return NULL;
+    }
+
+    if (!ogs_gtp_xact_on_list(xact)) {
+        ogs_warn("Stale GTP Transaction [%d] (not on peer list)", (int)id);
+        return NULL;
+    }
+
+    return xact;
+}
+
 static void response_timeout(void *data);
 static void holding_timeout(void *data);
 static void peer_timeout(void *data);
@@ -895,10 +938,10 @@ static void response_timeout(void *data)
     xact_id = OGS_POINTER_TO_UINT(data);
     ogs_assert(xact_id >= OGS_MIN_POOL_ID && xact_id <= OGS_MAX_POOL_ID);
 
-    xact = ogs_gtp_xact_find_by_id(xact_id);
+    xact = ogs_gtp_xact_find_by_id_for_timer(xact_id);
     if (!xact) {
-        ogs_error("GTP Transaction has already been removed [%d]", xact_id);
-        return;;
+        ogs_warn("GTP Transaction has already been removed [%d]", xact_id);
+        return;
     }
     ogs_assert(xact->gnode);
 
@@ -947,10 +990,10 @@ static void holding_timeout(void *data)
     xact_id = OGS_POINTER_TO_UINT(data);
     ogs_assert(xact_id >= OGS_MIN_POOL_ID && xact_id <= OGS_MAX_POOL_ID);
 
-    xact = ogs_gtp_xact_find_by_id(xact_id);
+    xact = ogs_gtp_xact_find_by_id_for_timer(xact_id);
     if (!xact) {
-        ogs_error("GTP Transaction has already been removed [%d]", xact_id);
-        return;;
+        ogs_warn("GTP Transaction has already been removed [%d]", xact_id);
+        return;
     }
     ogs_assert(xact->gnode);
 
@@ -988,10 +1031,10 @@ static void peer_timeout(void *data)
     xact_id = OGS_POINTER_TO_UINT(data);
     ogs_assert(xact_id >= OGS_MIN_POOL_ID && xact_id <= OGS_MAX_POOL_ID);
 
-    xact = ogs_gtp_xact_find_by_id(xact_id);
+    xact = ogs_gtp_xact_find_by_id_for_timer(xact_id);
     if (!xact) {
-        ogs_error("GTP Transaction has already been removed [%d]", xact_id);
-        return;;
+        ogs_warn("GTP Transaction has already been removed [%d]", xact_id);
+        return;
     }
     ogs_assert(xact->gnode);
 
@@ -1377,19 +1420,32 @@ static int ogs_gtp_xact_delete(ogs_gtp_xact_t *xact)
             OGS_ADDR(&xact->gnode->addr, buf),
             OGS_PORT(&xact->gnode->addr));
 
+    /*
+     * Stop/delete timers before freeing the xact so holding_timeout and
+     * friends never hash-lookup a freed transaction.
+     */
+    if (xact->tm_response) {
+        ogs_timer_stop(xact->tm_response);
+        ogs_timer_delete(xact->tm_response);
+        xact->tm_response = NULL;
+    }
+    if (xact->tm_peer) {
+        ogs_timer_stop(xact->tm_peer);
+        ogs_timer_delete(xact->tm_peer);
+        xact->tm_peer = NULL;
+    }
+    if (xact->tm_holding) {
+        ogs_timer_stop(xact->tm_holding);
+        ogs_timer_delete(xact->tm_holding);
+        xact->tm_holding = NULL;
+    }
+
     if (xact->seq[0].pkbuf)
         ogs_pkbuf_free(xact->seq[0].pkbuf);
     if (xact->seq[1].pkbuf)
         ogs_pkbuf_free(xact->seq[1].pkbuf);
     if (xact->seq[2].pkbuf)
         ogs_pkbuf_free(xact->seq[2].pkbuf);
-
-    if (xact->tm_response)
-        ogs_timer_delete(xact->tm_response);
-    if (xact->tm_holding)
-        ogs_timer_delete(xact->tm_holding);
-    if (xact->tm_peer)
-        ogs_timer_delete(xact->tm_peer);
 
     assoc_xact = ogs_gtp_xact_find_by_id(xact->assoc_xact_id);
     if (assoc_xact)
