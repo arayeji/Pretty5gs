@@ -1758,7 +1758,10 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
                     enb_ue, mme_ue, &message->emm.attach_request, e->pkbuf);
             if (rv != OGS_OK) {
                 ogs_error("emm_handle_attach_request() failed");
-                OGS_FSM_TRAN(s, emm_state_exception);
+                if (mme_self()->maintenance_mode)
+                    OGS_FSM_TRAN(s, &emm_state_ue_context_will_remove);
+                else
+                    OGS_FSM_TRAN(s, emm_state_exception);
                 break;
             }
 
@@ -2065,7 +2068,10 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
                     enb_ue, mme_ue, &message->emm.attach_request, e->pkbuf);
             if (rv != OGS_OK) {
                 ogs_error("emm_handle_attach_request() failed");
-                OGS_FSM_TRAN(s, emm_state_exception);
+                if (mme_self()->maintenance_mode)
+                    OGS_FSM_TRAN(s, &emm_state_ue_context_will_remove);
+                else
+                    OGS_FSM_TRAN(s, emm_state_exception);
                 break;
             }
 
@@ -2256,7 +2262,10 @@ void emm_state_exception(ogs_fsm_t *s, mme_event_t *e)
                     enb_ue, mme_ue, &message->emm.attach_request, e->pkbuf);
             if (rv != OGS_OK) {
                 ogs_error("emm_handle_attach_request() failed");
-                OGS_FSM_TRAN(s, emm_state_exception);
+                if (mme_self()->maintenance_mode)
+                    OGS_FSM_TRAN(s, &emm_state_ue_context_will_remove);
+                else
+                    OGS_FSM_TRAN(s, emm_state_exception);
                 break;
             }
 
