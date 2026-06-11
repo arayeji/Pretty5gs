@@ -173,8 +173,17 @@ void smf_s6b_send_aar(smf_sess_t *sess, ogs_gtp_xact_t *xact)
 
         ogs_debug("    Allocate new session: [%s]", sess_data->s6b_sid);
 
-        /* Save Session-Id to SMF Session Context */
-        sess->s6b_sid = (char *)sess_data->s6b_sid;
+        /* Save Session-Id to SMF Session Context (independent copy). */
+        if (sess->s6b_sid)
+            ogs_free(sess->s6b_sid);
+        sess->s6b_sid = ogs_strdup((char *)sess_data->s6b_sid);
+        if (!sess->s6b_sid) {
+            ogs_error("ogs_strdup() failed");
+            state_cleanup(sess_data, NULL, NULL);
+            ret = fd_msg_free(req);
+            ogs_assert(ret == 0);
+            return;
+        }
     } else
         ogs_debug("    Retrieve session: [%s]", sess_data->s6b_sid);
 

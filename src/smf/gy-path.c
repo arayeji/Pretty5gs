@@ -716,8 +716,17 @@ void smf_gy_send_ccr(smf_sess_t *sess, ogs_pool_id_t xact_id,
         ogs_assert(sess_data);
 
         ogs_debug("    Allocate new Gy session: [%s]", sess_data->gy_sid);
-        /* Save Session-Id to SMF Session Context */
-        sess->gy_sid = (char *)sess_data->gy_sid;
+        /* Save Session-Id to SMF Session Context (independent copy). */
+        if (sess->gy_sid)
+            ogs_free(sess->gy_sid);
+        sess->gy_sid = ogs_strdup((char *)sess_data->gy_sid);
+        if (!sess->gy_sid) {
+            ogs_error("ogs_strdup() failed");
+            state_cleanup(sess_data, NULL, NULL);
+            ret = fd_msg_free(req);
+            ogs_assert(ret == 0);
+            return;
+        }
     } else
         ogs_debug("    Retrieve Gy session: [%s]", sess_data->gy_sid);
     /*
