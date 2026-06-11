@@ -493,6 +493,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         break;
     case SMF_EVT_N4_TIMER:
     case SMF_EVT_N4_NO_HEARTBEAT:
+    case SMF_EVT_N4_REASSOCIATE:
         ogs_assert(e);
         pfcp_node = e->pfcp_node;
         ogs_assert(pfcp_node);

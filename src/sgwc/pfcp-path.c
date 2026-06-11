@@ -21,6 +21,7 @@
 #include "gtp-path.h"
 #include "s11-handler.h"
 #include "sgwc-trace.h"
+#include "event.h"
 
 static void pfcp_node_fsm_init(ogs_pfcp_node_t *node, bool try_to_associate)
 {
@@ -754,4 +755,21 @@ ogs_pfcp_node_t *sgwc_pfcp_admin_add_sgwu_peer(
             "(num_of_dnn=%u)", (unsigned)node->num_of_dnn);
 
     return node;
+}
+
+void sgwc_pfcp_request_reassociation(ogs_pfcp_node_t *node)
+{
+    int rv;
+    sgwc_event_t *e = NULL;
+
+    ogs_assert(node);
+
+    e = sgwc_event_new(SGWC_EVT_SXA_REASSOCIATE);
+    e->pfcp_node = node;
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        sgwc_event_free(e);
+    }
 }

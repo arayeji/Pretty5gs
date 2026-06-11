@@ -126,6 +126,7 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
 
     case SGWC_EVT_SXA_TIMER:
     case SGWC_EVT_SXA_NO_HEARTBEAT:
+    case SGWC_EVT_SXA_REASSOCIATE:
         ogs_assert(e);
         pfcp_node = e->pfcp_node;
         ogs_assert(pfcp_node);

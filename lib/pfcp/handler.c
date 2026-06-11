@@ -19,6 +19,31 @@
 
 #include "ogs-pfcp.h"
 
+void ogs_pfcp_cp_update_recovery_time_stamp(
+        ogs_pfcp_node_t *node, uint32_t recovery_ts, const char *where)
+{
+    ogs_assert(node);
+    ogs_assert(where);
+
+    if (node->remote_recovery == 0 ||
+        node->remote_recovery == recovery_ts) {
+    } else if (node->remote_recovery < recovery_ts) {
+        ogs_error("Remote PFCP restarted [%u<%u] in %s",
+            node->remote_recovery, recovery_ts, where);
+        node->restoration_required = true;
+    } else if (node->remote_recovery > recovery_ts) {
+        ogs_error("Invalid Recovery Time Stamp [%u>%u] in %s",
+            node->remote_recovery, recovery_ts, where);
+    }
+
+    node->remote_recovery = recovery_ts;
+}
+
+bool ogs_pfcp_cause_no_association(uint8_t cause)
+{
+    return cause == OGS_PFCP_CAUSE_NO_ESTABLISHED_PFCP_ASSOCIATION;
+}
+
 bool ogs_pfcp_handle_heartbeat_request(
         ogs_pfcp_node_t *node, ogs_pfcp_xact_t *xact,
         ogs_pfcp_heartbeat_request_t *req)
@@ -33,18 +58,8 @@ bool ogs_pfcp_handle_heartbeat_request(
         return false;
     }
 
-    if (node->remote_recovery == 0 ||
-        node->remote_recovery == req->recovery_time_stamp.u32) {
-    } else if (node->remote_recovery < req->recovery_time_stamp.u32) {
-        ogs_error("Remote PFCP restarted [%u<%u] in Heartbeat REQ",
-            node->remote_recovery, req->recovery_time_stamp.u32);
-        node->restoration_required = true;
-    } else if (node->remote_recovery > req->recovery_time_stamp.u32) {
-        ogs_error("Invalid Recovery Time Stamp [%u>%u] in Heartbeat REQ",
-        node->remote_recovery, req->recovery_time_stamp.u32);
-    }
-
-    node->remote_recovery = req->recovery_time_stamp.u32;
+    ogs_pfcp_cp_update_recovery_time_stamp(node,
+            req->recovery_time_stamp.u32, "Heartbeat REQ");
 
     rv = ogs_pfcp_send_heartbeat_response(xact);
     if (rv != OGS_OK) {
@@ -70,18 +85,8 @@ bool ogs_pfcp_handle_heartbeat_response(
         return false;
     }
 
-    if (node->remote_recovery == 0 ||
-        node->remote_recovery == rsp->recovery_time_stamp.u32) {
-    } else if (node->remote_recovery < rsp->recovery_time_stamp.u32) {
-        ogs_error("Remote PFCP restarted [%u<%u] in Heartbeat RSP",
-            node->remote_recovery, rsp->recovery_time_stamp.u32);
-        node->restoration_required = true;
-    } else if (node->remote_recovery > rsp->recovery_time_stamp.u32) {
-        ogs_error("Invalid Recovery Time Stamp [%u>%u] in Heartbeat RSP",
-        node->remote_recovery, rsp->recovery_time_stamp.u32);
-    }
-
-    node->remote_recovery = rsp->recovery_time_stamp.u32;
+    ogs_pfcp_cp_update_recovery_time_stamp(node,
+            rsp->recovery_time_stamp.u32, "Heartbeat RSP");
 
     ogs_timer_start(node->t_no_heartbeat,
             ogs_local_conf()->time.message.pfcp.no_heartbeat_duration);
@@ -99,6 +104,11 @@ bool ogs_pfcp_cp_handle_association_setup_request(
     ogs_assert(xact);
     ogs_assert(node);
     ogs_assert(req);
+
+    if (req->recovery_time_stamp.presence) {
+        ogs_pfcp_cp_update_recovery_time_stamp(node,
+                req->recovery_time_stamp.u32, "Association Setup REQ");
+    }
 
     ogs_pfcp_cp_send_association_setup_response(
             xact, OGS_PFCP_CAUSE_REQUEST_ACCEPTED);
@@ -150,6 +160,11 @@ bool ogs_pfcp_cp_handle_association_setup_response(
     ogs_assert(node);
     ogs_assert(rsp);
 
+    if (rsp->recovery_time_stamp.presence) {
+        ogs_pfcp_cp_update_recovery_time_stamp(node,
+                rsp->recovery_time_stamp.u32, "Association Setup RSP");
+    }
+
     ogs_gtpu_resource_remove_all(&node->gtpu_resource_list);
 
     for (i = 0; i < OGS_MAX_NUM_OF_GTPU_RESOURCE; i++) {
@@ -180,6 +195,22 @@ bool ogs_pfcp_cp_handle_association_setup_response(
     if (node->up_function_features.ftup == 0)
         ogs_warn("F-TEID allocation/release not supported with peer %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
+
+    return true;
+}
+
+bool ogs_pfcp_cp_handle_association_release_request(
+        ogs_pfcp_node_t *node, ogs_pfcp_xact_t *xact,
+        ogs_pfcp_association_release_request_t *req)
+{
+    ogs_assert(node);
+    ogs_assert(xact);
+    ogs_assert(req);
+
+    ogs_pfcp_send_error_message(xact, 0,
+            OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE,
+            OGS_PFCP_CAUSE_REQUEST_ACCEPTED, 0);
+    ogs_pfcp_xact_commit(xact);
 
     return true;
 }

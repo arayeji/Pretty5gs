@@ -221,9 +221,10 @@ uint8_t smf_5gc_n4_handle_session_establishment_response(
 
             smf_log_sgw_peer(sgw_peer, sizeof(sgw_peer), sess);
             smf_log_upf_peer(upf_peer, sizeof(upf_peer), sess);
-            ogs_error("[%s] PFCP Session Establishment rejected cause[%u] "
+            ogs_error("[%s] PFCP Session Establishment rejected cause[%u:%s] "
                     "APN[%s] SGW[%s] UPF[%s] smf_seid[0x%llx]",
                     smf_log_id(smf_ue), rsp->cause.u8,
+                    ogs_pfcp_cause_get_name(rsp->cause.u8),
                     sess->session.name ? sess->session.name : "-",
                     sgw_peer[0] ? sgw_peer : "-",
                     upf_peer[0] ? upf_peer : "-",
@@ -243,8 +244,11 @@ uint8_t smf_5gc_n4_handle_session_establishment_response(
         cause_value = OGS_PFCP_CAUSE_MANDATORY_IE_MISSING;
     }
 
-    if (cause_value != OGS_PFCP_CAUSE_REQUEST_ACCEPTED)
+    if (cause_value != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
+        if (ogs_pfcp_cause_no_association(cause_value))
+            smf_pfcp_request_reassociation(sess->pfcp_node);
         return cause_value;
+    }
 
     for (i = 0; i < OGS_MAX_NUM_OF_PDR; i++) {
         pdr = ogs_pfcp_handle_created_pdr(
@@ -298,7 +302,10 @@ uint8_t smf_5gc_n4_handle_session_establishment_response(
     }
 
     if (cause_value != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
-        ogs_error("PFCP Cause [%d] : Not Accepted", cause_value);
+        if (ogs_pfcp_cause_no_association(cause_value))
+            smf_pfcp_request_reassociation(sess->pfcp_node);
+        ogs_error("PFCP Cause [%d:%s] : Not Accepted",
+                cause_value, ogs_pfcp_cause_get_name(cause_value));
         return cause_value;
     }
 
@@ -372,7 +379,11 @@ void smf_5gc_n4_handle_session_modification_response(
 
     if (rsp->cause.presence) {
         if (rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
-            ogs_warn("PFCP Cause [%d] : Not Accepted", rsp->cause.u8);
+            ogs_warn("PFCP Cause [%d:%s] : Not Accepted",
+                    rsp->cause.u8,
+                    ogs_pfcp_cause_get_name(rsp->cause.u8));
+            if (sess && ogs_pfcp_cause_no_association(rsp->cause.u8))
+                smf_pfcp_request_reassociation(sess->pfcp_node);
             status = sbi_status_from_pfcp(rsp->cause.u8);
         }
     } else {
@@ -1260,12 +1271,20 @@ uint8_t smf_epc_n4_handle_session_establishment_response(
 
     if (rsp->cause.presence) {
         if (rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
-            ogs_warn("PFCP Cause [%d] : Not Accepted", rsp->cause.u8);
+            ogs_warn("PFCP Cause [%d:%s] : Not Accepted",
+                    rsp->cause.u8,
+                    ogs_pfcp_cause_get_name(rsp->cause.u8));
             cause_value = rsp->cause.u8;
         }
     } else {
         ogs_error("No Cause");
         cause_value = OGS_PFCP_CAUSE_MANDATORY_IE_MISSING;
+    }
+
+    if (cause_value != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
+        if (ogs_pfcp_cause_no_association(cause_value))
+            smf_pfcp_request_reassociation(sess->pfcp_node);
+        return cause_value;
     }
 
     if (cause_value == OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
@@ -1319,8 +1338,11 @@ uint8_t smf_epc_n4_handle_session_establishment_response(
     }
 
 
-    if (cause_value != OGS_PFCP_CAUSE_REQUEST_ACCEPTED)
+    if (cause_value != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
+        if (ogs_pfcp_cause_no_association(cause_value))
+            smf_pfcp_request_reassociation(sess->pfcp_node);
         return cause_value;
+    }
 
     bearer = smf_default_bearer_in_sess(sess);
     ogs_assert(bearer);
@@ -1398,7 +1420,11 @@ void smf_epc_n4_handle_session_modification_response(
 
     if (rsp->cause.presence) {
         if (rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
-            ogs_error("PFCP Cause [%d] : Not Accepted", rsp->cause.u8);
+            ogs_error("PFCP Cause [%d:%s] : Not Accepted",
+                    rsp->cause.u8,
+                    ogs_pfcp_cause_get_name(rsp->cause.u8));
+            if (ogs_pfcp_cause_no_association(rsp->cause.u8))
+                smf_pfcp_request_reassociation(sess->pfcp_node);
             return;
         }
     } else {

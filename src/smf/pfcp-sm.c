@@ -156,11 +156,21 @@ void smf_pfcp_state_will_associate(ogs_fsm_t *s, smf_event_t *e)
                     &message->pfcp_association_setup_response);
             OGS_FSM_TRAN(s, smf_pfcp_state_associated);
             break;
+        case OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE:
+            ogs_pfcp_cp_handle_association_release_request(node, xact,
+                    &message->pfcp_association_release_request);
+            ogs_warn("PFCP Association Release Request from %s",
+                    ogs_sockaddr_to_string_static(node->addr_list));
+            node->restoration_required = true;
+            OGS_FSM_TRAN(s, smf_pfcp_state_will_associate);
+            break;
         default:
             ogs_warn("cannot handle PFCP message type[%d]",
                     message->h.type);
             break;
         }
+        break;
+    case SMF_EVT_N4_REASSOCIATE:
         break;
     default:
         ogs_error("Unknown event %s", smf_event_get_name(e));
@@ -294,6 +304,14 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
                     ogs_sockaddr_to_string_static(node->addr_list));
             ogs_pfcp_cp_handle_association_setup_response(node, xact,
                     &message->pfcp_association_setup_response);
+            break;
+        case OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE:
+            ogs_pfcp_cp_handle_association_release_request(node, xact,
+                    &message->pfcp_association_release_request);
+            ogs_warn("PFCP Association Release Request from %s",
+                    ogs_sockaddr_to_string_static(node->addr_list));
+            node->restoration_required = true;
+            OGS_FSM_TRAN(s, smf_pfcp_state_will_associate);
             break;
         case OGS_PFCP_SESSION_ESTABLISHMENT_RESPONSE_TYPE:
             if (!message->h.seid_presence) ogs_error("No SEID");
@@ -431,6 +449,11 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
         ogs_assert(node);
         reselect_upf(node);
 
+        OGS_FSM_TRAN(s, smf_pfcp_state_will_associate);
+        break;
+    case SMF_EVT_N4_REASSOCIATE:
+        ogs_warn("PFCP re-association required with UPF %s",
+                ogs_sockaddr_to_string_static(node->addr_list));
         OGS_FSM_TRAN(s, smf_pfcp_state_will_associate);
         break;
     default:

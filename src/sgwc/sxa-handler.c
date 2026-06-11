@@ -373,6 +373,8 @@ void sgwc_sxa_handle_session_establishment_response(
             ogs_error("PFCP Cause [%d:%s] : Not Accepted",
                     pfcp_rsp->cause.u8,
                     ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8));
+            if (ogs_pfcp_cause_no_association(pfcp_rsp->cause.u8) && sess)
+                sgwc_pfcp_request_reassociation(sess->pfcp_node);
             cause_value = gtp_cause_from_pfcp(pfcp_rsp->cause.u8);
         }
     } else {
@@ -893,7 +895,11 @@ void sgwc_sxa_handle_session_modification_response(
 
     if (pfcp_rsp->cause.presence) {
         if (pfcp_rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
-            ogs_warn("PFCP Cause [%d] : Not Accepted", pfcp_rsp->cause.u8);
+            ogs_warn("PFCP Cause [%d:%s] : Not Accepted",
+                    pfcp_rsp->cause.u8,
+                    ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8));
+            if (ogs_pfcp_cause_no_association(pfcp_rsp->cause.u8) && sess)
+                sgwc_pfcp_request_reassociation(sess->pfcp_node);
             cause_value = gtp_cause_from_pfcp(pfcp_rsp->cause.u8);
         }
     } else {

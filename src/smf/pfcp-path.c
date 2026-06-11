@@ -21,6 +21,7 @@
 #include "pfcp-path.h"
 #include "collision-replace.h"
 #include "smf-trace.h"
+#include "event.h"
 
 /* Converts PFCP "Usage Report" "Report Trigger" bitmask to Gy "Reporting-Reason" AVP enum value.
  * PFCP: 3GPP TS 29.244 sec 8.2.41
@@ -1246,4 +1247,21 @@ ogs_pfcp_node_t *smf_pfcp_admin_add_upf_peer(
             "(num_of_dnn=%u)", (unsigned)node->num_of_dnn);
 
     return node;
+}
+
+void smf_pfcp_request_reassociation(ogs_pfcp_node_t *node)
+{
+    int rv;
+    smf_event_t *e = NULL;
+
+    ogs_assert(node);
+
+    e = smf_event_new(SMF_EVT_N4_REASSOCIATE);
+    e->pfcp_node = node;
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        ogs_event_free(e);
+    }
 }
