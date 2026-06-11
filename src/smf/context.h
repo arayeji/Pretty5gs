@@ -396,15 +396,22 @@ typedef struct smf_ue_s {
 #define SMF_SESS_CLEAR(__sESS) \
     do { \
         smf_ue_t *smf_ue = NULL; \
-        ogs_assert(__sESS); \
-        smf_ue = smf_ue_find_by_id((__sESS)->smf_ue_id); \
-        ogs_assert(smf_ue); \
-        smf_metrics_inst_by_slice_add(&(__sESS)->serving_plmn_id, \
-                &(__sESS)->s_nssai, SMF_METR_GAUGE_SM_SESSIONNBR, -1); \
+        smf_sess_t *_sess = smf_sess_find_active_by_id((__sESS)->id); \
+        if (!_sess) { \
+            ogs_warn("Session already removed (sess_id=%d)", \
+                    (int)(__sESS)->id); \
+            break; \
+        } \
+        smf_ue = smf_ue_find_active((_sess)->smf_ue_id); \
+        if (!smf_ue) { \
+            ogs_warn("UE already removed (sess_id=%d)", (int)(_sess)->id); \
+            smf_sess_remove(_sess); \
+            break; \
+        } \
         if (SMF_UE_IS_LAST_SESSION(smf_ue)) \
             smf_ue_remove(smf_ue); \
         else \
-            smf_sess_remove(__sESS); \
+            smf_sess_remove(_sess); \
     } while(0)
 
 typedef struct smf_bearer_s smf_bearer_t;
@@ -503,6 +510,7 @@ typedef struct smf_sess_s {
 
     bool            epc;            /**< EPC or 5GC */
     bool            collision_replace; /* Re-attach: wait UPF delete before new CSR */
+    unsigned        metrics_session_counted : 1;
 
     ogs_pfcp_sess_t pfcp;           /* PFCP session context */
 
@@ -1061,6 +1069,7 @@ void smf_bearer_tft_update(smf_bearer_t *bearer);
 void smf_bearer_qos_update(smf_bearer_t *bearer);
 
 smf_ue_t *smf_ue_find_by_id(ogs_pool_id_t id);
+smf_ue_t *smf_ue_find_active(ogs_pool_id_t id);
 smf_sess_t *smf_sess_find_by_id(ogs_pool_id_t id);
 smf_bearer_t *smf_bearer_find_by_id(ogs_pool_id_t id);
 smf_bearer_t *smf_qos_flow_find_by_id(ogs_pool_id_t id);

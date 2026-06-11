@@ -39,6 +39,9 @@ static OGS_POOL(smf_pf_pool, smf_pf_t);
 static OGS_POOL(smf_sess_pool, smf_sess_t);
 static OGS_POOL(smf_n4_seid_pool, ogs_pool_id_t);
 
+static bool smf_sess_on_ue_list(const smf_sess_t *sess);
+static bool smf_ue_on_list(const smf_ue_t *smf_ue);
+
 static int context_initialized = 0;
 
 static int num_of_smf_sess = 0;
@@ -1917,6 +1920,7 @@ smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)
     ogs_list_add(&smf_ue->sess_list, sess);
 
     stats_add_smf_session();
+    smf_metrics_session_active_inc(sess);
 
     return sess;
 }
@@ -2288,8 +2292,6 @@ smf_sess_t *smf_sess_add_by_sm_context(ogs_sbi_message_t *message)
     if (sess) {
         ogs_warn("OLD Session Will Release [SUPI:%s,PDU Session identity:%d]",
                 SmContextCreateData->supi, SmContextCreateData->pdu_session_id);
-        smf_metrics_inst_by_slice_add(&sess->serving_plmn_id, &sess->s_nssai,
-                SMF_METR_GAUGE_SM_SESSIONNBR, -1);
         smf_sess_remove(sess);
     }
 
@@ -2347,8 +2349,6 @@ smf_sess_t *smf_sess_add_by_pdu_session(ogs_sbi_message_t *message)
         ogs_warn("OLD Session Will Release [SUPI:%s,PDU Session identity:%d]",
                 PduSessionCreateData->supi,
                 PduSessionCreateData->pdu_session_id);
-        smf_metrics_inst_by_slice_add(&sess->serving_plmn_id, &sess->s_nssai,
-                SMF_METR_GAUGE_SM_SESSIONNBR, -1);
         smf_sess_remove(sess);
     }
 
@@ -2429,8 +2429,15 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
     uint8_t cause_value = OGS_PFCP_CAUSE_REQUEST_ACCEPTED;
 
     ogs_assert(sess);
-    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
-    ogs_assert(smf_ue);
+    if (!smf_sess_find_active_by_id(sess->id)) {
+        ogs_warn("Session already removed (sess_id=%d)", (int)sess->id);
+        return OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND;
+    }
+    smf_ue = smf_ue_find_active(sess->smf_ue_id);
+    if (!smf_ue) {
+        ogs_warn("UE already removed (sess_id=%d)", (int)sess->id);
+        return OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND;
+    }
 
     /*
      * Adapt requested PDN type to configured pools (IPv4-only SMF, IMS/hiweb
@@ -2614,22 +2621,32 @@ void smf_sess_remove(smf_sess_t *sess)
     char buf2[OGS_ADDRSTRLEN];
 
     ogs_assert(sess);
-    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
-    ogs_assert(smf_ue);
 
-    ogs_info("Removed Session: UE IMSI:[%s] DNN:[%s:%d] IPv4:[%s] IPv6:[%s]",
-            smf_ue->supi ? smf_ue->supi : smf_ue->imsi_bcd,
-            sess->session.name, sess->psi,
-            sess->ipv4 ? OGS_INET_NTOP(&sess->ipv4->addr, buf1) : "",
-            sess->ipv6 ? OGS_INET6_NTOP(&sess->ipv6->addr, buf2) : "");
+    smf_metrics_session_active_dec(sess);
+
+    if (smf_sess_on_ue_list(sess)) {
+        smf_ue = smf_ue_find_active(sess->smf_ue_id);
+        if (smf_ue) {
+            ogs_info("Removed Session: UE IMSI:[%s] DNN:[%s:%d] IPv4:[%s] IPv6:[%s]",
+                    smf_ue->supi ? smf_ue->supi : smf_ue->imsi_bcd,
+                    sess->session.name, sess->psi,
+                    sess->ipv4 ? OGS_INET_NTOP(&sess->ipv4->addr, buf1) : "",
+                    sess->ipv6 ? OGS_INET6_NTOP(&sess->ipv6->addr, buf2) : "");
+
+            ogs_list_remove(&smf_ue->sess_list, sess);
+        } else {
+            ogs_warn("UE not found while removing session (sess_id=%d)",
+                    (int)sess->id);
+        }
+    } else {
+        ogs_warn("Session not on UE list (sess_id=%d)", (int)sess->id);
+    }
 
     smf_radius_accounting_session_stopping(sess);
     smf_radius_sess_clear(sess);
 
     smf_ga_cdr_session_stop(sess);
     smf_ga_sess_clear(sess);
-
-    ogs_list_remove(&smf_ue->sess_list, sess);
 
     ogs_hash_set(self.smf_n4_seid_hash, &sess->smf_n4_seid,
             sizeof(sess->smf_n4_seid), NULL);
@@ -3987,6 +4004,34 @@ smf_bearer_t *smf_default_bearer_in_sess(smf_sess_t *sess)
 smf_ue_t *smf_ue_find_by_id(ogs_pool_id_t id)
 {
     return ogs_pool_find_by_id(&smf_ue_pool, id);
+}
+
+static bool smf_ue_on_list(const smf_ue_t *smf_ue)
+{
+    smf_ue_t *iter = NULL;
+
+    if (!smf_ue)
+        return false;
+
+    ogs_list_for_each(&self.smf_ue_list, iter) {
+        if (iter == smf_ue)
+            return true;
+    }
+
+    return false;
+}
+
+smf_ue_t *smf_ue_find_active(ogs_pool_id_t id)
+{
+    smf_ue_t *smf_ue = smf_ue_find_by_id(id);
+
+    if (!smf_ue)
+        return NULL;
+
+    if (!smf_ue_on_list(smf_ue))
+        return NULL;
+
+    return smf_ue;
 }
 
 smf_sess_t *smf_sess_find_by_id(ogs_pool_id_t id)

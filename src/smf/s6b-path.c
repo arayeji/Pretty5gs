@@ -404,8 +404,15 @@ static void smf_s6b_aaa_cb(void *data, struct msg **msg)
 
     ogs_debug("    Retrieve its data: [%s]", sess_data->s6b_sid);
 
-    sess = sess_data->sess;
-    ogs_assert(sess);
+    if (!sess_data->sess) {
+        ogs_warn("No Session");
+        goto cleanup;
+    }
+    sess = smf_sess_find_active_by_id(sess_data->sess->id);
+    if (!sess) {
+        ogs_warn("Session already removed [%d]", (int)sess_data->sess->id);
+        goto cleanup;
+    }
 
     /* Allocate S6B message structure */
     s6b_message = ogs_calloc(1, sizeof(ogs_diam_s6b_message_t));
@@ -750,8 +757,15 @@ static void smf_s6b_sta_cb(void *data, struct msg **msg)
 
     ogs_debug("    Retrieve its data: [%s]", sess_data->s6b_sid);
 
-    sess = sess_data->sess;
-    ogs_assert(sess);
+    if (!sess_data->sess) {
+        ogs_warn("No Session");
+        goto cleanup;
+    }
+    sess = smf_sess_find_active_by_id(sess_data->sess->id);
+    if (!sess) {
+        ogs_warn("Session already removed [%d]", (int)sess_data->sess->id);
+        goto cleanup;
+    }
 
     /* Allocate S6B message structure */
     s6b_message = ogs_calloc(1, sizeof(ogs_diam_s6b_message_t));

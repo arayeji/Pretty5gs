@@ -289,8 +289,7 @@ bool smf_nsmf_handle_create_sm_context(
                                     SmContextCreateData->hplmn_snssai->sd);
     }
 
-    smf_metrics_inst_by_slice_add(&sess->serving_plmn_id, &sess->s_nssai,
-            SMF_METR_GAUGE_SM_SESSIONNBR, 1);
+    smf_metrics_session_active_inc(sess);
     smf_metrics_inst_by_slice_add(&sess->serving_plmn_id, &sess->s_nssai,
             SMF_METR_CTR_SM_PDUSESSIONCREATIONREQ, 1);
 
@@ -1661,8 +1660,7 @@ bool smf_nsmf_handle_create_data_in_hsmf(
                 extended_protocol_configuration_options);
     }
 
-    smf_metrics_inst_by_slice_add(&sess->serving_plmn_id, &sess->s_nssai,
-            SMF_METR_GAUGE_SM_SESSIONNBR, 1);
+    smf_metrics_session_active_inc(sess);
     smf_metrics_inst_by_slice_add(&sess->serving_plmn_id, &sess->s_nssai,
             SMF_METR_CTR_SM_PDUSESSIONCREATIONREQ, 1);
 

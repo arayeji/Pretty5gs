@@ -815,9 +815,9 @@ static void smf_gx_cca_cb(void *data, struct msg **msg)
 
     ogs_debug("    CC-Request-Number[%d]", cc_request_number);
 
-    sess = smf_sess_find_by_id(sess_data->sess_id);
+    sess = smf_sess_find_active_by_id(sess_data->sess_id);
     if (!sess) {
-        ogs_error("Cannot find session by ID[%d]", sess_data->sess_id);
+        ogs_warn("Session already removed [%d]", sess_data->sess_id);
         error++;
         goto cleanup;
     }
@@ -1276,9 +1276,9 @@ static int smf_gx_rar_cb( struct msg **msg, struct avp *avp,
     }
 
     /* Get Session Information */
-    sess = smf_sess_find_by_id(sess_data->sess_id);
+    sess = smf_sess_find_active_by_id(sess_data->sess_id);
     if (!sess) {
-        ogs_error("No Session ID [%d]", sess_data->sess_id);
+        ogs_warn("Session already removed [%d]", sess_data->sess_id);
         error = 1;
         goto out;
     }

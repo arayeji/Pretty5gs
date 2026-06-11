@@ -7,6 +7,8 @@
 extern "C" {
 #endif
 
+typedef struct smf_sess_s smf_sess_t;
+
 /* GLOBAL */
 typedef enum smf_metric_type_global_s {
     SMF_METR_GLOB_CTR_GTP_NEW_NODE_FAILED = 0,
@@ -78,6 +80,9 @@ typedef enum smf_metric_type_by_slice_s {
 void smf_metrics_inst_by_slice_add(
     ogs_plmn_id_t *plmn, ogs_s_nssai_t *snssai,
     smf_metric_type_by_slice_t t, int val);
+
+void smf_metrics_session_active_inc(smf_sess_t *sess);
+void smf_metrics_session_active_dec(smf_sess_t *sess);
 
 /* BY SLICE and 5QI */
 typedef enum smf_metric_type_by_5qi_s {

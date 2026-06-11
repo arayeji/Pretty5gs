@@ -533,6 +533,12 @@ void smf_gsm_state_wait_epc_auth_initial(ogs_fsm_t *s, smf_event_t *e)
     return;
 
 test_can_proceed:
+    sess = smf_sess_find_active_by_id(e->sess_id);
+    if (!sess) {
+        ogs_warn("Session already removed [%s]", smf_event_get_name(e));
+        return;
+    }
+
     /* First wait for both Gx and Gy requests to be done: */
     if (!sess->sm_data.s6b_aar_in_flight &&
         !sess->sm_data.gx_ccr_init_in_flight &&
@@ -547,7 +553,11 @@ test_can_proceed:
 
         if (diam_err == ER_DIAMETER_SUCCESS) {
             OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_establishment);
-            ogs_assert(gtp_xact);
+            if (!gtp_xact) {
+                ogs_warn("GTP transaction already removed");
+                OGS_FSM_TRAN(s, smf_gsm_state_exception);
+                return;
+            }
             ogs_assert(OGS_OK ==
                 smf_epc_pfcp_send_session_establishment_request(
                     sess,
@@ -567,9 +577,11 @@ test_can_proceed:
                     sess, gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID,
                     OGS_DIAM_GY_CC_REQUEST_TYPE_TERMINATION_REQUEST);
             }
-            uint8_t gtp_cause = gtp_cause_from_diameter(
-                                    gtp_xact->gtp_version, diam_err, NULL);
-            send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);
+            if (gtp_xact) {
+                uint8_t gtp_cause = gtp_cause_from_diameter(
+                                        gtp_xact->gtp_version, diam_err, NULL);
+                send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);
+            }
         }
     }
 }
