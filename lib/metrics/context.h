@@ -170,10 +170,10 @@ void ogs_metrics_register_custom_ep(ogs_metrics_custom_ep_hdlr_t handler,
         const char *endpoint);
 
 /*
- * Admin endpoints (POST/GET). These are gated behind a loopback
- * ACL by default (see prometheus/context.c) because they mutate
- * NF state. Returned int is the HTTP status to send; if `body` is
- * left empty on success the caller gets "OK\n".
+ * Admin endpoints (POST/GET). Restricted to loopback and private/local
+ * client addresses (see prometheus/context.c); /metrics is not gated.
+ * Returned int is the HTTP status to send; if `body` is left empty on
+ * success the caller gets "OK\n".
  *
  * Methods bitmask uses MHD_HTTP_METHOD_GET / MHD_HTTP_METHOD_POST
  * style values via the OGS_METRICS_ADMIN_METHOD_* constants below.
