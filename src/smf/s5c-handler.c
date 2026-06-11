@@ -135,8 +135,12 @@ uint8_t smf_s5c_handle_create_session_request(
     uint16_t decoded = 0;
 
     ogs_assert(sess);
-    ogs_assert(xact);
     ogs_assert(req);
+
+    if (!xact) {
+        ogs_warn("No GTP transaction for Create Session Request");
+        return OGS_GTP2_CAUSE_SYSTEM_FAILURE;
+    }
 
     ogs_debug("Create Session Request");
 

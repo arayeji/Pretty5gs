@@ -45,6 +45,49 @@ static void response_timeout(void *data);
 static void holding_timeout(void *data);
 static void delayed_commit_timeout(void *data);
 
+static bool ogs_pfcp_xact_on_list(ogs_pfcp_xact_t *xact)
+{
+    ogs_pfcp_xact_t *iter = NULL;
+    ogs_list_t *list = NULL;
+
+    if (!xact || !xact->node)
+        return false;
+
+    list = xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
+        &xact->node->local_list : &xact->node->remote_list;
+
+    ogs_list_for_each(list, iter) {
+        if (iter == xact)
+            return true;
+    }
+
+    return false;
+}
+
+static ogs_pfcp_xact_t *ogs_pfcp_xact_find_by_id_for_timer(ogs_pool_id_t id)
+{
+    ogs_pfcp_xact_t *xact = NULL;
+
+    if (id < OGS_MIN_POOL_ID || id > OGS_MAX_POOL_ID)
+        return NULL;
+
+    xact = ogs_pfcp_xact_find_by_id(id);
+    if (!xact)
+        return NULL;
+
+    if (xact->id != id) {
+        ogs_warn("Stale PFCP Transaction [%d] (pool id mismatch)", (int)id);
+        return NULL;
+    }
+
+    if (!ogs_pfcp_xact_on_list(xact)) {
+        ogs_warn("Stale PFCP Transaction [%d] (not on peer list)", (int)id);
+        return NULL;
+    }
+
+    return xact;
+}
+
 int ogs_pfcp_xact_init(void)
 {
     ogs_assert(ogs_pfcp_xact_initialized == 0);
@@ -611,10 +654,10 @@ static void response_timeout(void *data)
     xact_id = OGS_POINTER_TO_UINT(data);
     ogs_assert(xact_id >= OGS_MIN_POOL_ID && xact_id <= OGS_MAX_POOL_ID);
 
-    xact = ogs_pfcp_xact_find_by_id(xact_id);
+    xact = ogs_pfcp_xact_find_by_id_for_timer(xact_id);
     if (!xact) {
-        ogs_error("PFCP Transaction has already been removed [%d]", xact_id);
-        return;;
+        ogs_warn("PFCP Transaction has already been removed [%d]", xact_id);
+        return;
     }
     ogs_assert(xact->node);
 
@@ -660,10 +703,10 @@ static void holding_timeout(void *data)
     xact_id = OGS_POINTER_TO_UINT(data);
     ogs_assert(xact_id >= OGS_MIN_POOL_ID && xact_id <= OGS_MAX_POOL_ID);
 
-    xact = ogs_pfcp_xact_find_by_id(xact_id);
+    xact = ogs_pfcp_xact_find_by_id_for_timer(xact_id);
     if (!xact) {
-        ogs_error("PFCP Transaction has already been removed [%d]", xact_id);
-        return;;
+        ogs_warn("PFCP Transaction has already been removed [%d]", xact_id);
+        return;
     }
     ogs_assert(xact->node);
 
@@ -698,10 +741,10 @@ static void delayed_commit_timeout(void *data)
     xact_id = OGS_POINTER_TO_UINT(data);
     ogs_assert(xact_id >= OGS_MIN_POOL_ID && xact_id <= OGS_MAX_POOL_ID);
 
-    xact = ogs_pfcp_xact_find_by_id(xact_id);
+    xact = ogs_pfcp_xact_find_by_id_for_timer(xact_id);
     if (!xact) {
-        ogs_error("PFCP Transaction has already been removed [%d]", xact_id);
-        return;;
+        ogs_warn("PFCP Transaction has already been removed [%d]", xact_id);
+        return;
     }
     ogs_assert(xact->node);
 
@@ -831,19 +874,32 @@ int ogs_pfcp_xact_delete(ogs_pfcp_xact_t *xact)
             xact->org == OGS_PFCP_LOCAL_ORIGINATOR ? "LOCAL " : "REMOTE",
             ogs_sockaddr_to_string_static(xact->node->addr_list));
 
+    /*
+     * Stop/delete timers before freeing the xact so holding_timeout and
+     * friends never hash-lookup a freed transaction.
+     */
+    if (xact->tm_response) {
+        ogs_timer_stop(xact->tm_response);
+        ogs_timer_delete(xact->tm_response);
+        xact->tm_response = NULL;
+    }
+    if (xact->tm_holding) {
+        ogs_timer_stop(xact->tm_holding);
+        ogs_timer_delete(xact->tm_holding);
+        xact->tm_holding = NULL;
+    }
+    if (xact->tm_delayed_commit) {
+        ogs_timer_stop(xact->tm_delayed_commit);
+        ogs_timer_delete(xact->tm_delayed_commit);
+        xact->tm_delayed_commit = NULL;
+    }
+
     if (xact->seq[0].pkbuf)
         ogs_pkbuf_free(xact->seq[0].pkbuf);
     if (xact->seq[1].pkbuf)
         ogs_pkbuf_free(xact->seq[1].pkbuf);
     if (xact->seq[2].pkbuf)
         ogs_pkbuf_free(xact->seq[2].pkbuf);
-
-    if (xact->tm_response)
-        ogs_timer_delete(xact->tm_response);
-    if (xact->tm_holding)
-        ogs_timer_delete(xact->tm_holding);
-    if (xact->tm_delayed_commit)
-        ogs_timer_delete(xact->tm_delayed_commit);
 
     ogs_list_remove(xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
             &xact->node->local_list : &xact->node->remote_list, xact);
