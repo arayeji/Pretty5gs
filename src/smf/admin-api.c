@@ -86,37 +86,6 @@ static int smf_admin_maintenance_queue(smf_event_e id, int force,
     return ADMIN_HTTP_ACCEPTED;
 }
 
-static int smf_admin_maintenance_enable(const ogs_metrics_query_t *q,
-        char *body, size_t body_cap, size_t *body_len)
-{
-    (void)q;
-    smf_admin_set_maintenance(true);
-    (void)smf_admin_maintenance_queue(
-            SMF_EVT_ADMIN_MAINTENANCE_ENABLE, 0,
-            body, body_cap, body_len);
-    return smf_admin_maintenance_status(q, body, body_cap, body_len);
-}
-
-static int smf_admin_maintenance_disable(const ogs_metrics_query_t *q,
-        char *body, size_t body_cap, size_t *body_len)
-{
-    (void)q;
-    smf_admin_set_maintenance(false);
-    (void)smf_admin_maintenance_queue(
-            SMF_EVT_ADMIN_MAINTENANCE_DISABLE, 0,
-            body, body_cap, body_len);
-    return smf_admin_maintenance_status(q, body, body_cap, body_len);
-}
-
-static int smf_admin_maintenance_drain(const ogs_metrics_query_t *q,
-        char *body, size_t body_cap, size_t *body_len)
-{
-    smf_admin_set_maintenance(true);
-    return smf_admin_maintenance_queue(
-            SMF_EVT_ADMIN_MAINTENANCE_DRAIN, q && q->force,
-            body, body_cap, body_len);
-}
-
 size_t smf_dump_maintenance_status(char *buf, size_t buflen,
         size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
@@ -159,6 +128,37 @@ static int smf_admin_maintenance_status(const ogs_metrics_query_t *q,
     }
     *body_len = n;
     return 200;
+}
+
+static int smf_admin_maintenance_enable(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    (void)q;
+    smf_admin_set_maintenance(true);
+    (void)smf_admin_maintenance_queue(
+            SMF_EVT_ADMIN_MAINTENANCE_ENABLE, 0,
+            body, body_cap, body_len);
+    return smf_admin_maintenance_status(q, body, body_cap, body_len);
+}
+
+static int smf_admin_maintenance_disable(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    (void)q;
+    smf_admin_set_maintenance(false);
+    (void)smf_admin_maintenance_queue(
+            SMF_EVT_ADMIN_MAINTENANCE_DISABLE, 0,
+            body, body_cap, body_len);
+    return smf_admin_maintenance_status(q, body, body_cap, body_len);
+}
+
+static int smf_admin_maintenance_drain(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    smf_admin_set_maintenance(true);
+    return smf_admin_maintenance_queue(
+            SMF_EVT_ADMIN_MAINTENANCE_DRAIN, q && q->force,
+            body, body_cap, body_len);
 }
 
 void smf_admin_api_register(void)
