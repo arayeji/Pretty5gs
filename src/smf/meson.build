@@ -87,6 +87,8 @@ libsmf_sources = files('''
     smf-reload-lists.c
     collision-replace.c
     admin-api.c
+    runtime-config.c
+    ../../lib/app/ogs-reload-audit-json.c
     smf-trace.c
     smf-sm.c
     gsm-sm.c

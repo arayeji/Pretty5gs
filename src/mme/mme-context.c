@@ -3825,6 +3825,8 @@ int mme_context_parse_config(void)
         self.gtpc_recovery = 1;
     ogs_info("MME GTP-C recovery counter: %u", self.gtpc_recovery);
 
+    ogs_reload_audit_record_startup("MME");
+
     return OGS_OK;
 }
 
