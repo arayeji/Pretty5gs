@@ -26,6 +26,7 @@
 #include "metrics.h"
 #include "ogs-metrics.h"
 #include "metrics/prometheus/json_pager.h"
+#include "admin-api.h"
 
 #include "sgwc-reload-lists.h"
 
@@ -100,6 +101,8 @@ int sgwc_initialize(void)
     if (rv != OGS_OK) return rv;
 
     ogs_metrics_context_open(ogs_metrics_self());
+
+    sgwc_admin_api_register();
 
     ogs_app_sighup_handler_set(sgwc_sighup_handler);
 

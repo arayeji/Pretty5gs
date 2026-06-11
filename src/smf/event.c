@@ -83,6 +83,13 @@ const char *smf_event_get_name(smf_event_t *e)
     case SMF_EVT_CONFIG_RELOAD:
         return "SMF_EVT_CONFIG_RELOAD";
 
+    case SMF_EVT_ADMIN_MAINTENANCE_ENABLE:
+        return "SMF_EVT_ADMIN_MAINTENANCE_ENABLE";
+    case SMF_EVT_ADMIN_MAINTENANCE_DISABLE:
+        return "SMF_EVT_ADMIN_MAINTENANCE_DISABLE";
+    case SMF_EVT_ADMIN_MAINTENANCE_DRAIN:
+        return "SMF_EVT_ADMIN_MAINTENANCE_DRAIN";
+
     default:
        break;
     }

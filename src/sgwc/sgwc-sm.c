@@ -331,6 +331,51 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
     case SGWC_EVT_CONFIG_RELOAD:
         sgwc_context_reload_runtime();
         break;
+
+    case SGWC_EVT_ADMIN_MAINTENANCE_ENABLE:
+        sgwc_self()->maintenance_mode = true;
+        ogs_info("admin maintenance: enabled");
+        break;
+
+    case SGWC_EVT_ADMIN_MAINTENANCE_DISABLE:
+        sgwc_self()->maintenance_mode = false;
+        ogs_info("admin maintenance: disabled");
+        break;
+
+    case SGWC_EVT_ADMIN_MAINTENANCE_DRAIN:
+    {
+        sgwc_ue_t *ue = NULL, *next_ue = NULL;
+        sgwc_sess_t *sess = NULL, *next_sess = NULL;
+        int drained = 0;
+
+        sgwc_self()->maintenance_mode = true;
+        ogs_info("admin maintenance drain: mode=%s",
+                e->admin_force ? "force" : "graceful");
+
+        ogs_list_for_each_safe(&sgwc_self()->sgw_ue_list, next_ue, ue) {
+            ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
+                if (sess->pfcp_node && sess->sgwu_sxa_seid) {
+                    rv = sgwc_pfcp_send_session_deletion_request(
+                            sess, OGS_INVALID_POOL_ID, NULL);
+                    ogs_expect(rv == OGS_OK);
+                }
+                if (sess->gnode)
+                    sgwc_gtp_send_s5c_delete_session_request(sess);
+
+                if (e->admin_force) {
+                    sgwc_sess_remove(sess);
+                } else {
+                    drained++;
+                }
+            }
+            if (e->admin_force && ogs_list_empty(&ue->sess_list))
+                sgwc_ue_remove(ue);
+        }
+        ogs_info("admin maintenance drain: initiated for %d sessions",
+                drained);
+        break;
+    }
+
     default:
         ogs_error("No handler for event %s", sgwc_event_get_name(e));
         break;

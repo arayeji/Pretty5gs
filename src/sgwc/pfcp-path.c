@@ -600,12 +600,14 @@ int sgwc_pfcp_send_session_deletion_request(
     sxabuf = sgwc_sxa_build_session_deletion_request(h.type, sess);
     if (!sxabuf) {
         ogs_error("sgwc_sxa_build_session_deletion_request() failed");
+        ogs_pfcp_xact_delete(xact);
         return OGS_ERROR;
     }
 
     rv = ogs_pfcp_xact_update_tx(xact, &h, sxabuf);
     if (rv != OGS_OK) {
         ogs_error("ogs_pfcp_xact_update_tx() failed");
+        ogs_pfcp_xact_delete(xact);
         return OGS_ERROR;
     }
 

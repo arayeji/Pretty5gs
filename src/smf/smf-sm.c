@@ -1480,6 +1480,43 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         smf_context_reload_runtime();
         break;
 
+    case SMF_EVT_ADMIN_MAINTENANCE_ENABLE:
+        smf_self()->maintenance_mode = true;
+        ogs_info("admin maintenance: enabled");
+        break;
+
+    case SMF_EVT_ADMIN_MAINTENANCE_DISABLE:
+        smf_self()->maintenance_mode = false;
+        ogs_info("admin maintenance: disabled");
+        break;
+
+    case SMF_EVT_ADMIN_MAINTENANCE_DRAIN:
+    {
+        smf_ue_t *ue = NULL, *next_ue = NULL;
+        smf_sess_t *sess = NULL, *next_sess = NULL;
+        int drained = 0;
+
+        smf_self()->maintenance_mode = true;
+        ogs_info("admin maintenance drain: mode=%s",
+                e->admin_force ? "force" : "graceful");
+
+        ogs_list_for_each_safe(&smf_self()->smf_ue_list, next_ue, ue) {
+            ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
+                rv = smf_epc_pfcp_send_session_deletion_best_effort(sess);
+                ogs_expect(rv == OGS_OK);
+                if (e->admin_force)
+                    smf_sess_remove(sess);
+                else
+                    drained++;
+            }
+            if (e->admin_force && ogs_list_empty(&ue->sess_list))
+                smf_ue_remove(ue);
+        }
+        ogs_info("admin maintenance drain: initiated for %d sessions",
+                drained);
+        break;
+    }
+
     default:
         ogs_error("No handler for event %s", smf_event_get_name(e));
         break;

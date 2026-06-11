@@ -628,6 +628,16 @@ void sgwc_s11_handle_create_session_request(
     req = &message->create_session_request;
     ogs_assert(req);
 
+    if (sgwc_self()->maintenance_mode) {
+        ogs_warn("Create Session rejected: SGWC maintenance mode");
+        ogs_gtp_send_error_message(
+                s11_xact,
+                sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
+                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_NO_RESOURCES_AVAILABLE);
+        return;
+    }
+
     if (sgwc_ue && req->sender_f_teid_for_control_plane.presence &&
             req->sender_f_teid_for_control_plane.data) {
         ogs_gtp2_f_teid_t *ft =

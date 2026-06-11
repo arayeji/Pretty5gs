@@ -61,6 +61,17 @@ int esm_handle_pdn_connectivity_request(
 
     ogs_assert(MME_UE_HAVE_IMSI(mme_ue));
 
+    if (mme_self()->maintenance_mode) {
+        ogs_warn("[%s] PDN connectivity rejected: MME maintenance mode",
+                mme_ue->imsi_bcd);
+        r = nas_eps_send_pdn_connectivity_reject(
+                sess, OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
+                create_action);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return OGS_ERROR;
+    }
+
     if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
         ogs_error("No Security Context : IMSI[%s]", mme_ue->imsi_bcd);
         r = nas_eps_send_pdn_connectivity_reject(

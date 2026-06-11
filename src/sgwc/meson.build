@@ -31,6 +31,7 @@ libsgwc_sources = files('''
     sgwc-trace.h
     sgwc-gtp-interop.h
     sgwc-reload-lists.h
+    admin-api.h
     metrics.h
 
     init.c
@@ -50,6 +51,7 @@ libsgwc_sources = files('''
     ga-writer.c
     sgwc-trace.c
     sgwc-gtp-interop.c
+    admin-api.c
     metrics.c
     ../../lib/metrics/prometheus/json_pager.c
 '''.split())

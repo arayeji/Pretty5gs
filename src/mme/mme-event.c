@@ -111,6 +111,12 @@ const char *mme_event_get_name(mme_event_t *e)
         return "MME_EVENT_ADMIN_DETACH_UE";
     case MME_EVENT_ADMIN_TAC_ADD:
         return "MME_EVENT_ADMIN_TAC_ADD";
+    case MME_EVENT_ADMIN_MAINTENANCE_ENABLE:
+        return "MME_EVENT_ADMIN_MAINTENANCE_ENABLE";
+    case MME_EVENT_ADMIN_MAINTENANCE_DISABLE:
+        return "MME_EVENT_ADMIN_MAINTENANCE_DISABLE";
+    case MME_EVENT_ADMIN_MAINTENANCE_DRAIN:
+        return "MME_EVENT_ADMIN_MAINTENANCE_DRAIN";
     default:
        break;
     }

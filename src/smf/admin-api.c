@@ -1,0 +1,147 @@
+/*
+ * Copyright (C) 2026 by Open5GS contributors
+ *
+ * SMF admin endpoints (maintenance mode + graceful drain).
+ */
+
+#include "ogs-core.h"
+#include "ogs-app.h"
+
+#include "context.h"
+#include "event.h"
+
+#include "admin-api.h"
+
+#include <stdarg.h>
+#include <string.h>
+
+#define ADMIN_HTTP_ACCEPTED            202
+#define ADMIN_HTTP_INTERNAL_ERROR      500
+#define ADMIN_HTTP_SERVICE_UNAVAIL     503
+
+static size_t fmt_json_status(char *body, size_t cap, int status,
+                              const char *fmt, ...)
+{
+    if (!body || cap == 0) return 0;
+    int written;
+    va_list ap;
+    char detail[512];
+
+    va_start(ap, fmt);
+    written = vsnprintf(detail, sizeof(detail), fmt, ap);
+    va_end(ap);
+    if (written < 0) detail[0] = '\0';
+
+    written = snprintf(body, cap,
+            "{\"status\":%d,\"detail\":\"%s\"}\n", status, detail);
+    if (written < 0) return 0;
+    return (size_t)((size_t)written < cap ? (size_t)written : cap - 1);
+}
+
+static int smf_count_sessions(void)
+{
+    smf_ue_t *ue = NULL;
+    int count = 0;
+
+    ogs_list_for_each(&smf_self()->smf_ue_list, ue)
+        count += ogs_list_count(&ue->sess_list);
+
+    return count;
+}
+
+static int smf_admin_maintenance_queue(smf_event_e id, int force,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    smf_event_t *e = NULL;
+    int rv;
+
+    e = smf_event_new(id);
+    if (!e) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_INTERNAL_ERROR, "event_new failed");
+        return ADMIN_HTTP_INTERNAL_ERROR;
+    }
+    e->admin_force = force;
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_event_free(e);
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
+        return ADMIN_HTTP_SERVICE_UNAVAIL;
+    }
+
+    ogs_pollset_notify(ogs_app()->pollset);
+
+    *body_len = fmt_json_status(body, body_cap, ADMIN_HTTP_ACCEPTED,
+            "maintenance event queued");
+    return ADMIN_HTTP_ACCEPTED;
+}
+
+static int smf_admin_maintenance_enable(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    (void)q;
+    return smf_admin_maintenance_queue(
+            SMF_EVT_ADMIN_MAINTENANCE_ENABLE, 0,
+            body, body_cap, body_len);
+}
+
+static int smf_admin_maintenance_disable(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    (void)q;
+    return smf_admin_maintenance_queue(
+            SMF_EVT_ADMIN_MAINTENANCE_DISABLE, 0,
+            body, body_cap, body_len);
+}
+
+static int smf_admin_maintenance_drain(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    return smf_admin_maintenance_queue(
+            SMF_EVT_ADMIN_MAINTENANCE_DRAIN, q && q->force,
+            body, body_cap, body_len);
+}
+
+size_t smf_dump_maintenance_status(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
+{
+    int sess_count = 0;
+    bool maintenance = false;
+    int written;
+
+    (void)page;
+    (void)page_size;
+    (void)q;
+
+    if (!buf || buflen == 0)
+        return 0;
+
+    ogs_metrics_dump_lock();
+    maintenance = smf_self()->maintenance_mode;
+    sess_count = smf_count_sessions();
+    ogs_metrics_dump_unlock();
+
+    written = snprintf(buf, buflen,
+            "{\"maintenance\":%s,\"session_count\":%d}\n",
+            maintenance ? "true" : "false", sess_count);
+    if (written < 0)
+        return 0;
+    return (size_t)((size_t)written < buflen ? (size_t)written : buflen - 1);
+}
+
+void smf_admin_api_register(void)
+{
+    ogs_metrics_register_custom_ep(smf_dump_maintenance_status,
+            "/admin/maintenance");
+    ogs_metrics_register_admin_ep(smf_admin_maintenance_enable,
+            "/admin/maintenance/enable",
+            OGS_METRICS_ADMIN_METHOD_POST);
+    ogs_metrics_register_admin_ep(smf_admin_maintenance_disable,
+            "/admin/maintenance/disable",
+            OGS_METRICS_ADMIN_METHOD_POST);
+    ogs_metrics_register_admin_ep(smf_admin_maintenance_drain,
+            "/admin/maintenance/drain",
+            OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
+}

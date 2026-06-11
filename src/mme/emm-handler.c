@@ -79,6 +79,16 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     ogs_assert(mme_ue);
     ogs_assert(enb_ue);
 
+    if (mme_self()->maintenance_mode) {
+        ogs_warn("Attach rejected: MME maintenance mode");
+        r = nas_eps_send_attach_reject(enb_ue, mme_ue,
+                OGS_NAS_EMM_CAUSE_CONGESTION,
+                OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return OGS_ERROR;
+    }
+
     ogs_assert(esm_message_container);
     if (!esm_message_container->length) {
         ogs_error("No ESM Message Container");

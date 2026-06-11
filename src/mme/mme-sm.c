@@ -1261,6 +1261,43 @@ cleanup:
         break;
     }
 
+    case MME_EVENT_ADMIN_MAINTENANCE_ENABLE:
+        mme_self()->maintenance_mode = true;
+        ogs_info("admin maintenance: enabled");
+        break;
+
+    case MME_EVENT_ADMIN_MAINTENANCE_DISABLE:
+        mme_self()->maintenance_mode = false;
+        ogs_info("admin maintenance: disabled");
+        break;
+
+    case MME_EVENT_ADMIN_MAINTENANCE_DRAIN:
+    {
+        mme_ue_t *it = NULL, *next = NULL;
+        int queued = 0;
+
+        mme_self()->maintenance_mode = true;
+        ogs_info("admin maintenance drain: mode=%s",
+                e->admin_force ? "force" : "graceful");
+
+        ogs_list_for_each_safe(&mme_self()->mme_ue_list, next, it) {
+            mme_event_t *ue_e = mme_event_new(MME_EVENT_ADMIN_DETACH_UE);
+            ogs_assert(ue_e);
+            ue_e->mme_ue_id = it->id;
+            ue_e->admin_force = e->admin_force;
+            rv = ogs_queue_push(ogs_app()->queue, ue_e);
+            if (rv != OGS_OK) {
+                mme_event_free(ue_e);
+                ogs_error("admin maintenance drain: queue full after %d UEs",
+                        queued);
+                break;
+            }
+            queued++;
+        }
+        ogs_info("admin maintenance drain: queued detach for %d UEs", queued);
+        break;
+    }
+
     case MME_EVENT_SGSAP_LO_SCTP_COMM_UP:
         sock = e->sock;
         ogs_assert(sock);

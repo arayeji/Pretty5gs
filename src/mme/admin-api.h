@@ -46,6 +46,17 @@
  *   GET /admin/trace/imsi?imsi=list       list active prefixes
  *   GET /admin/trace/imsi?force=1         clear all filters
  *
+ *   GET  /admin/maintenance
+ *        JSON status: maintenance flag + ue_count.
+ *
+ *   POST /admin/maintenance/enable
+ *   POST /admin/maintenance/disable
+ *        Toggle maintenance mode (blocks new attach / PDN).
+ *
+ *   POST /admin/maintenance/drain[?force=1]
+ *        Enable maintenance and graceful-detach every UE (default).
+ *        force=1 uses implicit detach (no NAS to UE).
+ *
  * Access control is NOT enforced inside the daemon - the metrics
  * port is expected to be firewalled at the host or network level.
  * Every admin call is logged with the caller's address so detaches
@@ -67,6 +78,16 @@ int mme_admin_enb_detach(const ogs_metrics_query_t *q,
 int mme_admin_ue_detach(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len);
 int mme_admin_trace_imsi(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len);
+
+size_t mme_dump_maintenance_status(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q);
+
+int mme_admin_maintenance_enable(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len);
+int mme_admin_maintenance_disable(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len);
+int mme_admin_maintenance_drain(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len);
 
 #ifdef __cplusplus

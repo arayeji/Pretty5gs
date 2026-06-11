@@ -134,6 +134,9 @@ typedef struct sgwc_context_s {
      * Default NWI is the session APN from GTP. match supports * (case-insensitive).
      */
     ogs_list_t sgwu_nwi_rewrite_list;
+
+    /* Operator maintenance window (/admin/maintenance/*). */
+    bool maintenance_mode;
 } sgwc_context_t;
 
 typedef struct sgwc_ue_s {
