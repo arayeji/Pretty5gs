@@ -336,10 +336,22 @@ static void format_client_addr(struct MHD_Connection *connection,
     }
 }
 
+static _MHD_Result reply_text(struct MHD_Connection *connection,
+                              unsigned int status, const char *body)
+{
+    struct MHD_Response *rsp =
+        MHD_create_response_from_buffer(strlen(body), (void *)body,
+                MHD_RESPMEM_MUST_COPY);
+    if (!rsp) return (_MHD_Result)MHD_NO;
+    MHD_add_response_header(rsp, "Content-Type", "text/plain; charset=utf-8");
+    int ret = MHD_queue_response(connection, status, rsp);
+    MHD_destroy_response(rsp);
+    return (_MHD_Result)ret;
+}
+
 /*
- * /admin/* is restricted to loopback and RFC1918 (private) client
- * addresses. /metrics, /ue-info, and other dumpers stay open to any
- * client that can reach the listener (firewall as needed).
+ * Paths under /admin/ are restricted to loopback and RFC1918 clients.
+ * /metrics and JSON dumpers stay open to any reachable client.
  */
 static bool metrics_client_is_local(struct MHD_Connection *connection)
 {
@@ -406,19 +418,6 @@ static _MHD_Result metrics_forbid_non_local_admin(
     ogs_warn("admin: denied non-local client %s for %s",
             peer[0] ? peer : "unknown", url);
     return reply_text(connection, MHD_HTTP_FORBIDDEN, "Forbidden\n");
-}
-
-static _MHD_Result reply_text(struct MHD_Connection *connection,
-                              unsigned int status, const char *body)
-{
-    struct MHD_Response *rsp =
-        MHD_create_response_from_buffer(strlen(body), (void *)body,
-                MHD_RESPMEM_MUST_COPY);
-    if (!rsp) return (_MHD_Result)MHD_NO;
-    MHD_add_response_header(rsp, "Content-Type", "text/plain; charset=utf-8");
-    int ret = MHD_queue_response(connection, status, rsp);
-    MHD_destroy_response(rsp);
-    return (_MHD_Result)ret;
 }
 
 static _MHD_Result serve_admin(struct MHD_Connection *connection,
