@@ -31,12 +31,19 @@ bool ogs_pfcp_handle_heartbeat_response(
         ogs_pfcp_node_t *node, ogs_pfcp_xact_t *xact,
         ogs_pfcp_heartbeat_response_t *req);
 
+void ogs_pfcp_cp_update_recovery_time_stamp(
+        ogs_pfcp_node_t *node, uint32_t recovery_ts, const char *where);
+bool ogs_pfcp_cause_no_association(uint8_t cause);
+
 bool ogs_pfcp_cp_handle_association_setup_request(
         ogs_pfcp_node_t *node, ogs_pfcp_xact_t *xact,
         ogs_pfcp_association_setup_request_t *req);
 bool ogs_pfcp_cp_handle_association_setup_response(
         ogs_pfcp_node_t *node, ogs_pfcp_xact_t *xact,
         ogs_pfcp_association_setup_response_t *req);
+bool ogs_pfcp_cp_handle_association_release_request(
+        ogs_pfcp_node_t *node, ogs_pfcp_xact_t *xact,
+        ogs_pfcp_association_release_request_t *req);
 
 bool ogs_pfcp_up_handle_association_setup_request(
         ogs_pfcp_node_t *node, ogs_pfcp_xact_t *xact,

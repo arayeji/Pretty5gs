@@ -19,6 +19,7 @@
 
 #include "binding.h"
 #include "sbi-path.h"
+#include "pfcp-path.h"
 #include "gn-handler.h"
 #include "gx-handler.h"
 #include "gy-handler.h"
@@ -849,6 +850,8 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
                         sess, pfcp_xact,
                         &pfcp_message->pfcp_session_establishment_response);
                 if (pfcp_cause != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
+                    if (ogs_pfcp_cause_no_association(pfcp_cause))
+                        smf_pfcp_request_reassociation(sess->pfcp_node);
                     /* FIXME: tear down Gy and Gx */
                     gtp_cause = gtp_cause_from_pfcp(
                                     pfcp_cause, gtp_xact->gtp_version);
