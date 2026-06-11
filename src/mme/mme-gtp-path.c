@@ -431,6 +431,13 @@ int mme_gtp_send_create_session_request(
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     ogs_assert(mme_ue);
 
+    if (mme_self()->maintenance_mode &&
+            create_action != OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST) {
+        ogs_warn("[%s] Create Session blocked: MME maintenance mode",
+                mme_log_imsi(mme_ue));
+        return OGS_ERROR;
+    }
+
     if (create_action != OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST)
         mme_sgw_reselect_for_ue_if_needed(mme_ue);
 

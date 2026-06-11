@@ -91,9 +91,10 @@ static int sgwc_admin_maintenance_enable(const ogs_metrics_query_t *q,
 {
     (void)q;
     sgwc_admin_set_maintenance(true);
-    return sgwc_admin_maintenance_queue(
+    (void)sgwc_admin_maintenance_queue(
             SGWC_EVT_ADMIN_MAINTENANCE_ENABLE, 0,
             body, body_cap, body_len);
+    return sgwc_admin_maintenance_status(q, body, body_cap, body_len);
 }
 
 static int sgwc_admin_maintenance_disable(const ogs_metrics_query_t *q,
@@ -101,9 +102,10 @@ static int sgwc_admin_maintenance_disable(const ogs_metrics_query_t *q,
 {
     (void)q;
     sgwc_admin_set_maintenance(false);
-    return sgwc_admin_maintenance_queue(
+    (void)sgwc_admin_maintenance_queue(
             SGWC_EVT_ADMIN_MAINTENANCE_DISABLE, 0,
             body, body_cap, body_len);
+    return sgwc_admin_maintenance_status(q, body, body_cap, body_len);
 }
 
 static int sgwc_admin_maintenance_drain(const ogs_metrics_query_t *q,
@@ -167,6 +169,9 @@ void sgwc_admin_api_register(void)
             "/admin/maintenance");
     ogs_metrics_register_admin_ep(sgwc_admin_maintenance_enable,
             "/admin/maintenance/enable",
+            OGS_METRICS_ADMIN_METHOD_POST);
+    ogs_metrics_register_admin_ep(sgwc_admin_maintenance_enable,
+            "/admin/maintenance",
             OGS_METRICS_ADMIN_METHOD_POST);
     ogs_metrics_register_admin_ep(sgwc_admin_maintenance_disable,
             "/admin/maintenance/disable",
