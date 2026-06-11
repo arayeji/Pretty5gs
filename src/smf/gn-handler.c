@@ -73,6 +73,11 @@ uint8_t smf_gn_handle_create_pdp_context_request(
 
     ogs_debug("Create PDP Context Request");
 
+    if (smf_self()->maintenance_mode) {
+        ogs_warn("Create PDP Context rejected: SMF maintenance mode");
+        return OGS_GTP1_CAUSE_NO_RESOURCES_AVAILABLE;
+    }
+
     cause_value = OGS_GTP1_CAUSE_REQUEST_ACCEPTED;
 
     if (req->imsi.presence == 0) {

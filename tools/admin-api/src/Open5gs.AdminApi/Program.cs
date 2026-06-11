@@ -12,6 +12,10 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<AdminContext>();
 builder.Services.AddSingleton<RevisionService>();
 builder.Services.AddSingleton<AuditService>();
+builder.Services.Configure<MaintenanceOptions>(
+    builder.Configuration.GetSection(MaintenanceOptions.SectionName));
+builder.Services.AddHttpClient("maintenance")
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(30));
 
 builder.Services.AddAdminAuth(builder.Configuration);
 
@@ -110,6 +114,7 @@ v1.MapSubnets();
 v1.MapSettings();
 v1.MapSync();
 v1.MapStatus();
+v1.MapMaintenance();
 
 // Prometheus scrape endpoint at /metrics (unauthenticated by design —
 // protect via network ACL / reverse proxy if needed).

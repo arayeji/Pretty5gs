@@ -653,6 +653,17 @@ int emm_handle_service_request(
     ogs_assert(mme_ue);
     ogs_assert(enb_ue);
 
+    if (mme_self()->maintenance_mode) {
+        int r;
+        ogs_warn("[%s] Service request rejected: MME maintenance mode",
+                mme_ue->imsi_bcd);
+        r = nas_eps_send_service_reject(enb_ue, mme_ue,
+                OGS_NAS_EMM_CAUSE_CONGESTION);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return OGS_ERROR;
+    }
+
     /* Set EPS Service */
     mme_ue->nas_eps.type = MME_EPS_TYPE_SERVICE_REQUEST;
     ogs_debug("    SERVICE TYPE[%d] TSC[%d] KSI[%d] VALUE[%d]",
@@ -745,6 +756,16 @@ int emm_handle_tau_request(
 
     ogs_assert(mme_ue);
     ogs_assert(enb_ue);
+
+    if (mme_self()->maintenance_mode) {
+        ogs_warn("[%s] TAU rejected: MME maintenance mode",
+                mme_ue->imsi_bcd);
+        r = nas_eps_send_tau_reject(enb_ue, mme_ue,
+                OGS_NAS_EMM_CAUSE_CONGESTION);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return OGS_ERROR;
+    }
 
     ogs_assert(pkbuf);
     ogs_assert(pkbuf->data);

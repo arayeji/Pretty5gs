@@ -50,6 +50,13 @@ static int sgwc_count_sessions(void)
     return count;
 }
 
+static void sgwc_admin_set_maintenance(bool maintenance)
+{
+    ogs_metrics_dump_lock();
+    sgwc_self()->maintenance_mode = maintenance;
+    ogs_metrics_dump_unlock();
+}
+
 static int sgwc_admin_maintenance_queue(sgwc_event_e id, int force,
         char *body, size_t body_cap, size_t *body_len)
 {
@@ -83,6 +90,7 @@ static int sgwc_admin_maintenance_enable(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len)
 {
     (void)q;
+    sgwc_admin_set_maintenance(true);
     return sgwc_admin_maintenance_queue(
             SGWC_EVT_ADMIN_MAINTENANCE_ENABLE, 0,
             body, body_cap, body_len);
@@ -92,6 +100,7 @@ static int sgwc_admin_maintenance_disable(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len)
 {
     (void)q;
+    sgwc_admin_set_maintenance(false);
     return sgwc_admin_maintenance_queue(
             SGWC_EVT_ADMIN_MAINTENANCE_DISABLE, 0,
             body, body_cap, body_len);
@@ -100,6 +109,7 @@ static int sgwc_admin_maintenance_disable(const ogs_metrics_query_t *q,
 static int sgwc_admin_maintenance_drain(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len)
 {
+    sgwc_admin_set_maintenance(true);
     return sgwc_admin_maintenance_queue(
             SGWC_EVT_ADMIN_MAINTENANCE_DRAIN, q && q->force,
             body, body_cap, body_len);

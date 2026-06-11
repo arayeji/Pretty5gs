@@ -58,6 +58,16 @@ bool smf_nsmf_handle_create_sm_context(
     smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
     ogs_assert(smf_ue);
 
+    if (smf_self()->maintenance_mode) {
+        ogs_warn("[%s:%d] PDU session create rejected: SMF maintenance mode",
+                smf_ue->supi, sess->psi);
+        smf_sbi_send_sm_context_create_error(stream,
+                OGS_SBI_HTTP_STATUS_SERVICE_UNAVAILABLE,
+                OGS_SBI_APP_ERRNO_NULL,
+                "SMF maintenance mode", smf_ue->supi, NULL);
+        return false;
+    }
+
     SmContextCreateData = message->SmContextCreateData;
     if (!SmContextCreateData) {
         ogs_error("[%s:%d] No SmContextCreateData",

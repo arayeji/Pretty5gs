@@ -355,6 +355,9 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
 
         ogs_list_for_each_safe(&sgwc_self()->sgw_ue_list, next_ue, ue) {
             ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
+                rv = sgwc_gtp_send_network_delete_session(ue, sess);
+                ogs_expect(rv == OGS_OK);
+
                 if (sess->pfcp_node && sess->sgwu_sxa_seid) {
                     rv = sgwc_pfcp_send_session_deletion_request(
                             sess, OGS_INVALID_POOL_ID, NULL);
