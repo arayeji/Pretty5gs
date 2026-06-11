@@ -23,6 +23,7 @@
 #include "pfcp-path.h"
 #include "gy-handler.h"
 #include "binding.h"
+#include "gx-handler.h"
 
 static void urr_update_volume(smf_sess_t *sess, ogs_pfcp_urr_t *urr, ogs_diam_gy_message_t *gy_message)
 {
@@ -141,8 +142,8 @@ uint32_t smf_gy_handle_cca_initial_request(
     if (gy_message->result_code != ER_DIAMETER_SUCCESS) {
         ogs_warn("Gy CCA Initial Diameter failure: res=%u",
             gy_message->result_code);
-        return gy_message->err ? *gy_message->err :
-                                 ER_DIAMETER_AUTHENTICATION_REJECTED;
+        return smf_diameter_failure_code(gy_message->err ?
+                *gy_message->err : gy_message->result_code);
     }
     if (gy_message->cca.result_code != ER_DIAMETER_SUCCESS) {
         ogs_warn("Gy CCA Initial Diameter Multiple-Services-Credit-Control Result-Code=%u",
@@ -150,8 +151,8 @@ uint32_t smf_gy_handle_cca_initial_request(
         /* Message RC was successful but MSCC was rejected. The session needs to
          * be tear down through CCR-T: */
         *need_termination = true;
-        return gy_message->cca.err ? *gy_message->cca.err :
-                                     ER_DIAMETER_AUTHENTICATION_REJECTED;
+        return smf_diameter_failure_code(gy_message->cca.err ?
+                *gy_message->cca.err : gy_message->cca.result_code);
     }
 
     bearer = smf_default_bearer_in_sess(sess);

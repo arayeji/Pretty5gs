@@ -38,28 +38,49 @@
 #include "ngap-path.h"
 #include "fd-path.h"
 #include "local-path.h"
+#include "gx-handler.h"
 
 static uint8_t gtp_cause_from_diameter(uint8_t gtp_version,
         const uint32_t dia_err, const uint32_t *dia_exp_err)
 {
+    uint32_t err = smf_diameter_failure_code(dia_err);
+
+    if (err == ER_DIAMETER_SUCCESS && dia_exp_err)
+        err = smf_diameter_failure_code(*dia_exp_err);
+
     switch (gtp_version) {
     case 1:
-        switch (dia_err) {
+        switch (err) {
         case OGS_DIAM_UNKNOWN_SESSION_ID:
             return OGS_GTP1_CAUSE_APN_ACCESS_DENIED;
+        case ER_DIAMETER_UNABLE_TO_DELIVER:
+        case ER_DIAMETER_REALM_NOT_SERVED:
+            ogs_warn("Diameter %u (PCRF/OCS unreachable), rejecting session",
+                    err);
+            return OGS_GTP1_CAUSE_NO_RESOURCES_AVAILABLE;
+        case ER_DIAMETER_AUTHENTICATION_REJECTED:
+            ogs_warn("Diameter %u (auth rejected), rejecting session", err);
+            return OGS_GTP1_CAUSE_USER_AUTHENTICATION_FAILED;
         }
         break;
     case 2:
-        switch (dia_err) {
+        switch (err) {
         case OGS_DIAM_UNKNOWN_SESSION_ID:
             return OGS_GTP2_CAUSE_APN_ACCESS_DENIED_NO_SUBSCRIPTION;
+        case ER_DIAMETER_UNABLE_TO_DELIVER:
+        case ER_DIAMETER_REALM_NOT_SERVED:
+            ogs_warn("Diameter %u (PCRF/OCS unreachable), rejecting session",
+                    err);
+            return OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING;
+        case ER_DIAMETER_AUTHENTICATION_REJECTED:
+            ogs_warn("Diameter %u (auth rejected), rejecting session", err);
+            return OGS_GTP2_CAUSE_UE_NOT_AUTHORISED_BY_OCS_OR_EXTERNAL_AAA_SERVER;
         }
         break;
     }
 
-    ogs_error("Unexpected Diameter Result Code %d/%d, defaulting to severe "
-              "network failure",
-              dia_err, dia_exp_err ? *dia_exp_err : -1);
+    ogs_warn("Diameter Result Code %u/%d, rejecting session",
+            err, dia_exp_err ? (int)*dia_exp_err : -1);
     switch (gtp_version) {
     case 1:
         return OGS_GTP1_CAUSE_USER_AUTHENTICATION_FAILED;
@@ -495,7 +516,8 @@ void smf_gsm_state_wait_epc_auth_initial(ogs_fsm_t *s, smf_event_t *e)
         switch(s6b_message->cmd_code) {
         case OGS_DIAM_S6B_CMD_AUTHENTICATION_AUTHORIZATION:
             sess->sm_data.s6b_aar_in_flight = false;
-            sess->sm_data.s6b_aaa_err = s6b_message->result_code;
+            sess->sm_data.s6b_aaa_err = smf_diameter_failure_code(
+                    s6b_message->result_code);
             if (s6b_message->result_code == ER_DIAMETER_SUCCESS) {
                 send_ccr_init_req_gx_gy(s, sess, gtp_xact);
                 return;
