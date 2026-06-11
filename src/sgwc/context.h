@@ -135,7 +135,7 @@ typedef struct sgwc_context_s {
      */
     ogs_list_t sgwu_nwi_rewrite_list;
 
-    /* Operator maintenance window (/admin/maintenance/*). */
+    /* Operator maintenance window (HTTP /admin/maintenance endpoints). */
     bool maintenance_mode;
 } sgwc_context_t;
 

@@ -342,7 +342,7 @@ typedef struct smf_context_s {
      ((__sMF) && (ogs_list_count(&(__sMF)->sess_list)) == 1)
     ogs_list_t      smf_ue_list;
 
-    /* Operator maintenance window (/admin/maintenance/*). */
+    /* Operator maintenance window (HTTP /admin/maintenance endpoints). */
     bool maintenance_mode;
 } smf_context_t;
 
