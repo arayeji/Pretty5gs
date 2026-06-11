@@ -341,6 +341,9 @@ typedef struct smf_context_s {
 #define SMF_UE_IS_LAST_SESSION(__sMF) \
      ((__sMF) && (ogs_list_count(&(__sMF)->sess_list)) == 1)
     ogs_list_t      smf_ue_list;
+
+    /* Operator maintenance window (/admin/maintenance/*). */
+    bool maintenance_mode;
 } smf_context_t;
 
 typedef struct smf_gtp_node_s {

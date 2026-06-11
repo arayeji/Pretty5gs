@@ -83,6 +83,13 @@ const char *sgwc_event_get_name(sgwc_event_t *e)
     case SGWC_EVT_CONFIG_RELOAD:
         return "SGWC_EVT_CONFIG_RELOAD";
 
+    case SGWC_EVT_ADMIN_MAINTENANCE_ENABLE:
+        return "SGWC_EVT_ADMIN_MAINTENANCE_ENABLE";
+    case SGWC_EVT_ADMIN_MAINTENANCE_DISABLE:
+        return "SGWC_EVT_ADMIN_MAINTENANCE_DISABLE";
+    case SGWC_EVT_ADMIN_MAINTENANCE_DRAIN:
+        return "SGWC_EVT_ADMIN_MAINTENANCE_DRAIN";
+
     default: 
        break;
     }

@@ -245,8 +245,93 @@ int mme_admin_trace_imsi(const ogs_metrics_query_t *q,
     return 200;
 }
 
+static int mme_admin_maintenance_queue(mme_event_e id, int force,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    mme_event_t *e = NULL;
+    int rv;
+
+    e = mme_event_new(id);
+    if (!e) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_INTERNAL_ERROR, "event_new failed");
+        return ADMIN_HTTP_INTERNAL_ERROR;
+    }
+    e->admin_force = force;
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        mme_event_free(e);
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
+        return ADMIN_HTTP_SERVICE_UNAVAIL;
+    }
+
+    ogs_pollset_notify(ogs_app()->pollset);
+
+    *body_len = fmt_json_status(body, body_cap, ADMIN_HTTP_ACCEPTED,
+            "maintenance event queued");
+    return ADMIN_HTTP_ACCEPTED;
+}
+
+size_t mme_dump_maintenance_status(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
+{
+    int ue_count = 0;
+    bool maintenance = false;
+    int written;
+
+    (void)page;
+    (void)page_size;
+    (void)q;
+
+    if (!buf || buflen == 0)
+        return 0;
+
+    ogs_metrics_dump_lock();
+    maintenance = mme_self()->maintenance_mode;
+    ue_count = ogs_list_count(&mme_self()->mme_ue_list);
+    ogs_metrics_dump_unlock();
+
+    written = snprintf(buf, buflen,
+            "{\"maintenance\":%s,\"ue_count\":%d}\n",
+            maintenance ? "true" : "false", ue_count);
+    if (written < 0)
+        return 0;
+    return (size_t)((size_t)written < buflen ? (size_t)written : buflen - 1);
+}
+
+int mme_admin_maintenance_enable(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    (void)q;
+    return mme_admin_maintenance_queue(
+            MME_EVENT_ADMIN_MAINTENANCE_ENABLE, 0,
+            body, body_cap, body_len);
+}
+
+int mme_admin_maintenance_disable(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    (void)q;
+    return mme_admin_maintenance_queue(
+            MME_EVENT_ADMIN_MAINTENANCE_DISABLE, 0,
+            body, body_cap, body_len);
+}
+
+int mme_admin_maintenance_drain(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    return mme_admin_maintenance_queue(
+            MME_EVENT_ADMIN_MAINTENANCE_DRAIN, q && q->force,
+            body, body_cap, body_len);
+}
+
 void mme_admin_api_register(void)
 {
+    ogs_metrics_register_custom_ep(mme_dump_maintenance_status,
+            "/admin/maintenance");
+
     ogs_metrics_register_admin_ep(mme_admin_enb_detach,
             "/admin/enb/detach",
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
@@ -255,5 +340,14 @@ void mme_admin_api_register(void)
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
     ogs_metrics_register_admin_ep(mme_admin_trace_imsi,
             "/admin/trace/imsi",
+            OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
+    ogs_metrics_register_admin_ep(mme_admin_maintenance_enable,
+            "/admin/maintenance/enable",
+            OGS_METRICS_ADMIN_METHOD_POST);
+    ogs_metrics_register_admin_ep(mme_admin_maintenance_disable,
+            "/admin/maintenance/disable",
+            OGS_METRICS_ADMIN_METHOD_POST);
+    ogs_metrics_register_admin_ep(mme_admin_maintenance_drain,
+            "/admin/maintenance/drain",
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
 }

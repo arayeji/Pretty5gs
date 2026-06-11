@@ -436,6 +436,58 @@ void sgwc_pgw_peer_setup(ogs_gtp_node_t *gnode)
     }
 }
 
+int sgwc_gtp_send_s5c_delete_session_request(sgwc_sess_t *sess)
+{
+    int rv;
+    sgwc_bearer_t *bearer = NULL;
+
+    ogs_gtp2_message_t gtp_message;
+    ogs_gtp2_header_t h;
+    ogs_pkbuf_t *pkbuf = NULL;
+    ogs_gtp_xact_t *xact = NULL;
+
+    ogs_assert(sess);
+
+    if (!sess->gnode)
+        return OGS_OK;
+
+    bearer = sgwc_default_bearer_in_sess(sess);
+    if (!bearer) {
+        ogs_error("No bearer for S5 Delete Session Request");
+        return OGS_ERROR;
+    }
+
+    memset(&gtp_message, 0, sizeof(ogs_gtp2_message_t));
+    gtp_message.h.type = OGS_GTP2_DELETE_SESSION_REQUEST_TYPE;
+    gtp_message.h.teid = sess->pgw_s5c_teid;
+    gtp_message.delete_session_request.linked_eps_bearer_id.presence = 1;
+    gtp_message.delete_session_request.linked_eps_bearer_id.u8 = bearer->ebi;
+
+    pkbuf = ogs_gtp2_build_msg(&gtp_message);
+    if (!pkbuf) {
+        ogs_error("ogs_gtp2_build_msg() failed");
+        return OGS_ERROR;
+    }
+
+    memset(&h, 0, sizeof(ogs_gtp2_header_t));
+    h.type = OGS_GTP2_DELETE_SESSION_REQUEST_TYPE;
+    h.teid = sess->pgw_s5c_teid;
+
+    xact = ogs_gtp_xact_local_create(
+            sess->gnode, &h, pkbuf, NULL, OGS_UINT_TO_POINTER(sess->id));
+    if (!xact) {
+        ogs_error("ogs_gtp_xact_local_create() failed");
+        ogs_pkbuf_free(pkbuf);
+        return OGS_ERROR;
+    }
+    xact->local_teid = sess->sgw_s5c_teid;
+
+    rv = ogs_gtp_xact_commit(xact);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
 int sgwc_gtp_send_network_delete_session(
         sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess)
 {

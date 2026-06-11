@@ -140,6 +140,11 @@ uint8_t smf_s5c_handle_create_session_request(
 
     ogs_debug("Create Session Request");
 
+    if (smf_self()->maintenance_mode) {
+        ogs_warn("Create Session rejected: SMF maintenance mode");
+        return OGS_GTP2_CAUSE_NO_RESOURCES_AVAILABLE;
+    }
+
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (req->imsi.presence == 0) {

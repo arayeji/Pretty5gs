@@ -38,6 +38,7 @@ void sgwc_timer_pgw_echo(void *data);
 void sgwc_pgw_peer_setup(ogs_gtp_node_t *gnode);
 int sgwc_gtp_send_network_delete_session(
         sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess);
+int sgwc_gtp_send_s5c_delete_session_request(sgwc_sess_t *sess);
 
 bool sgwc_gtpc_roam_port_enabled(void);
 int sgwc_gtp_connect_peer(sgwc_sess_t *sess, ogs_gtp_node_t *gnode);

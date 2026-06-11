@@ -78,6 +78,7 @@ libsmf_sources = files('''
     ga-writer.h
     smf-reload-lists.h
     collision-replace.h
+    admin-api.h
 
     init.c
     event.c
@@ -85,6 +86,7 @@ libsmf_sources = files('''
     context.c
     smf-reload-lists.c
     collision-replace.c
+    admin-api.c
     smf-trace.c
     smf-sm.c
     gsm-sm.c

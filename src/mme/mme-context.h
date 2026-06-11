@@ -276,6 +276,12 @@ typedef struct mme_context_s {
     struct {
         const char *dnn;            /* Emergency APN */
     } emergency;
+
+    /*
+     * Operator maintenance window (/admin/maintenance/*). Rejects new EPS
+     * attach and additional PDN connectivity; drain detaches all UEs.
+     */
+    bool maintenance_mode;
 } mme_context_t;
 
 typedef struct mme_sgsn_route_s {

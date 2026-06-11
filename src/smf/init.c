@@ -29,6 +29,7 @@
 #include "ogs-metrics.h"
 #include "metrics/prometheus/json_pager.h"
 #include "pdu-info.h"
+#include "admin-api.h"
 #include "smf-reload-lists.h"
 #ifdef OPEN5GS_ADMIN_WATCHER
 #include "smf-admin-watcher.h"
@@ -128,6 +129,8 @@ int smf_initialize(void)
 
     /* dumper /pdu-info */
     ogs_metrics_register_custom_ep(smf_dump_pdu_info, "/pdu-info");
+
+    smf_admin_api_register();
 
 #ifdef OPEN5GS_ADMIN_WATCHER
     (void)smf_admin_watcher_init();
