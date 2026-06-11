@@ -939,6 +939,16 @@ int emm_handle_extended_service_request(
     ogs_assert(mme_ue);
     ogs_assert(enb_ue);
 
+    if (mme_self()->maintenance_mode) {
+        ogs_warn("[%s] Extended service request rejected: MME maintenance mode",
+                mme_ue->imsi_bcd);
+        r = nas_eps_send_service_reject(enb_ue, mme_ue,
+                OGS_NAS_EMM_CAUSE_CONGESTION);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return OGS_ERROR;
+    }
+
     /* Set Service Type */
     memcpy(&mme_ue->nas_eps.service, service_type,
             sizeof(ogs_nas_service_type_t));

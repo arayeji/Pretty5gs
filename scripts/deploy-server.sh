@@ -11,16 +11,111 @@ REPO_DIR="${OPEN5GS_REPO:-/home/superadmin/open5gsNew}"
 GITHUB_REMOTE="${GITHUB_REMOTE:-github}"
 GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
 
-MME_ADMIN_URL="${MME_ADMIN_URL:-http://127.0.0.1:9090}"
-MAINTENANCE="${MAINTENANCE:-1}"          # 1 = block new attaches while verifying stack
+MME_YAML="${MME_YAML:-/etc/open5gs/mme.yaml}"
+# Leave empty to auto-discover from mme.yaml (default bind is often 127.0.0.2:9090, not 127.0.0.1).
+MME_ADMIN_URL="${MME_ADMIN_URL:-}"
+MAINTENANCE="${MAINTENANCE:-1}"          # 1 = use MME /admin/maintenance during deploy
+MAINTENANCE_LEAVE_ON="${MAINTENANCE_LEAVE_ON:-0}"  # 1 = keep maintenance enabled at end
 VERIFY="${VERIFY:-1}"                    # 1 = run post-install health checks
 SKIP_CLEAN="${SKIP_CLEAN:-0}"            # 1 = keep local untracked files (skip git clean -fd)
 
 log() { printf '[deploy] %s\n' "$*"; }
 die() { printf '[deploy] ERROR: %s\n' "$*" >&2; exit 1; }
 
+# Open5GS MME metrics/admin HTTP binds to mme.metrics.server.address (template: 127.0.0.2).
+read_mme_metrics_from_yaml() {
+    local yaml="$1" addr="" port="9090"
+
+    [[ -f "$yaml" ]] || return 1
+
+    addr="$(awk '/^mme:/{m=1} m && /metrics:/{t=1} t && /address:/{sub(/^.*address:[[:space:]]*/,""); print; exit}' "$yaml")"
+    port="$(awk '/^mme:/{m=1} m && /metrics:/{t=1} t && /port:/{sub(/^.*port:[[:space:]]*/,""); print; exit}' "$yaml")"
+    [[ -n "$addr" ]] || return 1
+    [[ -n "$port" ]] || port="9090"
+    printf 'http://%s:%s' "$addr" "$port"
+}
+
+discover_mme_admin_url() {
+    local url cand
+
+    if [[ -n "$MME_ADMIN_URL" ]]; then
+        echo "$MME_ADMIN_URL"
+        return 0
+    fi
+
+    url="$(read_mme_metrics_from_yaml "$MME_YAML" 2>/dev/null || true)"
+    [[ -n "$url" ]] && cand="$url" || cand=""
+
+    for url in ${cand:+"$cand"} \
+               "http://127.0.0.2:9090" \
+               "http://127.0.0.1:9090" \
+               "http://[::1]:9090"; do
+        if curl -sf --connect-timeout 2 "${url}/admin/maintenance/status" >/dev/null 2>&1; then
+            echo "$url"
+            return 0
+        fi
+        if curl -sf --connect-timeout 2 "${url}/" >/dev/null 2>&1; then
+            echo "$url"
+            return 0
+        fi
+    done
+    return 1
+}
+
+mme_admin_post() {
+    local path="$1"
+    local url body code
+
+    url="$(discover_mme_admin_url)" || {
+        log "warning: cannot reach MME admin HTTP (set MME_ADMIN_URL or check ${MME_YAML})"
+        return 1
+    }
+
+    body="$(curl -sS -w $'\n%{http_code}' -X POST "${url}${path}" 2>/dev/null || true)"
+    code="${body##*$'\n'}"
+    body="${body%$'\n'*}"
+
+    case "$code" in
+        200|202)
+            log "MME POST ${path} -> HTTP ${code} (${url})"
+            [[ -n "$body" ]] && log "  response: ${body}"
+            return 0
+            ;;
+        403)
+            log "warning: MME POST ${path} -> HTTP 403 Forbidden (${url})"
+            log "  admin endpoints reject non-RFC1918 clients; use curl from the MME host"
+            return 1
+            ;;
+        *)
+            log "warning: MME POST ${path} -> HTTP ${code:-none} (${url})"
+            [[ -n "$body" ]] && log "  response: ${body}"
+            return 1
+            ;;
+    esac
+}
+
+mme_maintenance_status() {
+    local url body
+
+    url="$(discover_mme_admin_url)" || return 1
+    body="$(curl -sf "${url}/admin/maintenance/status" 2>/dev/null || true)"
+    [[ -n "$body" ]] || return 1
+    printf '%s' "$body"
+}
+
+mme_maintenance_expect() {
+    local want="$1" body
+
+    body="$(mme_maintenance_status)" || return 1
+    case "$want" in
+        true)  grep -q '"maintenance":true' <<<"$body" ;;
+        false) grep -q '"maintenance":false' <<<"$body" ;;
+    esac
+}
+
 mme_maintenance() {
     local action="$1"
+
     if [[ "$MAINTENANCE" != "1" ]]; then
         return 0
     fi
@@ -28,11 +123,30 @@ mme_maintenance() {
         log "curl missing; skipping MME maintenance $action"
         return 0
     fi
-    if ! curl -sf -X POST "${MME_ADMIN_URL}/admin/maintenance/${action}" >/dev/null; then
-        log "warning: MME maintenance/${action} failed (is mmed up on ${MME_ADMIN_URL}?)"
-        return 1
-    fi
-    log "MME maintenance ${action} OK"
+
+    mme_admin_post "/admin/maintenance/${action}" || return 1
+
+    case "$action" in
+        enable)
+            sleep 1
+            if mme_maintenance_expect true; then
+                log "OK: MME maintenance flag is true"
+            else
+                log "warning: POST enable succeeded but status is not maintenance:true"
+                mme_maintenance_status | sed 's/^/[deploy]   /' || true
+                return 1
+            fi
+            ;;
+        disable)
+            sleep 1
+            if mme_maintenance_expect false; then
+                log "OK: MME maintenance flag is false"
+            else
+                log "warning: POST disable succeeded but status is not maintenance:false"
+                return 1
+            fi
+            ;;
+    esac
 }
 
 wait_active() {
@@ -135,7 +249,12 @@ if [[ "$SKIP_CLEAN" != "1" ]]; then
 fi
 log "HEAD: $(git rev-parse --short HEAD) $(git log -1 --oneline)"
 
-# --- stop (block new work; MME stop ends attach storm) ---
+# --- stop (enable maintenance first if MME is still running) ---
+if systemctl is-active --quiet open5gs-mmed 2>/dev/null; then
+    log "enabling MME maintenance before stop (blocks new attach/PDN)"
+    mme_maintenance enable || log "warning: pre-stop maintenance enable failed"
+fi
+
 log "stopping Open5GS daemons"
 sudo systemctl stop \
     open5gs-mmed \
@@ -186,10 +305,14 @@ sudo systemctl restart open5gs-mmed
 sleep 3
 wait_active open5gs-mmed 30
 
-mme_maintenance enable || true
+mme_maintenance enable || die "MME maintenance enable failed — check metrics bind in ${MME_YAML}"
 sleep 2
 verify_stack
-mme_maintenance disable || true
+if [[ "$MAINTENANCE_LEAVE_ON" == "1" ]]; then
+    log "MAINTENANCE_LEAVE_ON=1 — leaving MME maintenance enabled"
+else
+    mme_maintenance disable || log "warning: MME maintenance disable failed"
+fi
 
 # Optional admin-api proxy
 if systemctl list-unit-files open5gs-admin-api.service >/dev/null 2>&1; then

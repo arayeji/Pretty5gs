@@ -314,9 +314,10 @@ int mme_admin_maintenance_enable(const ogs_metrics_query_t *q,
 {
     (void)q;
     mme_admin_set_maintenance(true);
-    return mme_admin_maintenance_queue(
+    (void)mme_admin_maintenance_queue(
             MME_EVENT_ADMIN_MAINTENANCE_ENABLE, 0,
             body, body_cap, body_len);
+    return mme_admin_maintenance_status(q, body, body_cap, body_len);
 }
 
 int mme_admin_maintenance_disable(const ogs_metrics_query_t *q,
@@ -324,9 +325,10 @@ int mme_admin_maintenance_disable(const ogs_metrics_query_t *q,
 {
     (void)q;
     mme_admin_set_maintenance(false);
-    return mme_admin_maintenance_queue(
+    (void)mme_admin_maintenance_queue(
             MME_EVENT_ADMIN_MAINTENANCE_DISABLE, 0,
             body, body_cap, body_len);
+    return mme_admin_maintenance_status(q, body, body_cap, body_len);
 }
 
 int mme_admin_maintenance_drain(const ogs_metrics_query_t *q,
@@ -373,6 +375,9 @@ void mme_admin_api_register(void)
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
     ogs_metrics_register_admin_ep(mme_admin_maintenance_enable,
             "/admin/maintenance/enable",
+            OGS_METRICS_ADMIN_METHOD_POST);
+    ogs_metrics_register_admin_ep(mme_admin_maintenance_enable,
+            "/admin/maintenance",
             OGS_METRICS_ADMIN_METHOD_POST);
     ogs_metrics_register_admin_ep(mme_admin_maintenance_disable,
             "/admin/maintenance/disable",
