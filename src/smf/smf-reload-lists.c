@@ -306,7 +306,7 @@ static int smf_reload_session_entry_add_only(ogs_yaml_iter_t *subnet_iter)
     }
 
     if (!subnet) {
-        ogs_error("SIGHUP: Adding PFCP subnet failed");
+        ogs_reload_audit_warn("Adding PFCP subnet failed");
         ogs_free(dnn_seq);
         return 0;
     }
@@ -317,7 +317,7 @@ static int smf_reload_session_entry_add_only(ogs_yaml_iter_t *subnet_iter)
         subnet->range[i].high = high[i] ? ogs_strdup(high[i]) : NULL;
     }
 
-    ogs_info("SIGHUP: subnet added %s/%s (dnn=%d)",
+    ogs_reload_audit_note(" subnet added %s/%s (dnn=%d)",
             ipstr, mask_or_numbits, dnn_seq_n > 0 ? dnn_seq_n :
             (dnn_scalar ? 1 : 0));
     ogs_free(dnn_seq);
@@ -481,7 +481,7 @@ static int smf_reload_upf_peer_entry_add_only(ogs_yaml_iter_t *upf_array)
         if (num_of_tac)
             memcpy(node->tac, tac, sizeof(node->tac));
 
-        ogs_info("SIGHUP: UPF peer added [%s]:%d",
+        ogs_reload_audit_note(" UPF peer added [%s]:%d",
                 ogs_sockaddr_to_string_static(addr), OGS_PORT(addr));
         added++;
         smf_reload_lists_changed++;
@@ -515,7 +515,7 @@ static int smf_reload_pfcp_upf_add_only(ogs_yaml_iter_t *pfcp_iter)
                 }
             }
         } else if (!strcmp(pfcp_key, "server")) {
-            ogs_warn("SIGHUP: smf.pfcp.server ignored (bind address)");
+            ogs_reload_audit_warn("smf.pfcp.server ignored (bind address)");
         }
     }
 
@@ -548,13 +548,13 @@ static int smf_reload_trace_imsi_add_only(ogs_yaml_iter_t *smf_iter)
             if (!v || !v[0])
                 continue;
             if (ogs_trace_filter_add(v) != OGS_OK) {
-                ogs_warn("SIGHUP: trace_imsi could not add `%s'", v);
+                ogs_reload_audit_warn("trace_imsi could not add `%s'", v);
                 continue;
             }
             if (ogs_trace_filter_count() > count_before) {
                 added++;
                 smf_reload_lists_changed++;
-                ogs_info("SIGHUP: trace_imsi added `%s'", v);
+                ogs_reload_audit_note(" trace_imsi added `%s'", v);
             }
         }
     } while (ogs_yaml_iter_type(&trace_array) == YAML_SEQUENCE_NODE &&
@@ -774,18 +774,26 @@ void smf_context_reload_runtime(void)
     smf_context_t *self = smf_self();
     bool found = false;
     int lists_added = 0;
+    bool yaml_ok = false;
 
+    ogs_reload_audit_begin();
     smf_reload_lists_changed = 0;
 
     if (ogs_app_config_reload() != OGS_OK) {
         ogs_warn("Configuration reload failed; keeping previous config");
+        ogs_reload_audit_warn("YAML parse failed; previous config kept");
+        ogs_reload_audit_finish("SMF", false);
         ogs_log_cycle();
         return;
     }
 
+    yaml_ok = true;
+
     document = ogs_app()->document;
     if (!document) {
         ogs_warn("No configuration document for runtime reload");
+        ogs_reload_audit_warn("no configuration document after reload");
+        ogs_reload_audit_finish("SMF", false);
         ogs_log_cycle();
         return;
     }
@@ -838,24 +846,28 @@ void smf_context_reload_runtime(void)
                             smf_reload_replace_dns(
                                     &self->dns[0],
                                     &smf_reload_owned_dns[0], v);
+                            ogs_reload_audit_note("smf.dns added %s", v);
                         } else if (!self->dns[1] &&
                                 strcmp(self->dns[0], v) != 0) {
                             smf_reload_replace_dns(
                                     &self->dns[1],
                                     &smf_reload_owned_dns[1], v);
                             smf_reload_lists_changed++;
+                            ogs_reload_audit_note("smf.dns added %s", v);
                         }
                     } else if (ipsub.family == AF_INET6) {
                         if (!self->dns6[0]) {
                             smf_reload_replace_dns(
                                     &self->dns6[0],
                                     &smf_reload_owned_dns6[0], v);
+                            ogs_reload_audit_note("smf.dns6 added %s", v);
                         } else if (!self->dns6[1] &&
                                 strcmp(self->dns6[0], v) != 0) {
                             smf_reload_replace_dns(
                                     &self->dns6[1],
                                     &smf_reload_owned_dns6[1], v);
                             smf_reload_lists_changed++;
+                            ogs_reload_audit_note("smf.dns6 added %s", v);
                         }
                     }
                 } while (ogs_yaml_iter_type(&dns_iter) ==
@@ -863,8 +875,10 @@ void smf_context_reload_runtime(void)
                 found = true;
             } else if (!strcmp(smf_key, "mtu")) {
                 const char *v = ogs_yaml_iter_value(&smf_iter);
-                if (v)
+                if (v) {
                     self->mtu = atoi(v);
+                    ogs_reload_audit_note("smf.mtu=%u", self->mtu);
+                }
                 smf_reload_lists_changed++;
                 found = true;
             } else if (!strcmp(smf_key, "gtpc")) {
@@ -875,7 +889,7 @@ void smf_context_reload_runtime(void)
                     const char *gk = ogs_yaml_iter_key(&gtpc_iter);
 
                     if (gk && !strcmp(gk, "server")) {
-                        ogs_warn("SIGHUP: smf.gtpc.server ignored "
+                        ogs_reload_audit_warn("smf.gtpc.server ignored "
                                 "(bind address)");
                     }
                 }
@@ -886,10 +900,11 @@ void smf_context_reload_runtime(void)
                     (void)smf_radius_apply_runtime(&cfg);
                     smf_reload_radius_cfg_clear(&cfg);
                     smf_reload_lists_changed++;
+                    ogs_reload_audit_note("smf.radius configuration replaced");
                     found = true;
                 } else {
                     smf_reload_radius_cfg_clear(&cfg);
-                    ogs_warn("SIGHUP: smf.radius invalid; keeping previous "
+                    ogs_reload_audit_warn("smf.radius invalid; keeping previous "
                             "RADIUS config");
                 }
             } else if (!strcmp(smf_key, "cdr")) {
@@ -899,17 +914,15 @@ void smf_context_reload_runtime(void)
                 (void)smf_ga_writer_apply_runtime(&cfg);
                 smf_reload_cdr_cfg_clear(&cfg);
                 smf_reload_lists_changed++;
+                ogs_reload_audit_note("smf.cdr configuration replaced");
                 found = true;
             }
         }
     }
 
-    if (found || lists_added > 0 || smf_reload_lists_changed > 0) {
-        ogs_info("SMF runtime config reloaded (%d list change(s))",
-                lists_added + smf_reload_lists_changed);
-    } else {
-        ogs_warn("No reloadable SMF keys found in configuration");
-    }
+    (void)found;
+    (void)lists_added;
 
+    ogs_reload_audit_finish("SMF", yaml_ok);
     ogs_log_cycle();
 }

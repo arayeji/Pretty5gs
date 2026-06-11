@@ -69,7 +69,7 @@ if meson.version().version_compare('>=0.51.0')
     libprom_dep = prometheus_client_c_proj.dependency('prom')
 
     libmetrics_dependencies = libmetrics_dependencies + [libprom_dep, libmicrohttpd_dep]
-    libmetrics_file_list = libmetrics_file_list + ' prometheus/context.c'
+    libmetrics_file_list = libmetrics_file_list + ' prometheus/context.c prometheus/config-dump.c'
 else
     libprom_sources = files('''
         void/context.c

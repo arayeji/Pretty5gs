@@ -4212,18 +4212,26 @@ void mme_context_reload_runtime(void)
     ogs_yaml_iter_t root_iter;
     bool found = false;
     int lists_added = 0;
+    bool yaml_ok = false;
 
+    ogs_reload_audit_begin();
     mme_reload_lists_changed = 0;
 
     if (ogs_app_config_reload() != OGS_OK) {
         ogs_warn("Configuration reload failed; keeping previous config");
+        ogs_reload_audit_warn("YAML parse failed; previous config kept");
+        ogs_reload_audit_finish("MME", false);
         ogs_log_cycle();
         return;
     }
 
+    yaml_ok = true;
+
     document = ogs_app()->document;
     if (!document) {
         ogs_warn("No configuration document for runtime reload");
+        ogs_reload_audit_warn("no configuration document after reload");
+        ogs_reload_audit_finish("MME", false);
         ogs_log_cycle();
         return;
     }
@@ -4240,6 +4248,7 @@ void mme_context_reload_runtime(void)
                 ogs_assert(mme_key);
                 if (!strcmp(mme_key, "time")) {
                     mme_time_config_parse(&mme_iter);
+                    ogs_reload_audit_note("mme.time timers reloaded");
                     found = true;
                 } else if (!strcmp(mme_key, "gtpc")) {
                     ogs_yaml_iter_t gtpc_iter;
@@ -4249,12 +4258,17 @@ void mme_context_reload_runtime(void)
                         ogs_assert(gtpc_key);
                         if (!strcmp(gtpc_key, "echo_interval")) {
                             const char *v = ogs_yaml_iter_value(&gtpc_iter);
-                            if (v)
+                            if (v) {
                                 self.gtpc_echo_interval = atoi(v);
+                                ogs_reload_audit_note(
+                                        "mme.gtpc.echo_interval=%u",
+                                        self.gtpc_echo_interval);
+                            }
                             found = true;
                         } else if (!strcmp(gtpc_key, "recovery")) {
-                            ogs_warn("mme.gtpc.recovery ignored on SIGHUP "
-                                    "(only applied at daemon start)");
+                            ogs_reload_audit_warn(
+                                    "mme.gtpc.recovery ignored "
+                                    "(daemon restart required)");
                         }
                     }
                     lists_added += mme_reload_gtpc_client_add_only(&mme_iter);
@@ -4272,14 +4286,10 @@ void mme_context_reload_runtime(void)
     }
 
     if (found || lists_added > 0 || mme_reload_lists_changed > 0) {
-        ogs_info("MME runtime config reloaded (time/gtpc + add-only lists, "
-                "%d list change(s))",
-                lists_added + mme_reload_lists_changed);
         mme_sgw_echo_reschedule_all();
-    } else {
-        ogs_warn("No reloadable MME keys found in configuration");
     }
 
+    ogs_reload_audit_finish("MME", yaml_ok);
     ogs_log_cycle();
 }
 
