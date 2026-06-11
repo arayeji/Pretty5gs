@@ -142,6 +142,7 @@ void ogs_log_cycle(void)
         switch(log->type) {
         case OGS_LOG_FILE_TYPE:
             file_cycle(log);
+            break;
         default:
             break;
         }
@@ -573,15 +574,29 @@ static ogs_log_t *add_log(ogs_log_type_e type)
 
 static int file_cycle(ogs_log_t *log)
 {
+    FILE *fp = NULL;
+
     ogs_assert(log);
-    ogs_assert(log->file.out);
-    ogs_assert(log->file.name);
 
-    fclose(log->file.out);
-    log->file.out = fopen(log->file.name, "a");
-    ogs_assert(log->file.out);
+    if (!log->file.name) {
+        ogs_error("Log cycle skipped: no file name");
+        return OGS_ERROR;
+    }
 
-    return 0;
+    if (log->file.out) {
+        fclose(log->file.out);
+        log->file.out = NULL;
+    }
+
+    fp = fopen(log->file.name, "a");
+    if (!fp) {
+        ogs_error("Log cycle failed: cannot reopen `%s` (%d:%s)",
+                log->file.name, errno, strerror(errno));
+        return OGS_ERROR;
+    }
+
+    log->file.out = fp;
+    return OGS_OK;
 }
 
 static char *log_timestamp(char *buf, char *last,

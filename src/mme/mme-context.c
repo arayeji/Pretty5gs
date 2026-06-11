@@ -1775,9 +1775,13 @@ int mme_context_parse_config(void)
                                     ogs_yaml_iter_t sgsn_array, sgsn_iter;
                                     ogs_yaml_iter_recurse(&client_iter,
                                             &sgsn_array);
-                                    ogs_assert(ogs_yaml_iter_type(
-                                                &sgsn_array) ==
-                                            YAML_SEQUENCE_NODE);
+                                    if (ogs_yaml_iter_type(&sgsn_array) !=
+                                            YAML_SEQUENCE_NODE) {
+                                        ogs_error("mme.gtpc.client.sgsn must "
+                                                "be a YAML sequence (list); "
+                                                "see mme.yaml example");
+                                        break;
+                                    }
                                     do {
                                         mme_sgsn_t *sgsn = NULL;
 
@@ -4213,12 +4217,14 @@ void mme_context_reload_runtime(void)
 
     if (ogs_app_config_reload() != OGS_OK) {
         ogs_warn("Configuration reload failed; keeping previous config");
+        ogs_log_cycle();
         return;
     }
 
     document = ogs_app()->document;
     if (!document) {
         ogs_warn("No configuration document for runtime reload");
+        ogs_log_cycle();
         return;
     }
 
@@ -4273,6 +4279,8 @@ void mme_context_reload_runtime(void)
     } else {
         ogs_warn("No reloadable MME keys found in configuration");
     }
+
+    ogs_log_cycle();
 }
 
 mme_pgw_t *mme_pgw_add(ogs_sockaddr_t *addr)
