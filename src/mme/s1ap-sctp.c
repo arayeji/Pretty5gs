@@ -31,6 +31,28 @@ static void lksctp_accept_handler(short when, ogs_socket_t fd, void *data);
 static int s1ap_accept_handler(ogs_sock_t *sock);
 static int s1ap_recv_handler(ogs_sock_t *sock);
 
+static bool s1ap_sockaddr_valid(const ogs_sockaddr_t *addr)
+{
+    if (!addr)
+        return false;
+    return addr->ogs_sa_family == AF_INET ||
+            addr->ogs_sa_family == AF_INET6;
+}
+
+static void s1ap_copy_peer_addr(ogs_sockaddr_t *dst,
+        const ogs_sockaddr_t *from, const ogs_sock_t *sock)
+{
+    ogs_assert(dst);
+
+    if (s1ap_sockaddr_valid(from)) {
+        memcpy(dst, from, sizeof(ogs_sockaddr_t));
+    } else if (sock && s1ap_sockaddr_valid(&sock->remote_addr)) {
+        memcpy(dst, &sock->remote_addr, sizeof(ogs_sockaddr_t));
+    } else {
+        memset(dst, 0, sizeof(ogs_sockaddr_t));
+    }
+}
+
 static ogs_sockopt_t s1ap_default_sockopt;
 static bool s1ap_default_sockopt_ready = false;
 
@@ -215,7 +237,7 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
                     /* NEXT_ID(MAX >= MIN) */
                     addr = ogs_calloc(1, sizeof(ogs_sockaddr_t));
                     ogs_assert(addr);
-                    memcpy(addr, &from, sizeof(ogs_sockaddr_t));
+                    s1ap_copy_peer_addr(addr, &from, sock);
 
                     s1ap_event_push(MME_EVENT_S1AP_LO_SCTP_COMM_UP,
                             sock, addr, NULL,
@@ -234,7 +256,7 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
 
                 addr = ogs_calloc(1, sizeof(ogs_sockaddr_t));
                 ogs_assert(addr);
-                memcpy(addr, &from, sizeof(ogs_sockaddr_t));
+                s1ap_copy_peer_addr(addr, &from, sock);
 
                 s1ap_event_push(MME_EVENT_S1AP_LO_CONNREFUSED,
                         sock, addr, NULL, 0, 0);
@@ -249,7 +271,7 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
 
             addr = ogs_calloc(1, sizeof(ogs_sockaddr_t));
             ogs_assert(addr);
-            memcpy(addr, &from, sizeof(ogs_sockaddr_t));
+            s1ap_copy_peer_addr(addr, &from, sock);
 
             s1ap_event_push(MME_EVENT_S1AP_LO_CONNREFUSED,
                     sock, addr, NULL, 0, 0);
@@ -294,7 +316,7 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
 
         addr = ogs_calloc(1, sizeof(ogs_sockaddr_t));
         ogs_assert(addr);
-        memcpy(addr, &from, sizeof(ogs_sockaddr_t));
+        s1ap_copy_peer_addr(addr, &from, sock);
 
         s1ap_event_push(MME_EVENT_S1AP_MESSAGE, sock, addr, pkbuf, 0, 0);
         return 1;
@@ -310,7 +332,7 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
 
         addr = ogs_calloc(1, sizeof(ogs_sockaddr_t));
         if (addr) {
-            memcpy(addr, &from, sizeof(ogs_sockaddr_t));
+            s1ap_copy_peer_addr(addr, &from, sock);
             s1ap_event_push(MME_EVENT_S1AP_LO_CONNREFUSED,
                     sock, addr, NULL, 0, 0);
         }

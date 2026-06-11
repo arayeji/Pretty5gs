@@ -794,9 +794,32 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
         switch (pfcp_message->h.type) {
         case OGS_PFCP_SESSION_ESTABLISHMENT_RESPONSE_TYPE:
             if (pfcp_xact->epc) {
+                if (pfcp_xact->create_flags &
+                        OGS_PFCP_CREATE_RESTORATION_INDICATION) {
+                    ogs_pfcp_session_establishment_response_t *rsp =
+                        &pfcp_message->pfcp_session_establishment_response;
+                    ogs_pfcp_f_seid_t *up_f_seid = NULL;
+
+                    if (rsp->up_f_seid.presence == 0) {
+                        ogs_error("PFCP restoration: No UP F-SEID");
+                        break;
+                    }
+                    up_f_seid = rsp->up_f_seid.data;
+                    ogs_assert(up_f_seid);
+                    sess->upf_n4_seid = be64toh(up_f_seid->seid);
+                    ogs_info("PFCP restoration: UP F-SEID updated");
+                    break;
+                }
+
                 ogs_gtp_xact_t *gtp_xact =
                     ogs_gtp_xact_find_by_id(pfcp_xact->assoc_xact_id);
-                ogs_assert(gtp_xact);
+                if (!gtp_xact) {
+                    ogs_error("PFCP Establishment Response: "
+                            "GTP transaction gone (assoc_xact_id=%d)",
+                            (int)pfcp_xact->assoc_xact_id);
+                    OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
+                    return;
+                }
 
                 pfcp_cause = smf_epc_n4_handle_session_establishment_response(
                         sess, pfcp_xact,

@@ -40,6 +40,14 @@
 #include "mme-admin-watcher.h"
 #endif
 
+static bool mme_sockaddr_valid(const ogs_sockaddr_t *addr)
+{
+    if (!addr)
+        return false;
+    return addr->ogs_sa_family == AF_INET ||
+            addr->ogs_sa_family == AF_INET6;
+}
+
 void mme_state_initial(ogs_fsm_t *s, mme_event_t *e)
 {
     mme_sm_debug(e);
@@ -129,10 +137,13 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         sock = e->sock;
         ogs_assert(sock);
         addr = e->addr;
-        ogs_assert(addr);
-
-        ogs_assert(addr->ogs_sa_family == AF_INET ||
-                addr->ogs_sa_family == AF_INET6);
+        if (!mme_sockaddr_valid(addr)) {
+            ogs_error("S1AP LO_ACCEPT: invalid peer address (family=%u)",
+                    addr ? addr->ogs_sa_family : 0);
+            if (addr) ogs_free(addr);
+            ogs_sock_destroy(sock);
+            break;
+        }
 
         ogs_info("eNB-S1 accepted[%s] in master_sm module",
             OGS_ADDR(addr, buf));
@@ -180,10 +191,12 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         sock = e->sock;
         ogs_assert(sock);
         addr = e->addr;
-        ogs_assert(addr);
-
-        ogs_assert(addr->ogs_sa_family == AF_INET ||
-                addr->ogs_sa_family == AF_INET6);
+        if (!mme_sockaddr_valid(addr)) {
+            ogs_error("S1AP SCTP_COMM_UP: invalid peer address (family=%u)",
+                    addr ? addr->ogs_sa_family : 0);
+            if (addr) ogs_free(addr);
+            break;
+        }
 
         max_num_of_ostreams = e->max_num_of_ostreams;
 
@@ -213,10 +226,12 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         sock = e->sock;
         ogs_assert(sock);
         addr = e->addr;
-        ogs_assert(addr);
-
-        ogs_assert(addr->ogs_sa_family == AF_INET ||
-                addr->ogs_sa_family == AF_INET6);
+        if (!mme_sockaddr_valid(addr)) {
+            ogs_error("S1AP CONNREFUSED: invalid peer address (family=%u)",
+                    addr ? addr->ogs_sa_family : 0);
+            if (addr) ogs_free(addr);
+            break;
+        }
 
         enb = mme_enb_find_by_addr(addr);
         if (enb) {
@@ -250,12 +265,16 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         sock = e->sock;
         ogs_assert(sock);
         addr = e->addr;
-        ogs_assert(addr);
         pkbuf = e->pkbuf;
         ogs_assert(pkbuf);
 
-        ogs_assert(addr->ogs_sa_family == AF_INET ||
-                addr->ogs_sa_family == AF_INET6);
+        if (!mme_sockaddr_valid(addr)) {
+            ogs_error("S1AP MESSAGE: invalid peer address (family=%u)",
+                    addr ? addr->ogs_sa_family : 0);
+            if (addr) ogs_free(addr);
+            ogs_pkbuf_free(pkbuf);
+            break;
+        }
 
         enb = mme_enb_find_by_addr(addr);
         ogs_free(addr);
@@ -397,15 +416,11 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
         ogs_assert(mme_ue);
         if (!OGS_FSM_STATE(&mme_ue->sm)) {
-            ogs_fatal("MESSAGE[%d]", nas_message.emm.h.message_type);
-            ogs_fatal("ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
-                    enb_ue ? enb_ue->enb_ue_s1ap_id : 0,
-                    enb_ue ? enb_ue->mme_ue_s1ap_id : 0);
-            ogs_fatal("context [%p:%p]", enb_ue, mme_ue);
-            ogs_fatal("IMSI [%s]", mme_ue ? mme_ue->imsi_bcd : "No MME_UE");
-            ogs_assert_if_reached();
+            ogs_error("EMM message[%d] for MME-UE [%s] with no FSM state ignored",
+                    nas_message.emm.h.message_type, mme_ue->imsi_bcd);
+            ogs_pkbuf_free(pkbuf);
+            break;
         }
-        ogs_assert(OGS_FSM_STATE(&mme_ue->sm));
 
         e->mme_ue_id = mme_ue->id;
         e->nas_message = &nas_message;
@@ -1041,12 +1056,18 @@ cleanup:
             enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
             if (!enb_ue) {
                 ogs_error("ENB-S1 Context has already been removed");
-                OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
+                if (OGS_FSM_STATE(&mme_ue->sm))
+                    OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
                 break;
             }
 
             /* 3GPP TS 23.401 Figure D.3.6-1 step 5 */
             rv = mme_gn_handle_sgsn_context_response(xact, mme_ue, &gtp1_message.sgsn_context_response);
+            if (!OGS_FSM_STATE(&mme_ue->sm)) {
+                ogs_error("Gn SGSN Context Response for MME-UE [%s] "
+                        "with no FSM state ignored", mme_ue->imsi_bcd);
+                break;
+            }
             if (rv == OGS_GTP1_CAUSE_ACCEPT || rv == OGS_GTP1_CAUSE_REQUEST_IMEI) {
                 mme_s6a_send_air_from_gn(enb_ue, mme_ue, xact);
                 OGS_FSM_TRAN(&mme_ue->sm, &emm_state_authentication);
