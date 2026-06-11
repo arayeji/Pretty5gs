@@ -978,8 +978,7 @@ int sgwc_ue_remove(sgwc_ue_t *sgwc_ue)
 {
     ogs_assert(sgwc_ue);
 
-    if (sgwc_ue->imsi_len)
-        sgwc_metrics_ue_active_dec(sgwc_ue);
+    sgwc_metrics_ue_active_dec(sgwc_ue);
 
     ogs_list_remove(&self.sgw_ue_list, sgwc_ue);
 
@@ -1349,8 +1348,7 @@ int sgwc_sess_remove(sgwc_sess_t *sess)
 
     ogs_assert(sess);
 
-    if (sess->gnode)
-        sgwc_metrics_session_active_dec(sess);
+    sgwc_metrics_session_active_dec(sess);
 
     sgwc_sess_purge_upf(sess);
 

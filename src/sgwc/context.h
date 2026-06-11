@@ -174,6 +174,8 @@ typedef struct sgwc_ue_s {
     ogs_pool_id_t   csr_replace_s11_xact_id;
     ogs_pkbuf_t     *csr_replace_gtpbuf;
     ogs_pool_id_t   csr_replace_sess_id;
+
+    unsigned        metrics_ue_counted : 1;
 } sgwc_ue_t;
 
 #define SGWC_SESS(pfcp_sess) ogs_container_of(pfcp_sess, sgwc_sess_t, pfcp)
@@ -223,6 +225,8 @@ typedef struct sgwc_sess_s {
 
     /* Monotonic start time for create-session latency logging */
     ogs_time_t      create_session_t0;
+
+    unsigned        metrics_session_counted : 1;
 } sgwc_sess_t;
 
 static inline void sgwc_create_session_phase(

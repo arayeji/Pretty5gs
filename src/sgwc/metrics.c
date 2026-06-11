@@ -152,22 +152,34 @@ void sgwc_metrics_ue_active_inc(sgwc_ue_t *sgwc_ue)
 {
     ogs_plmn_id_t plmn_id;
 
+    ogs_assert(sgwc_ue);
+
+    if (sgwc_ue->metrics_ue_counted)
+        return;
+
     if (!sgwc_metrics_plmn_from_ue(sgwc_ue, &plmn_id))
         return;
 
     sgwc_metrics_inst_by_plmn_add(&plmn_id,
             SGWC_METR_BY_PLMN_GAUGE_UE_ACTIVE, 1);
+    sgwc_ue->metrics_ue_counted = 1;
 }
 
 void sgwc_metrics_ue_active_dec(sgwc_ue_t *sgwc_ue)
 {
     ogs_plmn_id_t plmn_id;
 
+    ogs_assert(sgwc_ue);
+
+    if (!sgwc_ue->metrics_ue_counted)
+        return;
+
     if (!sgwc_metrics_plmn_from_ue(sgwc_ue, &plmn_id))
         return;
 
     sgwc_metrics_inst_by_plmn_add(&plmn_id,
             SGWC_METR_BY_PLMN_GAUGE_UE_ACTIVE, -1);
+    sgwc_ue->metrics_ue_counted = 0;
 }
 
 void sgwc_metrics_session_active_inc(sgwc_sess_t *sess)
@@ -178,12 +190,16 @@ void sgwc_metrics_session_active_inc(sgwc_sess_t *sess)
     ogs_assert(sess);
     ogs_assert(sess->gnode);
 
+    if (sess->metrics_session_counted)
+        return;
+
     if (!sgwc_metrics_plmn_from_sess(sess, &plmn_id))
         return;
 
     OGS_ADDR(&sess->gnode->addr, ipbuf);
     sgwc_metrics_inst_by_plmn_pgw_add(&plmn_id, ipbuf,
             SGWC_METR_BY_PLMN_PGW_GAUGE_SESSION_ACTIVE, 1);
+    sess->metrics_session_counted = 1;
 }
 
 void sgwc_metrics_session_active_dec(sgwc_sess_t *sess)
@@ -193,8 +209,14 @@ void sgwc_metrics_session_active_dec(sgwc_sess_t *sess)
 
     ogs_assert(sess);
 
-    if (!sess->gnode)
+    if (!sess->metrics_session_counted)
         return;
+
+    if (!sess->gnode) {
+        ogs_warn("SGWC session metrics dec skipped: no PGW gnode");
+        sess->metrics_session_counted = 0;
+        return;
+    }
 
     if (!sgwc_metrics_plmn_from_sess(sess, &plmn_id))
         return;
@@ -202,6 +224,7 @@ void sgwc_metrics_session_active_dec(sgwc_sess_t *sess)
     OGS_ADDR(&sess->gnode->addr, ipbuf);
     sgwc_metrics_inst_by_plmn_pgw_add(&plmn_id, ipbuf,
             SGWC_METR_BY_PLMN_PGW_GAUGE_SESSION_ACTIVE, -1);
+    sess->metrics_session_counted = 0;
 }
 
 /* BY PLMN */
