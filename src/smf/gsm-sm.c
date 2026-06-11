@@ -72,12 +72,26 @@ static uint8_t gtp_cause_from_diameter(uint8_t gtp_version,
 static void send_gtp_create_err_msg(const smf_sess_t *sess,
         ogs_gtp_xact_t *gtp_xact, uint8_t gtp_cause)
 {
+    if (!gtp_xact)
+        return;
+
     if (gtp_xact->gtp_version == 1)
-        ogs_gtp1_send_error_message(gtp_xact, sess->sgw_s5c_teid,
+        ogs_gtp1_send_error_message(gtp_xact, sess ? sess->sgw_s5c_teid : 0,
             OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE, gtp_cause);
     else
-        ogs_gtp2_send_error_message(gtp_xact, sess->sgw_s5c_teid,
+        ogs_gtp2_send_error_message(gtp_xact, sess ? sess->sgw_s5c_teid : 0,
             OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, gtp_cause);
+}
+
+static void smf_gsm_fail_create_session(ogs_fsm_t *s, smf_sess_t *sess,
+        ogs_gtp_xact_t *gtp_xact, uint8_t gtp_cause)
+{
+    send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);
+
+    if (sess && sess->upf_n4_seid)
+        OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
+    else
+        OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
 }
 
 static void send_gtp_delete_err_msg(const smf_sess_t *sess,
@@ -91,18 +105,17 @@ static void send_gtp_delete_err_msg(const smf_sess_t *sess,
             OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE, gtp_cause);
 }
 
-static bool send_ccr_init_req_gx_gy(smf_sess_t *sess, ogs_gtp_xact_t *gtp_xact)
+static bool send_ccr_init_req_gx_gy(ogs_fsm_t *s, smf_sess_t *sess,
+        ogs_gtp_xact_t *gtp_xact)
 {
     int use_gy = smf_use_gy_iface();
 
     if (use_gy == -1) {
         ogs_error("No Gy Diameter Peer");
-        /* TODO: drop Gx connection here,
-         * possibly move to another "releasing" state! */
-        uint8_t gtp_cause = (gtp_xact->gtp_version == 1) ?
+        uint8_t gtp_cause = (gtp_xact && gtp_xact->gtp_version == 1) ?
                 OGS_GTP1_CAUSE_NO_RESOURCES_AVAILABLE :
                 OGS_GTP2_CAUSE_UE_NOT_AUTHORISED_BY_OCS_OR_EXTERNAL_AAA_SERVER;
-        send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);
+        smf_gsm_fail_create_session(s, sess, gtp_xact, gtp_cause);
         return false;
     }
 
@@ -259,10 +272,10 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
                             gtp_xact,
                             &e->gtp1_message->create_pdp_context_request);
             if (gtp1_cause != OGS_GTP1_CAUSE_REQUEST_ACCEPTED) {
-                send_gtp_create_err_msg(sess, gtp_xact, gtp1_cause);
+                smf_gsm_fail_create_session(s, sess, gtp_xact, gtp1_cause);
                 return;
             }
-            if (send_ccr_init_req_gx_gy(sess, gtp_xact) == true)
+            if (send_ccr_init_req_gx_gy(s, sess, gtp_xact) == true)
                 OGS_FSM_TRAN(s, smf_gsm_state_wait_epc_auth_initial);
         }
         break;
@@ -278,12 +291,12 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
                             gtp_xact,
                             &e->gtp2_message->create_session_request);
             if (gtp2_cause != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-                send_gtp_create_err_msg(sess, gtp_xact, gtp2_cause);
+                smf_gsm_fail_create_session(s, sess, gtp_xact, gtp2_cause);
                 return;
             }
             switch (sess->gtp_rat_type) {
             case OGS_GTP2_RAT_TYPE_EUTRAN:
-                if (send_ccr_init_req_gx_gy(sess, gtp_xact) == true)
+                if (send_ccr_init_req_gx_gy(s, sess, gtp_xact) == true)
                     OGS_FSM_TRAN(s, smf_gsm_state_wait_epc_auth_initial);
                 break;
             case OGS_GTP2_RAT_TYPE_WLAN:
@@ -484,7 +497,7 @@ void smf_gsm_state_wait_epc_auth_initial(ogs_fsm_t *s, smf_event_t *e)
             sess->sm_data.s6b_aar_in_flight = false;
             sess->sm_data.s6b_aaa_err = s6b_message->result_code;
             if (s6b_message->result_code == ER_DIAMETER_SUCCESS) {
-                send_ccr_init_req_gx_gy(sess, gtp_xact);
+                send_ccr_init_req_gx_gy(s, sess, gtp_xact);
                 return;
             }
             goto test_can_proceed;
@@ -581,7 +594,9 @@ test_can_proceed:
             if (gtp_xact) {
                 uint8_t gtp_cause = gtp_cause_from_diameter(
                                         gtp_xact->gtp_version, diam_err, NULL);
-                send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);
+                smf_gsm_fail_create_session(s, sess, gtp_xact, gtp_cause);
+            } else {
+                OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
             }
         }
     }
@@ -852,10 +867,9 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
                 if (pfcp_cause != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
                     if (ogs_pfcp_cause_no_association(pfcp_cause))
                         smf_pfcp_request_reassociation(sess->pfcp_node);
-                    /* FIXME: tear down Gy and Gx */
                     gtp_cause = gtp_cause_from_pfcp(
                                     pfcp_cause, gtp_xact->gtp_version);
-                    send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);
+                    smf_gsm_fail_create_session(s, sess, gtp_xact, gtp_cause);
                     return;
                 }
 

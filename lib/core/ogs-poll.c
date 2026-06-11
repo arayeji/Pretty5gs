@@ -83,6 +83,7 @@ ogs_poll_t *ogs_pollset_add(ogs_pollset_t *pollset, short when,
 
     ogs_pool_alloc(&pollset->pool, &poll);
     ogs_assert(poll);
+    memset(poll, 0, sizeof(*poll));
 
     rc = ogs_nonblocking(fd);
     ogs_assert(rc == OGS_OK);

@@ -92,7 +92,18 @@ static int select_add(ogs_poll_t *poll)
     pollset = poll->pollset;
     ogs_assert(pollset);
     context = pollset->context;
-    ogs_assert(context);
+    if (!context) {
+        ogs_error("select_add: pollset context is NULL (fd=%d)", (int)poll->fd);
+        return OGS_ERROR;
+    }
+
+#if defined(FD_SETSIZE)
+    if (poll->fd < 0 || poll->fd >= FD_SETSIZE) {
+        ogs_error("select_add: invalid fd=%d (FD_SETSIZE=%d)",
+                (int)poll->fd, FD_SETSIZE);
+        return OGS_ERROR;
+    }
+#endif
 
     if (poll->when & OGS_POLLIN) {
         FD_SET(poll->fd, &context->master_read_fd_set);
