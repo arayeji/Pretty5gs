@@ -112,7 +112,14 @@ static int epoll_add(ogs_poll_t *poll)
     pollset = poll->pollset;
     ogs_assert(pollset);
     context = pollset->context;
-    ogs_assert(context);
+    if (!context) {
+        ogs_error("epoll_add: pollset context is NULL (fd=%d)", (int)poll->fd);
+        return OGS_ERROR;
+    }
+    if (poll->fd < 0) {
+        ogs_error("epoll_add: invalid fd=%d", (int)poll->fd);
+        return OGS_ERROR;
+    }
 
     map = ogs_hash_get(context->map_hash, &poll->fd, sizeof(poll->fd));
     if (!map) {
@@ -164,7 +171,11 @@ static int epoll_remove(ogs_poll_t *poll)
     pollset = poll->pollset;
     ogs_assert(pollset);
     context = pollset->context;
-    ogs_assert(context);
+    if (!context) {
+        ogs_error("epoll_remove: pollset context is NULL (fd=%d)",
+                (int)poll->fd);
+        return OGS_ERROR;
+    }
 
     map = ogs_hash_get(context->map_hash, &poll->fd, sizeof(poll->fd));
     ogs_assert(map);
