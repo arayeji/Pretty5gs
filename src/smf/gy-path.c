@@ -97,6 +97,34 @@ static void state_cleanup(struct sess_state *sess_data, os0_t sid, void *opaque)
     ogs_thread_mutex_unlock(&sess_state_mutex);
 }
 
+/*
+ * Store Diameter session state. freeDiameter returns an error when the
+ * underlying session was already destroyed; release sess_data instead of
+ * aborting.
+ */
+static int gy_store_sess_state(struct session *session,
+        struct sess_state **sess_data)
+{
+    int ret;
+
+    ogs_assert(session);
+    ogs_assert(sess_data);
+
+    if (!*sess_data)
+        return 0;
+
+    ret = fd_sess_state_store(smf_gy_reg, session, sess_data);
+    if (ret != 0) {
+        ogs_warn("Gy fd_sess_state_store() failed [%d] sid[%s]",
+                ret, (char *)(*sess_data)->gy_sid);
+        state_cleanup(*sess_data, NULL, NULL);
+        *sess_data = NULL;
+        return ret;
+    }
+    ogs_assert(*sess_data == NULL);
+    return 0;
+}
+
 /* Requested-Service-Unit, RFC4006 8.18 */
 static void fill_requested_service_unit(smf_sess_t *sess, struct avp *parent_avp)
 {
@@ -969,9 +997,15 @@ void smf_gy_send_ccr(smf_sess_t *sess, ogs_pool_id_t xact_id,
     svg = sess_data;
 
     /* Store this value in the session */
-    ret = fd_sess_state_store(smf_gy_reg, session, &sess_data);
-    ogs_assert(ret == 0);
-    ogs_assert(sess_data == NULL);
+    if (gy_store_sess_state(session, &sess_data) != 0) {
+        ret = fd_msg_free(req);
+        ogs_assert(ret == 0);
+        if (sess->gy_sid) {
+            ogs_free(sess->gy_sid);
+            sess->gy_sid = NULL;
+        }
+        return;
+    }
 
     /* Send the request */
     ret = fd_msg_send(&req, smf_gy_cca_cb, svg);
@@ -1330,9 +1364,9 @@ cleanup:
             state_cleanup(sess_data, NULL, NULL);
         } else {
             ogs_debug("    fd_sess_state_store(): [%s]", sess_data->gy_sid);
-            ret = fd_sess_state_store(smf_gy_reg, session, &sess_data);
-            ogs_assert(ret == 0);
-            ogs_assert(sess_data == NULL);
+            if (gy_store_sess_state(session, &sess_data) != 0) {
+                /* sess_data freed */
+            }
         }
     }
 
@@ -1448,9 +1482,7 @@ static int smf_gy_rar_cb(struct msg **msg, struct avp *avp,
     }
 
     /* Store this value in the session */
-    ret = fd_sess_state_store(smf_gy_reg, session, &sess_data);
-    ogs_assert(ret == 0);
-    ogs_assert(sess_data == NULL);
+    (void)gy_store_sess_state(session, &sess_data);
 
     /* Send the answer */
     ret = fd_msg_send(msg, NULL, NULL);
@@ -1486,8 +1518,8 @@ error_out:
     }
 
     /* Store session state (may be NULL) */
-    ret = fd_sess_state_store(smf_gy_reg, session, &sess_data);
-    ogs_assert(sess_data == NULL);
+    if (sess_data)
+        (void)gy_store_sess_state(session, &sess_data);
 
     /* Send error response */
     ret = fd_msg_send(msg, NULL, NULL);
