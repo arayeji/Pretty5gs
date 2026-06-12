@@ -297,6 +297,19 @@ static void fill_query_from_connection(struct MHD_Connection *connection,
         }
     }
 
+    q->rat = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "rat");
+
+    const char *lac = MHD_lookup_connection_value(connection,
+            MHD_GET_ARGUMENT_KIND, "lac");
+    if (lac && *lac) {
+        char *end = NULL;
+        unsigned long long v = strtoull(lac, &end, 0);
+        if (end != lac && *end == '\0' && v <= 0xFFFFULL) {
+            q->lac = (uint16_t)v;
+            q->has_lac = 1;
+        }
+    }
+
     /*
      * Accept either ?force=1 or the textual forms operators tend to
      * type ("true", "yes", "on"). Anything else -> 0 (default graceful).

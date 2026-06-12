@@ -31,10 +31,14 @@
 extern "C" {
 #endif
 
+typedef struct smf_sess_s smf_sess_t;
 
 #ifndef PDU_INFO_PAGE_SIZE_DEFAULT
 #define PDU_INFO_PAGE_SIZE_DEFAULT 100U
 #endif
+
+bool smf_sess_rat_metric_labels(const smf_sess_t *sess,
+        const char **rat, const char **gtp_if);
 
 size_t smf_dump_pdu_info(char *buf, size_t buflen,
         size_t page, size_t page_size, const ogs_metrics_query_t *q);

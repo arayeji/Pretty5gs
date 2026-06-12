@@ -162,15 +162,27 @@ uint8_t smf_gn_handle_create_pdp_context_request(
     if (ogs_gtp1_parse_uli(&uli, &req->user_location_information) == 0)
         return OGS_GTP1_CAUSE_MANDATORY_IE_INCORRECT;
 
+    sess->uli_geo_loc_type = uli.geo_loc_type;
+    sess->uli_lac = 0;
+    sess->uli_rac = 0;
+    sess->uli_sac = 0;
+    sess->uli_ci = 0;
+
     switch (uli.geo_loc_type) {
     case OGS_GTP1_GEO_LOC_TYPE_CGI:
         ogs_nas_to_plmn_id(&sess->serving_plmn_id, &uli.cgi.nas_plmn_id);
+        sess->uli_lac = uli.cgi.lac;
+        sess->uli_ci = uli.cgi.ci;
         break;
     case OGS_GTP1_GEO_LOC_TYPE_SAI:
         ogs_nas_to_plmn_id(&sess->serving_plmn_id, &uli.sai.nas_plmn_id);
+        sess->uli_lac = uli.sai.lac;
+        sess->uli_sac = uli.sai.sac;
         break;
     case  OGS_GTP1_GEO_LOC_TYPE_RAI:
         ogs_nas_to_plmn_id(&sess->serving_plmn_id, &uli.rai.nas_plmn_id);
+        sess->uli_lac = uli.rai.lac;
+        sess->uli_rac = uli.rai.rac;
         break;
     /* default: should not happen */
     }

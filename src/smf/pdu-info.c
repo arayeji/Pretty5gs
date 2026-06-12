@@ -30,6 +30,8 @@
  * path: http://SMF_IP:9090/pdu-info
  *
  * curl -s "http://127.0.0.4:9090/pdu-info?gnb_ip=10.1.2.3"
+ * curl -s "http://127.0.0.4:9090/pdu-info?rat=UTRAN&lac=1034"
+ * curl -s "http://127.0.0.4:9090/pdu-info?enb_id=264040"
  * curl -s "http://127.0.0.4:9090/pdu-info?page_size=1" |jq . 
  * {
  *   "items": [
@@ -77,10 +79,12 @@
  */ 
 
 #include <string.h>
+#include <strings.h>
 #include <stdbool.h>
 #include <limits.h>
 
 #include "ogs-core.h"
+#include "ogs-gtp.h"
 #include "ogs-metrics.h"
 #include "context.h"
 #include "pdu-info.h"
@@ -138,6 +142,33 @@ static const char *smf_sbi_rat_type_name(OpenAPI_rat_type_e rat)
     }
 }
 
+static inline uint32_t u24_to_u32(ogs_uint24_t v)
+{
+    uint32_t x = 0;
+    memcpy(&x, &v, sizeof(v) < sizeof(x) ? sizeof(v) : sizeof(x));
+    return (x & 0xFFFFFFu);
+}
+
+static inline bool bearer_list_has_qfi(const smf_sess_t *s)
+{
+    if (!s) return false;
+    smf_bearer_t *b = NULL;
+    ogs_list_for_each(&((smf_sess_t *)s)->bearer_list, b) {
+        if (b && b->qfi > 0) return true;
+    }
+    return false;
+}
+
+/* 5G heuristic: S-NSSAI present or any QFI bearer */
+static inline bool looks_5g_sess(const smf_sess_t *s)
+{
+    if (!s) return false;
+    if (s->s_nssai.sst != 0) return true;
+    if (u24_to_u32(s->s_nssai.sd) != 0) return true;
+    if (bearer_list_has_qfi(s)) return true;
+    return false;
+}
+
 static cJSON *build_rat_object(const smf_sess_t *sess, bool is5g)
 {
     cJSON *rat = NULL;
@@ -177,6 +208,285 @@ static cJSON *build_rat_object(const smf_sess_t *sess, bool is5g)
         cJSON_AddItemToObjectCS(rat, "gtp_if", cJSON_CreateString("s5"));
 
     return rat;
+}
+
+static const char *smf_sess_rat_name(const smf_sess_t *sess)
+{
+    if (!sess)
+        return NULL;
+
+    if (looks_5g_sess(sess) && sess->sbi_rat_type != OpenAPI_rat_type_NULL)
+        return smf_sbi_rat_type_name(sess->sbi_rat_type);
+
+    if (sess->gtp_rat_type)
+        return smf_gtp_rat_type_name(sess->gtp_rat_type);
+
+    return NULL;
+}
+
+bool smf_sess_rat_metric_labels(const smf_sess_t *sess,
+        const char **rat, const char **gtp_if)
+{
+    static const char gtp_if_sbi[] = "sbi";
+    static const char gtp_if_gn[] = "gn";
+    static const char gtp_if_s5[] = "s5";
+
+    if (!sess || !rat || !gtp_if)
+        return false;
+
+    *rat = smf_sess_rat_name(sess);
+    if (!*rat)
+        return false;
+
+    if (looks_5g_sess(sess)) {
+        *gtp_if = gtp_if_sbi;
+        return true;
+    }
+
+    if (sess->gtp.version == 1)
+        *gtp_if = gtp_if_gn;
+    else if (sess->gtp.version == 2)
+        *gtp_if = gtp_if_s5;
+    else
+        *gtp_if = gtp_if_sbi;
+
+    return true;
+}
+
+static bool smf_plmn_id_is_set(const ogs_plmn_id_t *plmn)
+{
+    return plmn && (plmn->mcc1 || plmn->mcc2 || plmn->mcc3);
+}
+
+static uint16_t smf_sess_lac_for_filter(const smf_sess_t *sess)
+{
+    if (!sess)
+        return 0;
+
+    if (looks_5g_sess(sess))
+        return (uint16_t)(sess->nr_tai.tac.v & 0xffff);
+
+    if (sess->gtp.version == 1 &&
+            sess->gtp.user_location_information.presence)
+        return sess->uli_lac;
+
+    return sess->e_tai.tac;
+}
+
+static bool smf_sess_matches_enb_id(const smf_sess_t *sess, uint32_t enb_id)
+{
+    uint32_t derived;
+
+    if (!sess || looks_5g_sess(sess) || sess->gtp.version == 1)
+        return false;
+
+    if (!sess->e_cgi.cell_id)
+        return false;
+
+    derived = sess->e_cgi.cell_id >> 8;
+    return derived == enb_id;
+}
+
+static bool smf_sess_matches_pdu_filters(const smf_sess_t *sess,
+        const ogs_metrics_query_t *q)
+{
+    const char *rat_name = NULL;
+
+    if (!sess || !q)
+        return true;
+
+    if (q->rat && *q->rat) {
+        rat_name = smf_sess_rat_name(sess);
+        if (!rat_name || strcasecmp(rat_name, q->rat) != 0)
+            return false;
+    }
+
+    if (q->has_lac) {
+        if (smf_sess_lac_for_filter(sess) != q->lac)
+            return false;
+    }
+
+    if (q->has_enb_id) {
+        if (!smf_sess_matches_enb_id(sess, q->enb_id))
+            return false;
+    }
+
+    return true;
+}
+
+static bool smf_ue_has_matching_pdu(const smf_ue_t *ue,
+        const ogs_metrics_query_t *q)
+{
+    smf_sess_t *sess = NULL;
+
+    ogs_assert(ue);
+
+    ogs_list_for_each(&ue->sess_list, sess) {
+        if (smf_sess_matches_pdu_filters(sess, q))
+            return true;
+    }
+
+    return false;
+}
+
+static cJSON *build_location_object(const smf_sess_t *sess)
+{
+    cJSON *loc = NULL;
+    const bool is5g = looks_5g_sess(sess);
+    char plmn[OGS_PLMNIDSTRLEN] = "";
+
+    if (!sess)
+        return NULL;
+
+    if (is5g) {
+        cJSON *tai = NULL;
+        cJSON *ncgi = NULL;
+        char tac[7] = "";
+        char cell[11] = "";
+
+        if (!smf_plmn_id_is_set(&sess->nr_tai.plmn_id))
+            return NULL;
+
+        loc = cJSON_CreateObject();
+        tai = cJSON_CreateObject();
+        ncgi = cJSON_CreateObject();
+        if (!loc || !tai || !ncgi) {
+            cJSON_Delete(loc);
+            cJSON_Delete(tai);
+            cJSON_Delete(ncgi);
+            return NULL;
+        }
+
+        ogs_plmn_id_to_string(&sess->nr_tai.plmn_id, plmn);
+        snprintf(tac, sizeof(tac), "%06x",
+                (unsigned)(sess->nr_tai.tac.v & 0xffffff));
+        cJSON_AddItemToObjectCS(tai, "plmn", cJSON_CreateString(plmn));
+        cJSON_AddItemToObjectCS(tai, "tac", cJSON_CreateString(tac));
+        cJSON_AddItemToObjectCS(loc, "tai", tai);
+
+        if (smf_plmn_id_is_set(&sess->nr_cgi.plmn_id)) {
+            char ncgi_plmn[OGS_PLMNIDSTRLEN] = "";
+            ogs_plmn_id_to_string(&sess->nr_cgi.plmn_id, ncgi_plmn);
+            snprintf(cell, sizeof(cell), "%09llx",
+                    (unsigned long long)(sess->nr_cgi.cell_id & 0xfffffffffULL));
+            cJSON_AddItemToObjectCS(ncgi, "plmn", cJSON_CreateString(ncgi_plmn));
+            cJSON_AddItemToObjectCS(ncgi, "cell_id", cJSON_CreateString(cell));
+            cJSON_AddItemToObjectCS(loc, "ncgi", ncgi);
+        } else {
+            cJSON_Delete(ncgi);
+        }
+
+        return loc;
+    }
+
+    if (sess->gtp.version == 1 &&
+            sess->gtp.user_location_information.presence) {
+        loc = cJSON_CreateObject();
+        if (!loc)
+            return NULL;
+
+        switch (sess->uli_geo_loc_type) {
+        case OGS_GTP1_GEO_LOC_TYPE_CGI: {
+            cJSON *cgi = cJSON_CreateObject();
+            if (!cgi) {
+                cJSON_Delete(loc);
+                return NULL;
+            }
+            ogs_plmn_id_to_string(&sess->serving_plmn_id, plmn);
+            cJSON_AddItemToObjectCS(loc, "type", cJSON_CreateString("cgi"));
+            cJSON_AddItemToObjectCS(cgi, "plmn", cJSON_CreateString(plmn));
+            cJSON_AddItemToObjectCS(cgi, "lac",
+                    cJSON_CreateNumber((double)sess->uli_lac));
+            cJSON_AddItemToObjectCS(cgi, "ci",
+                    cJSON_CreateNumber((double)sess->uli_ci));
+            cJSON_AddItemToObjectCS(loc, "cgi", cgi);
+            break;
+        }
+        case OGS_GTP1_GEO_LOC_TYPE_SAI: {
+            cJSON *sai = cJSON_CreateObject();
+            if (!sai) {
+                cJSON_Delete(loc);
+                return NULL;
+            }
+            ogs_plmn_id_to_string(&sess->serving_plmn_id, plmn);
+            cJSON_AddItemToObjectCS(loc, "type", cJSON_CreateString("sai"));
+            cJSON_AddItemToObjectCS(sai, "plmn", cJSON_CreateString(plmn));
+            cJSON_AddItemToObjectCS(sai, "lac",
+                    cJSON_CreateNumber((double)sess->uli_lac));
+            cJSON_AddItemToObjectCS(sai, "sac",
+                    cJSON_CreateNumber((double)sess->uli_sac));
+            cJSON_AddItemToObjectCS(loc, "sai", sai);
+            break;
+        }
+        case OGS_GTP1_GEO_LOC_TYPE_RAI: {
+            cJSON *rai = cJSON_CreateObject();
+            if (!rai) {
+                cJSON_Delete(loc);
+                return NULL;
+            }
+            ogs_plmn_id_to_string(&sess->serving_plmn_id, plmn);
+            cJSON_AddItemToObjectCS(loc, "type", cJSON_CreateString("rai"));
+            cJSON_AddItemToObjectCS(rai, "plmn", cJSON_CreateString(plmn));
+            cJSON_AddItemToObjectCS(rai, "lac",
+                    cJSON_CreateNumber((double)sess->uli_lac));
+            cJSON_AddItemToObjectCS(rai, "rac",
+                    cJSON_CreateNumber((double)sess->uli_rac));
+            cJSON_AddItemToObjectCS(loc, "rai", rai);
+            break;
+        }
+        default:
+            cJSON_Delete(loc);
+            return NULL;
+        }
+
+        if (sess->uli_lac) {
+            cJSON_AddItemToObjectCS(loc, "lac",
+                    cJSON_CreateNumber((double)sess->uli_lac));
+        }
+
+        return loc;
+    }
+
+    if (smf_plmn_id_is_set(&sess->e_tai.plmn_id)) {
+        cJSON *tai = NULL;
+        cJSON *ecgi = NULL;
+        char ecgi_plmn[OGS_PLMNIDSTRLEN] = "";
+        char tac[7] = "";
+        char cell[9] = "";
+
+        loc = cJSON_CreateObject();
+        tai = cJSON_CreateObject();
+        ecgi = cJSON_CreateObject();
+        if (!loc || !tai || !ecgi) {
+            cJSON_Delete(loc);
+            cJSON_Delete(tai);
+            cJSON_Delete(ecgi);
+            return NULL;
+        }
+
+        ogs_plmn_id_to_string(&sess->e_tai.plmn_id, plmn);
+        snprintf(tac, sizeof(tac), "%04x", (unsigned)sess->e_tai.tac);
+        cJSON_AddItemToObjectCS(tai, "plmn", cJSON_CreateString(plmn));
+        cJSON_AddItemToObjectCS(tai, "tac", cJSON_CreateString(tac));
+        cJSON_AddItemToObjectCS(loc, "tai", tai);
+
+        if (smf_plmn_id_is_set(&sess->e_cgi.plmn_id)) {
+            ogs_plmn_id_to_string(&sess->e_cgi.plmn_id, ecgi_plmn);
+            snprintf(cell, sizeof(cell), "%07x",
+                    (unsigned)(sess->e_cgi.cell_id & 0x0fffffffu));
+            cJSON_AddItemToObjectCS(ecgi, "plmn", cJSON_CreateString(ecgi_plmn));
+            cJSON_AddItemToObjectCS(ecgi, "cell_id", cJSON_CreateString(cell));
+            cJSON_AddItemToObjectCS(ecgi, "enb_id",
+                    cJSON_CreateNumber((double)(sess->e_cgi.cell_id >> 8)));
+            cJSON_AddItemToObjectCS(loc, "ecgi", ecgi);
+        } else {
+            cJSON_Delete(ecgi);
+        }
+
+        return loc;
+    }
+
+    return NULL;
 }
 
 static int ip_to_text(const ogs_ip_t *ip, char *out, size_t outlen)
@@ -253,13 +563,6 @@ static cJSON *addr_string_from_sockaddr(ogs_sockaddr_t *sa4, ogs_sockaddr_t *sa6
     return addr_string_item(&ip, default_port);
 }
 
-static inline uint32_t u24_to_u32(ogs_uint24_t v)
-{
-    uint32_t x = 0;
-    memcpy(&x, &v, sizeof(v) < sizeof(x) ? sizeof(v) : sizeof(x));
-    return (x & 0xFFFFFFu);
-}
-
 static inline int up_state_of(const smf_sess_t *s)
 {
     if (!s) return 0;
@@ -271,26 +574,6 @@ static inline int up_state_of(const smf_sess_t *s)
 static inline bool has_n3_teid(const smf_sess_t *s)
 {
     return s && (s->remote_ul_teid != 0U || s->remote_dl_teid != 0U);
-}
-
-static inline bool bearer_list_has_qfi(const smf_sess_t *s)
-{
-    if (!s) return false;
-    smf_bearer_t *b = NULL;
-    ogs_list_for_each(&((smf_sess_t *)s)->bearer_list, b) {
-        if (b && b->qfi > 0) return true;
-    }
-    return false;
-}
-
-/* 5G heuristic: S-NSSAI present or any QFI bearer */
-static inline bool looks_5g_sess(const smf_sess_t *s)
-{
-    if (!s) return false;
-    if (s->s_nssai.sst != 0) return true;
-    if (u24_to_u32(s->s_nssai.sd) != 0) return true;
-    if (bearer_list_has_qfi(s)) return true;
-    return false;
 }
 
 static bool smf_sess_matches_ran_ip(const smf_sess_t *sess, const char *needle)
@@ -847,6 +1130,13 @@ static cJSON *build_single_pdu_object(const smf_sess_t *sess, int *any_active, i
             cJSON_AddItemToObjectCS(pdu, "rat", rat);
     }
 
+    /* User location (Gn ULI, LTE TAI/ECGI, or 5G TAI/NCGI) */
+    {
+        cJSON *loc = build_location_object(sess);
+        if (loc)
+            cJSON_AddItemToObjectCS(pdu, "location", loc);
+    }
+
     /* QoS flows */
     {
         cJSON *qarr = is5g ? build_qos_flows_array_5g(sess)
@@ -918,7 +1208,7 @@ static cJSON *build_single_pdu_object(const smf_sess_t *sess, int *any_active, i
     return pdu;
 }
 
-static cJSON *build_ue_object(const smf_ue_t *ue)
+static cJSON *build_ue_object(const smf_ue_t *ue, const ogs_metrics_query_t *q)
 {
     cJSON *ueo = cJSON_CreateObject();
     if (!ueo) return NULL;
@@ -935,13 +1225,25 @@ static cJSON *build_ue_object(const smf_ue_t *ue)
     if (!pdus) { cJSON_Delete(ueo); return NULL; }
 
     int any_active = 0, any_unknown = 0;
+    int pdu_count = 0;
 
     smf_sess_t *sess = NULL;
     ogs_list_for_each(&ue->sess_list, sess) {
+        if (q && !smf_sess_matches_pdu_filters(sess, q))
+            continue;
+
         cJSON *pdu = build_single_pdu_object(sess, &any_active, &any_unknown);
         if (!pdu) { cJSON_Delete(pdus); cJSON_Delete(ueo); return NULL; }
         cJSON_AddItemToArray(pdus, pdu);
+        pdu_count++;
     }
+
+    if (pdu_count == 0) {
+        cJSON_Delete(pdus);
+        cJSON_Delete(ueo);
+        return NULL;
+    }
+
     cJSON_AddItemToObjectCS(ueo, "pdu", pdus);
 
     /* UE activity */
@@ -953,6 +1255,97 @@ static cJSON *build_ue_object(const smf_ue_t *ue)
     }
 
     return ueo;
+}
+
+static void pdu_by_rat_count_inc(cJSON *summary, const char *rat_name)
+{
+    cJSON *by_rat = NULL;
+    cJSON *entry = NULL;
+    int count = 0;
+
+    if (!summary || !rat_name || !*rat_name)
+        return;
+
+    by_rat = cJSON_GetObjectItemCaseSensitive(summary, "pdu_by_rat");
+    if (!by_rat) {
+        by_rat = cJSON_CreateObject();
+        if (!by_rat)
+            return;
+        cJSON_AddItemToObjectCS(summary, "pdu_by_rat", by_rat);
+    }
+
+    entry = cJSON_GetObjectItemCaseSensitive(by_rat, rat_name);
+    if (entry && cJSON_IsNumber(entry)) {
+        count = entry->valueint + 1;
+        cJSON_SetIntValue(entry, count);
+        return;
+    }
+
+    cJSON_AddItemToObjectCS(by_rat, rat_name, cJSON_CreateNumber(1));
+}
+
+static bool smf_ue_matches_query(const smf_ue_t *ue, const ogs_metrics_query_t *q)
+{
+    if (!ue || !q)
+        return true;
+
+    if (q->supi && *q->supi) {
+        if (!ue->supi || strcmp(ue->supi, q->supi) != 0)
+            return false;
+    }
+    if (q->imsi && *q->imsi) {
+        if (!ue->imsi_bcd[0] || strcmp(ue->imsi_bcd, q->imsi) != 0)
+            return false;
+    }
+    if (q->ue_ip && *q->ue_ip) {
+        bool match = false;
+        smf_sess_t *s = NULL;
+        ogs_list_for_each(&ue->sess_list, s) {
+            char ip4[OGS_ADDRSTRLEN] = "";
+            char ip6[OGS_ADDRSTRLEN] = "";
+            if (s->ipv4) OGS_INET_NTOP(&s->ipv4->addr, ip4);
+            if (s->ipv6) OGS_INET6_NTOP(&s->ipv6->addr, ip6);
+            if ((ip4[0] && strcmp(ip4, q->ue_ip) == 0) ||
+                (ip6[0] && strcmp(ip6, q->ue_ip) == 0)) {
+                match = true;
+                break;
+            }
+        }
+        if (!match)
+            return false;
+    }
+    if (q->ip && *q->ip) {
+        if (!smf_ue_matches_ran_ip(ue, q->ip))
+            return false;
+    }
+
+    return true;
+}
+
+static void collect_pdu_by_rat_summary(cJSON *summary, const ogs_metrics_query_t *q)
+{
+    smf_context_t *smf = smf_self();
+    smf_ue_t *ue = NULL;
+
+    ogs_list_for_each(&smf->smf_ue_list, ue) {
+        smf_sess_t *sess = NULL;
+
+        if (!smf_ue_matches_query(ue, q))
+            continue;
+
+        ogs_list_for_each(&ue->sess_list, sess) {
+            const char *rat_name = NULL;
+
+            if (!smf_sess_matches_pdu_filters(sess, q))
+                continue;
+
+            rat_name = smf_sess_rat_name(sess);
+            if (!rat_name)
+                rat_name = "UNKNOWN";
+
+            pdu_by_rat_count_inc(summary, rat_name);
+        }
+    }
 }
 
 size_t smf_dump_pdu_info_paged(char *buf, size_t buflen,
@@ -977,6 +1370,15 @@ size_t smf_dump_pdu_info_paged(char *buf, size_t buflen,
     cJSON *items = cJSON_CreateArray();
     if (!items) { cJSON_Delete(root); if (buflen >= 3) { memcpy(buf, "{}", 3); return 2; } if (buflen) buf[0] = '\0'; return 0; }
 
+    cJSON *summary = cJSON_CreateObject();
+    if (!summary) {
+        cJSON_Delete(items);
+        cJSON_Delete(root);
+        if (buflen >= 3) { memcpy(buf, "{}", 3); return 2; }
+        if (buflen) buf[0] = '\0';
+        return 0;
+    }
+
     size_t idx = 0, emitted = 0;
     bool has_next = false, oom = false;
 
@@ -990,6 +1392,8 @@ size_t smf_dump_pdu_info_paged(char *buf, size_t buflen,
      */
     ogs_metrics_dump_lock();
 
+    collect_pdu_by_rat_summary(summary, q);
+
     ogs_list_for_each(&smf->smf_ue_list, ue) {
         /*
          * UE-level filters first. SUPI compares the full "imsi-..."
@@ -998,31 +1402,10 @@ size_t smf_dump_pdu_info_paged(char *buf, size_t buflen,
          * per-session (a single UE can hold multiple PDU sessions
          * with different IPs).
          */
-        if (q && q->supi && *q->supi) {
-            if (!ue->supi || strcmp(ue->supi, q->supi) != 0)
-                continue;
-        }
-        if (q && q->imsi && *q->imsi) {
-            if (!ue->imsi_bcd[0] || strcmp(ue->imsi_bcd, q->imsi) != 0)
-                continue;
-        }
-        if (q && q->ue_ip && *q->ue_ip) {
-            bool match = false;
-            smf_sess_t *s = NULL;
-            ogs_list_for_each(&ue->sess_list, s) {
-                char ip4[OGS_ADDRSTRLEN] = "";
-                char ip6[OGS_ADDRSTRLEN] = "";
-                if (s->ipv4) OGS_INET_NTOP(&s->ipv4->addr, ip4);
-                if (s->ipv6) OGS_INET6_NTOP(&s->ipv6->addr, ip6);
-                if ((ip4[0] && strcmp(ip4, q->ue_ip) == 0) ||
-                    (ip6[0] && strcmp(ip6, q->ue_ip) == 0)) {
-                    match = true; break;
-                }
-            }
-            if (!match) continue;
-        }
-        if (q && q->ip && *q->ip) {
-            if (!smf_ue_matches_ran_ip(ue, q->ip))
+        if (!smf_ue_matches_query(ue, q))
+            continue;
+        if (q && ((q->rat && *q->rat) || q->has_lac || q->has_enb_id)) {
+            if (!smf_ue_has_matching_pdu(ue, q))
                 continue;
         }
 
@@ -1030,7 +1413,7 @@ size_t smf_dump_pdu_info_paged(char *buf, size_t buflen,
         if (act == 1) { idx++; continue; }
         if (act == 2) break;
 
-        cJSON *ueo = build_ue_object(ue);
+        cJSON *ueo = build_ue_object(ue, q);
         if (!ueo) { oom = true; break; }
 
         cJSON_AddItemToArray(items, ueo);
@@ -1041,6 +1424,10 @@ size_t smf_dump_pdu_info_paged(char *buf, size_t buflen,
     ogs_metrics_dump_unlock();
 
     cJSON_AddItemToObjectCS(root, "items", items);
+    if (summary->child)
+        cJSON_AddItemToObjectCS(root, "summary", summary);
+    else
+        cJSON_Delete(summary);
     json_pager_add_trailing(root, no_paging, page, page_size, emitted, has_next && !oom, "/pdu-info", oom);
 
     return json_pager_finalize(root, buf, buflen);
