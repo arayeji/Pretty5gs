@@ -27,6 +27,7 @@
 #include "sgwc-trace.h"
 #include "sgwc-gtp-interop.h"
 #include "gn-handler.h"
+#include "gn-build.h"
 
 #define SGWC_GTP_CREATE_REJECT(_sess, _ue, _xact, _cause) \
     do { \
@@ -380,6 +381,7 @@ void sgwc_sxa_handle_session_establishment_response(
     ogs_pkbuf_t *pkbuf = NULL;
 
     ogs_gtp2_indication_t *indication = NULL;
+    ogs_nas_plmn_id_t gn_serving_plmn_id;
 
     ogs_debug("Session Establishment Response");
 
@@ -783,6 +785,11 @@ void sgwc_sxa_handle_session_establishment_response(
         }
 
         /* APN/PCO: forward unchanged from MME on S11. */
+        if (sess->gn && sgwc_ue) {
+            sgwc_gn_reapply_create_session_request(
+                    create_session_request, sess, sgwc_ue,
+                    &gn_serving_plmn_id);
+        }
 
         pkbuf = ogs_gtp2_build_msg(recv_message);
         if (!pkbuf) {

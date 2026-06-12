@@ -21,6 +21,49 @@
 
 #include <stdarg.h>
 
+void ogs_smf_trace_set_from_gtp2_create_session_request(
+        ogs_gtp2_create_session_request_t *req, const char *proc)
+{
+    ogs_trace_ctx_t ctx;
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+    char apn[OGS_MAX_APN_LEN+1];
+
+    memset(&ctx, 0, sizeof(ctx));
+
+    if (proc && proc[0])
+        ogs_cpystrn(ctx.proc, proc, sizeof(ctx.proc));
+
+    if (!req) {
+        ogs_trace_set(&ctx);
+        return;
+    }
+
+    if (req->imsi.presence && req->imsi.data && req->imsi.len) {
+        ogs_buffer_to_bcd(req->imsi.data, req->imsi.len, imsi_bcd);
+        ogs_cpystrn(ctx.imsi, imsi_bcd, sizeof(ctx.imsi));
+    }
+
+    if (req->access_point_name.presence && req->access_point_name.data &&
+            req->access_point_name.len > 0) {
+        if (ogs_fqdn_parse(apn, req->access_point_name.data,
+                ogs_min(req->access_point_name.len, OGS_MAX_APN_LEN)) > 0) {
+            char *apn_oi = ogs_dnn_oi_from_fqdn(apn);
+
+            if (apn_oi && apn_oi > apn && apn_oi[-1] == '.')
+                apn_oi[-1] = '\0';
+            ogs_cpystrn(ctx.apn, apn, sizeof(ctx.apn));
+        }
+    }
+
+    if (req->sender_f_teid_for_control_plane.presence &&
+            req->sender_f_teid_for_control_plane.data &&
+            req->sender_f_teid_for_control_plane.data->teid)
+        ctx.sgw_s5c_teid = be32toh(
+                req->sender_f_teid_for_control_plane.data->teid);
+
+    ogs_trace_set(&ctx);
+}
+
 void ogs_smf_trace_set(
         smf_ue_t *smf_ue, smf_sess_t *sess,
         const char *proc)

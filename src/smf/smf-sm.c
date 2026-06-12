@@ -171,6 +171,8 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             smf_s5c_handle_echo_response(gtp_xact, &gtp2_message.echo_response);
             break;
         case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
+            ogs_smf_trace_set_from_gtp2_create_session_request(
+                    &gtp2_message.create_session_request, "create-session");
             smf_metrics_inst_global_inc(SMF_METR_GLOB_CTR_S5C_RX_CREATESESSIONREQ);
             smf_metrics_inst_gtp_node_inc(smf_gnode->metrics, SMF_METR_GTP_NODE_CTR_S5C_RX_CREATESESSIONREQ);
             if (smf_self()->maintenance_mode && gtp2_message.h.teid == 0) {
@@ -203,7 +205,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     OGS_SETUP_GTP_NODE(sess, smf_gnode->gnode);
             }
             if (!sess) {
-                ogs_error("No Session");
+                OGS_TLOG_ERROR("No Session (Create Session Request rejected)");
                 ogs_gtp2_send_error_message(gtp_xact,
                         gtp2_sender_f_teid.teid_presence == true ?
                             gtp2_sender_f_teid.teid : 0,
