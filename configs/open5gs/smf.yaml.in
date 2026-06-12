@@ -466,6 +466,15 @@ smf:
 ################################################################################
 # PFCP Client
 ################################################################################
+#  o PFCP client address vs managed-service address (VPP / agent mapping):
+#    address:       PFCP peer on the wire (/pdu-info n4.pfcp_addr)
+#    service_addr:  host in your service inventory (/pdu-info n4.service_addr)
+#  pfcp:
+#    client:
+#      upf:
+#        - address: 192.168.200.25
+#          service_addr: 10.0.0.7
+#          tac: 1
 #  o UPF selection by eNodeB TAC
 #   (either single TAC or multiple TACs, DECIMAL representation)
 #  pfcp:
