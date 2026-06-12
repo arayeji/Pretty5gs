@@ -32,7 +32,7 @@
 #include "ogs-metrics.h"
 #include "metrics/prometheus/json_pager.h"
 
-#include <cJSON.h>
+#include "sbi/openapi/external/cJSON.h"
 
 static int ip_to_text(const ogs_ip_t *ip, char *out, size_t outlen)
 {
