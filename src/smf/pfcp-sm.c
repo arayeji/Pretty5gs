@@ -454,6 +454,11 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
     case SMF_EVT_N4_REASSOCIATE:
         ogs_warn("PFCP re-association required with UPF %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
+        /* 3GPP TS 23.007 19A: the UP function deletes the existing PFCP
+         * association and all associated PFCP sessions when it accepts the
+         * new Association Setup Request. Re-establish the sessions with
+         * PFCPSEReq-Flags RESTI (TS 29.244 8.2.116) after association. */
+        node->restoration_required = true;
         OGS_FSM_TRAN(s, smf_pfcp_state_will_associate);
         break;
     default:

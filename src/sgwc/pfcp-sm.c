@@ -411,11 +411,20 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
     case SGWC_EVT_SXA_NO_HEARTBEAT:
         ogs_warn("No Heartbeat from SGW-U %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
+        /* 3GPP TS 23.007 19A: when re-associating, the UP function deletes
+         * the existing PFCP association and all associated PFCP sessions
+         * upon receiving the new Association Setup Request. The sessions
+         * must therefore be re-established with PFCPSEReq-Flags RESTI
+         * (TS 29.244 8.2.116) once the association is up again. */
+        node->restoration_required = true;
         OGS_FSM_TRAN(s, sgwc_pfcp_state_will_associate);
         break;
     case SGWC_EVT_SXA_REASSOCIATE:
         ogs_warn("PFCP re-association required with SGW-U %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
+        /* See TS 23.007 19A note above: sessions are deleted on the UP
+         * function by the new association; restore them after setup. */
+        node->restoration_required = true;
         OGS_FSM_TRAN(s, sgwc_pfcp_state_will_associate);
         break;
     default:
