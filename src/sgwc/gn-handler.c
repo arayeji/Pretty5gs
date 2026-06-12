@@ -37,6 +37,103 @@ void sgwc_gn_handle_echo_request(
     ogs_gtp1_send_echo_response(xact, sgwc_self()->gn_gtpc_recovery);
 }
 
+static ogs_pkbuf_t *sgwc_gn_build_empty_gtp1_response(uint8_t type)
+{
+    ogs_pkbuf_t *pkbuf = NULL;
+    ogs_gtp1_header_t *h = NULL;
+
+    pkbuf = ogs_pkbuf_alloc(NULL, OGS_GTPV1C_HEADER_LEN);
+    ogs_assert(pkbuf);
+    ogs_pkbuf_put(pkbuf, OGS_GTPV1C_HEADER_LEN);
+
+    h = (ogs_gtp1_header_t *)pkbuf->data;
+    memset(h, 0, OGS_GTPV1C_HEADER_LEN);
+    h->version = 1;
+    h->pt = 1;
+    h->type = type;
+    h->length = 0;
+
+    ogs_pkbuf_trim(pkbuf, OGS_GTPV1C_HEADER_LEN - OGS_GTP1_TEID_LEN);
+    return pkbuf;
+}
+
+static int sgwc_gn_send_empty_response(
+        ogs_gtp_xact_t *xact, uint8_t response_type)
+{
+    int rv;
+    ogs_gtp1_header_t hdesc;
+    ogs_pkbuf_t *pkbuf = NULL;
+
+    ogs_assert(xact);
+
+    memset(&hdesc, 0, sizeof(hdesc));
+    hdesc.type = response_type;
+
+    pkbuf = sgwc_gn_build_empty_gtp1_response(response_type);
+    if (!pkbuf) {
+        ogs_error("sgwc_gn_build_empty_gtp1_response() failed");
+        return OGS_ERROR;
+    }
+
+    rv = ogs_gtp1_xact_update_tx(xact, &hdesc, pkbuf);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_gtp1_xact_update_tx() failed");
+        return OGS_ERROR;
+    }
+
+    rv = ogs_gtp_xact_commit(xact);
+    ogs_expect(rv == OGS_OK);
+    return rv;
+}
+
+bool sgwc_gn_handle_known_request(
+        ogs_gtp_node_t *gnode, ogs_pkbuf_t *recvbuf)
+{
+    ogs_gtp1_header_t hdesc;
+    ogs_gtp1_header_t *gh = NULL;
+    ogs_gtp_xact_t *xact = NULL;
+    int rv;
+    uint8_t response_type = 0;
+
+    ogs_assert(gnode);
+    ogs_assert(recvbuf);
+
+    if (recvbuf->len < OGS_GTPV1C_HEADER_LEN - OGS_GTP1_TEID_LEN)
+        return false;
+
+    gh = (ogs_gtp1_header_t *)recvbuf->data;
+    if (gh->version != 1)
+        return false;
+
+    switch (gh->type) {
+    case OGS_GTP1_NODE_ALIVE_REQUEST_TYPE:
+        response_type = OGS_GTP1_NODE_ALIVE_RESPONSE_TYPE;
+        break;
+    case OGS_GTP1_ECHO_RESPONSE_TYPE:
+        ogs_debug("[SGW] Gn Echo Response received");
+        return true;
+    default:
+        return false;
+    }
+
+    memset(&hdesc, 0, sizeof(hdesc));
+    hdesc.version = gh->version;
+    hdesc.pt = gh->pt;
+    hdesc.type = gh->type;
+    hdesc.length = be16toh(gh->length);
+    hdesc.teid = be32toh(gh->teid);
+    hdesc.e = gh->e;
+    hdesc.s = gh->s;
+    hdesc.pn = gh->pn;
+
+    rv = ogs_gtp1_xact_receive(gnode, &hdesc, &xact);
+    if (rv != OGS_OK || !xact)
+        return false;
+
+    ogs_debug("[SGW] Gn request type %u", gh->type);
+    return sgwc_gn_send_empty_response(xact, response_type) == OGS_OK;
+}
+
 void sgwc_gn_send_create_reject(
         sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *gn_xact,
         uint8_t gtp2_cause)

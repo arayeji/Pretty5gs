@@ -42,23 +42,6 @@ static bool sgwc_gtpc_is_s5_pgw_message(uint8_t type)
     }
 }
 
-static bool sgwc_gtpc_is_gn_message(uint8_t type)
-{
-    switch (type) {
-    case OGS_GTP1_ECHO_REQUEST_TYPE:
-    case OGS_GTP1_ECHO_RESPONSE_TYPE:
-    case OGS_GTP1_CREATE_PDP_CONTEXT_REQUEST_TYPE:
-    case OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE:
-    case OGS_GTP1_UPDATE_PDP_CONTEXT_REQUEST_TYPE:
-    case OGS_GTP1_UPDATE_PDP_CONTEXT_RESPONSE_TYPE:
-    case OGS_GTP1_DELETE_PDP_CONTEXT_REQUEST_TYPE:
-    case OGS_GTP1_DELETE_PDP_CONTEXT_RESPONSE_TYPE:
-        return true;
-    default:
-        return false;
-    }
-}
-
 static int sgwc_gn_queue_message(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
         ogs_sockaddr_t *from)
 {
@@ -170,12 +153,16 @@ static int sgwc_gtpc_recv_one(ogs_sock_t *sock)
 
     ogs_pkbuf_trim(pkbuf, size);
 
-    if (sgwc_self()->gn_enabled && pkbuf->len >= sizeof(ogs_gtp1_header_t)) {
+    if (pkbuf->len >= sizeof(ogs_gtp1_header_t)) {
         uint8_t gtp_ver = ((ogs_gtp1_header_t *)pkbuf->data)->version;
-        uint8_t msg_type = ((ogs_gtp1_header_t *)pkbuf->data)->type;
 
-        if (gtp_ver == 1 && sgwc_gtpc_is_gn_message(msg_type)) {
+        if (gtp_ver == 1 && sgwc_self()->gn_enabled)
             return sgwc_gn_queue_message(sock, pkbuf, &from);
+
+        if (gtp_ver != 2) {
+            ogs_debug("Ignoring GTPv%u on GTPC socket", gtp_ver);
+            ogs_pkbuf_free(pkbuf);
+            return 0;
         }
     }
 

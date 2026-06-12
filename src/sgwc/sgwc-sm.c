@@ -173,6 +173,17 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         recvbuf = e->pkbuf;
         ogs_assert(recvbuf);
 
+        if (recvbuf->len >= sizeof(ogs_gtp1_header_t)) {
+            uint8_t gtp_ver = ((ogs_gtp1_header_t *)recvbuf->data)->version;
+
+            if (gtp_ver != 2) {
+                ogs_debug("Ignoring GTPv%u on S11 queue (type %u)",
+                        gtp_ver, ((ogs_gtp1_header_t *)recvbuf->data)->type);
+                ogs_pkbuf_free(recvbuf);
+                break;
+            }
+        }
+
         if (ogs_gtp2_parse_msg(&gtp_message, recvbuf) != OGS_OK) {
             ogs_error("ogs_gtp2_parse_msg() failed");
             ogs_pkbuf_free(recvbuf);
@@ -289,14 +300,19 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         recvbuf = e->pkbuf;
         ogs_assert(recvbuf);
 
+        gnode = e->gnode;
+        ogs_assert(gnode);
+
+        if (sgwc_gn_handle_known_request(gnode, recvbuf)) {
+            ogs_pkbuf_free(recvbuf);
+            break;
+        }
+
         if (ogs_gtp1_parse_msg(&gtp1_message, recvbuf) != OGS_OK) {
             ogs_error("ogs_gtp1_parse_msg() failed");
             ogs_pkbuf_free(recvbuf);
             break;
         }
-
-        gnode = e->gnode;
-        ogs_assert(gnode);
 
         if (gtp1_message.h.teid != 0)
             sess = sgwc_sess_find_by_teid(gtp1_message.h.teid);
