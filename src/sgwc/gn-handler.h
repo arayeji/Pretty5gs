@@ -29,6 +29,9 @@ extern "C" {
 void sgwc_gn_handle_echo_request(
         ogs_gtp_xact_t *xact, ogs_gtp1_echo_request_t *req);
 
+bool sgwc_gn_handle_known_request(
+        ogs_gtp_node_t *gnode, ogs_pkbuf_t *recvbuf);
+
 void sgwc_gn_handle_create_pdp_context_request(
         sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *gn_xact,
         ogs_pkbuf_t *gtpbuf, ogs_gtp1_message_t *message);
