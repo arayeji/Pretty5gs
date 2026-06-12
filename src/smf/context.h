@@ -511,6 +511,9 @@ typedef struct smf_sess_s {
     bool            epc;            /**< EPC or 5GC */
     bool            collision_replace; /* Re-attach: wait UPF delete before new CSR */
     unsigned        metrics_session_counted : 1;
+    unsigned        metrics_rat_labeled : 1;
+    char            metrics_rat[16];
+    char            metrics_gtp_if[8];
 
     ogs_pfcp_sess_t pfcp;           /* PFCP session context */
 
