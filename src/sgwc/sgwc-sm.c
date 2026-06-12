@@ -340,6 +340,9 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         case OGS_GTP1_ECHO_REQUEST_TYPE:
             sgwc_gn_handle_echo_request(gtp_xact, &gtp1_message.echo_request);
             break;
+        case OGS_GTP1_ECHO_RESPONSE_TYPE:
+            ogs_debug("[SGW] Gn Echo Response received");
+            break;
         case OGS_GTP1_CREATE_PDP_CONTEXT_REQUEST_TYPE:
             sgwc_gn_handle_create_pdp_context_request(
                     sgwc_ue, gtp_xact, recvbuf, &gtp1_message);

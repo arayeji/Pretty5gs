@@ -236,6 +236,15 @@ static int sgwc_gtpc_recv_one(ogs_sock_t *sock)
         ogs_assert(e);
         e->gnode = gnode;
     } else {
+        if (sgwc_self()->gn_enabled &&
+                ogs_gtp_node_find_by_addr(
+                    &sgwc_self()->sgsn_gn_list, &from)) {
+            ogs_debug("Ignoring GTPv2 from known Gn SGSN [%s]:%u",
+                    OGS_ADDR(&from, frombuf), OGS_PORT(&from));
+            ogs_pkbuf_free(pkbuf);
+            return 0;
+        }
+
         gnode = ogs_gtp_node_find_by_addr(&sgwc_self()->mme_s11_list, &from);
         if (!gnode) {
             gnode = ogs_gtp_node_add_by_addr(&sgwc_self()->mme_s11_list, &from);
@@ -485,6 +494,42 @@ void sgwc_gtp_send_mme_echo(ogs_gtp_node_t *gnode)
     ogs_assert(gnode);
     ogs_gtp2_send_echo_request(
             gnode, sgwc_self()->gtpc_recovery, 0);
+}
+
+void sgwc_gtp_send_sgsn_echo(ogs_gtp_node_t *gnode)
+{
+    ogs_assert(gnode);
+    ogs_gtp1_send_echo_request(gnode);
+}
+
+void sgwc_timer_sgsn_echo(void *data)
+{
+    sgwc_sgsn_peer_t *peer = data;
+
+    ogs_assert(peer);
+    ogs_assert(peer->gnode);
+
+    sgwc_gtp_send_sgsn_echo(peer->gnode);
+    sgwc_sgsn_echo_schedule(peer);
+}
+
+void sgwc_sgsn_peer_start_echo(ogs_gtp_node_t *gnode)
+{
+    sgwc_sgsn_peer_t *peer = NULL;
+
+    ogs_assert(gnode);
+
+    peer = sgwc_sgsn_peer_get(gnode);
+    ogs_assert(peer);
+
+    if (!peer->t_echo) {
+        peer->t_echo = ogs_timer_add(
+                ogs_app()->timer_mgr, sgwc_timer_sgsn_echo, peer);
+        ogs_assert(peer->t_echo);
+
+        sgwc_gtp_send_sgsn_echo(gnode);
+        sgwc_sgsn_echo_schedule(peer);
+    }
 }
 
 void sgwc_timer_mme_echo(void *data)
