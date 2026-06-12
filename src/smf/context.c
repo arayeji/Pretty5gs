@@ -101,6 +101,7 @@ void smf_context_init(void)
     ogs_log_install_domain(&__ogs_ngap_domain, "ngap", ogs_core()->log.level);
     ogs_log_install_domain(&__ogs_nas_domain, "nas", ogs_core()->log.level);
     ogs_log_install_domain(&__ogs_diam_domain, "diam", ogs_core()->log.level);
+    ogs_log_install_domain(&__ogs_dbi_domain, "dbi", ogs_core()->log.level);
     ogs_log_install_domain(&__smf_log_domain, "smf", ogs_core()->log.level);
     ogs_log_install_domain(&__gsm_log_domain, "gsm", ogs_core()->log.level);
 
