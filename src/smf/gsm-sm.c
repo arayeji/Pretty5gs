@@ -116,6 +116,9 @@ static void smf_gsm_fail_create_session(ogs_fsm_t *s, smf_sess_t *sess,
 
     send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);
 
+    if (sess)
+        sess->sm_data.create_gtp_xact_id = OGS_INVALID_POOL_ID;
+
     if (sess && sess->upf_n4_seid)
         OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
     else
@@ -295,6 +298,7 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
         sess->sm_data.s6b_aaa_err = ER_DIAMETER_SUCCESS;
         sess->sm_data.gx_cca_init_err = ER_DIAMETER_SUCCESS;
         sess->sm_data.gy_cca_init_err = ER_DIAMETER_SUCCESS;
+        sess->sm_data.create_gtp_xact_id = OGS_INVALID_POOL_ID;
         break;
 
     case OGS_FSM_EXIT_SIG:
@@ -333,6 +337,8 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
                 smf_gsm_fail_create_session(s, sess, gtp_xact, gtp2_cause);
                 return;
             }
+            sess->sm_data.create_gtp_xact_id =
+                gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID;
             switch (sess->gtp_rat_type) {
             case OGS_GTP2_RAT_TYPE_EUTRAN:
             case OGS_GTP2_RAT_TYPE_UTRAN:
@@ -632,6 +638,7 @@ test_can_proceed:
                 OGS_FSM_TRAN(s, smf_gsm_state_exception);
                 return;
             }
+            sess->sm_data.create_gtp_xact_id = gtp_xact->id;
             ogs_assert(OGS_OK ==
                 smf_epc_pfcp_send_session_establishment_request(
                     sess,
@@ -952,6 +959,7 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
                     OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
                     return;
                 }
+                sess->sm_data.create_gtp_xact_id = OGS_INVALID_POOL_ID;
 
                 if (sess->gtp_rat_type == OGS_GTP2_RAT_TYPE_WLAN) {
                     /*
@@ -1026,7 +1034,20 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
     case SMF_EVT_N4_TIMER:
         switch (e->h.timer_id) {
         case SMF_TIMER_PFCP_NO_ESTABLISHMENT_RESPONSE:
-            OGS_FSM_TRAN(s, smf_gsm_state_5gc_n1_n2_reject);
+            if (sess->epc) {
+                ogs_gtp_xact_t *gtp_xact = ogs_gtp_xact_find_by_id(
+                        sess->sm_data.create_gtp_xact_id);
+
+                ogs_error("[%s] N4 establishment timeout; rejecting S5/Gn CSR",
+                        smf_log_id(smf_ue_find_by_id(sess->smf_ue_id)));
+                smf_gsm_fail_create_session(s, sess, gtp_xact,
+                        (gtp_xact && gtp_xact->gtp_version == 1) ?
+                            OGS_GTP1_CAUSE_NETWORK_FAILURE :
+                            OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+                sess->sm_data.create_gtp_xact_id = OGS_INVALID_POOL_ID;
+            } else {
+                OGS_FSM_TRAN(s, smf_gsm_state_5gc_n1_n2_reject);
+            }
             break;
         default:
             ogs_error("Unknown timer[%s:%d]",
