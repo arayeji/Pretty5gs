@@ -310,6 +310,8 @@ void smf_metrics_inst_by_slice_add(ogs_plmn_id_t *plmn,
 
 void smf_metrics_session_active_inc(smf_sess_t *sess)
 {
+    const char *rat = NULL, *gtp_if = NULL;
+
     ogs_assert(sess);
 
     if (sess->metrics_session_counted)
@@ -318,12 +320,13 @@ void smf_metrics_session_active_inc(smf_sess_t *sess)
     smf_metrics_inst_by_slice_add(&sess->serving_plmn_id, &sess->s_nssai,
             SMF_METR_GAUGE_SM_SESSIONNBR, 1);
 
-    {
-        const char *rat = NULL, *gtp_if = NULL;
-        if (smf_sess_rat_metric_labels(sess, &rat, &gtp_if)) {
-            smf_metrics_inst_by_rat_add(rat, gtp_if,
-                    SMF_METR_GAUGE_SM_SESSIONNBR_BY_RAT, 1);
-        }
+    if (smf_sess_rat_metric_labels(sess, &rat, &gtp_if)) {
+        ogs_cpystrn(sess->metrics_rat, rat, sizeof(sess->metrics_rat));
+        ogs_cpystrn(sess->metrics_gtp_if, gtp_if,
+                sizeof(sess->metrics_gtp_if));
+        sess->metrics_rat_labeled = 1;
+        smf_metrics_inst_by_rat_add(sess->metrics_rat, sess->metrics_gtp_if,
+                SMF_METR_GAUGE_SM_SESSIONNBR_BY_RAT, 1);
     }
 
     sess->metrics_session_counted = 1;
@@ -339,12 +342,12 @@ void smf_metrics_session_active_dec(smf_sess_t *sess)
     smf_metrics_inst_by_slice_add(&sess->serving_plmn_id, &sess->s_nssai,
             SMF_METR_GAUGE_SM_SESSIONNBR, -1);
 
-    {
-        const char *rat = NULL, *gtp_if = NULL;
-        if (smf_sess_rat_metric_labels(sess, &rat, &gtp_if)) {
-            smf_metrics_inst_by_rat_add(rat, gtp_if,
-                    SMF_METR_GAUGE_SM_SESSIONNBR_BY_RAT, -1);
-        }
+    if (sess->metrics_rat_labeled) {
+        smf_metrics_inst_by_rat_add(sess->metrics_rat, sess->metrics_gtp_if,
+                SMF_METR_GAUGE_SM_SESSIONNBR_BY_RAT, -1);
+        sess->metrics_rat_labeled = 0;
+        sess->metrics_rat[0] = '\0';
+        sess->metrics_gtp_if[0] = '\0';
     }
 
     sess->metrics_session_counted = 0;

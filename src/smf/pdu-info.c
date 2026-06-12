@@ -215,11 +215,18 @@ static const char *smf_sess_rat_name(const smf_sess_t *sess)
     if (!sess)
         return NULL;
 
-    if (looks_5g_sess(sess) && sess->sbi_rat_type != OpenAPI_rat_type_NULL)
+    /*
+     * Use sess->epc (set at GTP session create) rather than looks_5g_sess()
+     * so metrics and filters stay stable for the lifetime of the session.
+     */
+    if (!sess->epc && sess->sbi_rat_type != OpenAPI_rat_type_NULL)
         return smf_sbi_rat_type_name(sess->sbi_rat_type);
 
     if (sess->gtp_rat_type)
         return smf_gtp_rat_type_name(sess->gtp_rat_type);
+
+    if (!sess->epc && sess->psi)
+        return "NR";
 
     return NULL;
 }
@@ -227,6 +234,7 @@ static const char *smf_sess_rat_name(const smf_sess_t *sess)
 bool smf_sess_rat_metric_labels(const smf_sess_t *sess,
         const char **rat, const char **gtp_if)
 {
+    static const char rat_nr[] = "NR";
     static const char gtp_if_sbi[] = "sbi";
     static const char gtp_if_gn[] = "gn";
     static const char gtp_if_s5[] = "s5";
@@ -234,21 +242,24 @@ bool smf_sess_rat_metric_labels(const smf_sess_t *sess,
     if (!sess || !rat || !gtp_if)
         return false;
 
-    *rat = smf_sess_rat_name(sess);
-    if (!*rat)
-        return false;
-
-    if (looks_5g_sess(sess)) {
+    if (!sess->epc) {
+        *rat = smf_sess_rat_name(sess);
+        if (!*rat)
+            *rat = rat_nr;
         *gtp_if = gtp_if_sbi;
         return true;
     }
+
+    *rat = smf_gtp_rat_type_name(sess->gtp_rat_type);
+    if (!*rat)
+        return false;
 
     if (sess->gtp.version == 1)
         *gtp_if = gtp_if_gn;
     else if (sess->gtp.version == 2)
         *gtp_if = gtp_if_s5;
     else
-        *gtp_if = gtp_if_sbi;
+        *gtp_if = gtp_if_s5;
 
     return true;
 }
