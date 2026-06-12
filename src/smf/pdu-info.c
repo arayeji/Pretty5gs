@@ -19,7 +19,8 @@
 
 /*
  * Connected PDUs JSON dumper for the Prometheus HTTP server (/pdu-info).
- * - 5G PDUs:  psi+dnn, snssai, qos_flows [{qfi,5qi}], n3.{gnb,upf}, n4.{pfcp_addr,...}, pdu_state
+ * - 5G PDUs:  psi+dnn, snssai, qos_flows [{qfi,5qi}], n3.{gnb,upf},
+ *             n4.{pfcp_addr,service_addr,...}, pdu_state
  * - LTE PDUs: ebi(+psi if non-zero)+apn, qos_flows [{ebi,qci}], n4, s5.{pgw_u,...}, pdu_state
  * - UE-level: ue_activity ("active"/"unknown"/"idle")
  * - pager: /pdu-info?page=0&page_size=100 (0-based, page=SIZE_MAX -> no paging)
@@ -352,12 +353,13 @@ static cJSON *build_n3_object_5g(const smf_sess_t *sess)
 static cJSON *build_n4_object(const smf_sess_t *sess)
 {
     const char *pfcp_addr = NULL;
+    const char *service_host = NULL;
     cJSON *n4 = NULL;
 
     if (!sess || !sess->pfcp_node)
         return NULL;
 
-    pfcp_addr = ogs_sockaddr_to_string_static(sess->pfcp_node->addr_list);
+    pfcp_addr = ogs_pfcp_node_pfcp_endpoint(sess->pfcp_node);
     if (!pfcp_addr || !pfcp_addr[0])
         return NULL;
 
@@ -366,6 +368,12 @@ static cJSON *build_n4_object(const smf_sess_t *sess)
         return NULL;
 
     cJSON_AddItemToObjectCS(n4, "pfcp_addr", cJSON_CreateString(pfcp_addr));
+
+    service_host = ogs_pfcp_node_service_host(sess->pfcp_node);
+    if (service_host && service_host[0]) {
+        cJSON_AddItemToObjectCS(n4, "service_addr",
+                cJSON_CreateString(service_host));
+    }
 
     if (sess->smf_n4_seid) {
         cJSON_AddItemToObjectCS(n4, "smf_seid",

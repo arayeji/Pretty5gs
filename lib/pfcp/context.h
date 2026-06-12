@@ -84,7 +84,8 @@ typedef struct ogs_pfcp_context_s {
 typedef struct ogs_pfcp_node_s {
     ogs_lnode_t     lnode;          /* A node of list_t */
 
-    ogs_sockaddr_t  *config_addr; /* Configured addresses */
+    ogs_sockaddr_t  *config_addr; /* PFCP client address from YAML (address:) */
+    ogs_sockaddr_t  *service_addr; /* Optional managed-service / agent address */
     ogs_pfcp_node_id_t node_id;     /* PFCP node ID */
 
     /* List of addresses:: final merged address list */
@@ -429,6 +430,9 @@ void ogs_pfcp_node_remove(ogs_list_t *list, ogs_pfcp_node_t *node);
 void ogs_pfcp_node_remove_all(ogs_list_t *list);
 bool ogs_pfcp_node_id_compare(
         const ogs_pfcp_node_id_t *id1, const ogs_pfcp_node_id_t *id2);
+
+const char *ogs_pfcp_node_pfcp_endpoint(ogs_pfcp_node_t *node);
+const char *ogs_pfcp_node_service_host(ogs_pfcp_node_t *node);
 
 ogs_gtpu_resource_t *ogs_pfcp_find_gtpu_resource(ogs_list_t *list,
         const char *dnn, ogs_pfcp_interface_t source_interface);

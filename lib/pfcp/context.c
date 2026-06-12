@@ -503,7 +503,11 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                                         int i, num = 0;
                                         const char *hostname[
                                             OGS_MAX_NUM_OF_HOSTNAME];
+                                        const char *service_hostname[
+                                            OGS_MAX_NUM_OF_HOSTNAME];
+                                        int num_service = 0;
                                         uint16_t port = self.pfcp_port;
+                                        uint16_t service_port = 0;
                                         uint16_t tac[OGS_MAX_NUM_OF_TAI] = {0,};
                                         int num_of_tac = 0;
                                         const char *dnn[OGS_MAX_NUM_OF_DNN];
@@ -583,6 +587,46 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                                                 } while (ogs_yaml_iter_type(
                                                             &hostname_iter) ==
                                                         YAML_SEQUENCE_NODE);
+                                            } else if (!strcmp(remote_key,
+                                                        "service_addr") ||
+                                                    !strcmp(remote_key,
+                                                        "agent_addr") ||
+                                                    !strcmp(remote_key,
+                                                        "mgmt_addr")) {
+                                                ogs_yaml_iter_t hostname_iter;
+                                                ogs_yaml_iter_recurse(
+                                                        &remote_iter,
+                                                        &hostname_iter);
+                                                ogs_assert(ogs_yaml_iter_type(
+                                                            &hostname_iter) !=
+                                                        YAML_MAPPING_NODE);
+
+                                                do {
+                                                    if (ogs_yaml_iter_type(
+                                                            &hostname_iter) ==
+                                                        YAML_SEQUENCE_NODE) {
+                                                        if (!ogs_yaml_iter_next(
+                                                                &hostname_iter))
+                                                            break;
+                                                    }
+
+                                                    ogs_assert(num_service <
+                                                            OGS_MAX_NUM_OF_HOSTNAME);
+                                                    service_hostname[num_service++] =
+                                                        ogs_yaml_iter_value(
+                                                            &hostname_iter);
+                                                } while (ogs_yaml_iter_type(
+                                                            &hostname_iter) ==
+                                                        YAML_SEQUENCE_NODE);
+                                            } else if (!strcmp(remote_key,
+                                                        "service_port") ||
+                                                    !strcmp(remote_key,
+                                                        "agent_port")) {
+                                                const char *v =
+                                                    ogs_yaml_iter_value(
+                                                            &remote_iter);
+                                                if (v)
+                                                    service_port = atoi(v);
                                             } else if (!strcmp(remote_key,
                                                         "advertise")) {
                                                 /* Nothing in client */
@@ -797,6 +841,31 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                                         ogs_assert(node);
                                         ogs_list_add(
                                                 &self.pfcp_peer_list, node);
+
+                                        if (num_service > 0) {
+                                            ogs_sockaddr_t *service = NULL;
+                                            uint16_t sp = service_port ?
+                                                service_port : port;
+
+                                            for (i = 0; i < num_service; i++) {
+                                                rv = ogs_addaddrinfo(&service,
+                                                        family,
+                                                        service_hostname[i],
+                                                        sp, 0);
+                                                ogs_assert(rv == OGS_OK);
+                                            }
+
+                                            ogs_filter_ip_version(&service,
+                                                    ogs_global_conf()->parameter.
+                                                    no_ipv4,
+                                                    ogs_global_conf()->parameter.
+                                                    no_ipv6,
+                                                    ogs_global_conf()->parameter.
+                                                    prefer_ipv4);
+
+                                            if (service)
+                                                node->service_addr = service;
+                                        }
 
                                         node->num_of_tac = num_of_tac;
                                         if (num_of_tac != 0)
@@ -1059,9 +1128,70 @@ void ogs_pfcp_node_free(ogs_pfcp_node_t *node)
     ogs_pfcp_xact_delete_all(node);
 
     ogs_freeaddrinfo(node->config_addr);
+    ogs_freeaddrinfo(node->service_addr);
     ogs_freeaddrinfo(node->addr_list);
 
     ogs_pool_free(&ogs_pfcp_node_pool, node);
+}
+
+static ogs_sockaddr_t *ogs_pfcp_node_service_sockaddr(ogs_pfcp_node_t *node)
+{
+    if (!node)
+        return NULL;
+    if (node->service_addr)
+        return node->service_addr;
+    if (node->config_addr)
+        return node->config_addr;
+    return NULL;
+}
+
+static bool ogs_pfcp_sockaddr_same_host(
+        ogs_sockaddr_t *a, ogs_sockaddr_t *b)
+{
+    char ahost[OGS_ADDRSTRLEN] = "";
+    char bhost[OGS_ADDRSTRLEN] = "";
+
+    if (!a || !b)
+        return false;
+
+    OGS_ADDR(a, ahost);
+    OGS_ADDR(b, bhost);
+
+    if (!ahost[0] || !bhost[0])
+        return false;
+
+    return strcmp(ahost, bhost) == 0;
+}
+
+const char *ogs_pfcp_node_pfcp_endpoint(ogs_pfcp_node_t *node)
+{
+    if (!node || !node->addr_list)
+        return NULL;
+    return ogs_sockaddr_to_string_static(node->addr_list);
+}
+
+const char *ogs_pfcp_node_service_host(ogs_pfcp_node_t *node)
+{
+    static char host[OGS_ADDRSTRLEN];
+    ogs_sockaddr_t *service = NULL;
+
+    if (!node)
+        return NULL;
+
+    service = ogs_pfcp_node_service_sockaddr(node);
+    if (!service)
+        return NULL;
+
+    if (node->addr_list &&
+            ogs_pfcp_sockaddr_same_host(service, node->addr_list))
+        return NULL;
+
+    host[0] = '\0';
+    OGS_ADDR(service, host);
+    if (!host[0])
+        return NULL;
+
+    return host;
 }
 
 /******************************************************************************

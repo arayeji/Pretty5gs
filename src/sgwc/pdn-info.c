@@ -324,12 +324,22 @@ static cJSON *build_single_pdn_object(const sgwc_sess_t *sess,
                 cJSON_CreateNumber((double)sess->sgwc_sxa_seid));
         cJSON_AddItemToObjectCS(sxa, "sgwu_seid",
                 cJSON_CreateNumber((double)sess->sgwu_sxa_seid));
-        if (sess->pfcp_node && sess->pfcp_node->addr_list) {
-            const char *sgwu_addr =
-                ogs_sockaddr_to_string_static(sess->pfcp_node->addr_list);
-            if (sgwu_addr && sgwu_addr[0])
+        if (sess->pfcp_node) {
+            const char *pfcp_addr =
+                ogs_pfcp_node_pfcp_endpoint(sess->pfcp_node);
+            const char *service_host =
+                ogs_pfcp_node_service_host(sess->pfcp_node);
+
+            if (pfcp_addr && pfcp_addr[0]) {
+                cJSON_AddItemToObjectCS(sxa, "pfcp_addr",
+                        cJSON_CreateString(pfcp_addr));
                 cJSON_AddItemToObjectCS(sxa, "sgwu_addr",
-                        cJSON_CreateString(sgwu_addr));
+                        cJSON_CreateString(pfcp_addr));
+            }
+            if (service_host && service_host[0]) {
+                cJSON_AddItemToObjectCS(sxa, "service_addr",
+                        cJSON_CreateString(service_host));
+            }
         }
         cJSON_AddItemToObjectCS(pdn, "sxa", sxa);
     }

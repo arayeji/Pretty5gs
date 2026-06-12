@@ -98,6 +98,15 @@ sgwc:
 ################################################################################
 # PFCP Client
 ################################################################################
+#  o PFCP client address vs managed-service address (VPP / agent mapping):
+#    address:       PFCP peer used on the wire (also in /pdn-info pfcp_addr)
+#    service_addr:  host in your service inventory (/pdn-info service_addr)
+#  pfcp:
+#    client:
+#      sgwu:
+#        - address: 127.0.0.6
+#          service_addr: 10.0.0.6
+#          tac: 1
 #  o SGWU selection by eNodeB TAC
 #   (either single TAC or multiple TACs, DECIMAL representation)
 #  pfcp:
