@@ -22,9 +22,11 @@ libsgwc_sources = files('''
     gtp-path.h
     s11-build.h
     s11-handler.h
-    s5c-handler.h 
+    s5c-handler.h
     sxa-build.h
     sxa-handler.h
+    gn-build.h
+    gn-handler.h
     pfcp-path.h
     sgwc-sm.h
     ga-writer.h
@@ -46,6 +48,8 @@ libsgwc_sources = files('''
     s5c-handler.c 
     sxa-build.c
     sxa-handler.c
+    gn-build.c
+    gn-handler.c
     pfcp-path.c
     pfcp-sm.c
     sgwc-sm.c

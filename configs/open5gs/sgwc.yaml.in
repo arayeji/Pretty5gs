@@ -35,6 +35,18 @@ sgwc:
         port: 2123
 #    echo_interval: 60  # S11 Echo Request to each MME peer (default: 60)
   #
+  # GTPv1 Gn (2G/3G SGSN toward SGWC; S5 toward SMF/PGW):
+  #   server — GTPv1-C listen (optional; GTPv1 on gtpc.server if omitted)
+  #   pgw/smf — default S5 PGW (Open5GS SMF) for Create Session Request
+  #
+#  gn:
+#    server:
+#      - address: 127.0.0.3
+#        port: 2123
+#    pgw:
+#      - address: 127.0.0.4
+#        port: 2123
+  #
   # GTP-U (all sessions): force SGWC F-TEID (CH=0) instead of SGW-U FTUP.
   #
 #  gtpu:

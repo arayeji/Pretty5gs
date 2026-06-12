@@ -51,6 +51,11 @@ typedef struct sgwc_mme_peer_s {
     ogs_timer_t *t_echo;
 } sgwc_mme_peer_t;
 
+typedef struct sgwc_sgsn_peer_s {
+    ogs_gtp_node_t *gnode;
+    ogs_timer_t *t_echo;
+} sgwc_sgsn_peer_t;
+
 typedef struct sgwc_pgw_peer_s {
     ogs_gtp_node_t *gnode;
     uint8_t peer_recovery;
@@ -83,6 +88,7 @@ typedef struct sgwc_cdr_config_s {
 typedef struct sgwc_context_s {
     ogs_list_t mme_s11_list;    /* MME GTPC Node List */
     ogs_list_t pgw_s5c_list;    /* PGW GTPC Node List */
+    ogs_list_t sgsn_gn_list;    /* SGSN Gn GTPC Node List */
 
     sgwc_cdr_config_t cdr;
     uint32_t cdr_local_seq;
@@ -140,6 +146,19 @@ typedef struct sgwc_context_s {
 
     /* Operator maintenance window (HTTP /admin/maintenance endpoints). */
     bool maintenance_mode;
+
+    /*
+     * GTPv1 Gn (2G/3G SGSN): optional separate listener and default PGW/SMF.
+     * When gn.server is omitted, GTPv1 on gtpc.server is dispatched to Gn.
+     */
+    bool gn_enabled;
+    ogs_list_t gn_server_list;
+    ogs_list_t gn_server_list6;
+    ogs_sockaddr_t *gn_addr;
+    ogs_sockaddr_t *gn_addr6;
+    ogs_gtp2_f_teid_t gn_pgw_f_teid;
+    int gn_pgw_f_teid_len;
+    uint8_t gn_gtpc_recovery;
 } sgwc_context_t;
 
 typedef struct sgwc_ue_s {
@@ -179,6 +198,7 @@ typedef struct sgwc_ue_s {
     ogs_pool_id_t   csr_replace_sess_id;
 
     unsigned        metrics_ue_counted : 1;
+    unsigned        gn : 1;         /* UE reached via GTPv1 Gn */
 } sgwc_ue_t;
 
 #define SGWC_SESS(pfcp_sess) ogs_container_of(pfcp_sess, sgwc_sess_t, pfcp)
@@ -230,6 +250,9 @@ typedef struct sgwc_sess_s {
     ogs_time_t      create_session_t0;
 
     unsigned        metrics_session_counted : 1;
+    unsigned        gn : 1;         /* Session from GTPv1 Gn */
+    uint8_t         gn_nsapi;
+    ogs_gtp1_qos_profile_decoded_t gn_qos_pdec;
 } sgwc_sess_t;
 
 static inline void sgwc_create_session_phase(
@@ -301,6 +324,11 @@ bool sgwc_pgw_recovery_update(sgwc_pgw_peer_t *peer, uint8_t recovery);
 void sgwc_pgw_echo_schedule(sgwc_pgw_peer_t *peer);
 void sgwc_pgw_echo_reschedule_all(void);
 
+sgwc_sgsn_peer_t *sgwc_sgsn_peer_get(ogs_gtp_node_t *gnode);
+void sgwc_sgsn_peer_attach(ogs_gtp_node_t *gnode);
+void sgwc_sgsn_peer_detach(ogs_gtp_node_t *gnode);
+void sgwc_sgsn_peer_setup(ogs_gtp_node_t *gnode);
+
 sgwc_ue_t *sgwc_ue_add_by_message(ogs_gtp2_message_t *message);
 sgwc_ue_t *sgwc_ue_find_by_imsi(uint8_t *imsi, int imsi_len);
 sgwc_ue_t *sgwc_ue_find_by_imsi_bcd(char *imsi_bcd);
@@ -329,6 +357,7 @@ sgwc_sess_t *sgwc_sess_find_by_seid(uint64_t seid);
 
 sgwc_sess_t *sgwc_sess_find_by_apn(sgwc_ue_t *sgwc_ue, char *apn);
 sgwc_sess_t *sgwc_sess_find_by_ebi(sgwc_ue_t *sgwc_ue, uint8_t ebi);
+sgwc_sess_t *sgwc_sess_find_by_nsapi(sgwc_ue_t *sgwc_ue, uint8_t nsapi);
 sgwc_sess_t *sgwc_sess_find_by_id(ogs_pool_id_t id);
 
 #define SGWC_SESSION_SYNC_DONE(__sGWC, __tYPE, __fLAGS) \

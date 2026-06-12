@@ -19,6 +19,7 @@
 
 #include "s11-handler.h"
 #include "s5c-handler.h"
+#include "gn-handler.h"
 #include "context.h"
 #include "sgwc-reload-lists.h"
 
@@ -102,6 +103,7 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
 
     ogs_gtp_xact_t *gtp_xact = NULL;
     ogs_gtp2_message_t gtp_message;
+    ogs_gtp1_message_t gtp1_message;
     ogs_gtp_node_t *gnode = NULL;
 
     ogs_pfcp_node_t *pfcp_node = NULL;
@@ -277,6 +279,65 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
             break;
         default:
             ogs_warn("Not implemented(type:%d)", gtp_message.h.type);
+            break;
+        }
+        ogs_pkbuf_free(recvbuf);
+        break;
+
+    case SGWC_EVT_GN_MESSAGE:
+        ogs_assert(e);
+        recvbuf = e->pkbuf;
+        ogs_assert(recvbuf);
+
+        if (ogs_gtp1_parse_msg(&gtp1_message, recvbuf) != OGS_OK) {
+            ogs_error("ogs_gtp1_parse_msg() failed");
+            ogs_pkbuf_free(recvbuf);
+            break;
+        }
+
+        gnode = e->gnode;
+        ogs_assert(gnode);
+
+        if (gtp1_message.h.teid != 0)
+            sess = sgwc_sess_find_by_teid(gtp1_message.h.teid);
+
+        rv = ogs_gtp1_xact_receive(gnode, &gtp1_message.h, &gtp_xact);
+        if (rv != OGS_OK) {
+            ogs_pkbuf_free(recvbuf);
+            break;
+        }
+
+        if (!sgwc_ue && sess)
+            sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+
+        if (gtp1_message.h.teid == 0 &&
+                gtp1_message.create_pdp_context_request.imsi.presence) {
+            sgwc_ue = sgwc_ue_find_by_imsi(
+                    gtp1_message.create_pdp_context_request.imsi.data,
+                    gtp1_message.create_pdp_context_request.imsi.len);
+        }
+
+        if (sgwc_ue)
+            OGS_SETUP_GTP_NODE(sgwc_ue, gnode);
+
+        switch (gtp1_message.h.type) {
+        case OGS_GTP1_ECHO_REQUEST_TYPE:
+            sgwc_gn_handle_echo_request(gtp_xact, &gtp1_message.echo_request);
+            break;
+        case OGS_GTP1_CREATE_PDP_CONTEXT_REQUEST_TYPE:
+            sgwc_gn_handle_create_pdp_context_request(
+                    sgwc_ue, gtp_xact, recvbuf, &gtp1_message);
+            break;
+        case OGS_GTP1_DELETE_PDP_CONTEXT_REQUEST_TYPE:
+            sgwc_gn_handle_delete_pdp_context_request(
+                    sgwc_ue, sess, gtp_xact, recvbuf, &gtp1_message);
+            break;
+        case OGS_GTP1_UPDATE_PDP_CONTEXT_REQUEST_TYPE:
+            sgwc_gn_handle_update_pdp_context_request(
+                    sgwc_ue, sess, gtp_xact, recvbuf, &gtp1_message);
+            break;
+        default:
+            ogs_warn("Gn not implemented(type:%d)", gtp1_message.h.type);
             break;
         }
         ogs_pkbuf_free(recvbuf);

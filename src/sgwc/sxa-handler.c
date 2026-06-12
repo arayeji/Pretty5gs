@@ -26,6 +26,16 @@
 #include "ga-writer.h"
 #include "sgwc-trace.h"
 #include "sgwc-gtp-interop.h"
+#include "gn-handler.h"
+
+#define SGWC_GTP_CREATE_REJECT(_sess, _ue, _xact, _cause) \
+    do { \
+        if ((_sess) && (_sess)->gn) \
+            sgwc_gn_send_create_reject((_sess), (_ue), (_xact), (_cause)); \
+        else \
+            ogs_gtp_send_error_message((_xact), (_ue) ? (_ue)->mme_s11_teid : 0, \
+                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, (_cause)); \
+    } while (0)
 
 static void sgwc_log_urr_report(
         const char *phase, sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess,
@@ -468,10 +478,8 @@ void sgwc_sxa_handle_session_establishment_response(
                 pgw_peer[0] ? pgw_peer : "-",
                 pfcp_rsp->cause.presence ? pfcp_rsp->cause.u8 : 0,
                 cause_value, sess ? sess->id : 0);
-        ogs_gtp_send_error_message(
-                s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
-                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, cause_value);
-        if (sess)
+        SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact, cause_value);
+        if (sess && !sess->gn)
             sgwc_sess_remove(sess);
         return;
     }
@@ -1629,6 +1637,16 @@ indirect_fail:
             recv_message->h.type = OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE;
             recv_message->h.teid = sgwc_ue->mme_s11_teid;
 
+            if (sess->gn) {
+                rv = sgwc_gtp_send_create_pdp_context_response(
+                        sess, s11_xact, gtp_rsp);
+                ogs_expect(rv == OGS_OK);
+                ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
+                OGS_TLOG_INFO("Create PDP Context Response sent to SGSN");
+                sgwc_create_session_phase(sess, sgwc_ue, "gn-rsp-sent");
+                break;
+            }
+
             pkbuf = ogs_gtp2_build_msg(recv_message);
             if (!pkbuf) {
                 ogs_error("ogs_gtp2_build_msg() failed");
@@ -2018,6 +2036,12 @@ void sgwc_sxa_handle_session_deletion_response(
     ogs_assert(sgwc_ue);
 
     if (gtp_xact) {
+        if (sess && sess->gn &&
+                gtp_message->h.type == OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE) {
+            rv = sgwc_gtp_send_delete_pdp_context_response(
+                    sess, gtp_xact, OGS_GTP1_CAUSE_REQUEST_ACCEPTED);
+            ogs_expect(rv == OGS_OK);
+        } else {
         /*
          * If gtp_message->h.type == OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE
          * Then gtp_xact is S11-XACT
@@ -2041,6 +2065,7 @@ void sgwc_sxa_handle_session_deletion_response(
 
         rv = ogs_gtp_xact_commit(gtp_xact);
         ogs_expect(rv == OGS_OK);
+        }
     }
 
 cleanup:
