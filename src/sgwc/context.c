@@ -688,13 +688,39 @@ void sgwc_sgsn_peer_detach(ogs_gtp_node_t *gnode)
 
 void sgwc_sgsn_peer_setup(ogs_gtp_node_t *gnode)
 {
+    ogs_gtp_node_t *mme_gnode = NULL;
     char buf[OGS_ADDRSTRLEN];
 
     ogs_assert(gnode);
 
+    mme_gnode = ogs_gtp_node_find_by_addr(
+            &sgwc_self()->mme_s11_list, &gnode->addr);
+    if (mme_gnode) {
+        ogs_info("Remove [%s]:%d from S11 (Gn SGSN peer)",
+                OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
+        sgwc_mme_peer_detach(mme_gnode);
+        ogs_gtp_node_remove(&sgwc_self()->mme_s11_list, mme_gnode);
+    }
+
     sgwc_sgsn_peer_attach(gnode);
     ogs_info("SGWC Gn SGSN peer: [%s]:%d",
             OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
+
+    sgwc_sgsn_peer_start_echo(gnode);
+}
+
+void sgwc_sgsn_echo_schedule(sgwc_sgsn_peer_t *peer)
+{
+    ogs_time_t interval;
+
+    ogs_assert(peer);
+    ogs_assert(peer->t_echo);
+
+    interval = sgwc_self()->gtpc_echo_interval ?
+        ogs_time_from_sec(sgwc_self()->gtpc_echo_interval) :
+        ogs_time_from_sec(60);
+
+    ogs_timer_start(peer->t_echo, interval);
 }
 
 static int sgwc_context_prepare(void)

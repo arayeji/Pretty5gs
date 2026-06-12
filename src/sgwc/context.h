@@ -332,6 +332,7 @@ sgwc_sgsn_peer_t *sgwc_sgsn_peer_get(ogs_gtp_node_t *gnode);
 void sgwc_sgsn_peer_attach(ogs_gtp_node_t *gnode);
 void sgwc_sgsn_peer_detach(ogs_gtp_node_t *gnode);
 void sgwc_sgsn_peer_setup(ogs_gtp_node_t *gnode);
+void sgwc_sgsn_echo_schedule(sgwc_sgsn_peer_t *peer);
 
 sgwc_ue_t *sgwc_ue_add_by_message(ogs_gtp2_message_t *message);
 sgwc_ue_t *sgwc_ue_find_by_imsi(uint8_t *imsi, int imsi_len);

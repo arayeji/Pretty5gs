@@ -105,17 +105,6 @@ bool sgwc_gn_handle_known_request(
     if (gh->version != 1)
         return false;
 
-    switch (gh->type) {
-    case OGS_GTP1_NODE_ALIVE_REQUEST_TYPE:
-        response_type = OGS_GTP1_NODE_ALIVE_RESPONSE_TYPE;
-        break;
-    case OGS_GTP1_ECHO_RESPONSE_TYPE:
-        ogs_debug("[SGW] Gn Echo Response received");
-        return true;
-    default:
-        return false;
-    }
-
     memset(&hdesc, 0, sizeof(hdesc));
     hdesc.version = gh->version;
     hdesc.pt = gh->pt;
@@ -125,6 +114,19 @@ bool sgwc_gn_handle_known_request(
     hdesc.e = gh->e;
     hdesc.s = gh->s;
     hdesc.pn = gh->pn;
+
+    switch (gh->type) {
+    case OGS_GTP1_NODE_ALIVE_REQUEST_TYPE:
+        response_type = OGS_GTP1_NODE_ALIVE_RESPONSE_TYPE;
+        break;
+    case OGS_GTP1_ECHO_RESPONSE_TYPE:
+        rv = ogs_gtp1_xact_receive(gnode, &hdesc, &xact);
+        if (rv == OGS_OK)
+            ogs_debug("[SGW] Gn Echo Response received");
+        return rv == OGS_OK;
+    default:
+        return false;
+    }
 
     rv = ogs_gtp1_xact_receive(gnode, &hdesc, &xact);
     if (rv != OGS_OK || !xact)
