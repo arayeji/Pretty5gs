@@ -621,6 +621,17 @@ static cJSON *build_single_pdu_object(const smf_sess_t *sess, int *any_active, i
         cJSON_AddItemToObjectCS(pdu, "ue_location_timestamp", ts);
     }
 
+    /* PFCP URR session totals (same counters as RADIUS/Ga CDR). */
+    {
+        cJSON *ul = cJSON_CreateNumber((double)sess->gy.ul_octets);
+        if (!ul) { cJSON_Delete(pdu); return NULL; }
+        cJSON_AddItemToObjectCS(pdu, "usage_ul_octets", ul);
+
+        cJSON *dl = cJSON_CreateNumber((double)sess->gy.dl_octets);
+        if (!dl) { cJSON_Delete(pdu); return NULL; }
+        cJSON_AddItemToObjectCS(pdu, "usage_dl_octets", dl);
+    }
+
     return pdu;
 }
 

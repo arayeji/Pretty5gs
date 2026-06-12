@@ -23,6 +23,7 @@
 #include "gtp-path.h"
 #include "ga-writer.h"
 #include "metrics.h"
+#include "ogs-metrics.h"
 
 static sgwc_context_t self;
 
@@ -966,7 +967,9 @@ sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len)
 
     ogs_hash_set(self.imsi_ue_hash, sgwc_ue->imsi, sgwc_ue->imsi_len, sgwc_ue);
 
+    ogs_metrics_dump_lock();
     ogs_list_add(&self.sgw_ue_list, sgwc_ue);
+    ogs_metrics_dump_unlock();
 
     sgwc_metrics_ue_active_inc(sgwc_ue);
 
@@ -982,7 +985,9 @@ int sgwc_ue_remove(sgwc_ue_t *sgwc_ue)
 
     sgwc_metrics_ue_active_dec(sgwc_ue);
 
+    ogs_metrics_dump_lock();
     ogs_list_remove(&self.sgw_ue_list, sgwc_ue);
+    ogs_metrics_dump_unlock();
 
     ogs_hash_set(self.sgw_s11_teid_hash,
             &sgwc_ue->sgw_s11_teid, sizeof(sgwc_ue->sgw_s11_teid), NULL);
@@ -1223,7 +1228,9 @@ sgwc_sess_t *sgwc_sess_add(sgwc_ue_t *sgwc_ue, char *apn)
 
     sess->sgwc_ue_id = sgwc_ue->id;
 
+    ogs_metrics_dump_lock();
     ogs_list_add(&sgwc_ue->sess_list, sess);
+    ogs_metrics_dump_unlock();
 
     stats_add_sgwc_session();
 
@@ -1360,7 +1367,9 @@ int sgwc_sess_remove(sgwc_sess_t *sess)
     sgwc_ga_cdr_session_stop(sess);
     sgwc_ga_sess_clear(sess);
 
+    ogs_metrics_dump_lock();
     ogs_list_remove(&sgwc_ue->sess_list, sess);
+    ogs_metrics_dump_unlock();
 
     ogs_hash_set(self.sgwc_sxa_seid_hash, &sess->sgwc_sxa_seid,
             sizeof(sess->sgwc_sxa_seid), NULL);
