@@ -422,12 +422,23 @@ ogs_pkbuf_t *sgwc_gn_build_create_pdp_context_response(
     rsp->nsapi.presence = 1;
     rsp->nsapi.u8 = sess->gn_nsapi;
 
+    /*
+     * Charging ID is mandatory in an accepted Create PDP Context Response
+     * (TS 29.060). SMF sends it in S5 Bearer Context, not PDN Connection
+     * Charging ID — map either source for Gn.
+     */
     if (s5_rsp && s5_rsp->pdn_connection_charging_id.presence)
         rsp->charging_id.u32 = s5_rsp->pdn_connection_charging_id.u32;
+    else if (s5_rsp &&
+            s5_rsp->bearer_contexts_created[0].charging_id.presence)
+        rsp->charging_id.u32 =
+            s5_rsp->bearer_contexts_created[0].charging_id.u32;
     else if (sess->charging_id)
         rsp->charging_id.u32 = sess->charging_id;
-    if (rsp->charging_id.u32)
-        rsp->charging_id.presence = 1;
+    else
+        rsp->charging_id.u32 = sess->id;
+    rsp->charging_id.presence = 1;
+    sess->charging_id = rsp->charging_id.u32;
 
     if (sess->paa.session_type) {
         rv = ogs_paa_to_ip(&sess->paa, &ip_eua);

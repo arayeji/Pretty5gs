@@ -411,6 +411,8 @@ void sgwc_s5c_handle_create_session_response(
 
     if (rsp->pdn_connection_charging_id.presence)
         sess->charging_id = rsp->pdn_connection_charging_id.u32;
+    else if (rsp->bearer_contexts_created[0].charging_id.presence)
+        sess->charging_id = rsp->bearer_contexts_created[0].charging_id.u32;
 
     sgwc_ga_cdr_session_start(sess);
 
