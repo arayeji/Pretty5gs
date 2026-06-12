@@ -18,6 +18,7 @@
  */
 
 #include "binding.h"
+#include "smf-trace.h"
 #include "sbi-path.h"
 #include "pfcp-path.h"
 #include "gn-handler.h"
