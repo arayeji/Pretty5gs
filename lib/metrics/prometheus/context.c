@@ -281,6 +281,10 @@ static void fill_query_from_connection(struct MHD_Connection *connection,
     q->supi  = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "supi");
     q->ue_ip = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "ue_ip");
     q->ip    = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "ip");
+    if (!q->ip || !*q->ip)
+        q->ip = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "enb_ip");
+    if (!q->ip || !*q->ip)
+        q->ip = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "gnb_ip");
 
     const char *eid = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "enb_id");
     if (!eid) eid = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "gnb_id");

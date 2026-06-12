@@ -21,6 +21,7 @@
  * Active PDN sessions JSON dumper for the metrics HTTP server (/pdn-info).
  *
  * curl -s "http://127.0.0.3:9090/pdn-info?imsi=001010000000001"
+ * curl -s "http://127.0.0.3:9090/pdn-info?enb_ip=10.1.2.3"
  * curl -s "http://127.0.0.3:9090/pdn-info?ue_ip=10.45.0.7&page_size=50"
  */
 
@@ -32,6 +33,75 @@
 #include "metrics/prometheus/json_pager.h"
 
 #include <cJSON.h>
+
+static int ip_to_text(const ogs_ip_t *ip, char *out, size_t outlen)
+{
+    const char *ret;
+
+    if (!ip || !out || outlen == 0)
+        return 0;
+
+    out[0] = '\0';
+
+    if (ip->ipv4) {
+        ret = OGS_INET_NTOP(&ip->addr, out);
+        if (ret)
+            return 1;
+    }
+
+    if (ip->ipv6) {
+        ret = OGS_INET6_NTOP(ip->addr6, out);
+        if (ret)
+            return 1;
+    }
+
+    return 0;
+}
+
+static bool ogs_ip_matches_query(const ogs_ip_t *ip, const char *needle)
+{
+    char buf[OGS_ADDRSTRLEN] = "";
+
+    if (!ip || !needle || !*needle)
+        return false;
+    if (!ip_to_text(ip, buf, sizeof(buf)))
+        return false;
+    return strcmp(buf, needle) == 0;
+}
+
+static bool sess_matches_ran_ip(const sgwc_sess_t *sess, const char *ran_ip)
+{
+    sgwc_bearer_t *bearer = NULL;
+
+    ogs_assert(sess);
+
+    ogs_list_for_each(&sess->bearer_list, bearer) {
+        sgwc_tunnel_t *dl_tunnel = NULL;
+
+        if (!bearer)
+            continue;
+
+        dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
+        if (dl_tunnel && ogs_ip_matches_query(&dl_tunnel->remote_ip, ran_ip))
+            return true;
+    }
+
+    return false;
+}
+
+static bool ue_matches_ran_ip(const sgwc_ue_t *ue, const char *ran_ip)
+{
+    sgwc_sess_t *sess = NULL;
+
+    ogs_assert(ue);
+
+    ogs_list_for_each(&ue->sess_list, sess) {
+        if (sess_matches_ran_ip(sess, ran_ip))
+            return true;
+    }
+
+    return false;
+}
 
 static bool sess_matches_ue_ip(const sgwc_sess_t *sess, const char *ue_ip)
 {
@@ -194,6 +264,25 @@ static cJSON *build_single_pdn_object(const sgwc_sess_t *sess,
     if (sess->gnode && sess->gnode->sa_list)
         OGS_ADDR(sess->gnode->sa_list, pgw_addr);
 
+    if (def_bearer) {
+        sgwc_tunnel_t *dl_tunnel = sgwc_dl_tunnel_in_bearer(def_bearer);
+        char enb_ip[OGS_ADDRSTRLEN] = "";
+
+        if (dl_tunnel && ip_to_text(&dl_tunnel->remote_ip, enb_ip, sizeof(enb_ip))) {
+            cJSON *s1u = cJSON_CreateObject();
+            if (!s1u) {
+                cJSON_Delete(pdn);
+                return NULL;
+            }
+            cJSON_AddItemToObjectCS(s1u, "enb_addr", cJSON_CreateString(enb_ip));
+            if (dl_tunnel->remote_teid) {
+                cJSON_AddItemToObjectCS(s1u, "enb_teid",
+                        cJSON_CreateNumber((double)dl_tunnel->remote_teid));
+            }
+            cJSON_AddItemToObjectCS(pdn, "s1u", s1u);
+        }
+    }
+
     {
         cJSON *s5 = cJSON_CreateObject();
         if (!s5) {
@@ -340,6 +429,10 @@ size_t sgwc_dump_pdn_info(char *buf, size_t buflen,
                 }
             }
             if (!match)
+                continue;
+        }
+        if (q && q->ip && *q->ip) {
+            if (!ue_matches_ran_ip(ue, q->ip))
                 continue;
         }
 

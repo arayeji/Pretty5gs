@@ -130,7 +130,7 @@ typedef struct ogs_metrics_query_s {
     const char *imsi;      /* ?imsi=15-digit          */
     const char *supi;      /* ?supi=imsi-15-digit     */
     const char *ue_ip;     /* ?ue_ip=10.x.y.z         */
-    const char *ip;        /* ?ip=<RAN node IP>       */
+    const char *ip;        /* ?ip= / ?enb_ip= / ?gnb_ip= (RAN user-plane IP) */
     uint32_t    enb_id;    /* ?enb_id=N (also reused for gnb_id) */
     int         has_enb_id;
 
