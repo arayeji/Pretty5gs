@@ -156,10 +156,11 @@ static bool send_ccr_init_req_gx_gy(ogs_fsm_t *s, smf_sess_t *sess,
         sess->sm_data.gx_ccr_init_in_flight = false;
         sess->sm_data.gx_cca_init_err = ER_DIAMETER_UNABLE_TO_DELIVER;
         if (use_gy != 1) {
+            ogs_warn("Gx initial CCR was not sent (local Diameter session error)");
             smf_gsm_fail_create_session(s, sess, gtp_xact,
-                    gtp_cause_from_diameter(
-                        gtp_xact ? gtp_xact->gtp_version : 2,
-                        ER_DIAMETER_UNABLE_TO_DELIVER, NULL));
+                    (gtp_xact && gtp_xact->gtp_version == 1) ?
+                        OGS_GTP1_CAUSE_NO_RESOURCES_AVAILABLE :
+                        OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
             return false;
         }
     }
@@ -607,12 +608,18 @@ test_can_proceed:
         !sess->sm_data.gx_ccr_init_in_flight &&
         !sess->sm_data.gy_ccr_init_in_flight) {
         diam_err = ER_DIAMETER_SUCCESS;
-        if (sess->sm_data.s6b_aaa_err != ER_DIAMETER_SUCCESS)
+        if (sess->sm_data.s6b_aaa_err != ER_DIAMETER_SUCCESS) {
+            ogs_warn("S6b AAA error Result-Code[%u]", sess->sm_data.s6b_aaa_err);
             diam_err = sess->sm_data.s6b_aaa_err;
-        if (sess->sm_data.gx_cca_init_err != ER_DIAMETER_SUCCESS)
+        }
+        if (sess->sm_data.gx_cca_init_err != ER_DIAMETER_SUCCESS) {
+            ogs_warn("Gx CCA error Result-Code[%u]", sess->sm_data.gx_cca_init_err);
             diam_err = sess->sm_data.gx_cca_init_err;
-        if (sess->sm_data.gy_cca_init_err != ER_DIAMETER_SUCCESS)
+        }
+        if (sess->sm_data.gy_cca_init_err != ER_DIAMETER_SUCCESS) {
+            ogs_warn("Gy CCA error Result-Code[%u]", sess->sm_data.gy_cca_init_err);
             diam_err = sess->sm_data.gy_cca_init_err;
+        }
 
         if (diam_err == ER_DIAMETER_SUCCESS) {
             OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_establishment);
