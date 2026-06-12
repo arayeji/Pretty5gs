@@ -26,6 +26,7 @@
  *
  * path: http://SMF_IP:9090/pdu-info
  *
+ * curl -s "http://127.0.0.4:9090/pdu-info?gnb_ip=10.1.2.3"
  * curl -s "http://127.0.0.4:9090/pdu-info?page_size=1" |jq . 
  * {
  *   "items": [
@@ -114,6 +115,17 @@ static int ip_to_text(const ogs_ip_t *ip, char *out, size_t outlen)
     return 0;
 }
 
+static bool ogs_ip_matches_query(const ogs_ip_t *ip, const char *needle)
+{
+    char buf[OGS_ADDRSTRLEN] = "";
+
+    if (!ip || !needle || !*needle)
+        return false;
+    if (!ip_to_text(ip, buf, sizeof(buf)))
+        return false;
+    return strcmp(buf, needle) == 0;
+}
+
 /* Only used in handover function (currently disabled) */
 /*
 static bool ip_is_unspecified(const ogs_ip_t *ip)
@@ -193,6 +205,37 @@ static inline bool looks_5g_sess(const smf_sess_t *s)
     if (s->s_nssai.sst != 0) return true;
     if (u24_to_u32(s->s_nssai.sd) != 0) return true;
     if (bearer_list_has_qfi(s)) return true;
+    return false;
+}
+
+static bool smf_sess_matches_ran_ip(const smf_sess_t *sess, const char *needle)
+{
+    if (!sess || !needle || !*needle)
+        return false;
+
+    /* 5G: gNB N3-U (user plane). LTE PGW/SMF has no eNB GTP-U address. */
+    if (!looks_5g_sess(sess))
+        return false;
+
+    if (ogs_ip_matches_query(&sess->remote_dl_ip, needle))
+        return true;
+    if (ogs_ip_matches_query(&sess->handover.gnb_n3_ip, needle))
+        return true;
+
+    return false;
+}
+
+static bool smf_ue_matches_ran_ip(const smf_ue_t *ue, const char *needle)
+{
+    smf_sess_t *sess = NULL;
+
+    ogs_assert(ue);
+
+    ogs_list_for_each(&ue->sess_list, sess) {
+        if (smf_sess_matches_ran_ip(sess, needle))
+            return true;
+    }
+
     return false;
 }
 
@@ -737,6 +780,10 @@ size_t smf_dump_pdu_info_paged(char *buf, size_t buflen,
                 }
             }
             if (!match) continue;
+        }
+        if (q && q->ip && *q->ip) {
+            if (!smf_ue_matches_ran_ip(ue, q->ip))
+                continue;
         }
 
         int act = json_pager_advance(no_paging, idx, start_index, emitted, page_size, &has_next);
