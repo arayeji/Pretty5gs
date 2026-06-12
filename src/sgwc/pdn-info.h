@@ -32,6 +32,11 @@ extern "C" {
 #define PDN_INFO_PAGE_SIZE_DEFAULT 100U
 #endif
 
+typedef struct sgwc_sess_s sgwc_sess_t;
+
+bool sgwc_sess_rat_metric_labels(const sgwc_sess_t *sess,
+        const char **rat, const char **gtp_if);
+
 size_t sgwc_dump_pdn_info(char *buf, size_t buflen,
         size_t page, size_t page_size, const ogs_metrics_query_t *q);
 

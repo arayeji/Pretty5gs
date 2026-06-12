@@ -115,6 +115,32 @@ static void sgwc_gn_create_pdp_proceed(
     sess->gn = 1;
     sess->gn_nsapi = req->nsapi.u8;
 
+    if (req->rat_type.presence) {
+        switch (req->rat_type.u8) {
+        case OGS_GTP1_RAT_TYPE_UTRAN:
+            sess->gtp_rat_type = OGS_GTP2_RAT_TYPE_UTRAN;
+            break;
+        case OGS_GTP1_RAT_TYPE_GERAN:
+            sess->gtp_rat_type = OGS_GTP2_RAT_TYPE_GERAN;
+            break;
+        case OGS_GTP1_RAT_TYPE_WLAN:
+            sess->gtp_rat_type = OGS_GTP2_RAT_TYPE_WLAN;
+            break;
+        case OGS_GTP1_RAT_TYPE_GAN:
+            sess->gtp_rat_type = OGS_GTP2_RAT_TYPE_GAN;
+            break;
+        case OGS_GTP1_RAT_TYPE_HSPA_EVOLUTION:
+            sess->gtp_rat_type = OGS_GTP2_RAT_TYPE_HSPA_EVOLUTION;
+            break;
+        case OGS_GTP1_RAT_TYPE_EUTRAN:
+            sess->gtp_rat_type = OGS_GTP2_RAT_TYPE_EUTRAN;
+            break;
+        default:
+            sess->gtp_rat_type = OGS_GTP2_RAT_TYPE_UTRAN;
+            break;
+        }
+    }
+
     if (req->tunnel_endpoint_identifier_control_plane.presence)
         sgwc_ue->mme_s11_teid =
             req->tunnel_endpoint_identifier_control_plane.u32;

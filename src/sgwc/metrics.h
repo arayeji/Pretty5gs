@@ -20,6 +20,15 @@ typedef enum sgwc_metric_type_by_plmn_pgw_s {
     _SGWC_METR_BY_PLMN_PGW_MAX,
 } sgwc_metric_type_by_plmn_pgw_t;
 
+typedef enum sgwc_metric_type_by_rat_s {
+    SGWC_METR_GAUGE_SESSIONNBR_BY_RAT = 0,
+    _SGWC_METR_BY_RAT_MAX,
+} sgwc_metric_type_by_rat_t;
+
+void sgwc_metrics_inst_by_rat_add(
+    const char *rat, const char *gtp_if,
+    sgwc_metric_type_by_rat_t t, int val);
+
 void sgwc_metrics_ue_active_inc(sgwc_ue_t *sgwc_ue);
 void sgwc_metrics_ue_active_dec(sgwc_ue_t *sgwc_ue);
 void sgwc_metrics_session_active_inc(sgwc_sess_t *sess);
