@@ -223,6 +223,10 @@ static void sgwc_gn_create_pdp_proceed(
         goto cleanup;
     }
 
+    sess->apn_fqdn_len = ogs_min(req->access_point_name.len,
+            (int)sizeof(sess->apn_fqdn));
+    memcpy(sess->apn_fqdn, req->access_point_name.data, sess->apn_fqdn_len);
+
     sess->gn = 1;
     sess->gn_nsapi = req->nsapi.u8;
 

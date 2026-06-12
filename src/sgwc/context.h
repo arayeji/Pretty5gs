@@ -256,6 +256,8 @@ typedef struct sgwc_sess_s {
     unsigned        gn : 1;         /* Session from GTPv1 Gn */
     uint8_t         gtp_rat_type;
     uint8_t         gn_nsapi;
+    uint8_t         apn_fqdn[OGS_MAX_APN_LEN + 2];
+    uint8_t         apn_fqdn_len;
     ogs_gtp1_qos_profile_decoded_t gn_qos_pdec;
 } sgwc_sess_t;
 

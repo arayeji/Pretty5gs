@@ -213,14 +213,20 @@ static ogs_pkbuf_t *sgwc_gn_build_create_session_request(
     csr->serving_network.len = OGS_PLMN_ID_LEN;
 
     if (req->access_point_name.presence) {
-        if (ogs_fqdn_parse(apn, req->access_point_name.data,
+        if (sess->apn_fqdn_len > 0) {
+            csr->access_point_name.presence = 1;
+            csr->access_point_name.data = sess->apn_fqdn;
+            csr->access_point_name.len = sess->apn_fqdn_len;
+        } else if (ogs_fqdn_parse(apn, req->access_point_name.data,
                 ogs_min(req->access_point_name.len, OGS_MAX_APN_LEN)) > 0) {
             char *apn_oi = ogs_dnn_oi_from_fqdn(apn);
             if (apn_oi && apn_oi > apn && apn_oi[-1] == '.')
                 apn_oi[-1] = '\0';
+            sess->apn_fqdn_len = ogs_fqdn_build((char *)sess->apn_fqdn,
+                    sess->session.name, strlen(sess->session.name));
             csr->access_point_name.presence = 1;
-            csr->access_point_name.data = (uint8_t *)sess->session.name;
-            csr->access_point_name.len = strlen(sess->session.name);
+            csr->access_point_name.data = sess->apn_fqdn;
+            csr->access_point_name.len = sess->apn_fqdn_len;
         }
     }
 
@@ -331,10 +337,16 @@ void sgwc_gn_reapply_create_session_request(
         csr->imsi.len = sgwc_ue->imsi_len;
     }
 
-    if (sess->session.name && sess->session.name[0]) {
+    if (sess->apn_fqdn_len > 0) {
         csr->access_point_name.presence = 1;
-        csr->access_point_name.data = (uint8_t *)sess->session.name;
-        csr->access_point_name.len = strlen(sess->session.name);
+        csr->access_point_name.data = sess->apn_fqdn;
+        csr->access_point_name.len = sess->apn_fqdn_len;
+    } else if (sess->session.name && sess->session.name[0]) {
+        sess->apn_fqdn_len = ogs_fqdn_build((char *)sess->apn_fqdn,
+                sess->session.name, strlen(sess->session.name));
+        csr->access_point_name.presence = 1;
+        csr->access_point_name.data = sess->apn_fqdn;
+        csr->access_point_name.len = sess->apn_fqdn_len;
     }
 
     if (sess->gtp_rat_type) {
