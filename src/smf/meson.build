@@ -134,6 +134,7 @@ libsmf_sources = files('''
 '''.split())
 
 libsmf_deps = [libmetrics_dep,
+                libdbi_dep,
                 libsbi_dep,
                 libngap_dep,
                 libnas_5gs_dep,

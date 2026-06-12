@@ -1,3 +1,6 @@
+# Same MongoDB as HSS — required for EPC static UE IP from subscriber session.ue
+#db_uri: mongodb://localhost/open5gs
+
 logger:
   file:
     path: @localstatedir@/log/open5gs/smf.log

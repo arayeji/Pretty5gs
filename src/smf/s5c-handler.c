@@ -384,11 +384,12 @@ uint8_t smf_s5c_handle_create_session_request(
     } else if (req->pdn_type.presence) {
         sess->ue_session_type = req->pdn_type.u8;
         sess->session.session_type = sess->ue_session_type;
-        memset(&sess->session.ue_ip, 0, sizeof(sess->session.ue_ip));
     } else {
         OGS_TLOG_ERROR("No PAA or PDN Type");
         return OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
     }
+
+    smf_sess_apply_subscription_ue_ip(sess);
 
     rv = smf_radius_authorize_for_session(sess);
     if (rv != OGS_OK) {
