@@ -20,6 +20,39 @@
 #include "gn-build.h"
 #include "sgwc-gtp-interop.h"
 
+static ogs_pkbuf_t *sgwc_gn_encapsulate_gtp2_header(
+        ogs_pkbuf_t *pkbuf, uint8_t type, uint32_t teid)
+{
+    ogs_gtp2_header_t *h;
+    int gtp_hlen;
+
+    ogs_assert(pkbuf);
+
+    if (type > OGS_GTP2_VERSION_NOT_SUPPORTED_INDICATION_TYPE)
+        gtp_hlen = OGS_GTPV2C_HEADER_LEN;
+    else
+        gtp_hlen = OGS_GTPV2C_HEADER_LEN - OGS_GTP2_TEID_LEN;
+
+    ogs_pkbuf_push(pkbuf, gtp_hlen);
+    h = (ogs_gtp2_header_t *)pkbuf->data;
+    memset(h, 0, gtp_hlen);
+
+    h->version = 2;
+    h->type = type;
+
+    if (type > OGS_GTP2_VERSION_NOT_SUPPORTED_INDICATION_TYPE) {
+        h->teid_presence = 1;
+        h->teid = htobe32(teid);
+        h->sqn = 0;
+    } else {
+        h->teid_presence = 0;
+        h->sqn_only = 0;
+    }
+    h->length = htobe16(pkbuf->len - 4);
+
+    return pkbuf;
+}
+
 static int sgwc_gn_gtp1_uli_to_gtp2(
         ogs_gtp2_uli_t *gtp2_uli, ogs_tlv_octet_t *gtp1_uli,
         char *uli_buf, int uli_buf_len)
@@ -109,9 +142,11 @@ static ogs_pkbuf_t *sgwc_gn_build_create_session_request(
     ogs_gtp2_ambr_t ambr;
     ogs_nas_plmn_id_t nas_plmn_id;
     char uli_buf[OGS_GTP2_MAX_ULI_LEN];
+    char bearer_qos_buf[GTP2_BEARER_QOS_LEN];
     char apn[OGS_MAX_APN_LEN+1];
     uint8_t qci = 9;
     int decoded;
+    ogs_pkbuf_t *pkbuf = NULL;
 
     ogs_assert(sess);
     ogs_assert(sgwc_ue);
@@ -236,9 +271,9 @@ static ogs_pkbuf_t *sgwc_gn_build_create_session_request(
     csr->bearer_contexts_to_be_created[0].eps_bearer_id.presence = 1;
     csr->bearer_contexts_to_be_created[0].eps_bearer_id.u8 = sess->gn_nsapi;
     csr->bearer_contexts_to_be_created[0].bearer_level_qos.presence = 1;
-    csr->bearer_contexts_to_be_created[0].bearer_level_qos.len =
-        GTP2_BEARER_QOS_LEN;
-    csr->bearer_contexts_to_be_created[0].bearer_level_qos.data = &bearer_qos;
+    ogs_gtp2_build_bearer_qos(
+            &csr->bearer_contexts_to_be_created[0].bearer_level_qos,
+            &bearer_qos, bearer_qos_buf, sizeof(bearer_qos_buf));
 
     if (req->end_user_address.presence) {
         ogs_eua_t *eua = req->end_user_address.data;
@@ -272,7 +307,12 @@ static ogs_pkbuf_t *sgwc_gn_build_create_session_request(
         csr->aggregate_maximum_bit_rate.len = sizeof(ambr);
     }
 
-    return ogs_gtp2_build_msg(&message);
+    pkbuf = ogs_gtp2_build_msg(&message);
+    if (!pkbuf)
+        return NULL;
+
+    return sgwc_gn_encapsulate_gtp2_header(
+            pkbuf, OGS_GTP2_CREATE_SESSION_REQUEST_TYPE, 0);
 }
 
 void sgwc_gn_reapply_create_session_request(
@@ -514,6 +554,7 @@ static ogs_pkbuf_t *sgwc_gn_build_modify_bearer_request(
     ogs_gtp2_bearer_qos_t bearer_qos;
     ogs_gtp2_uli_t uli;
     char uli_buf[OGS_GTP2_MAX_ULI_LEN];
+    char bearer_qos_buf[GTP2_BEARER_QOS_LEN];
     sgwc_bearer_t *bearer = NULL;
     sgwc_tunnel_t *dl_tunnel = NULL;
     ogs_gtp2_f_teid_t sgw_s5u_teid;
@@ -578,10 +619,9 @@ static ogs_pkbuf_t *sgwc_gn_build_modify_bearer_request(
     mbr->bearer_contexts_to_be_modified[0].eps_bearer_id.presence = 1;
     mbr->bearer_contexts_to_be_modified[0].eps_bearer_id.u8 = bearer->ebi;
     mbr->bearer_contexts_to_be_modified[0].bearer_level_qos.presence = 1;
-    mbr->bearer_contexts_to_be_modified[0].bearer_level_qos.len =
-        GTP2_BEARER_QOS_LEN;
-    mbr->bearer_contexts_to_be_modified[0].bearer_level_qos.data =
-        &bearer_qos;
+    ogs_gtp2_build_bearer_qos(
+            &mbr->bearer_contexts_to_be_modified[0].bearer_level_qos,
+            &bearer_qos, bearer_qos_buf, sizeof(bearer_qos_buf));
 
     if (req->tunnel_endpoint_identifier_data_i.presence ||
             req->sgsn_address_for_user_traffic.presence) {

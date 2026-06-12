@@ -149,13 +149,19 @@ static void sess_timeout(ogs_gtp_xact_t *xact, void *data)
         }
 
         if (s11_xact) {
-            ogs_gtp_send_error_message(
-                    s11_xact, sgwc_ue->mme_s11_teid,
-                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
-                    OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+            if (sess && sess->gn) {
+                sgwc_gn_send_create_reject(sess, sgwc_ue, s11_xact,
+                        OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+            } else {
+                ogs_gtp_send_error_message(
+                        s11_xact, sgwc_ue->mme_s11_teid,
+                        OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                        OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+                sgwc_sess_remove(sess);
+            }
+        } else {
+            sgwc_sess_remove(sess);
         }
-
-        sgwc_sess_remove(sess);
         break;
     }
     default:
@@ -306,9 +312,15 @@ void sgwc_sxa_handle_unexpected_modification_response(
     if (s11_xact) {
         if (est_sess)
             sgwc_ue = sgwc_ue_find_by_id(est_sess->sgwc_ue_id);
-        ogs_gtp_send_error_message(
-                s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
-                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, cause_value);
+        if (est_sess && est_sess->gn) {
+            sgwc_gn_send_create_reject(est_sess, sgwc_ue, s11_xact,
+                    cause_value);
+            est_sess = NULL;
+        } else {
+            ogs_gtp_send_error_message(
+                    s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
+                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, cause_value);
+        }
     }
 
     if (est_sess)
@@ -1045,9 +1057,15 @@ void sgwc_sxa_handle_session_modification_response(
                 s11_xact = ogs_gtp_xact_find_by_id(pfcp_xact->assoc_xact_id);
 
                 if (s11_xact) {
-                    ogs_gtp_send_error_message(
-                            s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
-                            OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, cause_value);
+                    if (sess && sess->gn) {
+                        sgwc_gn_send_create_reject(sess, sgwc_ue, s11_xact,
+                                cause_value);
+                    } else {
+                        ogs_gtp_send_error_message(
+                                s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
+                                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                                cause_value);
+                    }
                 } else {
                     ogs_error("GTP transaction(S11) has already been "
                             "removed [%d]", pfcp_xact->assoc_xact_id);
@@ -1591,9 +1609,7 @@ indirect_fail:
                     &sgw_s11_teid, &len);
             if (rv != OGS_OK) {
                 ogs_error("ogs_gtp2_sockaddr_to_f_teid(S11) failed");
-                ogs_gtp_send_error_message(
-                        s11_xact, sgwc_ue->mme_s11_teid,
-                        OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
                         OGS_GTP2_CAUSE_SYSTEM_FAILURE);
                 return;
             }
@@ -1613,9 +1629,7 @@ indirect_fail:
                 ul_tunnel = sgwc_ul_tunnel_in_bearer(bearer);
                 if (!ul_tunnel) {
                     ogs_error("No UL tunnel");
-                    ogs_gtp_send_error_message(
-                            s11_xact, sgwc_ue->mme_s11_teid,
-                            OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                    SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
                             OGS_GTP2_CAUSE_SYSTEM_FAILURE);
                     return;
                 }
@@ -1625,9 +1639,7 @@ indirect_fail:
                 sgw_s1u_teid[i].teid = htobe32(ul_tunnel->local_teid);
                 if (!ul_tunnel->local_addr && !ul_tunnel->local_addr6) {
                     ogs_error("No S1-U local F-TEID");
-                    ogs_gtp_send_error_message(
-                            s11_xact, sgwc_ue->mme_s11_teid,
-                            OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                    SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
                             OGS_GTP2_CAUSE_GRE_KEY_NOT_FOUND);
                     return;
                 }
@@ -1636,9 +1648,7 @@ indirect_fail:
                     &sgw_s1u_teid[i], &sgw_s1u_len[i]);
                 if (rv != OGS_OK) {
                     ogs_error("ogs_gtp2_sockaddr_to_f_teid(S1U) failed");
-                    ogs_gtp_send_error_message(
-                            s11_xact, sgwc_ue->mme_s11_teid,
-                            OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                    SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
                             OGS_GTP2_CAUSE_SYSTEM_FAILURE);
                     return;
                 }
