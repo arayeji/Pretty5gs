@@ -102,7 +102,10 @@ int smf_initialize(void)
 
     if (ogs_app()->db_uri) {
         rv = ogs_dbi_init(ogs_app()->db_uri);
-        if (rv != OGS_OK) return rv;
+        if (rv != OGS_OK) {
+            ogs_warn("MongoDB init failed; SMF starts without subscription "
+                    "static UE IP (use pool/RADIUS). Check db_uri and mongod");
+        }
     }
 
     rv = ogs_pfcp_ue_pool_generate();

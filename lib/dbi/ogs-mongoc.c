@@ -112,7 +112,15 @@ int ogs_mongoc_init(const char *db_uri)
     ogs_assert(uri);
 
     self.name = mongoc_uri_get_database(uri);
-    ogs_assert(self.name);
+    if (!self.name || !self.name[0]) {
+        ogs_error("DB URI must include a database name "
+                "(e.g. mongodb://localhost/open5gs)");
+        mongoc_client_destroy(self.client);
+        self.client = NULL;
+        mongoc_cleanup();
+        self.initialized = false;
+        return OGS_ERROR;
+    }
 
     self.database = mongoc_client_get_database(self.client, self.name);
     ogs_assert(self.database);
