@@ -18,7 +18,6 @@
  */
 
 #include "context.h"
-#include "ogs-dbi.h"
 #include "radius-path.h"
 #include "ga-writer.h"
 #include "gtp-path.h"
@@ -101,7 +100,6 @@ void smf_context_init(void)
     ogs_log_install_domain(&__ogs_ngap_domain, "ngap", ogs_core()->log.level);
     ogs_log_install_domain(&__ogs_nas_domain, "nas", ogs_core()->log.level);
     ogs_log_install_domain(&__ogs_diam_domain, "diam", ogs_core()->log.level);
-    ogs_log_install_domain(&__ogs_dbi_domain, "dbi", ogs_core()->log.level);
     ogs_log_install_domain(&__smf_log_domain, "smf", ogs_core()->log.level);
     ogs_log_install_domain(&__gsm_log_domain, "gsm", ogs_core()->log.level);
 
@@ -2406,140 +2404,6 @@ static void smf_pfcp_subnet_desc(
     ogs_snprintf(buf, buflen, "%s/%u(free=%u/%u)",
             ip, subnet->prefixlen,
             subnet->pool.avail, subnet->pool.size);
-}
-
-static bool smf_sess_subscription_ue_ip_v4(const ogs_ip_t *ip)
-{
-    uint32_t zero = 0;
-
-    ogs_assert(ip);
-    return ip->ipv4 && memcmp(&ip->addr, &zero, sizeof(zero)) != 0;
-}
-
-static bool smf_sess_subscription_ue_ip_v6(const ogs_ip_t *ip)
-{
-    uint8_t zero[OGS_IPV6_LEN];
-
-    ogs_assert(ip);
-    memset(zero, 0, sizeof(zero));
-    return ip->ipv6 && memcmp(ip->addr6, zero, sizeof(zero)) != 0;
-}
-
-static ogs_session_t *smf_subscription_session_find_by_apn(
-        ogs_subscription_data_t *subscription_data, const char *apn)
-{
-    ogs_slice_data_t *slice_data = NULL;
-    int i;
-
-    ogs_assert(subscription_data);
-    ogs_assert(apn);
-
-    if (!subscription_data->num_of_slice)
-        return NULL;
-
-    /* EPC subscribers use the first slice entry (same as HSS S6a ULA). */
-    slice_data = &subscription_data->slice[0];
-
-    for (i = 0; i < slice_data->num_of_session; i++) {
-        ogs_session_t *session = &slice_data->session[i];
-
-        if (session->name && ogs_strcasecmp(session->name, apn) == 0)
-            return session;
-    }
-
-    return NULL;
-}
-
-/*
- * Load static UE IP (and framed routes) from the subscriber MongoDB document.
- * EPC Create Session / Gn CSR usually carry PDN type only; MME does not
- * forward HSS static IP on S5/Gn, so SMF must read subscription data itself.
- */
-int smf_sess_apply_subscription_ue_ip(smf_sess_t *sess)
-{
-    smf_ue_t *smf_ue = NULL;
-    ogs_subscription_data_t subscription_data;
-    ogs_session_t *sub_session = NULL;
-    char *supi = NULL;
-    int i;
-
-    ogs_assert(sess);
-
-    if (!ogs_app()->db_uri)
-        return OGS_ERROR;
-
-    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
-    if (!smf_ue || !smf_ue->supi || !sess->session.name)
-        return OGS_ERROR;
-
-    memset(&subscription_data, 0, sizeof(subscription_data));
-    supi = ogs_strdup(smf_ue->supi);
-    ogs_assert(supi);
-
-    if (ogs_dbi_subscription_data(supi, &subscription_data) != OGS_OK) {
-        ogs_free(supi);
-        ogs_subscription_data_free(&subscription_data);
-        return OGS_ERROR;
-    }
-
-    sub_session = smf_subscription_session_find_by_apn(
-            &subscription_data, sess->session.name);
-    if (!sub_session) {
-        ogs_debug("[%s] No subscription session for APN[%s]",
-                smf_ue->supi, sess->session.name);
-        ogs_free(supi);
-        ogs_subscription_data_free(&subscription_data);
-        return OGS_ERROR;
-    }
-
-    if (!smf_sess_subscription_ue_ip_v4(&sess->session.ue_ip) &&
-            smf_sess_subscription_ue_ip_v4(&sub_session->ue_ip)) {
-        sess->session.ue_ip.ipv4 = 1;
-        sess->session.ue_ip.addr = sub_session->ue_ip.addr;
-        ogs_info("[%s] Static IPv4 from subscription DNN:%s",
-                smf_ue->supi, sess->session.name);
-    }
-
-    if (!smf_sess_subscription_ue_ip_v6(&sess->session.ue_ip) &&
-            smf_sess_subscription_ue_ip_v6(&sub_session->ue_ip)) {
-        sess->session.ue_ip.ipv6 = 1;
-        memcpy(sess->session.ue_ip.addr6, sub_session->ue_ip.addr6,
-                OGS_IPV6_LEN);
-        ogs_info("[%s] Static IPv6 from subscription DNN:%s",
-                smf_ue->supi, sess->session.name);
-    }
-
-    if (sub_session->ipv4_framed_routes && !sess->session.ipv4_framed_routes) {
-        sess->session.ipv4_framed_routes = ogs_calloc(
-                OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI,
-                sizeof(sess->session.ipv4_framed_routes[0]));
-        ogs_assert(sess->session.ipv4_framed_routes);
-        for (i = 0; i < OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI; i++) {
-            const char *route = sub_session->ipv4_framed_routes[i];
-            if (!route)
-                break;
-            sess->session.ipv4_framed_routes[i] = ogs_strdup(route);
-            ogs_assert(sess->session.ipv4_framed_routes[i]);
-        }
-    }
-
-    if (sub_session->ipv6_framed_routes && !sess->session.ipv6_framed_routes) {
-        sess->session.ipv6_framed_routes = ogs_calloc(
-                OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI,
-                sizeof(sess->session.ipv6_framed_routes[0]));
-        ogs_assert(sess->session.ipv6_framed_routes);
-        for (i = 0; i < OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI; i++) {
-            const char *route = sub_session->ipv6_framed_routes[i];
-            if (!route)
-                break;
-            sess->session.ipv6_framed_routes[i] = ogs_strdup(route);
-            ogs_assert(sess->session.ipv6_framed_routes[i]);
-        }
-    }
-
-    ogs_free(supi);
-    ogs_subscription_data_free(&subscription_data);
-    return OGS_OK;
 }
 
 static void smf_sess_log_ue_ip_fail(
