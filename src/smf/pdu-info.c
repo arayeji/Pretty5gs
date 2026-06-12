@@ -19,9 +19,11 @@
 
 /*
  * Connected PDUs JSON dumper for the Prometheus HTTP server (/pdu-info).
- * - 5G PDUs:  psi+dnn, snssai, qos_flows [{qfi,5qi}], n3.{gnb,upf},
+ * - 5G PDUs:  psi+dnn, snssai, rat.{name,sbi}, qos_flows [{qfi,5qi}], n3.{gnb,upf},
  *             n4.{pfcp_addr,service_addr,...}, pdu_state
- * - LTE PDUs: ebi(+psi if non-zero)+apn, qos_flows [{ebi,qci}], n4, s5.{pgw_u,...}, pdu_state
+ * - LTE PDUs: ebi(+psi if non-zero)+apn, rat.{name,gtp,gtp_if}, qos_flows [{ebi,qci}],
+ *             n4, s5.{pgw_u,...}, pdu_state
+ * - Gn PDP:   same as LTE; rat.name is UTRAN/GERAN/EUTRAN from GTP RAT Type IE
  * - UE-level: ue_activity ("active"/"unknown"/"idle")
  * - pager: /pdu-info?page=0&page_size=100 (0-based, page=SIZE_MAX -> no paging)
  *
@@ -91,6 +93,91 @@
 
 /* Only used in ip_is_unspecified (currently disabled) */
 /* static const uint8_t zero6[OGS_IPV6_LEN] = {0}; */
+
+static const char *smf_gtp_rat_type_name(uint8_t rat)
+{
+    switch (rat) {
+    case OGS_GTP2_RAT_TYPE_UTRAN:
+        return "UTRAN";
+    case OGS_GTP2_RAT_TYPE_GERAN:
+        return "GERAN";
+    case OGS_GTP2_RAT_TYPE_WLAN:
+        return "WLAN";
+    case OGS_GTP2_RAT_TYPE_GAN:
+        return "GAN";
+    case OGS_GTP2_RAT_TYPE_HSPA_EVOLUTION:
+        return "HSPA_EVOLUTION";
+    case OGS_GTP2_RAT_TYPE_EUTRAN:
+        return "EUTRAN";
+    case OGS_GTP2_RAT_TYPE_VIRTUAL:
+        return "VIRTUAL";
+    case OGS_GTP2_RAT_TYPE_EUTRAN_NB_IOT:
+        return "EUTRAN_NB_IOT";
+    default:
+        return NULL;
+    }
+}
+
+static const char *smf_sbi_rat_type_name(OpenAPI_rat_type_e rat)
+{
+    switch (rat) {
+    case OpenAPI_rat_type_NR:
+        return "NR";
+    case OpenAPI_rat_type_EUTRA:
+        return "EUTRA";
+    case OpenAPI_rat_type_WLAN:
+        return "WLAN";
+    case OpenAPI_rat_type_NBIOT:
+        return "NBIOT";
+    case OpenAPI_rat_type_UTRA:
+        return "UTRAN";
+    case OpenAPI_rat_type_GERA:
+        return "GERAN";
+    default:
+        return NULL;
+    }
+}
+
+static cJSON *build_rat_object(const smf_sess_t *sess, bool is5g)
+{
+    cJSON *rat = NULL;
+    const char *name = NULL;
+
+    if (!sess)
+        return NULL;
+
+    if (is5g && sess->sbi_rat_type != OpenAPI_rat_type_NULL) {
+        name = smf_sbi_rat_type_name(sess->sbi_rat_type);
+        if (!name)
+            return NULL;
+        rat = cJSON_CreateObject();
+        if (!rat)
+            return NULL;
+        cJSON_AddItemToObjectCS(rat, "name", cJSON_CreateString(name));
+        cJSON_AddItemToObjectCS(rat, "sbi", cJSON_CreateString(name));
+        return rat;
+    }
+
+    if (!sess->gtp_rat_type)
+        return NULL;
+
+    name = smf_gtp_rat_type_name(sess->gtp_rat_type);
+    if (!name)
+        return NULL;
+
+    rat = cJSON_CreateObject();
+    if (!rat)
+        return NULL;
+
+    cJSON_AddItemToObjectCS(rat, "name", cJSON_CreateString(name));
+    cJSON_AddItemToObjectCS(rat, "gtp", cJSON_CreateNumber(sess->gtp_rat_type));
+    if (sess->gtp.version == 1)
+        cJSON_AddItemToObjectCS(rat, "gtp_if", cJSON_CreateString("gn"));
+    else if (sess->gtp.version == 2)
+        cJSON_AddItemToObjectCS(rat, "gtp_if", cJSON_CreateString("s5"));
+
+    return rat;
+}
 
 static int ip_to_text(const ogs_ip_t *ip, char *out, size_t outlen)
 {
@@ -751,6 +838,13 @@ static cJSON *build_single_pdu_object(const smf_sess_t *sess, int *any_active, i
         cJSON *sn = build_snssai_object(sess);
         if (!sn) { cJSON_Delete(pdu); return NULL; }
         cJSON_AddItemToObjectCS(pdu, "snssai", sn);
+    }
+
+    /* RAT (GTP Gn/S5 or 5G SBI) */
+    {
+        cJSON *rat = build_rat_object(sess, is5g);
+        if (rat)
+            cJSON_AddItemToObjectCS(pdu, "rat", rat);
     }
 
     /* QoS flows */

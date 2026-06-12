@@ -208,6 +208,8 @@ int16_t ogs_gtp1_parse_qos_profile(
     case 19: /* ARP + octet 3 + octet 3-20 */
         decoded->bit_rate_downlink_extended2_present = true;
         OGS_GNUC_FALLTHROUGH;
+    case 18: /* ARP + octets 3-18 (Rel-99 + ext DL); typical Osmocom SGSN */
+        OGS_GNUC_FALLTHROUGH;
     case 17: /* ARP + octet 3 + octet 3-18 */
         decoded->bit_rate_uplink_extended_present = true;
         OGS_GNUC_FALLTHROUGH;
