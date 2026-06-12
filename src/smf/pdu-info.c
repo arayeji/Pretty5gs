@@ -19,8 +19,8 @@
 
 /*
  * Connected PDUs JSON dumper for the Prometheus HTTP server (/pdu-info).
- * - 5G PDUs:  psi+dnn, snssai, qos_flows [{qfi,5qi}], n3.{gnb,upf}, handover{}, pdu_state
- * - LTE PDUs: ebi(+psi if non-zero)+apn, qos_flows [{ebi,qci}], pdu_state ("unknown" at SMF scope)
+ * - 5G PDUs:  psi+dnn, snssai, qos_flows [{qfi,5qi}], n3.{gnb,upf}, n4.{pfcp_addr,...}, pdu_state
+ * - LTE PDUs: ebi(+psi if non-zero)+apn, qos_flows [{ebi,qci}], n4, s5.{pgw_u,...}, pdu_state
  * - UE-level: ue_activity ("active"/"unknown"/"idle")
  * - pager: /pdu-info?page=0&page_size=100 (0-based, page=SIZE_MAX -> no paging)
  *
@@ -156,8 +156,6 @@ static cJSON *addr_string_item(const ogs_ip_t *ip, int port)
     return cJSON_CreateString(buf);
 }
 
-/* Only used in handover function (currently disabled) */
-/*
 static cJSON *addr_string_from_sockaddr(ogs_sockaddr_t *sa4, ogs_sockaddr_t *sa6, int default_port)
 {
     ogs_ip_t ip;
@@ -166,7 +164,6 @@ static cJSON *addr_string_from_sockaddr(ogs_sockaddr_t *sa4, ogs_sockaddr_t *sa6
         return NULL;
     return addr_string_item(&ip, default_port);
 }
-*/
 
 static inline uint32_t u24_to_u32(ogs_uint24_t v)
 {
@@ -349,6 +346,135 @@ static cJSON *build_n3_object_5g(const smf_sess_t *sess)
 
     if (n3->child == NULL) { cJSON_Delete(n3); return NULL; }
     return n3;
+}
+
+/* Selected UPF (N4 PFCP peer) for this PDU session */
+static cJSON *build_n4_object(const smf_sess_t *sess)
+{
+    const char *pfcp_addr = NULL;
+    cJSON *n4 = NULL;
+
+    if (!sess || !sess->pfcp_node)
+        return NULL;
+
+    pfcp_addr = ogs_sockaddr_to_string_static(sess->pfcp_node->addr_list);
+    if (!pfcp_addr || !pfcp_addr[0])
+        return NULL;
+
+    n4 = cJSON_CreateObject();
+    if (!n4)
+        return NULL;
+
+    cJSON_AddItemToObjectCS(n4, "pfcp_addr", cJSON_CreateString(pfcp_addr));
+
+    if (sess->smf_n4_seid) {
+        cJSON_AddItemToObjectCS(n4, "smf_seid",
+                cJSON_CreateNumber((double)sess->smf_n4_seid));
+    }
+    if (sess->upf_n4_seid) {
+        cJSON_AddItemToObjectCS(n4, "upf_seid",
+                cJSON_CreateNumber((double)sess->upf_n4_seid));
+    }
+
+    return n4;
+}
+
+/* LTE/EPC S5: PGW-U GTP-U endpoint advertised to the SGW */
+static cJSON *build_s5_object_lte(const smf_sess_t *sess)
+{
+    smf_bearer_t *bearer = NULL;
+    cJSON *s5 = NULL;
+    bool has_content = false;
+    char sgw_addr[OGS_ADDRSTRLEN] = "";
+
+    if (!sess || looks_5g_sess(sess))
+        return NULL;
+
+    bearer = smf_default_bearer_in_sess((smf_sess_t *)sess);
+
+    s5 = cJSON_CreateObject();
+    if (!s5)
+        return NULL;
+
+    if (sess->gnode && sess->gnode->sa_list) {
+        OGS_ADDR(sess->gnode->sa_list, sgw_addr);
+        if (sgw_addr[0]) {
+            cJSON_AddItemToObjectCS(s5, "sgw_addr",
+                    cJSON_CreateString(sgw_addr));
+            has_content = true;
+        }
+    }
+
+    if (bearer) {
+        cJSON *pgw_u = NULL;
+        cJSON *sgw_u = NULL;
+
+        if (bearer->pgw_s5u_teid ||
+                bearer->pgw_s5u_addr || bearer->pgw_s5u_addr6) {
+            pgw_u = cJSON_CreateObject();
+            if (!pgw_u) {
+                cJSON_Delete(s5);
+                return NULL;
+            }
+
+            if (bearer->pgw_s5u_teid) {
+                cJSON_AddItemToObjectCS(pgw_u, "teid",
+                        cJSON_CreateNumber((double)bearer->pgw_s5u_teid));
+                has_content = true;
+            }
+
+            {
+                cJSON *addr = addr_string_from_sockaddr(
+                        bearer->pgw_s5u_addr, bearer->pgw_s5u_addr6,
+                        OGS_GTPV1_U_UDP_PORT);
+                if (addr) {
+                    cJSON_AddItemToObjectCS(pgw_u, "addr", addr);
+                    has_content = true;
+                }
+            }
+
+            if (pgw_u->child)
+                cJSON_AddItemToObjectCS(s5, "pgw_u", pgw_u);
+            else
+                cJSON_Delete(pgw_u);
+        }
+
+        if (bearer->sgw_s5u_teid || bearer->sgw_s5u_ip.ipv4 ||
+                bearer->sgw_s5u_ip.ipv6) {
+            sgw_u = cJSON_CreateObject();
+            if (!sgw_u) {
+                cJSON_Delete(s5);
+                return NULL;
+            }
+
+            if (bearer->sgw_s5u_teid) {
+                cJSON_AddItemToObjectCS(sgw_u, "teid",
+                        cJSON_CreateNumber((double)bearer->sgw_s5u_teid));
+                has_content = true;
+            }
+
+            {
+                cJSON *addr = addr_string_item(
+                        &bearer->sgw_s5u_ip, OGS_GTPV1_U_UDP_PORT);
+                if (addr) {
+                    cJSON_AddItemToObjectCS(sgw_u, "addr", addr);
+                    has_content = true;
+                }
+            }
+
+            if (sgw_u->child)
+                cJSON_AddItemToObjectCS(s5, "sgw_u", sgw_u);
+            else
+                cJSON_Delete(sgw_u);
+        }
+    }
+
+    if (!has_content) {
+        cJSON_Delete(s5);
+        return NULL;
+    }
+
+    return s5;
 }
 
 /* Handover function disabled */
@@ -637,6 +763,18 @@ static cJSON *build_single_pdu_object(const smf_sess_t *sess, int *any_active, i
         cJSON *ho = build_handover_object_5g(sess);
         if (ho) cJSON_AddItemToObjectCS(pdu, "handover", ho);
         */
+    }
+
+    {
+        cJSON *n4 = build_n4_object(sess);
+        if (n4)
+            cJSON_AddItemToObjectCS(pdu, "n4", n4);
+    }
+
+    if (!is5g) {
+        cJSON *s5 = build_s5_object_lte(sess);
+        if (s5)
+            cJSON_AddItemToObjectCS(pdu, "s5", s5);
     }
 
     /* PDU state + UE activity aggregation */
