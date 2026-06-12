@@ -66,8 +66,11 @@ void ogs_trace_set(const ogs_trace_ctx_t *ctx);
  */
 void ogs_trace_filter_clear(void);
 int ogs_trace_filter_add(const char *imsi_prefix);
+int ogs_trace_filter_add_ex(const char *imsi, bool exact_match);
 int ogs_trace_filter_remove(const char *imsi_prefix);
+int ogs_trace_filter_replace_ex(const char *imsi, bool exact_match);
 bool ogs_trace_filter_match(const char *imsi_bcd);
+bool ogs_trace_filter_get_exact(int index);
 int ogs_trace_filter_count(void);
 int ogs_trace_filter_get(int index, char *buf, size_t buflen);
 /* Prefer ogs_trace_set() for OGS_TLOG prefixes (merge keeps stale fields). */

@@ -96,6 +96,7 @@ libmme_sources = files('''
     enb-info.c
     ue-info.c
     admin-api.c
+    mme-trace-sync.c
     runtime-config.c
     ../../lib/app/ogs-reload-audit-json.c
     ../../lib/metrics/prometheus/json_pager.c

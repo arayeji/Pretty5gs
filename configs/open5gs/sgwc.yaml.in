@@ -72,6 +72,8 @@ sgwc:
       sgwu:
         - address: 127.0.0.6
 #    send_user_id: true   # PFCP User ID (IMSI/MSISDN) to SGW-U (default: true)
+#  trace_imsi:          # IMSI prefix list (also GET /admin/trace/imsi on :9090)
+#    - "999700000000001"
 
 ################################################################################
 # GTP-C Server

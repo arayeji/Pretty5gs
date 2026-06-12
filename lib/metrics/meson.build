@@ -19,6 +19,8 @@ libmetrics_file_list = '''
     ogs-metrics.h
     context.h
     context.c
+    trace-admin.h
+    trace-admin.c
 '''
 libmetrics_dependencies = [libapp_dep]
 

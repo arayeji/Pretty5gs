@@ -728,6 +728,37 @@ int sgwc_context_parse_config(void)
                     }
                 } else if (!strcmp(sgwc_key, "sgwu")) {
                     /* handle config in pfcp library */
+                } else if (!strcmp(sgwc_key, "trace_imsi")) {
+                    ogs_yaml_iter_t trace_array, trace_iter;
+
+                    ogs_yaml_iter_recurse(&sgwc_iter, &trace_array);
+                    do {
+                        if (ogs_yaml_iter_type(&trace_array) ==
+                                YAML_MAPPING_NODE) {
+                            break;
+                        } else if (ogs_yaml_iter_type(&trace_array) ==
+                                YAML_SEQUENCE_NODE) {
+                            if (!ogs_yaml_iter_next(&trace_array))
+                                break;
+                            ogs_yaml_iter_recurse(&trace_array, &trace_iter);
+                        } else if (ogs_yaml_iter_type(&trace_array) ==
+                                YAML_SCALAR_NODE) {
+                            ogs_yaml_iter_recurse(&sgwc_iter, &trace_iter);
+                        } else
+                            ogs_assert_if_reached();
+
+                        while (ogs_yaml_iter_next(&trace_iter)) {
+                            const char *v = ogs_yaml_iter_value(&trace_iter);
+
+                            if (v && ogs_trace_filter_add(v) != OGS_OK)
+                                ogs_warn("trace_imsi: could not add `%s'", v);
+                        }
+                    } while (ogs_yaml_iter_type(&trace_array) ==
+                            YAML_SEQUENCE_NODE &&
+                            ogs_yaml_iter_next(&trace_array));
+
+                    ogs_info("trace_imsi: %d prefix(es) loaded",
+                            ogs_trace_filter_count());
                 } else if (!strcmp(sgwc_key, "inbound_roam")) {
                     ogs_yaml_iter_t roam_iter;
                     ogs_yaml_iter_recurse(&sgwc_iter, &roam_iter);

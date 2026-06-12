@@ -18,8 +18,14 @@ global:
 
 mme:
   # DEBUG/TRACE for matching IMSI prefixes only (also at logger level=error).
-  # Runtime (no restart): GET http://<mme-metrics>:9090/admin/trace/imsi?imsi=001010000000001
-  #   list filters: ?imsi=list   clear all: ?force=1
+  # Runtime trace API (same on SGWC/SMF :9090):
+  #   add:     ?imsi=<prefix>
+  #   replace: ?imsi=<prefix>&replace=1
+  #   remove:  ?imsi=<prefix>&remove=1
+  #   exact:   ?imsi=<imsi>&match=exact
+  #   list:    ?imsi=list
+  #   clear:   ?force=1
+  #   sync:    ?imsi=<prefix>&sync=sgwc,smf  (MME pushes to 127.0.0.3/4:9090)
 #  trace_imsi:
 #    - 001010000000001
   freeDiameter: @sysconfdir@/freeDiameter/mme.conf

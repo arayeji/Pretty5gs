@@ -26,6 +26,7 @@ static struct {
     int initialized;
     int count;
     char imsi[OGS_MAX_TRACE_IMSI_FILTERS][OGS_TRACE_IMSI_LEN];
+    bool exact[OGS_MAX_TRACE_IMSI_FILTERS];
 } trace_filter;
 
 static void trace_filter_init_once(void)
@@ -133,16 +134,22 @@ void ogs_trace_filter_clear(void)
 
 int ogs_trace_filter_add(const char *imsi_prefix)
 {
+    return ogs_trace_filter_add_ex(imsi_prefix, false);
+}
+
+int ogs_trace_filter_add_ex(const char *imsi, bool exact_match)
+{
     int i;
 
-    if (!imsi_prefix || !imsi_prefix[0])
+    if (!imsi || !imsi[0])
         return OGS_ERROR;
 
     trace_filter_init_once();
     ogs_thread_mutex_lock(&trace_filter.mutex);
 
     for (i = 0; i < trace_filter.count; i++) {
-        if (strcmp(trace_filter.imsi[i], imsi_prefix) == 0) {
+        if (strcmp(trace_filter.imsi[i], imsi) == 0) {
+            trace_filter.exact[i] = exact_match;
             ogs_thread_mutex_unlock(&trace_filter.mutex);
             return OGS_OK;
         }
@@ -153,12 +160,19 @@ int ogs_trace_filter_add(const char *imsi_prefix)
         return OGS_ERROR;
     }
 
-    ogs_cpystrn(trace_filter.imsi[trace_filter.count], imsi_prefix,
+    ogs_cpystrn(trace_filter.imsi[trace_filter.count], imsi,
             OGS_TRACE_IMSI_LEN);
+    trace_filter.exact[trace_filter.count] = exact_match;
     trace_filter.count++;
 
     ogs_thread_mutex_unlock(&trace_filter.mutex);
     return OGS_OK;
+}
+
+int ogs_trace_filter_replace_ex(const char *imsi, bool exact_match)
+{
+    ogs_trace_filter_clear();
+    return ogs_trace_filter_add_ex(imsi, exact_match);
 }
 
 int ogs_trace_filter_remove(const char *imsi_prefix)
@@ -204,7 +218,12 @@ bool ogs_trace_filter_match(const char *imsi_bcd)
 
         if (n == 0)
             continue;
-        if (strncmp(imsi_bcd, trace_filter.imsi[i], n) == 0) {
+        if (trace_filter.exact[i]) {
+            if (strcmp(imsi_bcd, trace_filter.imsi[i]) == 0) {
+                matched = true;
+                break;
+            }
+        } else if (strncmp(imsi_bcd, trace_filter.imsi[i], n) == 0) {
             matched = true;
             break;
         }
@@ -239,6 +258,18 @@ int ogs_trace_filter_get(int index, char *buf, size_t buflen)
     ogs_cpystrn(buf, trace_filter.imsi[index], buflen);
     ogs_thread_mutex_unlock(&trace_filter.mutex);
     return OGS_OK;
+}
+
+bool ogs_trace_filter_get_exact(int index)
+{
+    bool exact = false;
+
+    trace_filter_init_once();
+    ogs_thread_mutex_lock(&trace_filter.mutex);
+    if (index >= 0 && index < trace_filter.count)
+        exact = trace_filter.exact[index];
+    ogs_thread_mutex_unlock(&trace_filter.mutex);
+    return exact;
 }
 
 size_t ogs_trace_format_prefix(char *buf, size_t buflen)
