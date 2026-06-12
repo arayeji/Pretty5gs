@@ -57,8 +57,6 @@ static size_t trace_admin_fmt(char *body, size_t cap, bool ok,
 
 static bool trace_admin_match_exact(const ogs_metrics_query_t *q)
 {
-    const char *m;
-
     if (!q || !q->match)
         return false;
     return strcasecmp(q->match, "exact") == 0;
