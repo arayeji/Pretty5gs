@@ -23,6 +23,7 @@
 #include "gtp-path.h"
 #include "pfcp-path.h"
 #include "collision-replace.h"
+#include "smf-trace.h"
 #include "metrics.h"
 
 static smf_context_t self;
@@ -2082,22 +2083,22 @@ smf_sess_t *smf_sess_add_by_gtp2_message(ogs_gtp2_message_t *message)
     ogs_gtp2_create_session_request_t *req = &message->create_session_request;
 
     if (req->imsi.presence == 0) {
-        ogs_error("No IMSI");
+        OGS_TLOG_ERROR("No IMSI");
         return NULL;
     }
     if (req->access_point_name.presence == 0) {
-        ogs_error("No APN");
+        OGS_TLOG_ERROR("No APN");
         return NULL;
     } else {
         if (!smf_gtp_apn_parse(apn, &full_apn, req->access_point_name.data,
                 req->access_point_name.len)) {
-            ogs_error("Invalid APN");
+            OGS_TLOG_ERROR("Invalid APN");
             ogs_free(full_apn);
             return NULL;
         }
     }
     if (req->rat_type.presence == 0) {
-        ogs_error("No RAT Type");
+        OGS_TLOG_ERROR("No RAT Type");
         ogs_free(full_apn);
         return NULL;
     }

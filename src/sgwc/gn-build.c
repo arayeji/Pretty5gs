@@ -122,6 +122,11 @@ static ogs_pkbuf_t *sgwc_gn_build_create_session_request(
 
     message.h.type = OGS_GTP2_CREATE_SESSION_REQUEST_TYPE;
 
+    if (sgwc_ue->imsi_len == 0) {
+        ogs_error("No IMSI on SGWC UE for Gn CSR");
+        return NULL;
+    }
+
     csr->imsi.presence = 1;
     csr->imsi.data = sgwc_ue->imsi;
     csr->imsi.len = sgwc_ue->imsi_len;
@@ -267,6 +272,39 @@ static ogs_pkbuf_t *sgwc_gn_build_create_session_request(
     }
 
     return ogs_gtp2_build_msg(&message);
+}
+
+void sgwc_gn_reapply_create_session_request(
+        ogs_gtp2_create_session_request_t *csr,
+        sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
+        ogs_nas_plmn_id_t *nas_plmn_id)
+{
+    ogs_assert(csr);
+    ogs_assert(sess);
+    ogs_assert(sgwc_ue);
+    ogs_assert(nas_plmn_id);
+
+    if (sgwc_ue->imsi_len > 0) {
+        csr->imsi.presence = 1;
+        csr->imsi.data = sgwc_ue->imsi;
+        csr->imsi.len = sgwc_ue->imsi_len;
+    }
+
+    if (sess->session.name && sess->session.name[0]) {
+        csr->access_point_name.presence = 1;
+        csr->access_point_name.data = (uint8_t *)sess->session.name;
+        csr->access_point_name.len = strlen(sess->session.name);
+    }
+
+    if (sess->gtp_rat_type) {
+        csr->rat_type.presence = 1;
+        csr->rat_type.u8 = sess->gtp_rat_type;
+    }
+
+    ogs_nas_from_plmn_id(nas_plmn_id, &sess->serving_plmn_id);
+    csr->serving_network.presence = 1;
+    csr->serving_network.data = (uint8_t *)nas_plmn_id;
+    csr->serving_network.len = OGS_PLMN_ID_LEN;
 }
 
 ogs_pkbuf_t *sgwc_gn_build_create_session_request_pkbuf(

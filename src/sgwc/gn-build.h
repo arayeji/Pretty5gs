@@ -32,6 +32,11 @@ ogs_pkbuf_t *sgwc_gn_build_create_session_request_pkbuf(
         sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
         ogs_gtp1_create_pdp_context_request_t *req);
 
+void sgwc_gn_reapply_create_session_request(
+        ogs_gtp2_create_session_request_t *csr,
+        sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
+        ogs_nas_plmn_id_t *nas_plmn_id);
+
 ogs_pkbuf_t *sgwc_gn_build_create_pdp_context_response(
         uint8_t type, sgwc_sess_t *sess,
         ogs_gtp2_create_session_response_t *s5_rsp);

@@ -110,10 +110,8 @@ static void smf_gsm_fail_create_session(ogs_fsm_t *s, smf_sess_t *sess,
 {
     if (sess) {
         smf_ue_t *smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
-        ogs_warn("[%s] Create Session rejected APN[%s] gtp_cause[%u]",
-                smf_ue ? smf_log_id(smf_ue) : "-",
-                sess->session.name ? sess->session.name : "-",
-                gtp_cause);
+        ogs_smf_trace_set(smf_ue, sess, "create-session");
+        OGS_TLOG_WARN("Create Session rejected gtp_cause[%u]", gtp_cause);
     }
 
     send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);

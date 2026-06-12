@@ -143,7 +143,11 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         e->gtp_message = NULL;
         if (pfcp_xact->gtpbuf) {
             rv = ogs_gtp2_parse_msg(&gtp_message, pfcp_xact->gtpbuf);
-            e->gtp_message = &gtp_message;
+            if (rv != OGS_OK) {
+                ogs_error("ogs_gtp2_parse_msg() failed on PFCP CSR buffer");
+            } else {
+                e->gtp_message = &gtp_message;
+            }
         }
 
         ogs_fsm_dispatch(&pfcp_node->sm, e);
