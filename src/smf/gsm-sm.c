@@ -107,6 +107,14 @@ static void send_gtp_create_err_msg(const smf_sess_t *sess,
 static void smf_gsm_fail_create_session(ogs_fsm_t *s, smf_sess_t *sess,
         ogs_gtp_xact_t *gtp_xact, uint8_t gtp_cause)
 {
+    if (sess) {
+        smf_ue_t *smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+        ogs_warn("[%s] Create Session rejected APN[%s] gtp_cause[%u]",
+                smf_ue ? smf_log_id(smf_ue) : "-",
+                sess->session.name ? sess->session.name : "-",
+                gtp_cause);
+    }
+
     send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);
 
     if (sess && sess->upf_n4_seid)
@@ -141,9 +149,19 @@ static bool send_ccr_init_req_gx_gy(ogs_fsm_t *s, smf_sess_t *sess,
     }
 
     sess->sm_data.gx_ccr_init_in_flight = true;
-    smf_gx_send_ccr(
+    if (smf_gx_send_ccr(
             sess, gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID,
-            OGS_DIAM_GX_CC_REQUEST_TYPE_INITIAL_REQUEST);
+            OGS_DIAM_GX_CC_REQUEST_TYPE_INITIAL_REQUEST) != OGS_OK) {
+        sess->sm_data.gx_ccr_init_in_flight = false;
+        sess->sm_data.gx_cca_init_err = ER_DIAMETER_UNABLE_TO_DELIVER;
+        if (use_gy != 1) {
+            smf_gsm_fail_create_session(s, sess, gtp_xact,
+                    gtp_cause_from_diameter(
+                        gtp_xact ? gtp_xact->gtp_version : 2,
+                        ER_DIAMETER_UNABLE_TO_DELIVER, NULL));
+            return false;
+        }
+    }
 
     if (use_gy == 1) {
         /* Gy is available,
