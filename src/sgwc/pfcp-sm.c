@@ -19,6 +19,7 @@
 
 #include "pfcp-path.h"
 #include "sxa-handler.h"
+#include "gn-handler.h"
 
 static void pfcp_restoration(ogs_pfcp_node_t *node);
 static void node_timeout(ogs_pfcp_xact_t *xact, void *data);
@@ -333,11 +334,17 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
                     if (sess)
                         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
                     if (s11_xact) {
-                        ogs_gtp_send_error_message(
-                                s11_xact,
-                                sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
-                                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
-                                OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+                        if (sess && sess->gn) {
+                            sgwc_gn_send_create_reject(sess, sgwc_ue, s11_xact,
+                                    OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+                            sess = NULL;
+                        } else {
+                            ogs_gtp_send_error_message(
+                                    s11_xact,
+                                    sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
+                                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                                    OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+                        }
                     }
                     if (sess)
                         sgwc_sess_remove(sess);
