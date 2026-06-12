@@ -29,15 +29,6 @@
 #include "gn-handler.h"
 #include "gn-build.h"
 
-#define SGWC_GTP_CREATE_REJECT(_sess, _ue, _xact, _cause) \
-    do { \
-        if ((_sess) && (_sess)->gn) \
-            sgwc_gn_send_create_reject((_sess), (_ue), (_xact), (_cause)); \
-        else \
-            ogs_gtp_send_error_message((_xact), (_ue) ? (_ue)->mme_s11_teid : 0, \
-                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, (_cause)); \
-    } while (0)
-
 static void sgwc_log_urr_report(
         const char *phase, sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess,
         uint32_t urr_id, ogs_pfcp_volume_measurement_t *volume,
@@ -526,7 +517,7 @@ void sgwc_sxa_handle_session_establishment_response(
                 pgw_peer[0] ? pgw_peer : "-",
                 pfcp_rsp->cause.presence ? pfcp_rsp->cause.u8 : 0,
                 cause_value, sess ? sess->id : 0);
-        SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact, cause_value);
+        sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, cause_value);
         if (sess && !sess->gn)
             sgwc_sess_remove(sess);
         return;
@@ -548,7 +539,7 @@ void sgwc_sxa_handle_session_establishment_response(
         dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
         if (!dl_tunnel) {
             ogs_error("No DL tunnel");
-            SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_SYSTEM_FAILURE);
             if (!sess->gn)
                 sgwc_sess_remove(sess);
@@ -561,7 +552,7 @@ void sgwc_sxa_handle_session_establishment_response(
         if (dl_tunnel->local_addr == NULL && dl_tunnel->local_addr6 == NULL) {
             sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
             ogs_error("No UP F-TEID");
-            SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_GRE_KEY_NOT_FOUND);
             if (!sess->gn)
                 sgwc_sess_remove(sess);
@@ -576,7 +567,7 @@ void sgwc_sxa_handle_session_establishment_response(
         if (!dl_tunnel->local_addr && !dl_tunnel->local_addr6) {
             sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
             ogs_error("No local F-TEID address");
-            SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_GRE_KEY_NOT_FOUND);
             if (!sess->gn)
                 sgwc_sess_remove(sess);
@@ -588,7 +579,7 @@ void sgwc_sxa_handle_session_establishment_response(
         if (rv != OGS_OK) {
             sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
             ogs_error("ogs_gtp2_sockaddr_to_f_teid() failed");
-            SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_SYSTEM_FAILURE);
             if (!sess->gn)
                 sgwc_sess_remove(sess);
@@ -613,7 +604,7 @@ void sgwc_sxa_handle_session_establishment_response(
     if (rv != OGS_OK) {
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         ogs_error("ogs_gtp2_sockaddr_to_f_teid(S5C) failed");
-        SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+        sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                 OGS_GTP2_CAUSE_SYSTEM_FAILURE);
         if (!sess->gn)
             sgwc_sess_remove(sess);
@@ -625,7 +616,7 @@ void sgwc_sxa_handle_session_establishment_response(
     if (!up_f_seid) {
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         ogs_error("No UP F-SEID data");
-        SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+        sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                 OGS_GTP2_CAUSE_MANDATORY_IE_MISSING);
         if (!sess->gn)
             sgwc_sess_remove(sess);
@@ -649,7 +640,7 @@ void sgwc_sxa_handle_session_establishment_response(
                     pgw_s5c_teid, ogs_gtp_self()->gtpc_port);
             if (!pgw) {
                 ogs_error("ogs_gtp_node_add_by_f_teid() failed");
-                SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+                sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                         OGS_GTP2_CAUSE_SYSTEM_FAILURE);
                 if (!sess->gn)
                     sgwc_sess_remove(sess);
@@ -659,7 +650,7 @@ void sgwc_sxa_handle_session_establishment_response(
             rv = sgwc_gtp_connect_peer(sess, pgw);
             if (rv != OGS_OK) {
                 ogs_error("sgwc_gtp_connect_peer() failed");
-                SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+                sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                         OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
                 if (!sess->gn)
                     sgwc_sess_remove(sess);
@@ -681,7 +672,7 @@ void sgwc_sxa_handle_session_establishment_response(
     } else {
         ogs_error("No PGW S5-C F-TEID in Create Session Request "
                 "(PGW_S5C_TEID=0x%x)", sess->pgw_s5c_teid);
-        SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+        sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                 OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING);
         if (!sess->gn)
             sgwc_sess_remove(sess);
@@ -746,7 +737,7 @@ void sgwc_sxa_handle_session_establishment_response(
 
         if (!sess->gnode) {
             ogs_error("No S5 peer (gnode)");
-            SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
             if (!sess->gn)
                 sgwc_sess_remove(sess);
@@ -811,7 +802,7 @@ void sgwc_sxa_handle_session_establishment_response(
 
         if (!sess->gnode) {
             ogs_error("No S5 peer (gnode)");
-            SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
             if (!sess->gn)
                 sgwc_sess_remove(sess);
@@ -1609,7 +1600,7 @@ indirect_fail:
                     &sgw_s11_teid, &len);
             if (rv != OGS_OK) {
                 ogs_error("ogs_gtp2_sockaddr_to_f_teid(S11) failed");
-                SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+                sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                         OGS_GTP2_CAUSE_SYSTEM_FAILURE);
                 return;
             }
@@ -1629,7 +1620,7 @@ indirect_fail:
                 ul_tunnel = sgwc_ul_tunnel_in_bearer(bearer);
                 if (!ul_tunnel) {
                     ogs_error("No UL tunnel");
-                    SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+                    sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                             OGS_GTP2_CAUSE_SYSTEM_FAILURE);
                     return;
                 }
@@ -1639,7 +1630,7 @@ indirect_fail:
                 sgw_s1u_teid[i].teid = htobe32(ul_tunnel->local_teid);
                 if (!ul_tunnel->local_addr && !ul_tunnel->local_addr6) {
                     ogs_error("No S1-U local F-TEID");
-                    SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+                    sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                             OGS_GTP2_CAUSE_GRE_KEY_NOT_FOUND);
                     return;
                 }
@@ -1648,7 +1639,7 @@ indirect_fail:
                     &sgw_s1u_teid[i], &sgw_s1u_len[i]);
                 if (rv != OGS_OK) {
                     ogs_error("ogs_gtp2_sockaddr_to_f_teid(S1U) failed");
-                    SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+                    sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                             OGS_GTP2_CAUSE_SYSTEM_FAILURE);
                     return;
                 }

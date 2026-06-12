@@ -154,6 +154,18 @@ void sgwc_gn_send_create_reject(
         sgwc_sess_remove(sess);
 }
 
+void sgwc_gtp_create_reject(
+        sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *xact,
+        uint8_t gtp2_cause)
+{
+    if (sess && sess->gn)
+        sgwc_gn_send_create_reject(sess, sgwc_ue, xact, gtp2_cause);
+    else
+        ogs_gtp_send_error_message(xact,
+                sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
+                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, gtp2_cause);
+}
+
 static void sgwc_gn_create_pdp_proceed(
         sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *gn_xact,
         ogs_pkbuf_t *gtpbuf, ogs_gtp1_message_t *message)

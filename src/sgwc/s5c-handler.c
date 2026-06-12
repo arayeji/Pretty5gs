@@ -27,15 +27,6 @@
 #include "gn-build.h"
 #include "gn-handler.h"
 
-#define SGWC_GTP_CREATE_REJECT(_sess, _ue, _xact, _cause) \
-    do { \
-        if ((_sess) && (_sess)->gn) \
-            sgwc_gn_send_create_reject((_sess), (_ue), (_xact), (_cause)); \
-        else \
-            ogs_gtp_send_error_message((_xact), (_ue) ? (_ue)->mme_s11_teid : 0, \
-                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, (_cause)); \
-    } while (0)
-
 static bool sgwc_s5_message_recovery(
         ogs_gtp2_message_t *message, uint8_t *recovery)
 {
@@ -230,7 +221,7 @@ void sgwc_s5c_handle_create_session_response(
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
     if (!sgwc_ue) {
         ogs_error("No UE Context [Cause:%d]", session_cause);
-        SGWC_GTP_CREATE_REJECT(sess, NULL, s11_xact,
+        sgwc_gtp_create_reject(sess, NULL, s11_xact,
                 OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
         return;
     }
@@ -250,7 +241,7 @@ void sgwc_s5c_handle_create_session_response(
                 "APN[%s] gtp_cause[%u] SGW-S5C[0x%x] PGW-S5C[0x%x]",
                 sgwc_log_imsi(sgwc_ue), pgw_peer, mme_peer, apn,
                 session_cause, sess->sgw_s5c_teid, sess->pgw_s5c_teid);
-        SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact, session_cause);
+        sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, session_cause);
         return;
     }
 
@@ -290,7 +281,7 @@ void sgwc_s5c_handle_create_session_response(
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-        SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact, cause_value);
+        sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, cause_value);
         return;
     }
 
@@ -311,14 +302,14 @@ void sgwc_s5c_handle_create_session_response(
         bearer_cause = cause->value;
         if (!OGS_GTP2_CAUSE_IS_SUCCESS(bearer_cause)) {
             ogs_error("GTP Bearer Cause [VALUE:%d]", bearer_cause);
-            SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact, bearer_cause);
+            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, bearer_cause);
             return;
         }
     }
 
     if (!OGS_GTP2_CAUSE_IS_SUCCESS(session_cause)) {
         ogs_error("GTP Cause [VALUE:%d]", session_cause);
-        SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact, session_cause);
+        sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, session_cause);
         return;
     }
 
@@ -339,13 +330,13 @@ void sgwc_s5c_handle_create_session_response(
         }
         if (rsp->bearer_contexts_created[i].eps_bearer_id.presence == 0) {
             ogs_error("No EPS Bearer ID");
-            SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_MANDATORY_IE_MISSING);
             return;
         }
         if (rsp->bearer_contexts_created[i].s5_s8_u_sgw_f_teid.presence == 0) {
             ogs_error("No GTP TEID");
-            SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_MANDATORY_IE_MISSING);
             return;
         }
@@ -356,7 +347,7 @@ void sgwc_s5c_handle_create_session_response(
         if (!bearer) {
             ogs_error("No Bearer [%d]",
                     rsp->bearer_contexts_created[i].eps_bearer_id.u8);
-            SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
             return;
         }
@@ -375,7 +366,7 @@ void sgwc_s5c_handle_create_session_response(
         rv = ogs_gtp2_f_teid_to_ip(pgw_s5u_teid, &ul_tunnel->remote_ip);
         if (rv != OGS_OK) {
             ogs_error("ogs_gtp2_f_teid_to_ip() failed");
-            SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_MANDATORY_IE_MISSING);
             return;
         }
@@ -569,7 +560,7 @@ void sgwc_s5c_handle_modify_bearer_response(
                 ogs_error("ModifyBearerResponse missing PGW S5U address "
                         "(SEID=%u, bearer=%u)", sess->id, bearer->ebi);
 
-                SGWC_GTP_CREATE_REJECT(sess, sgwc_ue, s11_xact,
+                sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                         OGS_GTP2_CAUSE_MANDATORY_IE_MISSING);
                 return;
             }
