@@ -1317,16 +1317,20 @@ sgwc_ue_t *sgwc_ue_find_by_imsi_bcd(char *imsi_bcd)
     uint8_t imsi[OGS_MAX_IMSI_LEN];
     int imsi_len = 0;
 
-    ogs_assert(imsi_bcd);
+    if (!imsi_bcd || !imsi_bcd[0])
+        return NULL;
 
     ogs_bcd_to_buffer(imsi_bcd, imsi, &imsi_len);
+    if (!imsi_len)
+        return NULL;
 
     return sgwc_ue_find_by_imsi(imsi, imsi_len);
 }
 
 sgwc_ue_t *sgwc_ue_find_by_imsi(uint8_t *imsi, int imsi_len)
 {
-    ogs_assert(imsi && imsi_len);
+    if (!imsi || imsi_len <= 0)
+        return NULL;
 
     return ogs_hash_get(self.imsi_ue_hash, imsi, imsi_len);
 }
