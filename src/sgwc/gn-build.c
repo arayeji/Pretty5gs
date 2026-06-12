@@ -250,6 +250,7 @@ static ogs_pkbuf_t *sgwc_gn_build_create_session_request(
                 &pdu_session_type) == OGS_OK) {
             csr->pdn_type.presence = 1;
             csr->pdn_type.u8 = pdu_session_type;
+            sess->paa.session_type = pdu_session_type;
         }
     }
 
@@ -305,6 +306,11 @@ void sgwc_gn_reapply_create_session_request(
     csr->serving_network.presence = 1;
     csr->serving_network.data = (uint8_t *)nas_plmn_id;
     csr->serving_network.len = OGS_PLMN_ID_LEN;
+
+    if (!csr->pdn_type.presence && sess->paa.session_type) {
+        csr->pdn_type.presence = 1;
+        csr->pdn_type.u8 = sess->paa.session_type;
+    }
 }
 
 ogs_pkbuf_t *sgwc_gn_build_create_session_request_pkbuf(

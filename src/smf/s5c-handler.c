@@ -30,6 +30,19 @@
 
 #include "ipfw/ipfw2.h"
 
+static bool smf_gtp2_rat_is_legacy_ps(uint8_t rat_type)
+{
+    switch (rat_type) {
+    case OGS_GTP2_RAT_TYPE_UTRAN:
+    case OGS_GTP2_RAT_TYPE_GERAN:
+    case OGS_GTP2_RAT_TYPE_GAN:
+    case OGS_GTP2_RAT_TYPE_HSPA_EVOLUTION:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static void pfcp_sess_timeout(ogs_pfcp_xact_t *xact, void *data)
 {
     smf_sess_t *sess = NULL;
@@ -171,8 +184,9 @@ uint8_t smf_s5c_handle_create_session_request(
         OGS_TLOG_ERROR("No EPS Bearer QoS");
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
     }
-    if (req->pdn_address_allocation.presence == 0) {
-        OGS_TLOG_ERROR("No PAA");
+    if (req->pdn_address_allocation.presence == 0 &&
+            req->pdn_type.presence == 0) {
+        OGS_TLOG_ERROR("No PAA or PDN Type");
         cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
     }
     if (req->serving_network.presence == 0) {
@@ -202,6 +216,16 @@ uint8_t smf_s5c_handle_create_session_request(
         }
         if (req->user_location_information.presence == 0) {
             OGS_TLOG_ERROR("No UE Location Information");
+            cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
+        }
+        break;
+    case OGS_GTP2_RAT_TYPE_UTRAN:
+    case OGS_GTP2_RAT_TYPE_GERAN:
+    case OGS_GTP2_RAT_TYPE_GAN:
+    case OGS_GTP2_RAT_TYPE_HSPA_EVOLUTION:
+        if (req->bearer_contexts_to_be_created[0].
+                s5_s8_u_sgw_f_teid.presence == 0) {
+            OGS_TLOG_ERROR("No S5/S8 SGW GTP-U TEID");
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
         }
         break;
@@ -287,6 +311,19 @@ uint8_t smf_s5c_handle_create_session_request(
         memcpy(&sess->e_tai, &uli.tai, sizeof(sess->e_tai));
         memcpy(&sess->e_cgi, &uli.e_cgi, sizeof(sess->e_cgi));
 
+    } else if (smf_gtp2_rat_is_legacy_ps(sess->gtp_rat_type)) {
+        if (req->user_location_information.presence) {
+            decoded = ogs_gtp2_parse_uli(&uli, &req->user_location_information);
+            if (req->user_location_information.len != decoded) {
+                ogs_error("Invalid User Location Information(ULI)");
+                return OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
+            }
+            if (uli.flags.tai)
+                memcpy(&sess->e_tai, &uli.tai, sizeof(sess->e_tai));
+            if (uli.flags.e_cgi)
+                memcpy(&sess->e_cgi, &uli.e_cgi, sizeof(sess->e_cgi));
+        }
+
     } else if (sess->gtp_rat_type == OGS_GTP2_RAT_TYPE_WLAN) {
         /* Even after handover to WLAN,
          * there must be at least one EUTRAN session */
@@ -336,17 +373,22 @@ uint8_t smf_s5c_handle_create_session_request(
         return OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING;
     }
 
-    /* UE IP Address */
-    paa = req->pdn_address_allocation.data;
-    ogs_assert(paa);
-
-    /* Store UE Session Type (IPv4, IPv6, IPv4v6) */
-    sess->ue_session_type = paa->session_type;
-
-    /* Initially Set Session Type from UE */
-    sess->session.session_type = sess->ue_session_type;
-    rv = ogs_paa_to_ip(paa, &sess->session.ue_ip);
-    ogs_assert(rv == OGS_OK);
+    /* UE IP Address / PDN Type */
+    if (req->pdn_address_allocation.presence &&
+            req->pdn_address_allocation.data) {
+        paa = req->pdn_address_allocation.data;
+        sess->ue_session_type = paa->session_type;
+        sess->session.session_type = sess->ue_session_type;
+        rv = ogs_paa_to_ip(paa, &sess->session.ue_ip);
+        ogs_assert(rv == OGS_OK);
+    } else if (req->pdn_type.presence) {
+        sess->ue_session_type = req->pdn_type.u8;
+        sess->session.session_type = sess->ue_session_type;
+        memset(&sess->session.ue_ip, 0, sizeof(sess->session.ue_ip));
+    } else {
+        OGS_TLOG_ERROR("No PAA or PDN Type");
+        return OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
+    }
 
     rv = smf_radius_authorize_for_session(sess);
     if (rv != OGS_OK) {
@@ -483,6 +525,21 @@ uint8_t smf_s5c_handle_create_session_request(
         case OGS_GTP2_RAT_TYPE_WLAN:
             sgw_s5u_teid = req->bearer_contexts_to_be_created[i].
                 s2b_u_epdg_f_teid_5.data;
+            ogs_assert(sgw_s5u_teid);
+            bearer->sgw_s5u_teid = be32toh(sgw_s5u_teid->teid);
+            rv = ogs_gtp2_f_teid_to_ip(sgw_s5u_teid, &bearer->sgw_s5u_ip);
+            if (rv != OGS_OK) {
+                ogs_error("Invalid SGW-S5U TEID");
+                smf_bearer_remove_all(sess);
+                return OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
+            }
+            break;
+        case OGS_GTP2_RAT_TYPE_UTRAN:
+        case OGS_GTP2_RAT_TYPE_GERAN:
+        case OGS_GTP2_RAT_TYPE_GAN:
+        case OGS_GTP2_RAT_TYPE_HSPA_EVOLUTION:
+            sgw_s5u_teid = req->bearer_contexts_to_be_created[i].
+                s5_s8_u_sgw_f_teid.data;
             ogs_assert(sgw_s5u_teid);
             bearer->sgw_s5u_teid = be32toh(sgw_s5u_teid->teid);
             rv = ogs_gtp2_f_teid_to_ip(sgw_s5u_teid, &bearer->sgw_s5u_ip);

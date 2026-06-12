@@ -335,6 +335,10 @@ void smf_gsm_state_initial(ogs_fsm_t *s, smf_event_t *e)
             }
             switch (sess->gtp_rat_type) {
             case OGS_GTP2_RAT_TYPE_EUTRAN:
+            case OGS_GTP2_RAT_TYPE_UTRAN:
+            case OGS_GTP2_RAT_TYPE_GERAN:
+            case OGS_GTP2_RAT_TYPE_GAN:
+            case OGS_GTP2_RAT_TYPE_HSPA_EVOLUTION:
                 if (send_ccr_init_req_gx_gy(s, sess, gtp_xact) == true)
                     OGS_FSM_TRAN(s, smf_gsm_state_wait_epc_auth_initial);
                 break;

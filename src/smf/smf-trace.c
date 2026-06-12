@@ -56,10 +56,13 @@ void ogs_smf_trace_set_from_gtp2_create_session_request(
     }
 
     if (req->sender_f_teid_for_control_plane.presence &&
-            req->sender_f_teid_for_control_plane.data &&
-            req->sender_f_teid_for_control_plane.data->teid)
-        ctx.sgw_s5c_teid = be32toh(
-                req->sender_f_teid_for_control_plane.data->teid);
+            req->sender_f_teid_for_control_plane.data) {
+        ogs_gtp2_f_teid_t *sgw_s5c_teid =
+            req->sender_f_teid_for_control_plane.data;
+
+        if (sgw_s5c_teid->teid)
+            ctx.sgw_s5c_teid = be32toh(sgw_s5c_teid->teid);
+    }
 
     ogs_trace_set(&ctx);
 }
