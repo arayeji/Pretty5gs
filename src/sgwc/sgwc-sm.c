@@ -232,7 +232,9 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
             if (gtp_message.h.teid == 0) {
                 if (!sgwc_ue &&
-                        gtp_message.create_session_request.imsi.presence) {
+                        gtp_message.create_session_request.imsi.presence &&
+                        gtp_message.create_session_request.imsi.data &&
+                        gtp_message.create_session_request.imsi.len > 0) {
                     sgwc_ue = sgwc_ue_find_by_imsi(
                             gtp_message.create_session_request.imsi.data,
                             gtp_message.create_session_request.imsi.len);
@@ -326,8 +328,11 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         if (!sgwc_ue && sess)
             sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
 
-        if (gtp1_message.h.teid == 0 &&
-                gtp1_message.create_pdp_context_request.imsi.presence) {
+        if (gtp1_message.h.type == OGS_GTP1_CREATE_PDP_CONTEXT_REQUEST_TYPE &&
+                gtp1_message.h.teid == 0 &&
+                gtp1_message.create_pdp_context_request.imsi.presence &&
+                gtp1_message.create_pdp_context_request.imsi.data &&
+                gtp1_message.create_pdp_context_request.imsi.len > 0) {
             sgwc_ue = sgwc_ue_find_by_imsi(
                     gtp1_message.create_pdp_context_request.imsi.data,
                     gtp1_message.create_pdp_context_request.imsi.len);
