@@ -1644,7 +1644,7 @@ indirect_fail:
                 ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
                 OGS_TLOG_INFO("Create PDP Context Response sent to SGSN");
                 sgwc_create_session_phase(sess, sgwc_ue, "gn-rsp-sent");
-                break;
+                return;
             }
 
             pkbuf = ogs_gtp2_build_msg(recv_message);

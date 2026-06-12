@@ -296,7 +296,6 @@ void sgwc_gn_handle_create_pdp_context_request(
         sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *gn_xact,
         ogs_pkbuf_t *gtpbuf, ogs_gtp1_message_t *message)
 {
-    uint8_t cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
     ogs_gtp1_create_pdp_context_request_t *req = NULL;
 
     ogs_assert(gn_xact);
@@ -346,8 +345,6 @@ void sgwc_gn_handle_create_pdp_context_request(
         OGS_SETUP_GTP_NODE(sgwc_ue, gn_xact->gnode);
 
     sgwc_gn_create_pdp_proceed(sgwc_ue, gn_xact, gtpbuf, message);
-
-    ogs_unused(cause_value);
 }
 
 void sgwc_gn_handle_delete_pdp_context_request(
@@ -355,7 +352,6 @@ void sgwc_gn_handle_delete_pdp_context_request(
         ogs_pkbuf_t *gtpbuf, ogs_gtp1_message_t *message)
 {
     int rv;
-    uint8_t cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
     ogs_gtp_xact_t *s5c_xact = NULL;
     ogs_gtp2_message_t gtp2_message;
     ogs_gtp2_delete_session_request_t *req = NULL;
@@ -439,8 +435,6 @@ void sgwc_gn_handle_delete_pdp_context_request(
 
     rv = ogs_gtp_xact_commit(s5c_xact);
     ogs_expect(rv == OGS_OK);
-
-    ogs_unused(cause_value);
 }
 
 void sgwc_gn_handle_update_pdp_context_request(
@@ -590,6 +584,4 @@ void sgwc_gn_handle_update_pdp_context_request(
 
     rv = ogs_gtp_xact_commit(s5c_xact);
     ogs_expect(rv == OGS_OK);
-
-    ogs_unused(gtpbuf);
 }
