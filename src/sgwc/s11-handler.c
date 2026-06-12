@@ -280,6 +280,9 @@ static void sgwc_s11_create_session_proceed(
     sess = sgwc_sess_add(sgwc_ue, apn);
     ogs_assert(sess);
 
+    if (req->rat_type.presence)
+        sess->gtp_rat_type = req->rat_type.u8;
+
     /* Control-plane TEIDs from Create Session Request */
     if (req->sender_f_teid_for_control_plane.presence &&
             req->sender_f_teid_for_control_plane.data) {

@@ -23,6 +23,7 @@
  * curl -s "http://127.0.0.3:9090/pdn-info?imsi=001010000000001"
  * curl -s "http://127.0.0.3:9090/pdn-info?enb_ip=10.1.2.3"
  * curl -s "http://127.0.0.3:9090/pdn-info?ue_ip=10.45.0.7&page_size=50"
+ * curl -s "http://127.0.0.3:9090/pdn-info?rat=EUTRAN"
  */
 
 #include "pdn-info.h"
@@ -33,6 +34,119 @@
 #include "metrics/prometheus/json_pager.h"
 
 #include "sbi/openapi/external/cJSON.h"
+
+#include <strings.h>
+
+static const char *sgwc_gtp_rat_type_name(uint8_t rat)
+{
+    switch (rat) {
+    case OGS_GTP2_RAT_TYPE_UTRAN:
+        return "UTRAN";
+    case OGS_GTP2_RAT_TYPE_GERAN:
+        return "GERAN";
+    case OGS_GTP2_RAT_TYPE_WLAN:
+        return "WLAN";
+    case OGS_GTP2_RAT_TYPE_GAN:
+        return "GAN";
+    case OGS_GTP2_RAT_TYPE_HSPA_EVOLUTION:
+        return "HSPA_EVOLUTION";
+    case OGS_GTP2_RAT_TYPE_EUTRAN:
+        return "EUTRAN";
+    case OGS_GTP2_RAT_TYPE_VIRTUAL:
+        return "VIRTUAL";
+    case OGS_GTP2_RAT_TYPE_EUTRAN_NB_IOT:
+        return "EUTRAN_NB_IOT";
+    default:
+        return NULL;
+    }
+}
+
+static const char *sgwc_sess_rat_name(const sgwc_sess_t *sess)
+{
+    if (!sess || !sess->gtp_rat_type)
+        return NULL;
+
+    return sgwc_gtp_rat_type_name(sess->gtp_rat_type);
+}
+
+bool sgwc_sess_rat_metric_labels(const sgwc_sess_t *sess,
+        const char **rat, const char **gtp_if)
+{
+    static const char gtp_if_s11[] = "s11";
+    static const char gtp_if_gn[] = "gn";
+
+    if (!sess || !rat || !gtp_if)
+        return false;
+
+    *rat = sgwc_sess_rat_name(sess);
+    if (!*rat)
+        return false;
+
+    if (sess->gn)
+        *gtp_if = gtp_if_gn;
+    else
+        *gtp_if = gtp_if_s11;
+
+    return true;
+}
+
+static cJSON *build_rat_object(const sgwc_sess_t *sess)
+{
+    const char *name;
+    cJSON *rat;
+
+    if (!sess || !sess->gtp_rat_type)
+        return NULL;
+
+    name = sgwc_gtp_rat_type_name(sess->gtp_rat_type);
+    if (!name)
+        return NULL;
+
+    rat = cJSON_CreateObject();
+    if (!rat)
+        return NULL;
+
+    cJSON_AddItemToObjectCS(rat, "name", cJSON_CreateString(name));
+    cJSON_AddItemToObjectCS(rat, "gtp", cJSON_CreateNumber(sess->gtp_rat_type));
+    if (sess->gn)
+        cJSON_AddItemToObjectCS(rat, "gtp_if", cJSON_CreateString("gn"));
+    else
+        cJSON_AddItemToObjectCS(rat, "gtp_if", cJSON_CreateString("s11"));
+
+    return rat;
+}
+
+static bool sgwc_sess_matches_pdn_filters(const sgwc_sess_t *sess,
+        const ogs_metrics_query_t *q)
+{
+    const char *rat_name = NULL;
+
+    if (!sess || !q)
+        return true;
+
+    if (q->rat && *q->rat) {
+        rat_name = sgwc_sess_rat_name(sess);
+        if (!rat_name || strcasecmp(rat_name, q->rat) != 0)
+            return false;
+    }
+
+    return true;
+}
+
+static bool sgwc_ue_has_matching_pdn(const sgwc_ue_t *ue,
+        const ogs_metrics_query_t *q)
+{
+    sgwc_sess_t *sess = NULL;
+
+    ogs_assert(ue);
+
+    ogs_list_for_each(&ue->sess_list, sess) {
+        if (sgwc_sess_matches_pdn_filters(sess, q))
+            return true;
+    }
+
+    return false;
+}
 
 static int ip_to_text(const ogs_ip_t *ip, char *out, size_t outlen)
 {
@@ -253,6 +367,12 @@ static cJSON *build_single_pdn_object(const sgwc_sess_t *sess,
     }
 
     {
+        cJSON *rat = build_rat_object(sess);
+        if (rat)
+            cJSON_AddItemToObjectCS(pdn, "rat", rat);
+    }
+
+    {
         cJSON *qarr = build_qos_flows_array(sess);
         if (!qarr) {
             cJSON_Delete(pdn);
@@ -466,6 +586,10 @@ size_t sgwc_dump_pdn_info(char *buf, size_t buflen,
         }
         if (q && q->ip && *q->ip) {
             if (!ue_matches_ran_ip(ue, q->ip))
+                continue;
+        }
+        if (q && q->rat && *q->rat) {
+            if (!sgwc_ue_has_matching_pdn(ue, q))
                 continue;
         }
 

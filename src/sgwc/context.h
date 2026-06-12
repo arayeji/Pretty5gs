@@ -250,7 +250,11 @@ typedef struct sgwc_sess_s {
     ogs_time_t      create_session_t0;
 
     unsigned        metrics_session_counted : 1;
+    unsigned        metrics_rat_labeled : 1;
+    char            metrics_rat[16];
+    char            metrics_gtp_if[8];
     unsigned        gn : 1;         /* Session from GTPv1 Gn */
+    uint8_t         gtp_rat_type;
     uint8_t         gn_nsapi;
     ogs_gtp1_qos_profile_decoded_t gn_qos_pdec;
 } sgwc_sess_t;
