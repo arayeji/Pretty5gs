@@ -48,6 +48,10 @@ void sgwc_gn_send_create_reject(
         sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *gn_xact,
         uint8_t gtp2_cause);
 
+void sgwc_gtp_create_reject(
+        sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *xact,
+        uint8_t gtp2_cause);
+
 #ifdef __cplusplus
 }
 #endif
