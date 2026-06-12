@@ -125,6 +125,7 @@ int smf_gx_send_ccr(smf_sess_t *sess, ogs_pool_id_t xact_id,
         uint32_t cc_request_type)
 {
     int ret;
+    int retry = 0;
     smf_ue_t *smf_ue = NULL;
 
     struct msg *req = NULL;
@@ -150,6 +151,7 @@ int smf_gx_send_ccr(smf_sess_t *sess, ogs_pool_id_t xact_id,
 
     ogs_debug("[Credit-Control-Request]");
 
+send_ccr:
     /* Create the request */
     ret = fd_msg_new(ogs_diam_gx_cmd_ccr, MSGFL_ALLOC_ETEID, &req);
     ogs_assert(ret == 0);
@@ -167,14 +169,20 @@ int smf_gx_send_ccr(smf_sess_t *sess, ogs_pool_id_t xact_id,
         ret = fd_sess_fromsid_msg((os0_t)sess->gx_sid, sidlen, &session, &new);
         ogs_assert(ret == 0);
         if (new) {
-            ogs_warn("Gx Session [%s] missing in Diameter stack "
-                    "(PCRF link may have reset)", sess->gx_sid);
+            ogs_warn("Gx Session-Id [%s] missing in Diameter stack "
+                    "(PCRF link may have reset); opening new Gx session",
+                    sess->gx_sid);
             ret = fd_msg_free(req);
             ogs_assert(ret == 0);
 
             ogs_free(sess->gx_sid);
             sess->gx_sid = NULL;
 
+            if (!retry) {
+                retry = 1;
+                goto send_ccr;
+            }
+            ogs_error("Gx Session-Id still missing after retry");
             return OGS_ERROR;
         }
 
@@ -294,6 +302,16 @@ int smf_gx_send_ccr(smf_sess_t *sess, ogs_pool_id_t xact_id,
     ogs_assert(ret == 0);
     ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp);
     ogs_assert(ret == 0);
+
+    /*
+     * Route initial CCR by realm so a stale Destination-Host from a prior
+     * PCRF connection cannot trigger DIAMETER_UNABLE_TO_DELIVER (3002).
+     */
+    if (cc_request_type == OGS_DIAM_GX_CC_REQUEST_TYPE_INITIAL_REQUEST &&
+            sess_data->peer_host) {
+        ogs_free(sess_data->peer_host);
+        sess_data->peer_host = NULL;
+    }
 
     /* Set the Destination-Host AVP */
     if (sess_data->peer_host) {
@@ -773,6 +791,11 @@ int smf_gx_send_ccr(smf_sess_t *sess, ogs_pool_id_t xact_id,
             ogs_free(sess->gx_sid);
             sess->gx_sid = NULL;
         }
+        if (!retry) {
+            retry = 1;
+            goto send_ccr;
+        }
+        ogs_error("Gx fd_sess_state_store failed after retry");
         return OGS_ERROR;
     }
 
