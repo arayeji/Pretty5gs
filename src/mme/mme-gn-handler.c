@@ -227,12 +227,25 @@ static mme_sess_t *mme_ue_session_from_gtp1_pdp_ctx(mme_ue_t *mme_ue, const ogs_
     uint8_t qci = 0;
     ogs_session_t *ogs_sess;
 
-    ogs_sess = mme_session_find_by_apn(mme_ue, gtp1_pdp_ctx->apn);
+    char apn_ni[OGS_MAX_APN_LEN+1];
+    char *apn_oi = NULL;
+
+    /* 3GPP TS 29.060 7.7.30: the APN stored in a GTPv1 PDP Context is the
+     * full APN, i.e. APN-NI plus APN-OI (e.g. "internet.mnc012.mcc432.gprs").
+     * EPS session management, HSS subscription data and the PFCP Network
+     * Instance use the APN-NI only (TS 23.003 9.1.1: the APN-NI shall not
+     * end in ".gprs"), so strip the APN-OI before matching/storing. */
+    ogs_cpystrn(apn_ni, gtp1_pdp_ctx->apn, OGS_MAX_APN_LEN+1);
+    apn_oi = ogs_dnn_oi_from_fqdn(apn_ni);
+    if (apn_oi && apn_oi > apn_ni && apn_oi[-1] == '.')
+        apn_oi[-1] = '\0';
+
+    ogs_sess = mme_session_find_by_apn(mme_ue, apn_ni);
     if (!ogs_sess) {
         ogs_assert(mme_ue->num_of_session < OGS_MAX_NUM_OF_SESS);
         ogs_sess = &mme_ue->session[mme_ue->num_of_session];
         mme_ue->num_of_session++;
-        ogs_sess->name = ogs_strdup(gtp1_pdp_ctx->apn);
+        ogs_sess->name = ogs_strdup(apn_ni);
     }
     ogs_sess->smf_ip = gtp1_pdp_ctx->ggsn_address_c;
     ogs_sess->context_identifier = gtp1_pdp_ctx->pdp_ctx_id;

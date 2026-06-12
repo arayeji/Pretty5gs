@@ -251,6 +251,7 @@ static void sgwc_s11_create_session_proceed(
     ogs_gtp2_uli_t uli;
     ogs_gtp2_bearer_qos_t bearer_qos;
     char apn[OGS_MAX_APN_LEN+1];
+    char *apn_oi = NULL;
 
     ogs_assert(sgwc_ue);
     ogs_assert(s11_xact);
@@ -267,6 +268,14 @@ static void sgwc_s11_create_session_proceed(
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
         goto cleanup;
     }
+
+    /* TS 23.003 9.1.1: the APN-NI shall not end in ".gprs". A full APN
+     * (APN-NI + APN-OI) can arrive here via a Gn/Gp-SGSN handover path;
+     * the Sxa Network Instance (TS 29.244 8.2.4) must carry the APN-NI
+     * only, so strip a trailing APN-OI if present. */
+    apn_oi = ogs_dnn_oi_from_fqdn(apn);
+    if (apn_oi && apn_oi > apn && apn_oi[-1] == '.')
+        apn_oi[-1] = '\0';
 
     sess = sgwc_sess_add(sgwc_ue, apn);
     ogs_assert(sess);
@@ -621,6 +630,7 @@ void sgwc_s11_handle_create_session_request(
     ogs_gtp2_create_session_request_t *req = NULL;
 
     char apn[OGS_MAX_APN_LEN+1];
+    char *apn_oi = NULL;
 
     ogs_assert(s11_xact);
     ogs_assert(gtpbuf);
@@ -685,6 +695,12 @@ void sgwc_s11_handle_create_session_request(
             ogs_min(req->access_point_name.len, OGS_MAX_APN_LEN)) <= 0) {
             ogs_error("Invalid APN");
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
+        } else {
+            /* TS 23.003 9.1.1: strip a trailing APN-OI; the APN-NI is
+             * what session lookup and the Sxa Network Instance use. */
+            apn_oi = ogs_dnn_oi_from_fqdn(apn);
+            if (apn_oi && apn_oi > apn && apn_oi[-1] == '.')
+                apn_oi[-1] = '\0';
         }
     }
     if (req->sender_f_teid_for_control_plane.presence == 0) {
