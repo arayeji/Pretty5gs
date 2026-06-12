@@ -324,6 +324,12 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
             sess = sgwc_sess_find_by_teid(gtp1_message.h.teid);
 
         rv = ogs_gtp1_xact_receive(gnode, &gtp1_message.h, &gtp_xact);
+        if (rv == OGS_RETRY) {
+            ogs_debug("Gn GTP duplicate request ignored (type=%u)",
+                    gtp1_message.h.type);
+            ogs_pkbuf_free(recvbuf);
+            break;
+        }
         if (rv != OGS_OK) {
             ogs_pkbuf_free(recvbuf);
             break;

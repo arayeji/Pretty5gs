@@ -114,6 +114,8 @@ bool sgwc_gn_handle_known_request(
     hdesc.e = gh->e;
     hdesc.s = gh->s;
     hdesc.pn = gh->pn;
+    if (gh->s)
+        hdesc.sqn = gh->sqn;
 
     switch (gh->type) {
     case OGS_GTP1_NODE_ALIVE_REQUEST_TYPE:
@@ -123,7 +125,9 @@ bool sgwc_gn_handle_known_request(
         rv = ogs_gtp1_xact_receive(gnode, &hdesc, &xact);
         if (rv == OGS_OK)
             ogs_debug("[SGW] Gn Echo Response received");
-        return rv == OGS_OK;
+        else
+            ogs_debug("[SGW] Gn Echo Response ignored (no matching xact)");
+        return true;
     default:
         return false;
     }
@@ -209,13 +213,6 @@ static void sgwc_gn_create_pdp_proceed(
     apn_oi = ogs_dnn_oi_from_fqdn(apn);
     if (apn_oi && apn_oi > apn && apn_oi[-1] == '.')
         apn_oi[-1] = '\0';
-
-    sess = sgwc_sess_find_by_nsapi(sgwc_ue, req->nsapi.u8);
-    if (sess) {
-        ogs_error("[%s] Duplicate NSAPI %u", sgwc_ue->imsi_bcd, req->nsapi.u8);
-        cause_value = OGS_GTP2_CAUSE_REQUEST_REJECTED_REASON_NOT_SPECIFIED;
-        goto cleanup;
-    }
 
     sess = sgwc_sess_add(sgwc_ue, apn);
     if (!sess) {
@@ -458,6 +455,48 @@ void sgwc_gn_handle_create_pdp_context_request(
 
     if (sgwc_ue->gnode == NULL && gn_xact->gnode)
         OGS_SETUP_GTP_NODE(sgwc_ue, gn_xact->gnode);
+
+    {
+        sgwc_sess_t *sess = NULL;
+        ogs_gtp_xact_t *pending_s5 = NULL;
+
+        sess = sgwc_sess_find_by_nsapi(sgwc_ue, req->nsapi.u8);
+        if (sess) {
+            /*
+             * SGSN retransmits Create PDP Context Request while SGWC still
+             * waits on S5/PFCP. Do not tear down the in-flight session.
+             */
+            if (gn_xact && gn_xact->assoc_xact_id)
+                pending_s5 = ogs_gtp_xact_find_by_id(gn_xact->assoc_xact_id);
+            if (pending_s5 &&
+                    pending_s5->seq[0].type ==
+                        OGS_GTP2_CREATE_SESSION_REQUEST_TYPE &&
+                    pending_s5->assoc_xact_id == gn_xact->id) {
+                ogs_info("[%s] duplicate Create PDP Context Request while S5 "
+                        "pending - ignoring (NSAPI=%u)",
+                        sgwc_ue->imsi_bcd, req->nsapi.u8);
+                return;
+            }
+
+            if (sgwc_ue->csr_replace_s11_xact_id != OGS_INVALID_POOL_ID) {
+                ogs_info("[%s] duplicate Create PDP Context Request while CSR "
+                        "replace pending - ignoring (NSAPI=%u)",
+                        sgwc_ue->imsi_bcd, req->nsapi.u8);
+                return;
+            }
+
+            if (sess->sgwu_sxa_seid && sess->pfcp_node) {
+                ogs_info("[%s] OLD Session Release [NSAPI=%u,APN:%s]",
+                        sgwc_ue->imsi_bcd, req->nsapi.u8, sess->session.name);
+                sgwc_sess_remove(sess);
+            } else {
+                ogs_info("[%s] duplicate Create PDP Context Request while "
+                        "session establishment pending - ignoring (NSAPI=%u)",
+                        sgwc_ue->imsi_bcd, req->nsapi.u8);
+                return;
+            }
+        }
+    }
 
     sgwc_gn_create_pdp_proceed(sgwc_ue, gn_xact, gtpbuf, message);
 }
