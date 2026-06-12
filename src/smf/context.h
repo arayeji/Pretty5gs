@@ -663,6 +663,13 @@ typedef struct smf_sess_s {
     ogs_eps_tai_t   e_tai;
     ogs_e_cgi_t     e_cgi;
 
+    /* Gn User Location Information (parsed from GTPv1 ULI IE) */
+    uint8_t         uli_geo_loc_type; /* OGS_GTP1_GEO_LOC_TYPE_* */
+    uint16_t        uli_lac;
+    uint16_t        uli_rac;
+    uint16_t        uli_sac;
+    uint16_t        uli_ci;
+
     /* NR Location */
     ogs_5gs_tai_t   nr_tai;
     ogs_nr_cgi_t    nr_cgi;

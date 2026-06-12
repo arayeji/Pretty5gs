@@ -133,6 +133,9 @@ typedef struct ogs_metrics_query_s {
     const char *ip;        /* ?ip= / ?enb_ip= / ?gnb_ip= (RAN user-plane IP) */
     uint32_t    enb_id;    /* ?enb_id=N (also reused for gnb_id) */
     int         has_enb_id;
+    const char *rat;       /* ?rat=UTRAN (case insensitive) */
+    uint16_t    lac;       /* ?lac=N (3G LAC, LTE/5G TAC lower 16 bits) */
+    int         has_lac;
 
     /*
      * ?force=1 (or true/yes) toggles "polite" vs "abrupt" semantics

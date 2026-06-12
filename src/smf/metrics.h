@@ -113,6 +113,16 @@ typedef enum smf_metric_type_by_plmn_s {
 void smf_metrics_inst_by_plmn_add(
     ogs_plmn_id_t *plmn, smf_metric_type_by_plmn_t t, int val);
 
+/* BY RAT */
+typedef enum smf_metric_type_by_rat_s {
+    SMF_METR_GAUGE_SM_SESSIONNBR_BY_RAT = 0,
+    _SMF_METR_BY_RAT_MAX,
+} smf_metric_type_by_rat_t;
+
+void smf_metrics_inst_by_rat_add(
+    const char *rat, const char *gtp_if,
+    smf_metric_type_by_rat_t t, int val);
+
 void smf_metrics_init(void);
 void smf_metrics_final(void);
 
