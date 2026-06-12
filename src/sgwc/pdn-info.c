@@ -266,7 +266,23 @@ static cJSON *build_single_pdn_object(const sgwc_sess_t *sess,
 
     if (def_bearer) {
         sgwc_tunnel_t *dl_tunnel = sgwc_dl_tunnel_in_bearer(def_bearer);
+        sgwc_tunnel_t *ul_tunnel = sgwc_ul_tunnel_in_bearer(def_bearer);
         char enb_ip[OGS_ADDRSTRLEN] = "";
+        char pgw_u_ip[OGS_ADDRSTRLEN] = "";
+
+        if (ul_tunnel && ip_to_text(&ul_tunnel->remote_ip, pgw_u_ip, sizeof(pgw_u_ip))) {
+            cJSON *pgw_u = cJSON_CreateObject();
+            if (!pgw_u) {
+                cJSON_Delete(pdn);
+                return NULL;
+            }
+            cJSON_AddItemToObjectCS(pgw_u, "addr", cJSON_CreateString(pgw_u_ip));
+            if (ul_tunnel->remote_teid) {
+                cJSON_AddItemToObjectCS(pgw_u, "teid",
+                        cJSON_CreateNumber((double)ul_tunnel->remote_teid));
+            }
+            cJSON_AddItemToObjectCS(pdn, "pgw_u", pgw_u);
+        }
 
         if (dl_tunnel && ip_to_text(&dl_tunnel->remote_ip, enb_ip, sizeof(enb_ip))) {
             cJSON *s1u = cJSON_CreateObject();
@@ -308,6 +324,13 @@ static cJSON *build_single_pdn_object(const sgwc_sess_t *sess,
                 cJSON_CreateNumber((double)sess->sgwc_sxa_seid));
         cJSON_AddItemToObjectCS(sxa, "sgwu_seid",
                 cJSON_CreateNumber((double)sess->sgwu_sxa_seid));
+        if (sess->pfcp_node && sess->pfcp_node->addr_list) {
+            const char *sgwu_addr =
+                ogs_sockaddr_to_string_static(sess->pfcp_node->addr_list);
+            if (sgwu_addr && sgwu_addr[0])
+                cJSON_AddItemToObjectCS(sxa, "sgwu_addr",
+                        cJSON_CreateString(sgwu_addr));
+        }
         cJSON_AddItemToObjectCS(pdn, "sxa", sxa);
     }
 
