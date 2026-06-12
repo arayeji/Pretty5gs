@@ -18,6 +18,7 @@
  */
 
 #include "gtp-path.h"
+#include "gn-build.h"
 
 /*
  * PGW peers are normally learned from Create Session F-TEID. Home PGW may
@@ -39,6 +40,103 @@ static bool sgwc_gtpc_is_s5_pgw_message(uint8_t type)
     default:
         return false;
     }
+}
+
+static bool sgwc_gtpc_is_gn_message(uint8_t type)
+{
+    switch (type) {
+    case OGS_GTP1_ECHO_REQUEST_TYPE:
+    case OGS_GTP1_ECHO_RESPONSE_TYPE:
+    case OGS_GTP1_CREATE_PDP_CONTEXT_REQUEST_TYPE:
+    case OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE:
+    case OGS_GTP1_UPDATE_PDP_CONTEXT_REQUEST_TYPE:
+    case OGS_GTP1_UPDATE_PDP_CONTEXT_RESPONSE_TYPE:
+    case OGS_GTP1_DELETE_PDP_CONTEXT_REQUEST_TYPE:
+    case OGS_GTP1_DELETE_PDP_CONTEXT_RESPONSE_TYPE:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static int sgwc_gn_queue_message(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
+        ogs_sockaddr_t *from)
+{
+    sgwc_event_t *e = NULL;
+    int rv;
+    ogs_gtp_node_t *gnode = NULL;
+    char frombuf[OGS_ADDRSTRLEN];
+
+    ogs_assert(sock);
+    ogs_assert(pkbuf);
+    ogs_assert(from);
+
+    gnode = ogs_gtp_node_find_by_addr(&sgwc_self()->sgsn_gn_list, from);
+    if (!gnode) {
+        gnode = ogs_gtp_node_add_by_addr(&sgwc_self()->sgsn_gn_list, from);
+        if (!gnode) {
+            ogs_error("Failed to create SGSN gnode [%s]:%u",
+                    OGS_ADDR(from, frombuf), OGS_PORT(from));
+            ogs_pkbuf_free(pkbuf);
+            return -1;
+        }
+        gnode->sock = sock;
+        rv = ogs_gtp_connect(ogs_gtp_self()->gtpc_sock,
+                ogs_gtp_self()->gtpc_sock6, gnode);
+        if (rv != OGS_OK)
+            ogs_error("ogs_gtp_connect() failed for SGSN [%s]:%u",
+                    OGS_ADDR(from, frombuf), OGS_PORT(from));
+        sgwc_sgsn_peer_setup(gnode);
+    }
+
+    e = sgwc_event_new(SGWC_EVT_GN_MESSAGE);
+    ogs_assert(e);
+    e->gnode = gnode;
+    e->pkbuf = pkbuf;
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        ogs_pkbuf_free(pkbuf);
+        sgwc_event_free(e);
+        return -1;
+    }
+
+    return 1;
+}
+
+static int sgwc_gn_recv_one(ogs_sock_t *sock)
+{
+    ssize_t size;
+    ogs_pkbuf_t *pkbuf = NULL;
+    ogs_sockaddr_t from;
+
+    ogs_assert(sock);
+
+    pkbuf = ogs_pkbuf_alloc(NULL, OGS_MAX_SDU_LEN);
+    ogs_assert(pkbuf);
+    ogs_pkbuf_put(pkbuf, OGS_MAX_SDU_LEN);
+
+    size = ogs_recvfrom(sock->fd, pkbuf->data, pkbuf->len, 0, &from);
+    if (size <= 0) {
+        ogs_pkbuf_free(pkbuf);
+        if (size < 0 && ogs_socket_errno_would_block())
+            return 0;
+        return -1;
+    }
+
+    ogs_pkbuf_trim(pkbuf, size);
+    return sgwc_gn_queue_message(sock, pkbuf, &from);
+}
+
+static void _gtpv1_c_recv_cb(short when, ogs_socket_t fd, void *data)
+{
+    ogs_sock_t *sock = data;
+
+    ogs_assert(sock);
+
+    while (sgwc_gn_recv_one(sock) > 0)
+        ;
 }
 
 static int sgwc_gtpc_recv_one(ogs_sock_t *sock)
@@ -71,6 +169,15 @@ static int sgwc_gtpc_recv_one(ogs_sock_t *sock)
     }
 
     ogs_pkbuf_trim(pkbuf, size);
+
+    if (sgwc_self()->gn_enabled && pkbuf->len >= sizeof(ogs_gtp1_header_t)) {
+        uint8_t gtp_ver = ((ogs_gtp1_header_t *)pkbuf->data)->version;
+        uint8_t msg_type = ((ogs_gtp1_header_t *)pkbuf->data)->type;
+
+        if (gtp_ver == 1 && sgwc_gtpc_is_gn_message(msg_type)) {
+            return sgwc_gn_queue_message(sock, pkbuf, &from);
+        }
+    }
 
     /*
      * 5.5.2 in spec 29.274
@@ -349,6 +456,40 @@ int sgwc_gtp_open(void)
     ogs_assert(ogs_gtp_self()->gtpc_sock || ogs_gtp_self()->gtpc_sock6);
     ogs_assert(ogs_gtp_self()->gtpc_addr || ogs_gtp_self()->gtpc_addr6);
 
+    if (sgwc_self()->gn_enabled) {
+        ogs_socknode_t *node = NULL;
+        ogs_sock_t *gn_sock = NULL;
+
+        if (!ogs_list_empty(&sgwc_self()->gn_server_list) ||
+                !ogs_list_empty(&sgwc_self()->gn_server_list6)) {
+            ogs_list_for_each(&sgwc_self()->gn_server_list, node) {
+                gn_sock = ogs_gtp_server(node);
+                if (!gn_sock)
+                    return OGS_ERROR;
+                node->poll = ogs_pollset_add(ogs_app()->pollset,
+                        OGS_POLLIN, gn_sock->fd, _gtpv1_c_recv_cb, gn_sock);
+                ogs_assert(node->poll);
+            }
+            ogs_list_for_each(&sgwc_self()->gn_server_list6, node) {
+                gn_sock = ogs_gtp_server(node);
+                if (!gn_sock)
+                    return OGS_ERROR;
+                node->poll = ogs_pollset_add(ogs_app()->pollset,
+                        OGS_POLLIN, gn_sock->fd, _gtpv1_c_recv_cb, gn_sock);
+                ogs_assert(node->poll);
+            }
+        }
+
+        sgwc_self()->gn_addr = ogs_gtp_self()->gtpc_addr;
+        sgwc_self()->gn_addr6 = ogs_gtp_self()->gtpc_addr6;
+        if (gn_sock) {
+            if (gn_sock->local_addr.ogs_sa_family == AF_INET)
+                sgwc_self()->gn_addr = &gn_sock->local_addr;
+            else
+                sgwc_self()->gn_addr6 = &gn_sock->local_addr;
+        }
+    }
+
     return sgwc_roam_gtpc_open();
 }
 
@@ -571,6 +712,103 @@ void sgwc_gtp_close(void)
 
     ogs_socknode_remove_all(&ogs_gtp_self()->gtpc_list);
     ogs_socknode_remove_all(&ogs_gtp_self()->gtpc_list6);
+    ogs_socknode_remove_all(&sgwc_self()->gn_server_list);
+    ogs_socknode_remove_all(&sgwc_self()->gn_server_list6);
+}
+
+int sgwc_gtp_send_create_pdp_context_response(
+        sgwc_sess_t *sess, ogs_gtp_xact_t *gn_xact,
+        ogs_gtp2_create_session_response_t *s5_rsp)
+{
+    int rv;
+    sgwc_ue_t *sgwc_ue = NULL;
+    ogs_gtp1_header_t h;
+    ogs_pkbuf_t *pkbuf = NULL;
+
+    ogs_assert(sess);
+    ogs_assert(gn_xact);
+    sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+    ogs_assert(sgwc_ue);
+
+    pkbuf = sgwc_gn_build_create_pdp_context_response(
+            OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE, sess, s5_rsp);
+    if (!pkbuf) {
+        ogs_error("sgwc_gn_build_create_pdp_context_response() failed");
+        return OGS_ERROR;
+    }
+
+    memset(&h, 0, sizeof(h));
+    h.type = OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE;
+    h.teid = sgwc_ue->mme_s11_teid;
+
+    rv = ogs_gtp1_xact_update_tx(gn_xact, &h, pkbuf);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_gtp1_xact_update_tx() failed");
+        return OGS_ERROR;
+    }
+
+    rv = ogs_gtp_xact_commit(gn_xact);
+    ogs_expect(rv == OGS_OK);
+    return rv;
+}
+
+int sgwc_gtp_send_delete_pdp_context_response(
+        sgwc_sess_t *sess, ogs_gtp_xact_t *gn_xact, uint8_t gtp1_cause)
+{
+    int rv;
+    sgwc_ue_t *sgwc_ue = NULL;
+    ogs_gtp1_header_t h;
+    ogs_pkbuf_t *pkbuf = NULL;
+
+    ogs_assert(gn_xact);
+
+    if (sess)
+        sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+
+    pkbuf = sgwc_gn_build_delete_pdp_context_response(
+            OGS_GTP1_DELETE_PDP_CONTEXT_RESPONSE_TYPE, sess, gtp1_cause);
+    if (!pkbuf) {
+        ogs_error("sgwc_gn_build_delete_pdp_context_response() failed");
+        return OGS_ERROR;
+    }
+
+    memset(&h, 0, sizeof(h));
+    h.type = OGS_GTP1_DELETE_PDP_CONTEXT_RESPONSE_TYPE;
+    h.teid = sgwc_ue ? sgwc_ue->mme_s11_teid : 0;
+
+    rv = ogs_gtp1_xact_update_tx(gn_xact, &h, pkbuf);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_gtp1_xact_update_tx() failed");
+        return OGS_ERROR;
+    }
+
+    rv = ogs_gtp_xact_commit(gn_xact);
+    ogs_expect(rv == OGS_OK);
+    return rv;
+}
+
+int sgwc_gtp_send_update_pdp_context_response(
+        ogs_gtp_xact_t *gn_xact, uint32_t sgsn_teid, ogs_pkbuf_t *pkbuf)
+{
+    int rv;
+    ogs_gtp1_header_t h;
+
+    ogs_assert(gn_xact);
+    ogs_assert(pkbuf);
+
+    memset(&h, 0, sizeof(h));
+    h.type = OGS_GTP1_UPDATE_PDP_CONTEXT_RESPONSE_TYPE;
+    h.teid = sgsn_teid;
+
+    rv = ogs_gtp1_xact_update_tx(gn_xact, &h, pkbuf);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_gtp1_xact_update_tx() failed");
+        return OGS_ERROR;
+    }
+
+    rv = ogs_gtp_xact_commit(gn_xact);
+    ogs_expect(rv == OGS_OK);
+    return rv;
 }
 
 static void bearer_timeout(ogs_gtp_xact_t *xact, void *data)

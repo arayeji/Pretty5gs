@@ -72,6 +72,8 @@ const char *sgwc_event_get_name(sgwc_event_t *e)
         return "SGWC_EVT_S11_MESSAGE";
     case SGWC_EVT_S5C_MESSAGE:
         return "SGWC_EVT_S5C_MESSAGE";
+    case SGWC_EVT_GN_MESSAGE:
+        return "SGWC_EVT_GN_MESSAGE";
 
     case SGWC_EVT_SXA_MESSAGE:
         return "SGWC_EVT_SXA_MESSAGE";

@@ -49,6 +49,14 @@ void sgwc_gtpc_f_teid_addr(
 int sgwc_gtp_send_create_session_response(
     sgwc_sess_t *sess, ogs_gtp_xact_t *xact);
 
+int sgwc_gtp_send_create_pdp_context_response(
+        sgwc_sess_t *sess, ogs_gtp_xact_t *gn_xact,
+        ogs_gtp2_create_session_response_t *s5_rsp);
+int sgwc_gtp_send_delete_pdp_context_response(
+        sgwc_sess_t *sess, ogs_gtp_xact_t *gn_xact, uint8_t gtp1_cause);
+int sgwc_gtp_send_update_pdp_context_response(
+        ogs_gtp_xact_t *gn_xact, uint32_t sgsn_teid, ogs_pkbuf_t *pkbuf);
+
 int sgwc_gtp_send_downlink_data_notification(
     uint8_t cause_value, sgwc_bearer_t *bearer);
 

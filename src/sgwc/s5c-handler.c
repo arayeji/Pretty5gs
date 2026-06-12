@@ -24,6 +24,7 @@
 #include "metrics.h"
 
 #include "s5c-handler.h"
+#include "gn-build.h"
 
 static bool sgwc_s5_message_recovery(
         ogs_gtp2_message_t *message, uint8_t *recovery)
@@ -580,6 +581,20 @@ void sgwc_s5c_handle_modify_bearer_response(
         ogs_assert(OGS_OK ==
             sgwc_gtp_send_create_session_response(sess, s11_xact));
     } else {
+        if (sess && sess->gn) {
+            ogs_pkbuf_t *gn_pkbuf = NULL;
+
+            gn_pkbuf = sgwc_gn_build_update_pdp_context_response(
+                    OGS_GTP1_UPDATE_PDP_CONTEXT_RESPONSE_TYPE, sess,
+                    OGS_GTP1_CAUSE_REQUEST_ACCEPTED);
+            if (!gn_pkbuf) {
+                ogs_error("sgwc_gn_build_update_pdp_context_response() failed");
+                return;
+            }
+            rv = sgwc_gtp_send_update_pdp_context_response(
+                    s11_xact, sgwc_ue->mme_s11_teid, gn_pkbuf);
+            ogs_expect(rv == OGS_OK);
+        } else {
         message->h.type = OGS_GTP2_MODIFY_BEARER_RESPONSE_TYPE;
         message->h.teid = sgwc_ue->mme_s11_teid;
 
@@ -597,6 +612,7 @@ void sgwc_s5c_handle_modify_bearer_response(
 
         rv = ogs_gtp_xact_commit(s11_xact);
         ogs_expect(rv == OGS_OK);
+        }
     }
 }
 
