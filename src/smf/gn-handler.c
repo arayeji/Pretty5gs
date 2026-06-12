@@ -287,8 +287,6 @@ uint8_t smf_gn_handle_create_pdp_context_request(
     /* Initially Set Session Type from UE */
     sess->session.session_type = sess->ue_session_type;
 
-    smf_sess_apply_subscription_ue_ip(sess);
-
     rv = smf_radius_authorize_for_session(sess);
     if (rv != OGS_OK) {
         ogs_error("RADIUS authentication failed");

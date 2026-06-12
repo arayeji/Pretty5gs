@@ -18,7 +18,6 @@
  */
 
 #include "context.h"
-#include "ogs-dbi.h"
 #include "event.h"
 #include "fd-path.h"
 #include "gtp-path.h"
@@ -99,14 +98,6 @@ int smf_initialize(void)
 
     rv = smf_context_parse_config();
     if (rv != OGS_OK) return rv;
-
-    if (ogs_app()->db_uri) {
-        rv = ogs_dbi_init(ogs_app()->db_uri);
-        if (rv != OGS_OK) {
-            ogs_warn("MongoDB init failed; SMF starts without subscription "
-                    "static UE IP (use pool/RADIUS). Check db_uri and mongod");
-        }
-    }
 
     rv = ogs_pfcp_ue_pool_generate();
     if (rv != OGS_OK) return rv;
@@ -197,9 +188,6 @@ void smf_terminate(void)
     ogs_metrics_context_close(ogs_metrics_self());
 
     smf_fd_final();
-
-    if (ogs_app()->db_uri)
-        ogs_dbi_final();
 
     smf_context_final();
 
