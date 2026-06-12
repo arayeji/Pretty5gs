@@ -33,6 +33,7 @@ libsgwc_sources = files('''
     sgwc-reload-lists.h
     admin-api.h
     metrics.h
+    pdn-info.h
 
     init.c
     event.c
@@ -52,6 +53,7 @@ libsgwc_sources = files('''
     sgwc-trace.c
     sgwc-gtp-interop.c
     admin-api.c
+    pdn-info.c
     runtime-config.c
     ../../lib/app/ogs-reload-audit-json.c
     metrics.c
