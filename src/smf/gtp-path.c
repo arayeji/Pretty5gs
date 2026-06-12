@@ -466,6 +466,9 @@ int smf_gtp2_send_create_session_response(
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
+    ogs_info("S5 Create Session Response sent SGW_S5C_TEID=0x%x",
+            sess->sgw_s5c_teid);
+
     return rv;
 }
 
