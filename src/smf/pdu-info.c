@@ -256,8 +256,6 @@ bool smf_sess_rat_metric_labels(const smf_sess_t *sess,
 
     if (sess->gtp.version == 1)
         *gtp_if = gtp_if_gn;
-    else if (sess->gtp.version == 2)
-        *gtp_if = gtp_if_s5;
     else
         *gtp_if = gtp_if_s5;
 
