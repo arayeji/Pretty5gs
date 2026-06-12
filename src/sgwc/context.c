@@ -335,6 +335,7 @@ void sgwc_context_init(void)
     self.cdr_local_seq = 0;
     self.gtpc_recovery = 1;
     self.gtpc_echo_interval = 0;
+    self.pfcp_send_user_id = true;
 
     context_initialized = 1;
 }
@@ -714,7 +715,17 @@ int sgwc_context_parse_config(void)
                 } else if (sgwc_sgwu_nwi_rewrite_key(sgwc_key)) {
                     sgwc_sgwu_nwi_rewrite_parse(&sgwc_iter);
                 } else if (!strcmp(sgwc_key, "pfcp")) {
-                    /* handle config in pfcp library */
+                    ogs_yaml_iter_t pfcp_iter;
+                    ogs_yaml_iter_recurse(&sgwc_iter, &pfcp_iter);
+                    while (ogs_yaml_iter_next(&pfcp_iter)) {
+                        const char *pfcp_key = ogs_yaml_iter_key(&pfcp_iter);
+                        ogs_assert(pfcp_key);
+                        if (!strcmp(pfcp_key, "send_user_id") ||
+                                !strcmp(pfcp_key, "send_user_id_to_sgwu")) {
+                            self.pfcp_send_user_id =
+                                ogs_yaml_iter_bool(&pfcp_iter);
+                        }
+                    }
                 } else if (!strcmp(sgwc_key, "sgwu")) {
                     /* handle config in pfcp library */
                 } else if (!strcmp(sgwc_key, "inbound_roam")) {

@@ -71,6 +71,7 @@ sgwc:
     client:
       sgwu:
         - address: 127.0.0.6
+#    send_user_id: true   # PFCP User ID (IMSI/MSISDN) to SGW-U (default: true)
 
 ################################################################################
 # GTP-C Server

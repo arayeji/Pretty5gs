@@ -76,6 +76,7 @@ char *sgwc_runtime_config_dump(void)
     cJSON *root = cJSON_CreateObject();
     cJSON *runtime = NULL;
     cJSON *gtpu = NULL;
+    cJSON *pfcp = NULL;
     cJSON *inbound = NULL;
     cJSON *cdr = NULL;
     cJSON *rules = NULL;
@@ -105,6 +106,11 @@ char *sgwc_runtime_config_dump(void)
     cJSON_AddNumberToObject(gtpu, "teid_range_indication",
             ctx->gtpu_teid_range_indication);
     cJSON_AddNumberToObject(gtpu, "teid_range", ctx->gtpu_teid_range);
+
+    pfcp = cJSON_CreateObject();
+    ogs_assert(pfcp);
+    cJSON_AddItemToObject(runtime, "pfcp", pfcp);
+    cJSON_AddBoolToObject(pfcp, "send_user_id", ctx->pfcp_send_user_id);
 
     inbound = cJSON_CreateObject();
     ogs_assert(inbound);

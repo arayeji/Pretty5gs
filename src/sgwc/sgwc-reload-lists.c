@@ -326,6 +326,14 @@ static int sgwc_reload_pfcp_sgwu_add_only(ogs_yaml_iter_t *pfcp_iter)
             }
         } else if (!strcmp(pfcp_key, "server")) {
             ogs_reload_audit_warn("sgwc.pfcp.server ignored (bind address)");
+        } else if (!strcmp(pfcp_key, "send_user_id") ||
+                !strcmp(pfcp_key, "send_user_id_to_sgwu")) {
+            sgwc_context_t *self = sgwc_self();
+
+            self->pfcp_send_user_id = ogs_yaml_iter_bool(&pfcp_sub_iter);
+            sgwc_reload_lists_changed++;
+            ogs_reload_audit_note("sgwc.pfcp.send_user_id=%s",
+                    self->pfcp_send_user_id ? "true" : "false");
         }
     }
 
