@@ -25,6 +25,7 @@ static int sgwc_gn_gtp1_uli_to_gtp2(
         char *uli_buf, int uli_buf_len)
 {
     ogs_gtp1_uli_t uli;
+    ogs_plmn_id_t plmn_id;
     ogs_tlv_octet_t gtp2_uli_tlv;
 
     ogs_assert(gtp2_uli);
@@ -40,19 +41,22 @@ static int sgwc_gn_gtp1_uli_to_gtp2(
     case OGS_GTP1_GEO_LOC_TYPE_CGI:
         gtp2_uli->flags.e_cgi = 1;
         gtp2_uli->flags.tai = 1;
-        ogs_nas_from_plmn_id(&gtp2_uli->e_cgi.nas_plmn_id, &uli.cgi.nas_plmn_id);
+        ogs_nas_to_plmn_id(&plmn_id, &uli.cgi.nas_plmn_id);
+        ogs_nas_from_plmn_id(&gtp2_uli->e_cgi.nas_plmn_id, &plmn_id);
         gtp2_uli->e_cgi.cell_id = uli.cgi.ci;
-        ogs_nas_from_plmn_id(&gtp2_uli->tai.nas_plmn_id, &uli.cgi.nas_plmn_id);
+        ogs_nas_from_plmn_id(&gtp2_uli->tai.nas_plmn_id, &plmn_id);
         gtp2_uli->tai.tac = uli.cgi.lac;
         break;
     case OGS_GTP1_GEO_LOC_TYPE_SAI:
         gtp2_uli->flags.tai = 1;
-        ogs_nas_from_plmn_id(&gtp2_uli->tai.nas_plmn_id, &uli.sai.nas_plmn_id);
+        ogs_nas_to_plmn_id(&plmn_id, &uli.sai.nas_plmn_id);
+        ogs_nas_from_plmn_id(&gtp2_uli->tai.nas_plmn_id, &plmn_id);
         gtp2_uli->tai.tac = uli.sai.lac;
         break;
     case OGS_GTP1_GEO_LOC_TYPE_RAI:
         gtp2_uli->flags.tai = 1;
-        ogs_nas_from_plmn_id(&gtp2_uli->tai.nas_plmn_id, &uli.rai.nas_plmn_id);
+        ogs_nas_to_plmn_id(&plmn_id, &uli.rai.nas_plmn_id);
+        ogs_nas_from_plmn_id(&gtp2_uli->tai.nas_plmn_id, &plmn_id);
         gtp2_uli->tai.tac = uli.rai.lac;
         break;
     default:
@@ -233,15 +237,14 @@ static ogs_pkbuf_t *sgwc_gn_build_create_session_request(
 
     if (req->end_user_address.presence) {
         ogs_eua_t *eua = req->end_user_address.data;
+        ogs_ip_t ip;
+        uint8_t pdu_session_type = 0;
+
         ogs_assert(eua);
-        csr->pdn_type.presence = 1;
-        if (eua->pdp_type_organization == 0x01) {
-            if (eua->pdp_type_number == 0x21)
-                csr->pdn_type.u8 = OGS_PDU_SESSION_TYPE_IPV4;
-            else if (eua->pdp_type_number == 0x57)
-                csr->pdn_type.u8 = OGS_PDU_SESSION_TYPE_IPV6;
-            else if (eua->pdp_type_number == 0x8d)
-                csr->pdn_type.u8 = OGS_PDU_SESSION_TYPE_IPV4V6;
+        if (ogs_gtp1_eua_to_ip(eua, req->end_user_address.len, &ip,
+                &pdu_session_type) == OGS_OK) {
+            csr->pdn_type.presence = 1;
+            csr->pdn_type.u8 = pdu_session_type;
         }
     }
 
