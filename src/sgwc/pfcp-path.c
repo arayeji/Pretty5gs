@@ -20,6 +20,7 @@
 #include "pfcp-path.h"
 #include "gtp-path.h"
 #include "s11-handler.h"
+#include "gn-handler.h"
 #include "sgwc-trace.h"
 #include "event.h"
 
@@ -270,6 +271,11 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
 
         s11_xact = ogs_gtp_xact_find_by_id(xact->assoc_xact_id);
         if (sgwc_ue && s11_xact) {
+            if (sess->gn) {
+                sgwc_gn_send_create_reject(sess, sgwc_ue, s11_xact,
+                        OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+                break;
+            }
             ogs_gtp_send_error_message(
                     s11_xact, sgwc_ue->mme_s11_teid,
                     OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
