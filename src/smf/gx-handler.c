@@ -27,11 +27,13 @@
 
 uint32_t smf_diameter_failure_code(uint32_t code)
 {
-    if (code == ER_DIAMETER_SUCCESS)
+    /*
+     * Pool-allocated sessions leave unused sm_data.*_err at 0 until a Diameter
+     * answer arrives; 0 must not be treated as UNABLE_TO_DELIVER.
+     */
+    if (code == ER_DIAMETER_SUCCESS || code == 0)
         return ER_DIAMETER_SUCCESS;
-    if (code != 0)
-        return code;
-    return ER_DIAMETER_UNABLE_TO_DELIVER;
+    return code;
 }
 
 /* Returns ER_DIAMETER_SUCCESS on success, Diameter error code on failue. */
