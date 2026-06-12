@@ -101,7 +101,7 @@ static int trace_http_get(const char *host, uint16_t port,
     if (ogs_inet_pton(AF_INET, host, &addr.sin.sin_addr) != OGS_OK)
         return OGS_ERROR;
 
-    sock = ogs_tcp_client(ogs_sa_family(&addr), &addr);
+    sock = ogs_tcp_client(&addr, NULL);
     if (!sock)
         return OGS_ERROR;
 
