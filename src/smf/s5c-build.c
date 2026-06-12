@@ -79,6 +79,10 @@ ogs_pkbuf_t *smf_s5c_build_create_session_response(
     memset(&smf_s5c_teid, 0, sizeof(ogs_gtp2_f_teid_t));
     switch (sess->gtp_rat_type) {
     case OGS_GTP2_RAT_TYPE_EUTRAN:
+    case OGS_GTP2_RAT_TYPE_UTRAN:
+    case OGS_GTP2_RAT_TYPE_GERAN:
+    case OGS_GTP2_RAT_TYPE_GAN:
+    case OGS_GTP2_RAT_TYPE_HSPA_EVOLUTION:
         smf_s5c_teid.interface_type = OGS_GTP2_F_TEID_S5_S8_PGW_GTP_C;
         break;
     case OGS_GTP2_RAT_TYPE_WLAN:
@@ -123,6 +127,10 @@ ogs_pkbuf_t *smf_s5c_build_create_session_response(
     /* APN Restriction */
     switch (sess->gtp_rat_type) {
     case OGS_GTP2_RAT_TYPE_EUTRAN:
+    case OGS_GTP2_RAT_TYPE_UTRAN:
+    case OGS_GTP2_RAT_TYPE_GERAN:
+    case OGS_GTP2_RAT_TYPE_GAN:
+    case OGS_GTP2_RAT_TYPE_HSPA_EVOLUTION:
         rsp->apn_restriction.presence = 1;
         rsp->apn_restriction.u8 = OGS_GTP2_APN_NO_RESTRICTION;
         break;
@@ -256,6 +264,10 @@ ogs_pkbuf_t *smf_s5c_build_create_session_response(
 
         switch (sess->gtp_rat_type) {
         case OGS_GTP2_RAT_TYPE_EUTRAN:
+        case OGS_GTP2_RAT_TYPE_UTRAN:
+        case OGS_GTP2_RAT_TYPE_GERAN:
+        case OGS_GTP2_RAT_TYPE_GAN:
+        case OGS_GTP2_RAT_TYPE_HSPA_EVOLUTION:
             pgw_s5u_teid[i].interface_type = OGS_GTP2_F_TEID_S5_S8_PGW_GTP_U;
             rsp->bearer_contexts_created[i].s5_s8_u_sgw_f_teid.presence = 1;
             rsp->bearer_contexts_created[i].s5_s8_u_sgw_f_teid.data =
@@ -489,6 +501,10 @@ ogs_pkbuf_t *smf_s5c_build_create_bearer_request(
     memset(&pgw_s5u_teid, 0, sizeof(ogs_gtp2_f_teid_t));
     switch (sess->gtp_rat_type) {
     case OGS_GTP2_RAT_TYPE_EUTRAN:
+    case OGS_GTP2_RAT_TYPE_UTRAN:
+    case OGS_GTP2_RAT_TYPE_GERAN:
+    case OGS_GTP2_RAT_TYPE_GAN:
+    case OGS_GTP2_RAT_TYPE_HSPA_EVOLUTION:
         pgw_s5u_teid.interface_type = OGS_GTP2_F_TEID_S5_S8_PGW_GTP_U;
         break;
     case OGS_GTP2_RAT_TYPE_WLAN:
