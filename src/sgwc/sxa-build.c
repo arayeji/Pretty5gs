@@ -36,6 +36,10 @@ ogs_pkbuf_t *sgwc_sxa_build_session_establishment_request(
     ogs_pfcp_f_seid_t f_seid;
     int len;
 
+    sgwc_ue_t *sgwc_ue = NULL;
+    ogs_pfcp_user_id_t user_id;
+    char user_id_buf[sizeof(ogs_pfcp_user_id_t)];
+
     ogs_debug("Session Establishment Request");
     ogs_assert(sess);
 
@@ -69,6 +73,33 @@ ogs_pkbuf_t *sgwc_sxa_build_session_establishment_request(
     req->cp_f_seid.presence = 1;
     req->cp_f_seid.data = &f_seid;
     req->cp_f_seid.len = len;
+
+    /* User ID */
+    if (sgwc_self()->pfcp_send_user_id) {
+        sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        if (sgwc_ue) {
+            memset(&user_id, 0, sizeof(ogs_pfcp_user_id_t));
+            if (sgwc_ue->imsi_len) {
+                user_id.imsif = 1;
+                user_id.imsi_len = sgwc_ue->imsi_len;
+                ogs_assert(sgwc_ue->imsi_len <= OGS_MAX_IMSI_LEN);
+                memcpy(user_id.imsi, sgwc_ue->imsi, sgwc_ue->imsi_len);
+            }
+            if (sgwc_ue->msisdn_len) {
+                user_id.msisdnf = 1;
+                user_id.msisdn_len = sgwc_ue->msisdn_len;
+                ogs_assert(sgwc_ue->msisdn_len <= OGS_MAX_MSISDN_LEN);
+                memcpy(user_id.msisdn, sgwc_ue->msisdn, sgwc_ue->msisdn_len);
+            }
+
+            if (user_id.flags) {
+                ogs_pfcp_build_user_id(
+                        &req->user_id, &user_id, user_id_buf,
+                        sizeof(user_id_buf));
+                req->user_id.presence = 1;
+            }
+        }
+    }
 
     ogs_pfcp_pdrbuf_init();
 

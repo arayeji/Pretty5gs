@@ -825,6 +825,9 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                                             YAML_SEQUENCE_NODE);
                                 }
                             }
+                        } else if (!strcmp(pfcp_key, "send_user_id") ||
+                                !strcmp(pfcp_key, "send_user_id_to_sgwu")) {
+                            /* parsed by SGWC */
                         } else
                             ogs_warn("unknown key `%s`", pfcp_key);
                     }

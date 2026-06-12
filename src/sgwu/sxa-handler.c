@@ -77,6 +77,25 @@ void sgwu_sxa_handle_session_establishment_request(
         sereq_flags.value = req->pfcpsereq_flags.u8;
     }
 
+    /* User ID */
+    if (req->user_id.presence) {
+        ogs_pfcp_user_id_t user_id;
+
+        memset(&user_id, 0, sizeof(user_id));
+        if (ogs_pfcp_parse_user_id(&user_id, &req->user_id) >= 0) {
+            if (user_id.imsif && user_id.imsi_len) {
+                sess->imsi_len = user_id.imsi_len;
+                ogs_assert(sess->imsi_len <= OGS_MAX_IMSI_LEN);
+                memcpy(sess->imsi, user_id.imsi, sess->imsi_len);
+            }
+            if (user_id.msisdnf && user_id.msisdn_len) {
+                sess->msisdn_len = user_id.msisdn_len;
+                ogs_assert(sess->msisdn_len <= OGS_MAX_MSISDN_LEN);
+                memcpy(sess->msisdn, user_id.msisdn, sess->msisdn_len);
+            }
+        }
+    }
+
     for (i = 0; i < OGS_MAX_NUM_OF_PDR; i++) {
         created_pdr[i] = ogs_pfcp_handle_create_pdr(&sess->pfcp,
                 &req->create_pdr[i], &sereq_flags,

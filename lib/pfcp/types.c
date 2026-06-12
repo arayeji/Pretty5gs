@@ -839,3 +839,66 @@ int16_t ogs_pfcp_build_user_id(
 
     return octet->len;
 }
+
+int16_t ogs_pfcp_parse_user_id(
+        ogs_pfcp_user_id_t *user_id, ogs_tlv_octet_t *octet)
+{
+    int16_t size = 0;
+
+    ogs_assert(user_id);
+    ogs_assert(octet);
+    ogs_assert(octet->data);
+
+    memset(user_id, 0, sizeof(ogs_pfcp_user_id_t));
+
+    if (octet->len < (int16_t)sizeof(user_id->flags))
+        return -1;
+
+    user_id->flags = ((unsigned char *)octet->data)[size];
+    size += sizeof(user_id->flags);
+
+    if (user_id->imsif) {
+        if (size + (int16_t)sizeof(user_id->imsi_len) > octet->len)
+            return -1;
+        user_id->imsi_len = ((unsigned char *)octet->data)[size];
+        size += sizeof(user_id->imsi_len);
+
+        if (user_id->imsi_len > OGS_MAX_IMSI_LEN ||
+                size + user_id->imsi_len > octet->len)
+            return -1;
+        memcpy(user_id->imsi, (unsigned char *)octet->data + size,
+                user_id->imsi_len);
+        size += user_id->imsi_len;
+    }
+    if (user_id->imeif) {
+        if (size + (int16_t)sizeof(user_id->imeisv_len) > octet->len)
+            return -1;
+        user_id->imeisv_len = ((unsigned char *)octet->data)[size];
+        size += sizeof(user_id->imeisv_len);
+
+        if (user_id->imeisv_len > OGS_MAX_IMEISV_LEN ||
+                size + user_id->imeisv_len > octet->len)
+            return -1;
+        memcpy(user_id->imeisv, (unsigned char *)octet->data + size,
+                user_id->imeisv_len);
+        size += user_id->imeisv_len;
+    }
+    if (user_id->msisdnf) {
+        if (size + (int16_t)sizeof(user_id->msisdn_len) > octet->len)
+            return -1;
+        user_id->msisdn_len = ((unsigned char *)octet->data)[size];
+        size += sizeof(user_id->msisdn_len);
+
+        if (user_id->msisdn_len > OGS_MAX_MSISDN_LEN ||
+                size + user_id->msisdn_len > octet->len)
+            return -1;
+        memcpy(user_id->msisdn, (unsigned char *)octet->data + size,
+                user_id->msisdn_len);
+        size += user_id->msisdn_len;
+    }
+
+    if (size != octet->len)
+        ogs_error("Mismatch IE Length[%d] != Decoded[%d]", octet->len, size);
+
+    return size;
+}

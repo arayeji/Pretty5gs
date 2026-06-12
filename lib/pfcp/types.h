@@ -1656,6 +1656,8 @@ ED8(uint8_t spare:1;,
 int16_t ogs_pfcp_build_user_id(
         ogs_tlv_octet_t *octet, ogs_pfcp_user_id_t *user_id,
         void *data, int data_len);
+int16_t ogs_pfcp_parse_user_id(
+        ogs_pfcp_user_id_t *user_id, ogs_tlv_octet_t *octet);
 
 /*
  * 8.2.118 3GPP Interface Type

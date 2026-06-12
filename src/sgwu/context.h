@@ -58,6 +58,11 @@ typedef struct sgwu_sess_s {
         ogs_ip_t    ip;
     } sgwc_sxa_f_seid;                  /* SGW-C SEID is received from Peer */
 
+    uint8_t         imsi[OGS_MAX_IMSI_LEN];
+    int             imsi_len;
+    uint8_t         msisdn[OGS_MAX_MSISDN_LEN];
+    int             msisdn_len;
+
     ogs_pfcp_node_t *pfcp_node;
 } sgwu_sess_t;
 
