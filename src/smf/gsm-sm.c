@@ -608,7 +608,8 @@ test_can_proceed:
         !sess->sm_data.gx_ccr_init_in_flight &&
         !sess->sm_data.gy_ccr_init_in_flight) {
         diam_err = ER_DIAMETER_SUCCESS;
-        if (sess->sm_data.s6b_aaa_err != ER_DIAMETER_SUCCESS) {
+        if (sess->gtp_rat_type == OGS_GTP2_RAT_TYPE_WLAN &&
+                sess->sm_data.s6b_aaa_err != ER_DIAMETER_SUCCESS) {
             ogs_warn("S6b AAA error Result-Code[%u]", sess->sm_data.s6b_aaa_err);
             diam_err = sess->sm_data.s6b_aaa_err;
         }
@@ -616,7 +617,8 @@ test_can_proceed:
             ogs_warn("Gx CCA error Result-Code[%u]", sess->sm_data.gx_cca_init_err);
             diam_err = sess->sm_data.gx_cca_init_err;
         }
-        if (sess->sm_data.gy_cca_init_err != ER_DIAMETER_SUCCESS) {
+        if (smf_use_gy_iface() == 1 &&
+                sess->sm_data.gy_cca_init_err != ER_DIAMETER_SUCCESS) {
             ogs_warn("Gy CCA error Result-Code[%u]", sess->sm_data.gy_cca_init_err);
             diam_err = sess->sm_data.gy_cca_init_err;
         }

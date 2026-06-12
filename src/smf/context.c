@@ -42,6 +42,18 @@ static OGS_POOL(smf_n4_seid_pool, ogs_pool_id_t);
 static bool smf_sess_on_ue_list(const smf_sess_t *sess);
 static bool smf_ue_on_list(const smf_ue_t *smf_ue);
 
+static void smf_sess_sm_data_init(smf_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    sess->sm_data.s6b_aaa_err = ER_DIAMETER_SUCCESS;
+    sess->sm_data.gx_cca_init_err = ER_DIAMETER_SUCCESS;
+    sess->sm_data.gy_cca_init_err = ER_DIAMETER_SUCCESS;
+    sess->sm_data.gx_cca_term_err = ER_DIAMETER_SUCCESS;
+    sess->sm_data.gy_cca_term_err = ER_DIAMETER_SUCCESS;
+    sess->sm_data.s6b_sta_err = ER_DIAMETER_SUCCESS;
+}
+
 static int context_initialized = 0;
 
 static int num_of_smf_sess = 0;
@@ -1881,6 +1893,8 @@ smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)
     sess->index = ogs_pool_index(&smf_sess_pool, sess);
     ogs_assert(sess->index > 0 && sess->index <= ogs_app()->pool.sess);
 
+    smf_sess_sm_data_init(sess);
+
     /* -1 means "no RADIUS server pinned yet". */
     sess->radius.server_idx = -1;
 
@@ -2147,6 +2161,8 @@ smf_sess_t *smf_sess_add_by_psi(smf_ue_t *smf_ue, uint8_t psi)
             (long long)ogs_app()->pool.sess);
         return NULL;
     }
+
+    smf_sess_sm_data_init(sess);
 
     /* SBI Features */
     OGS_SBI_FEATURES_SET(sess->smpolicycontrol_features,
