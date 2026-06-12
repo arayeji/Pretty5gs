@@ -1271,9 +1271,20 @@ uint8_t smf_epc_n4_handle_session_establishment_response(
 
     if (rsp->cause.presence) {
         if (rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
-            ogs_warn("PFCP Cause [%d:%s] : Not Accepted",
-                    rsp->cause.u8,
-                    ogs_pfcp_cause_get_name(rsp->cause.u8));
+            smf_ue_t *smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+            char sgw_peer[OGS_ADDRSTRLEN];
+            char upf_peer[OGS_ADDRSTRLEN];
+
+            smf_log_sgw_peer(sgw_peer, sizeof(sgw_peer), sess);
+            smf_log_upf_peer(upf_peer, sizeof(upf_peer), sess);
+            ogs_error("[%s] PFCP Session Establishment rejected cause[%u:%s] "
+                    "APN[%s] SGW[%s] UPF[%s] smf_seid[0x%llx]",
+                    smf_log_id(smf_ue), rsp->cause.u8,
+                    ogs_pfcp_cause_get_name(rsp->cause.u8),
+                    sess->session.name ? sess->session.name : "-",
+                    sgw_peer[0] ? sgw_peer : "-",
+                    upf_peer[0] ? upf_peer : "-",
+                    (unsigned long long)sess->smf_n4_seid);
             cause_value = rsp->cause.u8;
         }
     } else {

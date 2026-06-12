@@ -270,6 +270,8 @@ static ogs_pkbuf_t *sgwc_gn_build_create_session_request(
     memset(&bearer_qos, 0, sizeof(bearer_qos));
     bearer_qos.qci = qci;
     bearer_qos.priority_level = sess->gn_qos_pdec.qos_profile.arp;
+    if (bearer_qos.priority_level == 0)
+        bearer_qos.priority_level = 1;
     bearer_qos.pre_emption_capability = 0;
     bearer_qos.pre_emption_vulnerability = 0;
 
