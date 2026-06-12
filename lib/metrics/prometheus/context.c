@@ -308,6 +308,27 @@ static void fill_query_from_connection(struct MHD_Connection *connection,
                 !strcasecmp(fv, "yes") || !strcasecmp(fv, "on"))
             q->force = 1;
     }
+
+    const char *rv = MHD_lookup_connection_value(connection,
+            MHD_GET_ARGUMENT_KIND, "remove");
+    if (rv && *rv) {
+        if (!strcasecmp(rv, "1") || !strcasecmp(rv, "true") ||
+                !strcasecmp(rv, "yes") || !strcasecmp(rv, "on"))
+            q->remove = 1;
+    }
+
+    const char *rp = MHD_lookup_connection_value(connection,
+            MHD_GET_ARGUMENT_KIND, "replace");
+    if (rp && *rp) {
+        if (!strcasecmp(rp, "1") || !strcasecmp(rp, "true") ||
+                !strcasecmp(rp, "yes") || !strcasecmp(rp, "on"))
+            q->replace = 1;
+    }
+
+    q->match = MHD_lookup_connection_value(connection,
+            MHD_GET_ARGUMENT_KIND, "match");
+    q->sync = MHD_lookup_connection_value(connection,
+            MHD_GET_ARGUMENT_KIND, "sync");
 }
 
 /*

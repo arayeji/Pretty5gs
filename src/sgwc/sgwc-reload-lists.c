@@ -418,6 +418,47 @@ static void sgwc_reload_cdr_scalars(ogs_yaml_iter_t *sgwc_iter)
     }
 }
 
+static int sgwc_reload_trace_imsi_add_only(ogs_yaml_iter_t *sgwc_iter)
+{
+    ogs_yaml_iter_t trace_array, trace_iter;
+    int added = 0;
+
+    ogs_yaml_iter_recurse(sgwc_iter, &trace_array);
+    do {
+        if (ogs_yaml_iter_type(&trace_array) == YAML_MAPPING_NODE)
+            break;
+        if (ogs_yaml_iter_type(&trace_array) == YAML_SEQUENCE_NODE) {
+            if (!ogs_yaml_iter_next(&trace_array))
+                break;
+            ogs_yaml_iter_recurse(&trace_array, &trace_iter);
+        } else if (ogs_yaml_iter_type(&trace_array) == YAML_SCALAR_NODE) {
+            ogs_yaml_iter_recurse(sgwc_iter, &trace_iter);
+        } else {
+            break;
+        }
+
+        while (ogs_yaml_iter_next(&trace_iter)) {
+            const char *v = ogs_yaml_iter_value(&trace_iter);
+            int count_before = ogs_trace_filter_count();
+
+            if (!v || !v[0])
+                continue;
+            if (ogs_trace_filter_add(v) != OGS_OK) {
+                ogs_reload_audit_warn("trace_imsi could not add `%s'", v);
+                continue;
+            }
+            if (ogs_trace_filter_count() > count_before) {
+                added++;
+                sgwc_reload_lists_changed++;
+                ogs_reload_audit_note(" trace_imsi added `%s'", v);
+            }
+        }
+    } while (ogs_yaml_iter_type(&trace_array) == YAML_SEQUENCE_NODE &&
+            ogs_yaml_iter_next(&trace_array));
+
+    return added;
+}
+
 static void sgwc_reload_inbound_roam(ogs_yaml_iter_t *sgwc_iter)
 {
     sgwc_context_t *self = sgwc_self();
@@ -575,6 +616,9 @@ void sgwc_context_reload_runtime(void)
                 found = true;
             } else if (!strcmp(sgwc_key, "cdr")) {
                 sgwc_reload_cdr_scalars(&sgwc_iter);
+                found = true;
+            } else if (!strcmp(sgwc_key, "trace_imsi")) {
+                lists_added += sgwc_reload_trace_imsi_add_only(&sgwc_iter);
                 found = true;
             }
         }

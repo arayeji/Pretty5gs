@@ -182,4 +182,7 @@ void sgwc_admin_api_register(void)
     ogs_metrics_register_admin_ep(sgwc_admin_maintenance_status,
             "/admin/maintenance/status",
             OGS_METRICS_ADMIN_METHOD_GET);
+    ogs_metrics_register_admin_ep(ogs_metrics_admin_trace_imsi,
+            "/admin/trace/imsi",
+            OGS_METRICS_ADMIN_METHOD_GET);
 }

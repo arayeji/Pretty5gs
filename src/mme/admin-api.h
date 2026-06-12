@@ -42,9 +42,16 @@
  *     SMF/PGW are still cleaned up via the standard cascade. The UE
  *     finds out it has been detached only on next interaction.
  *
- *   GET /admin/trace/imsi?imsi=<prefix>   add runtime DEBUG filter
- *   GET /admin/trace/imsi?imsi=list       list active prefixes
- *   GET /admin/trace/imsi?force=1         clear all filters
+ *   GET /admin/trace/imsi?imsi=<prefix>              add runtime DEBUG filter
+ *   GET /admin/trace/imsi?imsi=<prefix>&replace=1    set only this prefix
+ *   GET /admin/trace/imsi?imsi=<prefix>&remove=1     remove one prefix
+ *   GET /admin/trace/imsi?imsi=<prefix>&match=exact  exact IMSI match
+ *   GET /admin/trace/imsi?imsi=list                  list active prefixes
+ *   GET /admin/trace/imsi?force=1                    clear all filters
+ *   GET /admin/trace/imsi?imsi=<p>&sync=sgwc,smf     MME: push to peers
+ *
+ *   Same contract on SGWC/SMF metrics ports (without sync).
+ *   JSON: {"ok":true,"detail":"...","trace_imsi":["..."]}
  *
  *   GET  /admin/maintenance
  *   GET  /admin/maintenance/status

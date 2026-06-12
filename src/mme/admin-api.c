@@ -27,6 +27,7 @@
 
 #include "admin-api.h"   /* pulls in ogs-metrics.h */
 #include "runtime-config.h"
+#include "mme-trace-sync.h"
 
 #include <stdarg.h>
 #include <string.h>
@@ -198,52 +199,12 @@ int mme_admin_ue_detach(const ogs_metrics_query_t *q,
 int mme_admin_trace_imsi(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len)
 {
-    const char *imsi = (q && q->imsi) ? q->imsi : NULL;
-    int i, n;
+    int status = ogs_metrics_admin_trace_imsi(q, body, body_cap, body_len);
 
-    /* ?force=1 clears all runtime trace prefixes (no restart) */
-    if (q && q->force) {
-        ogs_trace_filter_clear();
-        *body_len = fmt_json_status(body, body_cap, 200,
-                "trace_imsi filters cleared");
-        return 200;
-    }
+    if (q && q->sync && q->sync[0] && status == 200)
+        *body_len = mme_trace_sync_append(q, body, body_cap, *body_len);
 
-    if (imsi && strcmp(imsi, "list") == 0) {
-        size_t off = 0;
-
-        off += snprintf(body + off, body_cap - off, "{\"trace_imsi\":[");
-        n = ogs_trace_filter_count();
-        for (i = 0; i < n; i++) {
-            char imsi[OGS_TRACE_IMSI_LEN];
-
-            if (ogs_trace_filter_get(i, imsi, sizeof(imsi)) != OGS_OK)
-                continue;
-            if (i > 0)
-                off += snprintf(body + off, body_cap - off, ",");
-            off += snprintf(body + off, body_cap - off, "\"%s\"", imsi);
-        }
-        off += snprintf(body + off, body_cap - off, "]}\n");
-        *body_len = off;
-        return 200;
-    }
-
-    if (!imsi || !*imsi) {
-        *body_len = fmt_json_status(body, body_cap,
-                ADMIN_HTTP_BAD_REQUEST,
-                "use ?imsi=<prefix>|list or ?force=1 to clear");
-        return ADMIN_HTTP_BAD_REQUEST;
-    }
-
-    if (ogs_trace_filter_add(imsi) != OGS_OK) {
-        *body_len = fmt_json_status(body, body_cap,
-                ADMIN_HTTP_INTERNAL_ERROR, "trace_imsi list full");
-        return ADMIN_HTTP_INTERNAL_ERROR;
-    }
-
-    *body_len = fmt_json_status(body, body_cap, 200,
-            "trace_imsi added %s (count=%d)", imsi, ogs_trace_filter_count());
-    return 200;
+    return status;
 }
 
 static void mme_admin_set_maintenance(bool maintenance)

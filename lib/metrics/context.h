@@ -152,6 +152,10 @@ typedef struct ogs_metrics_query_s {
      *                            SCTP close, no Reset PDU sent.
      */
     int         force;
+    int         remove;    /* ?remove=1 with imsi= removes one prefix */
+    int         replace;   /* ?replace=1 clears then sets only this imsi */
+    const char *match;     /* ?match=exact for full IMSI match */
+    const char *sync;      /* MME: ?sync=sgwc,smf propagate to peers */
 } ogs_metrics_query_t;
 
 typedef size_t (*ogs_metrics_custom_ep_hdlr_t)(
@@ -168,6 +172,9 @@ typedef struct ogs_metrics_custom_ep_s {
 
 void ogs_metrics_register_custom_ep(ogs_metrics_custom_ep_hdlr_t handler,
         const char *endpoint);
+
+int ogs_metrics_admin_trace_imsi(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len);
 
 /*
  * Admin endpoints (POST/GET). Restricted to loopback and private/local
