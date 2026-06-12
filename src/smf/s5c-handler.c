@@ -561,6 +561,8 @@ uint8_t smf_s5c_handle_create_session_request(
         if (i == 0) {
             sess->session.qos.index = bearer_qos.qci;
             sess->session.qos.arp.priority_level = bearer_qos.priority_level;
+            if (sess->session.qos.arp.priority_level == 0)
+                sess->session.qos.arp.priority_level = 1;
             sess->session.qos.arp.pre_emption_capability =
                             bearer_qos.pre_emption_capability;
             sess->session.qos.arp.pre_emption_vulnerability =
