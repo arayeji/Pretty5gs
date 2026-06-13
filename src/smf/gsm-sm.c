@@ -870,6 +870,7 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
 
     ogs_pfcp_xact_t *pfcp_xact = NULL;
     ogs_pfcp_message_t *pfcp_message = NULL;
+    ogs_gtp_xact_t *gtp_xact = NULL;
     int rv;
 
     ogs_sbi_stream_t *stream = NULL;
@@ -919,8 +920,7 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
                     break;
                 }
 
-                ogs_gtp_xact_t *gtp_xact =
-                    ogs_gtp_xact_find_by_id(pfcp_xact->assoc_xact_id);
+                gtp_xact = ogs_gtp_xact_find_by_id(pfcp_xact->assoc_xact_id);
                 if (!gtp_xact) {
                     ogs_error("PFCP Establishment Response: "
                             "GTP transaction gone (assoc_xact_id=%d)",
@@ -1090,7 +1090,7 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
         switch (e->h.timer_id) {
         case SMF_TIMER_PFCP_NO_ESTABLISHMENT_RESPONSE:
             if (sess->epc) {
-                ogs_gtp_xact_t *gtp_xact = ogs_gtp_xact_find_by_id(
+                gtp_xact = ogs_gtp_xact_find_by_id(
                         sess->sm_data.create_gtp_xact_id);
 
                 ogs_error("[%s] N4 establishment timeout; rejecting S5/Gn CSR",
