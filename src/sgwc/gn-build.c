@@ -144,6 +144,7 @@ static ogs_pkbuf_t *sgwc_gn_build_create_session_request(
     char uli_buf[OGS_GTP2_MAX_ULI_LEN];
     char bearer_qos_buf[GTP2_BEARER_QOS_LEN];
     char apn[OGS_MAX_APN_LEN+1];
+    char ip_buf[OGS_ADDRSTRLEN];
     uint8_t qci = 9;
     int decoded;
     ogs_pkbuf_t *pkbuf = NULL;
@@ -305,6 +306,10 @@ static ogs_pkbuf_t *sgwc_gn_build_create_session_request(
                 csr->pdn_address_allocation.presence = 1;
                 csr->pdn_address_allocation.data = &sess->paa;
                 csr->pdn_address_allocation.len = OGS_PAA_IPV4_LEN;
+                ogs_info("[%s] Gn static EUA -> S5 PAA IPv4:%s APN:%s",
+                        sgwc_ue->imsi_bcd,
+                        OGS_INET_NTOP(&ip.addr, ip_buf),
+                        sess->session.name ? sess->session.name : "-");
             } else if (pdu_session_type == OGS_PDU_SESSION_TYPE_IPV6 &&
                     ip.ipv6 &&
                     memcmp(ip.addr6, zero_addr6, sizeof(zero_addr6))) {

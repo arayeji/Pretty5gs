@@ -1951,7 +1951,10 @@ void sgwc_sxa_handle_session_deletion_response(
                         OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND)
                 proceed = true;
 
-            sgwc_csr_replace_continue(sgwc_ue, sess, proceed);
+            if (sess->gn)
+                sgwc_gn_csr_replace_continue(sgwc_ue, sess, proceed);
+            else
+                sgwc_csr_replace_continue(sgwc_ue, sess, proceed);
             return;
         }
         goto cleanup;
