@@ -315,7 +315,7 @@ static ogs_pkbuf_t *sgwc_gn_build_create_session_request(
                     ((ip.ipv4 &&
                       memcmp(&ip.addr, &zero_addr, sizeof(zero_addr))) ||
                      (ip.ipv6 &&
-                      memcmp(ip.addr6, zero_addr6, sizeof(zero_addr6)))) {
+                      memcmp(ip.addr6, zero_addr6, sizeof(zero_addr6))))) {
                 csr->pdn_address_allocation.presence = 1;
                 csr->pdn_address_allocation.data = &sess->paa;
                 csr->pdn_address_allocation.len = OGS_PAA_IPV4V6_LEN;
