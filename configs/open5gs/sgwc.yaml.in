@@ -9,7 +9,12 @@ global:
 #    peer: 64
 
 #
-#  Ga / GTP' offline SGW-CDR writer (TS 32.298 SGWRecord).
+#  UPG/VPP user plane (SGW-U at pfcp.client.sgwu): Create-FAR must precede
+#  Create-PDR in Session Modification. Required for VoLTE dedicated bearer.
+#
+#  parameter:
+#    use_upg_vpp: true
+#
 #  Spool files use format byte OGS_CDR_FORMAT_BER_SGW (0x02); SMF PGW-CDRs
 #  use 0x01. Both are forwarded by open5gs-cgfd from the same spool_dir.
 #
