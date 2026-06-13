@@ -501,7 +501,19 @@ static void sess_epc_timeout(ogs_pfcp_xact_t *xact, void *data)
     case OGS_PFCP_SESSION_DELETION_REQUEST_TYPE:
         if (sess->collision_replace)
             smf_sess_collision_on_pfcp_delete_timeout(sess);
-        else
+        else if (sess->sm_data.pfcp_ue_ip_purge_pending) {
+            ogs_gtp_xact_t *gtp_xact = NULL;
+            int rv;
+
+            sess->sm_data.pfcp_ue_ip_purge_pending = false;
+            ogs_warn("[%s] Orphan UPF purge timeout, retrying PFCP establish",
+                    smf_log_id(smf_ue_find_by_id(sess->smf_ue_id)));
+            gtp_xact = ogs_gtp_xact_find_by_id(sess->sm_data.create_gtp_xact_id);
+            rv = smf_epc_pfcp_send_session_establishment_request(
+                    sess,
+                    gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID, 0);
+            ogs_expect(rv == OGS_OK);
+        } else
             ogs_error("No PFCP session deletion response");
         break;
     default:
@@ -1088,6 +1100,54 @@ int smf_epc_pfcp_send_session_deletion_request(
     memset(&h, 0, sizeof(ogs_pfcp_header_t));
     h.type = OGS_PFCP_SESSION_DELETION_REQUEST_TYPE;
     h.seid = sess->upf_n4_seid;
+
+    n4buf = smf_n4_build_session_deletion_request(h.type, sess);
+    if (!n4buf) {
+        ogs_error("smf_n4_build_session_deletion_request() failed");
+        ogs_pfcp_xact_delete(xact);
+        return OGS_ERROR;
+    }
+
+    rv = ogs_pfcp_xact_update_tx(xact, &h, n4buf);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_pfcp_xact_update_tx() failed");
+        ogs_pfcp_xact_delete(xact);
+        return OGS_ERROR;
+    }
+
+    rv = ogs_pfcp_xact_commit(xact);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
+int smf_epc_pfcp_send_orphan_session_purge(
+        smf_sess_t *sess, uint64_t upf_seid)
+{
+    int rv;
+    ogs_pkbuf_t *n4buf = NULL;
+    ogs_pfcp_header_t h;
+    ogs_pfcp_xact_t *xact = NULL;
+
+    ogs_assert(sess);
+    ogs_assert(sess->pfcp_node);
+    ogs_assert(upf_seid);
+
+    xact = ogs_pfcp_xact_local_create(
+            sess->pfcp_node, sess_epc_timeout, OGS_UINT_TO_POINTER(sess->id));
+    if (!xact) {
+        ogs_error("ogs_pfcp_xact_local_create() failed");
+        return OGS_ERROR;
+    }
+
+    xact->epc = true;
+    xact->assoc_xact_id = OGS_INVALID_POOL_ID;
+    xact->local_seid = sess->smf_n4_seid;
+    xact->delete_trigger = OGS_PFCP_DELETE_TRIGGER_ORPHAN_PURGE;
+
+    memset(&h, 0, sizeof(ogs_pfcp_header_t));
+    h.type = OGS_PFCP_SESSION_DELETION_REQUEST_TYPE;
+    h.seid = upf_seid;
 
     n4buf = smf_n4_build_session_deletion_request(h.type, sess);
     if (!n4buf) {

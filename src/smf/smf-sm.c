@@ -190,6 +190,9 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
 
                 ogs_expect(!sess);
                 old_sess = smf_sess_find_collision_for_gtp2(&gtp2_message);
+                if (!old_sess)
+                    old_sess = smf_sess_find_collision_by_ipv4_gtp2(
+                            &gtp2_message);
                 if (old_sess) {
                     if (smf_sess_collision_replace_begin_gtp2(
                             old_sess, e, &gtp2_sender_f_teid))

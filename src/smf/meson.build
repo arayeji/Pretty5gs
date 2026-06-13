@@ -78,6 +78,7 @@ libsmf_sources = files('''
     ga-writer.h
     smf-reload-lists.h
     collision-replace.h
+    smf-pfcp-vendor.h
     admin-api.h
 
     init.c
@@ -86,6 +87,7 @@ libsmf_sources = files('''
     context.c
     smf-reload-lists.c
     collision-replace.c
+    smf-pfcp-vendor.c
     admin-api.c
     runtime-config.c
     ../../lib/app/ogs-reload-audit-json.c

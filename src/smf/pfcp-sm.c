@@ -363,6 +363,17 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
                 break;
             }
 
+            if (xact->delete_trigger ==
+                    OGS_PFCP_DELETE_TRIGGER_ORPHAN_PURGE) {
+                if (sess && sess->sm_data.pfcp_ue_ip_purge_pending) {
+                    e->sess_id = sess->id;
+                    ogs_fsm_dispatch(&sess->sm, e);
+                } else {
+                    ogs_pfcp_xact_commit(xact);
+                }
+                break;
+            }
+
             if (!sess) {
                 ogs_gtp_xact_t *gtp_xact =
                     ogs_gtp_xact_find_by_id(xact->assoc_xact_id);

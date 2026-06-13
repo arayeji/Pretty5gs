@@ -32,6 +32,7 @@ bool smf_sess_upf_established(smf_sess_t *sess);
 
 smf_sess_t *smf_sess_find_collision_for_gtp2(ogs_gtp2_message_t *message);
 smf_sess_t *smf_sess_find_collision_for_gtp1(ogs_gtp1_message_t *message);
+smf_sess_t *smf_sess_find_collision_by_ipv4_gtp2(ogs_gtp2_message_t *message);
 
 bool smf_sess_collision_replace_begin_gtp2(
         smf_sess_t *old_sess, smf_event_t *e,

@@ -26,6 +26,7 @@
 #include "gy-handler.h"
 #include "n4-handler.h"
 #include "collision-replace.h"
+#include "smf-pfcp-vendor.h"
 #include "s5c-handler.h"
 #include "nnrf-handler.h"
 #include "nsmf-handler.h"
@@ -932,6 +933,29 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
                         sess, pfcp_xact,
                         &pfcp_message->pfcp_session_establishment_response);
                 if (pfcp_cause != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
+                    if (!sess->sm_data.pfcp_ue_ip_retry_done &&
+                            pfcp_cause ==
+                            OGS_PFCP_CAUSE_RULE_CREATION_MODIFICATION_FAILURE &&
+                            e->pkbuf) {
+                        uint64_t orphan_seid = 0;
+
+                        if (smf_pfcp_parse_travelping_conflict_seid(
+                                    e->pkbuf, &orphan_seid)) {
+                            ogs_warn("[%s] UE IP conflict on UPF, "
+                                    "purging orphan SEID=0x%llx",
+                                    smf_log_id(
+                                        smf_ue_find_by_id(sess->smf_ue_id)),
+                                    (unsigned long long)orphan_seid);
+                            sess->sm_data.pfcp_ue_ip_purge_pending = true;
+                            sess->sm_data.pfcp_ue_ip_retry_done = true;
+                            if (smf_epc_pfcp_send_orphan_session_purge(
+                                        sess, orphan_seid) == OGS_OK)
+                                break;
+                            sess->sm_data.pfcp_ue_ip_purge_pending = false;
+                        } else {
+                            smf_pfcp_log_travelping_errors(e->pkbuf);
+                        }
+                    }
                     if (ogs_pfcp_cause_no_association(pfcp_cause))
                         smf_pfcp_request_reassociation(sess->pfcp_node);
                     gtp_cause = gtp_cause_from_pfcp(
@@ -1023,6 +1047,37 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
             }
 
             OGS_FSM_TRAN(s, smf_gsm_state_operational);
+            break;
+
+        case OGS_PFCP_SESSION_DELETION_RESPONSE_TYPE:
+            if (pfcp_xact->delete_trigger !=
+                    OGS_PFCP_DELETE_TRIGGER_ORPHAN_PURGE ||
+                    !sess->sm_data.pfcp_ue_ip_purge_pending)
+                break;
+
+            sess->sm_data.pfcp_ue_ip_purge_pending = false;
+
+            pfcp_cause = smf_epc_n4_handle_session_deletion_response(
+                        sess, pfcp_xact,
+                        &pfcp_message->pfcp_session_deletion_response);
+            if (pfcp_cause != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
+                ogs_warn("[%s] Orphan UPF purge rejected cause[%u], "
+                        "retrying PFCP establish anyway",
+                        smf_log_id(smf_ue_find_by_id(sess->smf_ue_id)),
+                        pfcp_cause);
+            }
+
+            gtp_xact = ogs_gtp_xact_find_by_id(
+                        sess->sm_data.create_gtp_xact_id);
+            if (!gtp_xact) {
+                ogs_error("PFCP orphan purge done but GTP transaction gone");
+                OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
+                return;
+            }
+
+            ogs_assert(OGS_OK ==
+                smf_epc_pfcp_send_session_establishment_request(
+                    sess, gtp_xact->id, 0));
             break;
 
         default:
