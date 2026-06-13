@@ -1024,7 +1024,8 @@ char *hss_cx_download_user_data(
                           ogs_diam_cx_xml_priority_e);
               ogs_assert(user_data);
 
-              /* trigger point */
+              /* trigger point (skip empty — no SPT means IFC never matches) */
+              if (ims_data->ifc[n].trigger_point.num_of_spt > 0) {
               user_data = ogs_mstrcatf(user_data, "%s",
                           ogs_diam_cx_xml_tp_s);
               ogs_assert(user_data);
@@ -1136,6 +1137,11 @@ char *hss_cx_download_user_data(
               user_data = ogs_mstrcatf(user_data, "%s",
                           ogs_diam_cx_xml_tp_e);
               ogs_assert(user_data);
+              } else {
+                  ogs_warn("IFC[%d] priority=%d has no SPT "
+                          "(check subscriber ifc[].trigger_point.spt in MongoDB)",
+                          n, ims_data->ifc[n].priority);
+              }
 
               /* application server */
               user_data = ogs_mstrcatf(user_data, "%s",
