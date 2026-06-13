@@ -287,13 +287,39 @@ static ogs_pkbuf_t *sgwc_gn_build_create_session_request(
         ogs_eua_t *eua = req->end_user_address.data;
         ogs_ip_t ip;
         uint8_t pdu_session_type = 0;
+        uint32_t zero_addr = 0;
+        uint8_t zero_addr6[OGS_IPV6_LEN];
 
         ogs_assert(eua);
         if (ogs_gtp1_eua_to_ip(eua, req->end_user_address.len, &ip,
                 &pdu_session_type) == OGS_OK) {
             csr->pdn_type.presence = 1;
             csr->pdn_type.u8 = pdu_session_type;
-            sess->paa.session_type = pdu_session_type;
+
+            if (ogs_ip_to_paa(&ip, &sess->paa) != OGS_OK)
+                ogs_error("ogs_ip_to_paa() failed");
+
+            memset(zero_addr6, 0, sizeof(zero_addr6));
+            if (pdu_session_type == OGS_PDU_SESSION_TYPE_IPV4 &&
+                    ip.ipv4 && memcmp(&ip.addr, &zero_addr, sizeof(zero_addr))) {
+                csr->pdn_address_allocation.presence = 1;
+                csr->pdn_address_allocation.data = &sess->paa;
+                csr->pdn_address_allocation.len = OGS_PAA_IPV4_LEN;
+            } else if (pdu_session_type == OGS_PDU_SESSION_TYPE_IPV6 &&
+                    ip.ipv6 &&
+                    memcmp(ip.addr6, zero_addr6, sizeof(zero_addr6))) {
+                csr->pdn_address_allocation.presence = 1;
+                csr->pdn_address_allocation.data = &sess->paa;
+                csr->pdn_address_allocation.len = OGS_PAA_IPV6_LEN;
+            } else if (pdu_session_type == OGS_PDU_SESSION_TYPE_IPV4V6 &&
+                    ((ip.ipv4 &&
+                      memcmp(&ip.addr, &zero_addr, sizeof(zero_addr))) ||
+                     (ip.ipv6 &&
+                      memcmp(ip.addr6, zero_addr6, sizeof(zero_addr6)))) {
+                csr->pdn_address_allocation.presence = 1;
+                csr->pdn_address_allocation.data = &sess->paa;
+                csr->pdn_address_allocation.len = OGS_PAA_IPV4V6_LEN;
+            }
         }
     }
 
@@ -364,6 +390,30 @@ void sgwc_gn_reapply_create_session_request(
     if (!csr->pdn_type.presence && sess->paa.session_type) {
         csr->pdn_type.presence = 1;
         csr->pdn_type.u8 = sess->paa.session_type;
+    }
+
+    if (!csr->pdn_address_allocation.presence && sess->paa.session_type) {
+        uint32_t zero_addr = 0;
+        uint8_t zero_addr6[OGS_IPV6_LEN];
+
+        memset(zero_addr6, 0, sizeof(zero_addr6));
+        if (sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV4 &&
+                memcmp(&sess->paa.addr, &zero_addr, sizeof(zero_addr))) {
+            csr->pdn_address_allocation.presence = 1;
+            csr->pdn_address_allocation.data = &sess->paa;
+            csr->pdn_address_allocation.len = OGS_PAA_IPV4_LEN;
+        } else if (sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV6 &&
+                memcmp(sess->paa.addr6, zero_addr6, sizeof(zero_addr6))) {
+            csr->pdn_address_allocation.presence = 1;
+            csr->pdn_address_allocation.data = &sess->paa;
+            csr->pdn_address_allocation.len = OGS_PAA_IPV6_LEN;
+        } else if (sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV4V6 &&
+                (memcmp(&sess->paa.both.addr, &zero_addr, sizeof(zero_addr)) ||
+                 memcmp(sess->paa.both.addr6, zero_addr6, sizeof(zero_addr6)))) {
+            csr->pdn_address_allocation.presence = 1;
+            csr->pdn_address_allocation.data = &sess->paa;
+            csr->pdn_address_allocation.len = OGS_PAA_IPV4V6_LEN;
+        }
     }
 }
 
