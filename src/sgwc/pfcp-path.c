@@ -308,7 +308,10 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
                 sgwu_peer[0] ? sgwu_peer : "(unknown)",
                 sess->id, (unsigned long long)sess->sgwu_sxa_seid);
         if (sgwc_ue && sgwc_ue->csr_replace_sess_id == sess->id) {
-            sgwc_csr_replace_continue(sgwc_ue, sess, false);
+            if (sess->gn)
+                sgwc_gn_csr_replace_continue(sgwc_ue, sess, false);
+            else
+                sgwc_csr_replace_continue(sgwc_ue, sess, false);
             return;
         }
         break;

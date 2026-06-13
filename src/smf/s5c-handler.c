@@ -381,6 +381,14 @@ uint8_t smf_s5c_handle_create_session_request(
         sess->session.session_type = sess->ue_session_type;
         rv = ogs_paa_to_ip(paa, &sess->session.ue_ip);
         ogs_assert(rv == OGS_OK);
+        if (sess->session.ue_ip.ipv4) {
+            char paa_buf[OGS_ADDRSTRLEN];
+
+            ogs_info("[%s] Create Session PAA from SGW IPv4:%s DNN:%s",
+                    smf_log_id(smf_ue),
+                    OGS_INET_NTOP(&sess->session.ue_ip.addr, paa_buf),
+                    sess->session.name ? sess->session.name : "-");
+        }
     } else if (req->pdn_type.presence) {
         sess->ue_session_type = req->pdn_type.u8;
         sess->session.session_type = sess->ue_session_type;

@@ -21,6 +21,7 @@
 #include "gn-build.h"
 #include "gtp-path.h"
 #include "pfcp-path.h"
+#include "s11-handler.h"
 #include "sgwc-trace.h"
 
 static void sgwc_gn_create_pdp_proceed(
@@ -404,6 +405,50 @@ cleanup:
     sgwc_gn_send_create_reject(sess, sgwc_ue, gn_xact, cause_value);
 }
 
+void sgwc_gn_csr_replace_continue(
+        sgwc_ue_t *sgwc_ue, sgwc_sess_t *old_sess, bool proceed)
+{
+    ogs_gtp_xact_t *gn_xact = NULL;
+    ogs_pkbuf_t *gtpbuf = NULL;
+    ogs_gtp1_message_t message;
+    int rv;
+
+    ogs_assert(sgwc_ue);
+    ogs_assert(old_sess);
+
+    gn_xact = ogs_gtp_xact_find_by_id(sgwc_ue->csr_replace_s11_xact_id);
+    gtpbuf = sgwc_ue->csr_replace_gtpbuf;
+
+    sgwc_ue->csr_replace_s11_xact_id = OGS_INVALID_POOL_ID;
+    sgwc_ue->csr_replace_gtpbuf = NULL;
+    sgwc_ue->csr_replace_sess_id = OGS_INVALID_POOL_ID;
+
+    old_sess->sgwu_sxa_seid = 0;
+    sgwc_sess_remove(old_sess);
+
+    if (!proceed || !gn_xact || !gtpbuf) {
+        if (gn_xact) {
+            sgwc_gn_send_create_reject(NULL, sgwc_ue, gn_xact,
+                    OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+        }
+        if (gtpbuf)
+            ogs_pkbuf_free(gtpbuf);
+        return;
+    }
+
+    rv = ogs_gtp1_parse_msg(&message, gtpbuf);
+    if (rv != OGS_OK) {
+        ogs_error("[%s] ogs_gtp1_parse_msg() failed", sgwc_ue->imsi_bcd);
+        sgwc_gn_send_create_reject(NULL, sgwc_ue, gn_xact,
+                OGS_GTP2_CAUSE_INVALID_MESSAGE_FORMAT);
+        ogs_pkbuf_free(gtpbuf);
+        return;
+    }
+
+    sgwc_gn_create_pdp_proceed(sgwc_ue, gn_xact, gtpbuf, &message);
+    ogs_pkbuf_free(gtpbuf);
+}
+
 void sgwc_gn_handle_create_pdp_context_request(
         sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *gn_xact,
         ogs_pkbuf_t *gtpbuf, ogs_gtp1_message_t *message)
@@ -486,9 +531,11 @@ void sgwc_gn_handle_create_pdp_context_request(
             }
 
             if (sess->sgwu_sxa_seid && sess->pfcp_node) {
-                ogs_info("[%s] OLD Session Release [NSAPI=%u,APN:%s]",
-                        sgwc_ue->imsi_bcd, req->nsapi.u8, sess->session.name);
-                sgwc_sess_remove(sess);
+                if (sgwc_csr_replace_start(sgwc_ue, sess, gn_xact, gtpbuf))
+                    return;
+                sgwc_gn_send_create_reject(sess, sgwc_ue, gn_xact,
+                        OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+                return;
             } else {
                 ogs_info("[%s] duplicate Create PDP Context Request while "
                         "session establishment pending - ignoring (NSAPI=%u)",

@@ -44,6 +44,9 @@ void sgwc_gn_handle_update_pdp_context_request(
         sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess, ogs_gtp_xact_t *gn_xact,
         ogs_pkbuf_t *gtpbuf, ogs_gtp1_message_t *message);
 
+void sgwc_gn_csr_replace_continue(
+        sgwc_ue_t *sgwc_ue, sgwc_sess_t *old_sess, bool proceed);
+
 void sgwc_gn_send_create_reject(
         sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *gn_xact,
         uint8_t gtp2_cause);
