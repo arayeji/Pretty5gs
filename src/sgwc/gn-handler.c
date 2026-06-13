@@ -171,6 +171,90 @@ void sgwc_gtp_create_reject(
                 OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, gtp2_cause);
 }
 
+static bool sgwc_gn_create_matches_active_sess(
+        sgwc_sess_t *sess, ogs_gtp1_create_pdp_context_request_t *req)
+{
+    char apn[OGS_MAX_APN_LEN+1];
+    char *apn_oi = NULL;
+    ogs_ip_t req_ip, sess_ip;
+    uint8_t pdu_session_type = 0;
+    sgwc_bearer_t *bearer = NULL;
+    sgwc_tunnel_t *dl_tunnel = NULL;
+
+    ogs_assert(sess);
+    ogs_assert(req);
+
+    if (!sess->pgw_s5c_teid || !sess->gnode ||
+            !sess->sgwu_sxa_seid || !sess->pfcp_node)
+        return false;
+
+    if (req->access_point_name.presence) {
+        if (ogs_fqdn_parse(apn, req->access_point_name.data,
+                ogs_min(req->access_point_name.len, OGS_MAX_APN_LEN)) <= 0)
+            return false;
+        apn_oi = ogs_dnn_oi_from_fqdn(apn);
+        if (apn_oi && apn_oi > apn && apn_oi[-1] == '.')
+            apn_oi[-1] = '\0';
+        if (!sess->session.name ||
+                strcmp(apn, sess->session.name) != 0)
+            return false;
+    }
+
+    if (req->end_user_address.presence && sess->paa.session_type) {
+        ogs_eua_t *eua = req->end_user_address.data;
+
+        ogs_assert(eua);
+        if (ogs_gtp1_eua_to_ip(eua, req->end_user_address.len, &req_ip,
+                &pdu_session_type) != OGS_OK)
+            return false;
+        if (ogs_paa_to_ip(&sess->paa, &sess_ip) != OGS_OK)
+            return false;
+        if (req_ip.ipv4) {
+            if (!sess_ip.ipv4 || req_ip.addr != sess_ip.addr)
+                return false;
+        }
+        if (req_ip.ipv6) {
+            if (!sess_ip.ipv6 ||
+                    memcmp(req_ip.addr6, sess_ip.addr6, OGS_IPV6_LEN))
+                return false;
+        }
+    }
+
+    bearer = sgwc_default_bearer_in_sess(sess);
+    if (!bearer)
+        return false;
+
+    dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
+    if (!dl_tunnel)
+        return false;
+
+    if (req->tunnel_endpoint_identifier_data_i.presence &&
+            dl_tunnel->remote_teid &&
+            req->tunnel_endpoint_identifier_data_i.u32 !=
+                dl_tunnel->remote_teid)
+        return false;
+
+    if (req->sgsn_address_for_user_traffic.presence &&
+            (dl_tunnel->remote_ip.ipv4 || dl_tunnel->remote_ip.ipv6)) {
+        ogs_ip_t req_sgsn_ip;
+
+        if (ogs_gtp1_gsn_addr_to_ip(
+                req->sgsn_address_for_user_traffic.data,
+                req->sgsn_address_for_user_traffic.len,
+                &req_sgsn_ip) != OGS_OK)
+            return false;
+        if (req_sgsn_ip.ipv4 && dl_tunnel->remote_ip.ipv4 &&
+                req_sgsn_ip.addr != dl_tunnel->remote_ip.addr)
+            return false;
+        if (req_sgsn_ip.ipv6 && dl_tunnel->remote_ip.ipv6 &&
+                memcmp(req_sgsn_ip.addr6, dl_tunnel->remote_ip.addr6,
+                    OGS_IPV6_LEN))
+            return false;
+    }
+
+    return true;
+}
+
 static void sgwc_gn_create_pdp_proceed(
         sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *gn_xact,
         ogs_pkbuf_t *gtpbuf, ogs_gtp1_message_t *message)
@@ -531,6 +615,14 @@ void sgwc_gn_handle_create_pdp_context_request(
             }
 
             if (sess->sgwu_sxa_seid && sess->pfcp_node) {
+                if (sgwc_gn_create_matches_active_sess(sess, req)) {
+                    ogs_info("[%s] duplicate Create PDP matches active "
+                            "session - re-sending Accept (NSAPI=%u)",
+                            sgwc_ue->imsi_bcd, req->nsapi.u8);
+                    sgwc_gtp_send_create_pdp_context_response(
+                            sess, gn_xact, NULL);
+                    return;
+                }
                 if (sgwc_csr_replace_start(sgwc_ue, sess, gn_xact, gtpbuf))
                     return;
                 sgwc_gn_send_create_reject(sess, sgwc_ue, gn_xact,
