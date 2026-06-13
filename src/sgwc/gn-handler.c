@@ -255,6 +255,50 @@ static bool sgwc_gn_create_matches_active_sess(
     return true;
 }
 
+/*
+ * Prefer Alternative SGSN Address for User Traffic when present — the RNC
+ * often puts the reachable PC/data-plane address (e.g. 192.168.14.32) there
+ * and a routed CP address (e.g. 10.234.241.21) in the primary IE.
+ */
+static int sgwc_gn_apply_sgsn_user_traffic_to_dl(
+        sgwc_tunnel_t *dl_tunnel,
+        ogs_gtp1_tlv_gsn_address_t *sgsn_user,
+        ogs_gtp1_tlv_gsn_address_t *alt_sgsn_user,
+        uint32_t remote_teid)
+{
+    ogs_gtp1_tlv_gsn_address_t *pick = sgsn_user;
+    ogs_pfcp_far_t *far = NULL;
+    int rv;
+
+    ogs_assert(dl_tunnel);
+
+    if (remote_teid)
+        dl_tunnel->remote_teid = remote_teid;
+
+    if (alt_sgsn_user && alt_sgsn_user->presence)
+        pick = alt_sgsn_user;
+    else if (!sgsn_user || !sgsn_user->presence)
+        return OGS_ERROR;
+
+    rv = ogs_gtp1_gsn_addr_to_ip(
+            pick->data, pick->len, &dl_tunnel->remote_ip);
+    if (rv != OGS_OK)
+        return OGS_ERROR;
+
+    far = dl_tunnel->far;
+    if (!far)
+        return OGS_OK;
+
+    far->apply_action = OGS_PFCP_APPLY_ACTION_FORW;
+    rv = ogs_pfcp_ip_to_outer_header_creation(
+            &dl_tunnel->remote_ip, &far->outer_header_creation,
+            &far->outer_header_creation_len);
+    if (rv == OGS_OK)
+        far->outer_header_creation.teid = dl_tunnel->remote_teid;
+
+    return OGS_OK;
+}
+
 static void sgwc_gn_create_pdp_proceed(
         sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *gn_xact,
         ogs_pkbuf_t *gtpbuf, ogs_gtp1_message_t *message)
@@ -434,34 +478,17 @@ static void sgwc_gn_create_pdp_proceed(
     if (req->tunnel_endpoint_identifier_data_i.presence &&
             req->sgsn_address_for_user_traffic.presence) {
         sgwc_tunnel_t *dl_tunnel = NULL;
-        ogs_pfcp_far_t *far = NULL;
 
         dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
         ogs_assert(dl_tunnel);
 
-        dl_tunnel->remote_teid =
-            req->tunnel_endpoint_identifier_data_i.u32;
-
-        rv = ogs_gtp1_gsn_addr_to_ip(
-                req->sgsn_address_for_user_traffic.data,
-                req->sgsn_address_for_user_traffic.len,
-                &dl_tunnel->remote_ip);
+        rv = sgwc_gn_apply_sgsn_user_traffic_to_dl(
+                dl_tunnel, &req->sgsn_address_for_user_traffic, NULL,
+                req->tunnel_endpoint_identifier_data_i.u32);
         if (rv != OGS_OK) {
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
             goto cleanup;
         }
-
-        far = dl_tunnel->far;
-        ogs_assert(far);
-        far->apply_action = OGS_PFCP_APPLY_ACTION_FORW;
-        rv = ogs_pfcp_ip_to_outer_header_creation(
-                &dl_tunnel->remote_ip, &far->outer_header_creation,
-                &far->outer_header_creation_len);
-        if (rv != OGS_OK) {
-            cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
-            goto cleanup;
-        }
-        far->outer_header_creation.teid = dl_tunnel->remote_teid;
     }
 
     csr_pkbuf = sgwc_gn_build_create_session_request_pkbuf(
@@ -774,31 +801,22 @@ void sgwc_gn_handle_update_pdp_context_request(
     ogs_assert(dl_tunnel);
 
     if (req->tunnel_endpoint_identifier_data_i.presence ||
-            req->sgsn_address_for_user_traffic.presence) {
-        if (req->tunnel_endpoint_identifier_data_i.presence)
-            dl_tunnel->remote_teid =
-                req->tunnel_endpoint_identifier_data_i.u32;
-        if (req->sgsn_address_for_user_traffic.presence) {
-            rv = ogs_gtp1_gsn_addr_to_ip(
-                    req->sgsn_address_for_user_traffic.data,
-                    req->sgsn_address_for_user_traffic.len,
-                    &dl_tunnel->remote_ip);
-            if (rv != OGS_OK) {
-                ogs_gtp1_send_error_message(gn_xact, sgwc_ue->mme_s11_teid,
-                        OGS_GTP1_UPDATE_PDP_CONTEXT_RESPONSE_TYPE,
-                        OGS_GTP1_CAUSE_MANDATORY_IE_INCORRECT);
-                return;
-            }
-        }
+            req->sgsn_address_for_user_traffic.presence ||
+            req->alternative_sgsn_address_for_user_traffic.presence) {
+        uint32_t remote_teid = dl_tunnel->remote_teid;
 
-        far = dl_tunnel->far;
-        if (far) {
-            far->apply_action = OGS_PFCP_APPLY_ACTION_FORW;
-            rv = ogs_pfcp_ip_to_outer_header_creation(
-                    &dl_tunnel->remote_ip, &far->outer_header_creation,
-                    &far->outer_header_creation_len);
-            if (rv == OGS_OK)
-                far->outer_header_creation.teid = dl_tunnel->remote_teid;
+        if (req->tunnel_endpoint_identifier_data_i.presence)
+            remote_teid = req->tunnel_endpoint_identifier_data_i.u32;
+
+        rv = sgwc_gn_apply_sgsn_user_traffic_to_dl(
+                dl_tunnel, &req->sgsn_address_for_user_traffic,
+                &req->alternative_sgsn_address_for_user_traffic,
+                remote_teid);
+        if (rv != OGS_OK) {
+            ogs_gtp1_send_error_message(gn_xact, sgwc_ue->mme_s11_teid,
+                    OGS_GTP1_UPDATE_PDP_CONTEXT_RESPONSE_TYPE,
+                    OGS_GTP1_CAUSE_MANDATORY_IE_INCORRECT);
+            return;
         }
     }
 
