@@ -381,7 +381,7 @@ ogs_pkbuf_t *sgwc_gn_build_create_pdp_context_response(
     int rv;
     sgwc_ue_t *sgwc_ue = NULL;
     sgwc_bearer_t *bearer = NULL;
-    sgwc_tunnel_t *dl_tunnel = NULL;
+    sgwc_tunnel_t *ul_tunnel = NULL;
 
     ogs_gtp1_message_t gtp1_message;
     ogs_gtp1_create_pdp_context_response_t *rsp = NULL;
@@ -399,8 +399,8 @@ ogs_pkbuf_t *sgwc_gn_build_create_pdp_context_response(
     ogs_assert(sgwc_ue);
     bearer = sgwc_default_bearer_in_sess(sess);
     ogs_assert(bearer);
-    dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
-    ogs_assert(dl_tunnel);
+    ul_tunnel = sgwc_ul_tunnel_in_bearer(bearer);
+    ogs_assert(ul_tunnel);
 
     rsp = &gtp1_message.create_pdp_context_response;
     memset(&gtp1_message, 0, sizeof(gtp1_message));
@@ -415,7 +415,7 @@ ogs_pkbuf_t *sgwc_gn_build_create_pdp_context_response(
     rsp->recovery.u8 = sgwc_self()->gn_gtpc_recovery;
 
     rsp->tunnel_endpoint_identifier_data_i.presence = 1;
-    rsp->tunnel_endpoint_identifier_data_i.u32 = dl_tunnel->local_teid;
+    rsp->tunnel_endpoint_identifier_data_i.u32 = ul_tunnel->local_teid;
     rsp->tunnel_endpoint_identifier_control_plane.presence = 1;
     rsp->tunnel_endpoint_identifier_control_plane.u32 = sess->sgw_s5c_teid;
 
@@ -454,7 +454,7 @@ ogs_pkbuf_t *sgwc_gn_build_create_pdp_context_response(
     }
 
     if (sgwc_self()->gn_addr && sgwc_self()->gn_addr6) {
-        if (dl_tunnel->local_addr) {
+        if (ul_tunnel->local_addr) {
             rv = ogs_gtp1_sockaddr_to_gsn_addr(sgwc_self()->gn_addr, NULL,
                     &sgw_gnc_gsnaddr, &gsn_len);
             ogs_expect(rv == OGS_OK);
@@ -483,19 +483,23 @@ ogs_pkbuf_t *sgwc_gn_build_create_pdp_context_response(
     rsp->ggsn_address_for_control_plane.data = &sgw_gnc_gsnaddr;
     rsp->ggsn_address_for_control_plane.len = gsn_len;
 
-    if (dl_tunnel->local_addr && dl_tunnel->local_addr6) {
-        if (dl_tunnel->local_addr) {
-            rv = ogs_gtp1_sockaddr_to_gsn_addr(dl_tunnel->local_addr, NULL,
+    /*
+     * GGSN user-plane address/TEID must match SGW-U access F-TEID (S1-U),
+     * same as S11 Create Session Response — not the S5 DL tunnel (core).
+     */
+    if (ul_tunnel->local_addr && ul_tunnel->local_addr6) {
+        if (ul_tunnel->local_addr) {
+            rv = ogs_gtp1_sockaddr_to_gsn_addr(ul_tunnel->local_addr, NULL,
                     &sgw_gnu_gsnaddr, &gsn_len);
             ogs_expect(rv == OGS_OK);
-            rv = ogs_gtp1_sockaddr_to_gsn_addr(NULL, dl_tunnel->local_addr6,
+            rv = ogs_gtp1_sockaddr_to_gsn_addr(NULL, ul_tunnel->local_addr6,
                     &sgw_gnu_altgsnaddr, &gsn_altlen);
             ogs_expect(rv == OGS_OK);
         } else {
-            rv = ogs_gtp1_sockaddr_to_gsn_addr(NULL, dl_tunnel->local_addr6,
+            rv = ogs_gtp1_sockaddr_to_gsn_addr(NULL, ul_tunnel->local_addr6,
                     &sgw_gnu_gsnaddr, &gsn_len);
             ogs_expect(rv == OGS_OK);
-            rv = ogs_gtp1_sockaddr_to_gsn_addr(dl_tunnel->local_addr, NULL,
+            rv = ogs_gtp1_sockaddr_to_gsn_addr(ul_tunnel->local_addr, NULL,
                     &sgw_gnu_altgsnaddr, &gsn_altlen);
             ogs_expect(rv == OGS_OK);
         }
@@ -505,7 +509,7 @@ ogs_pkbuf_t *sgwc_gn_build_create_pdp_context_response(
         rsp->alternative_ggsn_address_for_user_traffic.len = gsn_altlen;
     } else {
         rv = ogs_gtp1_sockaddr_to_gsn_addr(
-                dl_tunnel->local_addr, dl_tunnel->local_addr6,
+                ul_tunnel->local_addr, ul_tunnel->local_addr6,
                 &sgw_gnu_gsnaddr, &gsn_len);
         ogs_expect(rv == OGS_OK);
     }
@@ -542,7 +546,7 @@ ogs_pkbuf_t *sgwc_gn_build_update_pdp_context_response(
 {
     int rv;
     sgwc_bearer_t *bearer = NULL;
-    sgwc_tunnel_t *dl_tunnel = NULL;
+    sgwc_tunnel_t *ul_tunnel = NULL;
     ogs_gtp1_message_t gtp1_message;
     ogs_gtp1_update_pdp_context_response_t *rsp = NULL;
     ogs_gtp1_gsn_addr_t sgw_gnc_gsnaddr, sgw_gnu_gsnaddr;
@@ -554,8 +558,8 @@ ogs_pkbuf_t *sgwc_gn_build_update_pdp_context_response(
     ogs_assert(sess);
     bearer = sgwc_default_bearer_in_sess(sess);
     ogs_assert(bearer);
-    dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
-    ogs_assert(dl_tunnel);
+    ul_tunnel = sgwc_ul_tunnel_in_bearer(bearer);
+    ogs_assert(ul_tunnel);
 
     rsp = &gtp1_message.update_pdp_context_response;
     memset(&gtp1_message, 0, sizeof(gtp1_message));
@@ -565,7 +569,7 @@ ogs_pkbuf_t *sgwc_gn_build_update_pdp_context_response(
 
     if (cause == OGS_GTP1_CAUSE_REQUEST_ACCEPTED) {
         rsp->tunnel_endpoint_identifier_data_i.presence = 1;
-        rsp->tunnel_endpoint_identifier_data_i.u32 = dl_tunnel->local_teid;
+        rsp->tunnel_endpoint_identifier_data_i.u32 = ul_tunnel->local_teid;
         rsp->tunnel_endpoint_identifier_control_plane.presence = 1;
         rsp->tunnel_endpoint_identifier_control_plane.u32 = sess->sgw_s5c_teid;
 
@@ -578,7 +582,7 @@ ogs_pkbuf_t *sgwc_gn_build_update_pdp_context_response(
         sess->charging_id = charging_id;
 
         if (sgwc_self()->gn_addr && sgwc_self()->gn_addr6) {
-            if (dl_tunnel->local_addr) {
+            if (ul_tunnel->local_addr) {
                 rv = ogs_gtp1_sockaddr_to_gsn_addr(sgwc_self()->gn_addr, NULL,
                         &sgw_gnc_gsnaddr, &gsn_len);
                 ogs_expect(rv == OGS_OK);
@@ -607,19 +611,19 @@ ogs_pkbuf_t *sgwc_gn_build_update_pdp_context_response(
         rsp->ggsn_address_for_control_plane.data = &sgw_gnc_gsnaddr;
         rsp->ggsn_address_for_control_plane.len = gsn_len;
 
-        if (dl_tunnel->local_addr && dl_tunnel->local_addr6) {
-            if (dl_tunnel->local_addr) {
-                rv = ogs_gtp1_sockaddr_to_gsn_addr(dl_tunnel->local_addr, NULL,
+        if (ul_tunnel->local_addr && ul_tunnel->local_addr6) {
+            if (ul_tunnel->local_addr) {
+                rv = ogs_gtp1_sockaddr_to_gsn_addr(ul_tunnel->local_addr, NULL,
                         &sgw_gnu_gsnaddr, &gsn_len);
                 ogs_expect(rv == OGS_OK);
-                rv = ogs_gtp1_sockaddr_to_gsn_addr(NULL, dl_tunnel->local_addr6,
+                rv = ogs_gtp1_sockaddr_to_gsn_addr(NULL, ul_tunnel->local_addr6,
                         &sgw_gnu_altgsnaddr, &gsn_altlen);
                 ogs_expect(rv == OGS_OK);
             } else {
-                rv = ogs_gtp1_sockaddr_to_gsn_addr(NULL, dl_tunnel->local_addr6,
+                rv = ogs_gtp1_sockaddr_to_gsn_addr(NULL, ul_tunnel->local_addr6,
                         &sgw_gnu_gsnaddr, &gsn_len);
                 ogs_expect(rv == OGS_OK);
-                rv = ogs_gtp1_sockaddr_to_gsn_addr(dl_tunnel->local_addr, NULL,
+                rv = ogs_gtp1_sockaddr_to_gsn_addr(ul_tunnel->local_addr, NULL,
                         &sgw_gnu_altgsnaddr, &gsn_altlen);
                 ogs_expect(rv == OGS_OK);
             }
@@ -629,7 +633,7 @@ ogs_pkbuf_t *sgwc_gn_build_update_pdp_context_response(
             rsp->alternative_ggsn_address_for_user_traffic.len = gsn_altlen;
         } else {
             rv = ogs_gtp1_sockaddr_to_gsn_addr(
-                    dl_tunnel->local_addr, dl_tunnel->local_addr6,
+                    ul_tunnel->local_addr, ul_tunnel->local_addr6,
                     &sgw_gnu_gsnaddr, &gsn_len);
             ogs_expect(rv == OGS_OK);
         }
