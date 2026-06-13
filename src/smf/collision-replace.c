@@ -347,6 +347,7 @@ void smf_sess_collision_replace_complete(smf_sess_t *old_sess)
         OGS_TLOG_INFO("Create Session Request (after UPF collision replace)");
 
         memset(&ev, 0, sizeof(ev));
+        ev.h.id = SMF_EVT_S5C_MESSAGE;
         ev.sess_id = new_sess->id;
         ev.gtp_xact_id = smf_ue->collision_replace.gtp_xact_id;
         ev.gtp2_message = &gtp2_message;
@@ -378,6 +379,7 @@ void smf_sess_collision_replace_complete(smf_sess_t *old_sess)
         OGS_SETUP_GTP_NODE(new_sess, smf_ue->collision_replace.gtp_node);
 
     memset(&ev, 0, sizeof(ev));
+    ev.h.id = SMF_EVT_GN_MESSAGE;
     ev.sess_id = new_sess->id;
     ev.gtp_xact_id = smf_ue->collision_replace.gtp_xact_id;
     ev.gtp1_message = &gtp1_message;
