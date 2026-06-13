@@ -509,6 +509,7 @@ typedef struct smf_sess_s {
         ogs_pool_id_t create_gtp_xact_id; /* S5/Gn CSR xact awaiting PFCP */
         bool pfcp_ue_ip_purge_pending; /* Orphan UPF session purge in flight */
         bool pfcp_ue_ip_retry_done; /* PFCP establish retried after IP purge */
+        bool gx_restoration_in_flight; /* Gx CCR-I replay after PCRF reconnect */
     } sm_data;
 
     bool            epc;            /**< EPC or 5GC */

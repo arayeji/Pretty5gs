@@ -1259,6 +1259,43 @@ void smf_gsm_state_operational(ogs_fsm_t *s, smf_event_t *e)
         }
         break;
 
+    case SMF_EVT_GX_MESSAGE:
+        {
+            ogs_diam_gx_message_t *gx_message = e->gx_message;
+            smf_ue_t *smf_ue = NULL;
+
+            ogs_assert(gx_message);
+
+            switch (gx_message->cmd_code) {
+            case OGS_DIAM_GX_CMD_CODE_CREDIT_CONTROL:
+                switch (gx_message->cc_request_type) {
+                case OGS_DIAM_GX_CC_REQUEST_TYPE_INITIAL_REQUEST:
+                    if (!sess->sm_data.gx_restoration_in_flight)
+                        break;
+
+                    sess->sm_data.gx_restoration_in_flight = false;
+                    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+                    if (gx_message->result_code != ER_DIAMETER_SUCCESS) {
+                        ogs_warn("[%s] Gx restoration CCA failed "
+                                "Result-Code[%u] DNN:%s",
+                                smf_log_id(smf_ue),
+                                gx_message->result_code,
+                                sess->session.name ?
+                                    sess->session.name : "-");
+                        break;
+                    }
+
+                    ogs_info("[%s] Gx restoration CCA ok DNN:%s",
+                            smf_log_id(smf_ue),
+                            sess->session.name ? sess->session.name : "-");
+                    smf_gx_handle_re_auth_request(sess, gx_message);
+                    break;
+                }
+                break;
+            }
+        }
+        break;
+
     case SMF_EVT_GY_MESSAGE:
         gy_message = e->gy_message;
         ogs_assert(gy_message);
