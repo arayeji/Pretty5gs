@@ -158,6 +158,7 @@ void sgwc_s5c_handle_create_session_response(
     sgwc_ue_t *sgwc_ue = NULL;
     sgwc_bearer_t *bearer = NULL;
     sgwc_tunnel_t *ul_tunnel = NULL;
+    sgwc_tunnel_t *dl_tunnel = NULL;
     ogs_pfcp_pdr_t *pdr = NULL;
     ogs_pfcp_far_t *far = NULL;
 
@@ -387,6 +388,30 @@ void sgwc_s5c_handle_create_session_response(
             ogs_pfcp_ip_to_outer_header_creation(&ul_tunnel->remote_ip,
                 &far->outer_header_creation, &far->outer_header_creation_len));
         far->outer_header_creation.teid = ul_tunnel->remote_teid;
+
+        if (sess->gn) {
+            dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
+            ogs_assert(dl_tunnel);
+
+            pdr = dl_tunnel->pdr;
+            ogs_assert(pdr);
+
+            pdr->outer_header_removal_len = 1;
+            pdr->outer_header_removal.description =
+                OGS_PFCP_OUTER_HEADER_REMOVAL_GTPU_UDP_IP;
+
+            far = dl_tunnel->far;
+            if (far && (dl_tunnel->remote_ip.ipv4 ||
+                    dl_tunnel->remote_ip.ipv6)) {
+                far->apply_action = OGS_PFCP_APPLY_ACTION_FORW;
+                rv = ogs_pfcp_ip_to_outer_header_creation(
+                        &dl_tunnel->remote_ip,
+                        &far->outer_header_creation,
+                        &far->outer_header_creation_len);
+                if (rv == OGS_OK)
+                    far->outer_header_creation.teid = dl_tunnel->remote_teid;
+            }
+        }
     }
 
     /* Receive Control Plane(UL) : PGW-S5C */
@@ -424,6 +449,22 @@ void sgwc_s5c_handle_create_session_response(
             OGS_PFCP_MODIFY_UL_ONLY|
             OGS_PFCP_MODIFY_OUTER_HEADER_REMOVAL|
             OGS_PFCP_MODIFY_ACTIVATE));
+
+    if (sess->gn) {
+        bearer = sgwc_default_bearer_in_sess(sess);
+        if (bearer) {
+            dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
+            if (dl_tunnel && dl_tunnel->far &&
+                    dl_tunnel->far->apply_action) {
+                rv = sgwc_pfcp_send_session_modification_request(
+                        sess, OGS_INVALID_POOL_ID, NULL,
+                        OGS_PFCP_MODIFY_DL_ONLY|
+                        OGS_PFCP_MODIFY_OUTER_HEADER_REMOVAL|
+                        OGS_PFCP_MODIFY_ACTIVATE);
+                ogs_expect(rv == OGS_OK);
+            }
+        }
+    }
 }
 
 void sgwc_s5c_handle_modify_bearer_response(

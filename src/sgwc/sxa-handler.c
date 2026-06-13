@@ -1569,6 +1569,10 @@ indirect_fail:
 
         s11_xact = ogs_gtp_xact_find_by_id(pfcp_xact->assoc_xact_id);
         if (!s11_xact) {
+            if (sess && sess->gn && (flags & OGS_PFCP_MODIFY_DL_ONLY)) {
+                ogs_pfcp_xact_commit(pfcp_xact);
+                return;
+            }
             ogs_error("GTP transaction(S11) has already been removed [%d]",
                     pfcp_xact->assoc_xact_id);
             ogs_pfcp_xact_commit(pfcp_xact);
