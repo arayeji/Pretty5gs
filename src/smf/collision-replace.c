@@ -110,6 +110,26 @@ smf_sess_t *smf_sess_find_collision_for_gtp1(ogs_gtp1_message_t *message)
     return sess;
 }
 
+smf_sess_t *smf_sess_find_collision_by_ipv4_gtp2(ogs_gtp2_message_t *message)
+{
+    ogs_gtp2_create_session_request_t *req = NULL;
+    ogs_paa_t *paa = NULL;
+    ogs_ip_t ip;
+
+    ogs_assert(message);
+    req = &message->create_session_request;
+
+    if (req->pdn_address_allocation.presence == 0 ||
+            !req->pdn_address_allocation.data)
+        return NULL;
+
+    paa = req->pdn_address_allocation.data;
+    if (ogs_paa_to_ip(paa, &ip) != OGS_OK || !ip.ipv4)
+        return NULL;
+
+    return smf_sess_find_by_ipv4(ip.addr);
+}
+
 static bool smf_sess_collision_replace_begin(
         smf_sess_t *old_sess, smf_ue_t *smf_ue, smf_event_t *e,
         bool gtp2, ogs_gtp2_sender_f_teid_t *sender_f_teid)
@@ -169,15 +189,21 @@ static bool smf_sess_collision_replace_begin(
     char buf4[OGS_ADDRSTRLEN];
 
     ogs_info("[%s] OLD Session collision replace DNN:%s IPv4:%s "
-            "(UPF SEID=0x%llx): best-effort PFCP delete, proceeding",
+            "(UPF SEID=0x%llx): waiting for PFCP Session Deletion",
             smf_ue->imsi_bcd,
             old_sess->session.name ? old_sess->session.name : "-",
             old_sess->ipv4 ?
                 OGS_INET_NTOP(&old_sess->ipv4->addr, buf4) : "-",
             (unsigned long long)old_sess->upf_n4_seid);
 
-    smf_epc_pfcp_send_session_deletion_best_effort(old_sess);
-    smf_sess_collision_replace_complete(old_sess);
+    {
+        smf_event_t ev;
+
+        memset(&ev, 0, sizeof(ev));
+        ev.sess_id = old_sess->id;
+        ev.gtp_xact_id = OGS_INVALID_POOL_ID;
+        ogs_fsm_tran(&old_sess->sm, smf_gsm_state_wait_pfcp_deletion, &ev);
+    }
 
     return true;
 }
