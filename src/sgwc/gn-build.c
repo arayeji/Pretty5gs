@@ -498,7 +498,7 @@ ogs_pkbuf_t *sgwc_gn_build_create_pdp_context_response(
     if (sess->paa.session_type) {
         rv = ogs_paa_to_ip(&sess->paa, &ip_eua);
         if (rv == OGS_OK) {
-            rv = ogs_gtp1_ip_to_eua(sess->session.session_type, &ip_eua, &eua,
+            rv = ogs_gtp1_ip_to_eua(sess->paa.session_type, &ip_eua, &eua,
                     &eua_len);
             if (rv == OGS_OK) {
                 rsp->end_user_address.presence = 1;
