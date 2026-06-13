@@ -53,6 +53,8 @@ const char *smf_event_get_name(smf_event_t *e)
         return "SMF_EVT_GX_MESSAGE";
     case SMF_EVT_GY_MESSAGE:
         return "SMF_EVT_GY_MESSAGE";
+    case SMF_EVT_GX_PEER_CONNECT:
+        return "SMF_EVT_GX_PEER_CONNECT";
     case SMF_EVT_N4_MESSAGE:
         return "SMF_EVT_N4_MESSAGE";
     case SMF_EVT_N4_TIMER:

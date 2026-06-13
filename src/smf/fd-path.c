@@ -19,6 +19,25 @@
 
 #include "fd-path.h"
 
+#include "gx-restoration.h"
+
+static void smf_diam_peer_connect_cb(
+        enum fd_hook_type type, struct msg *msg,
+        struct peer_hdr *peer, void *other,
+        struct fd_hook_permsgdata *pmd, void *regdata)
+{
+    (void)msg;
+    (void)peer;
+    (void)other;
+    (void)pmd;
+    (void)regdata;
+
+    if (type != HOOK_PEER_CONNECT_SUCCESS)
+        return;
+
+    smf_gx_peer_connect_event_push();
+}
+
 int smf_fd_init(void)
 {
     int rv;
@@ -49,6 +68,8 @@ int smf_fd_init(void)
     rv = ogs_diam_start();
     ogs_assert(rv == 0);
 
+    ogs_diam_logger_register(smf_diam_peer_connect_cb);
+
     return OGS_OK;
 }
 
@@ -64,6 +85,8 @@ void smf_fd_final(void)
     smf_gx_final();
     smf_gy_final();
     smf_s6b_final();
+
+    ogs_diam_logger_unregister();
 
     ogs_diam_final();
 }

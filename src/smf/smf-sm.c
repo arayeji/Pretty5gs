@@ -35,6 +35,7 @@
 #include "npcf-handler.h"
 #include "nsmf-handler.h"
 #include "binding.h"
+#include "gx-restoration.h"
 
 static void smf_admin_drain_sessions(int admin_force)
 {
@@ -1553,6 +1554,10 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
 
     case SMF_EVT_CONFIG_RELOAD:
         smf_context_reload_runtime();
+        break;
+
+    case SMF_EVT_GX_PEER_CONNECT:
+        smf_gx_restoration_on_peer_connect();
         break;
 
     case SMF_EVT_ADMIN_MAINTENANCE_ENABLE:
