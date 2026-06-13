@@ -767,7 +767,6 @@ void sgwc_gn_handle_update_pdp_context_request(
     ogs_gtp1_update_pdp_context_request_t *req = NULL;
     sgwc_bearer_t *bearer = NULL;
     sgwc_tunnel_t *dl_tunnel = NULL;
-    ogs_pfcp_far_t *far = NULL;
 
     ogs_assert(gn_xact);
     ogs_assert(message);
