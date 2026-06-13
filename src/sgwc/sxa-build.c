@@ -19,6 +19,32 @@
 
 #include "sxa-build.h"
 
+static bool sgwc_sxa_tunnel_matches_modify(
+        sgwc_tunnel_t *tunnel, uint64_t modify_flags)
+{
+    ogs_assert(tunnel);
+
+    if (((modify_flags &
+          (OGS_PFCP_MODIFY_DL_ONLY|
+           OGS_PFCP_MODIFY_UL_ONLY|
+           OGS_PFCP_MODIFY_INDIRECT)) == 0) ||
+
+        ((modify_flags & OGS_PFCP_MODIFY_DL_ONLY) &&
+         (tunnel->interface_type == OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U)) ||
+
+        ((modify_flags & OGS_PFCP_MODIFY_UL_ONLY) &&
+         (tunnel->interface_type == OGS_GTP2_F_TEID_S1_U_SGW_GTP_U)) ||
+
+        (((modify_flags & OGS_PFCP_MODIFY_INDIRECT) &&
+          ((tunnel->interface_type ==
+              OGS_GTP2_F_TEID_SGW_GTP_U_FOR_DL_DATA_FORWARDING) ||
+           (tunnel->interface_type ==
+              OGS_GTP2_F_TEID_SGW_GTP_U_FOR_UL_DATA_FORWARDING))))))
+        return true;
+
+    return false;
+}
+
 ogs_pkbuf_t *sgwc_sxa_build_session_establishment_request(
         uint8_t type, sgwc_sess_t *sess)
 {
@@ -194,22 +220,7 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
     ogs_list_for_each_entry(
             &xact->bearer_to_modify_list, bearer, to_modify_node) {
         ogs_list_for_each(&bearer->tunnel_list, tunnel) {
-            if (((modify_flags &
-                  (OGS_PFCP_MODIFY_DL_ONLY|
-                   OGS_PFCP_MODIFY_UL_ONLY|
-                   OGS_PFCP_MODIFY_INDIRECT)) == 0) ||
-
-                ((modify_flags & OGS_PFCP_MODIFY_DL_ONLY) &&
-                 (tunnel->interface_type == OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U)) ||
-
-                ((modify_flags & OGS_PFCP_MODIFY_UL_ONLY) &&
-                 (tunnel->interface_type == OGS_GTP2_F_TEID_S1_U_SGW_GTP_U)) ||
-
-                (((modify_flags & OGS_PFCP_MODIFY_INDIRECT) &&
-                  ((tunnel->interface_type ==
-                      OGS_GTP2_F_TEID_SGW_GTP_U_FOR_DL_DATA_FORWARDING) ||
-                   (tunnel->interface_type ==
-                      OGS_GTP2_F_TEID_SGW_GTP_U_FOR_UL_DATA_FORWARDING))))) {
+            if (sgwc_sxa_tunnel_matches_modify(tunnel, modify_flags)) {
 
                 if (modify_flags & OGS_PFCP_MODIFY_REMOVE) {
 
@@ -240,28 +251,44 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
                         ogs_assert_if_reached();
 
                 } else if (modify_flags & OGS_PFCP_MODIFY_CREATE) {
+                    /*
+                     * UPG/VPP validates PDR->FAR references strictly and
+                     * rejects Create-PDR if the FAR does not exist yet.
+                     * Open5GS SGW-U uses far_find_or_add() and accepts
+                     * PDR-before-FAR in one message; VPP does not.
+                     */
+                    if (ogs_global_conf()->parameter.use_upg_vpp == true) {
+                        far = tunnel->far;
+                        if (far) {
+                            ogs_pfcp_build_create_far(
+                                    &req->create_far[num_of_create_far],
+                                    num_of_create_far, far);
+                            num_of_create_far++;
+                        } else
+                            ogs_assert_if_reached();
+                    } else {
+                        pdr = tunnel->pdr;
+                        if (pdr) {
+                            ogs_pfcp_build_create_pdr(
+                                    &req->create_pdr[num_of_create_pdr],
+                                    num_of_create_pdr, pdr);
+                            num_of_create_pdr++;
 
-                    pdr = tunnel->pdr;
-                    if (pdr) {
-                        ogs_pfcp_build_create_pdr(
-                                &req->create_pdr[num_of_create_pdr],
-                                num_of_create_pdr, pdr);
-                        num_of_create_pdr++;
+                            ogs_list_add(&xact->pdr_to_create_list,
+                                            &pdr->to_create_node);
+                        } else
+                            ogs_assert_if_reached();
 
-                        ogs_list_add(&xact->pdr_to_create_list,
-                                        &pdr->to_create_node);
-                    } else
-                        ogs_assert_if_reached();
+                        far = tunnel->far;
+                        if (far) {
+                            ogs_pfcp_build_create_far(
+                                    &req->create_far[num_of_create_far],
+                                    num_of_create_far, far);
 
-                    far = tunnel->far;
-                    if (far) {
-                        ogs_pfcp_build_create_far(
-                                &req->create_far[num_of_create_far],
-                                num_of_create_far, far);
-
-                        num_of_create_far++;
-                    } else
-                        ogs_assert_if_reached();
+                            num_of_create_far++;
+                        } else
+                            ogs_assert_if_reached();
+                    }
                 }
 
                 if (modify_flags & OGS_PFCP_MODIFY_DEACTIVATE) {
@@ -308,6 +335,29 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
                     } else
                         ogs_assert_if_reached();
                 }
+            }
+        }
+    }
+
+    if ((modify_flags & OGS_PFCP_MODIFY_CREATE) &&
+            ogs_global_conf()->parameter.use_upg_vpp == true) {
+        ogs_list_for_each_entry(
+                &xact->bearer_to_modify_list, bearer, to_modify_node) {
+            ogs_list_for_each(&bearer->tunnel_list, tunnel) {
+                if (!sgwc_sxa_tunnel_matches_modify(tunnel, modify_flags))
+                    continue;
+
+                pdr = tunnel->pdr;
+                if (pdr) {
+                    ogs_pfcp_build_create_pdr(
+                            &req->create_pdr[num_of_create_pdr],
+                            num_of_create_pdr, pdr);
+                    num_of_create_pdr++;
+
+                    ogs_list_add(&xact->pdr_to_create_list,
+                                    &pdr->to_create_node);
+                } else
+                    ogs_assert_if_reached();
             }
         }
     }
