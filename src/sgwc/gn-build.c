@@ -20,6 +20,76 @@
 #include "gn-build.h"
 #include "sgwc-gtp-interop.h"
 
+/*
+ * Build GGSN user-traffic GSN addresses from the SGW-U access F-TEID (FTUP).
+ * Primary must be the SGW-U address the RNC uses for uplink GTP-U — never
+ * the SGWC Gn control-plane listen address.
+ */
+static int sgwc_gn_ggsn_user_traffic_from_ul_tunnel(
+        sgwc_tunnel_t *ul_tunnel,
+        ogs_gtp1_gsn_addr_t *primary, int *primary_len,
+        ogs_gtp1_gsn_addr_t *alternative, int *alternative_len,
+        bool *alternative_present)
+{
+    ogs_sockaddr_t *saddr = NULL, *saddr6 = NULL;
+    int rv;
+
+    ogs_assert(ul_tunnel);
+    ogs_assert(ul_tunnel->pdr);
+    ogs_assert(primary);
+    ogs_assert(primary_len);
+    ogs_assert(alternative);
+    ogs_assert(alternative_len);
+    ogs_assert(alternative_present);
+
+    *alternative_present = false;
+
+    if (ul_tunnel->pdr->f_teid_len) {
+        rv = ogs_pfcp_f_teid_to_sockaddr(
+                &ul_tunnel->pdr->f_teid, ul_tunnel->pdr->f_teid_len,
+                &saddr, &saddr6);
+    } else if (ul_tunnel->local_addr || ul_tunnel->local_addr6) {
+        rv = OGS_OK;
+        if (ul_tunnel->local_addr)
+            ogs_assert(OGS_OK ==
+                ogs_copyaddrinfo(&saddr, ul_tunnel->local_addr));
+        if (ul_tunnel->local_addr6)
+            ogs_assert(OGS_OK ==
+                ogs_copyaddrinfo(&saddr6, ul_tunnel->local_addr6));
+    } else {
+        rv = OGS_ERROR;
+    }
+
+    if (rv != OGS_OK) {
+        ogs_error("No SGW-U access F-TEID for Gn user-traffic address");
+        return OGS_ERROR;
+    }
+
+    if (saddr) {
+        rv = ogs_gtp1_sockaddr_to_gsn_addr(
+                saddr, NULL, primary, primary_len);
+    } else {
+        rv = ogs_gtp1_sockaddr_to_gsn_addr(
+                NULL, saddr6, primary, primary_len);
+    }
+    if (rv != OGS_OK)
+        goto done;
+
+    if (saddr && saddr6) {
+        rv = ogs_gtp1_sockaddr_to_gsn_addr(
+                NULL, saddr6, alternative, alternative_len);
+        if (rv == OGS_OK)
+            *alternative_present = true;
+    }
+
+done:
+    if (saddr)
+        ogs_freeaddrinfo(saddr);
+    if (saddr6)
+        ogs_freeaddrinfo(saddr6);
+    return rv;
+}
+
 static ogs_pkbuf_t *sgwc_gn_encapsulate_gtp2_header(
         ogs_pkbuf_t *pkbuf, uint8_t type, uint32_t teid)
 {
@@ -542,35 +612,26 @@ ogs_pkbuf_t *sgwc_gn_build_create_pdp_context_response(
      * GGSN user-plane address/TEID must match SGW-U access F-TEID (S1-U),
      * same as S11 Create Session Response — not the S5 DL tunnel (core).
      */
-    if (ul_tunnel->local_addr && ul_tunnel->local_addr6) {
-        if (ul_tunnel->local_addr) {
-            rv = ogs_gtp1_sockaddr_to_gsn_addr(ul_tunnel->local_addr, NULL,
-                    &sgw_gnu_gsnaddr, &gsn_len);
-            ogs_expect(rv == OGS_OK);
-            rv = ogs_gtp1_sockaddr_to_gsn_addr(NULL, ul_tunnel->local_addr6,
-                    &sgw_gnu_altgsnaddr, &gsn_altlen);
-            ogs_expect(rv == OGS_OK);
-        } else {
-            rv = ogs_gtp1_sockaddr_to_gsn_addr(NULL, ul_tunnel->local_addr6,
-                    &sgw_gnu_gsnaddr, &gsn_len);
-            ogs_expect(rv == OGS_OK);
-            rv = ogs_gtp1_sockaddr_to_gsn_addr(ul_tunnel->local_addr, NULL,
-                    &sgw_gnu_altgsnaddr, &gsn_altlen);
-            ogs_expect(rv == OGS_OK);
+    {
+        bool alt_present = false;
+
+        rv = sgwc_gn_ggsn_user_traffic_from_ul_tunnel(
+                ul_tunnel, &sgw_gnu_gsnaddr, &gsn_len,
+                &sgw_gnu_altgsnaddr, &gsn_altlen, &alt_present);
+        if (rv != OGS_OK)
+            return NULL;
+
+        rsp->ggsn_address_for_user_traffic.presence = 1;
+        rsp->ggsn_address_for_user_traffic.data = &sgw_gnu_gsnaddr;
+        rsp->ggsn_address_for_user_traffic.len = gsn_len;
+
+        if (alt_present) {
+            rsp->alternative_ggsn_address_for_user_traffic.presence = 1;
+            rsp->alternative_ggsn_address_for_user_traffic.data =
+                &sgw_gnu_altgsnaddr;
+            rsp->alternative_ggsn_address_for_user_traffic.len = gsn_altlen;
         }
-        rsp->alternative_ggsn_address_for_user_traffic.presence = 1;
-        rsp->alternative_ggsn_address_for_user_traffic.data =
-            &sgw_gnu_altgsnaddr;
-        rsp->alternative_ggsn_address_for_user_traffic.len = gsn_altlen;
-    } else {
-        rv = ogs_gtp1_sockaddr_to_gsn_addr(
-                ul_tunnel->local_addr, ul_tunnel->local_addr6,
-                &sgw_gnu_gsnaddr, &gsn_len);
-        ogs_expect(rv == OGS_OK);
     }
-    rsp->ggsn_address_for_user_traffic.presence = 1;
-    rsp->ggsn_address_for_user_traffic.data = &sgw_gnu_gsnaddr;
-    rsp->ggsn_address_for_user_traffic.len = gsn_len;
 
     rsp->quality_of_service_profile.presence = 1;
     ogs_gtp1_build_qos_profile(&rsp->quality_of_service_profile,
@@ -666,35 +727,26 @@ ogs_pkbuf_t *sgwc_gn_build_update_pdp_context_response(
         rsp->ggsn_address_for_control_plane.data = &sgw_gnc_gsnaddr;
         rsp->ggsn_address_for_control_plane.len = gsn_len;
 
-        if (ul_tunnel->local_addr && ul_tunnel->local_addr6) {
-            if (ul_tunnel->local_addr) {
-                rv = ogs_gtp1_sockaddr_to_gsn_addr(ul_tunnel->local_addr, NULL,
-                        &sgw_gnu_gsnaddr, &gsn_len);
-                ogs_expect(rv == OGS_OK);
-                rv = ogs_gtp1_sockaddr_to_gsn_addr(NULL, ul_tunnel->local_addr6,
-                        &sgw_gnu_altgsnaddr, &gsn_altlen);
-                ogs_expect(rv == OGS_OK);
-            } else {
-                rv = ogs_gtp1_sockaddr_to_gsn_addr(NULL, ul_tunnel->local_addr6,
-                        &sgw_gnu_gsnaddr, &gsn_len);
-                ogs_expect(rv == OGS_OK);
-                rv = ogs_gtp1_sockaddr_to_gsn_addr(ul_tunnel->local_addr, NULL,
-                        &sgw_gnu_altgsnaddr, &gsn_altlen);
-                ogs_expect(rv == OGS_OK);
+        {
+            bool alt_present = false;
+
+            rv = sgwc_gn_ggsn_user_traffic_from_ul_tunnel(
+                    ul_tunnel, &sgw_gnu_gsnaddr, &gsn_len,
+                    &sgw_gnu_altgsnaddr, &gsn_altlen, &alt_present);
+            if (rv != OGS_OK)
+                return NULL;
+
+            rsp->ggsn_address_for_user_traffic.presence = 1;
+            rsp->ggsn_address_for_user_traffic.data = &sgw_gnu_gsnaddr;
+            rsp->ggsn_address_for_user_traffic.len = gsn_len;
+
+            if (alt_present) {
+                rsp->alternative_ggsn_address_for_user_traffic.presence = 1;
+                rsp->alternative_ggsn_address_for_user_traffic.data =
+                    &sgw_gnu_altgsnaddr;
+                rsp->alternative_ggsn_address_for_user_traffic.len = gsn_altlen;
             }
-            rsp->alternative_ggsn_address_for_user_traffic.presence = 1;
-            rsp->alternative_ggsn_address_for_user_traffic.data =
-                &sgw_gnu_altgsnaddr;
-            rsp->alternative_ggsn_address_for_user_traffic.len = gsn_altlen;
-        } else {
-            rv = ogs_gtp1_sockaddr_to_gsn_addr(
-                    ul_tunnel->local_addr, ul_tunnel->local_addr6,
-                    &sgw_gnu_gsnaddr, &gsn_len);
-            ogs_expect(rv == OGS_OK);
         }
-        rsp->ggsn_address_for_user_traffic.presence = 1;
-        rsp->ggsn_address_for_user_traffic.data = &sgw_gnu_gsnaddr;
-        rsp->ggsn_address_for_user_traffic.len = gsn_len;
 
         rsp->quality_of_service_profile.presence = 1;
         ogs_gtp1_build_qos_profile(&rsp->quality_of_service_profile,
