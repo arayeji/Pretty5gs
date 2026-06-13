@@ -329,7 +329,9 @@ static int sgwc_gn_scan_sgsn_user_ips(
             break;
 
         if (t == 133 &&
-                ogs_gtp1_gsn_addr_to_ip(val, ie_len, &ips[count]) == OGS_OK)
+                ogs_gtp1_gsn_addr_to_ip(
+                    (const ogs_gtp1_gsn_addr_t *)val, ie_len,
+                    &ips[count]) == OGS_OK)
             count++;
 
         off += ie_len;
