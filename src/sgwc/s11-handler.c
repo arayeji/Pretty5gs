@@ -1263,6 +1263,50 @@ void sgwc_s11_handle_create_bearer_response(
      *****************************************/
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
+    if (!bearer) {
+        ogs_error("No Bearer Context");
+        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+    }
+    if (!sess) {
+        ogs_error("No Session Context");
+        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+    }
+    if (!sgwc_ue) {
+        ogs_error("No SGWC-UE Context");
+        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+    }
+
+    if (rsp->cause.presence == 0) {
+        ogs_error("No Cause");
+        cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
+    } else {
+        cause = rsp->cause.data;
+        ogs_assert(cause);
+        if (cause->value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+            ogs_error("GTP Cause [Value:%d]", cause->value);
+            cause_value = cause->value;
+            if (bearer) {
+                ogs_debug("    bearer[EBI=%d]", bearer->ebi);
+                ogs_assert(OGS_OK ==
+                    sgwc_pfcp_send_bearer_modification_request(
+                        bearer, OGS_INVALID_POOL_ID, NULL,
+                        OGS_PFCP_MODIFY_UL_ONLY|OGS_PFCP_MODIFY_REMOVE));
+            }
+            goto cleanup;
+        }
+    }
+
+    if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+        if (bearer) {
+            ogs_debug("    bearer[EBI=%d]", bearer->ebi);
+            ogs_assert(OGS_OK ==
+                sgwc_pfcp_send_bearer_modification_request(
+                    bearer, OGS_INVALID_POOL_ID, NULL,
+                    OGS_PFCP_MODIFY_UL_ONLY|OGS_PFCP_MODIFY_REMOVE));
+        }
+        goto cleanup;
+    }
+
     if (rsp->bearer_contexts.presence == 0) {
         ogs_error("No Bearer");
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
@@ -1279,27 +1323,9 @@ void sgwc_s11_handle_create_bearer_response(
         ogs_error("No SGW TEID");
         cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
     }
-
-    if (rsp->cause.presence == 0) {
-        ogs_error("No Cause");
-        cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
-    }
     if (rsp->bearer_contexts.cause.presence == 0) {
         ogs_error("No Bearer Cause");
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
-    }
-
-    if (!bearer) {
-        ogs_error("No Bearer Context");
-        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
-    }
-    if (!sess) {
-        ogs_error("No Session Context");
-        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
-    }
-    if (!sgwc_ue) {
-        ogs_error("No SGWC-UE Context");
-        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
