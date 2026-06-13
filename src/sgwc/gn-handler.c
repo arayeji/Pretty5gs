@@ -255,18 +255,142 @@ static bool sgwc_gn_create_matches_active_sess(
     return true;
 }
 
+static bool sgwc_gn_ip_is_rfc1918(const ogs_ip_t *ip)
+{
+    uint32_t a;
+
+    if (!ip || !ip->ipv4)
+        return false;
+
+    a = ntohl(ip->addr);
+    if ((a >> 24) == 10)
+        return true;
+    if ((a >> 16) == 0xC0A8) /* 192.168.0.0/16 */
+        return true;
+    if ((a >> 20) == 0xAC1) /* 172.16.0.0/12 */
+        return true;
+
+    return false;
+}
+
+static int sgwc_gn_ip_from_gsn_addr(
+        ogs_gtp1_tlv_gsn_address_t *gsn, ogs_ip_t *ip)
+{
+    if (!gsn || !gsn->presence)
+        return OGS_ERROR;
+
+    return ogs_gtp1_gsn_addr_to_ip(gsn->data, gsn->len, ip);
+}
+
 /*
- * Prefer Alternative SGSN Address for User Traffic when present — the RNC
- * often puts the reachable PC/data-plane address (e.g. 192.168.14.32) there
- * and a routed CP address (e.g. 10.234.241.21) in the primary IE.
+ * Walk the raw GTPv1 PDU for every SGSN Address for User Traffic IE (133).
+ * Some RNCs send duplicate IE 133 (routed + PC-local) instead of IE 136.
  */
+static int sgwc_gn_scan_sgsn_user_ips(
+        ogs_pkbuf_t *gtpbuf, ogs_ip_t *ips, int max_ips)
+{
+    uint8_t *d;
+    int len, off, count = 0;
+
+    ogs_assert(gtpbuf);
+    ogs_assert(ips);
+    ogs_assert(max_ips > 0);
+
+    d = gtpbuf->data;
+    len = gtpbuf->len;
+    if (len < 9)
+        return 0;
+
+    off = (d[0] & 0x02) ? 12 : 8;
+
+    while (off + 1 < len && count < max_ips) {
+        uint8_t t = d[off++];
+        int ie_len = 0;
+        uint8_t *val = NULL;
+
+        if (t >= 128) {
+            if (off + 2 > len)
+                break;
+            ie_len = (d[off] << 8) | d[off + 1];
+            off += 2;
+            val = d + off;
+        } else {
+            switch (t) {
+            case 1: ie_len = 1; break;
+            case 2: ie_len = 8; break;
+            case 16: case 17: case 133: ie_len = 4; break;
+            default:
+                goto done;
+            }
+            val = d + off;
+        }
+
+        if (off + ie_len > len)
+            break;
+
+        if (t == 133 &&
+                ogs_gtp1_gsn_addr_to_ip(val, ie_len, &ips[count]) == OGS_OK)
+            count++;
+
+        off += ie_len;
+    }
+
+done:
+    return count;
+}
+
+static int sgwc_gn_pick_sgsn_user_traffic_ip(
+        ogs_pkbuf_t *gtpbuf,
+        ogs_gtp1_tlv_gsn_address_t *sgsn_user,
+        ogs_gtp1_tlv_gsn_address_t *alt_sgsn_user,
+        ogs_ip_t *selected)
+{
+    ogs_ip_t scanned[4];
+    ogs_ip_t parsed[2];
+    int i, n_scanned = 0, n_parsed = 0;
+
+    ogs_assert(selected);
+
+    if (gtpbuf)
+        n_scanned = sgwc_gn_scan_sgsn_user_ips(gtpbuf, scanned, 4);
+
+    if (sgwc_gn_ip_from_gsn_addr(sgsn_user, &parsed[n_parsed]) == OGS_OK)
+        n_parsed++;
+    if (sgwc_gn_ip_from_gsn_addr(alt_sgsn_user, &parsed[n_parsed]) == OGS_OK)
+        n_parsed++;
+
+    for (i = 0; i < n_scanned; i++) {
+        if (sgwc_gn_ip_is_rfc1918(&scanned[i])) {
+            memcpy(selected, &scanned[i], sizeof(*selected));
+            return OGS_OK;
+        }
+    }
+    for (i = 0; i < n_parsed; i++) {
+        if (sgwc_gn_ip_is_rfc1918(&parsed[i])) {
+            memcpy(selected, &parsed[i], sizeof(*selected));
+            return OGS_OK;
+        }
+    }
+    if (n_scanned > 0) {
+        memcpy(selected, &scanned[n_scanned - 1], sizeof(*selected));
+        return OGS_OK;
+    }
+    if (alt_sgsn_user && alt_sgsn_user->presence &&
+            sgwc_gn_ip_from_gsn_addr(alt_sgsn_user, selected) == OGS_OK)
+        return OGS_OK;
+    if (sgsn_user && sgsn_user->presence)
+        return sgwc_gn_ip_from_gsn_addr(sgsn_user, selected);
+
+    return OGS_ERROR;
+}
+
 static int sgwc_gn_apply_sgsn_user_traffic_to_dl(
         sgwc_tunnel_t *dl_tunnel,
+        ogs_pkbuf_t *gtpbuf,
         ogs_gtp1_tlv_gsn_address_t *sgsn_user,
         ogs_gtp1_tlv_gsn_address_t *alt_sgsn_user,
         uint32_t remote_teid)
 {
-    ogs_gtp1_tlv_gsn_address_t *pick = sgsn_user;
     ogs_pfcp_far_t *far = NULL;
     int rv;
 
@@ -275,13 +399,8 @@ static int sgwc_gn_apply_sgsn_user_traffic_to_dl(
     if (remote_teid)
         dl_tunnel->remote_teid = remote_teid;
 
-    if (alt_sgsn_user && alt_sgsn_user->presence)
-        pick = alt_sgsn_user;
-    else if (!sgsn_user || !sgsn_user->presence)
-        return OGS_ERROR;
-
-    rv = ogs_gtp1_gsn_addr_to_ip(
-            pick->data, pick->len, &dl_tunnel->remote_ip);
+    rv = sgwc_gn_pick_sgsn_user_traffic_ip(
+            gtpbuf, sgsn_user, alt_sgsn_user, &dl_tunnel->remote_ip);
     if (rv != OGS_OK)
         return OGS_ERROR;
 
@@ -297,6 +416,29 @@ static int sgwc_gn_apply_sgsn_user_traffic_to_dl(
         far->outer_header_creation.teid = dl_tunnel->remote_teid;
 
     return OGS_OK;
+}
+
+static int sgwc_gn_pfcp_activate_dl_tunnel(sgwc_sess_t *sess,
+        sgwc_tunnel_t *dl_tunnel)
+{
+    ogs_pfcp_pdr_t *pdr = NULL;
+
+    ogs_assert(sess);
+    ogs_assert(dl_tunnel);
+
+    pdr = dl_tunnel->pdr;
+    if (!pdr || !dl_tunnel->far || !dl_tunnel->far->apply_action)
+        return OGS_OK;
+
+    pdr->outer_header_removal_len = 1;
+    pdr->outer_header_removal.description =
+        OGS_PFCP_OUTER_HEADER_REMOVAL_GTPU_UDP_IP;
+
+    return sgwc_pfcp_send_session_modification_request(
+            sess, OGS_INVALID_POOL_ID, NULL,
+            OGS_PFCP_MODIFY_DL_ONLY|
+            OGS_PFCP_MODIFY_OUTER_HEADER_REMOVAL|
+            OGS_PFCP_MODIFY_ACTIVATE);
 }
 
 static void sgwc_gn_create_pdp_proceed(
@@ -483,7 +625,7 @@ static void sgwc_gn_create_pdp_proceed(
         ogs_assert(dl_tunnel);
 
         rv = sgwc_gn_apply_sgsn_user_traffic_to_dl(
-                dl_tunnel, &req->sgsn_address_for_user_traffic, NULL,
+                dl_tunnel, gtpbuf, &req->sgsn_address_for_user_traffic, NULL,
                 req->tunnel_endpoint_identifier_data_i.u32);
         if (rv != OGS_OK) {
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
@@ -767,8 +909,10 @@ void sgwc_gn_handle_update_pdp_context_request(
     ogs_gtp1_update_pdp_context_request_t *req = NULL;
     sgwc_bearer_t *bearer = NULL;
     sgwc_tunnel_t *dl_tunnel = NULL;
+    bool dl_tunnel_updated = false;
 
     ogs_assert(gn_xact);
+    ogs_assert(gtpbuf);
     ogs_assert(message);
     req = &message->update_pdp_context_request;
 
@@ -808,7 +952,7 @@ void sgwc_gn_handle_update_pdp_context_request(
             remote_teid = req->tunnel_endpoint_identifier_data_i.u32;
 
         rv = sgwc_gn_apply_sgsn_user_traffic_to_dl(
-                dl_tunnel, &req->sgsn_address_for_user_traffic,
+                dl_tunnel, gtpbuf, &req->sgsn_address_for_user_traffic,
                 &req->alternative_sgsn_address_for_user_traffic,
                 remote_teid);
         if (rv != OGS_OK) {
@@ -817,6 +961,12 @@ void sgwc_gn_handle_update_pdp_context_request(
                     OGS_GTP1_CAUSE_MANDATORY_IE_INCORRECT);
             return;
         }
+        dl_tunnel_updated = true;
+    }
+
+    if (dl_tunnel_updated) {
+        rv = sgwc_gn_pfcp_activate_dl_tunnel(sess, dl_tunnel);
+        ogs_expect(rv == OGS_OK);
     }
 
     if (req->quality_of_service_profile.presence) {
@@ -852,15 +1002,6 @@ void sgwc_gn_handle_update_pdp_context_request(
         rv = sgwc_gtp_send_update_pdp_context_response(
                 gn_xact, sgwc_ue->mme_s11_teid, pkbuf);
         ogs_expect(rv == OGS_OK);
-
-        if (dl_tunnel->far && dl_tunnel->far->apply_action) {
-            rv = sgwc_pfcp_send_session_modification_request(
-                    sess, OGS_INVALID_POOL_ID, NULL,
-                    OGS_PFCP_MODIFY_DL_ONLY|
-                    OGS_PFCP_MODIFY_OUTER_HEADER_REMOVAL|
-                    OGS_PFCP_MODIFY_ACTIVATE);
-            ogs_expect(rv == OGS_OK);
-        }
         return;
     }
 
