@@ -24,22 +24,25 @@ static bool sgwc_sxa_tunnel_matches_modify(
 {
     ogs_assert(tunnel);
 
-    if (((modify_flags &
-          (OGS_PFCP_MODIFY_DL_ONLY|
-           OGS_PFCP_MODIFY_UL_ONLY|
-           OGS_PFCP_MODIFY_INDIRECT)) == 0) ||
+    if ((modify_flags &
+         (OGS_PFCP_MODIFY_DL_ONLY|
+          OGS_PFCP_MODIFY_UL_ONLY|
+          OGS_PFCP_MODIFY_INDIRECT)) == 0)
+        return true;
 
-        ((modify_flags & OGS_PFCP_MODIFY_DL_ONLY) &&
-         (tunnel->interface_type == OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U)) ||
+    if ((modify_flags & OGS_PFCP_MODIFY_DL_ONLY) &&
+        tunnel->interface_type == OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U)
+        return true;
 
-        ((modify_flags & OGS_PFCP_MODIFY_UL_ONLY) &&
-         (tunnel->interface_type == OGS_GTP2_F_TEID_S1_U_SGW_GTP_U)) ||
+    if ((modify_flags & OGS_PFCP_MODIFY_UL_ONLY) &&
+        tunnel->interface_type == OGS_GTP2_F_TEID_S1_U_SGW_GTP_U)
+        return true;
 
-        (((modify_flags & OGS_PFCP_MODIFY_INDIRECT) &&
-          ((tunnel->interface_type ==
-              OGS_GTP2_F_TEID_SGW_GTP_U_FOR_DL_DATA_FORWARDING) ||
-           (tunnel->interface_type ==
-              OGS_GTP2_F_TEID_SGW_GTP_U_FOR_UL_DATA_FORWARDING))))))
+    if ((modify_flags & OGS_PFCP_MODIFY_INDIRECT) &&
+        (tunnel->interface_type ==
+            OGS_GTP2_F_TEID_SGW_GTP_U_FOR_DL_DATA_FORWARDING ||
+         tunnel->interface_type ==
+            OGS_GTP2_F_TEID_SGW_GTP_U_FOR_UL_DATA_FORWARDING))
         return true;
 
     return false;
@@ -188,6 +191,7 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
     int num_of_remove_far = 0;
     int num_of_create_pdr = 0;
     int num_of_create_far = 0;
+    int num_of_create_urr = 0;
     int num_of_update_pdr = 0;
     int num_of_update_far = 0;
 
@@ -215,6 +219,38 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
 
     if (modify_flags & OGS_PFCP_MODIFY_CREATE) {
         ogs_pfcp_pdrbuf_init();
+    }
+
+    if ((modify_flags & OGS_PFCP_MODIFY_CREATE) &&
+            ogs_global_conf()->parameter.use_upg_vpp == true) {
+        ogs_list_for_each_entry(
+                &xact->bearer_to_modify_list, bearer, to_modify_node) {
+            ogs_list_for_each(&bearer->tunnel_list, tunnel) {
+                if (!sgwc_sxa_tunnel_matches_modify(tunnel, modify_flags))
+                    continue;
+
+                far = tunnel->far;
+                if (far) {
+                    ogs_pfcp_build_create_far(
+                            &req->create_far[num_of_create_far],
+                            num_of_create_far, far);
+                    num_of_create_far++;
+                } else
+                    ogs_assert_if_reached();
+            }
+        }
+    }
+
+    if (modify_flags & OGS_PFCP_MODIFY_CREATE) {
+        ogs_list_for_each_entry(
+                &xact->bearer_to_modify_list, bearer, to_modify_node) {
+            if (bearer->urr) {
+                ogs_pfcp_build_create_urr(
+                        &req->create_urr[num_of_create_urr],
+                        num_of_create_urr, bearer->urr);
+                num_of_create_urr++;
+            }
+        }
     }
 
     ogs_list_for_each_entry(
@@ -251,21 +287,8 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
                         ogs_assert_if_reached();
 
                 } else if (modify_flags & OGS_PFCP_MODIFY_CREATE) {
-                    /*
-                     * UPG/VPP validates PDR->FAR references strictly and
-                     * rejects Create-PDR if the FAR does not exist yet.
-                     * Open5GS SGW-U uses far_find_or_add() and accepts
-                     * PDR-before-FAR in one message; VPP does not.
-                     */
                     if (ogs_global_conf()->parameter.use_upg_vpp == true) {
-                        far = tunnel->far;
-                        if (far) {
-                            ogs_pfcp_build_create_far(
-                                    &req->create_far[num_of_create_far],
-                                    num_of_create_far, far);
-                            num_of_create_far++;
-                        } else
-                            ogs_assert_if_reached();
+                        /* Create-FAR already sent above for UPG/VPP */
                     } else {
                         pdr = tunnel->pdr;
                         if (pdr) {
@@ -363,15 +386,17 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
     }
 
     total = num_of_remove_pdr + num_of_remove_far + num_of_create_pdr +
-            num_of_create_far + num_of_update_pdr + num_of_update_far;
+            num_of_create_far + num_of_create_urr + num_of_update_pdr +
+            num_of_update_far;
 
     if (!total) {
         ogs_error("PFCP Session Modification build invalid state: "
                 "sess_id=%d xact=%p flags=0x%llx remove_pdr=%d remove_far=%d "
-                "create_pdr=%d create_far=%d update_pdr=%d update_far=%d",
+                "create_pdr=%d create_far=%d create_urr=%d update_pdr=%d "
+                "update_far=%d",
                 sess->id, xact, (unsigned long long)modify_flags,
                 num_of_remove_pdr, num_of_remove_far,
-                num_of_create_pdr, num_of_create_far,
+                num_of_create_pdr, num_of_create_far, num_of_create_urr,
                 num_of_update_pdr, num_of_update_far);
         ogs_assert_if_reached();
     }
