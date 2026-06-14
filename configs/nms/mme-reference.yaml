@@ -1,0 +1,182 @@
+# Open5GS — MME NMS reference configuration (FICTIONAL SAMPLE DATA ONLY)
+# Purpose: field layout + descriptions for NMS schema mapping.
+# All PLMNs, IMSIs, IPs, and FQDNs below are placeholders — not real operator data.
+
+logger:
+  file:
+    path: /var/log/open5gs/mme.log          # NMS: log file path
+  level: info                               # NMS: fatal|error|warn|info|debug|trace
+  domain:
+    mme: info
+    s1ap: warn
+    gtp: warn
+    s6a: info
+    nas: warn
+
+global:
+  max:
+    ue: 4096                                # NMS: max UE contexts
+    peer: 64
+    tai: 4096
+    eps_tai0_partial_list: 20000
+  parameter:
+    use_upg_vpp: false
+    prefer_ipv4: true
+  time:
+    message:
+      duration: 15000
+
+mme:
+  mme_name: open5gs-mme0                    # NMS: MME name (S1AP)
+  relative_capacity: 100
+
+  trace_imsi:                               # NMS: IMSI prefix list (fictional)
+    - "999700000000001"
+    - "99970"
+
+  freeDiameter: /etc/open5gs/freeDiameter/mme.conf
+  # freeDiameter:
+  #   identity: mme.localdomain
+  #   realm: localdomain
+  #   listen_on: 127.0.0.2
+  #   connect:
+  #     - identity: hss.localdomain
+  #       address: 127.0.0.8
+
+  s1ap:
+    server:
+      - address: 127.0.0.2                    # NMS: SCTP listen (eNB S1-MME)
+        port: 36412
+        option:
+          sctp_nodelay: true
+
+  gtpc:
+    server:
+      - address: 127.0.0.2
+        port: 2123
+    recovery: 1
+    echo_interval: 60
+    client:
+      sgwc:
+        - address: 127.0.0.3
+          plmn_id:
+            mcc: "999"
+            mnc: "70"
+          serving_plmn_id:
+            mcc: "999"
+            mnc: "71"
+          tac: [1, 2, 3]
+          e_cell_id: [abc1234, def5678]
+      smf:
+        - address: 127.0.0.4
+          imsi_plmn_id:
+            mcc: "999"
+            mnc: "70"
+          apn: internet
+          tac: 10
+      sgsn:
+        - address: [127.0.0.5, fd84:7e51:54:49::2]
+          routes:
+            - rai:
+                lai:
+                  plmn_id: { mcc: "999", mnc: "70" }
+                  lac: 43690
+                rac: 187
+              ci: 1223
+        - name: sgsn.example.net
+          default_route: true
+
+  metrics:
+    server:
+      - address: 127.0.0.2
+        port: 9090
+
+  gummei:
+    - plmn_id:
+        mcc: "999"
+        mnc: "70"
+      mme_gid: 2
+      mme_code: 1
+
+  tai:
+    - plmn_id:
+        mcc: "999"
+        mnc: "70"
+      tac: [1, 2, 3, 10-20]
+
+  attach_accept:
+    tai_list: serving_only
+    equivalent_plmn: true
+    equivalent_plmn_serving_only: true
+    ims_voice_over_ps: true
+    t3402: false
+    legacy_gprs_qos: true
+
+  equivalent_plmn:
+    - mcc: "999"
+      mnc: "71"
+    - mcc: "999"
+      mnc: "72"
+
+  inbound_roam:
+    gtp_apn_format: fqdn
+    gtp_apn_lowercase: false
+    strip_pap_from_gtp_pco: false
+    gtpc_plmn_id_is_imsi_plmn: true
+
+  ambr_limit:
+    enabled: false
+    downlink: 100
+    uplink: 100
+
+  access_control:
+    - default_reject_cause: 13
+    - imsi_prefix: "99971"
+      reject_cause: 15
+      tac: [100, 101]
+      enb_id: [100001, 100002]
+    - plmn_id:
+        mcc: "999"
+        mnc: "70"
+
+  imsi_acl:
+    - "99970"
+    - "99971"
+
+  require_hss_map: false
+
+  hss_map:
+    - plmn_id: { mcc: "999", mnc: "70" }
+      realm: localdomain
+      host: hss.localdomain
+
+  security:
+    integrity_order: [EIA2, EIA1, EIA0]
+    ciphering_order: [EEA0, EEA1, EEA2]
+
+  network_name:
+    full: Open5GS
+    short: Next
+
+  time:
+    t3412: { value: 600 }
+    t3413: { value: 6, max_count: 2 }
+    bearer_setup: { value: 12, max_count: 4 }
+
+  sgsap:
+    client:
+      - address: msc.example.net
+        local_address: 127.0.0.2
+        map:
+          imsi_prefix: "99970"
+          tai:
+            plmn_id: { mcc: "999", mnc: "70" }
+            tac: 1
+
+  emergency:
+    dnn: sos
+    number:
+      - digits: "112"
+        categories: [police, ambulance, fire]
+
+  mip_home_agent_host_dns: true
