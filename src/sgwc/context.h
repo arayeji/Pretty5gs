@@ -338,7 +338,7 @@ void sgwc_sgsn_echo_schedule(sgwc_sgsn_peer_t *peer);
 
 sgwc_ue_t *sgwc_ue_add_by_message(ogs_gtp2_message_t *message);
 sgwc_ue_t *sgwc_ue_find_by_imsi(uint8_t *imsi, int imsi_len);
-sgwc_ue_t *sgwc_ue_find_by_imsi_bcd(char *imsi_bcd);
+sgwc_ue_t *sgwc_ue_find_by_imsi_bcd(const char *imsi_bcd);
 sgwc_ue_t *sgwc_ue_find_by_teid(uint32_t teid);
 
 sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len);
