@@ -952,8 +952,6 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
                                         sess, orphan_seid) == OGS_OK)
                                 break;
                             sess->sm_data.pfcp_ue_ip_purge_pending = false;
-                        } else {
-                            smf_pfcp_log_travelping_errors(e->pkbuf);
                         }
                     }
                     if (ogs_pfcp_cause_no_association(pfcp_cause))

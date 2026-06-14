@@ -1778,6 +1778,21 @@ smf_ue_t *smf_ue_find_by_imsi(uint8_t *imsi, int imsi_len)
     return (smf_ue_t *)ogs_hash_get(self.imsi_hash, imsi, imsi_len);
 }
 
+smf_ue_t *smf_ue_find_by_imsi_bcd(char *imsi_bcd)
+{
+    uint8_t imsi[OGS_MAX_IMSI_LEN];
+    int imsi_len = 0;
+
+    if (!imsi_bcd || !imsi_bcd[0])
+        return NULL;
+
+    ogs_bcd_to_buffer(imsi_bcd, imsi, &imsi_len);
+    if (!imsi_len)
+        return NULL;
+
+    return smf_ue_find_by_imsi(imsi, imsi_len);
+}
+
 static bool compare_ue_info(ogs_pfcp_node_t *node, smf_sess_t *sess)
 {
     int i;

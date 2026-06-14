@@ -44,6 +44,7 @@
 #include "pfcp/xact.h"
 #include "pfcp/handler.h"
 #include "pfcp/util.h"
+#include "pfcp/vendor.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -76,6 +76,36 @@ static void sgwc_admin_drain_sessions(int admin_force)
             admin_force ? "removed" : "initiated drain for", count);
 }
 
+static void sgwc_admin_detach_ue_sessions(sgwc_ue_t *ue, int admin_force)
+{
+    sgwc_sess_t *sess = NULL, *next_sess = NULL;
+    int count = 0;
+    int rv;
+
+    ogs_assert(ue);
+    ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
+        rv = sgwc_gtp_send_network_delete_session(ue, sess);
+        ogs_expect(rv == OGS_OK);
+
+        if (sess->pfcp_node && sess->sgwu_sxa_seid) {
+            rv = sgwc_pfcp_send_session_deletion_request(
+                    sess, OGS_INVALID_POOL_ID, NULL);
+            ogs_expect(rv == OGS_OK);
+        }
+        if (sess->gnode)
+            sgwc_gtp_send_s5c_delete_session_request(sess);
+
+        if (admin_force)
+            sgwc_sess_remove(sess);
+        count++;
+    }
+    if (admin_force && ogs_list_empty(&ue->sess_list))
+        sgwc_ue_remove(ue);
+
+    ogs_info("admin session detach: %s %d session(s) for imsi=%s",
+            admin_force ? "removed" : "initiated for", count, ue->imsi_bcd);
+}
+
 
 void sgwc_state_initial(ogs_fsm_t *s, sgwc_event_t *e)
 {
@@ -475,6 +505,18 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         ogs_info("admin maintenance drain: mode=%s",
                 e->admin_force ? "force" : "graceful");
         sgwc_admin_drain_sessions(e->admin_force);
+        break;
+
+    case SGWC_EVT_ADMIN_DETACH_SESSION:
+        sgwc_ue = sgwc_ue_find_by_id(e->sgwc_ue_id);
+        if (sgwc_ue) {
+            ogs_info("admin session detach: imsi=%s mode=%s",
+                    sgwc_ue->imsi_bcd,
+                    e->admin_force ? "force" : "graceful");
+            sgwc_admin_detach_ue_sessions(sgwc_ue, e->admin_force);
+        } else {
+            ogs_warn("admin session detach: UE already gone");
+        }
         break;
 
     default:

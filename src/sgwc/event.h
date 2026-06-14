@@ -51,6 +51,7 @@ typedef enum {
     SGWC_EVT_ADMIN_MAINTENANCE_ENABLE,
     SGWC_EVT_ADMIN_MAINTENANCE_DISABLE,
     SGWC_EVT_ADMIN_MAINTENANCE_DRAIN,
+    SGWC_EVT_ADMIN_DETACH_SESSION,
 
     SGWC_EVT_TOP,
 
@@ -70,8 +71,9 @@ typedef struct sgwc_event_s {
     ogs_pool_id_t pfcp_xact_id;
     ogs_pfcp_message_t *pfcp_message;
 
-    /* SGWC_EVT_ADMIN_MAINTENANCE_DRAIN: 0=graceful, 1=force local purge */
+    /* SGWC_EVT_ADMIN_MAINTENANCE_DRAIN / DETACH_SESSION: 0=graceful, 1=force */
     int admin_force;
+    ogs_pool_id_t sgwc_ue_id;
 } sgwc_event_t;
 
 OGS_STATIC_ASSERT(OGS_EVENT_SIZE >= sizeof(sgwc_event_t));

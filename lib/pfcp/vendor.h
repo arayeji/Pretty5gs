@@ -17,37 +17,23 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#include "smf-pfcp-vendor.h"
+#if !defined(OGS_PFCP_INSIDE) && !defined(OGS_PFCP_COMPILATION)
+#error "This header cannot be included directly."
+#endif
 
-#include <string.h>
+#ifndef OGS_PFCP_VENDOR_H
+#define OGS_PFCP_VENDOR_H
 
-void smf_pfcp_log_travelping_errors(ogs_pkbuf_t *pkbuf)
-{
-    ogs_pfcp_log_travelping_error(pkbuf);
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+bool ogs_pfcp_travelping_error_message(
+        ogs_pkbuf_t *pkbuf, char *msg, size_t msglen);
+void ogs_pfcp_log_travelping_error(ogs_pkbuf_t *pkbuf);
+
+#ifdef __cplusplus
 }
+#endif
 
-bool smf_pfcp_parse_travelping_conflict_seid(
-        ogs_pkbuf_t *pkbuf, uint64_t *up_seid_out)
-{
-    char msg[512];
-    char *p = NULL;
-    unsigned long long seid = 0;
-
-    ogs_assert(up_seid_out);
-    *up_seid_out = 0;
-
-    if (!ogs_pfcp_travelping_error_message(pkbuf, msg, sizeof(msg)))
-        return false;
-
-    p = strstr(msg, "up_seid ");
-    if (!p)
-        p = strstr(msg, "cp_seid ");
-    if (!p)
-        return false;
-
-    if (sscanf(p, "%*s 0x%llx", &seid) != 1)
-        return false;
-
-    *up_seid_out = (uint64_t)seid;
-    return *up_seid_out != 0;
-}
+#endif /* OGS_PFCP_VENDOR_H */

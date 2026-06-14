@@ -71,6 +71,7 @@ typedef enum {
     SMF_EVT_ADMIN_MAINTENANCE_ENABLE,
     SMF_EVT_ADMIN_MAINTENANCE_DISABLE,
     SMF_EVT_ADMIN_MAINTENANCE_DRAIN,
+    SMF_EVT_ADMIN_DETACH_SESSION,
 
     SMF_EVT_TOP,
 
@@ -115,8 +116,9 @@ typedef struct smf_event_s {
 
     ogs_pool_id_t sess_id;
 
-    /* SMF_EVT_ADMIN_MAINTENANCE_DRAIN: 0=graceful PFCP delete, 1=force */
+    /* SMF_EVT_ADMIN_MAINTENANCE_DRAIN / DETACH_SESSION: 0=graceful, 1=force */
     int admin_force;
+    ogs_pool_id_t smf_ue_id;
 } smf_event_t;
 
 OGS_STATIC_ASSERT(OGS_EVENT_SIZE >= sizeof(smf_event_t));

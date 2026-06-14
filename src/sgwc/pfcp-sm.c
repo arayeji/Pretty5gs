@@ -21,6 +21,30 @@
 #include "sxa-handler.h"
 #include "gn-handler.h"
 
+static void pfcp_log_travelping_rejection(
+        sgwc_event_t *e, ogs_pfcp_message_t *message)
+{
+    ogs_pfcp_tlv_cause_t *cause = NULL;
+
+    ogs_assert(e);
+    ogs_assert(message);
+
+    switch (message->h.type) {
+    case OGS_PFCP_SESSION_ESTABLISHMENT_RESPONSE_TYPE:
+        cause = &message->pfcp_session_establishment_response.cause;
+        break;
+    case OGS_PFCP_SESSION_MODIFICATION_RESPONSE_TYPE:
+        cause = &message->pfcp_session_modification_response.cause;
+        break;
+    default:
+        return;
+    }
+
+    if (cause->presence &&
+            cause->u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED)
+        ogs_pfcp_log_travelping_error(e->pkbuf);
+}
+
 static void pfcp_restoration(ogs_pfcp_node_t *node);
 static void node_timeout(ogs_pfcp_xact_t *xact, void *data);
 
@@ -351,6 +375,7 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
                     ogs_pfcp_xact_commit(xact);
                     break;
                 }
+                pfcp_log_travelping_rejection(e, message);
                 sgwc_sxa_handle_session_establishment_response(
                     sess, xact, e->gtp_message,
                     &message->pfcp_session_establishment_response);
@@ -361,12 +386,14 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
             if (!message->h.seid_presence) ogs_error("No SEID");
 
             if (!xact->modify_flags) {
+                pfcp_log_travelping_rejection(e, message);
                 sgwc_sxa_handle_unexpected_modification_response(
                         sess, xact,
                         &message->pfcp_session_modification_response);
                 break;
             }
 
+            pfcp_log_travelping_rejection(e, message);
             sgwc_sxa_handle_session_modification_response(
                 sess, xact, e->gtp_message,
                 &message->pfcp_session_modification_response);

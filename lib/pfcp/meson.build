@@ -46,6 +46,7 @@ libpfcp_sources = files('''
     context.h
     rule-match.h
     util.h
+    vendor.h
 
     message.c
     types.c
@@ -57,6 +58,7 @@ libpfcp_sources = files('''
     context.c
     rule-match.c
     util.c
+    vendor.c
 '''.split())
 
 libpfcp_inc = include_directories('.')
