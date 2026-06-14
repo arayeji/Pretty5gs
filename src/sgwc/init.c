@@ -132,8 +132,6 @@ void sgwc_terminate(void)
 
     sgwc_ga_writer_close();
 
-    sgwc_metrics_final();
-
     sgwc_context_final();
 
     ogs_pfcp_context_final();
@@ -141,6 +139,8 @@ void sgwc_terminate(void)
 
     ogs_pfcp_xact_final();
     ogs_gtp_xact_final();
+
+    sgwc_metrics_final();
 
     sgwc_event_final();
 }
