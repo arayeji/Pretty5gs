@@ -1,0 +1,143 @@
+{
+  "schema_version": "1.0",
+  "description": "Open5GS configurable fields for NMS mapping (MME, SGWC, SMF). Paths use dot notation; [] = array item. All examples use fictional lab data.",
+  "network_functions": {
+    "mme": {
+      "reference_file": "configs/nms/mme-reference.yaml",
+      "admin_api_port": 9091,
+      "admin_endpoints": [
+        { "path": "/admin/ue/detach", "method": "GET|POST", "params": ["imsi", "force"], "description": "Detach UE (S1 + S11 cascade)" },
+        { "path": "/admin/enb/detach", "method": "GET|POST", "params": ["enb_id|ip", "force"], "description": "Detach all UEs on eNB" },
+        { "path": "/admin/trace/imsi", "method": "GET|POST", "params": ["imsi", "replace", "remove", "sync", "match"], "description": "Runtime IMSI trace filter" },
+        { "path": "/admin/maintenance/drain", "method": "GET|POST", "params": ["force"], "description": "Graceful or force UE drain" },
+        { "path": "/admin/config", "method": "GET", "description": "Effective runtime config snapshot" }
+      ],
+      "fields": [
+        { "path": "logger.file.path", "type": "string", "group": "logging", "description": "Log file path", "example": "/var/log/open5gs/mme.log" },
+        { "path": "logger.level", "type": "enum", "enum": ["fatal","error","warn","info","debug","trace"], "group": "logging", "description": "Global log level" },
+        { "path": "global.max.ue", "type": "integer", "group": "capacity", "description": "Maximum UE contexts", "example": 8192 },
+        { "path": "global.parameter.use_upg_vpp", "type": "boolean", "group": "interop", "description": "UPG-VPP user plane compatibility flag" },
+        { "path": "mme.mme_name", "type": "string", "group": "identity", "description": "MME name in S1AP", "example": "open5gs-mme0" },
+        { "path": "mme.relative_capacity", "type": "integer", "group": "identity", "description": "Relative capacity 0-255", "example": 100 },
+        { "path": "mme.trace_imsi[]", "type": "string", "group": "diagnostics", "description": "IMSI prefix list for elevated logging", "example": "999700000000001" },
+        { "path": "mme.s1ap.server[].address", "type": "string", "group": "s1ap", "description": "S1-MME SCTP bind address or dev name", "example": "127.0.0.2" },
+        { "path": "mme.s1ap.server[].port", "type": "integer", "group": "s1ap", "description": "S1AP port (default 36412)", "example": 36412 },
+        { "path": "mme.gtpc.server[].address", "type": "string", "group": "gtpc", "description": "S11 GTP-C listen address", "example": "127.0.0.2" },
+        { "path": "mme.gtpc.echo_interval", "type": "integer", "group": "gtpc", "description": "S11 Echo Request interval seconds", "example": 60 },
+        { "path": "mme.gtpc.client.sgwc[].address", "type": "string", "group": "gtpc", "description": "SGW-C address for S11", "example": "127.0.0.3" },
+        { "path": "mme.gtpc.client.sgwc[].plmn_id.mcc", "type": "string", "group": "gtpc", "description": "Home PLMN for SGW selection", "example": "999" },
+        { "path": "mme.gtpc.client.sgwc[].plmn_id.mnc", "type": "string", "group": "gtpc", "description": "Home PLMN MNC (2 or 3 digits)", "example": "70" },
+        { "path": "mme.gtpc.client.sgwc[].serving_plmn_id", "type": "plmn", "group": "gtpc", "description": "Visited TAI PLMN for SGW selection" },
+        { "path": "mme.gtpc.client.sgwc[].tac[]", "type": "integer|range", "group": "gtpc", "description": "TAC-based SGW selection" },
+        { "path": "mme.gtpc.client.smf[].address", "type": "string", "group": "gtpc", "description": "SMF/PGW address for S11 CSR", "example": "127.0.0.4" },
+        { "path": "mme.gtpc.client.smf[].apn", "type": "string", "group": "gtpc", "description": "APN-based PGW selection", "example": "internet" },
+        { "path": "mme.metrics.server[].port", "type": "integer", "group": "metrics", "description": "Admin/metrics HTTP port", "example": 9090 },
+        { "path": "mme.gummei[].plmn_id", "type": "plmn", "group": "plmn", "description": "GUMMEI PLMN identity" },
+        { "path": "mme.gummei[].mme_gid", "type": "integer", "group": "plmn", "description": "MME group ID" },
+        { "path": "mme.gummei[].mme_code", "type": "integer", "group": "plmn", "description": "MME code" },
+        { "path": "mme.tai[].plmn_id", "type": "plmn", "group": "plmn", "description": "Served tracking area PLMN" },
+        { "path": "mme.tai[].tac[]", "type": "integer|range", "group": "plmn", "description": "Served TAC list" },
+        { "path": "mme.attach_accept.tai_list", "type": "enum", "enum": ["serving_only","all"], "group": "attach", "description": "TAI list in Attach Accept" },
+        { "path": "mme.attach_accept.ims_voice_over_ps", "type": "boolean", "group": "attach", "description": "Advertise VoPS support" },
+        { "path": "mme.inbound_roam.gtp_apn_format", "type": "enum", "enum": ["fqdn","received"], "group": "roaming", "description": "APN OI format on S11 CSR" },
+        { "path": "mme.inbound_roam.strip_pap_from_gtp_pco", "type": "boolean", "group": "roaming", "description": "Strip PAP/IPCP from GTP PCO toward home PGW" },
+        { "path": "mme.inbound_roam.force_ipv4_pdn_on_home_pgw", "type": "boolean", "group": "roaming", "description": "Force IPv4 PDN type on roam attach" },
+        { "path": "mme.ambr_limit.enabled", "type": "boolean", "group": "qos", "description": "Cap HSS AMBR before GTP/NAS" },
+        { "path": "mme.ambr_limit.downlink", "type": "integer", "group": "qos", "description": "AMBR downlink cap Mbps" },
+        { "path": "mme.access_control[]", "type": "object", "group": "security", "description": "IMSI/TAC/eNB access rules" },
+        { "path": "mme.imsi_acl[]", "type": "string", "group": "security", "description": "IMSI prefix allow-list before S6a" },
+        { "path": "mme.hss_map[].plmn_id", "type": "plmn", "group": "hss", "description": "IMSI PLMN to HSS mapping" },
+        { "path": "mme.hss_map[].realm", "type": "string", "group": "hss", "description": "Diameter realm for HSS" },
+        { "path": "mme.hss_map[].host", "type": "string", "group": "hss", "description": "Diameter host for HSS" },
+        { "path": "mme.security.integrity_order[]", "type": "enum", "enum": ["EIA0","EIA1","EIA2","EIA3"], "group": "security", "description": "NAS integrity preference order" },
+        { "path": "mme.security.ciphering_order[]", "type": "enum", "enum": ["EEA0","EEA1","EEA2","EEA3"], "group": "security", "description": "NAS cipher preference order" },
+        { "path": "mme.network_name.full", "type": "string", "group": "identity", "description": "Network name full" },
+        { "path": "mme.time.t3412.value", "type": "integer", "group": "timers", "description": "Periodic TAU timer seconds" },
+        { "path": "mme.sgsap.client[].address", "type": "string", "group": "csfb", "description": "MSC/VLR SGs SCTP server" },
+        { "path": "mme.emergency.dnn", "type": "string", "group": "emergency", "description": "Emergency APN/DNN", "example": "sos" }
+      ]
+    },
+    "sgwc": {
+      "reference_file": "configs/nms/sgwc-reference.yaml",
+      "admin_api_port": 9090,
+      "admin_endpoints": [
+        { "path": "/admin/session/detach", "method": "GET|POST", "params": ["imsi", "force"], "description": "Delete session(s) for IMSI; force=1 local purge for Gn orphans" },
+        { "path": "/admin/maintenance/drain", "method": "GET|POST", "params": ["force"], "description": "Drain all sessions" },
+        { "path": "/admin/pdn-info", "method": "GET", "params": ["imsi"], "description": "Session inventory JSON" },
+        { "path": "/admin/trace/imsi", "method": "GET|POST", "params": ["imsi"], "description": "Runtime trace filter" }
+      ],
+      "fields": [
+        { "path": "global.parameter.use_upg_vpp", "type": "boolean", "group": "interop", "description": "UPG-VPP PFCP ordering (Create-FAR before PDR)" },
+        { "path": "global.cdr.enabled", "type": "boolean", "group": "cdr", "description": "SGW offline CDR spool" },
+        { "path": "sgwc.metrics.server[].port", "type": "integer", "group": "metrics", "description": "Admin HTTP port", "example": 9090 },
+        { "path": "sgwc.gtpc.server[].address", "type": "string", "group": "gtpc", "description": "S11/S5 GTP-C listen", "example": "127.0.0.3" },
+        { "path": "sgwc.gtpc.echo_interval", "type": "integer", "group": "gtpc", "description": "S11 Echo interval seconds", "example": 60 },
+        { "path": "sgwc.gn.server[].address", "type": "string", "group": "gn", "description": "GTPv1 Gn listen address" },
+        { "path": "sgwc.gn.pgw[].address", "type": "string", "group": "gn", "description": "Default PGW/SMF for Gn PDP" },
+        { "path": "sgwc.gtpu.force_cp_teid", "type": "boolean", "group": "gtpu", "description": "SGWC assigns GTP-U TEID" },
+        { "path": "sgwc.gtpu.teid_offset", "type": "integer", "group": "gtpu", "description": "GTP-U TEID offset" },
+        { "path": "sgwc.inbound_roam.gtpc.source_port", "type": "integer", "group": "roaming", "description": "S5-C UDP source port to roam PGW" },
+        { "path": "sgwc.inbound_roam.gtpc.teid_offset", "type": "integer", "group": "roaming", "description": "S5-C TEID offset" },
+        { "path": "sgwc.inbound_roam.sgwu_nwi_rewrite[].match", "type": "string", "group": "pfcp", "description": "APN/NWI wildcard match (* supported)" },
+        { "path": "sgwc.inbound_roam.sgwu_nwi_rewrite[].replace", "type": "string", "group": "pfcp", "description": "PFCP Network Instance sent to SGW-U" },
+        { "path": "sgwc.pfcp.server[].address", "type": "string", "group": "pfcp", "description": "Sxa PFCP listen address" },
+        { "path": "sgwc.pfcp.server[].advertise", "type": "string", "group": "pfcp", "description": "PFCP Node ID advertised to SGW-U" },
+        { "path": "sgwc.pfcp.client.sgwu[].address", "type": "string", "group": "pfcp", "description": "SGW-U PFCP peer wire IP" },
+        { "path": "sgwc.pfcp.client.sgwu[].service_addr", "type": "string", "group": "pfcp", "description": "SGW-U inventory/NMS address" },
+        { "path": "sgwc.pfcp.client.sgwu[].tac[]", "type": "integer", "group": "pfcp", "description": "TAC-based SGW-U selection" },
+        { "path": "sgwc.pfcp.client.sgwu[].apn[]", "type": "string", "group": "pfcp", "description": "APN-based SGW-U selection" },
+        { "path": "sgwc.pfcp.send_user_id", "type": "boolean", "group": "pfcp", "description": "Send PFCP User ID IE to SGW-U" },
+        { "path": "sgwc.trace_imsi[]", "type": "string", "group": "diagnostics", "description": "IMSI prefix trace list" }
+      ]
+    },
+    "smf": {
+      "reference_file": "configs/nms/smf-reference.yaml",
+      "admin_api_port": 9092,
+      "admin_endpoints": [
+        { "path": "/admin/session/detach", "method": "GET|POST", "params": ["imsi", "force"], "description": "PFCP delete + local session remove" },
+        { "path": "/admin/pdu-info", "method": "GET", "params": ["imsi"], "description": "PDU session inventory JSON" },
+        { "path": "/admin/maintenance/drain", "method": "GET|POST", "params": ["force"], "description": "Drain all sessions" },
+        { "path": "/admin/trace/imsi", "method": "GET|POST", "params": ["imsi"], "description": "Runtime trace filter" }
+      ],
+      "fields": [
+        { "path": "global.parameter.use_upg_vpp", "type": "boolean", "group": "interop", "description": "UPG-VPP PFCP interop" },
+        { "path": "global.parameter.no_ipv4v6_local_addr_in_packet_filter", "type": "boolean", "group": "interop", "description": "Omit UE IP from TFT packet filters" },
+        { "path": "smf.sbi.server[].address", "type": "string", "group": "sbi", "description": "5G SBI HTTP server bind" },
+        { "path": "smf.sbi.server[].port", "type": "integer", "group": "sbi", "description": "SBI port", "example": 7777 },
+        { "path": "smf.sbi.client.nrf[].uri", "type": "string", "group": "sbi", "description": "NRF URI" },
+        { "path": "smf.sbi.client.scp[].uri", "type": "string", "group": "sbi", "description": "SCP URI" },
+        { "path": "smf.pfcp.server[].address", "type": "string", "group": "pfcp", "description": "N4 PFCP listen" },
+        { "path": "smf.pfcp.client.upf[].address", "type": "string", "group": "pfcp", "description": "UPF N4 wire address" },
+        { "path": "smf.pfcp.client.upf[].service_addr", "type": "string", "group": "pfcp", "description": "UPF inventory address" },
+        { "path": "smf.pfcp.client.upf[].dnn", "type": "string", "group": "pfcp", "description": "DNN-based UPF selection" },
+        { "path": "smf.gtpc.server[].address", "type": "string", "group": "gtpc", "description": "PGW-C GTP-C listen (S5/S11/Gn)" },
+        { "path": "smf.metrics.server[].port", "type": "integer", "group": "metrics", "description": "Admin HTTP port", "example": 9090 },
+        { "path": "smf.session[].subnet", "type": "cidr", "group": "ip_pool", "description": "UE IPv4/IPv6 pool CIDR" },
+        { "path": "smf.session[].gateway", "type": "string", "group": "ip_pool", "description": "Pool gateway address" },
+        { "path": "smf.session[].dnn", "type": "string", "group": "ip_pool", "description": "DNN/APN for this pool" },
+        { "path": "smf.session[].range[]", "type": "ip_range", "group": "ip_pool", "description": "Optional UE IP sub-range" },
+        { "path": "smf.dns[]", "type": "string", "group": "dns", "description": "DNS servers in PCO" },
+        { "path": "smf.mtu", "type": "integer", "group": "pdu", "description": "Link MTU in PCO", "example": 1400 },
+        { "path": "smf.default_pdr_precedence", "type": "integer", "group": "pfcp", "description": "Default bearer PDR precedence", "example": 100 },
+        { "path": "smf.p-cscf[]", "type": "string", "group": "ims", "description": "P-CSCF addresses for IMS" },
+        { "path": "smf.ctf.enabled", "type": "enum", "enum": ["auto","yes","no"], "group": "charging", "description": "Online charging (Gy/Gx)" },
+        { "path": "smf.cdr.enabled", "type": "boolean", "group": "cdr", "description": "PGW offline CDR spool" },
+        { "path": "smf.radius.enabled", "type": "boolean", "group": "radius", "description": "RADIUS auth/acct before IP assign" },
+        { "path": "smf.radius.servers[].host", "type": "string", "group": "radius", "description": "RADIUS server host" },
+        { "path": "smf.radius.servers[].secret", "type": "secret", "group": "radius", "description": "RADIUS shared secret" },
+        { "path": "smf.radius.pod_enabled", "type": "boolean", "group": "radius", "description": "RFC5176 Disconnect listener" },
+        { "path": "smf.info[].s_nssai[].sst", "type": "integer", "group": "5g", "description": "NRF SmfInfo SST" },
+        { "path": "smf.info[].s_nssai[].dnn[]", "type": "string", "group": "5g", "description": "NRF SmfInfo DNN list" },
+        { "path": "smf.trace_imsi[]", "type": "string", "group": "diagnostics", "description": "IMSI prefix trace list" }
+      ]
+    }
+  },
+  "shared_types": {
+    "plmn": {
+      "fields": {
+        "mcc": { "type": "string", "pattern": "^[0-9]{3}$", "example": "999" },
+        "mnc": { "type": "string", "pattern": "^[0-9]{2,3}$", "example": "70" }
+      }
+    }
+  }
+}
