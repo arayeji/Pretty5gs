@@ -258,6 +258,9 @@ void smf_metrics_inst_by_slice_add(ogs_plmn_id_t *plmn,
     ogs_metrics_inst_t *metrics = NULL;
     smf_metric_key_by_slice_t *slice_key;
 
+    if (!metrics_hash_by_slice)
+        return;
+
     slice_key = ogs_calloc(1, sizeof(*slice_key));
     ogs_assert(slice_key);
 
@@ -403,6 +406,9 @@ void smf_metrics_inst_by_5qi_add(ogs_plmn_id_t *plmn,
     ogs_metrics_inst_t *metrics = NULL;
     smf_metric_key_by_5qi_t *fiveqi_key;
 
+    if (!metrics_hash_by_5qi)
+        return;
+
     fiveqi_key = ogs_calloc(1, sizeof(*fiveqi_key));
     ogs_assert(fiveqi_key);
 
@@ -507,6 +513,9 @@ void smf_metrics_inst_by_cause_add(int cause,
     ogs_metrics_inst_t *metrics = NULL;
     smf_metric_key_by_cause_t *cause_key;
 
+    if (!metrics_hash_by_cause)
+        return;
+
     cause_key = ogs_calloc(1, sizeof(*cause_key));
     ogs_assert(cause_key);
 
@@ -580,6 +589,8 @@ void smf_metrics_inst_by_plmn_add(ogs_plmn_id_t *plmn,
     char plmn_id[OGS_PLMNIDSTRLEN] = "";
 
     ogs_assert(plmn);
+    if (!metrics_hash_by_plmn)
+        return;
 
     plmn_key = ogs_calloc(1, sizeof(*plmn_key));
     ogs_assert(plmn_key);
@@ -649,6 +660,8 @@ void smf_metrics_inst_by_rat_add(
     smf_metric_key_by_rat_t *rat_key;
 
     ogs_assert(rat);
+    if (!metrics_hash_by_rat)
+        return;
 
     rat_key = ogs_calloc(1, sizeof(*rat_key));
     ogs_assert(rat_key);
@@ -724,6 +737,7 @@ void smf_metrics_final(void)
             //ogs_free(val);
         }
         ogs_hash_destroy(metrics_hash_by_slice);
+        metrics_hash_by_slice = NULL;
     }
     if (metrics_hash_by_5qi) {
         for (hi = ogs_hash_first(metrics_hash_by_5qi); hi; hi = ogs_hash_next(hi)) {
@@ -739,6 +753,7 @@ void smf_metrics_final(void)
             //ogs_free(val);
         }
         ogs_hash_destroy(metrics_hash_by_5qi);
+        metrics_hash_by_5qi = NULL;
     }
     if (metrics_hash_by_cause) {
         for (hi = ogs_hash_first(metrics_hash_by_cause); hi; hi = ogs_hash_next(hi)) {
@@ -754,6 +769,7 @@ void smf_metrics_final(void)
             //ogs_free(val);
         }
         ogs_hash_destroy(metrics_hash_by_cause);
+        metrics_hash_by_cause = NULL;
     }
     if (metrics_hash_by_plmn) {
         for (hi = ogs_hash_first(metrics_hash_by_plmn); hi; hi = ogs_hash_next(hi)) {
@@ -765,6 +781,7 @@ void smf_metrics_final(void)
             ogs_free(key);
         }
         ogs_hash_destroy(metrics_hash_by_plmn);
+        metrics_hash_by_plmn = NULL;
     }
     if (metrics_hash_by_rat) {
         for (hi = ogs_hash_first(metrics_hash_by_rat); hi; hi = ogs_hash_next(hi)) {
@@ -776,6 +793,7 @@ void smf_metrics_final(void)
             ogs_free(key);
         }
         ogs_hash_destroy(metrics_hash_by_rat);
+        metrics_hash_by_rat = NULL;
     }
 
     ogs_metrics_context_final();
