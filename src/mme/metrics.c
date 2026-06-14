@@ -91,6 +91,8 @@ static void mme_metrics_inst_by_plmn_add(ogs_plmn_id_t *plmn,
     char plmn_id[OGS_PLMNIDSTRLEN] = "";
 
     ogs_assert(plmn);
+    if (!metrics_hash_by_plmn)
+        return;
 
     plmn_key = ogs_calloc(1, sizeof(*plmn_key));
     ogs_assert(plmn_key);
@@ -127,6 +129,8 @@ static void mme_metrics_inst_by_plmn_cause_add(ogs_plmn_id_t *plmn,
     char cause_str[4];
 
     ogs_assert(plmn);
+    if (!metrics_hash_by_plmn_cause)
+        return;
 
     key = ogs_calloc(1, sizeof(*key));
     ogs_assert(key);
@@ -163,6 +167,8 @@ static void mme_metrics_inst_by_reason_add(const char *reason,
     mme_metric_key_by_reason_t *key;
 
     ogs_assert(reason);
+    if (!metrics_hash_by_reason)
+        return;
 
     key = ogs_calloc(1, sizeof(*key));
     ogs_assert(key);
@@ -483,6 +489,7 @@ void mme_metrics_final(void)
             ogs_free(key);
         }
         ogs_hash_destroy(metrics_hash_by_plmn);
+        metrics_hash_by_plmn = NULL;
     }
     if (metrics_hash_by_plmn_cause) {
         for (hi = ogs_hash_first(metrics_hash_by_plmn_cause); hi;
@@ -494,6 +501,7 @@ void mme_metrics_final(void)
             ogs_free(key);
         }
         ogs_hash_destroy(metrics_hash_by_plmn_cause);
+        metrics_hash_by_plmn_cause = NULL;
     }
     if (metrics_hash_by_reason) {
         for (hi = ogs_hash_first(metrics_hash_by_reason); hi; hi = ogs_hash_next(hi)) {
@@ -504,6 +512,7 @@ void mme_metrics_final(void)
             ogs_free(key);
         }
         ogs_hash_destroy(metrics_hash_by_reason);
+        metrics_hash_by_reason = NULL;
     }
 
     ogs_metrics_context_final();
