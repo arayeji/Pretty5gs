@@ -659,6 +659,17 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         ogs_assert(OGS_FSM_STATE(&bearer->sm));
 
         ogs_fsm_dispatch(&bearer->sm, e);
+        if (OGS_FSM_CHECK(&bearer->sm, esm_state_bearer_deactivated)) {
+            sess = mme_sess_find_by_id(bearer->sess_id);
+            ogs_assert(sess);
+            default_bearer = mme_default_bearer_in_sess(sess);
+            ogs_assert(default_bearer);
+            if (default_bearer->ebi == bearer->ebi) {
+                MME_SESS_CLEAR(sess);
+            } else {
+                mme_bearer_remove(bearer);
+            }
+        }
         break;
 
     case MME_EVENT_S6A_MESSAGE:

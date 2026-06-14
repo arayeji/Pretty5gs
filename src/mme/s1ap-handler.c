@@ -1911,7 +1911,10 @@ void s1ap_handle_e_rab_setup_response(
                         OGS_GTP_DELETE_NO_ACTION));
                 ogs_warn("Delete Session Request");
             } else {
-                ogs_error("Not implemented : remove dedicated bearer");
+                ogs_assert(OGS_OK ==
+                    mme_gtp_send_create_bearer_response(bearer,
+                        OGS_GTP2_CAUSE_REQUEST_REJECTED_REASON_NOT_SPECIFIED));
+                mme_bearer_remove(bearer);
             }
         }
     }
