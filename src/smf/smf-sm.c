@@ -59,6 +59,27 @@ static void smf_admin_drain_sessions(int admin_force)
             admin_force ? "removed" : "initiated drain for", count);
 }
 
+static void smf_admin_detach_ue_sessions(smf_ue_t *ue, int admin_force)
+{
+    smf_sess_t *sess = NULL, *next_sess = NULL;
+    int count = 0;
+    int rv;
+
+    ogs_assert(ue);
+    ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
+        rv = smf_epc_pfcp_send_session_deletion_best_effort(sess);
+        ogs_expect(rv == OGS_OK);
+        if (admin_force)
+            smf_sess_remove(sess);
+        count++;
+    }
+    if (admin_force && ogs_list_empty(&ue->sess_list))
+        smf_ue_remove(ue);
+
+    ogs_info("admin session detach: %s %d session(s) for imsi=%s",
+            admin_force ? "removed" : "initiated for", count, ue->imsi_bcd);
+}
+
 void smf_state_initial(ogs_fsm_t *s, smf_event_t *e)
 {
     smf_sm_debug(e);
@@ -1576,6 +1597,20 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         ogs_info("admin maintenance drain: mode=%s",
                 e->admin_force ? "force" : "graceful");
         smf_admin_drain_sessions(e->admin_force);
+        break;
+
+    case SMF_EVT_ADMIN_DETACH_SESSION:
+        {
+            smf_ue_t *smf_ue = smf_ue_find_by_id(e->smf_ue_id);
+            if (smf_ue) {
+                ogs_info("admin session detach: imsi=%s mode=%s",
+                        smf_ue->imsi_bcd,
+                        e->admin_force ? "force" : "graceful");
+                smf_admin_detach_ue_sessions(smf_ue, e->admin_force);
+            } else {
+                ogs_warn("admin session detach: UE already gone");
+            }
+        }
         break;
 
     default:

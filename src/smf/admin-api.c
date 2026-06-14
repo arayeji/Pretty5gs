@@ -17,6 +17,8 @@
 #include <string.h>
 
 #define ADMIN_HTTP_ACCEPTED            202
+#define ADMIN_HTTP_BAD_REQUEST         400
+#define ADMIN_HTTP_NOT_FOUND           404
 #define ADMIN_HTTP_INTERNAL_ERROR      500
 #define ADMIN_HTTP_SERVICE_UNAVAIL     503
 
@@ -161,6 +163,53 @@ static int smf_admin_maintenance_drain(const ogs_metrics_query_t *q,
             body, body_cap, body_len);
 }
 
+static int smf_admin_session_detach(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    if (!q || !q->imsi || !*q->imsi) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_BAD_REQUEST, "missing ?imsi=...");
+        return ADMIN_HTTP_BAD_REQUEST;
+    }
+
+    ogs_pool_id_t smf_ue_id = OGS_INVALID_POOL_ID;
+
+    ogs_metrics_dump_lock();
+    smf_ue_t *smf_ue = smf_ue_find_by_imsi_bcd(q->imsi);
+    if (smf_ue) smf_ue_id = smf_ue->id;
+    ogs_metrics_dump_unlock();
+
+    if (smf_ue_id == OGS_INVALID_POOL_ID) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_NOT_FOUND, "session not found");
+        return ADMIN_HTTP_NOT_FOUND;
+    }
+
+    smf_event_t *e = smf_event_new(SMF_EVT_ADMIN_DETACH_SESSION);
+    if (!e) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_INTERNAL_ERROR, "event_new failed");
+        return ADMIN_HTTP_INTERNAL_ERROR;
+    }
+    e->smf_ue_id = smf_ue_id;
+    e->admin_force = q->force ? 1 : 0;
+
+    int rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_event_free(e);
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
+        return ADMIN_HTTP_SERVICE_UNAVAIL;
+    }
+
+    ogs_pollset_notify(ogs_app()->pollset);
+
+    *body_len = fmt_json_status(body, body_cap, ADMIN_HTTP_ACCEPTED,
+            "session detach queued for imsi=%s mode=%s",
+            q->imsi, e->admin_force ? "force" : "graceful");
+    return ADMIN_HTTP_ACCEPTED;
+}
+
 void smf_admin_api_register(void)
 {
     ogs_metrics_register_custom_ep(smf_dump_runtime_config,
@@ -185,4 +234,7 @@ void smf_admin_api_register(void)
     ogs_metrics_register_admin_ep(ogs_metrics_admin_trace_imsi,
             "/admin/trace/imsi",
             OGS_METRICS_ADMIN_METHOD_GET);
+    ogs_metrics_register_admin_ep(smf_admin_session_detach,
+            "/admin/session/detach",
+            OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
 }
