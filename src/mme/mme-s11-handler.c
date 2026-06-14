@@ -1123,9 +1123,11 @@ void mme_s11_handle_create_bearer_request(
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-        ogs_assert(sgw_ue);
-
-        if (req->linked_eps_bearer_id.presence == 0) {
+        if (!sgw_ue) {
+            ogs_error("[%s] No SGW UE Context",
+                    MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+            cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+        } else if (req->linked_eps_bearer_id.presence == 0) {
             ogs_error("No Linked EBI");
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
         }
@@ -1133,7 +1135,8 @@ void mme_s11_handle_create_bearer_request(
         if (cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
             sess = mme_sess_find_by_ebi(mme_ue, req->linked_eps_bearer_id.u8);
             if (!sess) {
-                ogs_error("No Context for Linked EPS Bearer ID[%d]",
+                ogs_error("[%s] No Context for Linked EPS Bearer ID[%d]",
+                        MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
                         req->linked_eps_bearer_id.u8);
                 cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
             }
@@ -1185,12 +1188,23 @@ void mme_s11_handle_create_bearer_request(
     /********************
      * Check ALL Context
      ********************/
-    ogs_assert(mme_ue);
-    ogs_assert(sgw_ue);
+    if (!mme_ue || !sgw_ue || !sess) {
+        ogs_error("Create Bearer Request: missing UE/SGW/session context");
+        ogs_gtp2_send_error_message(xact, sgw_ue ? sgw_ue->sgw_s11_teid : 0,
+                OGS_GTP2_CREATE_BEARER_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
+        return;
+    }
 
-    ogs_assert(sess);
     bearer = mme_bearer_add(sess);
-    ogs_assert(bearer);
+    if (!bearer) {
+        ogs_error("[%s] Create Bearer Request: bearer add failed",
+                mme_ue->imsi_bcd);
+        ogs_gtp2_send_error_message(xact, sgw_ue->sgw_s11_teid,
+                OGS_GTP2_CREATE_BEARER_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_NO_RESOURCES_AVAILABLE);
+        return;
+    }
 
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
             mme_ue->mme_s11_teid, sgw_ue->sgw_s11_teid);
@@ -1231,7 +1245,11 @@ void mme_s11_handle_create_bearer_request(
     if (ogs_gtp2_parse_bearer_qos(
                 &bearer_qos, &req->bearer_contexts.bearer_level_qos) !=
             req->bearer_contexts.bearer_level_qos.len) {
-        ogs_error("ogs_gtp2_parse_bearer_qos() failed");
+        ogs_error("[%s] Invalid Bearer QoS IE", mme_ue->imsi_bcd);
+        mme_bearer_remove(bearer);
+        ogs_gtp2_send_error_message(xact, sgw_ue->sgw_s11_teid,
+                OGS_GTP2_CREATE_BEARER_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT);
         return;
     }
     bearer->qos.index = bearer_qos.qci;
@@ -1277,7 +1295,12 @@ void mme_s11_handle_create_bearer_request(
     /* Before Activate DEDICATED bearer, check DEFAULT bearer status */
     default_bearer = mme_default_bearer_in_sess(sess);
     if (!default_bearer) {
-        ogs_error("No Default Bearer");
+        ogs_error("[%s] No Default Bearer for Create Bearer Request",
+                mme_ue->imsi_bcd);
+        mme_bearer_remove(bearer);
+        ogs_gtp2_send_error_message(xact, sgw_ue->sgw_s11_teid,
+                OGS_GTP2_CREATE_BEARER_RESPONSE_TYPE,
+                OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
         return;
     }
 
