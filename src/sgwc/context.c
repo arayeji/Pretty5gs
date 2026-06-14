@@ -1312,7 +1312,7 @@ void sgwc_ue_remove_all(void)
         sgwc_ue_remove(sgwc_ue);
 }
 
-sgwc_ue_t *sgwc_ue_find_by_imsi_bcd(char *imsi_bcd)
+sgwc_ue_t *sgwc_ue_find_by_imsi_bcd(const char *imsi_bcd)
 {
     uint8_t imsi[OGS_MAX_IMSI_LEN];
     int imsi_len = 0;

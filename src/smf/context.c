@@ -1778,7 +1778,7 @@ smf_ue_t *smf_ue_find_by_imsi(uint8_t *imsi, int imsi_len)
     return (smf_ue_t *)ogs_hash_get(self.imsi_hash, imsi, imsi_len);
 }
 
-smf_ue_t *smf_ue_find_by_imsi_bcd(char *imsi_bcd)
+smf_ue_t *smf_ue_find_by_imsi_bcd(const char *imsi_bcd)
 {
     uint8_t imsi[OGS_MAX_IMSI_LEN];
     int imsi_len = 0;
