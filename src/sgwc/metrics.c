@@ -94,6 +94,8 @@ static void sgwc_metrics_inst_by_plmn_add(ogs_plmn_id_t *plmn,
     char plmn_id[OGS_PLMNIDSTRLEN] = "";
 
     ogs_assert(plmn);
+    if (!metrics_hash_by_plmn)
+        return;
 
     plmn_key = ogs_calloc(1, sizeof(*plmn_key));
     ogs_assert(plmn_key);
@@ -130,6 +132,8 @@ static void sgwc_metrics_inst_by_plmn_pgw_add(ogs_plmn_id_t *plmn,
 
     ogs_assert(plmn);
     ogs_assert(pgw_addr);
+    if (!metrics_hash_by_plmn_pgw)
+        return;
 
     key = ogs_calloc(1, sizeof(*key));
     ogs_assert(key);
@@ -364,6 +368,8 @@ void sgwc_metrics_inst_by_rat_add(
     sgwc_metric_key_by_rat_t *rat_key;
 
     ogs_assert(rat);
+    if (!metrics_hash_by_rat)
+        return;
 
     rat_key = ogs_calloc(1, sizeof(*rat_key));
     ogs_assert(rat_key);
@@ -421,6 +427,7 @@ void sgwc_metrics_final(void)
             ogs_free(key);
         }
         ogs_hash_destroy(metrics_hash_by_plmn);
+        metrics_hash_by_plmn = NULL;
     }
     if (metrics_hash_by_plmn_pgw) {
         for (hi = ogs_hash_first(metrics_hash_by_plmn_pgw); hi;
@@ -432,6 +439,7 @@ void sgwc_metrics_final(void)
             ogs_free(key);
         }
         ogs_hash_destroy(metrics_hash_by_plmn_pgw);
+        metrics_hash_by_plmn_pgw = NULL;
     }
     if (metrics_hash_by_rat) {
         for (hi = ogs_hash_first(metrics_hash_by_rat); hi; hi = ogs_hash_next(hi)) {
@@ -442,6 +450,7 @@ void sgwc_metrics_final(void)
             ogs_free(key);
         }
         ogs_hash_destroy(metrics_hash_by_rat);
+        metrics_hash_by_rat = NULL;
     }
 
     ogs_metrics_context_final();
