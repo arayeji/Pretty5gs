@@ -721,6 +721,12 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
                 ogs_mme_trace_set(enb_ue, NULL, NULL, "initial-ue");
                 OGS_TLOG_DEBUG("Unknown UE by S_TMSI[G:%d,C:%d,M_TMSI:0x%x]",
                         nas_guti.mme_gid, nas_guti.mme_code, nas_guti.m_tmsi);
+            } else if (!mme_ue_is_valid_for_s1(mme_ue_from_stmsi)) {
+                ogs_warn("Stale MME-UE for S_TMSI[G:%d,C:%d,M_TMSI:0x%x] "
+                        "(mid-teardown) - treating as unknown UE",
+                        nas_guti.mme_gid, nas_guti.mme_code, nas_guti.m_tmsi);
+                mme_ue_from_stmsi = NULL;
+                ogs_mme_trace_set(enb_ue, NULL, NULL, "initial-ue");
             } else {
                 ogs_debug("    S_TMSI[G:%d,C:%d,M_TMSI:0x%x] IMSI:[%s]",
                         mme_ue_from_stmsi->current.guti.mme_gid,
