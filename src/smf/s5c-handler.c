@@ -150,6 +150,8 @@ uint8_t smf_s5c_handle_create_session_request(
     ogs_assert(sess);
     ogs_assert(req);
 
+    ogs_smf_trace_set_from_gtp2_create_session_request(req, "create-session");
+
     if (!xact) {
         ogs_warn("No GTP transaction for Create Session Request");
         return OGS_GTP2_CAUSE_SYSTEM_FAILURE;
@@ -165,57 +167,58 @@ uint8_t smf_s5c_handle_create_session_request(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (req->imsi.presence == 0) {
-        OGS_TLOG_ERROR("No IMSI");
+        smf_ue_error(NULL, sess, "create-session", "No IMSI");
         cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
     }
     if (req->sender_f_teid_for_control_plane.presence == 0) {
-        OGS_TLOG_ERROR("No TEID");
+        smf_ue_error(NULL, sess, "create-session", "No TEID");
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
     }
     if (req->bearer_contexts_to_be_created[0].presence == 0) {
-        OGS_TLOG_ERROR("No Bearer");
+        smf_ue_error(NULL, sess, "create-session", "No Bearer");
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
     }
     if (req->bearer_contexts_to_be_created[0].eps_bearer_id.presence == 0) {
-        OGS_TLOG_ERROR("No EPS Bearer ID");
+        smf_ue_error(NULL, sess, "create-session", "No EPS Bearer ID");
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
     }
     if (req->bearer_contexts_to_be_created[0].bearer_level_qos.presence == 0) {
-        OGS_TLOG_ERROR("No EPS Bearer QoS");
+        smf_ue_error(NULL, sess, "create-session", "No EPS Bearer QoS");
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
     }
     if (req->pdn_address_allocation.presence == 0 &&
             req->pdn_type.presence == 0) {
-        OGS_TLOG_ERROR("No PAA or PDN Type");
+        smf_ue_error(NULL, sess, "create-session", "No PAA or PDN Type");
         cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
     }
     if (req->serving_network.presence == 0) {
-        OGS_TLOG_ERROR("No Serving Network");
+        smf_ue_error(NULL, sess, "create-session", "No Serving Network");
         cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
     }
     if (req->serving_network.data == NULL) {
-        OGS_TLOG_ERROR("No Data in Serving Network");
+        smf_ue_error(NULL, sess, "create-session", "No Data in Serving Network");
         cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
     }
     if (req->serving_network.len != OGS_PLMN_ID_LEN) {
-        OGS_TLOG_ERROR("Invalid Len[%d] in Serving Network",
-                req->serving_network.len);
+        smf_ue_error(NULL, sess, "create-session",
+                "Invalid Len[%d] in Serving Network", req->serving_network.len);
         cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
     }
 
     if (!ogs_diam_is_relay_or_app_advertised(OGS_DIAM_GX_APPLICATION_ID)) {
-        OGS_TLOG_ERROR("No Gx Diameter Peer");
+        smf_ue_error(NULL, sess, "create-session", "No Gx Diameter Peer");
         cause_value = OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING;
     }
     switch (sess->gtp_rat_type) {
     case OGS_GTP2_RAT_TYPE_EUTRAN:
         if (req->bearer_contexts_to_be_created[0].
                 s5_s8_u_sgw_f_teid.presence == 0) {
-            OGS_TLOG_ERROR("No S5/S8 SGW GTP-U TEID");
+            smf_ue_error(NULL, sess, "create-session", "No S5/S8 SGW GTP-U TEID");
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
         }
         if (req->user_location_information.presence == 0) {
-            OGS_TLOG_ERROR("No UE Location Information");
+            smf_ue_error(NULL, sess, "create-session",
+                    "No UE Location Information");
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
         }
         break;
@@ -225,23 +228,24 @@ uint8_t smf_s5c_handle_create_session_request(
     case OGS_GTP2_RAT_TYPE_HSPA_EVOLUTION:
         if (req->bearer_contexts_to_be_created[0].
                 s5_s8_u_sgw_f_teid.presence == 0) {
-            OGS_TLOG_ERROR("No S5/S8 SGW GTP-U TEID");
+            smf_ue_error(NULL, sess, "create-session", "No S5/S8 SGW GTP-U TEID");
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
         }
         break;
     case OGS_GTP2_RAT_TYPE_WLAN:
         if (!ogs_diam_is_relay_or_app_advertised(OGS_DIAM_S6B_APPLICATION_ID)) {
-            OGS_TLOG_ERROR("No S6b Diameter Peer");
+            smf_ue_error(NULL, sess, "create-session", "No S6b Diameter Peer");
             cause_value = OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING;
         }
         if (req->bearer_contexts_to_be_created[0].
                 s2b_u_epdg_f_teid_5.presence == 0) {
-            OGS_TLOG_ERROR("No S2b ePDG GTP-U TEID");
+            smf_ue_error(NULL, sess, "create-session", "No S2b ePDG GTP-U TEID");
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
         }
         break;
     default:
-        OGS_TLOG_ERROR("Unknown RAT Type [%d]", req->rat_type.u8);
+        smf_ue_error(NULL, sess, "create-session",
+                "Unknown RAT Type [%d]", req->rat_type.u8);
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
     }
 
@@ -394,7 +398,7 @@ uint8_t smf_s5c_handle_create_session_request(
         sess->session.session_type = sess->ue_session_type;
         memset(&sess->session.ue_ip, 0, sizeof(sess->session.ue_ip));
     } else {
-        OGS_TLOG_ERROR("No PAA or PDN Type");
+        smf_ue_error(NULL, sess, "create-session", "No PAA or PDN Type");
         return OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
     }
 
@@ -441,8 +445,7 @@ uint8_t smf_s5c_handle_create_session_request(
     smf_radius_accounting_session_started(sess);
     smf_ga_cdr_session_start(sess);
 
-    ogs_smf_trace_set(smf_ue, sess, "create-session");
-    OGS_TLOG_INFO("Create Session accepted");
+    smf_ue_info(smf_ue, sess, "create-session", "Create Session accepted");
 
     /* Control Plane(DL) : SGW-S5C */
     sgw_s5c_teid = req->sender_f_teid_for_control_plane.data;
@@ -920,7 +923,8 @@ void smf_s5c_handle_create_bearer_response(
     ogs_assert(sess);
     ogs_assert(rsp);
 
-    ogs_debug("Create Bearer Response");
+    smf_ue_info(smf_ue_find_by_id(sess->smf_ue_id), sess, "s5c",
+            "Create Bearer Response");
 
     /********************
      * Check Transaction

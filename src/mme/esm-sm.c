@@ -28,6 +28,7 @@
 #include "s1ap-path.h"
 #include "nas-path.h"
 #include "mme-gtp-path.h"
+#include "mme-trace.h"
 
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __esm_log_domain
@@ -258,9 +259,10 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
             OGS_FSM_TRAN(s, esm_state_active);
             break;
         case OGS_NAS_EPS_ACTIVATE_DEDICATED_EPS_BEARER_CONTEXT_ACCEPT:
-            ogs_debug("Activate dedicated EPS bearer context accept");
-            ogs_debug("    IMSI[%s] PTI[%d] EBI[%d]",
-                    mme_ue->imsi_bcd, sess->pti, bearer->ebi);
+            mme_ue_info(mme_ue, NULL, "esm",
+                    sess->session ? sess->session->name : NULL,
+                    "Dedicated bearer accepted PTI=%d EBI=%d",
+                    sess->pti, bearer->ebi);
             CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
             /* Check if Initial Context Setup Response or 
              *          E-RAB Setup Response is received */
@@ -273,13 +275,15 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
             OGS_FSM_TRAN(s, esm_state_active);
             break;
         case OGS_NAS_EPS_ACTIVATE_DEDICATED_EPS_BEARER_CONTEXT_REJECT:
-            ogs_error("Activate dedicated EPS bearer context reject");
-            ogs_error("    IMSI[%s] PTI[%d] EBI[%d]",
-                    mme_ue->imsi_bcd, sess->pti, bearer->ebi);
-            CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
             activate_dedicated_eps_bearer_context_reject =
                 &message->esm.activate_dedicated_eps_bearer_context_reject;
             ogs_assert(activate_dedicated_eps_bearer_context_reject);
+            mme_ue_error(mme_ue, NULL, "esm",
+                    sess->session ? sess->session->name : NULL,
+                    "Dedicated bearer rejected PTI=%d EBI=%d ESM_CAUSE=%d",
+                    sess->pti, bearer->ebi,
+                    activate_dedicated_eps_bearer_context_reject->esm_cause);
+            CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
             ogs_assert(OGS_OK ==
                 mme_gtp_send_create_bearer_response(bearer,
                 gtp_cause_from_esm(

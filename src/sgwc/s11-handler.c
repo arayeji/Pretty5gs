@@ -295,8 +295,8 @@ static void sgwc_s11_create_session_proceed(
         sess->pgw_s5c_teid = be32toh(pgw_s5c_teid->teid);
     }
 
-    ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
-    OGS_TLOG_INFO("S11 session ready SGW-S5C=0x%x PGW-S5C=0x%x",
+    sgwc_ue_info(sgwc_ue, sess, "s11", NULL,
+            "S11 session ready SGW-S5C=0x%x PGW-S5C=0x%x",
             sess->sgw_s5c_teid, sess->pgw_s5c_teid);
 
     /* MSISDN (optional IE; forwarded by MME for SGW/PGW CDRs) */
@@ -718,8 +718,7 @@ void sgwc_s11_handle_create_session_request(
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
         goto cleanup;
 
-    ogs_sgwc_trace_set(sgwc_ue, NULL, apn, "create-session");
-    OGS_TLOG_INFO("Create Session Request");
+    sgwc_ue_info(sgwc_ue, NULL, "s11", apn, "Create Session Request");
 
     sess = sgwc_sess_find_by_ebi(sgwc_ue,
             req->bearer_contexts_to_be_created[0].eps_bearer_id.u8);
@@ -736,17 +735,17 @@ void sgwc_s11_handle_create_session_request(
                 pending_s5->seq[0].type ==
                     OGS_GTP2_CREATE_SESSION_REQUEST_TYPE &&
                 pending_s5->assoc_xact_id == s11_xact->id) {
-            ogs_info("[%s] duplicate Create Session Request while S5 "
-                    "pending - ignoring (EBI=%d)",
-                    sgwc_ue->imsi_bcd,
+            sgwc_ue_info(sgwc_ue, sess, "s11", apn,
+                    "duplicate Create Session Request while S5 pending "
+                    "EBI=%d - ignoring",
                     req->bearer_contexts_to_be_created[0].eps_bearer_id.u8);
             return;
         }
 
         if (sgwc_ue->csr_replace_s11_xact_id != OGS_INVALID_POOL_ID) {
-            ogs_info("[%s] duplicate Create Session Request while CSR "
-                    "replace pending - ignoring (EBI=%d)",
-                    sgwc_ue->imsi_bcd,
+            sgwc_ue_info(sgwc_ue, sess, "s11", apn,
+                    "duplicate Create Session Request while CSR replace "
+                    "pending EBI=%d - ignoring",
                     req->bearer_contexts_to_be_created[0].eps_bearer_id.u8);
             return;
         }
@@ -806,8 +805,7 @@ void sgwc_s11_handle_modify_bearer_request(
     req = &message->modify_bearer_request;
     ogs_assert(req);
 
-    ogs_sgwc_trace_set(sgwc_ue, NULL, NULL, "modify-bearer");
-    OGS_TLOG_INFO("Modify Bearer Request");
+    sgwc_ue_info(sgwc_ue, NULL, "s11", NULL, "Modify Bearer Request");
 
     /************************
      * Check SGWC-UE Context
@@ -1213,7 +1211,7 @@ void sgwc_s11_handle_create_bearer_response(
     rsp = &message->create_bearer_response;
     ogs_assert(rsp);
 
-    ogs_info("Create Bearer Response");
+    sgwc_ue_info(sgwc_ue, NULL, "s11", NULL, "Create Bearer Response");
 
     /********************
      * Check Transaction

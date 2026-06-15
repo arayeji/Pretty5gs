@@ -115,33 +115,37 @@ void ogs_smf_trace_set(
     ogs_trace_set(&ctx);
 }
 
-void smf_ue_debug(smf_ue_t *smf_ue, const char *fmt, ...)
+void smf_ue_log(
+        smf_ue_t *smf_ue, smf_sess_t *sess,
+        const char *proc, int level, const char *fmt, ...)
 {
     va_list ap;
+    char prefix[OGS_TRACE_PREFIX_BUFSIZE];
     char msg[OGS_HUGE_LEN];
     const char *id = "-";
 
     ogs_assert(fmt);
 
-    if (smf_ue) {
-        if (smf_ue->imsi_len > 0 && smf_ue->imsi_bcd[0])
-            id = smf_ue->imsi_bcd;
-        else if (smf_ue->supi)
-            id = smf_ue->supi;
-    }
+    if (!smf_ue && sess)
+        smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
 
-    if (!ogs_trace_filter_match(id) &&
+    if (smf_ue)
+        id = smf_log_id(smf_ue);
+
+    if (level == OGS_LOG_DEBUG &&
+            !ogs_trace_filter_match(id) &&
             !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
         return;
 
-    ogs_smf_trace_set(smf_ue, NULL, NULL);
+    ogs_smf_trace_set(smf_ue, sess, proc);
+    ogs_trace_format_prefix(prefix, sizeof(prefix));
 
     va_start(ap, fmt);
     ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
 
-    ogs_log_printf(OGS_LOG_DEBUG, OGS_LOG_DOMAIN,
-            0, __FILE__, __LINE__, OGS_FUNC, 0, "[%s] %s", id, msg);
+    ogs_log_printf(level, OGS_LOG_DOMAIN,
+            0, __FILE__, __LINE__, OGS_FUNC, 0, "%s %s", prefix, msg);
 }
 
 const char *smf_log_id(smf_ue_t *smf_ue)

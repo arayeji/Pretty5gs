@@ -7086,13 +7086,13 @@ mme_bearer_t *mme_bearer_add(mme_sess_t *sess)
      */
     bearer->ebi = mme_ebi_alloc(mme_ue);
     if (bearer->ebi == INVALID_EPS_BEARER_ID) {
-        ogs_error("Bearer add failed: EBI pool exhausted (IMSI=%s)",
-                mme_ue->imsi_bcd);
+        mme_ue_error(mme_ue, NULL, "bearer", NULL,
+                "Bearer add failed: EBI pool exhausted");
         ogs_pool_free(&mme_bearer_pool, bearer);
         return NULL;
     }
 
-    ogs_info("Bearer added (EBI=%d IMSI=%s)", bearer->ebi, mme_ue->imsi_bcd);
+    mme_bearer_added_log(mme_ue, bearer);
 
     bearer->mme_ue_id = mme_ue->id;
     bearer->sess_id = sess->id;
@@ -7144,7 +7144,7 @@ void mme_bearer_remove(mme_bearer_t *bearer)
     sess = mme_sess_find_by_id(bearer->sess_id);
     ogs_assert(sess);
 
-    ogs_info("Bearer removed (EBI=%d IMSI=%s)", bearer->ebi, mme_ue->imsi_bcd);
+    mme_bearer_removed_log(mme_ue, bearer);
 
     memset(&e, 0, sizeof(e));
     e.bearer_id = bearer->id;

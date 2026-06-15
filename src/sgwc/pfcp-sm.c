@@ -378,7 +378,8 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
                 pfcp_log_travelping_rejection(e, message);
                 sgwc_sxa_handle_session_establishment_response(
                     sess, xact, e->gtp_message,
-                    &message->pfcp_session_establishment_response);
+                    &message->pfcp_session_establishment_response,
+                    e->pkbuf);
             }
             break;
 

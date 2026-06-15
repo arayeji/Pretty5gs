@@ -57,6 +57,8 @@ typedef struct mme_hssmap_s mme_hssmap_t;
 typedef struct enb_ue_s enb_ue_t;
 typedef struct sgw_ue_s sgw_ue_t;
 typedef struct mme_ue_s mme_ue_t;
+
+void mme_sess_removed_log(mme_ue_t *mme_ue, const char *apn);
 typedef struct mme_sess_s mme_sess_t;
 typedef struct mme_bearer_s mme_bearer_t;
 
@@ -1096,9 +1098,8 @@ struct mme_ue_s {
         ogs_assert(__sESS); \
         mme_ue = mme_ue_find_by_id((__sESS)->mme_ue_id); \
         ogs_assert(mme_ue); \
-        ogs_debug("Removed Session: UE IMSI:[%s] APN:[%s]", \
-                mme_ue->imsi_bcd, \
-                (__sESS)->session ? (__sESS)->session->name : "Unknown"); \
+        mme_sess_removed_log(mme_ue, \
+                (__sESS)->session ? (__sESS)->session->name : NULL); \
         if (mme_sess_count(mme_ue) == 1) /* Last Session */ \
             CLEAR_SESSION_CONTEXT(mme_ue); \
         mme_sess_remove(__sESS); \

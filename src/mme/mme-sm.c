@@ -880,9 +880,12 @@ cleanup:
                     sqn, rv,
                     (ue_hint && MME_UE_HAVE_IMSI(ue_hint)) ? "" : " IMSI[-]");
             if (ue_hint && MME_UE_HAVE_IMSI(ue_hint)) {
-                ogs_error("    IMSI[%s] (late Create Session Response or "
-                        "invalid GTP transaction step?)",
-                        ue_hint->imsi_bcd);
+                mme_ue_error(ue_hint, NULL, "s11", NULL,
+                        "late Create Session Response or invalid GTP "
+                        "transaction step (type=%u teid=0x%x)",
+                        gtp_message.h.type,
+                        gtp_message.h.teid_presence ?
+                            gtp_message.h.teid : 0);
                 if (gtp_message.h.type ==
                         OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE)
                     mme_ue_progress(ue_hint, "create_session_rsp_late");

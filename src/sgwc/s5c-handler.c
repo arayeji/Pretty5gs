@@ -226,8 +226,7 @@ void sgwc_s5c_handle_create_session_response(
                 OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
         return;
     }
-    ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
-    OGS_TLOG_INFO("Create Session Response");
+    sgwc_ue_info(sgwc_ue, sess, "s5c", NULL, "Create Session Response");
     sgwc_create_session_phase(sess, sgwc_ue, "s5-create-session-rsp");
 
     if (rsp->cause.presence && rsp->cause.data &&
@@ -766,7 +765,7 @@ void sgwc_s5c_handle_create_bearer_request(
     req = &message->create_bearer_request;
     ogs_assert(req);
 
-    ogs_info("Create Bearer Request");
+    sgwc_ue_info(sgwc_ue, sess, "s5c", NULL, "Create Bearer Request");
 
     /********************
      * Check Transaction

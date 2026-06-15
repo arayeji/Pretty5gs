@@ -128,18 +128,15 @@ static bool mme_ue_progress_is_failure(const char *step)
 
 void mme_ue_progress(mme_ue_t *mme_ue, const char *step)
 {
-    const char *imsi = mme_ue_log_id(mme_ue);
-
     ogs_assert(step);
 
     if (mme_ue_progress_is_failure(step))
-        ogs_error("[%s] ATTACH step: %s", imsi, step);
+        mme_ue_error(mme_ue, NULL, "attach", NULL, "ATTACH step: %s", step);
     else
-        ogs_info("[%s] ATTACH step: %s", imsi, step);
+        mme_ue_info(mme_ue, NULL, "attach", NULL, "ATTACH step: %s", step);
 }
 
-static enb_ue_t *mme_ue_service_resolve_enb(
-        mme_ue_t *mme_ue, enb_ue_t *enb_ue)
+static enb_ue_t *mme_ue_resolve_enb(mme_ue_t *mme_ue, enb_ue_t *enb_ue)
 {
     if (enb_ue)
         return enb_ue;
@@ -148,46 +145,100 @@ static enb_ue_t *mme_ue_service_resolve_enb(
     return NULL;
 }
 
-static void mme_ue_service_vlog(
-        mme_ue_t *mme_ue, enb_ue_t *enb_ue, int level,
-        const char *fmt, va_list ap)
+void mme_ue_log(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue,
+        const char *proc, const char *apn, int level, const char *fmt, ...)
 {
+    va_list ap;
     char prefix[OGS_TRACE_PREFIX_BUFSIZE];
     char msg[OGS_HUGE_LEN];
+    const char *imsi = mme_ue_log_id(mme_ue);
 
     ogs_assert(fmt);
 
-    enb_ue = mme_ue_service_resolve_enb(mme_ue, enb_ue);
-    ogs_mme_trace_set(enb_ue, mme_ue, NULL, "service-req");
+    if (level == OGS_LOG_DEBUG &&
+            !ogs_trace_filter_match(imsi) &&
+            !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+        return;
+
+    enb_ue = mme_ue_resolve_enb(mme_ue, enb_ue);
+    ogs_mme_trace_set(enb_ue, mme_ue, apn, proc);
     ogs_trace_format_prefix(prefix, sizeof(prefix));
 
+    va_start(ap, fmt);
     ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+
     ogs_log_printf(level, OGS_LOG_DOMAIN,
             0, __FILE__, __LINE__, OGS_FUNC, 0, "%s %s", prefix, msg);
+}
+
+void mme_sess_removed_log(mme_ue_t *mme_ue, const char *apn)
+{
+    mme_ue_info(mme_ue, NULL, "esm", apn,
+            "Session removed APN[%s]", apn ? apn : "Unknown");
+}
+
+void mme_bearer_added_log(mme_ue_t *mme_ue, mme_bearer_t *bearer)
+{
+    mme_sess_t *sess = NULL;
+    const char *apn = NULL;
+
+    ogs_assert(mme_ue);
+    ogs_assert(bearer);
+
+    sess = mme_sess_find_by_id(bearer->sess_id);
+    if (sess && sess->session && sess->session->name)
+        apn = sess->session->name;
+
+    mme_ue_info(mme_ue, NULL, "bearer", apn,
+            "Bearer added EBI=%d", bearer->ebi);
+}
+
+void mme_bearer_removed_log(mme_ue_t *mme_ue, mme_bearer_t *bearer)
+{
+    mme_sess_t *sess = NULL;
+    const char *apn = NULL;
+
+    ogs_assert(mme_ue);
+    ogs_assert(bearer);
+
+    sess = mme_sess_find_by_id(bearer->sess_id);
+    if (sess && sess->session && sess->session->name)
+        apn = sess->session->name;
+
+    mme_ue_info(mme_ue, NULL, "bearer", apn,
+            "Bearer removed EBI=%d", bearer->ebi);
 }
 
 void mme_ue_service_info(
         mme_ue_t *mme_ue, enb_ue_t *enb_ue, const char *fmt, ...)
 {
     va_list ap;
+    char msg[OGS_HUGE_LEN];
 
     ogs_assert(fmt);
 
     va_start(ap, fmt);
-    mme_ue_service_vlog(mme_ue, enb_ue, OGS_LOG_INFO, fmt, ap);
+    ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
+
+    mme_ue_info(mme_ue, enb_ue, "service-req", NULL, "%s", msg);
 }
 
 void mme_ue_service_error(
         mme_ue_t *mme_ue, enb_ue_t *enb_ue, const char *fmt, ...)
 {
     va_list ap;
+    char msg[OGS_HUGE_LEN];
 
     ogs_assert(fmt);
 
     va_start(ap, fmt);
-    mme_ue_service_vlog(mme_ue, enb_ue, OGS_LOG_ERROR, fmt, ap);
+    ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
+
+    mme_ue_error(mme_ue, enb_ue, "service-req", NULL, "%s", msg);
 }
 
 void mme_ue_service_progress(
@@ -201,29 +252,6 @@ void mme_ue_service_progress(
         mme_ue_service_info(mme_ue, enb_ue, "SERVICE step: %s", step);
 }
 
-void mme_ue_debug(mme_ue_t *mme_ue, const char *fmt, ...)
-{
-    va_list ap;
-    char msg[OGS_HUGE_LEN];
-    const char *imsi = mme_ue_log_id(mme_ue);
-
-    ogs_assert(fmt);
-
-    if (!ogs_trace_filter_match(imsi) &&
-            !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
-        return;
-
-    ogs_mme_trace_set(
-            mme_ue ? enb_ue_find_by_id(mme_ue->enb_ue_id) : NULL,
-            mme_ue, NULL, NULL);
-
-    va_start(ap, fmt);
-    ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
-    va_end(ap);
-
-    ogs_log_printf(OGS_LOG_DEBUG, OGS_LOG_DOMAIN,
-            0, __FILE__, __LINE__, OGS_FUNC, 0, "[%s] %s", imsi, msg);
-}
 
 const char *mme_log_imsi(mme_ue_t *mme_ue)
 {

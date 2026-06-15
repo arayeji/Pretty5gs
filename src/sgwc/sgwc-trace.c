@@ -19,6 +19,8 @@
 
 #include "sgwc-trace.h"
 
+#include <stdarg.h>
+
 void ogs_sgwc_trace_set(
         sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess,
         const char *apn, const char *proc)
@@ -70,6 +72,36 @@ void ogs_sgwc_trace_set(
     }
 
     ogs_trace_set(&ctx);
+}
+
+void sgwc_ue_log(
+        sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess,
+        const char *proc, const char *apn, int level, const char *fmt, ...)
+{
+    va_list ap;
+    char prefix[OGS_TRACE_PREFIX_BUFSIZE];
+    char msg[OGS_HUGE_LEN];
+    const char *imsi = sgwc_log_imsi(sgwc_ue);
+
+    ogs_assert(fmt);
+
+    if (!sgwc_ue && sess)
+        sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+
+    if (level == OGS_LOG_DEBUG &&
+            !ogs_trace_filter_match(imsi) &&
+            !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+        return;
+
+    ogs_sgwc_trace_set(sgwc_ue, sess, apn, proc);
+    ogs_trace_format_prefix(prefix, sizeof(prefix));
+
+    va_start(ap, fmt);
+    ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+
+    ogs_log_printf(level, OGS_LOG_DOMAIN,
+            0, __FILE__, __LINE__, OGS_FUNC, 0, "%s %s", prefix, msg);
 }
 
 const char *sgwc_log_imsi(sgwc_ue_t *sgwc_ue)

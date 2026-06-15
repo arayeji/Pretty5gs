@@ -130,6 +130,8 @@ int esm_handle_pdn_connectivity_request(
         } else {
             apn = req->access_point_name.apn;
         }
+        mme_ue_info(mme_ue, NULL, "esm", apn,
+                "PDN connectivity request APN[%s]", apn);
         sess->session = mme_session_find_by_apn(mme_ue, apn);
         if (!sess->session) {
             /* Invalid APN */
@@ -138,7 +140,8 @@ int esm_handle_pdn_connectivity_request(
                     create_action);
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
-            ogs_warn("Invalid APN[%s]", apn);
+            mme_ue_warn(mme_ue, NULL, "esm",
+                    apn, "Invalid APN requested[%s]", apn);
             return OGS_ERROR;
         }
 
