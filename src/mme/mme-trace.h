@@ -55,7 +55,7 @@ void mme_ue_service_error(
 void mme_ue_log(
         mme_ue_t *mme_ue, enb_ue_t *enb_ue,
         const char *proc, const char *apn, int level,
-        const char *fmt, ...) OGS_GNUC_PRINTF(5, 6);
+        const char *fmt, ...) OGS_GNUC_PRINTF(6, 7);
 
 #define mme_ue_info(ue, enb, proc, apn, ...) \
     mme_ue_log(ue, enb, proc, apn, OGS_LOG_INFO, __VA_ARGS__)

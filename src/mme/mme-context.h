@@ -58,7 +58,6 @@ typedef struct enb_ue_s enb_ue_t;
 typedef struct sgw_ue_s sgw_ue_t;
 typedef struct mme_ue_s mme_ue_t;
 
-void mme_sess_removed_log(mme_ue_t *mme_ue, const char *apn);
 typedef struct mme_sess_s mme_sess_t;
 typedef struct mme_bearer_s mme_bearer_t;
 
