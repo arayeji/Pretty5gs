@@ -343,8 +343,8 @@ void smf_sess_collision_replace_complete(smf_sess_t *old_sess)
         if (smf_ue->collision_replace.peer_teid_presence)
             new_sess->sgw_s5c_teid = smf_ue->collision_replace.peer_teid;
 
-        ogs_smf_trace_set(smf_ue, new_sess, "create-session");
-        OGS_TLOG_INFO("Create Session Request (after UPF collision replace)");
+        smf_ue_info(smf_ue, new_sess, "create-session",
+                "Create Session Request (after UPF collision replace)");
 
         memset(&ev, 0, sizeof(ev));
         ev.h.id = SMF_EVT_S5C_MESSAGE;

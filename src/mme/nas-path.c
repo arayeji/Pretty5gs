@@ -1168,7 +1168,8 @@ int nas_eps_send_service_reject(
         return OGS_NOTFOUND;
     }
 
-    ogs_debug("[%s] Service reject", mme_ue->imsi_bcd);
+    mme_ue_warn(mme_ue, enb_ue, "emm", NULL,
+            "Service reject EMM_CAUSE=%d", emm_cause);
 
     /* Build Service Reject */
     emmbuf = emm_build_service_reject(emm_cause, mme_ue);

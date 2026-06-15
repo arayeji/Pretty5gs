@@ -33,8 +33,23 @@ void ogs_smf_trace_set(
 void ogs_smf_trace_set_from_gtp2_create_session_request(
         ogs_gtp2_create_session_request_t *req, const char *proc);
 
-void smf_ue_debug(smf_ue_t *smf_ue, const char *fmt, ...)
-    OGS_GNUC_PRINTF(2, 3);
+/*
+ * Enriched per-UE log: full ogs_trace_format_prefix on one line.
+ * DEBUG is emitted when logger level is debug or trace_imsi matches.
+ */
+void smf_ue_log(
+        smf_ue_t *smf_ue, smf_sess_t *sess,
+        const char *proc, int level,
+        const char *fmt, ...) OGS_GNUC_PRINTF(5, 6);
+
+#define smf_ue_info(ue, sess, proc, ...) \
+    smf_ue_log(ue, sess, proc, OGS_LOG_INFO, __VA_ARGS__)
+#define smf_ue_warn(ue, sess, proc, ...) \
+    smf_ue_log(ue, sess, proc, OGS_LOG_WARN, __VA_ARGS__)
+#define smf_ue_error(ue, sess, proc, ...) \
+    smf_ue_log(ue, sess, proc, OGS_LOG_ERROR, __VA_ARGS__)
+#define smf_ue_debug(ue, sess, proc, ...) \
+    smf_ue_log(ue, sess, proc, OGS_LOG_DEBUG, __VA_ARGS__)
 
 const char *smf_log_id(smf_ue_t *smf_ue);
 void smf_log_sgw_peer(char *buf, size_t buflen, smf_sess_t *sess);

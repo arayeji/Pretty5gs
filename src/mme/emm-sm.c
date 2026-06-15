@@ -435,8 +435,8 @@ void emm_state_registered(ogs_fsm_t *s, mme_event_t *e)
             if (mme_ue->t3413.retry_count >=
                     mme_timer_cfg(MME_TIMER_T3413)->max_count) {
                 /* Paging failed */
-                ogs_warn("Paging to IMSI[%s] failed. Stop paging",
-                        mme_ue->imsi_bcd);
+                mme_ue_warn(mme_ue, NULL, "emm", NULL,
+                        "Paging failed, stop paging");
                 CLEAR_MME_UE_TIMER(mme_ue->t3413);
                 mme_ue->paging.failed = true;
 
@@ -1074,7 +1074,9 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             break;
 
         case OGS_NAS_EPS_EXTENDED_SERVICE_REQUEST:
-            ogs_info("[%s] Extended service request", mme_ue->imsi_bcd);
+            mme_ue_info(mme_ue, enb_ue, "extended-svc", NULL,
+                    "Extended service request SERVICE_TYPE=%d",
+                    message->emm.extended_service_request.service_type.value);
 
             rv = emm_handle_extended_service_request(
                     enb_ue, mme_ue, &message->emm.extended_service_request);
@@ -1125,7 +1127,9 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                 ogs_debug("    Initial UE Message");
 
                 if (!MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
-                    ogs_warn("No P-TMSI : UE[%s]", mme_ue->imsi_bcd);
+                    mme_ue_warn(mme_ue, enb_ue, "extended-svc", NULL,
+                            "No P-TMSI (CSFB rejected) SERVICE_TYPE=%d",
+                            mme_ue->nas_eps.service.value);
                     r = nas_eps_send_service_reject(enb_ue, mme_ue,
                         OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK);
                     ogs_expect(r == OGS_OK);
@@ -1172,7 +1176,9 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                 ogs_debug("    Uplink NAS Transport");
 
                 if (!MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
-                    ogs_warn("No P-TMSI : UE[%s]", mme_ue->imsi_bcd);
+                    mme_ue_warn(mme_ue, enb_ue, "extended-svc", NULL,
+                            "No P-TMSI (CSFB rejected) SERVICE_TYPE=%d",
+                            mme_ue->nas_eps.service.value);
                     r = nas_eps_send_service_reject(enb_ue, mme_ue,
                         OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK);
                     ogs_expect(r == OGS_OK);

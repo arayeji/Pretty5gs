@@ -30,6 +30,25 @@ void ogs_sgwc_trace_set(
         sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess,
         const char *apn, const char *proc);
 
+/*
+ * Enriched per-UE log: full ogs_trace_format_prefix (IMSI, APN, PROC, TEIDs,
+ * UE IP) on one line.  DEBUG is emitted when logger level is debug or
+ * trace_imsi matches this subscriber.
+ */
+void sgwc_ue_log(
+        sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess,
+        const char *proc, const char *apn, int level,
+        const char *fmt, ...) OGS_GNUC_PRINTF(6, 7);
+
+#define sgwc_ue_info(ue, sess, proc, apn, ...) \
+    sgwc_ue_log(ue, sess, proc, apn, OGS_LOG_INFO, __VA_ARGS__)
+#define sgwc_ue_warn(ue, sess, proc, apn, ...) \
+    sgwc_ue_log(ue, sess, proc, apn, OGS_LOG_WARN, __VA_ARGS__)
+#define sgwc_ue_error(ue, sess, proc, apn, ...) \
+    sgwc_ue_log(ue, sess, proc, apn, OGS_LOG_ERROR, __VA_ARGS__)
+#define sgwc_ue_debug(ue, sess, proc, apn, ...) \
+    sgwc_ue_log(ue, sess, proc, apn, OGS_LOG_DEBUG, __VA_ARGS__)
+
 const char *sgwc_log_imsi(sgwc_ue_t *sgwc_ue);
 void sgwc_log_mme_peer(char *buf, size_t buflen, sgwc_ue_t *sgwc_ue);
 void sgwc_log_pgw_peer(char *buf, size_t buflen, sgwc_sess_t *sess);

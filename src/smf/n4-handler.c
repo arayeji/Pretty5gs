@@ -203,10 +203,9 @@ uint8_t smf_5gc_n4_handle_session_establishment_response(
 
         smf_log_sgw_peer(sgw_peer, sizeof(sgw_peer), sess);
         smf_log_upf_peer(upf_peer, sizeof(upf_peer), sess);
-        ogs_error("[%s] PFCP Session Establishment Response: no UP F-SEID "
-                "APN[%s] SGW[%s] UPF[%s] smf_seid[0x%llx]",
-                smf_log_id(smf_ue),
-                sess->session.name ? sess->session.name : "-",
+        smf_ue_error(smf_ue, sess, "n4",
+                "PFCP Session Establishment Response: no UP F-SEID "
+                "SGW[%s] UPF[%s] smf_seid[0x%llx]",
                 sgw_peer[0] ? sgw_peer : "-",
                 upf_peer[0] ? upf_peer : "-",
                 (unsigned long long)sess->smf_n4_seid);
@@ -221,11 +220,10 @@ uint8_t smf_5gc_n4_handle_session_establishment_response(
 
             smf_log_sgw_peer(sgw_peer, sizeof(sgw_peer), sess);
             smf_log_upf_peer(upf_peer, sizeof(upf_peer), sess);
-            ogs_error("[%s] PFCP Session Establishment rejected cause[%u:%s] "
-                    "APN[%s] SGW[%s] UPF[%s] smf_seid[0x%llx]",
-                    smf_log_id(smf_ue), rsp->cause.u8,
-                    ogs_pfcp_cause_get_name(rsp->cause.u8),
-                    sess->session.name ? sess->session.name : "-",
+            smf_ue_error(smf_ue, sess, "n4",
+                    "PFCP Session Establishment rejected cause[%u:%s] "
+                    "SGW[%s] UPF[%s] smf_seid[0x%llx]",
+                    rsp->cause.u8, ogs_pfcp_cause_get_name(rsp->cause.u8),
                     sgw_peer[0] ? sgw_peer : "-",
                     upf_peer[0] ? upf_peer : "-",
                     (unsigned long long)sess->smf_n4_seid);
@@ -236,10 +234,9 @@ uint8_t smf_5gc_n4_handle_session_establishment_response(
     } else {
         smf_ue_t *smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
 
-        ogs_error("[%s] PFCP Session Establishment Response: no Cause "
-                "APN[%s] smf_seid[0x%llx]",
-                smf_log_id(smf_ue),
-                sess->session.name ? sess->session.name : "-",
+        smf_ue_error(smf_ue, sess, "n4",
+                "PFCP Session Establishment Response: no Cause "
+                "smf_seid[0x%llx]",
                 (unsigned long long)sess->smf_n4_seid);
         cause_value = OGS_PFCP_CAUSE_MANDATORY_IE_MISSING;
     }
@@ -318,6 +315,10 @@ uint8_t smf_5gc_n4_handle_session_establishment_response(
     up_f_seid = rsp->up_f_seid.data;
     ogs_assert(up_f_seid);
     sess->upf_n4_seid = be64toh(up_f_seid->seid);
+
+    smf_ue_info(smf_ue_find_by_id(sess->smf_ue_id), sess, "n4",
+            "PFCP session established UPF-SEID=0x%llx",
+            (unsigned long long)sess->upf_n4_seid);
 
     return OGS_PFCP_CAUSE_REQUEST_ACCEPTED;
 }
@@ -1277,11 +1278,10 @@ uint8_t smf_epc_n4_handle_session_establishment_response(
 
             smf_log_sgw_peer(sgw_peer, sizeof(sgw_peer), sess);
             smf_log_upf_peer(upf_peer, sizeof(upf_peer), sess);
-            ogs_error("[%s] PFCP Session Establishment rejected cause[%u:%s] "
-                    "APN[%s] SGW[%s] UPF[%s] smf_seid[0x%llx]",
-                    smf_log_id(smf_ue), rsp->cause.u8,
-                    ogs_pfcp_cause_get_name(rsp->cause.u8),
-                    sess->session.name ? sess->session.name : "-",
+            smf_ue_error(smf_ue, sess, "n4",
+                    "PFCP Session Establishment rejected cause[%u:%s] "
+                    "SGW[%s] UPF[%s] smf_seid[0x%llx]",
+                    rsp->cause.u8, ogs_pfcp_cause_get_name(rsp->cause.u8),
                     sgw_peer[0] ? sgw_peer : "-",
                     upf_peer[0] ? upf_peer : "-",
                     (unsigned long long)sess->smf_n4_seid);
@@ -1367,6 +1367,9 @@ uint8_t smf_epc_n4_handle_session_establishment_response(
     up_f_seid = rsp->up_f_seid.data;
     ogs_assert(up_f_seid);
     sess->upf_n4_seid = be64toh(up_f_seid->seid);
+    smf_ue_info(smf_ue_find_by_id(sess->smf_ue_id), sess, "n4",
+            "PFCP session established UPF-SEID=0x%llx",
+            (unsigned long long)sess->upf_n4_seid);
     return OGS_PFCP_CAUSE_REQUEST_ACCEPTED;
 }
 

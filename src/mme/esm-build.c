@@ -22,6 +22,7 @@
 #include "mme-sm.h"
 #include "mme-ambr.h"
 #include "mme-context.h"
+#include "mme-trace.h"
 
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __esm_log_domain
@@ -114,9 +115,9 @@ ogs_pkbuf_t *esm_build_pdn_connectivity_reject(
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     ogs_assert(mme_ue);
 
-    ogs_debug("PDN connectivity reject");
-    ogs_debug("    IMSI[%s] PTI[%d] Cause[%d]",
-            mme_ue->imsi_bcd, sess->pti, esm_cause);
+    mme_ue_warn(mme_ue, NULL, "esm", NULL,
+            "PDN connectivity reject PTI=%d Cause=%d",
+            sess->pti, esm_cause);
 
     memset(&message, 0, sizeof(message));
     if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST) {

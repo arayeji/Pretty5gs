@@ -47,9 +47,28 @@ void mme_ue_service_error(
         mme_ue_t *mme_ue, enb_ue_t *enb_ue, const char *fmt, ...)
     OGS_GNUC_PRINTF(3, 4);
 
-/* DEBUG for one UE when IMSI is on ogs_trace_filter list (no restart) */
-void mme_ue_debug(mme_ue_t *mme_ue, const char *fmt, ...)
-    OGS_GNUC_PRINTF(2, 3);
+/*
+ * Enriched per-UE log: full ogs_trace_format_prefix (IMSI, ENB, S1AP, EBI,
+ * APN, PROC, TEIDs) on one line.  DEBUG is emitted when logger level is
+ * debug or mme.trace_imsi matches this subscriber.
+ */
+void mme_ue_log(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue,
+        const char *proc, const char *apn, int level,
+        const char *fmt, ...) OGS_GNUC_PRINTF(5, 6);
+
+#define mme_ue_info(ue, enb, proc, apn, ...) \
+    mme_ue_log(ue, enb, proc, apn, OGS_LOG_INFO, __VA_ARGS__)
+#define mme_ue_warn(ue, enb, proc, apn, ...) \
+    mme_ue_log(ue, enb, proc, apn, OGS_LOG_WARN, __VA_ARGS__)
+#define mme_ue_error(ue, enb, proc, apn, ...) \
+    mme_ue_log(ue, enb, proc, apn, OGS_LOG_ERROR, __VA_ARGS__)
+#define mme_ue_debug(ue, enb, proc, apn, ...) \
+    mme_ue_log(ue, enb, proc, apn, OGS_LOG_DEBUG, __VA_ARGS__)
+
+void mme_sess_removed_log(mme_ue_t *mme_ue, const char *apn);
+void mme_bearer_added_log(mme_ue_t *mme_ue, mme_bearer_t *bearer);
+void mme_bearer_removed_log(mme_ue_t *mme_ue, mme_bearer_t *bearer);
 
 /* Context strings for ogs_error/ogs_warn (IMSI, peers, radio) */
 const char *mme_log_imsi(mme_ue_t *mme_ue);

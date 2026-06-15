@@ -278,14 +278,22 @@ static void mme_s11_create_session_fail(
 {
     int r;
 
+    mme_sess_t *log_sess = NULL;
+    const char *log_apn = NULL;
+
     ogs_assert(mme_ue);
 
+    log_sess = mme_sess_first(mme_ue);
+    if (log_sess && log_sess->session && log_sess->session->name)
+        log_apn = log_sess->session->name;
+
     if (reason)
-        ogs_error("[%s] CreateSessionResponse failure: %s [Cause:%d]",
-                mme_ue->imsi_bcd, reason, fail_cause);
+        mme_ue_error(mme_ue, enb_ue, "s11", log_apn,
+                "CreateSessionResponse failure: %s Cause=%d",
+                reason, fail_cause);
     else
-        ogs_error("[%s] CreateSessionResponse failure [Cause:%d]",
-                mme_ue->imsi_bcd, fail_cause);
+        mme_ue_error(mme_ue, enb_ue, "s11", log_apn,
+                "CreateSessionResponse failure Cause=%d", fail_cause);
 
     mme_ue_progress(mme_ue, "create_session_rsp_fail");
 
@@ -353,11 +361,14 @@ void mme_s11_handle_create_session_response(
     else if (mme_ue_from_teid)
         mme_ue = mme_ue_from_teid;
 
-    if (mme_ue && MME_UE_HAVE_IMSI(mme_ue))
-        ogs_info("[%s] S11 Create Session Response received "
-                "(create_action=%d local_s11_teid=0x%x)",
-                mme_ue->imsi_bcd, create_action, xact->local_teid);
     enb_ue = enb_ue_find_by_id(xact->enb_ue_id);
+
+    if (mme_ue && MME_UE_HAVE_IMSI(mme_ue))
+        mme_ue_info(mme_ue, enb_ue, "s11",
+                sess->session ? sess->session->name : NULL,
+                "Create Session Response received "
+                "create_action=%d local_s11_teid=0x%x",
+                create_action, xact->local_teid);
 
     rv = ogs_gtp_xact_commit(xact);
     if (rv != OGS_OK) {
@@ -421,8 +432,6 @@ void mme_s11_handle_create_session_response(
      * Check MME-UE Context
      ************************/
     if (!mme_ue_from_teid) {
-        ogs_error("[%s] No Context in TEID [Cause:%d]",
-                mme_ue->imsi_bcd, session_cause);
         fail_cause = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
         fail_reason = "No Context in TEID";
         goto fail;
@@ -432,10 +441,8 @@ void mme_s11_handle_create_session_response(
      * Check Mandatory/Conditional IE Missing
      *****************************************/
     if (rsp->sender_f_teid_for_control_plane.presence == 0) {
-        ogs_error("[%s] No S11 TEID [Cause:%d]",
-                mme_ue->imsi_bcd, session_cause);
         fail_cause = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
-        fail_reason = "Conditional IE missing";
+        fail_reason = "No S11 TEID in Create Session Response";
         goto fail;
     }
 
@@ -448,18 +455,14 @@ void mme_s11_handle_create_session_response(
         break;
     default:
         if (rsp->pgw_s5_s8__s2a_s2b_f_teid_for_pmip_based_interface_or_for_gtp_based_control_plane_interface.presence == 0) {
-            ogs_error("[%s] No S5C TEID [Cause:%d]",
-                    mme_ue->imsi_bcd, session_cause);
             fail_cause = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
-            fail_reason = "Conditional IE missing";
+            fail_reason = "No S5C TEID in Create Session Response";
             goto fail;
         }
 
         if (rsp->pdn_address_allocation.presence == 0) {
-            ogs_error("[%s] No PDN Address Allocation [Cause:%d]",
-                    mme_ue->imsi_bcd, session_cause);
             fail_cause = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
-            fail_reason = "Conditional IE missing";
+            fail_reason = "No PDN Address Allocation in Create Session Response";
             goto fail;
         }
     }
@@ -672,6 +675,9 @@ void mme_s11_handle_create_session_response(
         session->ambr.uplink = be32toh(ambr->uplink) * 1000;
     }
 
+    mme_ue_info(mme_ue, enb_ue, "s11", session->name,
+            "Create Session OK MME_S11_TEID=0x%x SGW_S11_TEID=0x%x",
+            mme_ue->mme_s11_teid, target_ue->sgw_s11_teid);
     mme_ue_progress(mme_ue, "create_session_rsp_ok");
 
     if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST) {
@@ -1103,6 +1109,8 @@ void mme_s11_handle_create_bearer_request(
     mme_bearer_t *bearer = NULL, *default_bearer = NULL;
     mme_sess_t *sess = NULL;
     sgw_ue_t *sgw_ue = NULL;
+    enb_ue_t *enb_ue = NULL;
+    const char *apn = NULL;
 
     ogs_gtp2_f_teid_t *sgw_s1u_teid = NULL;
     ogs_gtp2_f_teid_t *pgw_s5u_teid = NULL;
@@ -1110,8 +1118,6 @@ void mme_s11_handle_create_bearer_request(
 
     ogs_assert(xact);
     ogs_assert(req);
-
-    ogs_debug("Create Bearer Request");
 
     /***********************
      * Check MME-UE Context
@@ -1122,24 +1128,27 @@ void mme_s11_handle_create_bearer_request(
         ogs_error("No Context in TEID");
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
+        enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
         sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
         if (!sgw_ue) {
-            ogs_error("[%s] No SGW UE Context",
-                    MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+            mme_ue_error(mme_ue, enb_ue, "s11", NULL,
+                    "Create Bearer: No SGW UE Context");
             cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
         } else if (req->linked_eps_bearer_id.presence == 0) {
-            ogs_error("No Linked EBI");
+            mme_ue_error(mme_ue, enb_ue, "s11", NULL,
+                    "Create Bearer: No Linked EBI");
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
         }
 
         if (cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
             sess = mme_sess_find_by_ebi(mme_ue, req->linked_eps_bearer_id.u8);
             if (!sess) {
-                ogs_error("[%s] No Context for Linked EPS Bearer ID[%d]",
-                        MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
+                mme_ue_error(mme_ue, enb_ue, "s11", NULL,
+                        "Create Bearer: No session for linked EBI=%d",
                         req->linked_eps_bearer_id.u8);
                 cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
-            }
+            } else if (sess->session && sess->session->name)
+                apn = sess->session->name;
         }
     }
 
@@ -1155,27 +1164,33 @@ void mme_s11_handle_create_bearer_request(
     ogs_assert(cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
 
     if (req->bearer_contexts.presence == 0) {
-        ogs_error("No Bearer");
+        mme_ue_error(mme_ue, enb_ue, "s11", apn,
+                "Create Bearer: No Bearer context");
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
     }
     if (req->bearer_contexts.eps_bearer_id.presence == 0) {
-        ogs_error("No EPS Bearer ID");
+        mme_ue_error(mme_ue, enb_ue, "s11", apn,
+                "Create Bearer: No EPS Bearer ID");
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
     }
     if (req->bearer_contexts.s1_u_enodeb_f_teid.presence == 0) {
-        ogs_error("No SGW-S1U TEID");
+        mme_ue_error(mme_ue, enb_ue, "s11", apn,
+                "Create Bearer: No SGW-S1U TEID");
         cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
     }
     if (req->bearer_contexts.s4_u_sgsn_f_teid.presence == 0) {
-        ogs_error("No PGW-S5U TEID");
+        mme_ue_error(mme_ue, enb_ue, "s11", apn,
+                "Create Bearer: No PGW-S5U TEID");
         cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
     }
     if (req->bearer_contexts.bearer_level_qos.presence == 0) {
-        ogs_error("No QoS");
+        mme_ue_error(mme_ue, enb_ue, "s11", apn,
+                "Create Bearer: No QoS");
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
     }
     if (req->bearer_contexts.tft.presence == 0) {
-        ogs_error("No TFT");
+        mme_ue_error(mme_ue, enb_ue, "s11", apn,
+                "Create Bearer: No TFT");
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
     }
 
@@ -1198,16 +1213,13 @@ void mme_s11_handle_create_bearer_request(
 
     bearer = mme_bearer_add(sess);
     if (!bearer) {
-        ogs_error("[%s] Create Bearer Request: bearer add failed",
-                mme_ue->imsi_bcd);
+        mme_ue_error(mme_ue, enb_ue, "s11", apn,
+                "Create Bearer: bearer add failed");
         ogs_gtp2_send_error_message(xact, sgw_ue->sgw_s11_teid,
                 OGS_GTP2_CREATE_BEARER_RESPONSE_TYPE,
                 OGS_GTP2_CAUSE_NO_RESOURCES_AVAILABLE);
         return;
     }
-
-    ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
-            mme_ue->mme_s11_teid, sgw_ue->sgw_s11_teid);
 
     /*
      * DEPRECATED : Issues #3072
@@ -1245,7 +1257,8 @@ void mme_s11_handle_create_bearer_request(
     if (ogs_gtp2_parse_bearer_qos(
                 &bearer_qos, &req->bearer_contexts.bearer_level_qos) !=
             req->bearer_contexts.bearer_level_qos.len) {
-        ogs_error("[%s] Invalid Bearer QoS IE", mme_ue->imsi_bcd);
+        mme_ue_error(mme_ue, enb_ue, "s11", apn,
+                "Create Bearer: Invalid Bearer QoS IE");
         mme_bearer_remove(bearer);
         ogs_gtp2_send_error_message(xact, sgw_ue->sgw_s11_teid,
                 OGS_GTP2_CREATE_BEARER_RESPONSE_TYPE,
@@ -1295,8 +1308,8 @@ void mme_s11_handle_create_bearer_request(
     /* Before Activate DEDICATED bearer, check DEFAULT bearer status */
     default_bearer = mme_default_bearer_in_sess(sess);
     if (!default_bearer) {
-        ogs_error("[%s] No Default Bearer for Create Bearer Request",
-                mme_ue->imsi_bcd);
+        mme_ue_error(mme_ue, enb_ue, "s11", apn,
+                "Create Bearer: No default bearer in session");
         mme_bearer_remove(bearer);
         ogs_gtp2_send_error_message(xact, sgw_ue->sgw_s11_teid,
                 OGS_GTP2_CREATE_BEARER_RESPONSE_TYPE,
@@ -1305,6 +1318,11 @@ void mme_s11_handle_create_bearer_request(
     }
 
     if (OGS_FSM_CHECK(&default_bearer->sm, esm_state_active)) {
+        mme_ue_info(mme_ue, enb_ue, "s11", apn,
+                "Create Bearer accepted EBI=%d QCI=%d linked_ebi=%d ECM=%s",
+                bearer->ebi, bearer->qos.index,
+                req->linked_eps_bearer_id.u8,
+                ECM_IDLE(mme_ue) ? "IDLE" : "CONNECTED");
         if (ECM_IDLE(mme_ue)) {
             MME_STORE_PAGING_INFO(mme_ue,
                 MME_PAGING_TYPE_CREATE_BEARER, bearer->id);

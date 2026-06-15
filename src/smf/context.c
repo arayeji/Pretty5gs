@@ -2097,23 +2097,25 @@ smf_sess_t *smf_sess_add_by_gtp2_message(ogs_gtp2_message_t *message)
 
     ogs_gtp2_create_session_request_t *req = &message->create_session_request;
 
+    ogs_smf_trace_set_from_gtp2_create_session_request(req, "create-session");
+
     if (req->imsi.presence == 0) {
-        OGS_TLOG_ERROR("No IMSI");
+        smf_ue_error(NULL, NULL, "create-session", "No IMSI");
         return NULL;
     }
     if (req->access_point_name.presence == 0) {
-        OGS_TLOG_ERROR("No APN");
+        smf_ue_error(NULL, NULL, "create-session", "No APN");
         return NULL;
     } else {
         if (!smf_gtp_apn_parse(apn, &full_apn, req->access_point_name.data,
                 req->access_point_name.len)) {
-            OGS_TLOG_ERROR("Invalid APN");
+            smf_ue_error(NULL, NULL, "create-session", "Invalid APN");
             ogs_free(full_apn);
             return NULL;
         }
     }
     if (req->rat_type.presence == 0) {
-        OGS_TLOG_ERROR("No RAT Type");
+        smf_ue_error(NULL, NULL, "create-session", "No RAT Type");
         ogs_free(full_apn);
         return NULL;
     }
@@ -2389,17 +2391,6 @@ smf_sess_t *smf_sess_add_by_pdu_session(ogs_sbi_message_t *message)
     return sess;
 }
 
-static const char *smf_ue_log_id(const smf_ue_t *smf_ue)
-{
-    if (!smf_ue)
-        return "-";
-    if (smf_ue->imsi_len > 0 && smf_ue->imsi_bcd[0])
-        return smf_ue->imsi_bcd;
-    if (smf_ue->supi)
-        return smf_ue->supi;
-    return "-";
-}
-
 static void smf_pfcp_subnet_desc(
         const ogs_pfcp_subnet_t *subnet, char *buf, int buflen)
 {
@@ -2425,10 +2416,8 @@ static void smf_sess_log_ue_ip_fail(
         smf_ue_t *smf_ue, smf_sess_t *sess,
         int family, uint8_t cause_value)
 {
-    ogs_error("[%s] UE IP assign failed DNN:%s family=%d cause=%u",
-            smf_ue_log_id(smf_ue),
-            sess->session.name ? sess->session.name : "-",
-            family, cause_value);
+    smf_ue_error(smf_ue, sess, "create-session",
+            "UE IP assign failed family=%d cause=%u", family, cause_value);
 }
 
 static void smf_sess_log_ue_ip_ok(smf_ue_t *smf_ue, smf_sess_t *sess)
@@ -2444,9 +2433,8 @@ static void smf_sess_log_ue_ip_ok(smf_ue_t *smf_ue, smf_sess_t *sess)
     if (sess->ipv6)
         smf_pfcp_subnet_desc(sess->ipv6->subnet, pool6, sizeof pool6);
 
-    ogs_info("[%s] UE IP assigned DNN:%s IPv4:%s IPv6:%s pool:%s / %s",
-            smf_ue_log_id(smf_ue),
-            sess->session.name ? sess->session.name : "-",
+    smf_ue_info(smf_ue, sess, "create-session",
+            "UE IP assigned IPv4:%s IPv6:%s pool:%s / %s",
             sess->ipv4 ? OGS_INET_NTOP(&sess->ipv4->addr, buf1) : "-",
             sess->ipv6 ? OGS_INET6_NTOP(&sess->ipv6->addr, buf2) : "-",
             pool4[0] ? pool4 : "-",

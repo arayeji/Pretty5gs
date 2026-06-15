@@ -111,8 +111,8 @@ static void smf_gsm_fail_create_session(ogs_fsm_t *s, smf_sess_t *sess,
 {
     if (sess) {
         smf_ue_t *smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
-        ogs_smf_trace_set(smf_ue, sess, "create-session");
-        OGS_TLOG_WARN("Create Session rejected gtp_cause[%u]", gtp_cause);
+        smf_ue_warn(smf_ue, sess, "create-session",
+                "Create Session rejected gtp_cause[%u]", gtp_cause);
     }
 
     send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);

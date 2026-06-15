@@ -189,7 +189,8 @@ static void bearer_timeout(ogs_gtp_xact_t *xact, void *data)
 
     switch (type) {
     case OGS_GTP2_CREATE_BEARER_REQUEST_TYPE:
-        ogs_error("[%s] No Create Bearer Response", sgwc_ue->imsi_bcd);
+        sgwc_ue_error(sgwc_ue, NULL, "sxa", NULL,
+                "No Create Bearer Response");
         ogs_debug("    bearer[EBI=%d]", bearer->ebi);
         ogs_assert(OGS_OK ==
             sgwc_pfcp_send_bearer_modification_request(
@@ -357,7 +358,8 @@ static bool sgwc_resolve_pgw_s5c_teid(
 void sgwc_sxa_handle_session_establishment_response(
         sgwc_sess_t *sess, ogs_pfcp_xact_t *pfcp_xact,
         ogs_gtp2_message_t *recv_message,
-        ogs_pfcp_session_establishment_response_t *pfcp_rsp)
+        ogs_pfcp_session_establishment_response_t *pfcp_rsp,
+        ogs_pkbuf_t *pfcp_pkbuf)
 {
     int rv;
     uint8_t cause_value = 0;
@@ -503,20 +505,36 @@ void sgwc_sxa_handle_session_establishment_response(
         char sgwu_peer[OGS_ADDRSTRLEN];
         char mme_peer[OGS_ADDRSTRLEN];
         char pgw_peer[OGS_ADDRSTRLEN];
+        char vpp_detail[512];
+        uint16_t offending_ie = 0;
+
+        vpp_detail[0] = '\0';
+        if (pfcp_pkbuf &&
+                !ogs_pfcp_travelping_error_message(
+                    pfcp_pkbuf, vpp_detail, sizeof(vpp_detail)))
+            vpp_detail[0] = '\0';
+
+        if (pfcp_rsp->offending_ie.presence)
+            offending_ie = pfcp_rsp->offending_ie.u16;
 
         if (sess) sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         sgwc_log_sgwu_peer(sgwu_peer, sizeof(sgwu_peer), sess);
         sgwc_log_mme_peer(mme_peer, sizeof(mme_peer), sgwc_ue);
         sgwc_log_pgw_peer(pgw_peer, sizeof(pgw_peer), sess);
-        ogs_error("[%s] SGW-U rejected PFCP Session Establishment "
-                "SGW-U[%s] MME[%s] PGW[%s] PFCP cause[%u] -> S11 cause[%u] "
-                "sess_id[%d]",
-                sgwc_log_imsi(sgwc_ue),
+        sgwc_ue_error(sgwc_ue, sess, "sxa",
+                sess && sess->session.name ? sess->session.name : NULL,
+                "SGW-U rejected PFCP Session Establishment "
+                "SGW-U[%s] MME[%s] PGW[%s] PFCP cause[%u:%s] -> S11 cause[%u] "
+                "sess_id[%d] offending_ie[%u] vpp[%s]",
                 sgwu_peer[0] ? sgwu_peer : "-",
                 mme_peer[0] ? mme_peer : "-",
                 pgw_peer[0] ? pgw_peer : "-",
                 pfcp_rsp->cause.presence ? pfcp_rsp->cause.u8 : 0,
-                cause_value, sess ? sess->id : 0);
+                pfcp_rsp->cause.presence ?
+                    ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8) : "-",
+                cause_value, sess ? sess->id : 0,
+                offending_ie,
+                vpp_detail[0] ? vpp_detail : "-");
         sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, cause_value);
         if (sess && !sess->gn)
             sgwc_sess_remove(sess);
@@ -625,8 +643,8 @@ void sgwc_sxa_handle_session_establishment_response(
     sess->sgwu_sxa_seid = be64toh(up_f_seid->seid);
 
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-    ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
-    OGS_TLOG_INFO("PFCP session established SGWU-SEID=0x%llx",
+    sgwc_ue_info(sgwc_ue, sess, "sxa", NULL,
+            "PFCP session established SGWU-SEID=0x%llx",
             (unsigned long long)sess->sgwu_sxa_seid);
     sgwc_create_session_phase(sess, sgwc_ue, "pfcp-establish-ok");
 
@@ -1664,8 +1682,8 @@ indirect_fail:
                 rv = sgwc_gtp_send_create_pdp_context_response(
                         sess, s11_xact, gtp_rsp);
                 ogs_expect(rv == OGS_OK);
-                ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
-                OGS_TLOG_INFO("Create PDP Context Response sent to SGSN");
+                sgwc_ue_info(sgwc_ue, sess, "sxa", NULL,
+                        "Create PDP Context Response sent to SGSN");
                 sgwc_create_session_phase(sess, sgwc_ue, "gn-rsp-sent");
                 return;
             }
@@ -1685,8 +1703,8 @@ indirect_fail:
             rv = ogs_gtp_xact_commit(s11_xact);
             ogs_expect(rv == OGS_OK);
 
-            ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
-            OGS_TLOG_INFO("Create Session Response sent to MME");
+            sgwc_ue_info(sgwc_ue, sess, "sxa", NULL,
+                    "Create Session Response sent to MME");
             sgwc_create_session_phase(sess, sgwc_ue, "s11-rsp-sent");
 
         } else if (flags & OGS_PFCP_MODIFY_DL_ONLY) {
