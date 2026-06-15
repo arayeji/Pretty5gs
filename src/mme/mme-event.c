@@ -19,10 +19,107 @@
 
 #include "ogs-sctp.h"
 
+#include "ogs-app.h"
+
 #include "mme-event.h"
 #include "mme-context.h"
 
 #include "s1ap-path.h"
+
+static bool mme_event_belongs_to_mme_ue(
+        mme_event_t *e, ogs_pool_id_t mme_ue_id)
+{
+    ogs_assert(e);
+
+    if (e->mme_ue_id >= OGS_MIN_POOL_ID &&
+            e->mme_ue_id <= OGS_MAX_POOL_ID &&
+            e->mme_ue_id == mme_ue_id)
+        return true;
+
+    if (e->enb_ue_id >= OGS_MIN_POOL_ID &&
+            e->enb_ue_id <= OGS_MAX_POOL_ID) {
+        enb_ue_t *enb_ue = enb_ue_find_by_id(e->enb_ue_id);
+        if (enb_ue && enb_ue->mme_ue_id == mme_ue_id)
+            return true;
+    }
+
+    if (e->sgw_ue_id >= OGS_MIN_POOL_ID &&
+            e->sgw_ue_id <= OGS_MAX_POOL_ID) {
+        sgw_ue_t *sgw_ue = sgw_ue_find_by_id(e->sgw_ue_id);
+        if (sgw_ue && sgw_ue->mme_ue_id == mme_ue_id)
+            return true;
+    }
+
+    return false;
+}
+
+static void mme_event_discard(mme_event_t *e)
+{
+    ogs_assert(e);
+
+    if (e->addr) {
+        ogs_free(e->addr);
+        e->addr = NULL;
+    }
+    if (e->pkbuf) {
+        ogs_pkbuf_free(e->pkbuf);
+        e->pkbuf = NULL;
+    }
+    if (e->s6a_message) {
+        ogs_free(e->s6a_message);
+        e->s6a_message = NULL;
+    }
+
+    mme_event_free(e);
+}
+
+void mme_event_purge_mme_ue(ogs_pool_id_t mme_ue_id)
+{
+    ogs_queue_t *queue = NULL;
+    ogs_queue_t *pending = NULL;
+    mme_event_t *e = NULL;
+    int rv, purged = 0;
+    unsigned int n;
+
+    if (mme_ue_id < OGS_MIN_POOL_ID || mme_ue_id > OGS_MAX_POOL_ID)
+        return;
+
+    queue = ogs_app()->queue;
+    ogs_assert(queue);
+
+    n = ogs_queue_size(queue);
+    if (n == 0)
+        return;
+
+    pending = ogs_queue_create(n + 16);
+    ogs_assert(pending);
+
+    while ((rv = ogs_queue_trypop(queue, (void **)&e)) == OGS_OK) {
+        ogs_assert(e);
+        if (mme_event_belongs_to_mme_ue(e, mme_ue_id)) {
+            mme_event_discard(e);
+            purged++;
+        } else {
+            rv = ogs_queue_trypush(pending, e);
+            ogs_assert(rv == OGS_OK);
+        }
+    }
+    ogs_assert(rv != OGS_ERROR);
+
+    while ((rv = ogs_queue_trypop(pending, (void **)&e)) == OGS_OK) {
+        ogs_assert(e);
+        rv = ogs_queue_trypush(queue, e);
+        ogs_assert(rv == OGS_OK);
+    }
+    ogs_assert(rv != OGS_ERROR);
+
+    ogs_queue_destroy(pending);
+
+    if (purged > 0) {
+        ogs_debug("Purged %d queued event(s) for removed MME-UE [id:%d]",
+                purged, mme_ue_id);
+    }
+}
 
 void mme_event_term(void)
 {

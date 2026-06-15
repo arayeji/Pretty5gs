@@ -166,12 +166,16 @@ static void emm_timer_event_send(mme_timer_e timer_id, void *data)
 {
     int rv;
     mme_event_t *e = NULL;
+    ogs_pool_id_t mme_ue_id = OGS_POINTER_TO_UINT(data);
 
     ogs_assert(data);
 
+    if (!mme_ue_find_by_id(mme_ue_id))
+        return;
+
     e = mme_event_new(MME_EVENT_EMM_TIMER);
     e->timer_id = timer_id;
-    e->mme_ue_id = OGS_POINTER_TO_UINT(data);
+    e->mme_ue_id = mme_ue_id;
 
     rv = ogs_queue_push(ogs_app()->queue, e);
     if (rv != OGS_OK) {
@@ -213,12 +217,18 @@ static void esm_timer_event_send(mme_timer_e timer_id, void *data)
 {
     int rv;
     mme_event_t *e = NULL;
+    ogs_pool_id_t bearer_id = OGS_POINTER_TO_UINT(data);
+    mme_bearer_t *bearer = NULL;
 
     ogs_assert(data);
 
+    bearer = mme_bearer_find_by_id(bearer_id);
+    if (!bearer)
+        return;
+
     e = mme_event_new(MME_EVENT_ESM_TIMER);
     e->timer_id = timer_id;
-    e->bearer_id = OGS_POINTER_TO_UINT(data);
+    e->bearer_id = bearer_id;
 
     rv = ogs_queue_push(ogs_app()->queue, e);
     if (rv != OGS_OK) {
@@ -311,13 +321,17 @@ void mme_timer_gn_holding_timer_expire(void *data)
 {
     int rv;
     mme_event_t *e = NULL;
+    ogs_pool_id_t mme_ue_id = OGS_POINTER_TO_UINT(data);
 
     ogs_assert(data);
+
+    if (!mme_ue_find_by_id(mme_ue_id))
+        return;
 
     e = mme_event_new(MME_EVENT_GN_TIMER);
 
     e->timer_id = MME_TIMER_GN_HOLDING;
-    e->mme_ue_id = OGS_POINTER_TO_UINT(data);
+    e->mme_ue_id = mme_ue_id;
 
     rv = ogs_queue_push(ogs_app()->queue, e);
     if (rv != OGS_OK) {

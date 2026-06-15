@@ -1404,6 +1404,12 @@ void mme_ue_remove_all(void);
 mme_ue_t *mme_ue_find_by_id(ogs_pool_id_t id);
 
 /*
+ * True when mme_ue is safe to associate from S1AP InitialUEMessage
+ * (valid pool object, live EMM FSM, not mid-teardown).
+ */
+bool mme_ue_is_valid_for_s1(mme_ue_t *mme_ue);
+
+/*
  * Snapshot of every MME pool's size/avail/peak/list-count to the log.
  * Invoked from the SIGUSR1 handler via ogs_app_pool_dump_cb_get().
  * Operators run `kill -USR1 <mme-pid>` to inspect live pool pressure.

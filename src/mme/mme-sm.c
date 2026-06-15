@@ -369,8 +369,14 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         }
 
         mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+        if (mme_ue && !mme_ue_is_valid_for_s1(mme_ue))
+            mme_ue = NULL;
+
         if (!mme_ue) {
             mme_ue = mme_ue_find_by_message(&nas_message);
+            if (mme_ue && !mme_ue_is_valid_for_s1(mme_ue))
+                mme_ue = NULL;
+
             if (!mme_ue) {
                 mme_ue = mme_ue_add(enb_ue);
                 if (mme_ue == NULL) {
@@ -463,7 +469,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
     case MME_EVENT_EMM_TIMER:
         mme_ue = mme_ue_find_by_id(e->mme_ue_id);
         if (!mme_ue) {
-            ogs_error("EMM timer for removed MME-UE [id:%d] ignored",
+            ogs_debug("EMM timer for removed MME-UE [id:%d] ignored",
                     e->mme_ue_id);
             break;
         }

@@ -4201,6 +4201,27 @@ static void mme_time_config_parse(ogs_yaml_iter_t *time_iter)
         } else if (!strcmp(time_key, "bearer_setup") ||
                 !strcmp(time_key, "sae_bearer_setup")) {
             mme_bearer_setup_time_parse_yaml(time_iter);
+        } else if (!strcmp(time_key, "t3413")) {
+            mme_timer_parse_yaml(time_iter, MME_TIMER_T3413);
+        } else if (!strcmp(time_key, "t3422")) {
+            mme_timer_parse_yaml(time_iter, MME_TIMER_T3422);
+        } else if (!strcmp(time_key, "t3450")) {
+            mme_timer_parse_yaml(time_iter, MME_TIMER_T3450);
+        } else if (!strcmp(time_key, "t3460")) {
+            mme_timer_parse_yaml(time_iter, MME_TIMER_T3460);
+        } else if (!strcmp(time_key, "t3470")) {
+            mme_timer_parse_yaml(time_iter, MME_TIMER_T3470);
+        } else if (!strcmp(time_key, "t3489")) {
+            mme_timer_parse_yaml(time_iter, MME_TIMER_T3489);
+        } else if (!strcmp(time_key, "t3495") ||
+                !strcmp(time_key, "nas_deactivate_bearer")) {
+            mme_timer_parse_yaml(time_iter, MME_TIMER_NAS_DEACTIVATE_BEARER);
+        } else if (!strcmp(time_key, "sgs_ts6_1") ||
+                !strcmp(time_key, "ts6_1")) {
+            mme_timer_parse_yaml(time_iter, MME_TIMER_SGS_TS6_1);
+        } else if (!strcmp(time_key, "s6a") ||
+                !strcmp(time_key, "s6a_timeout")) {
+            mme_timer_parse_yaml(time_iter, MME_TIMER_S6A);
         } else if (!strcmp(time_key, "s11_holding")) {
             mme_timer_parse_yaml(time_iter, MME_TIMER_S11_HOLDING);
         } else
@@ -6142,6 +6163,10 @@ void mme_ue_remove(mme_ue_t *mme_ue)
 
     mme_ue_fsm_fini(mme_ue);
 
+    /* Stop timers first, then drop any already-queued events for this UE. */
+    CLEAR_MME_UE_ALL_TIMERS(mme_ue);
+    mme_event_purge_mme_ue(mme_ue->id);
+
     ogs_hash_set(self.mme_s11_teid_hash,
             &mme_ue->mme_s11_teid, sizeof(mme_ue->mme_s11_teid), NULL);
     ogs_hash_set(self.mme_gn_teid_hash,
@@ -6176,8 +6201,6 @@ void mme_ue_remove(mme_ue_t *mme_ue)
     /* Clear Transparent Container */
     OGS_ASN_CLEAR_DATA(&mme_ue->container);
 
-    /* Delete All Timers */
-    CLEAR_MME_UE_ALL_TIMERS(mme_ue);
     ogs_timer_delete(mme_ue->t3413.timer);
     ogs_timer_delete(mme_ue->t3422.timer);
     ogs_timer_delete(mme_ue->t3450.timer);
@@ -6219,6 +6242,32 @@ void mme_ue_remove_all(void)
 mme_ue_t *mme_ue_find_by_id(ogs_pool_id_t id)
 {
     return ogs_pool_find_by_id(&mme_ue_pool, id);
+}
+
+bool mme_ue_is_valid_for_s1(mme_ue_t *mme_ue)
+{
+    mme_ue_t *found = NULL;
+
+    if (!mme_ue)
+        return false;
+
+    found = mme_ue_find_by_id(mme_ue->id);
+    if (found != mme_ue)
+        return false;
+
+    if (mme_ue->ue_context_will_remove)
+        return false;
+
+    if (!OGS_FSM_STATE(&mme_ue->sm))
+        return false;
+
+    if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
+        return false;
+
+    if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_final))
+        return false;
+
+    return true;
 }
 
 void mme_ue_fsm_init(mme_ue_t *mme_ue)

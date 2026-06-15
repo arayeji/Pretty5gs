@@ -141,6 +141,12 @@ void mme_event_term(void);
 mme_event_t *mme_event_new(mme_event_e id);
 void mme_event_free(mme_event_t *e);
 
+/*
+ * Drop queued main-thread events targeting a MME-UE that is being removed.
+ * Prevents timer/NAS/S6a events from firing after mme_ue_remove().
+ */
+void mme_event_purge_mme_ue(ogs_pool_id_t mme_ue_id);
+
 void mme_event_timeout(void *data);
 
 const char *mme_event_get_name(mme_event_t *e);
