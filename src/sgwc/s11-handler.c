@@ -264,7 +264,7 @@ static void sgwc_s11_create_session_proceed(
 
     if (ogs_fqdn_parse(apn, req->access_point_name.data,
             ogs_min(req->access_point_name.len, OGS_MAX_APN_LEN)) <= 0) {
-        ogs_error("Invalid APN");
+        sgwc_ue_error(sgwc_ue, NULL, "s11", NULL, "Invalid APN");
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
         goto cleanup;
     }

@@ -259,7 +259,8 @@ uint8_t smf_s5c_handle_create_session_request(
     /* TS 29.274 sec 8.11, TS 29.002 ISDN-AddressString  */
     if (req->msisdn.presence == 1) {
         if (req->msisdn.len > sizeof(smf_ue->msisdn))  {
-            ogs_error("MSISDN wrong size %u > %zu",
+            smf_ue_error(smf_ue, sess, "create-session",
+                "MSISDN wrong size %u > %zu",
                 req->msisdn.len, sizeof(smf_ue->msisdn));
             return OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
         }
@@ -304,12 +305,14 @@ uint8_t smf_s5c_handle_create_session_request(
         /* User Location Inforation is mandatory only for E-UTRAN */
         ogs_assert(req->user_location_information.presence);
         if (req->user_location_information.presence == 0) {
-            ogs_error("No User Location Information(ULI)");
+            smf_ue_error(smf_ue, sess, "create-session",
+                    "No User Location Information(ULI)");
             return OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
         }
         decoded = ogs_gtp2_parse_uli(&uli, &req->user_location_information);
         if (req->user_location_information.len != decoded) {
-            ogs_error("Invalid User Location Information(ULI)");
+            smf_ue_error(smf_ue, sess, "create-session",
+                    "Invalid User Location Information(ULI)");
             return OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
         }
         memcpy(&sess->e_tai, &uli.tai, sizeof(sess->e_tai));
@@ -319,7 +322,8 @@ uint8_t smf_s5c_handle_create_session_request(
         if (req->user_location_information.presence) {
             decoded = ogs_gtp2_parse_uli(&uli, &req->user_location_information);
             if (req->user_location_information.len != decoded) {
-                ogs_error("Invalid User Location Information(ULI)");
+                smf_ue_error(smf_ue, sess, "create-session",
+                    "Invalid User Location Information(ULI)");
                 return OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
             }
             if (uli.flags.tai)
@@ -404,7 +408,8 @@ uint8_t smf_s5c_handle_create_session_request(
 
     rv = smf_radius_authorize_for_session(sess);
     if (rv != OGS_OK) {
-        ogs_error("RADIUS authentication failed");
+        smf_ue_error(smf_ue, sess, "create-session",
+                "RADIUS authentication failed");
         return OGS_GTP2_CAUSE_USER_AUTHENTICATION_FAILED;
     }
 
@@ -415,7 +420,8 @@ uint8_t smf_s5c_handle_create_session_request(
          * OGS_PFCP_CAUSE_ALL_DYNAMIC_ADDRESS_ARE_OCCUPIED
          * OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE
          */
-        ogs_error("Failed to set UE IP Address");
+        smf_ue_error(smf_ue, sess, "create-session",
+                "Failed to set UE IP Address");
         switch(rv) {
         case OGS_PFCP_CAUSE_ALL_DYNAMIC_ADDRESS_ARE_OCCUPIED:
             cause_value = OGS_GTP2_CAUSE_ALL_DYNAMIC_ADDRESSES_ARE_OCCUPIED;
@@ -452,13 +458,14 @@ uint8_t smf_s5c_handle_create_session_request(
     ogs_assert(sgw_s5c_teid);
     /* sess->sgw_s5c_teid has already been updated in SMF-SM */
     if (sess->sgw_s5c_teid != be32toh(sgw_s5c_teid->teid)) {
-        ogs_error("SGW-S5C TEID mismatch (sess=0x%x, msg=0x%x)",
+        smf_ue_error(smf_ue, sess, "create-session",
+                "SGW-S5C TEID mismatch (sess=0x%x, msg=0x%x)",
                 sess->sgw_s5c_teid, be32toh(sgw_s5c_teid->teid));
         return OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     }
     rv = ogs_gtp2_f_teid_to_ip(sgw_s5c_teid, &sess->sgw_s5c_ip);
     if (rv != OGS_OK) {
-        ogs_error("Invalid SGW-S5C TEID");
+        smf_ue_error(smf_ue, sess, "create-session", "Invalid SGW-S5C TEID");
         return OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
     }
 
@@ -561,7 +568,8 @@ uint8_t smf_s5c_handle_create_session_request(
             }
             break;
         default:
-            ogs_error("Unknown RAT Type [%d]", sess->gtp_rat_type);
+            smf_ue_error(smf_ue, sess, "create-session",
+                    "Unknown RAT Type [%d]", sess->gtp_rat_type);
             ogs_assert_if_reached();
         }
 
@@ -582,7 +590,7 @@ uint8_t smf_s5c_handle_create_session_request(
     }
 
     if (bearer_count == 0) {
-        ogs_error("No Bearer Context");
+        smf_ue_error(smf_ue, sess, "create-session", "No Bearer Context");
         smf_bearer_remove_all(sess);
         return OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
     }
@@ -689,13 +697,13 @@ uint8_t smf_s5c_handle_delete_session_request(
     ogs_assert(req);
 
     if (!ogs_diam_is_relay_or_app_advertised(OGS_DIAM_GX_APPLICATION_ID)) {
-        ogs_error("No Gx Diameter Peer");
+        smf_ue_error(NULL, sess, "delete-session", "No Gx Diameter Peer");
         return OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING;
     }
 
     if (sess->gtp_rat_type == OGS_GTP2_RAT_TYPE_WLAN) {
         if (!ogs_diam_is_relay_or_app_advertised(OGS_DIAM_S6B_APPLICATION_ID)) {
-            ogs_error("No S6b Diameter Peer");
+            smf_ue_error(NULL, sess, "delete-session", "No S6b Diameter Peer");
             return OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING;
         }
     }

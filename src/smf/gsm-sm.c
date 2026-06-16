@@ -143,7 +143,7 @@ static bool send_ccr_init_req_gx_gy(ogs_fsm_t *s, smf_sess_t *sess,
     int use_gy = smf_use_gy_iface();
 
     if (use_gy == -1) {
-        ogs_error("No Gy Diameter Peer");
+        smf_ue_error(NULL, sess, "gy", "No Gy Diameter Peer");
         uint8_t gtp_cause = (gtp_xact && gtp_xact->gtp_version == 1) ?
                 OGS_GTP1_CAUSE_NO_RESOURCES_AVAILABLE :
                 OGS_GTP2_CAUSE_UE_NOT_AUTHORISED_BY_OCS_OR_EXTERNAL_AAA_SERVER;
@@ -158,7 +158,8 @@ static bool send_ccr_init_req_gx_gy(ogs_fsm_t *s, smf_sess_t *sess,
         sess->sm_data.gx_ccr_init_in_flight = false;
         sess->sm_data.gx_cca_init_err = ER_DIAMETER_UNABLE_TO_DELIVER;
         if (use_gy != 1) {
-            ogs_warn("Gx initial CCR was not sent (local Diameter session error)");
+            smf_ue_warn(NULL, sess, "gx",
+                    "Gx initial CCR was not sent (local Diameter session error)");
             smf_gsm_fail_create_session(s, sess, gtp_xact,
                     (gtp_xact && gtp_xact->gtp_version == 1) ?
                         OGS_GTP1_CAUSE_NO_RESOURCES_AVAILABLE :
@@ -186,7 +187,7 @@ static bool send_ccr_termination_req_gx_gy_s6b(
     int use_gy = smf_use_gy_iface();
 
     if (use_gy == -1) {
-        ogs_error("No Gy Diameter Peer");
+        smf_ue_error(NULL, sess, "gy", "No Gy Diameter Peer");
         /* TODO: drop Gx connection here,
          * possibly move to another "releasing" state! */
         uint8_t gtp_cause = (gtp_xact->gtp_version == 1) ?
@@ -619,16 +620,22 @@ test_can_proceed:
         diam_err = ER_DIAMETER_SUCCESS;
         if (sess->gtp_rat_type == OGS_GTP2_RAT_TYPE_WLAN &&
                 sess->sm_data.s6b_aaa_err != ER_DIAMETER_SUCCESS) {
-            ogs_warn("S6b AAA error Result-Code[%u]", sess->sm_data.s6b_aaa_err);
+            smf_ue_warn(NULL, sess, "s6b",
+                    "S6b AAA error Result-Code[%u]",
+                    sess->sm_data.s6b_aaa_err);
             diam_err = sess->sm_data.s6b_aaa_err;
         }
         if (sess->sm_data.gx_cca_init_err != ER_DIAMETER_SUCCESS) {
-            ogs_warn("Gx CCA error Result-Code[%u]", sess->sm_data.gx_cca_init_err);
+            smf_ue_warn(NULL, sess, "gx",
+                    "Gx CCA error Result-Code[%u]",
+                    sess->sm_data.gx_cca_init_err);
             diam_err = sess->sm_data.gx_cca_init_err;
         }
         if (smf_use_gy_iface() == 1 &&
                 sess->sm_data.gy_cca_init_err != ER_DIAMETER_SUCCESS) {
-            ogs_warn("Gy CCA error Result-Code[%u]", sess->sm_data.gy_cca_init_err);
+            smf_ue_warn(NULL, sess, "gy",
+                    "Gy CCA error Result-Code[%u]",
+                    sess->sm_data.gy_cca_init_err);
             diam_err = sess->sm_data.gy_cca_init_err;
         }
 

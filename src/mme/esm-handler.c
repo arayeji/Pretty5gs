@@ -117,7 +117,8 @@ int esm_handle_pdn_connectivity_request(
                 sess, OGS_NAS_ESM_CAUSE_REQUEST_REJECTED_UNSPECIFIED, create_action);
         ogs_expect(r == OGS_OK);
         ogs_assert(r != OGS_ERROR);
-        ogs_warn("Emergency call, but no emergency APN defined");
+        ogs_warn("[%s] Emergency call, but no emergency APN defined",
+                mme_ue->imsi_bcd);
         return OGS_ERROR;
     }
     if ((req->presencemask &
@@ -221,7 +222,7 @@ int esm_handle_pdn_connectivity_request(
         ogs_assert(OGS_OK ==
             mme_gtp_send_create_session_request(enb_ue, sess, create_action));
     } else {
-        ogs_error("No APN");
+        ogs_error("[%s] No APN", mme_ue->imsi_bcd);
         r = nas_eps_send_pdn_connectivity_reject(
                 sess, OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN, create_action);
         ogs_expect(r == OGS_OK);
@@ -326,9 +327,10 @@ int esm_handle_information_response(
         }
     } else {
         if (rsp->access_point_name.length)
-            ogs_error("Invalid APN[%s]", rsp->access_point_name.apn);
+            ogs_error("[%s] Invalid APN[%s]", mme_ue->imsi_bcd,
+                    rsp->access_point_name.apn);
         else
-            ogs_error("No APN");
+            ogs_error("[%s] No APN", mme_ue->imsi_bcd);
 
         r = nas_eps_send_pdn_connectivity_reject(
                 sess, OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN,

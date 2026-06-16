@@ -301,13 +301,13 @@ uint8_t smf_5gc_n4_handle_session_establishment_response(
     if (cause_value != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
         if (ogs_pfcp_cause_no_association(cause_value))
             smf_pfcp_request_reassociation(sess->pfcp_node);
-        ogs_error("PFCP Cause [%d:%s] : Not Accepted",
+        smf_ue_warn(NULL, sess, "n4", "PFCP Cause [%d:%s] : Not Accepted",
                 cause_value, ogs_pfcp_cause_get_name(cause_value));
         return cause_value;
     }
 
     if (sess->local_ul_addr == NULL && sess->local_ul_addr6 == NULL) {
-        ogs_error("No UP F-TEID");
+        smf_ue_error(NULL, sess, "n4", "No UP F-TEID");
         return OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND;
     }
 

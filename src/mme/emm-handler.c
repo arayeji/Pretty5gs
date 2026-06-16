@@ -195,7 +195,8 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     served_tai_index = mme_find_served_tai(&mme_ue->tai);
     if (served_tai_index < 0) {
         /* Send Attach Reject */
-        ogs_warn("Cannot find Served TAI[PLMN_ID:%06x,TAC:%d]",
+        ogs_warn("[%s] Cannot find Served TAI[PLMN_ID:%06x,TAC:%d]",
+            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "Unknown",
             ogs_plmn_id_hexdump(&mme_ue->tai.plmn_id), mme_ue->tai.tac);
         r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_TRACKING_AREA_NOT_ALLOWED,
@@ -616,7 +617,8 @@ int emm_handle_detach_request(
         break;
     case 6: /* 1 1 0 : reserved */
     case 7: /* 1 1 1 : reserved */
-        ogs_warn("Unknown Detach type[%d]",
+        ogs_warn("[%s] Unknown Detach type[%d]",
+            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "Unknown",
             detach_request->detach_type.value);
         break;
     /* 0 1 1 : combined EPS/IMSI detach */
@@ -836,7 +838,8 @@ int emm_handle_tau_request(
     served_tai_index = mme_find_served_tai(&mme_ue->tai);
     if (served_tai_index < 0) {
         /* Send TAU reject */
-        ogs_warn("Cannot find Served TAI[PLMN_ID:%06x,TAC:%d]",
+        ogs_warn("[%s] Cannot find Served TAI[PLMN_ID:%06x,TAC:%d]",
+            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "Unknown",
             ogs_plmn_id_hexdump(&mme_ue->tai.plmn_id), mme_ue->tai.tac);
         r = nas_eps_send_tau_reject(enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_TRACKING_AREA_NOT_ALLOWED);
@@ -1004,7 +1007,8 @@ int emm_handle_extended_service_request(
     served_tai_index = mme_find_served_tai(&mme_ue->tai);
     if (served_tai_index < 0) {
         /* Send TAU reject */
-        ogs_warn("Cannot find Served TAI[PLMN_ID:%06x,TAC:%d]",
+        ogs_warn("[%s] Cannot find Served TAI[PLMN_ID:%06x,TAC:%d]",
+            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "Unknown",
             ogs_plmn_id_hexdump(&mme_ue->tai.plmn_id), mme_ue->tai.tac);
         r = nas_eps_send_tau_reject(enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_TRACKING_AREA_NOT_ALLOWED);
@@ -1023,7 +1027,9 @@ int emm_handle_extended_service_request(
                 MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "Unknown");
         break;
     default:
-        ogs_error("Unknown TMSI type [%d]", mobile_identity->tmsi.type);
+        ogs_error("[%s] Unknown TMSI type [%d]",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "Unknown",
+                mobile_identity->tmsi.type);
         break;
     }
 
@@ -1070,7 +1076,9 @@ int emm_handle_security_mode_complete(
             }
             break;
         default:
-            ogs_warn("Invalid IMEISV Type[%d]", imeisv->imeisv.type);
+            ogs_warn("[%s] Invalid IMEISV Type[%d]",
+                    MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "Unknown",
+                    imeisv->imeisv.type);
             break;
 
         }
