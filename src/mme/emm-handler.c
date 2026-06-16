@@ -45,7 +45,8 @@ static uint8_t emm_inbound_roam_access_reject(
     if (emm_cause == OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED)
         return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
 
-    ogs_error("[%s] Rejected by inbound roam access policy [emm_cause:%d]",
+    /* ACL deny is expected/configured behavior, not an error - log at debug. */
+    ogs_debug("[%s] Rejected by inbound roam access policy [emm_cause:%d]",
             imsi_bcd, emm_cause);
     if (tau)
         r = nas_eps_send_tau_reject(enb_ue, mme_ue, emm_cause);
