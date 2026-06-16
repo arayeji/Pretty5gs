@@ -131,7 +131,10 @@ void mme_ue_progress(mme_ue_t *mme_ue, const char *step)
     ogs_assert(step);
 
     if (mme_ue_progress_is_failure(step))
-        mme_ue_error(mme_ue, NULL, "attach", NULL, "ATTACH step: %s", step);
+        /* Reject/fail is an expected per-subscriber outcome (roaming reject,
+         * ACL, S6a deny), not an MME error - log at debug so it stays
+         * filterable per-IMSI via mme.trace_imsi instead of flooding error. */
+        mme_ue_debug(mme_ue, NULL, "attach", NULL, "ATTACH step: %s", step);
     else
         mme_ue_info(mme_ue, NULL, "attach", NULL, "ATTACH step: %s", step);
 }

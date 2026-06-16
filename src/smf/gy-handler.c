@@ -24,6 +24,7 @@
 #include "gy-handler.h"
 #include "binding.h"
 #include "gx-handler.h"
+#include "smf-trace.h"
 
 static void urr_update_volume(smf_sess_t *sess, ogs_pfcp_urr_t *urr, ogs_diam_gy_message_t *gy_message)
 {
@@ -140,13 +141,15 @@ uint32_t smf_gy_handle_cca_initial_request(
 
     *need_termination = false;
     if (gy_message->result_code != ER_DIAMETER_SUCCESS) {
-        ogs_warn("Gy CCA Initial Diameter failure: res=%u",
+        smf_ue_warn(NULL, sess, "gy",
+            "Gy CCA Initial Diameter failure: res=%u",
             gy_message->result_code);
         return smf_diameter_failure_code(gy_message->err ?
                 *gy_message->err : gy_message->result_code);
     }
     if (gy_message->cca.result_code != ER_DIAMETER_SUCCESS) {
-        ogs_warn("Gy CCA Initial Diameter Multiple-Services-Credit-Control Result-Code=%u",
+        smf_ue_warn(NULL, sess, "gy",
+            "Gy CCA Initial Diameter Multiple-Services-Credit-Control Result-Code=%u",
             gy_message->cca.result_code);
         /* Message RC was successful but MSCC was rejected. The session needs to
          * be tear down through CCR-T: */
@@ -197,13 +200,15 @@ uint32_t smf_gy_handle_cca_update_request(
             sess->sgw_s5c_teid, sess->smf_n4_teid);
 
     if (gy_message->result_code != ER_DIAMETER_SUCCESS) {
-        ogs_warn("Gy CCA Update Diameter failure: Result-Code=%u",
+        smf_ue_warn(NULL, sess, "gy",
+            "Gy CCA Update Diameter failure: Result-Code=%u",
             gy_message->result_code);
         return gy_message->err ? *gy_message->err :
                                  ER_DIAMETER_AUTHENTICATION_REJECTED;
     }
     if (gy_message->cca.result_code != ER_DIAMETER_SUCCESS) {
-        ogs_warn("Gy CCA Update Diameter Multiple-Services-Credit-Control Result-Code=%u",
+        smf_ue_warn(NULL, sess, "gy",
+            "Gy CCA Update Diameter Multiple-Services-Credit-Control Result-Code=%u",
             gy_message->cca.result_code);
         return gy_message->cca.err ? *gy_message->cca.err :
                                      ER_DIAMETER_AUTHENTICATION_REJECTED;

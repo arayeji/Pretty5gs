@@ -237,7 +237,7 @@ void sgwc_s5c_handle_create_session_response(
 
         sgwc_log_pgw_peer(pgw_peer, sizeof(pgw_peer), sess);
         sgwc_log_mme_peer(mme_peer, sizeof(mme_peer), sgwc_ue);
-        ogs_error("[%s] Create Session rejected by PGW[%s] MME[%s] "
+        ogs_warn("[%s] Create Session rejected by PGW[%s] MME[%s] "
                 "APN[%s] gtp_cause[%u] SGW-S5C[0x%x] PGW-S5C[0x%x]",
                 sgwc_log_imsi(sgwc_ue), pgw_peer, mme_peer, apn,
                 session_cause, sess->sgw_s5c_teid, sess->pgw_s5c_teid);
@@ -251,15 +251,18 @@ void sgwc_s5c_handle_create_session_response(
      * Check Mandatory/Conditional IE Missing
      *****************************************/
     if (rsp->pgw_s5_s8__s2a_s2b_f_teid_for_pmip_based_interface_or_for_gtp_based_control_plane_interface.presence == 0) {
-        ogs_error("No GTP TEID [Cause:%d]", session_cause);
+        sgwc_ue_error(sgwc_ue, sess, "s5c", NULL,
+                "No GTP TEID [Cause:%d]", session_cause);
         cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
     }
     if (rsp->pdn_address_allocation.presence == 0) {
-        ogs_error("No PDN Address Allocation [Cause:%d]", session_cause);
+        sgwc_ue_error(sgwc_ue, sess, "s5c", NULL,
+                "No PDN Address Allocation [Cause:%d]", session_cause);
         cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
     } else if (rsp->pdn_address_allocation.len < OGS_PAA_IPV4_LEN ||
             rsp->pdn_address_allocation.len > OGS_PAA_IPV4V6_LEN) {
-        ogs_error("Invalid PAA IE [Length:%d]",
+        sgwc_ue_error(sgwc_ue, sess, "s5c", NULL,
+                "Invalid PAA IE [Length:%d]",
                 rsp->pdn_address_allocation.len);
         cause_value = OGS_GTP2_CAUSE_INVALID_LENGTH;
     } else {
@@ -270,13 +273,15 @@ void sgwc_s5c_handle_create_session_response(
         } else if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV6) {
         } else if (sess->session.session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
         } else {
-            ogs_error("Unknown session-type [%d]", sess->session.session_type);
+            sgwc_ue_error(sgwc_ue, sess, "s5c", NULL,
+                    "Unknown session-type [%d]", sess->session.session_type);
             cause_value = OGS_GTP2_CAUSE_PREFERRED_PDN_TYPE_NOT_SUPPORTED;
         }
     }
 
     if (rsp->cause.presence == 0) {
-        ogs_error("No Cause [VALUE:%d]", session_cause);
+        sgwc_ue_error(sgwc_ue, sess, "s5c", NULL,
+                "No Cause [VALUE:%d]", session_cause);
         cause_value = OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING;
     }
 

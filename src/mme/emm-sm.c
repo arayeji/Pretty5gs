@@ -677,7 +677,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             rv = emm_handle_service_request(
                     enb_ue, mme_ue, &message->emm.service_request);
             if (rv != OGS_OK) {
-                ogs_error("emm_handle_service_request() failed");
+                ogs_debug("emm_handle_service_request() failed");
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             }
@@ -762,7 +762,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             rv = emm_handle_identity_response(enb_ue, mme_ue,
                     &message->emm.identity_response);
             if (rv != OGS_OK) {
-                ogs_error("emm_handle_identity_response() failed");
+                ogs_debug("emm_handle_identity_response() failed");
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             }
@@ -790,7 +790,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             rv = emm_handle_attach_request(
                     enb_ue, mme_ue, &message->emm.attach_request, e->pkbuf);
             if (rv != OGS_OK) {
-                ogs_error("emm_handle_attach_request() failed");
+                ogs_debug("emm_handle_attach_request() failed");
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             }
@@ -820,7 +820,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                     rv = nas_eps_send_emm_to_esm(mme_ue,
                             &mme_ue->pdn_connectivity_request);
                     if (rv != OGS_OK) {
-                        ogs_error("nas_eps_send_emm_to_esm() failed");
+                        ogs_debug("nas_eps_send_emm_to_esm() failed");
                         r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                                 OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                                 OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
@@ -853,7 +853,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             rv = emm_handle_tau_request(enb_ue, mme_ue,
                     &message->emm.tracking_area_update_request, e->pkbuf);
             if (rv != OGS_OK) {
-                ogs_error("emm_handle_tau_request() failed");
+                ogs_debug("emm_handle_tau_request() failed");
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             }
@@ -1081,7 +1081,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             rv = emm_handle_extended_service_request(
                     enb_ue, mme_ue, &message->emm.extended_service_request);
             if (rv != OGS_OK) {
-                ogs_error("emm_handle_extended_service_request() failed");
+                ogs_debug("emm_handle_extended_service_request() failed");
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             }
@@ -1230,7 +1230,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             rv = emm_handle_detach_request(
                     enb_ue, mme_ue, &message->emm.detach_request_from_ue);
             if (rv != OGS_OK) {
-                ogs_error("emm_handle_detach_request() failed");
+                ogs_debug("emm_handle_detach_request() failed");
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             }
@@ -1435,7 +1435,7 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
             rv = emm_handle_authentication_response(enb_ue, mme_ue,
                     &message->emm.authentication_response);
             if (rv != OGS_OK) {
-                ogs_error("emm_handle_authentication_response() failed");
+                ogs_debug("emm_handle_authentication_response() failed");
                 r = nas_eps_send_authentication_reject(mme_ue);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
@@ -1501,7 +1501,7 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
             rv = emm_handle_attach_request(
                     enb_ue, mme_ue, &message->emm.attach_request, e->pkbuf);
             if (rv != OGS_OK) {
-                ogs_error("emm_handle_attach_request() failed");
+                ogs_debug("emm_handle_attach_request() failed");
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             }
@@ -1526,7 +1526,7 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
             rv = emm_handle_detach_request(
                     enb_ue, mme_ue, &message->emm.detach_request_from_ue);
             if (rv != OGS_OK) {
-                ogs_error("emm_handle_detach_request() failed");
+                ogs_debug("emm_handle_detach_request() failed");
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             }
@@ -1763,7 +1763,7 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
             rv = emm_handle_attach_request(
                     enb_ue, mme_ue, &message->emm.attach_request, e->pkbuf);
             if (rv != OGS_OK) {
-                ogs_error("emm_handle_attach_request() failed");
+                ogs_debug("emm_handle_attach_request() failed");
                 if (mme_self()->maintenance_mode)
                     OGS_FSM_TRAN(s, &emm_state_ue_context_will_remove);
                 else
@@ -1799,7 +1799,7 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
             rv = emm_handle_detach_request(
                     enb_ue, mme_ue, &message->emm.detach_request_from_ue);
             if (rv != OGS_OK) {
-                ogs_error("emm_handle_detach_request() failed");
+                ogs_debug("emm_handle_detach_request() failed");
                 OGS_FSM_TRAN(s, emm_state_exception);
                 break;
             }
@@ -2073,7 +2073,7 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
             rv = emm_handle_attach_request(
                     enb_ue, mme_ue, &message->emm.attach_request, e->pkbuf);
             if (rv != OGS_OK) {
-                ogs_error("emm_handle_attach_request() failed");
+                ogs_debug("emm_handle_attach_request() failed");
                 if (mme_self()->maintenance_mode)
                     OGS_FSM_TRAN(s, &emm_state_ue_context_will_remove);
                 else
@@ -2102,7 +2102,7 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
             rv = emm_handle_detach_request(
                     enb_ue, mme_ue, &message->emm.detach_request_from_ue);
             if (rv != OGS_OK) {
-                ogs_error("emm_handle_detach_request() failed");
+                ogs_debug("emm_handle_detach_request() failed");
                 OGS_FSM_TRAN(s, emm_state_exception);
                 break;
             }
@@ -2267,7 +2267,7 @@ void emm_state_exception(ogs_fsm_t *s, mme_event_t *e)
             rv = emm_handle_attach_request(
                     enb_ue, mme_ue, &message->emm.attach_request, e->pkbuf);
             if (rv != OGS_OK) {
-                ogs_error("emm_handle_attach_request() failed");
+                ogs_debug("emm_handle_attach_request() failed");
                 if (mme_self()->maintenance_mode)
                     OGS_FSM_TRAN(s, &emm_state_ue_context_will_remove);
                 else
@@ -2302,7 +2302,7 @@ void emm_state_exception(ogs_fsm_t *s, mme_event_t *e)
                     rv = nas_eps_send_emm_to_esm(mme_ue,
                             &mme_ue->pdn_connectivity_request);
                     if (rv != OGS_OK) {
-                        ogs_error("nas_eps_send_emm_to_esm() failed");
+                        ogs_debug("nas_eps_send_emm_to_esm() failed");
                         r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                                 OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                                 OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);

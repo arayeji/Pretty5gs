@@ -55,7 +55,7 @@ uint8_t mme_s6a_handle_aia(
     if (s6a_message->result_code != ER_DIAMETER_SUCCESS) {
         ogs_mme_trace_set(
                 enb_ue_find_by_id(mme_ue->enb_ue_id), mme_ue, NULL, "s6a");
-        ogs_error("[%s] S6a AIA failed result=%d",
+        ogs_warn("[%s] S6a AIA failed result=%d",
                 mme_ue->imsi_bcd, s6a_message->result_code);
         mme_ue_progress(mme_ue, "s6a_aia_fail");
         return emm_cause_from_diameter(s6a_message->err, s6a_message->exp_err);
