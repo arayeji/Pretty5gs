@@ -215,7 +215,7 @@ uint8_t mme_inbound_roam_access_emm_cause(
             uint8_t emm_cause = mme_access_control_inbound_reject_cause(
                     NULL, OGS_NAS_EMM_CAUSE_PLMN_NOT_ALLOWED);
 
-            ogs_warn("[%s] inbound roam IMSI not in access_control allow-list "
+            ogs_debug("[%s] inbound roam IMSI not in access_control allow-list "
                     "[serving_plmn:%s tac:%u eNB:0x%x emm_cause:%d]",
                     mme_ue->imsi_bcd, serving_plmn, tac, enb_id, emm_cause);
             return emm_cause;
@@ -234,7 +234,7 @@ uint8_t mme_inbound_roam_access_emm_cause(
         uint8_t emm_cause = mme_access_control_inbound_reject_cause(ac,
                 OGS_NAS_EMM_CAUSE_ROAMING_NOT_ALLOWED_IN_THIS_TRACKING_AREA);
 
-        ogs_warn("[%s] inbound roam TAC[%u] not in access_control allow-list "
+        ogs_debug("[%s] inbound roam TAC[%u] not in access_control allow-list "
                 "[prefix:%s serving_plmn:%s eNB:0x%x emm_cause:%d]",
                 mme_ue->imsi_bcd, tac,
                 ac->imsi_prefix[0] ? ac->imsi_prefix : "-",
@@ -247,7 +247,7 @@ uint8_t mme_inbound_roam_access_emm_cause(
             uint8_t emm_cause = mme_access_control_inbound_reject_cause(ac,
                     OGS_NAS_EMM_CAUSE_ROAMING_NOT_ALLOWED_IN_THIS_TRACKING_AREA);
 
-            ogs_warn("[%s] inbound roam eNB-ID unknown for access_control "
+            ogs_debug("[%s] inbound roam eNB-ID unknown for access_control "
                     "[prefix:%s serving_plmn:%s tac:%u emm_cause:%d]",
                     mme_ue->imsi_bcd,
                     ac->imsi_prefix[0] ? ac->imsi_prefix : "-",
@@ -258,7 +258,7 @@ uint8_t mme_inbound_roam_access_emm_cause(
             uint8_t emm_cause = mme_access_control_inbound_reject_cause(ac,
                     OGS_NAS_EMM_CAUSE_ROAMING_NOT_ALLOWED_IN_THIS_TRACKING_AREA);
 
-            ogs_warn("[%s] inbound roam eNB-ID[0x%x] not in access_control "
+            ogs_debug("[%s] inbound roam eNB-ID[0x%x] not in access_control "
                     "allow-list [prefix:%s serving_plmn:%s tac:%u emm_cause:%d]",
                     mme_ue->imsi_bcd, enb_id,
                     ac->imsi_prefix[0] ? ac->imsi_prefix : "-",

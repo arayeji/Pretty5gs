@@ -144,6 +144,9 @@ static void pcrf_mysql_disable_runtime(pcrf_context_t *ctx)
 int pcrf_mysql_open(pcrf_context_t *ctx)
 {
     bool reconnect = true;
+    unsigned int connect_timeout = 3;
+    unsigned int read_timeout = 3;
+    unsigned int write_timeout = 3;
 
     ogs_assert(ctx);
     if (!ctx->mysql.enabled)
@@ -162,6 +165,15 @@ int pcrf_mysql_open(pcrf_context_t *ctx)
     }
 
     mysql_options(pcrf_mysql, MYSQL_OPT_RECONNECT, &reconnect);
+    /*
+     * The policy lookup runs synchronously on the Gx CCR path. Without
+     * timeouts a stalled MySQL would block every PDN-connection setup
+     * (head-of-line blocking) until TCP gives up. Cap each phase so a
+     * slow DB fails fast and we fall back to YAML policy instead.
+     */
+    mysql_options(pcrf_mysql, MYSQL_OPT_CONNECT_TIMEOUT, &connect_timeout);
+    mysql_options(pcrf_mysql, MYSQL_OPT_READ_TIMEOUT, &read_timeout);
+    mysql_options(pcrf_mysql, MYSQL_OPT_WRITE_TIMEOUT, &write_timeout);
 
     if (!mysql_real_connect(pcrf_mysql, ctx->mysql.server, ctx->mysql.user,
             ctx->mysql.password ? ctx->mysql.password : "",

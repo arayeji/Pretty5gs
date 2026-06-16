@@ -66,6 +66,13 @@ static void mme_event_discard(mme_event_t *e)
         e->pkbuf = NULL;
     }
     if (e->s6a_message) {
+        /*
+         * Match the normal free path in mme-sm.c: the IDR/ULA branches
+         * sub-allocate subscription_data, so a flat free would leak it
+         * when an S6a event is discarded mid-teardown.
+         */
+        ogs_subscription_data_free(&e->s6a_message->idr_message.subscription_data);
+        ogs_subscription_data_free(&e->s6a_message->ula_message.subscription_data);
         ogs_free(e->s6a_message);
         e->s6a_message = NULL;
     }
