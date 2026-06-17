@@ -365,7 +365,7 @@ void mme_s11_handle_create_session_response(
 
     if (mme_ue && MME_UE_HAVE_IMSI(mme_ue))
         mme_ue_info(mme_ue, enb_ue, "s11",
-                sess->session ? sess->session->name : NULL,
+                (sess && sess->session) ? sess->session->name : NULL,
                 "Create Session Response received "
                 "create_action=%d local_s11_teid=0x%x",
                 create_action, xact->local_teid);
