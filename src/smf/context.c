@@ -26,6 +26,31 @@
 #include "smf-trace.h"
 #include "metrics.h"
 
+#define SMF_RECOVERY_COUNTER_FILE "/var/lib/open5gs/smf_recovery_counter"
+
+static uint8_t
+smf_load_recovery_counter(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    uint8_t val = 0;
+    (void)fread(&val, 1, 1, f);
+    fclose(f);
+    return val;
+}
+
+static void
+smf_save_recovery_counter(const char *path, uint8_t val)
+{
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        ogs_warn("failed to persist GTP-C recovery counter to %s", path);
+        return;
+    }
+    (void)fwrite(&val, 1, 1, f);
+    fclose(f);
+}
+
 static smf_context_t self;
 static ogs_diam_config_t g_diam_conf;
 
@@ -126,7 +151,8 @@ void smf_context_init(void)
     self.n1n2message_hash = ogs_hash_make();
     ogs_assert(self.n1n2message_hash);
 
-    self.gtpc_recovery = 1;
+    self.gtpc_recovery = 0;
+    self.recovery_counter_file = SMF_RECOVERY_COUNTER_FILE;
 
     context_initialized = 1;
 }
@@ -611,7 +637,16 @@ int smf_context_parse_config(void)
                             ogs_warn("unknown key `%s`", ctf_key);
                     }
                 } else if (!strcmp(smf_key, "gtpc")) {
-                    /* handle config in gtp library */
+                    ogs_yaml_iter_t gtpc_iter;
+                    ogs_yaml_iter_recurse(&smf_iter, &gtpc_iter);
+                    while (ogs_yaml_iter_next(&gtpc_iter)) {
+                        const char *gtpc_key = ogs_yaml_iter_key(&gtpc_iter);
+                        ogs_assert(gtpc_key);
+                        if (!strcmp(gtpc_key, "recovery_counter_file")) {
+                            const char *v = ogs_yaml_iter_value(&gtpc_iter);
+                            if (v) self.recovery_counter_file = v;
+                        }
+                    }
                 } else if (!strcmp(smf_key, "gtpu")) {
                     /* handle config in gtp library */
                 } else if (!strcmp(smf_key, "dns")) {
@@ -1377,10 +1412,13 @@ int smf_context_parse_config(void)
     rv = smf_context_validation();
     if (rv != OGS_OK) return rv;
 
+    self.gtpc_recovery = smf_load_recovery_counter(self.recovery_counter_file);
     self.gtpc_recovery++;
     if (self.gtpc_recovery == 0)
         self.gtpc_recovery = 1;
-    ogs_info("SMF GTP-C recovery counter: %u", self.gtpc_recovery);
+    smf_save_recovery_counter(self.recovery_counter_file, self.gtpc_recovery);
+    ogs_info("SMF GTP-C recovery counter: %u (file: %s)",
+             self.gtpc_recovery, self.recovery_counter_file);
 
     ogs_reload_audit_record_startup("SMF");
 
