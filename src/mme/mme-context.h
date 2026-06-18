@@ -100,6 +100,7 @@ typedef struct mme_context_s {
 
     uint8_t         gtpc_recovery;  /* MME GTP-C Recovery IE (S11) */
     uint32_t        gtpc_echo_interval; /* S11 echo period in seconds (0=60) */
+    const char     *recovery_counter_file;
 
     ogs_list_t      sgsn_list;       /* SGW GTPv1C Client List */
 

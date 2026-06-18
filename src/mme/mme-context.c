@@ -38,6 +38,31 @@
 
 #define MAX_CELL_PER_ENB            8
 
+#define MME_RECOVERY_COUNTER_FILE "/var/lib/open5gs/mme_recovery_counter"
+
+static uint8_t
+mme_load_recovery_counter(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    uint8_t val = 0;
+    (void)fread(&val, 1, 1, f);
+    fclose(f);
+    return val;
+}
+
+static void
+mme_save_recovery_counter(const char *path, uint8_t val)
+{
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        ogs_warn("failed to persist GTP-C recovery counter to %s", path);
+        return;
+    }
+    (void)fwrite(&val, 1, 1, f);
+    fclose(f);
+}
+
 static mme_context_t self;
 static ogs_diam_config_t g_diam_conf;
 
@@ -665,8 +690,9 @@ static int mme_context_prepare(void)
     self.time.t3346.value = 0;
     self.time.t3346.include_any_reject = false;
 
-    self.gtpc_recovery = 1;
+    self.gtpc_recovery = 0;
     self.gtpc_echo_interval = 0;
+    self.recovery_counter_file = MME_RECOVERY_COUNTER_FILE;
 
     mme_attach_accept_set_defaults();
 
@@ -2023,6 +2049,10 @@ int mme_context_parse_config(void)
                             const char *v = ogs_yaml_iter_value(&gtpc_iter);
                             if (v)
                                 self.gtpc_echo_interval = atoi(v);
+                        } else if (!strcmp(gtpc_key,
+                                "recovery_counter_file")) {
+                            const char *v = ogs_yaml_iter_value(&gtpc_iter);
+                            if (v) self.recovery_counter_file = v;
                         } else
                             ogs_warn("unknown key `%s`", gtpc_key);
                     }
@@ -3820,10 +3850,13 @@ int mme_context_parse_config(void)
     rv = mme_context_validation();
     if (rv != OGS_OK) return rv;
 
+    self.gtpc_recovery = mme_load_recovery_counter(self.recovery_counter_file);
     self.gtpc_recovery++;
     if (self.gtpc_recovery == 0)
         self.gtpc_recovery = 1;
-    ogs_info("MME GTP-C recovery counter: %u", self.gtpc_recovery);
+    mme_save_recovery_counter(self.recovery_counter_file, self.gtpc_recovery);
+    ogs_info("MME GTP-C recovery counter: %u (file: %s)",
+             self.gtpc_recovery, self.recovery_counter_file);
 
     ogs_reload_audit_record_startup("MME");
 
@@ -4291,6 +4324,11 @@ void mme_context_reload_runtime(void)
                         } else if (!strcmp(gtpc_key, "recovery")) {
                             ogs_reload_audit_warn(
                                     "mme.gtpc.recovery ignored "
+                                    "(daemon restart required)");
+                        } else if (!strcmp(gtpc_key,
+                                "recovery_counter_file")) {
+                            ogs_reload_audit_warn(
+                                    "mme.gtpc.recovery_counter_file ignored "
                                     "(daemon restart required)");
                         }
                     }

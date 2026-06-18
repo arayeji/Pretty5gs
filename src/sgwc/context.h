@@ -102,6 +102,7 @@ typedef struct sgwc_context_s {
     /* GTPv2-C Recovery counter (TS 29.274) for Echo/CSR interop */
     uint8_t gtpc_recovery;
     uint32_t gtpc_echo_interval; /* S11 echo period in seconds (0=60) */
+    const char *recovery_counter_file;
 
     /*
      * Inbound roam S5: optional local UDP bind (source port only).

@@ -337,6 +337,7 @@ typedef struct smf_context_s {
 
     /* GTPv2-C Recovery counter (TS 29.274) for Echo/CSR interop */
     uint8_t gtpc_recovery;
+    const char *recovery_counter_file;
 
 #define SMF_UE_IS_LAST_SESSION(__sMF) \
      ((__sMF) && (ogs_list_count(&(__sMF)->sess_list)) == 1)

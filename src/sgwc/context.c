@@ -18,12 +18,38 @@
  */
 
 #include <yaml.h>
+#include <stdio.h>
 
 #include "context.h"
 #include "gtp-path.h"
 #include "ga-writer.h"
 #include "metrics.h"
 #include "ogs-metrics.h"
+
+#define SGWC_RECOVERY_COUNTER_FILE "/var/lib/open5gs/sgwc_recovery_counter"
+
+static uint8_t
+sgwc_load_recovery_counter(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    uint8_t val = 0;
+    (void)fread(&val, 1, 1, f);
+    fclose(f);
+    return val;
+}
+
+static void
+sgwc_save_recovery_counter(const char *path, uint8_t val)
+{
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        ogs_warn("failed to persist GTP-C recovery counter to %s", path);
+        return;
+    }
+    (void)fwrite(&val, 1, 1, f);
+    fclose(f);
+}
 
 static sgwc_context_t self;
 
@@ -336,9 +362,10 @@ void sgwc_context_init(void)
     self.cdr.triggers = SGWC_CDR_TRIG_START | SGWC_CDR_TRIG_INTERIM |
             SGWC_CDR_TRIG_STOP;
     self.cdr_local_seq = 0;
-    self.gtpc_recovery = 1;
+    self.gtpc_recovery = 0;
     self.gtpc_echo_interval = 0;
-    self.gn_gtpc_recovery = 1;
+    self.gn_gtpc_recovery = 0;
+    self.recovery_counter_file = SGWC_RECOVERY_COUNTER_FILE;
     self.pfcp_send_user_id = true;
 
     context_initialized = 1;
@@ -876,6 +903,10 @@ int sgwc_context_parse_config(void)
                             const char *v = ogs_yaml_iter_value(&gtpc_iter);
                             if (v)
                                 self.gtpc_echo_interval = atoi(v);
+                        } else if (!strcmp(gtpc_key,
+                                "recovery_counter_file")) {
+                            const char *v = ogs_yaml_iter_value(&gtpc_iter);
+                            if (v) self.recovery_counter_file = v;
                         }
                     }
                 } else if (!strcmp(sgwc_key, "gtpu")) {
@@ -1155,10 +1186,14 @@ int sgwc_context_parse_config(void)
     rv = sgwc_context_validation();
     if (rv != OGS_OK) return rv;
 
+    self.gtpc_recovery = sgwc_load_recovery_counter(self.recovery_counter_file);
     self.gtpc_recovery++;
     if (self.gtpc_recovery == 0)
         self.gtpc_recovery = 1;
-    ogs_info("SGWC GTP-C recovery counter: %u", self.gtpc_recovery);
+    self.gn_gtpc_recovery = self.gtpc_recovery;
+    sgwc_save_recovery_counter(self.recovery_counter_file, self.gtpc_recovery);
+    ogs_info("SGWC GTP-C recovery counter: %u (file: %s)",
+             self.gtpc_recovery, self.recovery_counter_file);
 
     ogs_reload_audit_record_startup("SGWC");
 
