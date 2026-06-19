@@ -835,7 +835,7 @@ int mme_gtp_send_delete_bearer_response(
 }
 
 int mme_gtp_send_release_access_bearers_request(
-        enb_ue_t *enb_ue, mme_ue_t *mme_ue, int action)
+        ogs_pool_id_t enb_ue_id, mme_ue_t *mme_ue, int action)
 {
     int rv;
     ogs_gtp2_header_t h;
@@ -843,7 +843,6 @@ int mme_gtp_send_release_access_bearers_request(
     ogs_gtp_xact_t *xact = NULL;
     sgw_ue_t *sgw_ue = NULL;
 
-    ogs_assert(enb_ue);
     ogs_assert(action);
     ogs_assert(mme_ue);
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
@@ -869,7 +868,7 @@ int mme_gtp_send_release_access_bearers_request(
     }
     xact->release_action = action;
     xact->local_teid = mme_ue->gn.mme_gn_teid;
-    xact->enb_ue_id = enb_ue->id;
+    xact->enb_ue_id = enb_ue_id;
 
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
@@ -886,6 +885,8 @@ void mme_gtp_send_release_all_ue_in_enb(mme_enb_t *enb, int action)
         mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
 
         if (mme_ue) {
+            ogs_pool_id_t enb_ue_id = enb_ue->id;
+
             if (action == OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_LO_CONNREFUSED) {
                 /*
                  * https://github.com/open5gs/open5gs/pull/1497
@@ -903,15 +904,18 @@ void mme_gtp_send_release_all_ue_in_enb(mme_enb_t *enb, int action)
                  *
                  * To solve this situation,
                  * Execute enb_ue_unlink(mme_ue) and enb_ue_remove(enb_ue)
-                 * before mme_gtp_send_release_access_bearers_request()
+                 * before mme_gtp_send_release_access_bearers_request().
+                 * enb_ue_id is saved above before the free to avoid
+                 * use-after-free when setting xact->enb_ue_id.
                  */
                 enb_ue_deassociate_mme_ue(enb_ue, mme_ue);
                 enb_ue_remove(enb_ue);
+                enb_ue = NULL;
             }
 
             ogs_assert(OGS_OK ==
                 mme_gtp_send_release_access_bearers_request(
-                    enb_ue, mme_ue, action));
+                    enb_ue_id, mme_ue, action));
         } else {
             ogs_warn("mme_gtp_send_release_all_ue_in_enb()");
             ogs_warn("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d] Action[%d]",
