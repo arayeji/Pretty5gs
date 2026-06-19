@@ -4574,7 +4574,8 @@ void s1ap_handle_s1_reset(
             mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
             if (mme_ue) {
                 ogs_assert(OGS_OK ==
-                    mme_gtp_send_release_access_bearers_request(enb_ue, mme_ue,
+                    mme_gtp_send_release_access_bearers_request(enb_ue->id,
+                        mme_ue,
                         OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_RESET_PARTIAL));
             } else {
                 enb_ue_remove(enb_ue);

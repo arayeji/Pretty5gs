@@ -47,7 +47,7 @@ int mme_gtp_send_update_bearer_response(
 int mme_gtp_send_delete_bearer_response(
         mme_bearer_t *bearer, uint8_t cause_value);
 int mme_gtp_send_release_access_bearers_request(
-        enb_ue_t *enb_ue, mme_ue_t *mme_ue, int action);
+        ogs_pool_id_t enb_ue_id, mme_ue_t *mme_ue, int action);
 void mme_gtp_send_release_all_ue_in_enb(mme_enb_t *enb, int action);
 
 int mme_gtp_send_downlink_data_notification_ack(

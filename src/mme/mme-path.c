@@ -214,7 +214,7 @@ void mme_send_release_access_bearer_or_ue_context_release(enb_ue_t *enb_ue)
         ogs_debug("[%s] Release access bearer request", mme_ue->imsi_bcd);
         ogs_assert(OGS_OK ==
             mme_gtp_send_release_access_bearers_request(
-                enb_ue, mme_ue,
+                enb_ue->id, mme_ue,
                 OGS_GTP_RELEASE_SEND_UE_CONTEXT_RELEASE_COMMAND));
     } else {
         ogs_debug("No UE Context");
