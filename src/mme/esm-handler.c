@@ -327,10 +327,10 @@ int esm_handle_information_response(
         }
     } else {
         if (rsp->access_point_name.length)
-            ogs_error("[%s] Invalid APN[%s]", mme_ue->imsi_bcd,
+            ogs_warn("[%s] Invalid APN[%s]", mme_ue->imsi_bcd,
                     rsp->access_point_name.apn);
         else
-            ogs_error("[%s] No APN", mme_ue->imsi_bcd);
+            ogs_warn("[%s] No APN", mme_ue->imsi_bcd);
 
         r = nas_eps_send_pdn_connectivity_reject(
                 sess, OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN,
