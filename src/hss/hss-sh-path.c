@@ -114,6 +114,7 @@ static char *hss_sh_build_sh_data(
 
     ogs_subscription_data_t subscription_data;
     bool has_subscription = false;
+    bool want_reachability = false;
 
     *served = 0;
 
@@ -168,6 +169,7 @@ static char *hss_sh_build_sh_data(
             break;
 
         case OGS_DIAM_SH_DATA_REF_USER_STATE:
+            want_reachability = true;
             /* PS domain user state: only when a real MME is registered. */
             if (!requested_domain_present ||
                     requested_domain == OGS_DIAM_SH_REQUESTED_DOMAIN_PS) {
@@ -201,6 +203,7 @@ static char *hss_sh_build_sh_data(
             break;
 
         case OGS_DIAM_SH_DATA_REF_LOCATION_INFORMATION:
+            want_reachability = true;
             /* PS domain: report serving MME as EPSLocationInformation.
              * EPSLocationInformation lives under four nested Extensions
              * (tSh-Data-Extension .. Extension4) per TS 29.328 Annex D. */
@@ -259,6 +262,22 @@ static char *hss_sh_build_sh_data(
                     data_references[i]);
             break;
         }
+    }
+
+    /*
+     * UE-Reachable: Kamailio T-ADS reads //UE-Reachable/text() to choose a
+     * short vs long paging wait. Emit it whenever location/user-state was
+     * requested. Reachable if either domain is currently attached.
+     */
+    if (has_subscription && want_reachability) {
+        bool reachable =
+            (subscription_data.mme_host && !subscription_data.purge_flag) ||
+            (subscription_data.vlr_number && !subscription_data.cs_purge_flag);
+        xml = ogs_mstrcatf(xml, "%s%s%s",
+                ogs_diam_sh_xml_ue_reachable_s,
+                reachable ? "true" : "false",
+                ogs_diam_sh_xml_ue_reachable_e);
+        ogs_assert(xml);
     }
 
     xml = ogs_mstrcatf(xml, "%s", ogs_diam_sh_xml_sh_data_e);

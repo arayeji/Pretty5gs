@@ -87,6 +87,8 @@ const char *ogs_diam_sh_xml_vlr_number_s = "<VLRNumber>";
 const char *ogs_diam_sh_xml_vlr_number_e = "</VLRNumber>";
 const char *ogs_diam_sh_xml_msc_number_s = "<MSCNumber>";
 const char *ogs_diam_sh_xml_msc_number_e = "</MSCNumber>";
+const char *ogs_diam_sh_xml_ue_reachable_s = "<UE-Reachable>";
+const char *ogs_diam_sh_xml_ue_reachable_e = "</UE-Reachable>";
 
 extern int ogs_dict_sh_entry(char *conffile);
 

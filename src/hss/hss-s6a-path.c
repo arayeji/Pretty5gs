@@ -1233,12 +1233,19 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
     }
 
     if (is_cs_update) {
-        /* CS ULR from IWF: store VLR data, leave the PS MME untouched. */
+        /* CS ULR from IWF: store VLR data, leave the PS MME untouched.
+         * If the subscriber was registered on a different IWF/VLR host,
+         * cancel the previous one first (mirrors the PS MME CLR). */
         if (subscription_data.vlr_host != NULL &&
                 !subscription_data.cs_purge_flag &&
-                strcmp(subscription_data.vlr_host, mme_host) != 0) {
-            ogs_info("[%s] CS re-registration from a new VLR/IWF host (%s)",
-                    imsi_bcd, mme_host);
+                (strcmp(subscription_data.vlr_host, mme_host) != 0 ||
+                 (subscription_data.vlr_realm != NULL &&
+                  strcmp(subscription_data.vlr_realm, mme_realm) != 0))) {
+            hss_s6a_send_clr(imsi_bcd, subscription_data.vlr_host,
+                    subscription_data.vlr_realm,
+                    OGS_DIAM_S6A_CT_UPDATE_PROCEDURE_IWF);
+            ogs_info("[%s] Sending Cancel Location to previous IWF/VLR host %s",
+                    imsi_bcd, subscription_data.vlr_host);
         }
 
         rv = hss_db_update_vlr(imsi_bcd, vlr_number, mme_host, mme_realm,
@@ -2229,24 +2236,45 @@ int hss_s6a_send_idr(char *imsi_bcd, uint32_t idr_flags, uint32_t subdata_mask)
     }
 
     /*
-     * Select the serving node to arm:
-     *  - PS-registered (real MME): target the MME (existing behaviour).
-     *  - CS-only (VLR via IWF, no live MME): target the IWF CS host so the
-     *    URRP reachability shim runs over the CS leg.
+     * Select the serving node to arm for UE reachability.
+     *
+     * CS T-ADS must win over a stale/mistaken PS MME: in the lab a CS-only
+     * subscriber can still carry an old mme_host, or a mistaken IWF PS ULR
+     * may have written the IWF's own host into mme_host. In both cases the
+     * IDR must go to the IWF CS host (vlr_host), not the MME.
+     *
+     *   CS active  = vlr_number set and not CS-purged
+     *   mme is IWF = mme_host equals the IWF CS host (not a real MME)
+     *   PS active  = real mme_host set, not purged, not the IWF host
+     *
+     *   if CS active and PS not active   -> IDR to vlr_host (CS)
+     *   else if PS active                -> IDR to mme_host (PS)
+     *   else                             -> nothing reachable
      */
-    if (subscription_data.mme_host != NULL && !subscription_data.purge_flag) {
-        dest_host = subscription_data.mme_host;
-        dest_realm = subscription_data.mme_realm;
-    } else if (subscription_data.vlr_host != NULL &&
-            !subscription_data.cs_purge_flag) {
-        dest_host = subscription_data.vlr_host;
-        dest_realm = subscription_data.vlr_realm;
-        ogs_debug("    [%s] Arming UE reachability on CS IWF host %s",
-                imsi_bcd, dest_host);
-    } else {
-        ogs_error("    [%s] No reachable serving node. Cannot send IDR.",
-                imsi_bcd);
-        return OGS_ERROR;
+    {
+        bool cs_active = (subscription_data.vlr_number != NULL &&
+                !subscription_data.cs_purge_flag);
+        bool mme_is_iwf_ps = (subscription_data.mme_host != NULL &&
+                subscription_data.vlr_host != NULL &&
+                strcmp(subscription_data.mme_host,
+                        subscription_data.vlr_host) == 0);
+        bool ps_active = (subscription_data.mme_host != NULL &&
+                !subscription_data.purge_flag && !mme_is_iwf_ps);
+
+        if (cs_active && !ps_active) {
+            dest_host = subscription_data.vlr_host;
+            dest_realm = subscription_data.vlr_realm;
+            ogs_debug("    [%s] Arming UE reachability on CS IWF host %s",
+                    imsi_bcd, dest_host ? dest_host : "(realm)");
+        } else if (ps_active) {
+            dest_host = subscription_data.mme_host;
+            dest_realm = subscription_data.mme_realm;
+        } else {
+            ogs_error("    [%s] No reachable serving node. Cannot send IDR.",
+                    imsi_bcd);
+            ogs_subscription_data_free(&subscription_data);
+            return OGS_ERROR;
+        }
     }
 
     /* Avoid sending IDR if only Operator-Determined-Barring field changed and

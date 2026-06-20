@@ -160,6 +160,8 @@ extern const char *ogs_diam_sh_xml_vlr_number_s;
 extern const char *ogs_diam_sh_xml_vlr_number_e;
 extern const char *ogs_diam_sh_xml_msc_number_s;
 extern const char *ogs_diam_sh_xml_msc_number_e;
+extern const char *ogs_diam_sh_xml_ue_reachable_s;
+extern const char *ogs_diam_sh_xml_ue_reachable_e;
 
 #ifdef __cplusplus
 }
