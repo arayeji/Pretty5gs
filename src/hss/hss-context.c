@@ -445,6 +445,26 @@ int hss_db_update_mme(char *imsi_bcd, char *mme_host, char *mme_realm,
     return rv;
 }
 
+int hss_db_update_vlr(char *imsi_bcd, char *vlr_number, char *vlr_host,
+    char *vlr_realm, bool purge_flag)
+{
+    int rv;
+    char *supi = NULL;
+
+    ogs_assert(imsi_bcd);
+
+    ogs_thread_mutex_lock(&self.db_lock);
+    supi = ogs_msprintf("%s-%s", OGS_ID_SUPI_TYPE_IMSI, imsi_bcd);
+    ogs_assert(supi);
+
+    rv = ogs_dbi_update_vlr(supi, vlr_number, vlr_host, vlr_realm, purge_flag);
+
+    ogs_free(supi);
+    ogs_thread_mutex_unlock(&self.db_lock);
+
+    return rv;
+}
+
 int hss_db_increment_sqn(char *imsi_bcd)
 {
     int rv;

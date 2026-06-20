@@ -216,6 +216,15 @@ bool ogs_pdu_session_id_is_valid(int psi);
 #define OGS_MME_TIMESTAMP_STRING "mme_timestamp"
 #define OGS_PURGE_FLAG_STRING "purge_flag"
 
+/* CS-domain serving node (VLR/MSC), populated via an IWF S6d ULR carrying
+ * the real VLR Global Title in the SGSN-Number AVP. Stored separately from
+ * the PS-domain mme_host so a CS attach never overwrites a real MME. */
+#define OGS_VLR_NUMBER_STRING "vlr_number"
+#define OGS_VLR_HOST_STRING "vlr_host"
+#define OGS_VLR_REALM_STRING "vlr_realm"
+#define OGS_VLR_TIMESTAMP_STRING "vlr_timestamp"
+#define OGS_CS_PURGE_FLAG_STRING "cs_purge_flag"
+
 #define OGS_AMBR_STRING "ambr"
 #define OGS_DOWNLINK_STRING "downlink"
 #define OGS_UPLINK_STRING "uplink"
@@ -949,6 +958,12 @@ typedef struct ogs_subscription_data_s {
     char *mme_host;
     char *mme_realm;
     bool purge_flag;
+
+    /* CS-domain (VLR/MSC) serving node, learned from an IWF S6d ULR. */
+    char *vlr_number;
+    char *vlr_host;
+    char *vlr_realm;
+    bool cs_purge_flag;
 } ogs_subscription_data_t;
 
 void ogs_subscription_data_free(ogs_subscription_data_t *subscription_data);

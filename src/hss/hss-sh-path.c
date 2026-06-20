@@ -168,10 +168,10 @@ static char *hss_sh_build_sh_data(
             break;
 
         case OGS_DIAM_SH_DATA_REF_USER_STATE:
-            /* Only the PS domain is supported (no CS/VLR in Open5GS). */
+            /* PS domain user state: only when a real MME is registered. */
             if (!requested_domain_present ||
                     requested_domain == OGS_DIAM_SH_REQUESTED_DOMAIN_PS) {
-                if (has_subscription) {
+                if (has_subscription && subscription_data.mme_host) {
                     int state = subscription_data.purge_flag ?
                         OGS_DIAM_SH_PS_USER_STATE_DETACHED :
                         OGS_DIAM_SH_PS_USER_STATE_ATTACHED_REACHABLE;
@@ -179,6 +179,21 @@ static char *hss_sh_build_sh_data(
                             ogs_diam_sh_xml_ps_user_state_s,
                             state,
                             ogs_diam_sh_xml_ps_user_state_e);
+                    ogs_assert(xml);
+                    (*served)++;
+                }
+            }
+            /* CS domain user state: derived from the IWF-provided VLR data. */
+            if (!requested_domain_present ||
+                    requested_domain == OGS_DIAM_SH_REQUESTED_DOMAIN_CS) {
+                if (has_subscription && subscription_data.vlr_number) {
+                    int state = subscription_data.cs_purge_flag ?
+                        OGS_DIAM_SH_CS_USER_STATE_NOT_PROVIDED_FROM_VLR :
+                        OGS_DIAM_SH_CS_USER_STATE_ASSUMED_IDLE;
+                    xml = ogs_mstrcatf(xml, "%s%d%s",
+                            ogs_diam_sh_xml_cs_user_state_s,
+                            state,
+                            ogs_diam_sh_xml_cs_user_state_e);
                     ogs_assert(xml);
                     (*served)++;
                 }
@@ -210,6 +225,27 @@ static char *hss_sh_build_sh_data(
                             ogs_diam_sh_xml_extension_e);
                     ogs_assert(xml);
                     /* close the outermost Extension */
+                    xml = ogs_mstrcatf(xml, "%s",
+                            ogs_diam_sh_xml_extension_e);
+                    ogs_assert(xml);
+                    (*served)++;
+                }
+            }
+            /* CS domain: report the VLR Global Title as CSLocationInformation
+             * (single Extension), so Kamailio T-ADS can route via CS. */
+            if (!requested_domain_present ||
+                    requested_domain == OGS_DIAM_SH_REQUESTED_DOMAIN_CS) {
+                if (has_subscription && subscription_data.vlr_number &&
+                        !subscription_data.cs_purge_flag) {
+                    xml = ogs_mstrcatf(xml,
+                            "%s%s%s%s%s%s",
+                            ogs_diam_sh_xml_extension_s,
+                            ogs_diam_sh_xml_cs_location_information_s,
+                            ogs_diam_sh_xml_vlr_number_s,
+                            subscription_data.vlr_number,
+                            ogs_diam_sh_xml_vlr_number_e,
+                            ogs_diam_sh_xml_cs_location_information_e);
+                    ogs_assert(xml);
                     xml = ogs_mstrcatf(xml, "%s",
                             ogs_diam_sh_xml_extension_e);
                     ogs_assert(xml);

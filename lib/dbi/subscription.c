@@ -251,6 +251,64 @@ int ogs_dbi_update_mme(char *supi, char *mme_host, char *mme_realm,
     return rv;
 }
 
+int ogs_dbi_update_vlr(char *supi, char *vlr_number, char *vlr_host,
+    char *vlr_realm, bool purge_flag)
+{
+    int rv = OGS_OK;
+    bson_t *query = NULL;
+    bson_t *update = NULL;
+    bson_t set;
+    bson_error_t error;
+
+    char *supi_type = NULL;
+    char *supi_id = NULL;
+
+    ogs_assert(supi);
+
+    if (ogs_id_get_type_value(supi, &supi_type, &supi_id) == false) {
+        ogs_error("Invalid supi=%s", supi);
+        return OGS_ERROR;
+    }
+
+    ogs_debug("SUPI type: %s, SUPI id: %s, vlr_number: %s, vlr_host: %s, "
+            "vlr_realm: %s, cs_purge: %d",
+            supi_type, supi_id, vlr_number ? vlr_number : "(null)",
+            vlr_host ? vlr_host : "(null)",
+            vlr_realm ? vlr_realm : "(null)", purge_flag);
+
+    query = BCON_NEW(supi_type, BCON_UTF8(supi_id));
+
+    /* Build the $set document dynamically: VLR identity fields are only
+     * written when supplied (e.g. on a CS attach), while the timestamp and
+     * CS purge flag are always refreshed (also used on detach to clear). */
+    update = bson_new();
+    BSON_APPEND_DOCUMENT_BEGIN(update, "$set", &set);
+    if (vlr_number)
+        BSON_APPEND_UTF8(&set, OGS_VLR_NUMBER_STRING, vlr_number);
+    if (vlr_host)
+        BSON_APPEND_UTF8(&set, OGS_VLR_HOST_STRING, vlr_host);
+    if (vlr_realm)
+        BSON_APPEND_UTF8(&set, OGS_VLR_REALM_STRING, vlr_realm);
+    BSON_APPEND_INT64(&set, OGS_VLR_TIMESTAMP_STRING, ogs_time_now());
+    BSON_APPEND_BOOL(&set, OGS_CS_PURGE_FLAG_STRING, purge_flag);
+    bson_append_document_end(update, &set);
+
+    if (!mongoc_collection_update(ogs_mongoc()->collection.subscriber,
+            MONGOC_UPDATE_UPSERT, query, update, NULL, &error)) {
+        ogs_error("mongoc_collection_update() failure: %s", error.message);
+
+        rv = OGS_ERROR;
+    }
+
+    if (query) bson_destroy(query);
+    if (update) bson_destroy(update);
+
+    ogs_free(supi_type);
+    ogs_free(supi_id);
+
+    return rv;
+}
+
 int ogs_dbi_increment_sqn(char *supi)
 {
     int rv = OGS_OK;
@@ -824,6 +882,27 @@ int ogs_dbi_subscription_data(char *supi,
         } else if (!strcmp(key, OGS_PURGE_FLAG_STRING) &&
             BSON_ITER_HOLDS_BOOL(&iter)) {
             subscription_data->purge_flag = bson_iter_bool(&iter);
+        } else if (!strcmp(key, OGS_VLR_NUMBER_STRING) &&
+            BSON_ITER_HOLDS_UTF8(&iter)) {
+            utf8 = bson_iter_utf8(&iter, &length);
+            subscription_data->vlr_number =
+                ogs_strndup(utf8, ogs_min(length, OGS_MAX_FQDN_LEN) + 1);
+            ogs_assert(subscription_data->vlr_number);
+        } else if (!strcmp(key, OGS_VLR_HOST_STRING) &&
+            BSON_ITER_HOLDS_UTF8(&iter)) {
+            utf8 = bson_iter_utf8(&iter, &length);
+            subscription_data->vlr_host =
+                ogs_strndup(utf8, ogs_min(length, OGS_MAX_FQDN_LEN) + 1);
+            ogs_assert(subscription_data->vlr_host);
+        } else if (!strcmp(key, OGS_VLR_REALM_STRING) &&
+            BSON_ITER_HOLDS_UTF8(&iter)) {
+            utf8 = bson_iter_utf8(&iter, &length);
+            subscription_data->vlr_realm =
+                ogs_strndup(utf8, ogs_min(length, OGS_MAX_FQDN_LEN) + 1);
+            ogs_assert(subscription_data->vlr_realm);
+        } else if (!strcmp(key, OGS_CS_PURGE_FLAG_STRING) &&
+            BSON_ITER_HOLDS_BOOL(&iter)) {
+            subscription_data->cs_purge_flag = bson_iter_bool(&iter);
         }
     }
 

@@ -123,6 +123,7 @@ extern struct dict_object *ogs_diam_s6a_immediate_response_preferred;
 extern struct dict_object *ogs_diam_s6a_authentication_info;
 extern struct dict_object *ogs_diam_s6a_re_synchronization_info;
 extern struct dict_object *ogs_diam_s6a_ue_srvcc_capability;
+extern struct dict_object *ogs_diam_s6a_sgsn_number;
 extern struct dict_object *ogs_diam_s6a_e_utran_vector;
 extern struct dict_object *ogs_diam_s6a_utran_vector;
 extern struct dict_object *ogs_diam_s6a_confidentiality_key;

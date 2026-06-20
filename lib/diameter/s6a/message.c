@@ -101,6 +101,8 @@ struct dict_object *ogs_diam_s6a_a_msisdn = NULL;
 
 struct dict_object *ogs_diam_s6a_sms_register_request = NULL;
 
+struct dict_object *ogs_diam_s6a_sgsn_number = NULL;
+
 struct dict_object *ogs_diam_s6a_supported_features = NULL;
 struct dict_object *ogs_diam_s6a_feature_list_id = NULL;
 struct dict_object *ogs_diam_s6a_feature_list = NULL;
@@ -135,6 +137,7 @@ int ogs_diam_s6a_init(void)
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "IDR-Flags", &ogs_diam_s6a_idr_flags);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "Cancellation-Type", &ogs_diam_s6a_cancellation_type);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "UE-SRVCC-Capability", &ogs_diam_s6a_ue_srvcc_capability);
+    CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "SGSN-Number", &ogs_diam_s6a_sgsn_number);
 
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "Requested-EUTRAN-Authentication-Info", &ogs_diam_s6a_req_eutran_auth_info);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "Requested-UTRAN-GERAN-Authentication-Info", &ogs_diam_s6a_req_utran_geran_auth_info);

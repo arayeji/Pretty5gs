@@ -1083,6 +1083,12 @@ void ogs_subscription_data_free(ogs_subscription_data_t *subscription_data)
         ogs_free(subscription_data->mme_host);
     if (subscription_data->mme_realm)
         ogs_free(subscription_data->mme_realm);
+    if (subscription_data->vlr_number)
+        ogs_free(subscription_data->vlr_number);
+    if (subscription_data->vlr_host)
+        ogs_free(subscription_data->vlr_host);
+    if (subscription_data->vlr_realm)
+        ogs_free(subscription_data->vlr_realm);
 
     for (i = 0; i < subscription_data->num_of_slice; i++) {
         ogs_slice_data_t *slice_data = &subscription_data->slice[i];
