@@ -100,6 +100,7 @@ struct sess_state {
 static void mme_s6a_aia_cb(void *data, struct msg **msg);
 static void mme_s6a_ula_cb(void *data, struct msg **msg);
 static void mme_s6a_pua_cb(void *data, struct msg **msg);
+static void mme_s6a_noa_cb(void *data, struct msg **msg);
 
 static void state_cleanup(struct sess_state *sess_data, os0_t sid, void *opaque)
 {
@@ -2306,6 +2307,168 @@ send_error:
             OGS_INVALID_POOL_ID, &req, session, &sess_data, stored);
 }
 
+/*
+ * MME Sends Notify-Request to HSS (3GPP TS 29.272 #7.2.17).
+ *
+ * T-ADS UE-reachability procedure: once the HSS has armed URRP-MME via
+ * S6a IDR(UE-Reachability), the MME reports that the UE has become
+ * reachable so the HSS can push the change (e.g. Sh Push-Notification)
+ * towards the IMS Application Server (Kamailio S-CSCF/TAS).
+ */
+void mme_s6a_send_nor(mme_ue_t *mme_ue, uint32_t nor_flags)
+{
+    int ret, stored = 0;
+
+    struct msg *req = NULL;
+    struct avp *avp;
+    union avp_value val;
+    struct sess_state *sess_data = NULL, *svg;
+    struct session *session = NULL;
+
+    if (!mme_ue) {
+        ogs_error("UE(mme-ue) context has already been removed");
+        return;
+    }
+
+    ogs_debug("[MME] Notify-Request");
+
+    if (!mme_imsi_hss_allowed(mme_ue)) {
+        ogs_debug("[%s] skip NOR for ACL-blocked IMSI", mme_ue->imsi_bcd);
+        return;
+    }
+
+    /* Create the random value to store with the session */
+    sess_data = ogs_calloc(1, sizeof(*sess_data));
+    if (!sess_data) {
+        ogs_error("ogs_calloc() failed");
+        return;
+    }
+    sess_data->mme_ue_id = mme_ue->id;
+    sess_data->enb_ue_id = OGS_INVALID_POOL_ID;
+    sess_data->gtp_xact_id = OGS_INVALID_POOL_ID;
+
+    /* Create the request */
+    MME_S6A_CHK(fd_msg_new(ogs_diam_s6a_cmd_nor, MSGFL_ALLOC_ETEID, &req));
+
+    /* Create a new session */
+    MME_S6A_CHK(fd_msg_new_session(req, (os0_t)OGS_DIAM_S6A_APP_SID_OPT,
+            CONSTSTRLEN(OGS_DIAM_S6A_APP_SID_OPT)));
+    MME_S6A_CHK(fd_msg_sess_get(fd_g_config->cnf_dict, req, &session, NULL));
+
+    /* Set the Auth-Session-State AVP */
+    MME_S6A_CHK(fd_msg_avp_new(ogs_diam_auth_session_state, 0, &avp));
+    val.i32 = OGS_DIAM_AUTH_SESSION_NO_STATE_MAINTAINED;
+    MME_S6A_CHK(fd_msg_avp_setvalue(avp, &val));
+    MME_S6A_CHK(fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp));
+
+    /* Set Origin-Host & Origin-Realm */
+    MME_S6A_CHK(fd_msg_add_origin(req, 0));
+
+    /* Set the Destination-Realm & Destination-Host (HSS) */
+    MME_S6A_CHK(mme_add_hss_destination(mme_ue, req));
+
+    /* Set the User-Name AVP */
+    MME_S6A_CHK(fd_msg_avp_new(ogs_diam_user_name, 0, &avp));
+    val.os.data = (uint8_t *)mme_ue->imsi_bcd;
+    val.os.len  = strlen(mme_ue->imsi_bcd);
+    MME_S6A_CHK(fd_msg_avp_setvalue(avp, &val));
+    MME_S6A_CHK(fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp));
+
+    /* Set the NOR-Flags AVP */
+    if (nor_flags) {
+        MME_S6A_CHK(fd_msg_avp_new(ogs_diam_s6a_nor_flags, 0, &avp));
+        val.u32 = nor_flags;
+        MME_S6A_CHK(fd_msg_avp_setvalue(avp, &val));
+        MME_S6A_CHK(fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp));
+    }
+
+    /* Set Vendor-Specific-Application-Id AVP */
+    MME_S6A_CHK(ogs_diam_message_vendor_specific_appid_set(
+            req, OGS_DIAM_S6A_APPLICATION_ID));
+
+    MME_S6A_CHK(clock_gettime(CLOCK_REALTIME, &sess_data->ts));
+
+    /* Keep a pointer to the session data for debug purpose */
+    svg = sess_data;
+
+    /* Store this value in the session */
+    MME_S6A_CHK(fd_sess_state_store(mme_s6a_reg, session, &sess_data));
+    stored = 1;
+
+    /* Send the request */
+    ret = fd_msg_send(&req, mme_s6a_noa_cb, svg);
+    if (ret != 0) {
+        ogs_error("fd_msg_send NOR failed (ret=%d) IMSI[%s]",
+                ret, mme_ue->imsi_bcd);
+        goto send_error;
+    }
+
+    /* Increment the counter */
+    if (pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) != 0)
+        ogs_error("pthread_mutex_lock() failed");
+    else {
+    ogs_diam_stats_self()->stats.nb_sent++;
+        if (pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) != 0)
+            ogs_error("pthread_mutex_unlock() failed");
+    }
+
+    ogs_info("[%s] T-ADS: Tx S6a Notify-Request (NOR-Flags=0x%x)",
+            mme_ue->imsi_bcd, nor_flags);
+    return;
+
+send_error:
+    /* No GTP/NAS peer is waiting on a NOR; clean up locally without
+     * posting an S6a failure event. */
+    if (stored && session) {
+        ret = fd_sess_state_retrieve(mme_s6a_reg, session, &sess_data);
+        if (ret != 0)
+            ogs_error("fd_sess_state_retrieve() failed");
+    }
+    if (req) {
+        ret = fd_msg_free(req);
+        if (ret != 0)
+            ogs_error("fd_msg_free() failed");
+        req = NULL;
+    }
+    if (sess_data)
+        state_cleanup(sess_data, NULL, NULL);
+}
+
+/* MME received Notify-Answer from HSS (3GPP TS 29.272 #7.2.18) */
+static void mme_s6a_noa_cb(void *data, struct msg **msg)
+{
+    int ret, new;
+    struct sess_state *sess_data = NULL;
+    struct session *session = NULL;
+
+    ogs_debug("[MME] Notify-Answer");
+
+    if (!msg || !*msg) {
+        ogs_error("Invalid message pointer");
+        return;
+    }
+
+    ret = fd_msg_sess_get(fd_g_config->cnf_dict, *msg, &session, &new);
+    if (ret == 0 && session) {
+        ret = fd_sess_state_retrieve(mme_s6a_reg, session, &sess_data);
+        if (ret == 0 && sess_data && (void *)sess_data == data)
+            state_cleanup(sess_data, NULL, NULL);
+    }
+
+    ret = fd_msg_free(*msg);
+    if (ret != 0)
+        ogs_error("fd_msg_free() failed (Notify-Answer)");
+    *msg = NULL;
+
+    if (pthread_mutex_lock(&ogs_diam_stats_self()->stats_lock) != 0)
+        ogs_error("pthread_mutex_lock() failed");
+    else {
+        ogs_diam_stats_self()->stats.nb_recv++;
+        if (pthread_mutex_unlock(&ogs_diam_stats_self()->stats_lock) != 0)
+            ogs_error("pthread_mutex_unlock() failed");
+    }
+}
+
 /* MME received Purge UE Answer from HSS */
 /* Fixed mme_s6a_pua_cb() function with proper error handling and C89 compliance */
 static void mme_s6a_pua_cb(void *data, struct msg **msg)
@@ -3180,10 +3343,17 @@ static int mme_s6a_idr_cb(struct msg **msg, struct avp *avp,
     }
     }
 
-    /* Validate that we have meaningful data to process */
+    /* Validate that we have meaningful data to process.
+     *
+     * T-ADS: an IDR carrying only the UE-Reachability (URRP-MME) or
+     * TADS-Data flag is valid even without Subscription-Data; the MME arms
+     * UE reachability and reports it later via Notify-Request (see
+     * mme_s6a_handle_idr()). 3GPP TS 23.272 / TS 29.272. */
     if (!has_subscriber_data &&
         !(idr_message->idr_flags & OGS_DIAM_S6A_IDR_FLAGS_EPS_LOCATION_INFO) &&
-        !(idr_message->idr_flags & OGS_DIAM_S6A_IDR_FLAGS_EPS_USER_STATE))
+        !(idr_message->idr_flags & OGS_DIAM_S6A_IDR_FLAGS_EPS_USER_STATE) &&
+        !(idr_message->idr_flags & OGS_DIAM_S6A_IDR_FLAGS_UE_REACHABILITY) &&
+        !(idr_message->idr_flags & OGS_DIAM_S6A_IDR_FLAGS_TADS_DATA))
     {
         ogs_error("Insert Subscriber Data "
                 "with unsupported IDR Flags "

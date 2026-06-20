@@ -114,6 +114,7 @@ extern struct dict_object *ogs_diam_s6a_ula_flags;
 extern struct dict_object *ogs_diam_s6a_pua_flags;
 extern struct dict_object *ogs_diam_s6a_clr_flags;
 extern struct dict_object *ogs_diam_s6a_idr_flags;
+extern struct dict_object *ogs_diam_s6a_nor_flags;
 extern struct dict_object *ogs_diam_s6a_cancellation_type;
 extern struct dict_object *ogs_diam_s6a_subscription_data;
 extern struct dict_object *ogs_diam_s6a_req_eutran_auth_info;
@@ -236,6 +237,16 @@ typedef struct ogs_diam_s6a_idr_message_s {
     uint32_t subdatamask;
     ogs_subscription_data_t subscription_data;
 } ogs_diam_s6a_idr_message_t;
+
+/* NOR-Flags (3GPP TS 29.272 §7.3.83). Sent by the MME in a Notify-Request
+ * to report UE state changes to the HSS. Bit 7 (UE-Reachable-from-MME) is
+ * used for the T-ADS / URRP-MME UE-reachability procedure. */
+#define OGS_DIAM_S6A_NOR_FLAGS_SINGLE_REGISTRATION_IND     (1)
+#define OGS_DIAM_S6A_NOR_FLAGS_SGSN_AREA_RESTRICTED        (1 << 1)
+#define OGS_DIAM_S6A_NOR_FLAGS_READY_FOR_SM_FROM_SGSN      (1 << 2)
+#define OGS_DIAM_S6A_NOR_FLAGS_UE_REACHABLE_FROM_SGSN      (1 << 3)
+#define OGS_DIAM_S6A_NOR_FLAGS_READY_FOR_SM_FROM_MME       (1 << 6)
+#define OGS_DIAM_S6A_NOR_FLAGS_UE_REACHABLE_FROM_MME       (1 << 7)
 
 typedef struct ogs_diam_s6a_message_s {
 #define OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION               316

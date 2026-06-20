@@ -25,6 +25,7 @@
 
 #include "mme-sm.h"
 #include "mme-s6a-handler.h"
+#include "mme-fd-path.h"
 #include "mme-ambr.h"
 #include "mme-pgw-host.h"
 
@@ -282,6 +283,43 @@ uint8_t mme_s6a_handle_idr(
         }
 
         mme_ue->context_identifier = slice_data->context_identifier;
+    }
+
+    /*
+     * T-ADS UE Reachability (URRP-MME), 3GPP TS 23.272 / TS 29.272.
+     *
+     * The HSS arms URRP-MME with an S6a IDR carrying the UE-Reachability
+     * IDR-Flag when an IMS Application Server (Kamailio S-CSCF/TAS) needs to
+     * know when an unregistered/idle UE becomes reachable for terminating
+     * access domain selection.
+     *
+     *  - UE already ECM-CONNECTED -> report reachability immediately (NOR).
+     *  - UE ECM-IDLE -> page the UE (TS 23.401) and report once it answers
+     *    (handled in mme_send_after_paging()).
+     */
+    if (idr_message->idr_flags & OGS_DIAM_S6A_IDR_FLAGS_UE_REACHABILITY) {
+        if (ECM_CONNECTED(mme_ue)) {
+            ogs_info("[%s] T-ADS: URRP-MME armed; UE already ECM-CONNECTED, "
+                    "reporting reachability now", mme_ue->imsi_bcd);
+            mme_ue->urrp_mme = false;
+            mme_s6a_send_nor(mme_ue,
+                    OGS_DIAM_S6A_NOR_FLAGS_UE_REACHABLE_FROM_MME);
+        } else {
+            mme_ue->urrp_mme = true;
+            if (!MME_PAGING_ONGOING(mme_ue)) {
+                int r;
+                ogs_info("[%s] T-ADS: URRP-MME armed; UE ECM-IDLE, paging "
+                        "for UE reachability", mme_ue->imsi_bcd);
+                MME_STORE_PAGING_INFO(mme_ue,
+                        MME_PAGING_TYPE_UE_REACHABILITY, NULL);
+                r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
+                ogs_expect(r == OGS_OK);
+            } else {
+                ogs_info("[%s] T-ADS: URRP-MME armed; paging already ongoing "
+                        "[type=%d], will report on connect",
+                        mme_ue->imsi_bcd, mme_ue->paging.type);
+            }
+        }
     }
 
     return OGS_OK;
