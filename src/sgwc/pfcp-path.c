@@ -280,9 +280,18 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
                     s11_xact, sgwc_ue->mme_s11_teid,
                     OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
                     OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+            sgwc_sess_remove(sess);
+        } else if (xact->assoc_xact_id == OGS_INVALID_POOL_ID) {
+            /* PFCP restoration path — SGW-U slow to respond; keep the
+             * session so the UE can continue after SGW-U recovers.
+             * The UE will re-attach or the session will be aged out. */
+            ogs_warn("[%s] PFCP restoration timeout sess_id[%d] — "
+                    "keeping session pending SGW-U recovery",
+                    sgwc_log_imsi(sgwc_ue), sess->id);
+        } else {
+            /* s11_xact already gone — normal session timeout, clean up */
+            sgwc_sess_remove(sess);
         }
-
-        sgwc_sess_remove(sess);
         break;
     }
     case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE: {
