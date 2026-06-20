@@ -42,6 +42,7 @@ struct dict_object *ogs_diam_s6a_ula_flags = NULL;
 struct dict_object *ogs_diam_s6a_pua_flags = NULL;
 struct dict_object *ogs_diam_s6a_clr_flags = NULL;
 struct dict_object *ogs_diam_s6a_idr_flags = NULL;
+struct dict_object *ogs_diam_s6a_nor_flags = NULL;
 struct dict_object *ogs_diam_s6a_cancellation_type = NULL;
 struct dict_object *ogs_diam_s6a_subscription_data = NULL;
 struct dict_object *ogs_diam_s6a_req_eutran_auth_info = NULL;
@@ -135,6 +136,7 @@ int ogs_diam_s6a_init(void)
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "PUA-Flags", &ogs_diam_s6a_pua_flags);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "CLR-Flags", &ogs_diam_s6a_clr_flags);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "IDR-Flags", &ogs_diam_s6a_idr_flags);
+    CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "NOR-Flags", &ogs_diam_s6a_nor_flags);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "Cancellation-Type", &ogs_diam_s6a_cancellation_type);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "UE-SRVCC-Capability", &ogs_diam_s6a_ue_srvcc_capability);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "SGSN-Number", &ogs_diam_s6a_sgsn_number);

@@ -371,9 +371,36 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
             }
         }
         break;
+    case MME_PAGING_TYPE_UE_REACHABILITY:
+        /*
+         * T-ADS UE reachability paging (URRP-MME). The reachability report
+         * to the HSS (S6a NOR) is sent by the generic URRP check below, so
+         * that it also covers the case where URRP was armed while another
+         * paging procedure was already ongoing.
+         */
+        break;
     default:
         ogs_fatal("Invalid Paging Type[%d]", mme_ue->paging.type);
         ogs_assert_if_reached();
+    }
+
+    /*
+     * T-ADS (3GPP TS 23.272 / TS 29.272): if the HSS armed UE reachability
+     * (URRP-MME) and the UE has now become reachable, notify the HSS via
+     * S6a Notify-Request so it can inform the IMS Application Server. On
+     * paging failure, leave URRP disarmed (the AS falls back per its policy).
+     */
+    if (mme_ue->urrp_mme) {
+        mme_ue->urrp_mme = false;
+        if (failed == false) {
+            ogs_info("[%s] T-ADS: UE reachable after paging -> Tx S6a NOR",
+                    mme_ue->imsi_bcd);
+            mme_s6a_send_nor(mme_ue,
+                    OGS_DIAM_S6A_NOR_FLAGS_UE_REACHABLE_FROM_MME);
+        } else {
+            ogs_warn("[%s] T-ADS: UE reachability paging failed",
+                    mme_ue->imsi_bcd);
+        }
     }
 
 cleanup:

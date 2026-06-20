@@ -950,10 +950,20 @@ struct mme_ue_s {
 #define MME_PAGING_TYPE_CS_CALL_SERVICE 5
 #define MME_PAGING_TYPE_SMS_SERVICE 6
 #define MME_PAGING_TYPE_DETACH_TO_UE 7
+#define MME_PAGING_TYPE_UE_REACHABILITY 8
         int type;
         void *data;
         bool failed;
     } paging;
+
+    /*
+     * URRP-MME (UE Reachability Request Parameter, 3GPP TS 23.272 /
+     * TS 29.272). Armed by the HSS via S6a IDR(UE-Reachability) for
+     * Terminating Access Domain Selection (T-ADS). While set, the MME
+     * reports UE reachability to the HSS via S6a Notify-Request (NOR)
+     * once the UE becomes reachable (paging response / ECM-CONNECTED).
+     */
+    bool urrp_mme;
 
     /* SGW UE context */
     ogs_pool_id_t sgw_ue_id;
