@@ -22,6 +22,7 @@
 
 #include "context.h"
 #include "gtp-path.h"
+#include "pfcp-path.h"
 #include "ga-writer.h"
 #include "metrics.h"
 #include "ogs-metrics.h"
@@ -425,7 +426,8 @@ static bool sgwc_mme_recovery_is_restart(uint8_t stored, uint8_t received)
 
 static void sgwc_mme_purge_sessions(ogs_gtp_node_t *gnode)
 {
-    sgwc_ue_t *sgwc_ue = NULL, *next = NULL;
+    sgwc_ue_t *sgwc_ue = NULL, *next_ue = NULL;
+    sgwc_sess_t *sess = NULL, *next_sess = NULL;
     char buf[OGS_ADDRSTRLEN];
 
     ogs_assert(gnode);
@@ -433,13 +435,28 @@ static void sgwc_mme_purge_sessions(ogs_gtp_node_t *gnode)
     ogs_warn("MME [%s]:%d recovery restart: purging SGWC sessions",
             OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
 
-    ogs_list_for_each_safe(&self.sgw_ue_list, next, sgwc_ue) {
+    ogs_list_for_each_safe(&self.sgw_ue_list, next_ue, sgwc_ue) {
         if (sgwc_ue->gnode != gnode)
             continue;
 
-        ogs_warn("[%s] MME recovery restart: remove UE context",
-                sgwc_ue->imsi_bcd);
-        sgwc_ue_remove(sgwc_ue);
+        ogs_list_for_each_safe(&sgwc_ue->sess_list, next_sess, sess) {
+            ogs_warn("[%s] MME recovery restart: delete session toward PGW/SMF",
+                    sgwc_ue->imsi_bcd);
+
+            /* Remove data-plane bearer on SGW-U */
+            if (sess->pfcp_node && sess->sgwu_sxa_seid)
+                sgwc_pfcp_send_session_deletion_request(
+                        sess, OGS_INVALID_POOL_ID, NULL);
+
+            /* Delete PDN connection on PGW/SMF (S5C) */
+            if (sess->gnode)
+                sgwc_gtp_send_s5c_delete_session_request(sess);
+
+            sgwc_sess_remove(sess);
+        }
+
+        if (ogs_list_empty(&sgwc_ue->sess_list))
+            sgwc_ue_remove(sgwc_ue);
     }
 }
 
