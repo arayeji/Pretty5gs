@@ -1067,6 +1067,8 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
     char imeisv_bcd[OGS_MAX_IMEISV_BCD_LEN+1];
     char *mme_host = NULL;
     char *mme_realm = NULL;
+    char vlr_number[OGS_MAX_MSISDN_BCD_LEN*2+1];
+    bool is_cs_update = false;
 
     int rv;
     uint32_t result_code = 0;
@@ -1207,28 +1209,74 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
-    /* Check if CLR needs to be sent to previous MME */
-    if (subscription_data.mme_host != NULL &&
-            subscription_data.mme_realm != NULL) {
-        if (!subscription_data.purge_flag) {
-            if (strcmp(subscription_data.mme_host, mme_host) ||
-                strcmp(subscription_data.mme_realm, mme_realm)) {
-                hss_s6a_send_clr(imsi_bcd, subscription_data.mme_host,
-                    subscription_data.mme_realm,
-                    OGS_DIAM_S6A_CT_MME_UPDATE_PROCEDURE);
-                ogs_info("[%s] Sending Cancel Location to previous MME",
-                        imsi_bcd);
-            }
+    /*
+     * CS-domain interworking (IWF + HSS).
+     *
+     * An IWF that performs CS Location Update (GSUP) toward an MSC/VLR sends
+     * an S6d ULR which reuses the optional SGSN-Number AVP (TS 29.272) to
+     * carry the *real* VLR Global Title. We detect that case by the presence
+     * of SGSN-Number and store the VLR data in dedicated fields, so that a CS
+     * attach never overwrites a real PS MME (and vice versa). For these CS
+     * ULRs the request Origin-Host is the IWF CS Diameter identity, which we
+     * keep as vlr_host for later IDR/CLR routing.
+     */
+    memset(vlr_number, 0, sizeof(vlr_number));
+    ret = fd_msg_search_avp(qry, ogs_diam_s6a_sgsn_number, &avp);
+    if (ret == 0 && avp) {
+        ret = fd_msg_avp_hdr(avp, &hdr);
+        if (ret == 0 && hdr && hdr->avp_value->os.len > 0) {
+            int gt_len = ogs_min(hdr->avp_value->os.len,
+                    OGS_MAX_MSISDN_BCD_LEN);
+            ogs_buffer_to_bcd(hdr->avp_value->os.data, gt_len, vlr_number);
+            is_cs_update = true;
         }
     }
 
-    /* Update database with current MME and timestamp */
-    rv = hss_db_update_mme(imsi_bcd, mme_host, mme_realm, false);
-    if (rv != OGS_OK) {
-        ogs_error("Failed to update MME info for IMSI: %s", imsi_bcd);
-        result_code = OGS_DIAM_UNABLE_TO_DELIVER;
-        error_occurred = 1;
-        goto out;
+    if (is_cs_update) {
+        /* CS ULR from IWF: store VLR data, leave the PS MME untouched. */
+        if (subscription_data.vlr_host != NULL &&
+                !subscription_data.cs_purge_flag &&
+                strcmp(subscription_data.vlr_host, mme_host) != 0) {
+            ogs_info("[%s] CS re-registration from a new VLR/IWF host (%s)",
+                    imsi_bcd, mme_host);
+        }
+
+        rv = hss_db_update_vlr(imsi_bcd, vlr_number, mme_host, mme_realm,
+                false);
+        if (rv != OGS_OK) {
+            ogs_error("Failed to update VLR info for IMSI: %s", imsi_bcd);
+            result_code = OGS_DIAM_UNABLE_TO_DELIVER;
+            error_occurred = 1;
+            goto out;
+        }
+        ogs_info("[%s] CS Update-Location: VLRNumber=%s (IWF host=%s)",
+                imsi_bcd, vlr_number, mme_host);
+    } else {
+        /* PS ULR (real MME): existing behaviour, unchanged. */
+
+        /* Check if CLR needs to be sent to previous MME */
+        if (subscription_data.mme_host != NULL &&
+                subscription_data.mme_realm != NULL) {
+            if (!subscription_data.purge_flag) {
+                if (strcmp(subscription_data.mme_host, mme_host) ||
+                    strcmp(subscription_data.mme_realm, mme_realm)) {
+                    hss_s6a_send_clr(imsi_bcd, subscription_data.mme_host,
+                        subscription_data.mme_realm,
+                        OGS_DIAM_S6A_CT_MME_UPDATE_PROCEDURE);
+                    ogs_info("[%s] Sending Cancel Location to previous MME",
+                            imsi_bcd);
+                }
+            }
+        }
+
+        /* Update database with current MME and timestamp */
+        rv = hss_db_update_mme(imsi_bcd, mme_host, mme_realm, false);
+        if (rv != OGS_OK) {
+            ogs_error("Failed to update MME info for IMSI: %s", imsi_bcd);
+            result_code = OGS_DIAM_UNABLE_TO_DELIVER;
+            error_occurred = 1;
+            goto out;
+        }
     }
 
     /* Process Terminal-Information if present */
@@ -1762,8 +1810,30 @@ static int hss_ogs_diam_s6a_pur_cb(struct msg **msg, struct avp *avp,
     ogs_cpystrn(mme_realm, (char*)hdr->avp_value->os.data,
         ogs_min(hdr->avp_value->os.len, OGS_MAX_FQDN_LEN)+1);
 
+    /*
+     * If the purge comes from the CS IWF (Origin-Host matches the stored
+     * vlr_host), treat it as a CS detach: set cs_purge_flag so the Sh UDR
+     * stops returning the VLR number, and leave the PS MME untouched.
+     */
+    if (subscription_data.vlr_host &&
+        !strcmp(subscription_data.vlr_host, mme_host)) {
+
+        rv = hss_db_update_vlr(imsi_bcd, NULL, NULL, NULL, true);
+        if (rv != OGS_OK) {
+            ogs_error("Cannot update CS purge flag: %s", imsi_bcd);
+            ret = fd_msg_rescode_set(ans,
+                    (char*)"DIAMETER_UNABLE_TO_COMPLY", NULL, NULL, 1);
+            if (ret != 0) {
+                ogs_error("Failed to set DIAMETER_UNABLE_TO_COMPLY");
+            }
+            use_experimental_code = 0;
+            error_occurred = 1;
+            goto outnoexp;
+        }
+        ogs_info("[%s] CS detach (purge) from IWF host %s", imsi_bcd, mme_host);
+
     /* Check if the MME matches the one in subscription data */
-    if (subscription_data.mme_host && subscription_data.mme_realm &&
+    } else if (subscription_data.mme_host && subscription_data.mme_realm &&
         !strcmp(subscription_data.mme_host, mme_host) &&
         !strcmp(subscription_data.mme_realm, mme_realm)) {
 
@@ -2145,6 +2215,8 @@ int hss_s6a_send_idr(char *imsi_bcd, uint32_t idr_flags, uint32_t subdata_mask)
     struct session *session = NULL;
 
     ogs_subscription_data_t subscription_data;
+    char *dest_host = NULL;
+    char *dest_realm = NULL;
 
     ogs_debug("[HSS] Tx Insert-Subscriber-Data-Request");
 
@@ -2156,8 +2228,24 @@ int hss_s6a_send_idr(char *imsi_bcd, uint32_t idr_flags, uint32_t subdata_mask)
         return OGS_ERROR;
     }
 
-    if (subscription_data.purge_flag) {
-        ogs_error("    [%s] UE Purged at MME.  Cannot send IDR.", imsi_bcd);
+    /*
+     * Select the serving node to arm:
+     *  - PS-registered (real MME): target the MME (existing behaviour).
+     *  - CS-only (VLR via IWF, no live MME): target the IWF CS host so the
+     *    URRP reachability shim runs over the CS leg.
+     */
+    if (subscription_data.mme_host != NULL && !subscription_data.purge_flag) {
+        dest_host = subscription_data.mme_host;
+        dest_realm = subscription_data.mme_realm;
+    } else if (subscription_data.vlr_host != NULL &&
+            !subscription_data.cs_purge_flag) {
+        dest_host = subscription_data.vlr_host;
+        dest_realm = subscription_data.vlr_realm;
+        ogs_debug("    [%s] Arming UE reachability on CS IWF host %s",
+                imsi_bcd, dest_host);
+    } else {
+        ogs_error("    [%s] No reachable serving node. Cannot send IDR.",
+                imsi_bcd);
         return OGS_ERROR;
     }
 
@@ -2202,11 +2290,11 @@ int hss_s6a_send_idr(char *imsi_bcd, uint32_t idr_flags, uint32_t subdata_mask)
     ogs_assert(ret == 0);
 
     /* Set the Destination-Host AVP */
-    if (subscription_data.mme_host != NULL) {
+    if (dest_host != NULL) {
         ret = fd_msg_avp_new(ogs_diam_destination_host, 0, &avp);
         ogs_assert(ret == 0);
-        val.os.data = (uint8_t *)subscription_data.mme_host;
-        val.os.len  = strlen(subscription_data.mme_host);
+        val.os.data = (uint8_t *)dest_host;
+        val.os.len  = strlen(dest_host);
         ret = fd_msg_avp_setvalue(avp, &val);
         ogs_assert(ret == 0);
         ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp);
@@ -2216,12 +2304,12 @@ int hss_s6a_send_idr(char *imsi_bcd, uint32_t idr_flags, uint32_t subdata_mask)
     /* Set the Destination-Realm AVP */
     ret = fd_msg_avp_new(ogs_diam_destination_realm, 0, &avp);
     ogs_assert(ret == 0);
-    if (subscription_data.mme_realm == NULL) {
+    if (dest_realm == NULL) {
         val.os.data = (unsigned char *)(fd_g_config->cnf_diamrlm);
         val.os.len  = strlen(fd_g_config->cnf_diamrlm);
     } else {
-        val.os.data = (unsigned char *)subscription_data.mme_realm;
-        val.os.len  = strlen(subscription_data.mme_realm);
+        val.os.data = (unsigned char *)dest_realm;
+        val.os.len  = strlen(dest_realm);
     }
     ret = fd_msg_avp_setvalue(avp, &val);
     ogs_assert(ret == 0);

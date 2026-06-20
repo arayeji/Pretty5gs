@@ -67,6 +67,8 @@ int hss_db_increment_sqn(char *imsi_bcd);
 int hss_db_update_imeisv(char *imsi_bcd, char *imeisv);
 int hss_db_update_mme(char *imsi_bcd, char *mme_host, char *mme_realm,
     bool purge_flag);
+int hss_db_update_vlr(char *imsi_bcd, char *vlr_number, char *vlr_host,
+    char *vlr_realm, bool purge_flag);
 
 int hss_db_subscription_data(
     char *imsi_bcd, ogs_subscription_data_t *subscription_data);

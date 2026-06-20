@@ -101,6 +101,12 @@ extern struct dict_object *ogs_diam_sh_supported_features;  /* 628 */
 #define OGS_DIAM_SH_PS_USER_STATE_NOT_PROVIDED          5
 #define OGS_DIAM_SH_PS_USER_STATE_NDNR                  6
 
+/* CSUserState values - 3GPP TS 29.328 */
+#define OGS_DIAM_SH_CS_USER_STATE_CAMEL_BUSY            0
+#define OGS_DIAM_SH_CS_USER_STATE_NET_DET_NOT_REACH     1
+#define OGS_DIAM_SH_CS_USER_STATE_ASSUMED_IDLE          2
+#define OGS_DIAM_SH_CS_USER_STATE_NOT_PROVIDED_FROM_VLR 3
+
 /* Experimental Result-Codes - 3GPP TS 29.329 6.2 */
 #define OGS_DIAM_SH_SUCCESS_USER_DATA_NOT_AVAILABLE         4100
 #define OGS_DIAM_SH_SUCCESS_PRIOR_UPDATE_IN_PROGRESS        4101
