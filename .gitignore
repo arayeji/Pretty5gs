@@ -14,6 +14,14 @@ tools/analyze_kkkk_pcap.py
 tools/analyze_pcap_paa.py
 tools/analyze_s1ap_attach.py
 tools/trace_imsi_pcap.py
+tools/_decode_wow1_gtpc.py
+tools/_decode_wow1_gtpc2.py
+tools/analyze_gn_capture.py
+tools/analyze_wow_pcap.py
+tools/compare_wow2_flows.py
+tools/compare_wow_pcaps.py
+tools/decode_mbr361.py
+tools/decode_wow5_gn.py
 
 # Local SGsAP map tooling (generated from operator spreadsheets)
 configs/open5gs/sgsap-csmap-merge-example.yaml
@@ -34,6 +42,9 @@ subprojects/freeDiameter
 subprojects/libtins
 subprojects/prometheus-client-c
 subprojects/usrsctp
+
+# Local meson wrap lock artifact
+subprojects/.wraplock
 
 webui/.next
 /.vs
