@@ -544,10 +544,11 @@ static void pfcp_restoration(ogs_pfcp_node_t *node)
                             OGS_INET_NTOP(&sess->ipv4->addr, buf1) : "",
                         sess->ipv6 ?
                             OGS_INET6_NTOP(&sess->ipv6->addr, buf2) : "");
-                    ogs_assert(OGS_OK ==
-                        smf_epc_pfcp_send_session_establishment_request(
+                    if (smf_epc_pfcp_send_session_establishment_request(
                             sess, OGS_INVALID_POOL_ID,
-                            OGS_PFCP_CREATE_RESTORATION_INDICATION));
+                            OGS_PFCP_CREATE_RESTORATION_INDICATION) != OGS_OK)
+                        ogs_warn("PFCP restoration send failed for sess_id[%d]",
+                                sess->id);
                 } else {
                     ogs_info("UE SUPI[%s] DNN[%s] IPv4[%s] IPv6[%s]",
                         smf_ue->supi, sess->session.name,
@@ -555,10 +556,11 @@ static void pfcp_restoration(ogs_pfcp_node_t *node)
                             OGS_INET_NTOP(&sess->ipv4->addr, buf1) : "",
                         sess->ipv6 ?
                             OGS_INET6_NTOP(&sess->ipv6->addr, buf2) : "");
-                    ogs_assert(OGS_OK ==
-                            smf_5gc_pfcp_send_session_establishment_request(
-                                sess, NULL,
-                                OGS_PFCP_CREATE_RESTORATION_INDICATION));
+                    if (smf_5gc_pfcp_send_session_establishment_request(
+                            sess, NULL,
+                            OGS_PFCP_CREATE_RESTORATION_INDICATION) != OGS_OK)
+                        ogs_warn("PFCP restoration send failed for sess_id[%d]",
+                                sess->id);
                 }
             }
         }

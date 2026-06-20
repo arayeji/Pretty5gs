@@ -500,10 +500,11 @@ static void pfcp_restoration(ogs_pfcp_node_t *node)
             if (node == sess->pfcp_node) {
                 ogs_info("UE IMSI[%s] APN[%s]",
                     sgwc_ue->imsi_bcd, sess->session.name);
-                ogs_assert(OGS_OK ==
-                    sgwc_pfcp_send_session_establishment_request(
+                if (sgwc_pfcp_send_session_establishment_request(
                         sess, OGS_INVALID_POOL_ID, NULL,
-                        OGS_PFCP_CREATE_RESTORATION_INDICATION));
+                        OGS_PFCP_CREATE_RESTORATION_INDICATION) != OGS_OK)
+                    ogs_warn("PFCP restoration send failed for sess_id[%d]",
+                            sess->id);
             }
         }
     }
