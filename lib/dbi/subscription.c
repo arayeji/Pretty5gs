@@ -293,6 +293,17 @@ int ogs_dbi_update_vlr(char *supi, char *vlr_number, char *vlr_host,
     BSON_APPEND_BOOL(&set, OGS_CS_PURGE_FLAG_STRING, purge_flag);
     bson_append_document_end(update, &set);
 
+    /* On a CS detach (purge) drop the VLR identity fields so stale data does
+     * not linger in Mongo. cs_purge_flag stays set above for traceability. */
+    if (purge_flag) {
+        bson_t unset;
+        BSON_APPEND_DOCUMENT_BEGIN(update, "$unset", &unset);
+        BSON_APPEND_UTF8(&unset, OGS_VLR_NUMBER_STRING, "");
+        BSON_APPEND_UTF8(&unset, OGS_VLR_HOST_STRING, "");
+        BSON_APPEND_UTF8(&unset, OGS_VLR_REALM_STRING, "");
+        bson_append_document_end(update, &unset);
+    }
+
     if (!mongoc_collection_update(ogs_mongoc()->collection.subscriber,
             MONGOC_UPDATE_UPSERT, query, update, NULL, &error)) {
         ogs_error("mongoc_collection_update() failure: %s", error.message);
