@@ -33,6 +33,7 @@ libhss_sources = files('''
     hss-s6a-path.c
     hss-cx-path.c
     hss-swx-path.c
+    hss-sh-path.c
 
     hss-fd-path.c
 
@@ -47,7 +48,8 @@ libhss = static_library('hss',
                     libdbi_dep,
                     libdiameter_s6a_dep,
                     libdiameter_cx_dep,
-                    libdiameter_swx_dep],
+                    libdiameter_swx_dep,
+                    libdiameter_sh_dep],
     install : false)
 
 libhss_dep = declare_dependency(
@@ -58,7 +60,8 @@ libhss_dep = declare_dependency(
                     libdbi_dep,
                     libdiameter_s6a_dep,
                     libdiameter_cx_dep,
-                    libdiameter_swx_dep])
+                    libdiameter_swx_dep,
+                    libdiameter_sh_dep])
 
 hss_sources = files('''
     app-init.c

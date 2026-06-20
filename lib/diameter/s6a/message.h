@@ -106,6 +106,8 @@ extern struct dict_object *ogs_diam_s6a_cmd_clr;
 extern struct dict_object *ogs_diam_s6a_cmd_cla;
 extern struct dict_object *ogs_diam_s6a_cmd_idr;
 extern struct dict_object *ogs_diam_s6a_cmd_ida;
+extern struct dict_object *ogs_diam_s6a_cmd_nor;
+extern struct dict_object *ogs_diam_s6a_cmd_noa;
 
 extern struct dict_object *ogs_diam_s6a_ulr_flags;
 extern struct dict_object *ogs_diam_s6a_ula_flags;
