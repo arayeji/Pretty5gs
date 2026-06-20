@@ -31,6 +31,8 @@ static struct disp_hdl *hdl_s6a_air = NULL;
 static struct disp_hdl *hdl_s6a_ulr = NULL;
 /* handler for Purge-UE-Request cb */
 static struct disp_hdl *hdl_s6a_pur = NULL;
+/* handler for Notify-Request cb */
+static struct disp_hdl *hdl_s6a_nor = NULL;
 /* handler for Cancel-Location-Answer cb */
 static void hss_s6a_cla_cb(void *data, struct msg **msg);
 /* handler for Insert-Subscriber-Data-Answer cb */
@@ -2378,6 +2380,73 @@ cleanup:
     return;
 }
 
+/* HSS received Notify-Request from MME (3GPP TS 29.272 #7.2.17).
+ *
+ * The MME sends NOR after the HSS armed URRP-MME (IDR-Flags bit 0). On a
+ * reachability/state change the HSS maps the notification to an Sh
+ * Push-Notification-Request towards subscribed Application Servers (H7). */
+static int hss_ogs_diam_s6a_nor_cb(struct msg **msg, struct avp *avp,
+        struct session *session, void *opaque, enum disp_action *act)
+{
+    int ret;
+    struct msg *ans = NULL, *qry = NULL;
+    struct avp *avpch = NULL;
+    struct avp_hdr *hdr = NULL;
+    union avp_value val;
+
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+    bool have_imsi = false;
+
+    ogs_assert(msg);
+
+    ogs_debug("[HSS] Rx Notify-Request");
+
+    memset(imsi_bcd, 0, sizeof(imsi_bcd));
+
+    qry = *msg;
+    ret = fd_msg_new_answer_from_req(fd_g_config->cnf_dict, msg, 0);
+    ogs_assert(ret == 0);
+    ans = *msg;
+
+    /* User-Name (IMSI) */
+    ret = fd_msg_search_avp(qry, ogs_diam_user_name, &avpch);
+    if (ret == 0 && avpch) {
+        ret = fd_msg_avp_hdr(avpch, &hdr);
+        if (ret == 0 && hdr)
+            have_imsi = hss_s6a_user_name_to_imsi_bcd(
+                    hdr, imsi_bcd, sizeof(imsi_bcd));
+    }
+
+    /* Set Vendor-Specific-Application-Id */
+    ret = ogs_diam_message_vendor_specific_appid_set(
+            ans, OGS_DIAM_S6A_APPLICATION_ID);
+    ogs_assert(ret == 0);
+
+    /* Set the Auth-Session-State */
+    ret = fd_msg_avp_new(ogs_diam_auth_session_state, 0, &avp);
+    ogs_assert(ret == 0);
+    val.i32 = OGS_DIAM_AUTH_SESSION_NO_STATE_MAINTAINED;
+    ret = fd_msg_avp_setvalue(avp, &val);
+    ogs_assert(ret == 0);
+    ret = fd_msg_avp_add(ans, MSG_BRW_LAST_CHILD, avp);
+    ogs_assert(ret == 0);
+
+    /* Result-Code: DIAMETER_SUCCESS */
+    ret = fd_msg_rescode_set(ans, (char *)"DIAMETER_SUCCESS", NULL, NULL, 1);
+    ogs_assert(ret == 0);
+
+    ret = fd_msg_send(msg, NULL, NULL);
+    ogs_assert(ret == 0);
+
+    ogs_debug("[HSS] Tx Notify-Answer");
+
+    /* Map MME Notify to Sh PNR for subscribed Application Servers */
+    if (have_imsi)
+        hss_sh_notify_by_imsi(imsi_bcd);
+
+    return 0;
+}
+
 int hss_s6a_init(void)
 {
     int ret;
@@ -2417,6 +2486,12 @@ int hss_s6a_init(void)
                 &hdl_s6a_pur);
     ogs_assert(ret == 0);
 
+    /* Specific handler for Notify-Request */
+    data.command = ogs_diam_s6a_cmd_nor;
+    ret = fd_disp_register(hss_ogs_diam_s6a_nor_cb, DISP_HOW_CC, &data, NULL,
+                &hdl_s6a_nor);
+    ogs_assert(ret == 0);
+
     /* Advertise the support for the application in the peer */
     ret = fd_disp_app_support(ogs_diam_s6a_application, ogs_diam_vendor, 1, 0);
     ogs_assert(ret == 0);
@@ -2439,4 +2514,6 @@ void hss_s6a_final(void)
         (void) fd_disp_unregister(&hdl_s6a_ulr, NULL);
     if (hdl_s6a_pur)
         (void) fd_disp_unregister(&hdl_s6a_pur, NULL);
+    if (hdl_s6a_nor)
+        (void) fd_disp_unregister(&hdl_s6a_nor, NULL);
 }

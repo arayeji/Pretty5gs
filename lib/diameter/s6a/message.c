@@ -34,6 +34,8 @@ struct dict_object *ogs_diam_s6a_cmd_clr = NULL;
 struct dict_object *ogs_diam_s6a_cmd_cla = NULL;
 struct dict_object *ogs_diam_s6a_cmd_idr = NULL;
 struct dict_object *ogs_diam_s6a_cmd_ida = NULL;
+struct dict_object *ogs_diam_s6a_cmd_nor = NULL;
+struct dict_object *ogs_diam_s6a_cmd_noa = NULL;
 
 struct dict_object *ogs_diam_s6a_ulr_flags = NULL;
 struct dict_object *ogs_diam_s6a_ula_flags = NULL;
@@ -123,6 +125,8 @@ int ogs_diam_s6a_init(void)
     CHECK_dict_search(DICT_COMMAND, CMD_BY_NAME, "Cancel-Location-Answer", &ogs_diam_s6a_cmd_cla);
     CHECK_dict_search(DICT_COMMAND, CMD_BY_NAME, "Insert-Subscriber-Data-Request", &ogs_diam_s6a_cmd_idr);
     CHECK_dict_search(DICT_COMMAND, CMD_BY_NAME, "Insert-Subscriber-Data-Answer", &ogs_diam_s6a_cmd_ida);
+    CHECK_dict_search(DICT_COMMAND, CMD_BY_NAME, "Notify-Request", &ogs_diam_s6a_cmd_nor);
+    CHECK_dict_search(DICT_COMMAND, CMD_BY_NAME, "Notify-Answer", &ogs_diam_s6a_cmd_noa);
 
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "ULR-Flags", &ogs_diam_s6a_ulr_flags);
     CHECK_dict_search(DICT_AVP, AVP_BY_NAME_ALL_VENDORS, "ULA-Flags", &ogs_diam_s6a_ula_flags);

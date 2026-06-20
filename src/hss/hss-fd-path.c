@@ -92,6 +92,8 @@ int hss_fd_init(void)
     ogs_assert(rv == OGS_OK);
     rv = hss_swx_init();
     ogs_assert(rv == OGS_OK);
+    rv = hss_sh_init();
+    ogs_assert(rv == OGS_OK);
 
     ogs_diam_stats_update_cb_register(hsss_diam_stats_update_cb);
 
@@ -106,6 +108,7 @@ void hss_fd_final(void)
     hss_s6a_final();
     hss_cx_final();
     hss_swx_final();
+    hss_sh_final();
 
     ogs_diam_final();
 }

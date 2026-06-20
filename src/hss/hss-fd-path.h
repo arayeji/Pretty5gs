@@ -87,6 +87,13 @@ int hss_cx_init(void);
 void hss_cx_final(void);
 int hss_swx_init(void);
 void hss_swx_final(void);
+int hss_sh_init(void);
+void hss_sh_final(void);
+
+/* Push an Sh notification (PNR) to subscribed Application Servers for the
+ * given IMSI. Invoked from the S6a NOR handler when the MME reports a
+ * reachability/state change (URRP-MME). */
+void hss_sh_notify_by_imsi(const char *imsi_bcd);
 
 #ifdef __cplusplus
 }
