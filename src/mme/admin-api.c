@@ -240,7 +240,7 @@ int mme_admin_ue_page(const ogs_metrics_query_t *q,
         return ADMIN_HTTP_INTERNAL_ERROR;
     }
     e->mme_ue_id = mme_ue_pool_id;
-    /* force=1 -> CS-domain paging; default PS-domain. */
+    /* force=1 -> re-page even if a paging procedure is already in flight. */
     e->admin_force = q->force ? 1 : 0;
 
     int rv = ogs_queue_push(ogs_app()->queue, e);
@@ -255,8 +255,8 @@ int mme_admin_ue_page(const ogs_metrics_query_t *q,
 
     *body_len = fmt_json_status(body, body_cap,
             ADMIN_HTTP_ACCEPTED,
-            "paging queued for imsi=%s domain=%s",
-            q->imsi, e->admin_force ? "cs" : "ps");
+            "paging queued for imsi=%s domain=ps mode=%s",
+            q->imsi, e->admin_force ? "force-repage" : "normal");
     return ADMIN_HTTP_ACCEPTED;
 }
 
