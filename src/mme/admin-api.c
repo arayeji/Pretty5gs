@@ -196,6 +196,70 @@ int mme_admin_ue_detach(const ogs_metrics_query_t *q,
     return ADMIN_HTTP_ACCEPTED;
 }
 
+int mme_admin_ue_page(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    if (!q || !q->imsi || !*q->imsi) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_BAD_REQUEST, "missing ?imsi=...");
+        return ADMIN_HTTP_BAD_REQUEST;
+    }
+
+    ogs_pool_id_t mme_ue_pool_id = OGS_INVALID_POOL_ID;
+    bool connected = false;
+
+    ogs_metrics_dump_lock();
+    mme_ue_t *mme_ue = mme_ue_find_by_imsi_bcd(q->imsi);
+    if (mme_ue) {
+        mme_ue_pool_id = mme_ue->id;
+        connected = ECM_CONNECTED(mme_ue);
+    }
+    ogs_metrics_dump_unlock();
+
+    if (mme_ue_pool_id == OGS_INVALID_POOL_ID) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_NOT_FOUND, "UE not found");
+        return ADMIN_HTTP_NOT_FOUND;
+    }
+
+    /*
+     * Advisory shortcut: if the UE is already connected there is nothing
+     * to page. The MME main thread re-checks authoritatively before it
+     * actually sends the S1AP Paging.
+     */
+    if (connected) {
+        *body_len = fmt_json_status(body, body_cap, 200,
+                "UE already ECM-CONNECTED for imsi=%s", q->imsi);
+        return 200;
+    }
+
+    mme_event_t *e = mme_event_new(MME_EVENT_ADMIN_PAGE_UE);
+    if (!e) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_INTERNAL_ERROR, "event_new failed");
+        return ADMIN_HTTP_INTERNAL_ERROR;
+    }
+    e->mme_ue_id = mme_ue_pool_id;
+    /* force=1 -> CS-domain paging; default PS-domain. */
+    e->admin_force = q->force ? 1 : 0;
+
+    int rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        mme_event_free(e);
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
+        return ADMIN_HTTP_SERVICE_UNAVAIL;
+    }
+
+    ogs_pollset_notify(ogs_app()->pollset);
+
+    *body_len = fmt_json_status(body, body_cap,
+            ADMIN_HTTP_ACCEPTED,
+            "paging queued for imsi=%s domain=%s",
+            q->imsi, e->admin_force ? "cs" : "ps");
+    return ADMIN_HTTP_ACCEPTED;
+}
+
 int mme_admin_trace_imsi(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len)
 {
@@ -330,6 +394,9 @@ void mme_admin_api_register(void)
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
     ogs_metrics_register_admin_ep(mme_admin_ue_detach,
             "/admin/ue/detach",
+            OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
+    ogs_metrics_register_admin_ep(mme_admin_ue_page,
+            "/admin/ue/page",
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
     ogs_metrics_register_admin_ep(mme_admin_trace_imsi,
             "/admin/trace/imsi",
