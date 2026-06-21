@@ -24,6 +24,7 @@
 #include "eplmn-config.h"
 #include "mme-event.h"
 #include "mme-path.h"
+#include "mme-fd-path.h"
 #include "mme-roam-access.h"
 #include "mme-timer.h"
 #include "mme-trace.h"
@@ -6858,6 +6859,16 @@ void enb_ue_associate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
      * evictor only considers UEs that are genuinely idle. */
     mme_ue->idle_since = 0;
     mme_idle_t3346_clear(mme_ue);
+
+    /*
+     * T-ADS (3GPP TS 23.272 / TS 29.272): the UE just established a
+     * signalling connection (ECM-CONNECTED). If the HSS armed URRP-MME,
+     * report reachability now via S6a NOR. This covers both the paged
+     * response and an autonomous re-appearance (periodic TAU / Service
+     * Request) after paging failed; mme_s6a_report_urrp() is a no-op
+     * when URRP-MME is not armed.
+     */
+    mme_s6a_report_urrp(mme_ue);
 }
 
 void enb_ue_deassociate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)

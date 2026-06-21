@@ -44,6 +44,13 @@ void mme_s6a_send_pur(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 /* MME Sends Notify Request to HSS (T-ADS UE-reachability report, URRP-MME) */
 void mme_s6a_send_nor(mme_ue_t *mme_ue, uint32_t nor_flags);
 
+/*
+ * T-ADS helper: if URRP-MME is armed for this UE, report reachability to
+ * the HSS via S6a NOR (UE-Reachable-From-MME) and disarm. No-op otherwise.
+ * Called from any ECM-IDLE -> ECM-CONNECTED transition.
+ */
+void mme_s6a_report_urrp(mme_ue_t *mme_ue);
+
 void mme_s6a_timer_start(mme_ue_t *mme_ue, uint16_t cmd_code);
 void mme_s6a_timer_stop(mme_ue_t *mme_ue);
 

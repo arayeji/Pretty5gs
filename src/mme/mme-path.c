@@ -387,18 +387,24 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
     /*
      * T-ADS (3GPP TS 23.272 / TS 29.272): if the HSS armed UE reachability
      * (URRP-MME) and the UE has now become reachable, notify the HSS via
-     * S6a Notify-Request so it can inform the IMS Application Server. On
-     * paging failure, leave URRP disarmed (the AS falls back per its policy).
+     * S6a Notify-Request so it can inform the IMS Application Server.
+     *
+     * On success the NOR is normally already sent from the ECM-CONNECTED
+     * transition (enb_ue_associate_mme_ue -> mme_s6a_report_urrp); the
+     * call here is idempotent and only acts as a safety net.
+     *
+     * On paging failure we deliberately keep URRP-MME *armed*: the S1AP
+     * paging procedure has already exhausted its bounded T3413 retries,
+     * so rather than dropping the request we let the next autonomous
+     * ECM-CONNECTED transition (periodic TAU / Service Request) report
+     * reachability. The arming is cleared when the UE context is removed.
      */
     if (mme_ue->urrp_mme) {
-        mme_ue->urrp_mme = false;
         if (failed == false) {
-            ogs_info("[%s] T-ADS: UE reachable after paging -> Tx S6a NOR",
-                    mme_ue->imsi_bcd);
-            mme_s6a_send_nor(mme_ue,
-                    OGS_DIAM_S6A_NOR_FLAGS_UE_REACHABLE_FROM_MME);
+            mme_s6a_report_urrp(mme_ue);
         } else {
-            ogs_warn("[%s] T-ADS: UE reachability paging failed",
+            ogs_warn("[%s] T-ADS: UE reachability paging failed; URRP-MME "
+                    "stays armed for autonomous reachability",
                     mme_ue->imsi_bcd);
         }
     }

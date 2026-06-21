@@ -2434,6 +2434,27 @@ send_error:
         state_cleanup(sess_data, NULL, NULL);
 }
 
+/*
+ * T-ADS: report UE reachability if URRP-MME is armed, then disarm.
+ *
+ * Invoked from any ECM-IDLE -> ECM-CONNECTED transition
+ * (enb_ue_associate_mme_ue), so reachability is reported whether the UE
+ * answered our paging or came up autonomously (periodic TAU, Service
+ * Request, Attach). Idempotent: the disarm makes sure only one NOR is
+ * sent per arming.
+ */
+void mme_s6a_report_urrp(mme_ue_t *mme_ue)
+{
+    if (!mme_ue || !mme_ue->urrp_mme)
+        return;
+
+    mme_ue->urrp_mme = false;
+
+    ogs_info("[%s] T-ADS: UE reachable (ECM-CONNECTED) -> Tx S6a NOR",
+            mme_ue->imsi_bcd);
+    mme_s6a_send_nor(mme_ue, OGS_DIAM_S6A_NOR_FLAGS_UE_REACHABLE_FROM_MME);
+}
+
 /* MME received Notify-Answer from HSS (3GPP TS 29.272 #7.2.18) */
 static void mme_s6a_noa_cb(void *data, struct msg **msg)
 {

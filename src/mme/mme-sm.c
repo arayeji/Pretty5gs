@@ -1324,6 +1324,44 @@ cleanup:
         break;
     }
 
+    case MME_EVENT_ADMIN_PAGE_UE:
+    {
+        mme_ue = mme_ue_find_by_id(e->mme_ue_id);
+        if (!mme_ue) {
+            ogs_warn("admin page ue: mme_ue pool-id %d already gone",
+                    (int)e->mme_ue_id);
+            break;
+        }
+
+        if (ECM_CONNECTED(mme_ue)) {
+            ogs_info("admin page ue: imsi=%s already ECM-CONNECTED, skip",
+                    mme_ue->imsi_bcd);
+            break;
+        }
+
+        if (MME_PAGING_ONGOING(mme_ue)) {
+            ogs_info("admin page ue: imsi=%s paging already ongoing [type=%d]",
+                    mme_ue->imsi_bcd, mme_ue->paging.type);
+            break;
+        }
+
+        {
+            int r;
+            S1AP_CNDomain_t cn_domain =
+                e->admin_force ? S1AP_CNDomain_cs : S1AP_CNDomain_ps;
+
+            ogs_info("admin page ue: imsi=%s domain=%s",
+                    mme_ue->imsi_bcd, e->admin_force ? "cs" : "ps");
+
+            MME_STORE_PAGING_INFO(mme_ue,
+                    MME_PAGING_TYPE_UE_REACHABILITY, NULL);
+            r = s1ap_send_paging(mme_ue, cn_domain);
+            ogs_expect(r == OGS_OK);
+            ogs_assert(r != OGS_ERROR);
+        }
+        break;
+    }
+
     case MME_EVENT_ADMIN_MAINTENANCE_ENABLE:
         mme_self()->maintenance_mode = true;
         ogs_info("admin maintenance: enabled (implicit detach all UEs)");

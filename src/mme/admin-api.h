@@ -42,6 +42,19 @@
  *     SMF/PGW are still cleaned up via the standard cascade. The UE
  *     finds out it has been detached only on next interaction.
  *
+ *   POST /admin/ue/page?imsi=<15 digits>[&force=1]    ; or
+ *   GET  /admin/ue/page?imsi=<15 digits>[&force=1]
+ *
+ *     Manually trigger paging for the named UE (TS 23.401 paging).
+ *     Useful to force a T-ADS UE-reachability check or wake an idle
+ *     UE on demand. If the UE is already ECM-CONNECTED the call is a
+ *     no-op (returns 200). Default pages the PS domain
+ *     (S1AP CN-Domain = ps); force=1 pages the CS domain.
+ *
+ *     This does NOT arm URRP-MME; it only sends paging. If URRP-MME
+ *     is already armed (HSS S6a IDR), the resulting ECM-CONNECTED
+ *     transition reports reachability via S6a NOR as usual.
+ *
  *   GET /admin/trace/imsi?imsi=<prefix>              add runtime DEBUG filter
  *   GET /admin/trace/imsi?imsi=<prefix>&replace=1    set only this prefix
  *   GET /admin/trace/imsi?imsi=<prefix>&remove=1     remove one prefix
@@ -84,6 +97,8 @@ void mme_admin_api_register(void);
 int mme_admin_enb_detach(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len);
 int mme_admin_ue_detach(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len);
+int mme_admin_ue_page(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len);
 int mme_admin_trace_imsi(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len);
