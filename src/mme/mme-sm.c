@@ -1333,29 +1333,36 @@ cleanup:
             break;
         }
 
+        /* Can't page a UE that already has a signalling connection. */
         if (ECM_CONNECTED(mme_ue)) {
             ogs_info("admin page ue: imsi=%s already ECM-CONNECTED, skip",
                     mme_ue->imsi_bcd);
             break;
         }
 
-        if (MME_PAGING_ONGOING(mme_ue)) {
-            ogs_info("admin page ue: imsi=%s paging already ongoing [type=%d]",
+        /*
+         * force=0 (default): if a paging procedure is already running we
+         * leave it alone. force=1: re-issue paging anyway (restarts T3413
+         * and re-sends the S1AP Paging) - matches the "abrupt" force
+         * convention used by the other admin endpoints.
+         */
+        if (MME_PAGING_ONGOING(mme_ue) && !e->admin_force) {
+            ogs_info("admin page ue: imsi=%s paging already ongoing "
+                    "[type=%d], skip (use force=1 to re-page)",
                     mme_ue->imsi_bcd, mme_ue->paging.type);
             break;
         }
 
         {
             int r;
-            S1AP_CNDomain_t cn_domain =
-                e->admin_force ? S1AP_CNDomain_cs : S1AP_CNDomain_ps;
 
-            ogs_info("admin page ue: imsi=%s domain=%s",
-                    mme_ue->imsi_bcd, e->admin_force ? "cs" : "ps");
+            ogs_info("admin page ue: imsi=%s domain=ps%s",
+                    mme_ue->imsi_bcd,
+                    e->admin_force ? " (forced re-page)" : "");
 
             MME_STORE_PAGING_INFO(mme_ue,
                     MME_PAGING_TYPE_UE_REACHABILITY, NULL);
-            r = s1ap_send_paging(mme_ue, cn_domain);
+            r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
         }

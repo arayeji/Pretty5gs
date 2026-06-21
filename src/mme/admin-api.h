@@ -45,15 +45,21 @@
  *   POST /admin/ue/page?imsi=<15 digits>[&force=1]    ; or
  *   GET  /admin/ue/page?imsi=<15 digits>[&force=1]
  *
- *     Manually trigger paging for the named UE (TS 23.401 paging).
- *     Useful to force a T-ADS UE-reachability check or wake an idle
- *     UE on demand. If the UE is already ECM-CONNECTED the call is a
- *     no-op (returns 200). Default pages the PS domain
- *     (S1AP CN-Domain = ps); force=1 pages the CS domain.
+ *     Manually trigger PS-domain paging for the named UE (TS 23.401
+ *     paging, S1AP CN-Domain = ps). Useful to wake an idle UE on demand
+ *     or to drive a T-ADS UE-reachability check. If the UE is already
+ *     ECM-CONNECTED the call is a no-op (returns 200).
  *
- *     This does NOT arm URRP-MME; it only sends paging. If URRP-MME
- *     is already armed (HSS S6a IDR), the resulting ECM-CONNECTED
- *     transition reports reachability via S6a NOR as usual.
+ *     force=0 (default): if a paging procedure is already running for
+ *                        the UE, leave it alone (returns "skip").
+ *     force=1          : re-issue paging anyway (restarts T3413 and
+ *                        re-sends the S1AP Paging) - same "abrupt"
+ *                        force convention as the detach endpoints.
+ *
+ *     CS-domain paging is not exposed here; it is driven by SGsAP from
+ *     the MSC/VLR. This endpoint does NOT arm URRP-MME; it only sends
+ *     paging. If URRP-MME is already armed (HSS S6a IDR), the resulting
+ *     ECM-CONNECTED transition reports reachability via S6a NOR.
  *
  *   GET /admin/trace/imsi?imsi=<prefix>              add runtime DEBUG filter
  *   GET /admin/trace/imsi?imsi=<prefix>&replace=1    set only this prefix
