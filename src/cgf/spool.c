@@ -20,6 +20,7 @@
 #include "spool.h"
 
 #include "cdr/framing.h"
+#include "ogs-app.h"
 
 #include <stdio.h>
 #include <errno.h>
@@ -42,9 +43,93 @@
 
 static cgf_spool_file_t *g_active = NULL;
 
+/*
+ * Spool scan state — ready/ can hold 100k+ files. A full readdir on
+ * every spool_poll tick was costing ~10% CPU. We keep a lexicographic
+ * cursor (last handled basename), cache the next validated path, and
+ * back off when the directory is empty.
+ */
+static char g_last_handled_base[256];
+static bool g_last_handled_valid;
+static char g_cached_next_path[512];
+static ogs_time_t g_empty_until;
+
+#define CGF_SPOOL_EMPTY_BACKOFF_MAX_MS 30000
+
 /* ------------------------------------------------------------------ */
 
 cgf_spool_file_t *cgf_spool_get_active(void) { return g_active; }
+
+static const char *path_basename(const char *path)
+{
+    const char *base = strrchr(path, '/');
+#ifdef _WIN32
+    { const char *bb = strrchr(path, '\\'); if (bb > base) base = bb; }
+#endif
+    return base ? base + 1 : path;
+}
+
+static void spool_clear_cached_next(void)
+{
+    g_cached_next_path[0] = '\0';
+}
+
+static void spool_remember_handled(const char *path)
+{
+    const char *base = path_basename(path);
+    ogs_snprintf(g_last_handled_base, sizeof(g_last_handled_base),
+            "%s", base);
+    g_last_handled_valid = (g_last_handled_base[0] != '\0');
+    spool_clear_cached_next();
+}
+
+static void spool_reset_scan_state(void)
+{
+    g_last_handled_valid = false;
+    g_last_handled_base[0] = '\0';
+    spool_clear_cached_next();
+    g_empty_until = 0;
+}
+
+static bool spool_is_cdr_name(const char *name)
+{
+    size_t nl;
+
+    if (!name) return false;
+    nl = strlen(name);
+    return nl >= 4 && strcmp(name + nl - 4, ".cdr") == 0;
+}
+
+static bool spool_path_ready(const char *path)
+{
+    struct stat st;
+
+    if (!path || !path[0]) return false;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
+static void spool_mark_empty(void)
+{
+    uint32_t poll_ms = cgf_self()->spool_poll_ms;
+    static uint32_t empty_backoff_ms;
+    ogs_time_t delay;
+
+    if (!poll_ms) poll_ms = 1000;
+    if (!empty_backoff_ms) empty_backoff_ms = poll_ms * 5;
+    else if (empty_backoff_ms < CGF_SPOOL_EMPTY_BACKOFF_MAX_MS)
+        empty_backoff_ms *= 2;
+    if (empty_backoff_ms > CGF_SPOOL_EMPTY_BACKOFF_MAX_MS)
+        empty_backoff_ms = CGF_SPOOL_EMPTY_BACKOFF_MAX_MS;
+
+    delay = ogs_time_from_msec(empty_backoff_ms);
+    g_empty_until = ogs_time_now() + delay;
+    spool_clear_cached_next();
+}
+
+static void spool_clear_empty_backoff(void)
+{
+    g_empty_until = 0;
+}
 
 static void free_file(cgf_spool_file_t *f)
 {
@@ -80,11 +165,12 @@ static int slurp(const char *path, uint8_t **out, size_t *out_len)
     return OGS_OK;
 }
 
-static int find_oldest(char *out_path, size_t out_cap)
+static int find_next_cdr(char *out_path, size_t out_cap,
+        const char *after_base)
 {
-    /* Scan ready/ for *.cdr and return the lexicographically smallest
-     * name (filenames include an epoch prefix so this matches
-     * insertion order). Returns OGS_OK if one was found. */
+    /* Return the lexicographically smallest *.cdr in ready/, or — when
+     * after_base is set — the smallest name strictly greater than it.
+     * Filenames carry an epoch prefix so this matches insertion order. */
 #ifdef _WIN32
     WIN32_FIND_DATAA fd;
     HANDLE h;
@@ -96,6 +182,10 @@ static int find_oldest(char *out_path, size_t out_cap)
     if (h == INVALID_HANDLE_VALUE) return OGS_ERROR;
     do {
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (!spool_is_cdr_name(fd.cFileName)) continue;
+        if (after_base && after_base[0] &&
+                strcmp(fd.cFileName, after_base) <= 0)
+            continue;
         if (best[0] == '\0' || strcmp(fd.cFileName, best) < 0)
             ogs_snprintf(best, sizeof(best), "%s", fd.cFileName);
     } while (FindNextFileA(h, &fd));
@@ -112,9 +202,10 @@ static int find_oldest(char *out_path, size_t out_cap)
     if (!d) return OGS_ERROR;
 
     while ((ent = readdir(d)) != NULL) {
-        size_t nl = strlen(ent->d_name);
-        if (nl < 4) continue;
-        if (strcmp(ent->d_name + nl - 4, ".cdr") != 0) continue;
+        if (!spool_is_cdr_name(ent->d_name)) continue;
+        if (after_base && after_base[0] &&
+                strcmp(ent->d_name, after_base) <= 0)
+            continue;
         if (best[0] == '\0' || strcmp(ent->d_name, best) < 0)
             ogs_snprintf(best, sizeof(best), "%s", ent->d_name);
     }
@@ -126,22 +217,45 @@ static int find_oldest(char *out_path, size_t out_cap)
 #endif
 }
 
-void cgf_spool_refill(void)
+static int pick_next_path(char *out_path, size_t out_cap)
 {
-    char path[512];
+    const char *after = g_last_handled_valid ? g_last_handled_base : NULL;
+
+    if (g_cached_next_path[0] && spool_path_ready(g_cached_next_path)) {
+        ogs_snprintf(out_path, out_cap, "%s", g_cached_next_path);
+        return OGS_OK;
+    }
+
+    spool_clear_cached_next();
+    if (find_next_cdr(out_path, out_cap, after) != OGS_OK)
+        return OGS_ERROR;
+
+    ogs_snprintf(g_cached_next_path, sizeof(g_cached_next_path),
+            "%s", out_path);
+    return OGS_OK;
+}
+
+static int quarantine_bad_header(const char *path)
+{
+    const char *base = path_basename(path);
+    char dst[512];
+
+    ogs_snprintf(dst, sizeof(dst), "%s/%s", cgf_self()->failed_dir, base);
+    return rename(path, dst);
+}
+
+static bool open_spool_file(const char *path)
+{
     cgf_spool_file_t *f;
     uint8_t *data = NULL;
     size_t data_len = 0;
 
-    if (g_active) return; /* already draining one */
-
-    if (find_oldest(path, sizeof(path)) != OGS_OK) return;
     if (slurp(path, &data, &data_len) != OGS_OK) {
         ogs_warn("cgf: cannot read '%s'", path);
-        return;
+        spool_remember_handled(path);
+        return false;
     }
 
-    /* Quick sanity check of the first frame. */
     if (data_len >= CDR_RECORD_HDR_LEN) {
         if (memcmp(data, CDR_FILE_MAGIC, 4) != 0 ||
                 data[4] != CDR_FILE_VERSION ||
@@ -149,20 +263,12 @@ void cgf_spool_refill(void)
             ogs_error("cgf: '%s' has bad spool header (magic/version/format), "
                     "quarantining", path);
             ogs_free(data);
-            /* Move directly to failed/. */
-            {
-                const char *base = strrchr(path, '/');
-#ifdef _WIN32
-                { const char *bb = strrchr(path, '\\');
-                  if (bb > base) base = bb; }
-#endif
-                base = base ? base + 1 : path;
-                char dst[512];
-                ogs_snprintf(dst, sizeof(dst), "%s/%s",
-                        cgf_self()->failed_dir, base);
-                rename(path, dst);
+            if (quarantine_bad_header(path) != 0) {
+                ogs_warn("cgf: quarantine rename failed for '%s': %s",
+                        path, strerror(errno));
             }
-            return;
+            spool_remember_handled(path);
+            return false;
         }
     }
 
@@ -173,11 +279,37 @@ void cgf_spool_refill(void)
     f->data_len = data_len;
     f->next_record_offset = 0;
     g_active = f;
+    spool_clear_cached_next();
 
     ogs_info("cgf: opened spool file '%s' (%zu B, first_record=%s)",
             path, data_len,
             data_len >= OGS_CDR_RECORD_HDR_LEN ?
                 ogs_cdr_format_name(data[5]) : "?");
+    return true;
+}
+
+void cgf_spool_refill(void)
+{
+    char path[512];
+    int attempts;
+
+    if (g_active) return;
+    if (g_empty_until && ogs_time_now() < g_empty_until) return;
+
+    /* Try several candidates in one timer tick when early files are
+     * unreadable or corrupt — avoids a full readdir every spool_poll. */
+    for (attempts = 0; attempts < 8; attempts++) {
+        if (pick_next_path(path, sizeof(path)) != OGS_OK) {
+            spool_mark_empty();
+            return;
+        }
+
+        if (open_spool_file(path))
+            return;
+    }
+
+    ogs_warn("cgf: spool refill skipped %d unreadable/corrupt files in "
+            "ready/", attempts);
 }
 
 uint32_t cgf_spool_stage_batch(cgf_spool_file_t *file,
@@ -295,6 +427,8 @@ void cgf_spool_ack_batch(cgf_spool_file_t *file)
             move_to(file, cgf_self()->done_dir);
         }
         if (file == g_active) g_active = NULL;
+        spool_remember_handled(file->path);
+        spool_clear_empty_backoff();
         free_file(file);
     }
 }
@@ -314,11 +448,16 @@ void cgf_spool_quarantine(cgf_spool_file_t *file)
     if (!file) return;
     ogs_warn("cgf: quarantining '%s'", file->path);
     move_to(file, cgf_self()->failed_dir);
-    if (file == g_active) g_active = NULL;
+    if (file == g_active) {
+        g_active = NULL;
+        spool_remember_handled(file->path);
+    }
+    spool_clear_empty_backoff();
     free_file(file);
 }
 
 void cgf_spool_close(void)
 {
     if (g_active) { free_file(g_active); g_active = NULL; }
+    spool_reset_scan_state();
 }
