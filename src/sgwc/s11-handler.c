@@ -1132,6 +1132,8 @@ void sgwc_s11_handle_delete_session_request(
                 s11_xact, sgwc_ue->mme_s11_teid,
                 OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE,
                 OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
+        /* Release the UE context if this was its last session. */
+        sgwc_ue_remove_if_empty(sgwc_ue);
         return;
     }
 

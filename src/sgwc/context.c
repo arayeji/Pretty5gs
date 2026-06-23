@@ -1364,6 +1364,30 @@ void sgwc_ue_remove_all(void)
         sgwc_ue_remove(sgwc_ue);
 }
 
+void sgwc_ue_remove_if_empty(sgwc_ue_t *sgwc_ue)
+{
+    if (!sgwc_ue)
+        return;
+
+    /*
+     * Keep the UE while a Create Session Request collision replace is
+     * pending: that flow re-establishes a session on the same UE and
+     * still needs the context.
+     */
+    if (sgwc_ue->csr_replace_s11_xact_id != OGS_INVALID_POOL_ID ||
+            sgwc_ue->csr_replace_sess_id != OGS_INVALID_POOL_ID)
+        return;
+
+    /*
+     * Once the last PDN connection is gone, the SGWC-UE context (its S11
+     * TEID, IMSI hash entry and the sgwc_ue_active gauge) must be released.
+     * Otherwise UE contexts accumulate indefinitely on normal detach, since
+     * the MME and SGW-U release their state but the SGW-C never does.
+     */
+    if (ogs_list_empty(&sgwc_ue->sess_list))
+        sgwc_ue_remove(sgwc_ue);
+}
+
 sgwc_ue_t *sgwc_ue_find_by_imsi_bcd(const char *imsi_bcd)
 {
     uint8_t imsi[OGS_MAX_IMSI_LEN];

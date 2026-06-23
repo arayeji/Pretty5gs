@@ -153,6 +153,8 @@ static void sess_timeout(ogs_gtp_xact_t *xact, void *data)
         } else {
             sgwc_sess_remove(sess);
         }
+        /* Release the UE context if this create-session was its last. */
+        sgwc_ue_remove_if_empty(sgwc_ue);
         break;
     }
     default:
@@ -315,8 +317,11 @@ void sgwc_sxa_handle_unexpected_modification_response(
         }
     }
 
-    if (est_sess)
+    if (est_sess) {
+        sgwc_ue_t *est_ue = sgwc_ue_find_by_id(est_sess->sgwc_ue_id);
         sgwc_sess_remove(est_sess);
+        sgwc_ue_remove_if_empty(est_ue);
+    }
 
     ogs_pfcp_xact_commit(pfcp_xact);
 }
@@ -536,8 +541,10 @@ void sgwc_sxa_handle_session_establishment_response(
                 offending_ie,
                 vpp_detail[0] ? vpp_detail : "-");
         sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, cause_value);
-        if (sess && !sess->gn)
+        if (sess && !sess->gn) {
             sgwc_sess_remove(sess);
+            sgwc_ue_remove_if_empty(sgwc_ue);
+        }
         return;
     }
 
@@ -559,8 +566,10 @@ void sgwc_sxa_handle_session_establishment_response(
             ogs_error("No DL tunnel");
             sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_SYSTEM_FAILURE);
-            if (!sess->gn)
+            if (!sess->gn) {
                 sgwc_sess_remove(sess);
+                sgwc_ue_remove_if_empty(sgwc_ue);
+            }
             return;
         }
 
@@ -572,8 +581,10 @@ void sgwc_sxa_handle_session_establishment_response(
             ogs_error("No UP F-TEID");
             sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_GRE_KEY_NOT_FOUND);
-            if (!sess->gn)
+            if (!sess->gn) {
                 sgwc_sess_remove(sess);
+                sgwc_ue_remove_if_empty(sgwc_ue);
+            }
             return;
         }
 
@@ -587,8 +598,10 @@ void sgwc_sxa_handle_session_establishment_response(
             ogs_error("No local F-TEID address");
             sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_GRE_KEY_NOT_FOUND);
-            if (!sess->gn)
+            if (!sess->gn) {
                 sgwc_sess_remove(sess);
+                sgwc_ue_remove_if_empty(sgwc_ue);
+            }
             return;
         }
         rv = ogs_gtp2_sockaddr_to_f_teid(
@@ -599,8 +612,10 @@ void sgwc_sxa_handle_session_establishment_response(
             ogs_error("ogs_gtp2_sockaddr_to_f_teid() failed");
             sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_SYSTEM_FAILURE);
-            if (!sess->gn)
+            if (!sess->gn) {
                 sgwc_sess_remove(sess);
+                sgwc_ue_remove_if_empty(sgwc_ue);
+            }
             return;
         }
 
@@ -624,8 +639,10 @@ void sgwc_sxa_handle_session_establishment_response(
         ogs_error("ogs_gtp2_sockaddr_to_f_teid(S5C) failed");
         sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                 OGS_GTP2_CAUSE_SYSTEM_FAILURE);
-        if (!sess->gn)
+        if (!sess->gn) {
             sgwc_sess_remove(sess);
+            sgwc_ue_remove_if_empty(sgwc_ue);
+        }
         return;
     }
 
@@ -636,8 +653,10 @@ void sgwc_sxa_handle_session_establishment_response(
         ogs_error("No UP F-SEID data");
         sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                 OGS_GTP2_CAUSE_MANDATORY_IE_MISSING);
-        if (!sess->gn)
+        if (!sess->gn) {
             sgwc_sess_remove(sess);
+            sgwc_ue_remove_if_empty(sgwc_ue);
+        }
         return;
     }
     sess->sgwu_sxa_seid = be64toh(up_f_seid->seid);
@@ -660,8 +679,10 @@ void sgwc_sxa_handle_session_establishment_response(
                 ogs_error("ogs_gtp_node_add_by_f_teid() failed");
                 sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                         OGS_GTP2_CAUSE_SYSTEM_FAILURE);
-                if (!sess->gn)
+                if (!sess->gn) {
                     sgwc_sess_remove(sess);
+                    sgwc_ue_remove_if_empty(sgwc_ue);
+                }
                 return;
             }
 
@@ -670,8 +691,10 @@ void sgwc_sxa_handle_session_establishment_response(
                 ogs_error("sgwc_gtp_connect_peer() failed");
                 sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                         OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
-                if (!sess->gn)
+                if (!sess->gn) {
                     sgwc_sess_remove(sess);
+                    sgwc_ue_remove_if_empty(sgwc_ue);
+                }
                 return;
             }
         }
@@ -692,8 +715,10 @@ void sgwc_sxa_handle_session_establishment_response(
                 "(PGW_S5C_TEID=0x%x)", sess->pgw_s5c_teid);
         sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                 OGS_GTP2_CAUSE_CONDITIONAL_IE_MISSING);
-        if (!sess->gn)
+        if (!sess->gn) {
             sgwc_sess_remove(sess);
+            sgwc_ue_remove_if_empty(sgwc_ue);
+        }
         return;
     }
 
@@ -757,8 +782,10 @@ void sgwc_sxa_handle_session_establishment_response(
             ogs_error("No S5 peer (gnode)");
             sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
-            if (!sess->gn)
+            if (!sess->gn) {
                 sgwc_sess_remove(sess);
+                sgwc_ue_remove_if_empty(sgwc_ue);
+            }
             return;
         }
         s5c_xact = ogs_gtp_xact_local_create(
@@ -822,8 +849,10 @@ void sgwc_sxa_handle_session_establishment_response(
             ogs_error("No S5 peer (gnode)");
             sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
-            if (!sess->gn)
+            if (!sess->gn) {
                 sgwc_sess_remove(sess);
+                sgwc_ue_remove_if_empty(sgwc_ue);
+            }
             return;
         }
         s5c_xact = ogs_gtp_xact_local_create(
@@ -2114,8 +2143,13 @@ void sgwc_sxa_handle_session_deletion_response(
 
 cleanup:
     if (sess) {
+        sgwc_ue_t *owner_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+
         sess->sgwu_sxa_seid = 0;
         sgwc_sess_remove(sess);
+
+        /* Release the UE context once its last PDN connection is gone. */
+        sgwc_ue_remove_if_empty(owner_ue);
     } else
         ogs_error("No Session");
 }

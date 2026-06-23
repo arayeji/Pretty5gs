@@ -165,8 +165,11 @@ static void create_session_reject_and_cleanup(
 {
     sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, gtp2_cause);
 
-    if (sess && !sess->gn)
+    if (sess && !sess->gn) {
         sgwc_sess_remove(sess);
+        /* Drop the UE context too if this was its last session. */
+        sgwc_ue_remove_if_empty(sgwc_ue);
+    }
 }
 
 void sgwc_s5c_handle_create_session_response(
