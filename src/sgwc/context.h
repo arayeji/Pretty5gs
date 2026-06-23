@@ -344,6 +344,7 @@ sgwc_ue_t *sgwc_ue_find_by_teid(uint32_t teid);
 
 sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len);
 int sgwc_ue_remove(sgwc_ue_t *sgwc_ue);
+void sgwc_ue_remove_if_empty(sgwc_ue_t *sgwc_ue);
 void sgwc_ue_remove_all(void);
 sgwc_ue_t *sgwc_ue_find_by_id(ogs_pool_id_t id);
 
