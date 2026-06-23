@@ -563,6 +563,7 @@ void sgwc_sxa_handle_session_establishment_response(
 
         dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
         if (!dl_tunnel) {
+            sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
             ogs_error("No DL tunnel");
             sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_SYSTEM_FAILURE);
