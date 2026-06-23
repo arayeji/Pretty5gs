@@ -146,6 +146,29 @@ static void bearer_timeout(ogs_gtp_xact_t *xact, void *data)
     }
 }
 
+/*
+ * Reject the S11 Create Session to the MME/SGSN and tear down the orphan
+ * SGW-U PFCP session.
+ *
+ * When this handler runs, the PFCP Session Establishment on SGW-U has already
+ * completed (sess->sgwu_sxa_seid is set) before the S5 Create Session Request
+ * was sent to PGW/SMF. If PGW rejects the Create Session (or the response is
+ * malformed), the PDN connection never comes up end-to-end, so the SGW-U
+ * session must be deleted to avoid leaking user-plane resources.
+ *
+ * For the Gn (2G/3G) case, sgwc_gtp_create_reject() already removes the
+ * session via sgwc_gn_send_create_reject(); guard against a double free.
+ */
+static void create_session_reject_and_cleanup(
+        sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *s11_xact,
+        uint8_t gtp2_cause)
+{
+    sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, gtp2_cause);
+
+    if (sess && !sess->gn)
+        sgwc_sess_remove(sess);
+}
+
 void sgwc_s5c_handle_create_session_response(
         sgwc_sess_t *sess, ogs_gtp_xact_t *s5c_xact,
         ogs_pkbuf_t *gtpbuf, ogs_gtp2_message_t *message)
@@ -241,7 +264,8 @@ void sgwc_s5c_handle_create_session_response(
                 "APN[%s] gtp_cause[%u] SGW-S5C[0x%x] PGW-S5C[0x%x]",
                 sgwc_log_imsi(sgwc_ue), pgw_peer, mme_peer, apn,
                 session_cause, sess->sgw_s5c_teid, sess->pgw_s5c_teid);
-        sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, session_cause);
+        create_session_reject_and_cleanup(
+                sess, sgwc_ue, s11_xact, session_cause);
         return;
     }
 
@@ -286,7 +310,8 @@ void sgwc_s5c_handle_create_session_response(
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-        sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, cause_value);
+        create_session_reject_and_cleanup(
+                sess, sgwc_ue, s11_xact, cause_value);
         return;
     }
 
@@ -307,14 +332,16 @@ void sgwc_s5c_handle_create_session_response(
         bearer_cause = cause->value;
         if (!OGS_GTP2_CAUSE_IS_SUCCESS(bearer_cause)) {
             ogs_error("GTP Bearer Cause [VALUE:%d]", bearer_cause);
-            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, bearer_cause);
+            create_session_reject_and_cleanup(
+                    sess, sgwc_ue, s11_xact, bearer_cause);
             return;
         }
     }
 
     if (!OGS_GTP2_CAUSE_IS_SUCCESS(session_cause)) {
         ogs_error("GTP Cause [VALUE:%d]", session_cause);
-        sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, session_cause);
+        create_session_reject_and_cleanup(
+                sess, sgwc_ue, s11_xact, session_cause);
         return;
     }
 
@@ -335,13 +362,13 @@ void sgwc_s5c_handle_create_session_response(
         }
         if (rsp->bearer_contexts_created[i].eps_bearer_id.presence == 0) {
             ogs_error("No EPS Bearer ID");
-            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
+            create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_MANDATORY_IE_MISSING);
             return;
         }
         if (rsp->bearer_contexts_created[i].s5_s8_u_sgw_f_teid.presence == 0) {
             ogs_error("No GTP TEID");
-            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
+            create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_MANDATORY_IE_MISSING);
             return;
         }
@@ -352,7 +379,7 @@ void sgwc_s5c_handle_create_session_response(
         if (!bearer) {
             ogs_error("No Bearer [%d]",
                     rsp->bearer_contexts_created[i].eps_bearer_id.u8);
-            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
+            create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
             return;
         }
@@ -371,7 +398,7 @@ void sgwc_s5c_handle_create_session_response(
         rv = ogs_gtp2_f_teid_to_ip(pgw_s5u_teid, &ul_tunnel->remote_ip);
         if (rv != OGS_OK) {
             ogs_error("ogs_gtp2_f_teid_to_ip() failed");
-            sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
+            create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_MANDATORY_IE_MISSING);
             return;
         }
