@@ -18,6 +18,7 @@
  */
 
 #include "gtp-path.h"
+#include "pfcp-path.h"
 #include "gn-build.h"
 
 /*
