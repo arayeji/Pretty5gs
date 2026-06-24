@@ -1083,15 +1083,20 @@ void sgwc_sxa_handle_session_modification_response(
                     if (sess && sess->gn) {
                         sgwc_gn_send_create_reject(sess, sgwc_ue, s11_xact,
                                 cause_value);
+                        sgwc_ue_remove_if_empty(sgwc_ue);
                     } else {
-                        ogs_gtp_send_error_message(
-                                s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
-                                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
-                                cause_value);
+                        sgwc_create_session_reject_and_cleanup(
+                                sess, sgwc_ue, s11_xact, cause_value);
+                        sgwc_ue_remove_if_empty(sgwc_ue);
+                        sess = NULL;
                     }
                 } else {
                     ogs_error("GTP transaction(S11) has already been "
-                            "removed [%d]", pfcp_xact->assoc_xact_id);
+                            "removed [%d] — aborting downstream sessions",
+                            pfcp_xact->assoc_xact_id);
+                    sgwc_sess_abort_create(sess);
+                    sgwc_ue_remove_if_empty(sgwc_ue);
+                    sess = NULL;
                 }
 
             } else if (flags & OGS_PFCP_MODIFY_DL_ONLY) {

@@ -312,6 +312,16 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
             sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
             sgwc_ue_remove_if_empty(sgwc_ue);
+        } else if (sgwc_ue &&
+                (xact->modify_flags & OGS_PFCP_MODIFY_UL_ONLY)) {
+            /*
+             * S11 GTP transaction already expired before the PFCP modification
+             * timed out.  MME has already given up on this bearer, so there is
+             * no S11 reply to send; just tear down the downstream sessions
+             * (S5 + PFCP) that were created during this attach attempt.
+             */
+            sgwc_sess_abort_create(sess);
+            sgwc_ue_remove_if_empty(sgwc_ue);
         }
         break;
     }
