@@ -1657,11 +1657,26 @@ void sgwc_s11_handle_delete_bearer_response(
      ********************/
     ogs_assert(s11_xact);
     s5c_xact = ogs_gtp_xact_find_by_id(s11_xact->assoc_xact_id);
-    ogs_assert(s5c_xact);
+    if (!s5c_xact) {
+        /*
+         * No associated S5C transaction: this Delete Bearer Response arrived
+         * for an admin-initiated (not PGW-forwarded) deletion.  Commit the
+         * S11 transaction, then fall through to send a PFCP Session Deletion
+         * to SGW-U with no GTP relay context.  The SXA cleanup cascade will
+         * remove the local session.
+         */
+        ogs_warn("Delete Bearer Response: no S5C xact "
+                 "(admin-initiated, doing local SGW-U cleanup)");
+    }
 
     if (s11_xact->xid & OGS_GTP_CMD_XACT_ID) {
-        /* MME received Bearer Resource Modification Request */
-        ogs_assert(s5c_xact->data);
+        /* MME received Bearer Resource Modification Request: s5c_xact required */
+        if (!s5c_xact || !s5c_xact->data) {
+            ogs_error("Delete Bearer Response (CMD path): missing S5C xact");
+            rv = ogs_gtp_xact_commit(s11_xact);
+            ogs_expect(rv == OGS_OK);
+            return;
+        }
         bearer_id = OGS_POINTER_TO_UINT(s5c_xact->data);
         ogs_assert(bearer_id >= OGS_MIN_POOL_ID &&
                 bearer_id <= OGS_MAX_POOL_ID);
@@ -1743,7 +1758,9 @@ void sgwc_s11_handle_delete_bearer_response(
 
         ogs_assert(OGS_OK ==
             sgwc_pfcp_send_session_deletion_request(
-                sess, s5c_xact->id, gtpbuf));
+                sess,
+                s5c_xact ? s5c_xact->id : OGS_INVALID_POOL_ID,
+                s5c_xact ? gtpbuf : NULL));
     } else {
        /*
         * << EPS Bearer IDs >>
