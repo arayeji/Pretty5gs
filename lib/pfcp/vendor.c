@@ -69,37 +69,21 @@ next:
 bool ogs_pfcp_travelping_error_message(
         ogs_pkbuf_t *pkbuf, char *msg, size_t msglen)
 {
-    ogs_pfcp_header_t *h = NULL;
-    uint16_t body_len;
-    const uint8_t *p, *end;
-    uint16_t hlen;
-
     ogs_assert(pkbuf);
     ogs_assert(msg);
     ogs_assert(msglen > 0);
 
     msg[0] = '\0';
 
-    if (pkbuf->len < 4)
+    /*
+     * By the time this is called, ogs_pfcp_parse_msg() has already
+     * ogs_pkbuf_pull()'d past the PFCP fixed header so pkbuf->data points
+     * directly at the first IE.  Scan from there.
+     */
+    if (pkbuf->len == 0)
         return false;
 
-    h = (ogs_pfcp_header_t *)pkbuf->data;
-    hlen = h->seid_presence ?
-        OGS_PFCP_HEADER_LEN : OGS_PFCP_HEADER_LEN - OGS_PFCP_SEID_LEN;
-    if (pkbuf->len < hlen)
-        return false;
-
-    body_len = be16toh(h->length);
-    if (body_len + 4 > pkbuf->len)
-        body_len = pkbuf->len - 4;
-
-    p = pkbuf->data + hlen;
-    end = pkbuf->data + 4 + body_len;
-
-    if (end > pkbuf->data + pkbuf->len)
-        end = pkbuf->data + pkbuf->len;
-
-    return pfcp_travelping_scan_tlvs(p, end - p, msg, msglen);
+    return pfcp_travelping_scan_tlvs(pkbuf->data, pkbuf->len, msg, msglen);
 }
 
 void ogs_pfcp_log_travelping_error(ogs_pkbuf_t *pkbuf)
