@@ -25,6 +25,7 @@
 
 #include "gtp-path.h"
 #include "pfcp-path.h"
+#include "metrics.h"
 
 static void sgwc_handle_echo_request(
         ogs_gtp_xact_t *xact, ogs_gtp2_echo_request_t *req)
@@ -113,6 +114,9 @@ void sgwc_state_initial(ogs_fsm_t *s, sgwc_event_t *e)
 
     ogs_assert(s);
 
+    /* Start the periodic orphan sweep on the main thread (owns timer_mgr). */
+    sgwc_orphan_timer_start();
+
     OGS_FSM_TRAN(s, &sgwc_state_operational);
 }
 
@@ -121,6 +125,8 @@ void sgwc_state_final(ogs_fsm_t *s, sgwc_event_t *e)
     sgwc_sm_debug(e);
 
     ogs_assert(s);
+
+    sgwc_orphan_timer_stop();
 }
 
 void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
@@ -553,45 +559,41 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
     }
 
     case SGWC_EVT_ADMIN_PURGE_ORPHANS: {
-        sgwc_ue_t *ue = NULL, *next_ue = NULL;
-        sgwc_sess_t *sess = NULL, *next_sess = NULL;
-        int count = 0;
+        int purged = 0, remaining;
         /*
-         * Grace period: a freshly created session that has not yet finished
-         * its S5/PFCP establishment legitimately has sgwu_sxa_seid==0 and is
-         * not yet metrics-counted. Tearing it down here would abort an
-         * in-flight attach and leave a pending PFCP/S5 transaction pointing
-         * at a freed session. Only purge sessions older than this.
+         * Admin-triggered purge. Reuse the shared sweep with the same grace as
+         * the periodic task so a manual purge never aborts an attach that is
+         * still in flight. The grace keeps freshly created sessions (which
+         * legitimately have sgwu_sxa_seid==0 / not yet metrics-counted) alive.
          */
-        const ogs_time_t grace = ogs_time_from_sec(30);
-        ogs_time_t now = ogs_time_now();
+        remaining = sgwc_orphan_sweep(true,
+                ogs_time_from_sec(sgwc_self()->orphan.grace_s), &purged);
+        sgwc_metrics_global_set(
+                SGWC_METR_GLOB_GAUGE_SESSIONS_ORPHAN, remaining);
+        ogs_info("admin purge-orphans: removed %d session(s), "
+                 "%d orphan(s) remaining", purged, remaining);
+        break;
+    }
 
-        ogs_list_for_each_safe(&sgwc_self()->sgw_ue_list, next_ue, ue) {
-            ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
-                bool is_orphan = (!sess->metrics_session_counted ||
-                                  sess->sgwu_sxa_seid == 0);
-                bool aged_out = (sess->create_session_t0 == 0) ||
-                        ((now - sess->create_session_t0) > grace);
+    case SGWC_EVT_ORPHAN_SWEEP: {
+        int purged = 0, remaining;
 
-                /*
-                 * Orphan: never fully established (not metrics-counted) OR
-                 * no PFCP session with SGW-U — AND old enough that it is not
-                 * an attach still in progress.
-                 */
-                if (is_orphan && aged_out) {
-                    ogs_info("purge orphan: imsi=%s apn=%s "
-                             "(counted=%d sxa_seid=0x%"PRIx64")",
-                             ue->imsi_bcd,
-                             sess->session.name ? sess->session.name : "-",
-                             sess->metrics_session_counted,
-                             sess->sgwu_sxa_seid);
-                    sgwc_sess_abort_create(sess);
-                    count++;
-                }
-            }
-            sgwc_ue_remove_if_empty(ue);
-        }
-        ogs_info("admin purge-orphans: removed %d session(s)", count);
+        remaining = sgwc_orphan_sweep(sgwc_self()->orphan.purge,
+                ogs_time_from_sec(sgwc_self()->orphan.grace_s), &purged);
+
+        sgwc_metrics_global_set(
+                SGWC_METR_GLOB_GAUGE_SESSIONS_ORPHAN, remaining);
+
+        if (purged)
+            ogs_warn("orphan sweep: purged %d session(s), %d remaining",
+                    purged, remaining);
+        else
+            ogs_debug("orphan sweep: %d orphan(s)", remaining);
+
+        /* Re-arm for the next interval (timer is one-shot). */
+        if (sgwc_self()->orphan.enabled && sgwc_self()->orphan.t_sweep)
+            ogs_timer_start(sgwc_self()->orphan.t_sweep,
+                    ogs_time_from_sec(sgwc_self()->orphan.interval_s));
         break;
     }
 

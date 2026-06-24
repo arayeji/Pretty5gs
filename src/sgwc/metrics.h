@@ -10,6 +10,11 @@ extern "C" {
 typedef struct sgwc_ue_s sgwc_ue_t;
 typedef struct sgwc_sess_s sgwc_sess_t;
 
+typedef enum sgwc_metric_type_global_s {
+    SGWC_METR_GLOB_GAUGE_SESSIONS_ORPHAN = 0,
+    _SGWC_METR_GLOB_MAX,
+} sgwc_metric_type_global_t;
+
 typedef enum sgwc_metric_type_by_plmn_s {
     SGWC_METR_BY_PLMN_GAUGE_UE_ACTIVE = 0,
     _SGWC_METR_BY_PLMN_MAX,
@@ -28,6 +33,8 @@ typedef enum sgwc_metric_type_by_rat_s {
 void sgwc_metrics_inst_by_rat_add(
     const char *rat, const char *gtp_if,
     sgwc_metric_type_by_rat_t t, int val);
+
+void sgwc_metrics_global_set(sgwc_metric_type_global_t t, int val);
 
 void sgwc_metrics_ue_active_inc(sgwc_ue_t *sgwc_ue);
 void sgwc_metrics_ue_active_dec(sgwc_ue_t *sgwc_ue);

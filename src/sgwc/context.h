@@ -85,6 +85,24 @@ typedef struct sgwc_cdr_config_s {
 #define SGWC_CDR_TRIG_STOP            (1u << 2)
 } sgwc_cdr_config_t;
 
+/*
+ * Periodic orphan-session sweep.
+ *
+ * An "orphan" is a session that never finished establishment
+ * (metrics_session_counted == 0) or has no PFCP session bound to SGW-U
+ * (sgwu_sxa_seid == 0). The sweep runs on the SGW-C main thread, publishes
+ * the current orphan backlog to the sgwc_sessions_orphan gauge, and -- when
+ * purge is enabled -- tears down orphans older than grace_s (so it never
+ * aborts an attach that is still in flight).
+ */
+typedef struct sgwc_orphan_config_s {
+    bool enabled;          /* run the periodic sweep at all (default true)   */
+    bool purge;            /* actually delete aged orphans (default true)    */
+    uint32_t interval_s;   /* sweep period in seconds (default 60)           */
+    uint32_t grace_s;      /* min orphan age before purging (default 30)     */
+    ogs_timer_t *t_sweep;  /* main-thread periodic timer                     */
+} sgwc_orphan_config_t;
+
 typedef struct sgwc_context_s {
     ogs_list_t mme_s11_list;    /* MME GTPC Node List */
     ogs_list_t pgw_s5c_list;    /* PGW GTPC Node List */
@@ -92,6 +110,8 @@ typedef struct sgwc_context_s {
 
     sgwc_cdr_config_t cdr;
     uint32_t cdr_local_seq;
+
+    sgwc_orphan_config_t orphan;
 
     ogs_hash_t *imsi_ue_hash;   /* hash table (IMSI : SGW_UE) */
     ogs_hash_t *sgw_s11_teid_hash;  /* hash table (SGW-S11-TEID : SGW_UE) */
@@ -360,6 +380,18 @@ void sgwc_sess_abort_create(sgwc_sess_t *sess);
 int sgwc_sess_remove(sgwc_sess_t *sess);
 void sgwc_sess_purge_upf(sgwc_sess_t *sess);
 void sgwc_sess_remove_all(sgwc_ue_t *sgwc_ue);
+
+/*
+ * Walk every session and account orphans. When do_purge is true, tear down
+ * orphans whose age exceeds 'grace' (use 0 to ignore age). Returns the number
+ * of orphan sessions still present after the sweep (the live backlog); if
+ * out_purged is non-NULL it receives how many were torn down. Main thread only.
+ */
+int sgwc_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
+
+/* Periodic orphan sweep timer (no-op when sgwc.orphan.enabled is false). */
+void sgwc_orphan_timer_start(void);
+void sgwc_orphan_timer_stop(void);
 
 bool sgwc_sess_s5c_teid_matches(sgwc_sess_t *sess, uint32_t teid);
 sgwc_sess_t *sgwc_sess_find_by_teid(uint32_t teid);

@@ -28,6 +28,8 @@ const char *sgwc_timer_get_name(sgwc_timer_e id)
         return "SGWC_TIMER_PFCP_ASSOCIATION";
     case SGWC_TIMER_PFCP_NO_HEARTBEAT:
         return "SGWC_TIMER_PFCP_NO_HEARTBEAT";
+    case SGWC_TIMER_ORPHAN_SWEEP:
+        return "SGWC_TIMER_ORPHAN_SWEEP";
     default: 
        break;
     }

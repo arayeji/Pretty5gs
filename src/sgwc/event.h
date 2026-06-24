@@ -55,6 +55,8 @@ typedef enum {
     SGWC_EVT_ADMIN_DETACH_SESS_ONE,   /* detach one specific session (sgwc_sess_id) */
     SGWC_EVT_ADMIN_PURGE_ORPHANS,     /* delete all orphan sessions                 */
 
+    SGWC_EVT_ORPHAN_SWEEP,            /* periodic orphan metric + optional purge    */
+
     SGWC_EVT_TOP,
 
 } sgwc_event_e;

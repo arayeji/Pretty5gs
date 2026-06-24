@@ -21,6 +21,7 @@
 #include <stdio.h>
 
 #include "context.h"
+#include "event.h"
 #include "gtp-path.h"
 #include "pfcp-path.h"
 #include "ga-writer.h"
@@ -363,6 +364,13 @@ void sgwc_context_init(void)
     self.cdr.triggers = SGWC_CDR_TRIG_START | SGWC_CDR_TRIG_INTERIM |
             SGWC_CDR_TRIG_STOP;
     self.cdr_local_seq = 0;
+
+    self.orphan.enabled = true;
+    self.orphan.purge = true;
+    self.orphan.interval_s = 60;
+    self.orphan.grace_s = 30;
+    self.orphan.t_sweep = NULL;
+
     self.gtpc_recovery = 0;
     self.gtpc_echo_interval = 0;
     self.gn_gtpc_recovery = 0;
@@ -1194,6 +1202,28 @@ int sgwc_context_parse_config(void)
                         } else
                             ogs_warn("unknown key `%s` in sgwc.cdr", ck);
                     }
+                } else if (!strcmp(sgwc_key, "orphan")) {
+                    ogs_yaml_iter_t o_iter;
+                    ogs_yaml_iter_recurse(&sgwc_iter, &o_iter);
+                    while (ogs_yaml_iter_next(&o_iter)) {
+                        const char *ok = ogs_yaml_iter_key(&o_iter);
+                        const char *ov = ogs_yaml_iter_value(&o_iter);
+                        ogs_assert(ok);
+                        if (!strcmp(ok, "enabled")) {
+                            self.orphan.enabled = ogs_yaml_iter_bool(&o_iter);
+                        } else if (!strcmp(ok, "purge")) {
+                            self.orphan.purge = ogs_yaml_iter_bool(&o_iter);
+                        } else if (!strcmp(ok, "interval") ||
+                                !strcmp(ok, "interval_s")) {
+                            if (ov) self.orphan.interval_s =
+                                (uint32_t)atoi(ov);
+                        } else if (!strcmp(ok, "grace") ||
+                                !strcmp(ok, "grace_s")) {
+                            if (ov) self.orphan.grace_s =
+                                (uint32_t)atoi(ov);
+                        } else
+                            ogs_warn("unknown key `%s` in sgwc.orphan", ok);
+                    }
                 } else
                     ogs_warn("unknown key `%s`", sgwc_key);
             }
@@ -1736,6 +1766,111 @@ void sgwc_sess_abort_create(sgwc_sess_t *sess)
     }
 
     sgwc_sess_remove(sess);
+}
+
+int sgwc_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
+{
+    sgwc_ue_t *ue = NULL, *next_ue = NULL;
+    sgwc_sess_t *sess = NULL, *next_sess = NULL;
+    ogs_time_t now = ogs_time_now();
+    int remaining = 0, purged = 0;
+
+    /*
+     * Main-thread only: this walks and mutates sgw_ue_list / sess_list and may
+     * send S5/PFCP teardown messages. sgwc_sess_remove() takes the metrics dump
+     * lock internally for the list removal, which is what the admin HTTP reader
+     * (sgwc_admin_list_sessions) also holds while iterating, so the two never
+     * corrupt the list. The _safe iterators tolerate removal of the current
+     * node; the outer iterator pre-captures next_ue so removing an emptied UE
+     * is safe too.
+     */
+    ogs_list_for_each_safe(&self.sgw_ue_list, next_ue, ue) {
+        ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
+            bool is_orphan = (!sess->metrics_session_counted ||
+                              sess->sgwu_sxa_seid == 0);
+            bool aged_out;
+
+            if (!is_orphan)
+                continue;
+
+            aged_out = (sess->create_session_t0 == 0) ||
+                    ((now - sess->create_session_t0) > grace);
+
+            if (do_purge && aged_out) {
+                ogs_info("orphan sweep: purge imsi=%s apn=%s "
+                         "(counted=%d sxa_seid=0x%" PRIx64 ")",
+                         ue->imsi_bcd,
+                         sess->session.name ? sess->session.name : "-",
+                         sess->metrics_session_counted, sess->sgwu_sxa_seid);
+                sgwc_sess_abort_create(sess);
+                purged++;
+                continue; /* sess is freed; do not count as remaining */
+            }
+
+            /* Orphan that survives this sweep (in grace, or purge disabled). */
+            remaining++;
+        }
+        sgwc_ue_remove_if_empty(ue);
+    }
+
+    if (out_purged)
+        *out_purged = purged;
+
+    return remaining;
+}
+
+static void orphan_sweep_timer_cb(void *data)
+{
+    sgwc_event_t *e = NULL;
+    int rv;
+
+    e = sgwc_event_new(SGWC_EVT_ORPHAN_SWEEP);
+    ogs_assert(e);
+    e->timer_id = SGWC_TIMER_ORPHAN_SWEEP;
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_queue_push() failed [%d] for orphan sweep", (int)rv);
+        sgwc_event_free(e);
+    }
+}
+
+void sgwc_orphan_timer_start(void)
+{
+    uint32_t interval_s;
+
+    if (!self.orphan.enabled) {
+        ogs_info("SGWC orphan sweep disabled by config");
+        return;
+    }
+
+    /* Clamp to a sane floor so a misconfigured 0/1s never busy-loops. */
+    interval_s = self.orphan.interval_s;
+    if (interval_s < 5) {
+        ogs_warn("sgwc.orphan.interval %u too low; using 5s", interval_s);
+        interval_s = 5;
+        self.orphan.interval_s = interval_s;
+    }
+
+    if (!self.orphan.t_sweep) {
+        self.orphan.t_sweep = ogs_timer_add(
+                ogs_app()->timer_mgr, orphan_sweep_timer_cb, NULL);
+        ogs_assert(self.orphan.t_sweep);
+    }
+
+    ogs_timer_start(self.orphan.t_sweep, ogs_time_from_sec(interval_s));
+
+    ogs_info("SGWC orphan sweep started: interval=%us grace=%us purge=%s",
+             interval_s, self.orphan.grace_s,
+             self.orphan.purge ? "on" : "off");
+}
+
+void sgwc_orphan_timer_stop(void)
+{
+    if (self.orphan.t_sweep) {
+        ogs_timer_delete(self.orphan.t_sweep);
+        self.orphan.t_sweep = NULL;
+    }
 }
 
 int sgwc_sess_remove(sgwc_sess_t *sess)
