@@ -204,11 +204,6 @@ void sgwc_s5c_handle_create_session_response(
     rv = ogs_gtp_xact_commit(s5c_xact);
     ogs_expect(rv == OGS_OK);
 
-    if (!s11_xact) {
-        sgwc_log_no_s11_xact(sess, s5c_xact, "S5 Create Session Response");
-        return;
-    }
-
     /************************
      * Getting Cause Value
      ************************/
@@ -216,6 +211,36 @@ void sgwc_s5c_handle_create_session_response(
         ogs_gtp2_cause_t *cause = rsp->cause.data;
         ogs_assert(cause);
         session_cause = cause->value;
+    }
+
+    if (!s11_xact) {
+        sgwc_log_no_s11_xact(sess, s5c_xact, "S5 Create Session Response");
+        /*
+         * The MME's S11 Create Session transaction already expired: the MME
+         * gave up on this attach (e.g. a slow/failing PGW) and released the
+         * UE. There is no S11 reply to send. If we just return, the SGW-U
+         * PFCP session created for this attach -- and, when the PGW accepted,
+         * the PGW/SMF S5 session -- leak with no owner. Tear them down here,
+         * mirroring the abort-on-failure rollback used elsewhere in SGW-C.
+         */
+        if (sess) {
+            sgwc_ue_t *abort_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+            if (abort_ue) {
+                /*
+                 * If the PGW accepted before the MME timed out, the S5
+                 * session is live but not yet metrics-counted, so
+                 * sgwc_sess_abort_create() would not send the S5 Delete.
+                 * Send it explicitly (guarded so we never double-send).
+                 */
+                if (OGS_GTP2_CAUSE_IS_SUCCESS(session_cause) &&
+                        sess->gnode && !sess->gn &&
+                        !sess->metrics_session_counted)
+                    sgwc_gtp_send_s5c_delete_session_request(sess);
+                sgwc_sess_abort_create(sess);
+                sgwc_ue_remove_if_empty(abort_ue);
+            }
+        }
+        return;
     }
 
     /************************
