@@ -18,6 +18,7 @@
 
 #include <stdarg.h>
 #include <string.h>
+#include <inttypes.h>
 
 #define ADMIN_HTTP_ACCEPTED            202
 #define ADMIN_HTTP_BAD_REQUEST         400
