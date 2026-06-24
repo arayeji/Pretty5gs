@@ -4090,6 +4090,15 @@ static void mme_sgw_purge_sessions(mme_sgw_t *sgw)
 
         mme_ue->detach_type = MME_DETACH_TYPE_MME_IMPLICIT;
         mme_send_delete_session_or_detach(enb_ue, mme_ue);
+
+        /*
+         * If there were no sessions to delete AND no S1 context,
+         * mme_send_delete_session_or_detach() sets ue_context_will_remove
+         * but returns without removing the UE (it defers to "the caller").
+         * Drive the removal immediately here so these UEs do not leak.
+         */
+        if (mme_ue->ue_context_will_remove)
+            mme_ue_enter_ue_context_will_remove(mme_ue);
     }
 }
 
