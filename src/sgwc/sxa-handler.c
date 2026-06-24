@@ -284,7 +284,7 @@ void sgwc_sxa_handle_unexpected_modification_response(
                     pfcp_xact->xid, sess->session.name);
             ogs_pfcp_xact_commit(pfcp_xact);
             sgwc_sxa_handle_session_modification_response(
-                    sess, mod_xact, &gtp_message, pfcp_rsp);
+                    sess, mod_xact, &gtp_message, pfcp_rsp, NULL);
             return;
         }
 
@@ -295,7 +295,7 @@ void sgwc_sxa_handle_unexpected_modification_response(
                     "treating as CSR UL-activate [%s]",
                     pfcp_xact->xid, est_sess->session.name);
             sgwc_sxa_handle_session_modification_response(
-                    est_sess, pfcp_xact, &gtp_message, pfcp_rsp);
+                    est_sess, pfcp_xact, &gtp_message, pfcp_rsp, NULL);
             return;
         }
 
