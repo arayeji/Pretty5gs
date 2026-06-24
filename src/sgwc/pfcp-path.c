@@ -274,6 +274,7 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
             if (sess->gn) {
                 sgwc_gn_send_create_reject(sess, sgwc_ue, s11_xact,
                         OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+                sgwc_ue_remove_if_empty(sgwc_ue);
                 break;
             }
             ogs_gtp_send_error_message(
@@ -281,6 +282,7 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
                     OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
                     OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
             sgwc_sess_remove(sess);
+            sgwc_ue_remove_if_empty(sgwc_ue);
         } else if (xact->assoc_xact_id == OGS_INVALID_POOL_ID) {
             /* PFCP restoration path — SGW-U slow to respond; keep the
              * session so the UE can continue after SGW-U recovers.
@@ -291,6 +293,7 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
         } else {
             /* s11_xact already gone — normal session timeout, clean up */
             sgwc_sess_remove(sess);
+            sgwc_ue_remove_if_empty(sgwc_ue);
         }
         break;
     }
@@ -308,6 +311,7 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
     }
     case OGS_PFCP_SESSION_DELETION_REQUEST_TYPE: {
         sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        ogs_gtp_xact_t *s11_xact = NULL;
         char sgwu_peer[OGS_ADDRSTRLEN];
 
         sgwc_log_sgwu_peer(sgwu_peer, sizeof(sgwu_peer), sess);
@@ -323,7 +327,35 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
                 sgwc_csr_replace_continue(sgwc_ue, sess, false);
             return;
         }
-        break;
+
+        /*
+         * SGW-U never answered the deletion after all PFCP retransmissions
+         * (e.g. an unresponsive or broken user plane that does not emit
+         * Session Deletion Responses). The SGW-C session and UE were freed
+         * only in the Session Deletion *Response* handler, so a silent SGW-U
+         * left the SGW-C context (and the sgwc_ue_active gauge) leaking
+         * forever. Stop waiting on the user plane: acknowledge the pending
+         * S11/Gn peer so the MME/SGSN can finish detach, then drop the
+         * session and release the UE if this was its last PDN connection.
+         * sgwu_sxa_seid is cleared first so sgwc_sess_remove() does not queue
+         * yet another (already-timed-out) orphan purge toward the dead SGW-U.
+         */
+        s11_xact = ogs_gtp_xact_find_by_id(xact->assoc_xact_id);
+        if (sgwc_ue && s11_xact) {
+            if (sess->gn)
+                sgwc_gtp_send_delete_pdp_context_response(
+                        sess, s11_xact, OGS_GTP1_CAUSE_REQUEST_ACCEPTED);
+            else
+                ogs_gtp_send_error_message(
+                        s11_xact, sgwc_ue->mme_s11_teid,
+                        OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE,
+                        OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
+        }
+
+        sess->sgwu_sxa_seid = 0;
+        sgwc_sess_remove(sess);
+        sgwc_ue_remove_if_empty(sgwc_ue);
+        return;
     }
     default:
         ogs_error("Not implemented [type:%d]", type);

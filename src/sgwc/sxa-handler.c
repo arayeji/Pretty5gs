@@ -449,6 +449,19 @@ void sgwc_sxa_handle_session_establishment_response(
         ogs_pfcp_far_t *far = NULL;
 
         ogs_assert(sess);
+
+        /*
+         * Record the SGW-U F-SEID as soon as the UPF accepts the
+         * establishment, before any of the bearer/F-TEID checks below that
+         * can still reject the Create Session locally. Otherwise a local
+         * failure here calls sgwc_sess_remove() while sgwu_sxa_seid is still
+         * 0, so sgwc_sess_purge_upf() sends nothing and the user-plane
+         * session the UPF just created leaks on SGW-U (VPP).
+         */
+        if (pfcp_rsp->up_f_seid.presence && pfcp_rsp->up_f_seid.data)
+            sess->sgwu_sxa_seid = be64toh(
+                    ((ogs_pfcp_f_seid_t *)pfcp_rsp->up_f_seid.data)->seid);
+
         for (i = 0; i < OGS_MAX_NUM_OF_PDR; i++) {
             pdr = ogs_pfcp_handle_created_pdr(
                     &sess->pfcp, &pfcp_rsp->created_pdr[i],
