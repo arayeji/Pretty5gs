@@ -6,9 +6,12 @@
 
 #include "ogs-core.h"
 #include "ogs-app.h"
+#include "ogs-gtp.h"
 
 #include "context.h"
 #include "event.h"
+#include "gtp-path.h"
+#include "pfcp-path.h"
 
 #include "admin-api.h"
 #include "runtime-config.h"
@@ -210,6 +213,179 @@ static int sgwc_admin_session_detach(const ogs_metrics_query_t *q,
     return ADMIN_HTTP_ACCEPTED;
 }
 
+/*
+ * DELETE /admin/session/delete?imsi=<IMSI>[&apn=<APN>][&force=1]
+ *
+ * When apn is omitted: tears down ALL sessions for the IMSI (same as detach).
+ * When apn is supplied: tears down only the session for that specific APN,
+ * leaving other PDN connections for the same UE intact.
+ *
+ * The teardown chain covers the full path:
+ *   SGW-C  ->  SGW-U (PFCP delete)
+ *   SGW-C  ->  SMF   (S5 Delete Session Request)
+ *   SGW-C  ->  MME   (S11 Delete Session Request, so MME also cleans up)
+ */
+static int sgwc_admin_session_delete(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    if (!q || !q->imsi || !*q->imsi) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_BAD_REQUEST, "missing ?imsi=...");
+        return ADMIN_HTTP_BAD_REQUEST;
+    }
+
+    /* No APN filter -> same as full detach */
+    if (!q->apn || !*q->apn)
+        return sgwc_admin_session_detach(q, body, body_cap, body_len);
+
+    ogs_pool_id_t sess_id = OGS_INVALID_POOL_ID;
+
+    ogs_metrics_dump_lock();
+    sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_imsi_bcd(q->imsi);
+    if (sgwc_ue) {
+        /* Strip APN-OI if present (accept "internet" and "internet.mnc001.mcc001.gprs") */
+        char apn_ni[OGS_MAX_APN_LEN + 1];
+        snprintf(apn_ni, sizeof(apn_ni), "%s", q->apn);
+        char *oi = ogs_dnn_oi_from_fqdn(apn_ni);
+        if (oi && oi > apn_ni && oi[-1] == '.') oi[-1] = '\0';
+
+        sgwc_sess_t *sess = sgwc_sess_find_by_apn(sgwc_ue, apn_ni);
+        if (sess) sess_id = sess->id;
+    }
+    ogs_metrics_dump_unlock();
+
+    if (sess_id == OGS_INVALID_POOL_ID) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_NOT_FOUND, "session not found for imsi=%s apn=%s",
+                q->imsi, q->apn);
+        return ADMIN_HTTP_NOT_FOUND;
+    }
+
+    sgwc_event_t *e = sgwc_event_new(SGWC_EVT_ADMIN_DETACH_SESS_ONE);
+    if (!e) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_INTERNAL_ERROR, "event_new failed");
+        return ADMIN_HTTP_INTERNAL_ERROR;
+    }
+    e->admin_sess_id = sess_id;
+    e->admin_force   = q->force ? 1 : 0;
+
+    int rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        sgwc_event_free(e);
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
+        return ADMIN_HTTP_SERVICE_UNAVAIL;
+    }
+
+    ogs_pollset_notify(ogs_app()->pollset);
+
+    *body_len = fmt_json_status(body, body_cap, ADMIN_HTTP_ACCEPTED,
+            "session delete queued for imsi=%s apn=%s mode=%s",
+            q->imsi, q->apn, e->admin_force ? "force" : "graceful");
+    return ADMIN_HTTP_ACCEPTED;
+}
+
+/*
+ * GET  /admin/sessions[?imsi=<IMSI>][?orphan=1]
+ *
+ * Lists all SGW-C sessions as a JSON array.  With ?orphan=1 only sessions
+ * that were never fully established (incomplete attach) or have no SGW-U
+ * PFCP session are returned.
+ */
+static size_t sgwc_admin_list_sessions(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
+{
+    sgwc_ue_t *ue = NULL;
+    sgwc_sess_t *sess = NULL;
+    char tmp[256];
+    size_t pos = 0;
+    int first = 1;
+    bool orphan_only = false;
+
+    (void)page; (void)page_size;
+
+    if (q && q->orphan)
+        orphan_only = true;
+
+#define APPEND(fmt, ...) \
+    do { \
+        int _n = snprintf(tmp, sizeof(tmp), fmt, ##__VA_ARGS__); \
+        if (_n > 0 && pos + (size_t)_n < buflen) { \
+            memcpy(buf + pos, tmp, (size_t)_n); \
+            pos += (size_t)_n; \
+        } \
+    } while(0)
+
+    APPEND("{\"sessions\":[");
+
+    ogs_list_for_each(&sgwc_self()->sgw_ue_list, ue) {
+        if (q && q->imsi && *q->imsi &&
+                strcmp(ue->imsi_bcd, q->imsi) != 0)
+            continue;
+
+        ogs_list_for_each(&ue->sess_list, sess) {
+            bool is_orphan = (!sess->metrics_session_counted ||
+                              sess->sgwu_sxa_seid == 0);
+            if (orphan_only && !is_orphan) continue;
+
+            if (!first) APPEND(",");
+            first = 0;
+            APPEND("{\"imsi\":\"%s\","
+                   "\"apn\":\"%s\","
+                   "\"orphan\":%s,"
+                   "\"pfcp_seid\":\"0x%"PRIx64"\","
+                   "\"smf_connected\":%s}",
+                   ue->imsi_bcd,
+                   sess->session.name,
+                   is_orphan ? "true" : "false",
+                   sess->sgwu_sxa_seid,
+                   sess->gnode ? "true" : "false");
+        }
+    }
+
+    APPEND("]}\n");
+#undef APPEND
+
+    return pos;
+}
+
+/*
+ * POST /admin/sessions/purge-orphans[?force=1]
+ *
+ * Deletes all sessions that are orphaned — i.e. never completed the
+ * full attach (metrics_session_counted==0) or have no SGW-U PFCP session.
+ * Each session teardown sends:
+ *   - PFCP Session Deletion  -> SGW-U (VPP)
+ *   - S5 Delete Session Req  -> SMF
+ * MME is not notified (these sessions have no live MME context by definition).
+ */
+static int sgwc_admin_purge_orphans(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    sgwc_event_t *e = sgwc_event_new(SGWC_EVT_ADMIN_PURGE_ORPHANS);
+    if (!e) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_INTERNAL_ERROR, "event_new failed");
+        return ADMIN_HTTP_INTERNAL_ERROR;
+    }
+    e->admin_force = 1; /* orphan purge is always a forced immediate removal */
+
+    int rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        sgwc_event_free(e);
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
+        return ADMIN_HTTP_SERVICE_UNAVAIL;
+    }
+
+    ogs_pollset_notify(ogs_app()->pollset);
+
+    *body_len = fmt_json_status(body, body_cap, ADMIN_HTTP_ACCEPTED,
+            "orphan purge queued");
+    return ADMIN_HTTP_ACCEPTED;
+}
+
 void sgwc_admin_api_register(void)
 {
     ogs_metrics_register_custom_ep(sgwc_dump_runtime_config,
@@ -236,5 +412,23 @@ void sgwc_admin_api_register(void)
             OGS_METRICS_ADMIN_METHOD_GET);
     ogs_metrics_register_admin_ep(sgwc_admin_session_detach,
             "/admin/session/detach",
+            OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
+
+    /* Session delete: ?imsi=<IMSI>[&apn=<APN>][&force=1]
+     * With APN:    tears down the single named PDN connection across all NFs.
+     * Without APN: tears down all sessions for the IMSI (same as detach). */
+    ogs_metrics_register_admin_ep(sgwc_admin_session_delete,
+            "/admin/session/delete",
+            OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
+
+    /* Session list: GET /admin/sessions[?imsi=<IMSI>][?orphan=1] */
+    ogs_metrics_register_custom_ep(sgwc_admin_list_sessions,
+            "/admin/sessions");
+
+    /* Orphan purge: POST /admin/sessions/purge-orphans
+     * Removes all sessions that never completed attach or have no SGW-U path.
+     * Sends PFCP delete to SGW-U (VPP) and S5 delete to SMF for each. */
+    ogs_metrics_register_admin_ep(sgwc_admin_purge_orphans,
+            "/admin/sessions/purge-orphans",
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
 }

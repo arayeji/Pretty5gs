@@ -279,6 +279,7 @@ static void fill_query_from_connection(struct MHD_Connection *connection,
     memset(q, 0, sizeof(*q));
     q->imsi  = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "imsi");
     q->supi  = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "supi");
+    q->apn   = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "apn");
     q->ue_ip = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "ue_ip");
     q->ip    = MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "ip");
     if (!q->ip || !*q->ip)
@@ -328,6 +329,14 @@ static void fill_query_from_connection(struct MHD_Connection *connection,
         if (!strcasecmp(rv, "1") || !strcasecmp(rv, "true") ||
                 !strcasecmp(rv, "yes") || !strcasecmp(rv, "on"))
             q->remove = 1;
+    }
+
+    const char *ov = MHD_lookup_connection_value(connection,
+            MHD_GET_ARGUMENT_KIND, "orphan");
+    if (ov && *ov) {
+        if (!strcasecmp(ov, "1") || !strcasecmp(ov, "true") ||
+                !strcasecmp(ov, "yes") || !strcasecmp(ov, "on"))
+            q->orphan = 1;
     }
 
     const char *rp = MHD_lookup_connection_value(connection,

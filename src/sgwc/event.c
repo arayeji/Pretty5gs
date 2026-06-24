@@ -95,6 +95,10 @@ const char *sgwc_event_get_name(sgwc_event_t *e)
         return "SGWC_EVT_ADMIN_MAINTENANCE_DRAIN";
     case SGWC_EVT_ADMIN_DETACH_SESSION:
         return "SGWC_EVT_ADMIN_DETACH_SESSION";
+    case SGWC_EVT_ADMIN_DETACH_SESS_ONE:
+        return "SGWC_EVT_ADMIN_DETACH_SESS_ONE";
+    case SGWC_EVT_ADMIN_PURGE_ORPHANS:
+        return "SGWC_EVT_ADMIN_PURGE_ORPHANS";
 
     default:
        break;

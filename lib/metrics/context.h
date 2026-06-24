@@ -129,6 +129,7 @@ static inline void ogs_metrics_inst_dec(ogs_metrics_inst_t *inst)
 typedef struct ogs_metrics_query_s {
     const char *imsi;      /* ?imsi=15-digit          */
     const char *supi;      /* ?supi=imsi-15-digit     */
+    const char *apn;       /* ?apn=internet           */
     const char *ue_ip;     /* ?ue_ip=10.x.y.z         */
     const char *ip;        /* ?ip= / ?enb_ip= / ?gnb_ip= (RAN user-plane IP) */
     uint32_t    enb_id;    /* ?enb_id=N (also reused for gnb_id) */
@@ -159,6 +160,7 @@ typedef struct ogs_metrics_query_s {
     int         replace;   /* ?replace=1 clears then sets only this imsi */
     const char *match;     /* ?match=exact for full IMSI match */
     const char *sync;      /* MME: ?sync=sgwc,smf propagate to peers */
+    int         orphan;    /* ?orphan=1 filter stale/incomplete sessions */
 } ogs_metrics_query_t;
 
 typedef size_t (*ogs_metrics_custom_ep_hdlr_t)(

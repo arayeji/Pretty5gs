@@ -519,6 +519,62 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         }
         break;
 
+    case SGWC_EVT_ADMIN_DETACH_SESS_ONE: {
+        sgwc_sess_t *sess = sgwc_sess_find_by_id(e->admin_sess_id);
+        if (sess) {
+            sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+            ogs_info("admin session delete: imsi=%s apn=%s mode=%s",
+                    sgwc_ue ? sgwc_ue->imsi_bcd : "-",
+                    sess->session.name,
+                    e->admin_force ? "force" : "graceful");
+            if (e->admin_force) {
+                sgwc_sess_abort_create(sess);
+                if (sgwc_ue)
+                    sgwc_ue_remove_if_empty(sgwc_ue);
+            } else {
+                /* Graceful: send signalling, keep local context for responses */
+                if (sess->pfcp_node && sess->sgwu_sxa_seid)
+                    sgwc_pfcp_send_session_deletion_request(
+                            sess, OGS_INVALID_POOL_ID, NULL);
+                if (sess->gnode)
+                    sgwc_gtp_send_s5c_delete_session_request(sess);
+                sgwc_gtp_send_network_delete_session(sgwc_ue, sess);
+            }
+        } else {
+            ogs_warn("admin session delete: session already gone");
+        }
+        break;
+    }
+
+    case SGWC_EVT_ADMIN_PURGE_ORPHANS: {
+        sgwc_ue_t *ue = NULL, *next_ue = NULL;
+        sgwc_sess_t *sess = NULL, *next_sess = NULL;
+        int count = 0;
+
+        ogs_list_for_each_safe(&sgwc_self()->sgw_ue_list, next_ue, ue) {
+            ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
+                /*
+                 * Orphan: session was never fully established
+                 * (not counted in active metrics) OR has no PFCP
+                 * session with SGW-U.
+                 */
+                if (!sess->metrics_session_counted ||
+                        sess->sgwu_sxa_seid == 0) {
+                    ogs_info("purge orphan: imsi=%s apn=%s "
+                             "(counted=%d sxa_seid=0x%"PRIx64")",
+                             ue->imsi_bcd, sess->session.name,
+                             sess->metrics_session_counted,
+                             sess->sgwu_sxa_seid);
+                    sgwc_sess_abort_create(sess);
+                    count++;
+                }
+            }
+            sgwc_ue_remove_if_empty(ue);
+        }
+        ogs_info("admin purge-orphans: removed %d session(s)", count);
+        break;
+    }
+
     default:
         ogs_error("No handler for event %s", sgwc_event_get_name(e));
         break;
