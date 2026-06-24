@@ -721,6 +721,48 @@ int sgwc_gtp_send_network_delete_session(
     return rv;
 }
 
+/*
+ * Timeout for an admin-initiated Delete Bearer Request to MME: MME did not
+ * respond.  Log a warning and force a PFCP session deletion so the local
+ * context and SGW-U tunnel are cleaned up despite the silent MME.
+ */
+static void admin_delete_bearer_timeout(ogs_gtp_xact_t *xact, void *data)
+{
+    ogs_pool_id_t bearer_id = OGS_INVALID_POOL_ID;
+    sgwc_bearer_t *bearer = NULL;
+    sgwc_sess_t *sess = NULL;
+    sgwc_ue_t *sgwc_ue = NULL;
+
+    ogs_assert(xact);
+
+    if (!data) {
+        ogs_error("admin_delete_bearer_timeout: no bearer data");
+        return;
+    }
+    bearer_id = OGS_POINTER_TO_UINT(data);
+    bearer = sgwc_bearer_find_by_id(bearer_id);
+    if (!bearer) {
+        ogs_warn("admin_delete_bearer_timeout: bearer [%d] already gone",
+                 (int)bearer_id);
+        return;
+    }
+    sess = sgwc_sess_find_by_id(bearer->sess_id);
+    if (!sess) {
+        ogs_warn("admin_delete_bearer_timeout: session already gone");
+        return;
+    }
+    sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+
+    ogs_warn("[%s] No Delete Bearer Response from MME (admin delete) "
+             "-- forcing local SGW-U PFCP cleanup",
+             sgwc_ue ? sgwc_ue->imsi_bcd : "-");
+
+    /* Best-effort PFCP session deletion; SXA cleanup will free the session. */
+    ogs_assert(OGS_OK ==
+        sgwc_pfcp_send_session_deletion_request(
+            sess, OGS_INVALID_POOL_ID, NULL));
+}
+
 int sgwc_gtp_send_delete_bearer_request_to_mme(
         sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess,
         ogs_pool_id_t s5c_xact_id)
@@ -773,7 +815,7 @@ int sgwc_gtp_send_delete_bearer_request_to_mme(
      */
     s11_xact = ogs_gtp_xact_local_create(
             sgwc_ue->gnode, &h, pkbuf,
-            bearer_timeout, OGS_UINT_TO_POINTER(bearer->id));
+            admin_delete_bearer_timeout, OGS_UINT_TO_POINTER(bearer->id));
     if (!s11_xact) {
         ogs_error("ogs_gtp_xact_local_create() failed");
         return OGS_ERROR;
