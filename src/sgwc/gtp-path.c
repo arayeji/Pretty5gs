@@ -721,6 +721,86 @@ int sgwc_gtp_send_network_delete_session(
     return rv;
 }
 
+int sgwc_gtp_send_delete_bearer_request_to_mme(
+        sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess,
+        ogs_pool_id_t s5c_xact_id)
+{
+    int rv;
+    sgwc_bearer_t *bearer = NULL;
+
+    ogs_gtp2_message_t gtp_message;
+    ogs_gtp2_delete_bearer_request_t *req = NULL;
+
+    ogs_gtp2_header_t h;
+    ogs_pkbuf_t *pkbuf = NULL;
+    ogs_gtp_xact_t *s11_xact = NULL;
+
+    ogs_assert(sgwc_ue);
+    ogs_assert(sess);
+
+    if (!sgwc_ue->gnode) {
+        ogs_error("[%s] No S11 peer for Delete Bearer Request",
+                sgwc_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
+
+    bearer = sgwc_default_bearer_in_sess(sess);
+    if (!bearer) {
+        ogs_error("[%s] No default bearer for Delete Bearer Request",
+                sgwc_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
+
+    memset(&gtp_message, 0, sizeof(gtp_message));
+    req = &gtp_message.delete_bearer_request;
+
+    req->linked_eps_bearer_id.presence = 1;
+    req->linked_eps_bearer_id.u8 = bearer->ebi;
+
+    memset(&h, 0, sizeof(h));
+    h.type = OGS_GTP2_DELETE_BEARER_REQUEST_TYPE;
+    h.teid = sgwc_ue->mme_s11_teid;
+
+    pkbuf = ogs_gtp2_build_msg(&gtp_message);
+    if (!pkbuf) {
+        ogs_error("ogs_gtp2_build_msg() failed");
+        return OGS_ERROR;
+    }
+
+    /*
+     * Use bearer_timeout as the fallback so a non-responding MME is handled
+     * gracefully (same path as the PGW-originated Delete Bearer Request).
+     */
+    s11_xact = ogs_gtp_xact_local_create(
+            sgwc_ue->gnode, &h, pkbuf,
+            bearer_timeout, OGS_UINT_TO_POINTER(bearer->id));
+    if (!s11_xact) {
+        ogs_error("ogs_gtp_xact_local_create() failed");
+        return OGS_ERROR;
+    }
+    s11_xact->local_teid = sgwc_ue->sgw_s11_teid;
+
+    /* Record which bearer this belongs to (used by the response handler). */
+    s11_xact->data = OGS_UINT_TO_POINTER(bearer->id);
+
+    /*
+     * Associate the S5C transaction when there is one (PGW-forwarded path).
+     * For admin-initiated calls pass OGS_INVALID_POOL_ID — the response
+     * handler detects the absence and handles local cleanup instead of
+     * forwarding to PGW.
+     */
+    if (s5c_xact_id != OGS_INVALID_POOL_ID) {
+        ogs_gtp_xact_t *s5c_xact = ogs_gtp_xact_find_by_id(s5c_xact_id);
+        if (s5c_xact)
+            ogs_gtp_xact_associate(s5c_xact, s11_xact);
+    }
+
+    rv = ogs_gtp_xact_commit(s11_xact);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
 void sgwc_gtp_close(void)
 {
     if (sgwc_self()->roam_gtpc_poll) {

@@ -85,7 +85,9 @@ static void sgwc_admin_detach_ue_sessions(sgwc_ue_t *ue, int admin_force)
 
     ogs_assert(ue);
     ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
-        rv = sgwc_gtp_send_network_delete_session(ue, sess);
+        /* Notify MME via Delete Bearer Request (3GPP TS 23.401 §5.4.4). */
+        rv = sgwc_gtp_send_delete_bearer_request_to_mme(
+                ue, sess, OGS_INVALID_POOL_ID);
         ogs_expect(rv == OGS_OK);
 
         if (sess->pfcp_node && sess->sgwu_sxa_seid) {
@@ -533,7 +535,20 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
                     sgwc_ue ? sgwc_ue->imsi_bcd : "-",
                     sess->session.name,
                     e->admin_force ? "force" : "graceful");
+
+            /* Always notify MME via Delete Bearer Request (§5.4.4). */
+            if (sgwc_ue)
+                sgwc_gtp_send_delete_bearer_request_to_mme(
+                        sgwc_ue, sess, OGS_INVALID_POOL_ID);
+
             if (e->admin_force) {
+                /*
+                 * Force: tear down downstream (SGW-U + SMF) and remove
+                 * locally immediately. The Delete Bearer Request above is
+                 * fire-and-forget; if MME responds after the session is
+                 * gone, the response handler handles the missing context
+                 * gracefully.
+                 */
                 sgwc_sess_abort_create(sess);
                 if (sgwc_ue)
                     sgwc_ue_remove_if_empty(sgwc_ue);
@@ -545,12 +560,9 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
                 if (sess->gnode)
                     sgwc_gtp_send_s5c_delete_session_request(sess);
                 /*
-                 * sgwc_gtp_send_network_delete_session() asserts on a NULL
-                 * sgwc_ue. A session should always have a live UE, but guard
-                 * anyway so a stale lookup cannot crash the daemon.
+                 * Local context stays alive; cleanup cascades via the
+                 * Delete Bearer Response → PFCP deletion → sxa cleanup path.
                  */
-                if (sgwc_ue)
-                    sgwc_gtp_send_network_delete_session(sgwc_ue, sess);
             }
         } else {
             ogs_warn("admin session delete: session already gone");
