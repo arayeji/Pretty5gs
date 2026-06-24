@@ -1830,11 +1830,21 @@ void sgwc_s11_handle_release_access_bearers_request(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sgwc_ue) {
-        ogs_error("Release Access Bearers Request: no SGWC-UE context for "
+        uint32_t sgw_s11_teid =
+                message->h.teid_presence ? message->h.teid : 0;
+
+        /*
+         * Release Access Bearers Request carries no IMSI (TS 29.274). When
+         * the SGWC-UE context is already gone, IMSI cannot be recovered on
+         * SGW-C; the enriched prefix shows IMSI:- and the SGW-S11-TEID from
+         * the GTP header when the MME had one assigned.
+         */
+        sgwc_ue_warn_no_ctx("s11", sgw_s11_teid,
+                "Release Access Bearers Request: no SGWC-UE context for "
                 "SGW-S11-TEID[0x%x] - context already released (stale MME "
                 "state, prior Delete Session, failed attach, or SGW-C "
                 "restart); replying CONTEXT_NOT_FOUND so MME re-syncs",
-                message->h.teid_presence ? message->h.teid : 0);
+                sgw_s11_teid);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     }
 

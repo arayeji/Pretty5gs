@@ -40,6 +40,14 @@ void sgwc_ue_log(
         const char *proc, const char *apn, int level,
         const char *fmt, ...) OGS_GNUC_PRINTF(6, 7);
 
+/*
+ * WARN with enriched prefix when no SGWC-UE context exists (IMSI shows as "-").
+ * sgw_s11_teid from the GTP header is included when non-zero.
+ */
+void sgwc_ue_warn_no_ctx(
+        const char *proc, uint32_t sgw_s11_teid,
+        const char *fmt, ...) OGS_GNUC_PRINTF(3, 4);
+
 #define sgwc_ue_info(ue, sess, proc, apn, ...) \
     sgwc_ue_log(ue, sess, proc, apn, OGS_LOG_INFO, __VA_ARGS__)
 #define sgwc_ue_warn(ue, sess, proc, apn, ...) \
