@@ -53,6 +53,27 @@ static int sgwc_metrics_init_spec(ogs_metrics_context_t *ctx,
     return OGS_OK;
 }
 
+/* GLOBAL (no labels) */
+ogs_metrics_spec_t *sgwc_metrics_spec_global[_SGWC_METR_GLOB_MAX];
+ogs_metrics_inst_t *sgwc_metrics_inst_global[_SGWC_METR_GLOB_MAX];
+sgwc_metrics_spec_def_t sgwc_metrics_spec_def_global[_SGWC_METR_GLOB_MAX] = {
+[SGWC_METR_GLOB_GAUGE_SESSIONS_ORPHAN] = {
+    .type = OGS_METRICS_METRIC_TYPE_GAUGE,
+    .name = "sgwc_sessions_orphan",
+    .description = "SGWC sessions detected as orphan/stuck "
+        "(no SGW-U PFCP session or never fully established)",
+},
+};
+
+void sgwc_metrics_global_set(sgwc_metric_type_global_t t, int val)
+{
+    if (t >= _SGWC_METR_GLOB_MAX)
+        return;
+    if (!sgwc_metrics_inst_global[t])
+        return;
+    ogs_metrics_inst_set(sgwc_metrics_inst_global[t], val);
+}
+
 static bool sgwc_metrics_plmn_from_ue(sgwc_ue_t *sgwc_ue, ogs_plmn_id_t *plmn_id)
 {
     ogs_assert(sgwc_ue);
@@ -399,15 +420,22 @@ void sgwc_metrics_inst_by_rat_add(
 
 void sgwc_metrics_init(void)
 {
+    unsigned int i;
     ogs_metrics_context_t *ctx = ogs_metrics_self();
     ogs_metrics_context_init();
 
+    sgwc_metrics_init_spec(ctx, sgwc_metrics_spec_global,
+            sgwc_metrics_spec_def_global, _SGWC_METR_GLOB_MAX);
     sgwc_metrics_init_spec(ctx, sgwc_metrics_spec_by_plmn,
             sgwc_metrics_spec_def_by_plmn, _SGWC_METR_BY_PLMN_MAX);
     sgwc_metrics_init_spec(ctx, sgwc_metrics_spec_by_plmn_pgw,
             sgwc_metrics_spec_def_by_plmn_pgw, _SGWC_METR_BY_PLMN_PGW_MAX);
     sgwc_metrics_init_spec(ctx, sgwc_metrics_spec_by_rat,
             sgwc_metrics_spec_def_by_rat, _SGWC_METR_BY_RAT_MAX);
+
+    for (i = 0; i < _SGWC_METR_GLOB_MAX; i++)
+        sgwc_metrics_inst_global[i] = ogs_metrics_inst_new(
+                sgwc_metrics_spec_global[i], 0, NULL);
 
     sgwc_metrics_init_by_plmn();
     sgwc_metrics_init_by_plmn_pgw();
@@ -417,6 +445,14 @@ void sgwc_metrics_init(void)
 void sgwc_metrics_final(void)
 {
     ogs_hash_index_t *hi;
+    unsigned int i;
+
+    for (i = 0; i < _SGWC_METR_GLOB_MAX; i++) {
+        if (sgwc_metrics_inst_global[i]) {
+            ogs_metrics_inst_free(sgwc_metrics_inst_global[i]);
+            sgwc_metrics_inst_global[i] = NULL;
+        }
+    }
 
     if (metrics_hash_by_plmn) {
         for (hi = ogs_hash_first(metrics_hash_by_plmn); hi; hi = ogs_hash_next(hi)) {

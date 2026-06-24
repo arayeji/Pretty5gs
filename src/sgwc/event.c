@@ -100,6 +100,9 @@ const char *sgwc_event_get_name(sgwc_event_t *e)
     case SGWC_EVT_ADMIN_PURGE_ORPHANS:
         return "SGWC_EVT_ADMIN_PURGE_ORPHANS";
 
+    case SGWC_EVT_ORPHAN_SWEEP:
+        return "SGWC_EVT_ORPHAN_SWEEP";
+
     default:
        break;
     }
