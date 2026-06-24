@@ -757,7 +757,10 @@ void sgwc_s5c_handle_delete_session_response(
     }
 
     if (session_cause != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-        ogs_error("GTP Cause [VALUE:%d] - Ignored", session_cause);
+        ogs_error("[%s] S5 Delete Session Response from PGW/SMF returned "
+                "non-success gtp_cause[%d] (64=Context Not Found); SGW-C "
+                "ignores it and completes local session teardown anyway",
+                sgwc_ue->imsi_bcd, session_cause);
     }
 
     /********************

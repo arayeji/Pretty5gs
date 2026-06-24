@@ -1815,7 +1815,11 @@ void sgwc_s11_handle_release_access_bearers_request(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sgwc_ue) {
-        ogs_error("No Context");
+        ogs_error("Release Access Bearers Request: no SGWC-UE context for "
+                "SGW-S11-TEID[0x%x] - context already released (stale MME "
+                "state, prior Delete Session, failed attach, or SGW-C "
+                "restart); replying CONTEXT_NOT_FOUND so MME re-syncs",
+                message->h.teid_presence ? message->h.teid : 0);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     }
 
