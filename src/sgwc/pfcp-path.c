@@ -277,11 +277,8 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
                 sgwc_ue_remove_if_empty(sgwc_ue);
                 break;
             }
-            ogs_gtp_send_error_message(
-                    s11_xact, sgwc_ue->mme_s11_teid,
-                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+            sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
-            sgwc_sess_remove(sess);
             sgwc_ue_remove_if_empty(sgwc_ue);
         } else if (xact->assoc_xact_id == OGS_INVALID_POOL_ID) {
             /* PFCP restoration path — SGW-U slow to respond; keep the
@@ -292,13 +289,14 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
                     sgwc_log_imsi(sgwc_ue), sess->id);
         } else {
             /* s11_xact already gone — normal session timeout, clean up */
-            sgwc_sess_remove(sess);
+            sgwc_sess_abort_create(sess);
             sgwc_ue_remove_if_empty(sgwc_ue);
         }
         break;
     }
     case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE: {
         sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        ogs_gtp_xact_t *s11_xact = NULL;
         char sgwu_peer[OGS_ADDRSTRLEN];
 
         sgwc_log_sgwu_peer(sgwu_peer, sizeof(sgwu_peer), sess);
@@ -307,6 +305,14 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
                 sgwc_log_imsi(sgwc_ue),
                 sgwu_peer[0] ? sgwu_peer : "(unknown)",
                 sess->id, (unsigned long long)sess->sgwc_sxa_seid);
+
+        s11_xact = ogs_gtp_xact_find_by_id(xact->assoc_xact_id);
+        if (sgwc_ue && s11_xact &&
+                (xact->modify_flags & OGS_PFCP_MODIFY_UL_ONLY)) {
+            sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
+                    OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
+            sgwc_ue_remove_if_empty(sgwc_ue);
+        }
         break;
     }
     case OGS_PFCP_SESSION_DELETION_REQUEST_TYPE: {

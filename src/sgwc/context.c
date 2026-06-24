@@ -1718,6 +1718,26 @@ void sgwc_sess_select_sgwu(sgwc_sess_t *sess)
     }
 }
 
+void sgwc_sess_abort_create(sgwc_sess_t *sess)
+{
+    if (!sess)
+        return;
+
+    /*
+     * Roll back a partially established PDN during Create Session.  The PGW/SMF
+     * S5 session exists only after Create Session Response (see
+     * sgwc_metrics_session_active_inc).  sgwc_sess_remove() purges SGW-U (PFCP).
+     */
+    if (sess->metrics_session_counted && sess->gnode && !sess->gn) {
+        if (sgwc_gtp_send_s5c_delete_session_request(sess) != OGS_OK) {
+            ogs_warn("S5 Delete Session failed during create abort "
+                    "[sess_id=%d]", sess->id);
+        }
+    }
+
+    sgwc_sess_remove(sess);
+}
+
 int sgwc_sess_remove(sgwc_sess_t *sess)
 {
     sgwc_ue_t *sgwc_ue = NULL;
