@@ -1999,8 +1999,19 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
             }
 
             mme_metrics_attach_success(mme_ue);
-            mme_metrics_ue_registered_inc(mme_ue);
-            mme_ue->metrics_registered = true;
+            /*
+             * Count each UE context in the mme_ue_registered gauge at most
+             * once. The same mme_ue is reused across re-attaches (a new Attach
+             * Request on a live context flows back through attach-complete
+             * here), but the gauge is only decremented once on context removal
+             * (mme_metrics_on_ue_remove, gated by metrics_registered). Without
+             * this guard every re-attach leaked +1, inflating the gauge far
+             * above the real number of attached UEs.
+             */
+            if (!mme_ue->metrics_registered) {
+                mme_metrics_ue_registered_inc(mme_ue);
+                mme_ue->metrics_registered = true;
+            }
 
             OGS_FSM_TRAN(s, &emm_state_registered);
             break;
