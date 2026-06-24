@@ -592,6 +592,21 @@ void sgwc_csr_replace_continue(
     sgwc_ue->csr_replace_gtpbuf = NULL;
     sgwc_ue->csr_replace_sess_id = OGS_INVALID_POOL_ID;
 
+    /*
+     * Tear down the OLD PGW-C/SMF session on S5/S8 before dropping it.
+     *
+     * CSR replace only deleted the old SGW-U (PFCP) session; the old PDN
+     * connection on PGW-C/SMF was abandoned silently, so SMF accumulates
+     * orphaned (control-plane-only) sessions on every re-attach collision.
+     *
+     * Fire-and-forget: the new Create Session proceeds independently below,
+     * and the eventual S5 Delete Session Response is ignored because this
+     * transaction has no associated S11 transaction. Send it BEFORE
+     * sgwc_sess_remove() frees old_sess (it uses pgw_s5c_teid/gnode/bearer).
+     */
+    if (old_sess->gnode && old_sess->pgw_s5c_teid)
+        sgwc_gtp_send_s5c_delete_session_request(old_sess);
+
     old_sess->sgwu_sxa_seid = 0;
     sgwc_sess_remove(old_sess);
 
