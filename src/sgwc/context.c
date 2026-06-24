@@ -19,6 +19,7 @@
 
 #include <yaml.h>
 #include <stdio.h>
+#include <inttypes.h>
 
 #include "context.h"
 #include "event.h"

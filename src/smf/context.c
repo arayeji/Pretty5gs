@@ -17,6 +17,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <inttypes.h>
+
 #include "context.h"
 #include "event.h"
 #include "timer.h"
