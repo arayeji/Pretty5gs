@@ -52,6 +52,8 @@ typedef enum {
     SGWC_EVT_ADMIN_MAINTENANCE_DISABLE,
     SGWC_EVT_ADMIN_MAINTENANCE_DRAIN,
     SGWC_EVT_ADMIN_DETACH_SESSION,
+    SGWC_EVT_ADMIN_DETACH_SESS_ONE,   /* detach one specific session (sgwc_sess_id) */
+    SGWC_EVT_ADMIN_PURGE_ORPHANS,     /* delete all orphan sessions                 */
 
     SGWC_EVT_TOP,
 
@@ -74,6 +76,7 @@ typedef struct sgwc_event_s {
     /* SGWC_EVT_ADMIN_MAINTENANCE_DRAIN / DETACH_SESSION: 0=graceful, 1=force */
     int admin_force;
     ogs_pool_id_t sgwc_ue_id;
+    ogs_pool_id_t admin_sess_id;  /* SGWC_EVT_ADMIN_DETACH_SESS_ONE: specific session */
 } sgwc_event_t;
 
 OGS_STATIC_ASSERT(OGS_EVENT_SIZE >= sizeof(sgwc_event_t));
