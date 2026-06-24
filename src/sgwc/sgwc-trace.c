@@ -104,6 +104,32 @@ void sgwc_ue_log(
             0, __FILE__, __LINE__, OGS_FUNC, 0, "%s %s", prefix, msg);
 }
 
+void sgwc_ue_warn_no_ctx(
+        const char *proc, uint32_t sgw_s11_teid,
+        const char *fmt, ...)
+{
+    va_list ap;
+    char prefix[OGS_TRACE_PREFIX_BUFSIZE];
+    char msg[OGS_HUGE_LEN];
+    ogs_trace_ctx_t ctx;
+
+    ogs_assert(proc);
+    ogs_assert(fmt);
+
+    memset(&ctx, 0, sizeof(ctx));
+    ogs_cpystrn(ctx.proc, proc, sizeof(ctx.proc));
+    ctx.sgw_s11_teid = sgw_s11_teid;
+    ogs_trace_set(&ctx);
+    ogs_trace_format_prefix(prefix, sizeof(prefix));
+
+    va_start(ap, fmt);
+    ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+
+    ogs_log_printf(OGS_LOG_WARN, OGS_LOG_DOMAIN,
+            0, __FILE__, __LINE__, OGS_FUNC, 0, "%s %s", prefix, msg);
+}
+
 const char *sgwc_log_imsi(sgwc_ue_t *sgwc_ue)
 {
     if (sgwc_ue && sgwc_ue->imsi_bcd[0])
