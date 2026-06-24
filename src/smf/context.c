@@ -156,12 +156,6 @@ void smf_context_init(void)
     self.gtpc_recovery = 0;
     self.recovery_counter_file = SMF_RECOVERY_COUNTER_FILE;
 
-    self.orphan.enabled = true;
-    self.orphan.purge = true;
-    self.orphan.interval_s = 60;
-    self.orphan.grace_s = 30;
-    self.orphan.t_sweep = NULL;
-
     context_initialized = 1;
 }
 
@@ -242,6 +236,13 @@ static int smf_context_prepare(void)
     self.radius.use_framed_ip_for_ue = true;
 
     self.default_pdr_precedence = OGS_PFCP_DEFAULT_PDR_PRECEDENCE;
+
+    /* Orphan sweep defaults; reset on every parse so SIGHUP removes them cleanly. */
+    self.orphan.enabled = true;
+    self.orphan.purge = true;
+    self.orphan.interval_s = 60;
+    self.orphan.grace_s = 30;
+    /* t_sweep is NOT reset here -- the timer is live on reload */
 
     self.cdr.enabled = false;
     self.cdr.spool_dir = NULL;
