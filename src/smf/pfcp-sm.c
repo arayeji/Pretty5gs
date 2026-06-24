@@ -23,30 +23,6 @@
 
 #include "n4-handler.h"
 
-static void pfcp_log_travelping_rejection(
-        smf_event_t *e, ogs_pfcp_message_t *message)
-{
-    ogs_pfcp_tlv_cause_t *cause = NULL;
-
-    ogs_assert(e);
-    ogs_assert(message);
-
-    switch (message->h.type) {
-    case OGS_PFCP_SESSION_ESTABLISHMENT_RESPONSE_TYPE:
-        cause = &message->pfcp_session_establishment_response.cause;
-        break;
-    case OGS_PFCP_SESSION_MODIFICATION_RESPONSE_TYPE:
-        cause = &message->pfcp_session_modification_response.cause;
-        break;
-    default:
-        return;
-    }
-
-    if (cause->presence &&
-            cause->u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED)
-        ogs_pfcp_log_travelping_error(e->pkbuf);
-}
-
 static void pfcp_restoration(ogs_pfcp_node_t *node);
 static void reselect_upf(ogs_pfcp_node_t *node);
 static void node_timeout(ogs_pfcp_xact_t *xact, void *data);
@@ -358,7 +334,6 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
                         OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
                 break;
             }
-            pfcp_log_travelping_rejection(e, message);
             ogs_fsm_dispatch(&sess->sm, e);
             break;
 
@@ -371,7 +346,6 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
                 break;
             }
 
-            pfcp_log_travelping_rejection(e, message);
             if (xact->epc)
                 smf_epc_n4_handle_session_modification_response(
                     sess, xact, e->gtp2_message,

@@ -938,7 +938,8 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
 
                 pfcp_cause = smf_epc_n4_handle_session_establishment_response(
                         sess, pfcp_xact,
-                        &pfcp_message->pfcp_session_establishment_response);
+                        &pfcp_message->pfcp_session_establishment_response,
+                        e->pkbuf);
                 if (pfcp_cause != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
                     if (!sess->sm_data.pfcp_ue_ip_retry_done &&
                             pfcp_cause ==
@@ -1027,7 +1028,8 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
                 int r = 0;
                 pfcp_cause = smf_5gc_n4_handle_session_establishment_response(
                         sess, pfcp_xact,
-                        &pfcp_message->pfcp_session_establishment_response);
+                        &pfcp_message->pfcp_session_establishment_response,
+                        e->pkbuf);
                 if (pfcp_cause != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
                     OGS_FSM_TRAN(s, smf_gsm_state_5gc_n1_n2_reject);
                     return;

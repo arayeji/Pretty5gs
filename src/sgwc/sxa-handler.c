@@ -891,7 +891,8 @@ void sgwc_sxa_handle_session_establishment_response(
 void sgwc_sxa_handle_session_modification_response(
         sgwc_sess_t *sess, ogs_pfcp_xact_t *pfcp_xact,
         ogs_gtp2_message_t *recv_message,
-        ogs_pfcp_session_modification_response_t *pfcp_rsp)
+        ogs_pfcp_session_modification_response_t *pfcp_rsp,
+        ogs_pkbuf_t *pfcp_pkbuf)
 {
     int i, rv, len = 0;
     uint8_t cause_value = 0;
@@ -988,9 +989,25 @@ void sgwc_sxa_handle_session_modification_response(
 
     if (pfcp_rsp->cause.presence) {
         if (pfcp_rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
-            ogs_warn("PFCP Cause [%d:%s] : Not Accepted",
+            char vpp_detail[512];
+            if (!sgwc_ue && sess)
+                sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+
+            vpp_detail[0] = '\0';
+            if (pfcp_pkbuf &&
+                    !ogs_pfcp_travelping_error_message(
+                        pfcp_pkbuf, vpp_detail, sizeof(vpp_detail)))
+                vpp_detail[0] = '\0';
+
+            sgwc_ue_error(sgwc_ue, sess, "sxa",
+                    sess && sess->session.name ? sess->session.name : NULL,
+                    "SGW-U rejected PFCP Session Modification "
+                    "PFCP cause[%u:%s] -> S11 cause[%u] vpp[%s]",
                     pfcp_rsp->cause.u8,
-                    ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8));
+                    ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8),
+                    gtp_cause_from_pfcp(pfcp_rsp->cause.u8),
+                    vpp_detail[0] ? vpp_detail : "-");
+
             if (ogs_pfcp_cause_no_association(pfcp_rsp->cause.u8) && sess)
                 sgwc_pfcp_request_reassociation(sess->pfcp_node);
             cause_value = gtp_cause_from_pfcp(pfcp_rsp->cause.u8);

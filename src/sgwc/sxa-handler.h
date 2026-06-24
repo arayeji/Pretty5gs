@@ -34,7 +34,8 @@ void sgwc_sxa_handle_session_establishment_response(
 void sgwc_sxa_handle_session_modification_response(
         sgwc_sess_t *sess, ogs_pfcp_xact_t *pfcp_xact,
         ogs_gtp2_message_t *recv_message,
-        ogs_pfcp_session_modification_response_t *pfcp_rsp);
+        ogs_pfcp_session_modification_response_t *pfcp_rsp,
+        ogs_pkbuf_t *pfcp_pkbuf);
 void sgwc_sxa_handle_session_deletion_response(
         sgwc_sess_t *sess, ogs_pfcp_xact_t *pfcp_xact,
         ogs_gtp2_message_t *gtp_message,

@@ -28,7 +28,8 @@ extern "C" {
 
 uint8_t smf_5gc_n4_handle_session_establishment_response(
         smf_sess_t *sess, ogs_pfcp_xact_t *xact,
-        ogs_pfcp_session_establishment_response_t *rsp);
+        ogs_pfcp_session_establishment_response_t *rsp,
+        ogs_pkbuf_t *pkbuf);
 void smf_5gc_n4_handle_session_modification_response(
         smf_sess_t *sess, ogs_pfcp_xact_t *xact,
         ogs_pfcp_session_modification_response_t *rsp);
@@ -38,7 +39,8 @@ int smf_5gc_n4_handle_session_deletion_response(
 
 uint8_t smf_epc_n4_handle_session_establishment_response(
         smf_sess_t *sess, ogs_pfcp_xact_t *xact,
-        ogs_pfcp_session_establishment_response_t *rsp);
+        ogs_pfcp_session_establishment_response_t *rsp,
+        ogs_pkbuf_t *pkbuf);
 void smf_epc_n4_handle_session_modification_response(
         smf_sess_t *sess, ogs_pfcp_xact_t *xact,
         ogs_gtp2_message_t *recv_message,
