@@ -929,10 +929,31 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
 
                 gtp_xact = ogs_gtp_xact_find_by_id(pfcp_xact->assoc_xact_id);
                 if (!gtp_xact) {
+                    /*
+                     * The S5/S8 Create Session transaction is gone: the peer
+                     * (SGW-C/MME) gave up on this attach and there is nobody
+                     * to answer. We must still CONSUME this PFCP Session
+                     * Establishment Response so that sess->upf_n4_seid is
+                     * recorded from the UP F-SEID -- otherwise the Session
+                     * Deletion we send next would carry SEID 0, the UPF could
+                     * not match it, and the just-created PGW-U session would
+                     * leak forever.
+                     */
                     ogs_error("PFCP Establishment Response: "
-                            "GTP transaction gone (assoc_xact_id=%d)",
+                            "GTP transaction gone (assoc_xact_id=%d), "
+                            "tearing down orphaned UPF session",
                             (int)pfcp_xact->assoc_xact_id);
-                    OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
+                    pfcp_cause =
+                        smf_epc_n4_handle_session_establishment_response(
+                            sess, pfcp_xact,
+                            &pfcp_message->
+                                pfcp_session_establishment_response,
+                            e->pkbuf);
+                    if (pfcp_cause == OGS_PFCP_CAUSE_REQUEST_ACCEPTED &&
+                            sess->upf_n4_seid)
+                        OGS_FSM_TRAN(s, smf_gsm_state_wait_pfcp_deletion);
+                    else
+                        OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
                     return;
                 }
 
