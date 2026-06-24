@@ -176,7 +176,8 @@ static int sbi_status_from_pfcp(uint8_t pfcp_cause)
  * other cause value on failure */
 uint8_t smf_5gc_n4_handle_session_establishment_response(
         smf_sess_t *sess, ogs_pfcp_xact_t *xact,
-        ogs_pfcp_session_establishment_response_t *rsp)
+        ogs_pfcp_session_establishment_response_t *rsp,
+        ogs_pkbuf_t *pkbuf)
 {
     int i;
 
@@ -216,17 +217,26 @@ uint8_t smf_5gc_n4_handle_session_establishment_response(
         if (rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
             char sgw_peer[OGS_ADDRSTRLEN];
             char upf_peer[OGS_ADDRSTRLEN];
+            char vpp_detail[512];
             smf_ue_t *smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
 
             smf_log_sgw_peer(sgw_peer, sizeof(sgw_peer), sess);
             smf_log_upf_peer(upf_peer, sizeof(upf_peer), sess);
+
+            vpp_detail[0] = '\0';
+            if (pkbuf &&
+                    !ogs_pfcp_travelping_error_message(
+                        pkbuf, vpp_detail, sizeof(vpp_detail)))
+                vpp_detail[0] = '\0';
+
             smf_ue_error(smf_ue, sess, "n4",
                     "PFCP Session Establishment rejected cause[%u:%s] "
-                    "SGW[%s] UPF[%s] smf_seid[0x%llx]",
+                    "SGW[%s] UPF[%s] smf_seid[0x%llx] vpp[%s]",
                     rsp->cause.u8, ogs_pfcp_cause_get_name(rsp->cause.u8),
                     sgw_peer[0] ? sgw_peer : "-",
                     upf_peer[0] ? upf_peer : "-",
-                    (unsigned long long)sess->smf_n4_seid);
+                    (unsigned long long)sess->smf_n4_seid,
+                    vpp_detail[0] ? vpp_detail : "-");
             cause_value = rsp->cause.u8;
             smf_metrics_inst_by_cause_add(cause_value,
                     SMF_METR_CTR_SM_N4SESSIONESTABFAIL, 1);
@@ -1249,7 +1259,8 @@ int smf_5gc_n4_handle_session_deletion_response(
  * other cause value on failure */
 uint8_t smf_epc_n4_handle_session_establishment_response(
         smf_sess_t *sess, ogs_pfcp_xact_t *xact,
-        ogs_pfcp_session_establishment_response_t *rsp)
+        ogs_pfcp_session_establishment_response_t *rsp,
+        ogs_pkbuf_t *pkbuf)
 {
     uint8_t cause_value = OGS_PFCP_CAUSE_REQUEST_ACCEPTED;
 
@@ -1275,16 +1286,25 @@ uint8_t smf_epc_n4_handle_session_establishment_response(
             smf_ue_t *smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
             char sgw_peer[OGS_ADDRSTRLEN];
             char upf_peer[OGS_ADDRSTRLEN];
+            char vpp_detail[512];
 
             smf_log_sgw_peer(sgw_peer, sizeof(sgw_peer), sess);
             smf_log_upf_peer(upf_peer, sizeof(upf_peer), sess);
+
+            vpp_detail[0] = '\0';
+            if (pkbuf &&
+                    !ogs_pfcp_travelping_error_message(
+                        pkbuf, vpp_detail, sizeof(vpp_detail)))
+                vpp_detail[0] = '\0';
+
             smf_ue_error(smf_ue, sess, "n4",
                     "PFCP Session Establishment rejected cause[%u:%s] "
-                    "SGW[%s] UPF[%s] smf_seid[0x%llx]",
+                    "SGW[%s] UPF[%s] smf_seid[0x%llx] vpp[%s]",
                     rsp->cause.u8, ogs_pfcp_cause_get_name(rsp->cause.u8),
                     sgw_peer[0] ? sgw_peer : "-",
                     upf_peer[0] ? upf_peer : "-",
-                    (unsigned long long)sess->smf_n4_seid);
+                    (unsigned long long)sess->smf_n4_seid,
+                    vpp_detail[0] ? vpp_detail : "-");
             cause_value = rsp->cause.u8;
         }
     } else {
