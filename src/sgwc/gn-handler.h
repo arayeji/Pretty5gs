@@ -55,6 +55,10 @@ void sgwc_gtp_create_reject(
         sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *xact,
         uint8_t gtp2_cause);
 
+void sgwc_create_session_reject_and_cleanup(
+        sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *s11_xact,
+        uint8_t gtp2_cause);
+
 #ifdef __cplusplus
 }
 #endif

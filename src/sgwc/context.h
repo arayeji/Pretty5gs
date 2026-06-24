@@ -356,6 +356,7 @@ void sgwc_sess_sync_pfcp_pdr_nwi(sgwc_sess_t *sess);
 
 void sgwc_sess_select_sgwu(sgwc_sess_t *sess);
 
+void sgwc_sess_abort_create(sgwc_sess_t *sess);
 int sgwc_sess_remove(sgwc_sess_t *sess);
 void sgwc_sess_purge_upf(sgwc_sess_t *sess);
 void sgwc_sess_remove_all(sgwc_ue_t *sgwc_ue);

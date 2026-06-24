@@ -520,7 +520,7 @@ cleanup:
     ogs_error("[%s] Create Session failed before SGW-U/SMF [GTP cause:%u]",
             sgwc_ue ? sgwc_ue->imsi_bcd : "-", cause_value);
     if (sess)
-        sgwc_sess_remove(sess);
+        sgwc_sess_abort_create(sess);
 
     ogs_gtp_send_error_message(
             s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
@@ -774,7 +774,7 @@ void sgwc_s11_handle_create_session_request(
 
         ogs_info("OLD Session Release [IMSI:%s,APN:%s]",
                 sgwc_ue->imsi_bcd, sess->session.name);
-        sgwc_sess_remove(sess);
+        sgwc_sess_abort_create(sess);
     }
 
     sgwc_s11_create_session_proceed(sgwc_ue, s11_xact, gtpbuf, message);

@@ -156,20 +156,15 @@ static void bearer_timeout(ogs_gtp_xact_t *xact, void *data)
  * malformed), the PDN connection never comes up end-to-end, so the SGW-U
  * session must be deleted to avoid leaking user-plane resources.
  *
- * For the Gn (2G/3G) case, sgwc_gtp_create_reject() already removes the
+ * For the Gn (2G/3G) case, sgwc_gn_send_create_reject() already removes the
  * session via sgwc_gn_send_create_reject(); guard against a double free.
  */
 static void create_session_reject_and_cleanup(
         sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *s11_xact,
         uint8_t gtp2_cause)
 {
-    sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, gtp2_cause);
-
-    if (sess && !sess->gn) {
-        sgwc_sess_remove(sess);
-        /* Drop the UE context too if this was its last session. */
-        sgwc_ue_remove_if_empty(sgwc_ue);
-    }
+    sgwc_create_session_reject_and_cleanup(
+            sess, sgwc_ue, s11_xact, gtp2_cause);
 }
 
 void sgwc_s5c_handle_create_session_response(
@@ -637,7 +632,7 @@ void sgwc_s5c_handle_modify_bearer_response(
                 ogs_error("ModifyBearerResponse missing PGW S5U address "
                         "(SEID=%u, bearer=%u)", sess->id, bearer->ebi);
 
-                sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact,
+                sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
                         OGS_GTP2_CAUSE_MANDATORY_IE_MISSING);
                 return;
             }

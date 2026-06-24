@@ -171,6 +171,18 @@ void sgwc_gtp_create_reject(
                 OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE, gtp2_cause);
 }
 
+void sgwc_create_session_reject_and_cleanup(
+        sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *s11_xact,
+        uint8_t gtp2_cause)
+{
+    sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, gtp2_cause);
+
+    if (sess && !sess->gn) {
+        sgwc_sess_abort_create(sess);
+        sgwc_ue_remove_if_empty(sgwc_ue);
+    }
+}
+
 static bool sgwc_gn_create_matches_active_sess(
         sgwc_sess_t *sess, ogs_gtp1_create_pdp_context_request_t *req)
 {

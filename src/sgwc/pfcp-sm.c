@@ -339,15 +339,14 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
                                     OGS_GTP2_CAUSE_SYSTEM_FAILURE);
                             sess = NULL;
                         } else {
-                            ogs_gtp_send_error_message(
-                                    s11_xact,
-                                    sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
-                                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                            sgwc_create_session_reject_and_cleanup(
+                                    sess, sgwc_ue, s11_xact,
                                     OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+                            sess = NULL;
                         }
+                    } else if (sess) {
+                        sgwc_sess_abort_create(sess);
                     }
-                    if (sess)
-                        sgwc_sess_remove(sess);
                     ogs_pfcp_xact_commit(xact);
                     break;
                 }
