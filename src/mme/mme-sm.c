@@ -1008,6 +1008,18 @@ cleanup:
             ogs_warn("Not implemented(type:%d)", gtp_message.h.type);
             break;
         }
+
+        /*
+         * mme_s11_handle_sgw_context_lost() (and similar handlers) may set
+         * ue_context_will_remove when there are no pending sessions AND no
+         * S1 context, expecting "the caller" to drive the FSM transition.
+         * Unlike EMM event handlers which check this flag explicitly, the S11
+         * event handler had no such check, so UEs would leak indefinitely.
+         * Complete the removal here before freeing the packet buffer.
+         */
+        if (mme_ue && mme_ue->ue_context_will_remove)
+            mme_ue_enter_ue_context_will_remove(mme_ue);
+
         ogs_pkbuf_free(pkbuf);
         break;
 
