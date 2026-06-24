@@ -319,6 +319,13 @@ static size_t sgwc_admin_list_sessions(char *buf, size_t buflen,
 
     APPEND("{\"sessions\":[");
 
+    /*
+     * This dumper runs in the Prometheus/MHD HTTP thread, while the main
+     * worker thread mutates sgw_ue_list / sess_list under the metrics dump
+     * lock (see sgwc_ue_remove / sgwc_sess_remove). Hold the same lock here
+     * so we never walk a list that is being spliced underneath us.
+     */
+    ogs_metrics_dump_lock();
     ogs_list_for_each(&sgwc_self()->sgw_ue_list, ue) {
         if (q && q->imsi && *q->imsi &&
                 strcmp(ue->imsi_bcd, q->imsi) != 0)
@@ -337,12 +344,13 @@ static size_t sgwc_admin_list_sessions(char *buf, size_t buflen,
                    "\"pfcp_seid\":\"0x%"PRIx64"\","
                    "\"smf_connected\":%s}",
                    ue->imsi_bcd,
-                   sess->session.name,
+                   sess->session.name ? sess->session.name : "",
                    is_orphan ? "true" : "false",
                    sess->sgwu_sxa_seid,
                    sess->gnode ? "true" : "false");
         }
     }
+    ogs_metrics_dump_unlock();
 
     APPEND("]}\n");
 #undef APPEND
