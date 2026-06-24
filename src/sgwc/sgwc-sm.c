@@ -538,7 +538,13 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
                             sess, OGS_INVALID_POOL_ID, NULL);
                 if (sess->gnode)
                     sgwc_gtp_send_s5c_delete_session_request(sess);
-                sgwc_gtp_send_network_delete_session(sgwc_ue, sess);
+                /*
+                 * sgwc_gtp_send_network_delete_session() asserts on a NULL
+                 * sgwc_ue. A session should always have a live UE, but guard
+                 * anyway so a stale lookup cannot crash the daemon.
+                 */
+                if (sgwc_ue)
+                    sgwc_gtp_send_network_delete_session(sgwc_ue, sess);
             }
         } else {
             ogs_warn("admin session delete: session already gone");
@@ -550,19 +556,33 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         sgwc_ue_t *ue = NULL, *next_ue = NULL;
         sgwc_sess_t *sess = NULL, *next_sess = NULL;
         int count = 0;
+        /*
+         * Grace period: a freshly created session that has not yet finished
+         * its S5/PFCP establishment legitimately has sgwu_sxa_seid==0 and is
+         * not yet metrics-counted. Tearing it down here would abort an
+         * in-flight attach and leave a pending PFCP/S5 transaction pointing
+         * at a freed session. Only purge sessions older than this.
+         */
+        const ogs_time_t grace = ogs_time_from_sec(30);
+        ogs_time_t now = ogs_time_now();
 
         ogs_list_for_each_safe(&sgwc_self()->sgw_ue_list, next_ue, ue) {
             ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
+                bool is_orphan = (!sess->metrics_session_counted ||
+                                  sess->sgwu_sxa_seid == 0);
+                bool aged_out = (sess->create_session_t0 == 0) ||
+                        ((now - sess->create_session_t0) > grace);
+
                 /*
-                 * Orphan: session was never fully established
-                 * (not counted in active metrics) OR has no PFCP
-                 * session with SGW-U.
+                 * Orphan: never fully established (not metrics-counted) OR
+                 * no PFCP session with SGW-U — AND old enough that it is not
+                 * an attach still in progress.
                  */
-                if (!sess->metrics_session_counted ||
-                        sess->sgwu_sxa_seid == 0) {
+                if (is_orphan && aged_out) {
                     ogs_info("purge orphan: imsi=%s apn=%s "
                              "(counted=%d sxa_seid=0x%"PRIx64")",
-                             ue->imsi_bcd, sess->session.name,
+                             ue->imsi_bcd,
+                             sess->session.name ? sess->session.name : "-",
                              sess->metrics_session_counted,
                              sess->sgwu_sxa_seid);
                     sgwc_sess_abort_create(sess);
