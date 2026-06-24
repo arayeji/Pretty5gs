@@ -96,6 +96,9 @@ const char *smf_event_get_name(smf_event_t *e)
     case SMF_EVT_ADMIN_DETACH_SESSION:
         return "SMF_EVT_ADMIN_DETACH_SESSION";
 
+    case SMF_EVT_ORPHAN_SWEEP:
+        return "SMF_EVT_ORPHAN_SWEEP";
+
     default:
        break;
     }

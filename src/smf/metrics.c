@@ -137,6 +137,12 @@ smf_metrics_spec_def_t smf_metrics_spec_def_global[_SMF_METR_GLOB_MAX] = {
     .name = "pfcp_peers_active",
     .description = "Active PFCP peers",
 },
+[SMF_METR_GLOB_GAUGE_SESSIONS_ORPHAN] = {
+    .type = OGS_METRICS_METRIC_TYPE_GAUGE,
+    .name = "smf_sessions_orphan",
+    .description = "EPC sessions detected as orphan/stuck "
+        "(no UPF PFCP session or never fully established)",
+},
 };
 int smf_metrics_init_inst_global(void)
 {

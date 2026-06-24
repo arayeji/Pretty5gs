@@ -18,6 +18,8 @@
  */
 
 #include "context.h"
+#include "event.h"
+#include "timer.h"
 #include "radius-path.h"
 #include "ga-writer.h"
 #include "gtp-path.h"
@@ -153,6 +155,12 @@ void smf_context_init(void)
 
     self.gtpc_recovery = 0;
     self.recovery_counter_file = SMF_RECOVERY_COUNTER_FILE;
+
+    self.orphan.enabled = true;
+    self.orphan.purge = true;
+    self.orphan.interval_s = 60;
+    self.orphan.grace_s = 30;
+    self.orphan.t_sweep = NULL;
 
     context_initialized = 1;
 }
@@ -1352,6 +1360,28 @@ int smf_context_parse_config(void)
                                             &security_indication_iter);
                         }
                     }
+                } else if (!strcmp(smf_key, "orphan")) {
+                    ogs_yaml_iter_t o_iter;
+                    ogs_yaml_iter_recurse(&smf_iter, &o_iter);
+                    while (ogs_yaml_iter_next(&o_iter)) {
+                        const char *ok = ogs_yaml_iter_key(&o_iter);
+                        const char *ov = ogs_yaml_iter_value(&o_iter);
+                        ogs_assert(ok);
+                        if (!strcmp(ok, "enabled")) {
+                            self.orphan.enabled = ogs_yaml_iter_bool(&o_iter);
+                        } else if (!strcmp(ok, "purge")) {
+                            self.orphan.purge = ogs_yaml_iter_bool(&o_iter);
+                        } else if (!strcmp(ok, "interval") ||
+                                !strcmp(ok, "interval_s")) {
+                            if (ov) self.orphan.interval_s =
+                                (uint32_t)atoi(ov);
+                        } else if (!strcmp(ok, "grace") ||
+                                !strcmp(ok, "grace_s")) {
+                            if (ov) self.orphan.grace_s =
+                                (uint32_t)atoi(ov);
+                        } else
+                            ogs_warn("unknown key `%s` in smf.orphan", ok);
+                    }
                 } else if (!strcmp(smf_key, "pfcp")) {
                     /* handle config in pfcp library */
                 } else if (!strcmp(smf_key, "upf")) {
@@ -1978,6 +2008,9 @@ smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)
 
     /* Set EPC */
     sess->epc = true;
+
+    /* Creation epoch for orphan aging. */
+    sess->created = ogs_time_now();
 
     memset(&e, 0, sizeof(e));
     e.sess_id = sess->id;
@@ -2667,6 +2700,113 @@ void smf_sess_set_paging_n1n2message_location(
             sess->paging.n1n2message_location,
             strlen(sess->paging.n1n2message_location),
             sess);
+}
+
+int smf_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
+{
+    smf_ue_t *ue = NULL, *next_ue = NULL;
+    smf_sess_t *sess = NULL, *next_sess = NULL;
+    ogs_time_t now = ogs_time_now();
+    int remaining = 0, purged = 0;
+
+    /*
+     * Main-thread only: walks and mutates smf_ue_list / sess_list and may send
+     * a best-effort PFCP delete to the UPF. Only EPC sessions are considered;
+     * 5GC PDU sessions follow their own AMF/SBI-driven release lifecycle.
+     */
+    ogs_list_for_each_safe(&self.smf_ue_list, next_ue, ue) {
+        ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
+            bool is_orphan, aged_out;
+
+            if (!sess->epc)
+                continue;
+
+            is_orphan = (!sess->metrics_session_counted ||
+                         sess->upf_n4_seid == 0);
+            if (!is_orphan)
+                continue;
+
+            aged_out = (sess->created == 0) ||
+                    ((now - sess->created) > grace);
+
+            if (do_purge && aged_out) {
+                ogs_info("orphan sweep: purge imsi=%s apn=%s "
+                         "(counted=%d upf_n4_seid=0x%" PRIx64 ")",
+                         ue->imsi_bcd,
+                         sess->session.name ? sess->session.name : "-",
+                         sess->metrics_session_counted,
+                         (uint64_t)sess->upf_n4_seid);
+                /* Best-effort PFCP delete (no-op if no UPF SEID), then free. */
+                smf_epc_pfcp_send_session_deletion_best_effort(sess);
+                smf_sess_remove(sess);
+                purged++;
+                continue; /* sess is freed; do not count as remaining */
+            }
+
+            remaining++;
+        }
+        if (ogs_list_empty(&ue->sess_list))
+            smf_ue_remove(ue);
+    }
+
+    if (out_purged)
+        *out_purged = purged;
+
+    return remaining;
+}
+
+static void orphan_sweep_timer_cb(void *data)
+{
+    smf_event_t *e = NULL;
+    int rv;
+
+    e = smf_event_new(SMF_EVT_ORPHAN_SWEEP);
+    ogs_assert(e);
+    e->h.timer_id = SMF_TIMER_ORPHAN_SWEEP;
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_queue_push() failed [%d] for orphan sweep", (int)rv);
+        ogs_event_free(e);
+    }
+}
+
+void smf_orphan_timer_start(void)
+{
+    uint32_t interval_s;
+
+    if (!self.orphan.enabled) {
+        ogs_info("SMF orphan sweep disabled by config");
+        return;
+    }
+
+    /* Clamp to a sane floor so a misconfigured 0/1s never busy-loops. */
+    interval_s = self.orphan.interval_s;
+    if (interval_s < 5) {
+        ogs_warn("smf.orphan.interval %u too low; using 5s", interval_s);
+        interval_s = 5;
+        self.orphan.interval_s = interval_s;
+    }
+
+    if (!self.orphan.t_sweep) {
+        self.orphan.t_sweep = ogs_timer_add(
+                ogs_app()->timer_mgr, orphan_sweep_timer_cb, NULL);
+        ogs_assert(self.orphan.t_sweep);
+    }
+
+    ogs_timer_start(self.orphan.t_sweep, ogs_time_from_sec(interval_s));
+
+    ogs_info("SMF orphan sweep started: interval=%us grace=%us purge=%s",
+             interval_s, self.orphan.grace_s,
+             self.orphan.purge ? "on" : "off");
+}
+
+void smf_orphan_timer_stop(void)
+{
+    if (self.orphan.t_sweep) {
+        ogs_timer_delete(self.orphan.t_sweep);
+        self.orphan.t_sweep = NULL;
+    }
 }
 
 void smf_sess_remove(smf_sess_t *sess)

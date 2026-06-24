@@ -345,6 +345,22 @@ typedef struct smf_context_s {
 
     /* Operator maintenance window (HTTP /admin/maintenance endpoints). */
     bool maintenance_mode;
+
+    /*
+     * Periodic orphan-session sweep (EPC only). An "orphan" is an EPC session
+     * that never finished establishment (metrics_session_counted == 0) or has
+     * no PFCP session bound to the UPF (upf_n4_seid == 0). The sweep runs on
+     * the SMF main thread, publishes the smf_sessions_orphan gauge, and -- when
+     * purge is enabled -- tears down orphans older than grace_s (so it never
+     * aborts a session that is still being set up).
+     */
+    struct {
+        bool enabled;          /* run the periodic sweep (default true)       */
+        bool purge;            /* delete aged orphans (default true)          */
+        uint32_t interval_s;   /* sweep period seconds (default 60)           */
+        uint32_t grace_s;      /* min orphan age before purge (default 30)    */
+        ogs_timer_t *t_sweep;  /* main-thread periodic timer                  */
+    } orphan;
 } smf_context_t;
 
 typedef struct smf_gtp_node_s {
@@ -514,6 +530,7 @@ typedef struct smf_sess_s {
     } sm_data;
 
     bool            epc;            /**< EPC or 5GC */
+    ogs_time_t      created;        /* session creation epoch (orphan aging) */
     bool            collision_replace; /* Re-attach: wait UPF delete before new CSR */
     unsigned        metrics_session_counted : 1;
     unsigned        metrics_rat_labeled : 1;
@@ -1031,6 +1048,18 @@ void smf_sess_set_paging_n1n2message_location(
 
 void smf_sess_remove(smf_sess_t *sess);
 void smf_sess_remove_all(smf_ue_t *smf_ue);
+
+/*
+ * Walk every EPC session and account orphans. When do_purge is true, tear down
+ * orphans whose age exceeds 'grace' (use 0 to ignore age). Returns the number
+ * of orphan sessions still present after the sweep (the live backlog); if
+ * out_purged is non-NULL it receives how many were torn down. Main thread only.
+ */
+int smf_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
+
+/* Periodic orphan sweep timer (no-op when smf.orphan.enabled is false). */
+void smf_orphan_timer_start(void);
+void smf_orphan_timer_stop(void);
 
 bool smf_gtp_apn_parse(
         char *apn_ni, char **full_apn_out,
