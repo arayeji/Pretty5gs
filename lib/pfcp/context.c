@@ -2594,9 +2594,14 @@ ogs_pfcp_ue_ip_t *ogs_pfcp_ue_ip_alloc(
         subnet = ogs_pfcp_find_subnet(family);
 
     if (subnet == NULL) {
-        ogs_error("No free UE IP in matching pool(s) "
-                "(family=%d dnn=%s)",
-                family, dnn ? dnn : "*");
+        ogs_error("No UE IP available: no subnet/pool matches "
+                "family=%d(%s) dnn=%s - either no such pool is configured for "
+                "this DNN, or every matching pool is exhausted "
+                "(see per-pool free/total below)",
+                family,
+                family == AF_INET ? "IPv4" :
+                    family == AF_INET6 ? "IPv6" : "?",
+                dnn ? dnn : "*");
         ogs_pfcp_log_matching_pools(family, dnn);
         *cause_value = OGS_PFCP_CAUSE_NO_RESOURCES_AVAILABLE;
         return NULL;
@@ -2934,8 +2939,13 @@ static void ogs_pfcp_log_matching_pools(int family, const char *dnn)
     }
 
     if (!any_match) {
-        ogs_error("  no UE IP pool for family=%d dnn=%s",
-                family, dnn ? dnn : "*");
+        ogs_error("  no UE IP pool configured for family=%d(%s) dnn=%s "
+                "- check the SMF/UPF subnet (ogstun) configuration; this DNN "
+                "has no address pool for this IP family",
+                family,
+                family == AF_INET ? "IPv4" :
+                    family == AF_INET6 ? "IPv6" : "?",
+                dnn ? dnn : "*");
     }
 }
 

@@ -113,7 +113,10 @@ static void sess_timeout(ogs_gtp_xact_t *xact, void *data)
 
     sess = sgwc_sess_find_by_id(sess_id);
     if (!sess) {
-        ogs_error("Session has already been removed [%d]", type);
+        ogs_error("S5/GTP transaction timeout for message-type[%d] "
+                "(32=Create Session Request) but the SGWC session was already "
+                "removed (released or replaced meanwhile); nothing to do",
+                type);
         return;
     }
 
@@ -2165,7 +2168,11 @@ cleanup:
         /* Release the UE context once its last PDN connection is gone. */
         sgwc_ue_remove_if_empty(owner_ue);
     } else
-        ogs_error("No Session");
+        ogs_error("PFCP Session Deletion Response from SGW-U, but SGWC "
+                "session context was already removed "
+                "(local SXA-SEID[0x%llx] PFCP-cause[%d]); nothing to clean up",
+                (unsigned long long)pfcp_xact->local_seid,
+                pfcp_rsp->cause.presence ? pfcp_rsp->cause.u8 : -1);
 }
 
 void sgwc_sxa_handle_session_report_request(

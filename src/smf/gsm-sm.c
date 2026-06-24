@@ -959,7 +959,25 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
                                         sess, orphan_seid) == OGS_OK)
                                 break;
                             sess->sm_data.pfcp_ue_ip_purge_pending = false;
+                        } else {
+                            ogs_error("[%s] UE IP conflict on UPF but no "
+                                    "orphan SEID in rejection (UPF did not "
+                                    "report a conflicting Travelping SEID); "
+                                    "cannot auto-purge the stale UPF session - "
+                                    "the UE IP stays pinned and every attach "
+                                    "for this IP will keep failing until the "
+                                    "stale session is cleared on the UPF",
+                                    smf_log_id(
+                                        smf_ue_find_by_id(sess->smf_ue_id)));
                         }
+                    } else if (pfcp_cause ==
+                            OGS_PFCP_CAUSE_RULE_CREATION_MODIFICATION_FAILURE) {
+                        ogs_error("[%s] UE IP conflict on UPF persists after "
+                                "orphan purge + re-establish retry; giving up "
+                                "and rejecting the session - the stale UPF "
+                                "session must be cleared manually",
+                                smf_log_id(
+                                    smf_ue_find_by_id(sess->smf_ue_id)));
                     }
                     if (ogs_pfcp_cause_no_association(pfcp_cause))
                         smf_pfcp_request_reassociation(sess->pfcp_node);
