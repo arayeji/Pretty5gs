@@ -73,6 +73,8 @@ typedef enum {
     SMF_EVT_ADMIN_MAINTENANCE_DRAIN,
     SMF_EVT_ADMIN_DETACH_SESSION,
 
+    SMF_EVT_ORPHAN_SWEEP,           /* periodic orphan metric + optional purge */
+
     SMF_EVT_TOP,
 
 } smf_event_e;

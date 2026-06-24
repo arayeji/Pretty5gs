@@ -36,6 +36,7 @@
 #include "nsmf-handler.h"
 #include "binding.h"
 #include "gx-restoration.h"
+#include "metrics.h"
 
 static void smf_admin_drain_sessions(int admin_force)
 {
@@ -86,6 +87,9 @@ void smf_state_initial(ogs_fsm_t *s, smf_event_t *e)
 
     ogs_assert(s);
 
+    /* Start the periodic orphan sweep on the main thread (owns timer_mgr). */
+    smf_orphan_timer_start();
+
     OGS_FSM_TRAN(s, &smf_state_operational);
 }
 
@@ -94,6 +98,8 @@ void smf_state_final(ogs_fsm_t *s, smf_event_t *e)
     smf_sm_debug(e);
 
     ogs_assert(s);
+
+    smf_orphan_timer_stop();
 }
 
 void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
@@ -1610,6 +1616,29 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             } else {
                 ogs_warn("admin session detach: UE already gone");
             }
+        }
+        break;
+
+    case SMF_EVT_ORPHAN_SWEEP:
+        {
+            int purged = 0, remaining;
+
+            remaining = smf_orphan_sweep(smf_self()->orphan.purge,
+                    ogs_time_from_sec(smf_self()->orphan.grace_s), &purged);
+
+            smf_metrics_inst_global_set(
+                    SMF_METR_GLOB_GAUGE_SESSIONS_ORPHAN, remaining);
+
+            if (purged)
+                ogs_warn("orphan sweep: purged %d session(s), %d remaining",
+                        purged, remaining);
+            else
+                ogs_debug("orphan sweep: %d orphan(s)", remaining);
+
+            /* Re-arm for the next interval (timer is one-shot). */
+            if (smf_self()->orphan.enabled && smf_self()->orphan.t_sweep)
+                ogs_timer_start(smf_self()->orphan.t_sweep,
+                        ogs_time_from_sec(smf_self()->orphan.interval_s));
         }
         break;
 
