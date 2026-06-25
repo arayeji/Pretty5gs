@@ -265,6 +265,14 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
             ogs_assert(OGS_OK ==
                 mme_gtp_send_create_bearer_response(
                     bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE));
+            /*
+             * The Create Bearer Response (failure) was sent back to SGW/SMF,
+             * so the network side will tear down the bearer on its end.
+             * Remove the MME-side bearer context now to avoid an EBI leak —
+             * no Delete Bearer Request will arrive for a bearer whose
+             * creation was rejected.
+             */
+            mme_bearer_remove(bearer);
         } else {
             r = nas_eps_send_activate_dedicated_bearer_context_request(bearer);
             ogs_expect(r == OGS_OK);
