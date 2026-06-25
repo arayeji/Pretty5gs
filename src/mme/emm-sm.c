@@ -2199,7 +2199,9 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
  */
 void emm_state_ue_context_will_remove(ogs_fsm_t *s, mme_event_t *e)
 {
+    int r;
     mme_ue_t *mme_ue = NULL;
+    enb_ue_t *enb_ue = NULL;
 
     ogs_assert(s);
     ogs_assert(e);
@@ -2214,6 +2216,32 @@ void emm_state_ue_context_will_remove(ogs_fsm_t *s, mme_event_t *e)
         /*
          * Remove UE context on state entry.
          *
+         * If a live S1 context is still attached (e.g. a maintenance-mode
+         * attach reject routed here), release it toward the eNB first.
+         * Otherwise mme_ue_remove() below would orphan the enb_ue: it only
+         * invalidates mme_ue->enb_ue_id and never frees or releases the S1
+         * context, so the enb_ue would leak until the eNB happens to release
+         * S1 on its own.
+         *
+         * S1_CONTEXT_REMOVE frees only the enb_ue when the release completes
+         * (or when t_s1_holding fires after 30s should the eNB stay silent),
+         * which lets us drop the mme_ue immediately as before. We sever the
+         * enb_ue -> mme_ue back-reference so that deferred handler cannot touch
+         * the mme_ue freed just below (its pool id could otherwise be reused).
+         */
+        enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+        if (enb_ue &&
+                enb_ue->ue_ctx_rel_action == S1AP_UE_CTX_REL_INVALID_ACTION) {
+            ogs_warn("[%s] UE context will remove: releasing orphaned S1 "
+                    "context", mme_ue->imsi_bcd);
+            r = s1ap_send_ue_context_release_command(enb_ue,
+                    S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
+                    S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
+            ogs_expect(r == OGS_OK);
+            enb_ue->mme_ue_id = OGS_INVALID_POOL_ID;
+        }
+
+        /*
          * MME_UE_REMOVE_WITH_PAGING_FAIL() handles corner cases where
          * paging procedures may still be in progress.
          */
@@ -2247,6 +2275,46 @@ void emm_state_exception(ogs_fsm_t *s, mme_event_t *e)
     case OGS_FSM_ENTRY_SIG:
         CLEAR_SERVICE_INDICATOR(mme_ue);
         CLEAR_MME_UE_ALL_TIMERS(mme_ue);
+
+        /*
+         * Bound the S1/UE context lifetime on terminal EMM failure.
+         *
+         * emm_state_exception is the common sink for rejected or failed
+         * procedures: attach reject for roaming-not-allowed / PLMN-not-allowed
+         * / no-suitable-cells (mme-roam-access.c, emm-handler.c), authentication
+         * reject, T3450 expiry, and assorted protocol errors. Many of those
+         * paths only transmit the NAS reject PDU and then land here, leaving the
+         * eNB to initiate the S1 release. When the eNB never sends a
+         * UEContextReleaseRequest - common with foreign/misbehaving roaming eNBs
+         * during a reject storm, or when the UE just drops the RRC connection -
+         * neither the enb_ue (S1) nor the mme_ue context is ever freed. They
+         * accumulate without bound (observed: enb_ue gauge > 230k and ~16 GB RSS
+         * with only a few hundred registered UEs).
+         *
+         * Proactively release the S1 connection here, exactly as the S6a
+         * AIA/ULA reject paths already do (see mme-sm.c). Going through
+         * mme_send_delete_session_or_mme_ue_context_release() also tears down any
+         * GTP session that may still exist before releasing S1. The underlying
+         * s1ap_send_ue_context_release_command() arms t_s1_holding (30s), so the
+         * context is reclaimed locally even if the eNB stays silent, and the
+         * UE_CONTEXT_REMOVE action drops both the enb_ue and the mme_ue once the
+         * release completes.
+         *
+         * Guards:
+         *  - act only while an S1 context is still associated;
+         *  - ue_ctx_rel_action != INVALID means a release is already in flight
+         *    (e.g. CLEAR_S1_CONTEXT / HOLDING_S1_CONTEXT) - don't double-release;
+         *  - a pending session release will drive the S1 release on GTP
+         *    completion, so don't start a second teardown.
+         */
+        enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+        if (enb_ue &&
+                enb_ue->ue_ctx_rel_action == S1AP_UE_CTX_REL_INVALID_ACTION &&
+                !MME_SESSION_RELEASE_PENDING(mme_ue)) {
+            ogs_warn("[%s] EMM exception: releasing S1/UE context "
+                    "(no eNB-initiated release)", mme_ue->imsi_bcd);
+            mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+        }
         break;
     case OGS_FSM_EXIT_SIG:
         break;
