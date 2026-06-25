@@ -1459,10 +1459,22 @@ void smf_epc_n4_handle_session_modification_response(
                     ogs_pfcp_cause_get_name(rsp->cause.u8));
             if (ogs_pfcp_cause_no_association(rsp->cause.u8))
                 smf_pfcp_request_reassociation(sess->pfcp_node);
+            /*
+             * The PFCP UPF rejected the bearer-creation modification.
+             * If the bearer was freshly allocated (MODIFY_CREATE), it will
+             * never get a GTP Create Bearer Request sent, so no Delete Bearer
+             * Request will arrive to trigger smf_bearer_remove().  Remove it
+             * here to avoid the SMF bearer list filling up and blocking all
+             * future dedicated-bearer creation attempts.
+             */
+            if ((flags & OGS_PFCP_MODIFY_CREATE) && bearer)
+                smf_bearer_remove(bearer);
             return;
         }
     } else {
         ogs_error("No Cause");
+        if ((flags & OGS_PFCP_MODIFY_CREATE) && bearer)
+            smf_bearer_remove(bearer);
         return;
     }
 
