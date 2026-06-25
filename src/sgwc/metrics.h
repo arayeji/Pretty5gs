@@ -25,6 +25,11 @@ typedef enum sgwc_metric_type_by_plmn_pgw_s {
     _SGWC_METR_BY_PLMN_PGW_MAX,
 } sgwc_metric_type_by_plmn_pgw_t;
 
+typedef enum sgwc_metric_type_by_plmn_apn_s {
+    SGWC_METR_BY_PLMN_APN_GAUGE_SESSION_ACTIVE = 0,
+    _SGWC_METR_BY_PLMN_APN_MAX,
+} sgwc_metric_type_by_plmn_apn_t;
+
 typedef enum sgwc_metric_type_by_rat_s {
     SGWC_METR_GAUGE_SESSIONNBR_BY_RAT = 0,
     _SGWC_METR_BY_RAT_MAX,
