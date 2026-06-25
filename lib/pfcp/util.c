@@ -132,7 +132,14 @@ ogs_pfcp_extract_node_id(ogs_pfcp_message_t *message,
 
     case OGS_PFCP_SESSION_ESTABLISHMENT_RESPONSE_TYPE:
         tlv_node_id = &message->pfcp_session_establishment_response.node_id;
-        requirement = OGS_PFCP_NODE_ID_MANDATORY;
+        /*
+         * 3GPP TS 29.244 marks Node ID as Mandatory here, but some UPF
+         * implementations omit it (especially after a CP restart when the
+         * UPF already knows the peer by SEID/IP).  Treat it as Optional so
+         * that the caller falls back to IP-address-based node lookup instead
+         * of silently dropping the response and stalling session setup.
+         */
+        requirement = OGS_PFCP_NODE_ID_OPTIONAL;
         break;
 
     case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE:
