@@ -94,15 +94,24 @@ static bool sgwc_metrics_plmn_from_sess(sgwc_sess_t *sess, ogs_plmn_id_t *plmn_i
     ogs_assert(sess);
     ogs_assert(plmn_id);
 
+    /*
+     * Always prefer IMSI PLMN (home PLMN) so that the metric label matches
+     * the subscriber identity, consistent with sgwc_ue_active.
+     * serving_plmn_id is the *visited* network's PLMN (derived from the TAI
+     * or Serving Network IE) and would label every session with the local
+     * operator's PLMN regardless of the subscriber's home network.
+     * Fall back to serving_plmn_id only when IMSI is unavailable
+     * (e.g. anonymous/emergency sessions).
+     */
+    sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+    if (sgwc_ue && sgwc_metrics_plmn_from_ue(sgwc_ue, plmn_id))
+        return true;
+
     memset(&zero_plmn_id, 0, sizeof(zero_plmn_id));
     if (memcmp(&sess->serving_plmn_id, &zero_plmn_id, OGS_PLMN_ID_LEN) != 0) {
         *plmn_id = sess->serving_plmn_id;
         return true;
     }
-
-    sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-    if (sgwc_ue && sgwc_metrics_plmn_from_ue(sgwc_ue, plmn_id))
-        return true;
 
     return false;
 }
