@@ -1814,7 +1814,10 @@ void sgwc_s11_handle_delete_bearer_response(
         ogs_debug("    bearer[EBI=%d] xact=%p", bearer->ebi, s5c_xact);
         ogs_assert(OGS_OK ==
             sgwc_pfcp_send_bearer_modification_request(
-                bearer, s5c_xact->id, gtpbuf, OGS_PFCP_MODIFY_REMOVE));
+                bearer,
+                s5c_xact ? s5c_xact->id : OGS_INVALID_POOL_ID,
+                s5c_xact ? gtpbuf : NULL,
+                OGS_PFCP_MODIFY_REMOVE));
     }
 
     return;
@@ -1822,8 +1825,9 @@ void sgwc_s11_handle_delete_bearer_response(
 cleanup:
     ogs_assert(cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
 
-    ogs_gtp_send_error_message(s5c_xact, sess ? sess->pgw_s5c_teid : 0,
-            OGS_GTP2_DELETE_BEARER_RESPONSE_TYPE, cause_value);
+    if (s5c_xact)
+        ogs_gtp_send_error_message(s5c_xact, sess ? sess->pgw_s5c_teid : 0,
+                OGS_GTP2_DELETE_BEARER_RESPONSE_TYPE, cause_value);
 }
 
 void sgwc_s11_handle_release_access_bearers_request(
