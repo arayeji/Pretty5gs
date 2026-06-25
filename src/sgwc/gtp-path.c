@@ -838,6 +838,13 @@ int sgwc_gtp_send_delete_bearer_request_to_mme(
             ogs_gtp_xact_associate(s5c_xact, s11_xact);
     }
 
+    ogs_info("[%s] Delete Bearer Request -> MME EBI=%d APN=%s "
+             "(admin=%s)",
+             sgwc_ue->imsi_bcd, bearer->ebi,
+             sgwc_default_bearer_in_sess(sess) &&
+                     sess->session.name ? sess->session.name : "-",
+             s5c_xact_id == OGS_INVALID_POOL_ID ? "yes" : "no");
+
     rv = ogs_gtp_xact_commit(s11_xact);
     ogs_expect(rv == OGS_OK);
 

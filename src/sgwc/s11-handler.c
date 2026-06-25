@@ -1665,8 +1665,9 @@ void sgwc_s11_handle_delete_bearer_response(
          * to SGW-U with no GTP relay context.  The SXA cleanup cascade will
          * remove the local session.
          */
-        ogs_warn("Delete Bearer Response: no S5C xact "
-                 "(admin-initiated, doing local SGW-U cleanup)");
+        ogs_info("[%s] Delete Bearer Response from MME (admin delete) "
+                 "-- cascading to SGW-U PFCP cleanup",
+                 sgwc_ue ? sgwc_ue->imsi_bcd : "-");
     }
 
     if (s11_xact->xid & OGS_GTP_CMD_XACT_ID) {
