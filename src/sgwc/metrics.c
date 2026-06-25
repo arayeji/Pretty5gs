@@ -24,6 +24,12 @@ typedef struct sgwc_metric_key_by_plmn_pgw_s {
     sgwc_metric_type_by_plmn_pgw_t      t;
 } sgwc_metric_key_by_plmn_pgw_t;
 
+typedef struct sgwc_metric_key_by_plmn_apn_s {
+    ogs_plmn_id_t                       plmn_id;
+    char                                apn[OGS_MAX_APN_LEN+1];
+    sgwc_metric_type_by_plmn_apn_t      t;
+} sgwc_metric_key_by_plmn_apn_t;
+
 typedef struct sgwc_metric_key_by_rat_s {
     char                        rat[16];
     char                        gtp_if[8];
@@ -36,6 +42,9 @@ extern sgwc_metrics_spec_def_t sgwc_metrics_spec_def_by_plmn[_SGWC_METR_BY_PLMN_
 extern ogs_metrics_spec_t *sgwc_metrics_spec_by_plmn_pgw[_SGWC_METR_BY_PLMN_PGW_MAX];
 extern ogs_hash_t *metrics_hash_by_plmn_pgw;
 extern sgwc_metrics_spec_def_t sgwc_metrics_spec_def_by_plmn_pgw[_SGWC_METR_BY_PLMN_PGW_MAX];
+extern ogs_metrics_spec_t *sgwc_metrics_spec_by_plmn_apn[_SGWC_METR_BY_PLMN_APN_MAX];
+extern ogs_hash_t *metrics_hash_by_plmn_apn;
+extern sgwc_metrics_spec_def_t sgwc_metrics_spec_def_by_plmn_apn[_SGWC_METR_BY_PLMN_APN_MAX];
 extern ogs_metrics_spec_t *sgwc_metrics_spec_by_rat[_SGWC_METR_BY_RAT_MAX];
 extern ogs_hash_t *metrics_hash_by_rat;
 extern sgwc_metrics_spec_def_t sgwc_metrics_spec_def_by_rat[_SGWC_METR_BY_RAT_MAX];
@@ -192,6 +201,45 @@ static void sgwc_metrics_inst_by_plmn_pgw_add(ogs_plmn_id_t *plmn,
     ogs_metrics_inst_add(metrics, val);
 }
 
+static void sgwc_metrics_inst_by_plmn_apn_add(ogs_plmn_id_t *plmn,
+        const char *apn, sgwc_metric_type_by_plmn_apn_t t, int val)
+{
+    ogs_metrics_inst_t *metrics = NULL;
+    sgwc_metric_key_by_plmn_apn_t *key;
+    char plmn_id[OGS_PLMNIDSTRLEN] = "";
+
+    ogs_assert(plmn);
+    ogs_assert(apn);
+    if (!metrics_hash_by_plmn_apn)
+        return;
+
+    key = ogs_calloc(1, sizeof(*key));
+    ogs_assert(key);
+
+    key->plmn_id = *plmn;
+    ogs_cpystrn(key->apn, apn, sizeof(key->apn));
+    key->t = t;
+
+    metrics = ogs_hash_get(metrics_hash_by_plmn_apn,
+            key, sizeof(*key));
+
+    if (!metrics) {
+        ogs_plmn_id_to_string(plmn, plmn_id);
+
+        metrics = ogs_metrics_inst_new(sgwc_metrics_spec_by_plmn_apn[t],
+                sgwc_metrics_spec_def_by_plmn_apn->num_labels,
+                (const char *[]){ plmn_id, key->apn });
+
+        ogs_assert(metrics);
+        ogs_hash_set(metrics_hash_by_plmn_apn,
+                key, sizeof(*key), metrics);
+    } else {
+        ogs_free(key);
+    }
+
+    ogs_metrics_inst_add(metrics, val);
+}
+
 void sgwc_metrics_ue_active_inc(sgwc_ue_t *sgwc_ue)
 {
     ogs_plmn_id_t plmn_id;
@@ -245,6 +293,14 @@ void sgwc_metrics_session_active_inc(sgwc_sess_t *sess)
     sgwc_metrics_inst_by_plmn_pgw_add(&plmn_id, ipbuf,
             SGWC_METR_BY_PLMN_PGW_GAUGE_SESSION_ACTIVE, 1);
 
+    if (sess->session.name && sess->session.name[0]) {
+        ogs_cpystrn(sess->metrics_apn, sess->session.name,
+                sizeof(sess->metrics_apn));
+        sess->metrics_apn_labeled = 1;
+        sgwc_metrics_inst_by_plmn_apn_add(&plmn_id, sess->metrics_apn,
+                SGWC_METR_BY_PLMN_APN_GAUGE_SESSION_ACTIVE, 1);
+    }
+
     if (sgwc_sess_rat_metric_labels(sess, &rat, &gtp_if)) {
         ogs_cpystrn(sess->metrics_rat, rat, sizeof(sess->metrics_rat));
         ogs_cpystrn(sess->metrics_gtp_if, gtp_if,
@@ -269,6 +325,18 @@ static void sgwc_metrics_session_rat_dec(sgwc_sess_t *sess)
     sess->metrics_gtp_if[0] = '\0';
 }
 
+static void sgwc_metrics_session_apn_dec(sgwc_sess_t *sess,
+        ogs_plmn_id_t *plmn_id)
+{
+    if (!sess->metrics_apn_labeled)
+        return;
+
+    sgwc_metrics_inst_by_plmn_apn_add(plmn_id, sess->metrics_apn,
+            SGWC_METR_BY_PLMN_APN_GAUGE_SESSION_ACTIVE, -1);
+    sess->metrics_apn_labeled = 0;
+    sess->metrics_apn[0] = '\0';
+}
+
 void sgwc_metrics_session_active_dec(sgwc_sess_t *sess)
 {
     ogs_plmn_id_t plmn_id;
@@ -282,6 +350,7 @@ void sgwc_metrics_session_active_dec(sgwc_sess_t *sess)
     if (!sess->gnode) {
         ogs_warn("SGWC session metrics dec skipped: no PGW gnode");
         sgwc_metrics_session_rat_dec(sess);
+        sess->metrics_apn_labeled = 0;
         sess->metrics_session_counted = 0;
         return;
     }
@@ -289,6 +358,7 @@ void sgwc_metrics_session_active_dec(sgwc_sess_t *sess)
     if (!sgwc_metrics_plmn_from_sess(sess, &plmn_id)) {
         ogs_warn("SGWC session metrics dec skipped: no PLMN");
         sgwc_metrics_session_rat_dec(sess);
+        sess->metrics_apn_labeled = 0;
         sess->metrics_session_counted = 0;
         return;
     }
@@ -297,6 +367,7 @@ void sgwc_metrics_session_active_dec(sgwc_sess_t *sess)
     sgwc_metrics_inst_by_plmn_pgw_add(&plmn_id, ipbuf,
             SGWC_METR_BY_PLMN_PGW_GAUGE_SESSION_ACTIVE, -1);
 
+    sgwc_metrics_session_apn_dec(sess, &plmn_id);
     sgwc_metrics_session_rat_dec(sess);
     sess->metrics_session_counted = 0;
 }
@@ -358,6 +429,36 @@ static void sgwc_metrics_init_by_plmn_pgw(void)
 {
     metrics_hash_by_plmn_pgw = ogs_hash_make();
     ogs_assert(metrics_hash_by_plmn_pgw);
+}
+
+/* BY PLMN and APN */
+const char *labels_plmn_apn[] = {
+    "plmnid",
+    "apn"
+};
+
+#define SGWC_METR_BY_PLMN_APN_GAUGE_ENTRY(_id, _name, _desc) \
+    [_id] = { \
+        .type = OGS_METRICS_METRIC_TYPE_GAUGE, \
+        .name = _name, \
+        .description = _desc, \
+        .num_labels = OGS_ARRAY_SIZE(labels_plmn_apn), \
+        .labels = labels_plmn_apn, \
+    },
+
+ogs_metrics_spec_t *sgwc_metrics_spec_by_plmn_apn[_SGWC_METR_BY_PLMN_APN_MAX];
+ogs_hash_t *metrics_hash_by_plmn_apn = NULL;
+sgwc_metrics_spec_def_t sgwc_metrics_spec_def_by_plmn_apn[_SGWC_METR_BY_PLMN_APN_MAX] = {
+SGWC_METR_BY_PLMN_APN_GAUGE_ENTRY(
+    SGWC_METR_BY_PLMN_APN_GAUGE_SESSION_ACTIVE,
+    "sgwc_session_active_by_apn",
+    "Active sessions per IMSI PLMN and APN on SGWC")
+};
+
+static void sgwc_metrics_init_by_plmn_apn(void)
+{
+    metrics_hash_by_plmn_apn = ogs_hash_make();
+    ogs_assert(metrics_hash_by_plmn_apn);
 }
 
 /* BY RAT */
@@ -439,6 +540,8 @@ void sgwc_metrics_init(void)
             sgwc_metrics_spec_def_by_plmn, _SGWC_METR_BY_PLMN_MAX);
     sgwc_metrics_init_spec(ctx, sgwc_metrics_spec_by_plmn_pgw,
             sgwc_metrics_spec_def_by_plmn_pgw, _SGWC_METR_BY_PLMN_PGW_MAX);
+    sgwc_metrics_init_spec(ctx, sgwc_metrics_spec_by_plmn_apn,
+            sgwc_metrics_spec_def_by_plmn_apn, _SGWC_METR_BY_PLMN_APN_MAX);
     sgwc_metrics_init_spec(ctx, sgwc_metrics_spec_by_rat,
             sgwc_metrics_spec_def_by_rat, _SGWC_METR_BY_RAT_MAX);
 
@@ -448,6 +551,7 @@ void sgwc_metrics_init(void)
 
     sgwc_metrics_init_by_plmn();
     sgwc_metrics_init_by_plmn_pgw();
+    sgwc_metrics_init_by_plmn_apn();
     sgwc_metrics_init_by_rat();
 }
 
@@ -485,6 +589,18 @@ void sgwc_metrics_final(void)
         }
         ogs_hash_destroy(metrics_hash_by_plmn_pgw);
         metrics_hash_by_plmn_pgw = NULL;
+    }
+    if (metrics_hash_by_plmn_apn) {
+        for (hi = ogs_hash_first(metrics_hash_by_plmn_apn); hi;
+                hi = ogs_hash_next(hi)) {
+            sgwc_metric_key_by_plmn_apn_t *key =
+                (sgwc_metric_key_by_plmn_apn_t *)ogs_hash_this_key(hi);
+
+            ogs_hash_set(metrics_hash_by_plmn_apn, key, sizeof(*key), NULL);
+            ogs_free(key);
+        }
+        ogs_hash_destroy(metrics_hash_by_plmn_apn);
+        metrics_hash_by_plmn_apn = NULL;
     }
     if (metrics_hash_by_rat) {
         for (hi = ogs_hash_first(metrics_hash_by_rat); hi; hi = ogs_hash_next(hi)) {

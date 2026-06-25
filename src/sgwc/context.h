@@ -272,8 +272,10 @@ typedef struct sgwc_sess_s {
 
     unsigned        metrics_session_counted : 1;
     unsigned        metrics_rat_labeled : 1;
+    unsigned        metrics_apn_labeled : 1;
     char            metrics_rat[16];
     char            metrics_gtp_if[8];
+    char            metrics_apn[OGS_MAX_APN_LEN+1];
     unsigned        gn : 1;         /* Session from GTPv1 Gn */
     uint8_t         gtp_rat_type;
     uint8_t         gn_nsapi;
