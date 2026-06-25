@@ -730,7 +730,19 @@ void sgwc_s5c_handle_delete_session_response(
     ogs_expect(rv == OGS_OK);
 
     if (!s11_xact) {
-        sgwc_log_no_s11_xact(sess, s5c_xact, "S5 Delete Session Response");
+        /*
+         * assoc_xact_id == 0 (OGS_INVALID_POOL_ID) means the S5C Delete was
+         * self-initiated (abort/cleanup path) and was never linked to an S11
+         * transaction.  This is expected — the local session is already being
+         * torn down by the caller.  Only log at ERROR when assoc_xact_id was
+         * non-zero (the S11 xact existed but expired before the PGW replied).
+         */
+        if (s5c_xact->assoc_xact_id != OGS_INVALID_POOL_ID)
+            sgwc_log_no_s11_xact(sess, s5c_xact, "S5 Delete Session Response");
+        else
+            ogs_debug("[sgwc] S5 Delete Session Response for self-initiated "
+                    "cleanup (no S11 xact expected) SGW-S5C[0x%x]",
+                    sess ? sess->sgw_s5c_teid : 0);
         return;
     }
 
