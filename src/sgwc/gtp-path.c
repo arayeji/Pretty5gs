@@ -774,7 +774,6 @@ int sgwc_gtp_send_delete_bearer_request_to_mme(
     ogs_gtp2_message_t gtp_message;
     ogs_gtp2_delete_bearer_request_t *req = NULL;
 
-    ogs_gtp2_header_t h;
     ogs_pkbuf_t *pkbuf = NULL;
     ogs_gtp_xact_t *s11_xact = NULL;
 
@@ -800,9 +799,9 @@ int sgwc_gtp_send_delete_bearer_request_to_mme(
     req->linked_eps_bearer_id.presence = 1;
     req->linked_eps_bearer_id.u8 = bearer->ebi;
 
-    memset(&h, 0, sizeof(h));
-    h.type = OGS_GTP2_DELETE_BEARER_REQUEST_TYPE;
-    h.teid = sgwc_ue->mme_s11_teid;
+    /* Must set gtp_message.h.type so ogs_gtp2_build_msg picks the right serializer. */
+    gtp_message.h.type = OGS_GTP2_DELETE_BEARER_REQUEST_TYPE;
+    gtp_message.h.teid = sgwc_ue->mme_s11_teid;
 
     pkbuf = ogs_gtp2_build_msg(&gtp_message);
     if (!pkbuf) {
@@ -815,7 +814,7 @@ int sgwc_gtp_send_delete_bearer_request_to_mme(
      * gracefully (same path as the PGW-originated Delete Bearer Request).
      */
     s11_xact = ogs_gtp_xact_local_create(
-            sgwc_ue->gnode, &h, pkbuf,
+            sgwc_ue->gnode, &gtp_message.h, pkbuf,
             admin_delete_bearer_timeout, OGS_UINT_TO_POINTER(bearer->id));
     if (!s11_xact) {
         ogs_error("ogs_gtp_xact_local_create() failed");
