@@ -306,6 +306,13 @@ typedef struct sgwc_bearer_s {
     uint8_t         ebi;
 
     ogs_pfcp_urr_t  *urr;
+    bool            urr_created;    /* URR already installed on SGW-U:
+                                     * a dedicated bearer is created in two
+                                     * PFCP modifications (UL then DL leg) that
+                                     * share one URR. Only the first leg may
+                                     * carry Create URR; re-creating the same
+                                     * URR ID makes a strict UPF (e.g. UPG/VPP)
+                                     * reject with cause 73. */
 
     ogs_list_t      tunnel_list;
     ogs_pool_id_t   sess_id;

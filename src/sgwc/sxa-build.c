@@ -244,11 +244,23 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
     if (modify_flags & OGS_PFCP_MODIFY_CREATE) {
         ogs_list_for_each_entry(
                 &xact->bearer_to_modify_list, bearer, to_modify_node) {
-            if (bearer->urr) {
+            /*
+             * A dedicated bearer is installed with two PFCP Session
+             * Modifications (UL_ONLY leg then DL_ONLY leg) whose Create PDRs
+             * both reference the bearer's single URR. The URR must be created
+             * exactly once: the second leg's Create PDR only needs to
+             * reference the existing URR ID. Re-sending Create URR for an
+             * already-installed URR ID is invalid per TS 29.244 and a strict
+             * UPF (e.g. UPG/VPP) rejects the whole modification with cause 73
+             * (RULE_CREATION_MODIFICATION_FAILURE), leaving the bearer
+             * half-built (PDR/FAR of the second leg never installed).
+             */
+            if (bearer->urr && !bearer->urr_created) {
                 ogs_pfcp_build_create_urr(
                         &req->create_urr[num_of_create_urr],
                         num_of_create_urr, bearer->urr);
                 num_of_create_urr++;
+                bearer->urr_created = true;
             }
         }
     }
