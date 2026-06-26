@@ -33,7 +33,8 @@ void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue);
  * allocating mme_ue_t (attach/TAU/service storm path).
  */
 int mme_maintenance_reject_without_ue(
-        enb_ue_t *enb_ue, const ogs_nas_eps_message_t *message);
+        enb_ue_t *enb_ue, const ogs_nas_eps_message_t *message,
+        uint8_t nas_type);
 
 /*
  * Reclaim MME-UE contexts with no ESM session (regardless of EMM state).
