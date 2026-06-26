@@ -48,6 +48,12 @@ int mme_orphan_enb_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
 void mme_orphan_timer_start(void);
 void mme_orphan_timer_stop(void);
 void mme_orphan_timer_rearm(void);
+
+/* Orphan-sweep heartbeat, surfaced via /admin/maintenance/status. */
+void mme_orphan_sweep_record(int ue_purged, int ue_remaining);
+void mme_orphan_sweep_get_stats(ogs_time_t *last_run, int *last_purged,
+        int *last_remaining, uint64_t *total_purged);
+
 void mme_admin_detach_ue(mme_ue_t *mme_ue, bool force);
 
 void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue);

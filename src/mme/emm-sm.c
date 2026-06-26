@@ -227,8 +227,23 @@ static void emm_handle_s6a_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("[%s] S6a timeout but no S1 context (cmd=%u)",
+        /*
+         * S6a (AIR/ULR) timed out for a UE that has already lost its S1
+         * link - common during eNB SCTP reset storms. The attach/TAU
+         * cannot be completed and no NAS reject can be delivered without
+         * S1, so a half-built context with no ESM session would otherwise
+         * sit session-less and idle forever, pinning ue_count above
+         * mme_session/enb_ue. Drive it to removal here instead of leaking;
+         * the orphan sweep is only a backstop for this. Using OGS_FSM_TRAN
+         * (not mme_ue_enter_ue_context_will_remove()) keeps the actual free
+         * in the FSM dispatch loop that invoked this handler, avoiding a
+         * use-after-free of the EMM FSM.
+         */
+        ogs_error("[%s] S6a timeout but no S1 context (cmd=%u); releasing UE",
                 mme_ue->imsi_bcd, cmd);
+        if (ogs_list_empty(&mme_ue->sess_list) &&
+                !MME_SESSION_RELEASE_PENDING(mme_ue))
+            OGS_FSM_TRAN(s, &emm_state_ue_context_will_remove);
         return;
     }
 

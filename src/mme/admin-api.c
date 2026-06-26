@@ -24,6 +24,8 @@
 
 #include "mme-context.h"
 #include "mme-event.h"
+#include "mme-sm.h"      /* emm_state_ue_context_will_remove (FSM check) */
+#include "mme-path.h"    /* orphan-sweep heartbeat accessors */
 
 #include "admin-api.h"   /* pulls in ogs-metrics.h */
 #include "runtime-config.h"
@@ -311,8 +313,15 @@ size_t mme_dump_maintenance_status(char *buf, size_t buflen,
         size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
     int ue_count = 0;
+    int sessionless = 0, idle = 0, will_remove = 0, orphan_candidates = 0;
     bool maintenance = false;
     int written;
+    mme_ue_t *mme_ue = NULL;
+
+    ogs_time_t sweep_last_run = 0;
+    int sweep_last_purged = 0, sweep_last_remaining = 0;
+    uint64_t sweep_total_purged = 0;
+    long long sweep_age_s = -1;
 
     (void)page;
     (void)page_size;
@@ -323,12 +332,40 @@ size_t mme_dump_maintenance_status(char *buf, size_t buflen,
 
     ogs_metrics_dump_lock();
     maintenance = mme_self()->maintenance_mode;
-    ue_count = ogs_list_count(&mme_self()->mme_ue_list);
+    ogs_list_for_each(&mme_self()->mme_ue_list, mme_ue) {
+        bool no_sess = ogs_list_empty(&mme_ue->sess_list);
+        bool is_idle = !ECM_CONNECTED(mme_ue);
+
+        ue_count++;
+        if (no_sess) sessionless++;
+        if (is_idle) idle++;
+        if (mme_ue->ue_context_will_remove) will_remove++;
+        /*
+         * What the orphan sweep is meant to reclaim: a session-less context
+         * that is not actively mid-removal. Tracks the leak directly.
+         */
+        if (no_sess &&
+                !OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
+            orphan_candidates++;
+    }
     ogs_metrics_dump_unlock();
 
+    mme_orphan_sweep_get_stats(&sweep_last_run, &sweep_last_purged,
+            &sweep_last_remaining, &sweep_total_purged);
+    if (sweep_last_run)
+        sweep_age_s = (long long)ogs_time_to_sec(
+                ogs_time_now() - sweep_last_run);
+
     written = snprintf(buf, buflen,
-            "{\"maintenance\":%s,\"ue_count\":%d}\n",
-            maintenance ? "true" : "false", ue_count);
+            "{\"maintenance\":%s,\"ue_count\":%d,"
+            "\"sessionless\":%d,\"idle\":%d,\"will_remove\":%d,"
+            "\"orphan_candidates\":%d,"
+            "\"sweep\":{\"age_s\":%lld,\"last_purged\":%d,"
+            "\"last_remaining\":%d,\"total_purged\":%llu}}\n",
+            maintenance ? "true" : "false", ue_count,
+            sessionless, idle, will_remove, orphan_candidates,
+            sweep_age_s, sweep_last_purged, sweep_last_remaining,
+            (unsigned long long)sweep_total_purged);
     if (written < 0)
         return 0;
     return (size_t)((size_t)written < buflen ? (size_t)written : buflen - 1);
