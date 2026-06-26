@@ -75,9 +75,14 @@ void cgf_context_final(void)
 
     for (i = 0; i < self.num_of_peers; i++) {
         cgf_peer_t *p = &self.peers[i];
+        uint32_t j;
+
         if (p->addr) ogs_freeaddrinfo(p->addr);
         if (p->sock) ogs_sock_destroy(p->sock);
-        if (p->xact.pkbuf) ogs_pkbuf_free(p->xact.pkbuf);
+        for (j = 0; j < CGF_MAX_INFLIGHT; j++) {
+            if (p->xacts[j].pkbuf)
+                ogs_pkbuf_free(p->xacts[j].pkbuf);
+        }
         memset(p, 0, sizeof(*p));
     }
 
