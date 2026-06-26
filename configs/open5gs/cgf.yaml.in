@@ -71,10 +71,12 @@ cgf:
 
   batch:
     # Maximum number of encoded CDRs packed into a single GTP'
-    # DataRecordTransferRequest. Keeping the UDP payload below MTU
-    # avoids fragmentation and makes retransmission cheaper.
-    max_records_per_packet: 32
-    max_bytes_per_packet: 1400
+    # DataRecordTransferRequest. Sized to fit a typical rotated spool
+    # file (~64 KiB on disk) in one or two datagrams on a LAN path.
+    max_records_per_packet: 255
+    max_bytes_per_packet: 32000
+    # Pipelined in-flight DTRRs per peer (stop-and-wait was ~1 batch/RTT).
+    max_inflight: 8
 
   # Data Record Packet IE sub-header. Four octets sitting between the
   # `fc <len>` TLIV header and the list of length-prefixed BER records:
