@@ -45,19 +45,6 @@ int mme_maintenance_reject_without_ue(
  */
 int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
 int mme_orphan_enb_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
-
-/*
- * Reclaim eNB contexts that share the IP of a freshly-arrived SCTP
- * association but belong to a different (now-stale) association. A
- * physical eNB keeps a single S1 association; when it reconnects from
- * a new SCTP source port and the old association's SHUTDOWN/COMM_LOST
- * never arrives, the old context lingers - and once it reached S1
- * Setup the orphan sweep deliberately skips it, so these pile up.
- * 'keep' (nullable) is the addr of the new association to preserve.
- * Returns the number of stale contexts removed.
- */
-int mme_enb_remove_stale_by_ip(
-        const ogs_sockaddr_t *addr, const ogs_sockaddr_t *keep);
 void mme_orphan_timer_start(void);
 void mme_orphan_timer_stop(void);
 void mme_orphan_timer_rearm(void);

@@ -207,41 +207,6 @@ int mme_orphan_enb_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
     return remaining;
 }
 
-int mme_enb_remove_stale_by_ip(
-        const ogs_sockaddr_t *addr, const ogs_sockaddr_t *keep)
-{
-    mme_enb_t *enb = NULL, *next = NULL;
-    int removed = 0;
-
-    ogs_assert(addr);
-
-    ogs_list_for_each_safe(&mme_self()->enb_list, next, enb) {
-        if (!enb->sctp.addr)
-            continue;
-        /* Different eNB IP: leave it alone. */
-        if (!ogs_sockaddr_is_equal_addr(
-                (void *)enb->sctp.addr, (void *)addr))
-            continue;
-        /* Same IP and it IS the new association we must keep. */
-        if (keep && ogs_sockaddr_is_equal(
-                (void *)enb->sctp.addr, (void *)keep))
-            continue;
-
-        ogs_warn("eNB-S1[%s] superseded by new association from same IP; "
-                "releasing stale context (setup_success=%d, ues=%d)",
-                ogs_sockaddr_to_string_static(enb->sctp.addr),
-                enb->state.s1_setup_success ? 1 : 0,
-                enb->num_enb_ues);
-
-        mme_gtp_send_release_all_ue_in_enb(
-                enb, OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_LO_CONNREFUSED);
-        mme_enb_remove(enb);
-        removed++;
-    }
-
-    return removed;
-}
-
 void mme_orphan_timer_start(void)
 {
     ogs_time_t interval;
