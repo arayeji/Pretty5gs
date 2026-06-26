@@ -19,6 +19,7 @@
 
 #include "s1ap-path.h"
 #include "nas-path.h"
+#include "emm-build.h"
 #include "sgsap-path.h"
 #include "mme-gtp-path.h"
 #include "mme-path.h"
@@ -42,6 +43,49 @@ void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue)
     e.id = OGS_FSM_USER_SIG;
     e.mme_ue_id = mme_ue->id;
     ogs_fsm_tran(&mme_ue->sm, &emm_state_ue_context_will_remove, &e);
+}
+
+int mme_maintenance_reject_without_ue(
+        enb_ue_t *enb_ue, const ogs_nas_eps_message_t *message)
+{
+    ogs_pkbuf_t *emmbuf = NULL;
+    ogs_nas_emm_cause_t emm_cause = OGS_NAS_EMM_CAUSE_CONGESTION;
+    int r, rv = OGS_OK;
+
+    ogs_assert(enb_ue);
+    ogs_assert(message);
+
+    switch (message->emm.h.message_type) {
+    case OGS_NAS_EPS_ATTACH_REQUEST:
+        emmbuf = emm_build_attach_reject(emm_cause, NULL);
+        break;
+    case OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST:
+        emmbuf = emm_build_tau_reject(emm_cause, NULL);
+        break;
+    case OGS_NAS_EPS_SERVICE_REQUEST:
+    case OGS_NAS_EPS_EXTENDED_SERVICE_REQUEST:
+        emmbuf = emm_build_service_reject(emm_cause, NULL);
+        break;
+    default:
+        ogs_debug("Maintenance: EMM type[%d]: S1 release only (no MME-UE)",
+                message->emm.h.message_type);
+        break;
+    }
+
+    if (emmbuf) {
+        rv = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
+        ogs_expect(rv == OGS_OK);
+    }
+
+    r = s1ap_send_ue_context_release_command(enb_ue,
+            S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
+            S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
+    ogs_expect(r == OGS_OK);
+
+    ogs_warn("Maintenance: rejected new UE (EMM type=%d) without MME-UE "
+            "context", message->emm.h.message_type);
+
+    return (rv == OGS_OK && r == OGS_OK) ? OGS_OK : OGS_ERROR;
 }
 
 static ogs_timer_t *t_orphan_sweep = NULL;

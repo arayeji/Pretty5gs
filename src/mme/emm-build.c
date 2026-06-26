@@ -760,8 +760,6 @@ ogs_pkbuf_t *emm_build_tau_reject(
     ogs_nas_eps_tracking_area_update_reject_t *tau_reject =
         &message.emm.tracking_area_update_reject;
 
-    ogs_assert(mme_ue);
-
     ogs_debug("    Cause[%d]", emm_cause);
 
     memset(&message, 0, sizeof(message));
@@ -790,8 +788,6 @@ ogs_pkbuf_t *emm_build_service_reject(
 {
     ogs_nas_eps_message_t message;
     ogs_nas_eps_service_reject_t *service_reject = &message.emm.service_reject;
-
-    ogs_assert(mme_ue);
 
     memset(&message, 0, sizeof(message));
     message.emm.h.protocol_discriminator = OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM;

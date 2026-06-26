@@ -408,6 +408,20 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                 mme_ue = NULL;
 
             if (!mme_ue) {
+                /*
+                 * Maintenance: do not allocate mme_ue_t for brand-new
+                 * procedures. Reject over S1/NAS and release the enb_ue
+                 * so attach storms cannot inflate mme_ue_list. Existing
+                 * contexts resolved by mme_ue_find_by_message() still
+                 * flow through the normal maintenance handlers below.
+                 */
+                if (mme_self()->maintenance_mode) {
+                    r = mme_maintenance_reject_without_ue(enb_ue, &nas_message);
+                    ogs_expect(r == OGS_OK);
+                    ogs_pkbuf_free(pkbuf);
+                    return;
+                }
+
                 mme_ue = mme_ue_add(enb_ue);
                 if (mme_ue == NULL) {
                     r = s1ap_send_ue_context_release_command(enb_ue,

@@ -29,6 +29,13 @@ extern "C" {
 void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue);
 
 /*
+ * Maintenance window: reject a brand-new S1/NAS procedure without
+ * allocating mme_ue_t (attach/TAU/service storm path).
+ */
+int mme_maintenance_reject_without_ue(
+        enb_ue_t *enb_ue, const ogs_nas_eps_message_t *message);
+
+/*
  * Reclaim MME-UE contexts with no ESM session (regardless of EMM state).
  * Registered ECM-IDLE subscribers always retain at least one session until
  * detach; empty sess_list means the context is stale.
