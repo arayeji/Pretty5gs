@@ -53,7 +53,7 @@ int cgf_context_init(void)
     self.spool_poll_ms = 250;
     self.max_records_per_packet = 255;
     self.max_bytes_per_packet = 32000;
-    self.max_inflight = 8;
+    self.max_inflight = 1;
     self.purge_on_success = false;
 
     /* DRP IE sub-header defaults. Matches the working peer capture:

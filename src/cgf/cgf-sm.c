@@ -52,17 +52,33 @@ static void switch_to_next_peer(void)
 static void abort_in_flight(cgf_peer_t *peer, const char *reason)
 {
     uint32_t i;
+    cgf_spool_file_t *nacked[CGF_MAX_INFLIGHT];
+    uint32_t n_nacked = 0;
 
     if (cgf_gtpp_inflight_count(peer) == 0) return;
     ogs_warn("cgf: aborting in-flight xacts to '%s': %s",
             peer->address_str, reason);
     for (i = 0; i < CGF_MAX_INFLIGHT; i++) {
         cgf_xact_t *x = &peer->xacts[i];
+        cgf_spool_file_t *f;
+        uint32_t j;
+        bool seen;
+
         if (!x->active) continue;
-        if (x->file)
-            cgf_spool_nack_batch(x->file);
+
+        f = x->file;
+        if (f) {
+            seen = false;
+            for (j = 0; j < n_nacked; j++) {
+                if (nacked[j] == f) { seen = true; break; }
+            }
+            if (!seen && n_nacked < CGF_MAX_INFLIGHT)
+                nacked[n_nacked++] = f;
+        }
         cgf_gtpp_free_xact(x);
     }
+    for (i = 0; i < n_nacked; i++)
+        cgf_spool_nack_batch(nacked[i]);
 }
 
 static bool peer_may_send(const cgf_peer_t *peer)
@@ -291,6 +307,18 @@ void cgf_sm_on_spool_tick(void)
 /*  Drain                                                             */
 /* ------------------------------------------------------------------ */
 
+static bool peer_file_inflight(
+        const cgf_peer_t *peer, const cgf_spool_file_t *file)
+{
+    uint32_t i;
+
+    for (i = 0; i < CGF_MAX_INFLIGHT; i++) {
+        if (peer->xacts[i].active && peer->xacts[i].file == file)
+            return true;
+    }
+    return false;
+}
+
 void cgf_sm_try_drain(void)
 {
     cgf_context_t *self = cgf_self();
@@ -319,6 +347,11 @@ void cgf_sm_try_drain(void)
         }
 
         if (f->send_offset >= f->data_len) break;
+
+        /* One in-flight DTRR per spool file — pipelining multiple
+         * batches from the same file caused use-after-free when UDP
+         * delivered DTRR responses out of order. */
+        if (peer_file_inflight(p, f)) break;
 
         if (cap > sizeof(batch)) cap = sizeof(batch);
 
