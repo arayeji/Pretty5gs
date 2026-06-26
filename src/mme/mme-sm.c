@@ -103,6 +103,32 @@ static void mme_admin_queue_detach_all_ues(int admin_force)
     ogs_info("admin maintenance: queued detach for %d UEs", queued);
 }
 
+/*
+ * EMM dispatch may synchronously remove the MME-UE (maintenance drain,
+ * emm_state_ue_context_will_remove entry, etc.). Re-resolve by pool id
+ * before touching mme_ue after ogs_fsm_dispatch().
+ */
+static void mme_sm_post_emm_dispatch(ogs_pool_id_t mme_ue_id)
+{
+    mme_ue_t *mme_ue = NULL;
+    enb_ue_t *enb_ue = NULL;
+
+    mme_ue = mme_ue_find_by_id(mme_ue_id);
+    if (!mme_ue || !mme_ue_is_valid_for_s1(mme_ue))
+        return;
+
+    if (!OGS_FSM_CHECK(&mme_ue->sm, emm_state_exception))
+        return;
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+
+    mme_ue = mme_ue_find_by_id(mme_ue_id);
+    if (mme_ue && mme_ue_is_valid_for_s1(mme_ue) &&
+            mme_ue->ue_context_will_remove)
+        mme_ue_enter_ue_context_will_remove(mme_ue);
+}
+
 void mme_state_final(ogs_fsm_t *s, mme_event_t *e)
 {
     mme_sm_debug(e);
@@ -456,13 +482,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         ogs_mme_trace_from_ids(e->enb_ue_id, mme_ue->id, NULL, "emm");
 
         ogs_fsm_dispatch(&mme_ue->sm, e);
-        if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_exception)) {
-            enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-
-            mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
-            if (mme_ue->ue_context_will_remove)
-                mme_ue_enter_ue_context_will_remove(mme_ue);
-        }
+        mme_sm_post_emm_dispatch(e->mme_ue_id);
 
         ogs_pkbuf_free(pkbuf);
         break;
@@ -480,13 +500,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         }
 
         ogs_fsm_dispatch(&mme_ue->sm, e);
-        if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_exception)) {
-            enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-
-            mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
-            if (mme_ue->ue_context_will_remove)
-                mme_ue_enter_ue_context_will_remove(mme_ue);
-        }
+        mme_sm_post_emm_dispatch(e->mme_ue_id);
         break;
 
     case MME_EVENT_ESM_MESSAGE:
@@ -1277,62 +1291,7 @@ cleanup:
             break;
         }
 
-        if (e->admin_force) {
-            /*
-             * Implicit detach (UE not notified over the air). SGW /
-             * SMF / PGW still cleaned up via the standard cascade.
-             * Reuse the timer-driven path - it sets detach_type to
-             * MME_IMPLICIT and runs mme_send_delete_session_or_detach
-             * for us.
-             */
-            ogs_info("admin detach ue (force/implicit): imsi=%s",
-                    mme_ue->imsi_bcd);
-            mme_timer_implicit_detach_expire(OGS_UINT_TO_POINTER(mme_ue->id));
-            break;
-        }
-
-        /*
-         * Graceful path = MME-initiated explicit detach
-         * (TS 23.401 § 5.3.8.3). Mirrors the HSS-CLR flow in
-         * mme-s6a-handler.c so the UE actually receives a NAS
-         * Detach Request and the eNB sees the resulting UE Context
-         * Release.
-         */
-        ogs_info("admin detach ue (graceful): imsi=%s state=%s",
-                mme_ue->imsi_bcd,
-                ECM_CONNECTED(mme_ue) ? "ECM-CONNECTED" : "ECM-IDLE");
-
-        mme_ue->detach_type = MME_DETACH_TYPE_MME_EXPLICIT;
-
-        if (ECM_IDLE(mme_ue)) {
-            int r;
-            MME_STORE_PAGING_INFO(mme_ue,
-                    MME_PAGING_TYPE_DETACH_TO_UE, NULL);
-            r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
-        } else {
-            int r;
-            enb_ue_t *enb_ue = NULL;
-
-            MME_CLEAR_PAGING_INFO(mme_ue);
-            r = nas_eps_send_detach_request(mme_ue);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
-
-            if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
-                ogs_assert(OGS_OK ==
-                        sgsap_send_detach_indication(mme_ue));
-            } else {
-                enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-                if (enb_ue) {
-                    mme_send_delete_session_or_detach(enb_ue, mme_ue);
-                } else {
-                    ogs_warn("admin detach ue: no S1 context for imsi=%s",
-                            mme_ue->imsi_bcd);
-                }
-            }
-        }
+        mme_admin_detach_ue(mme_ue, e->admin_force ? true : false);
         break;
     }
 
@@ -1383,8 +1342,7 @@ cleanup:
 
     case MME_EVENT_ADMIN_MAINTENANCE_ENABLE:
         mme_self()->maintenance_mode = true;
-        ogs_info("admin maintenance: enabled (implicit detach all UEs)");
-        mme_admin_queue_detach_all_ues(1);
+        ogs_info("admin maintenance: enabled");
         break;
 
     case MME_EVENT_ADMIN_MAINTENANCE_DISABLE:
