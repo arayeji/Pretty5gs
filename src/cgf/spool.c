@@ -24,6 +24,7 @@
 
 #include <stdio.h>
 #include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -44,15 +45,19 @@
 static cgf_spool_file_t *g_active = NULL;
 
 /*
- * Spool scan state — ready/ can hold 100k+ files. A full readdir on
- * every spool_poll tick was costing ~10% CPU. We keep a lexicographic
- * cursor (last handled basename), cache the next validated path, and
- * back off when the directory is empty.
+ * Spool scan state — ready/ can hold 100k+ files. Scanning the whole
+ * directory on every file transition is O(n) per file (O(n²) to drain a
+ * backlog). We scan once into a sorted queue and consume it in order;
+ * a new scan runs only when the queue is exhausted.
  */
 static char g_last_handled_base[256];
 static bool g_last_handled_valid;
 static char g_cached_next_path[512];
 static ogs_time_t g_empty_until;
+
+static char **g_pending_queue = NULL;
+static uint32_t g_pending_count = 0;
+static uint32_t g_pending_idx = 0;
 
 #define CGF_SPOOL_EMPTY_BACKOFF_MAX_MS 30000
 
@@ -83,12 +88,110 @@ static void spool_remember_handled(const char *path)
     spool_clear_cached_next();
 }
 
+static void pending_queue_free(void)
+{
+    uint32_t i;
+
+    if (!g_pending_queue) return;
+    for (i = 0; i < g_pending_count; i++)
+        ogs_free(g_pending_queue[i]);
+    ogs_free(g_pending_queue);
+    g_pending_queue = NULL;
+    g_pending_count = 0;
+    g_pending_idx = 0;
+}
+
+static int cmp_basename(const void *a, const void *b)
+{
+    return strcmp(*(const char * const *)a, *(const char * const *)b);
+}
+
+static int pending_queue_build(const char *after_base)
+{
+    char **names = NULL;
+    uint32_t n_names = 0, n_cap = 0;
+    uint32_t i;
+
+    pending_queue_free();
+
+#ifdef _WIN32
+    {
+        WIN32_FIND_DATAA fd;
+        HANDLE h;
+        char pattern[512];
+
+        ogs_snprintf(pattern, sizeof(pattern), "%s\\*.cdr",
+                cgf_self()->ready_dir);
+        h = FindFirstFileA(pattern, &fd);
+        if (h == INVALID_HANDLE_VALUE) return OGS_ERROR;
+        do {
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+            if (!spool_is_cdr_name(fd.cFileName)) continue;
+            if (after_base && after_base[0] &&
+                    strcmp(fd.cFileName, after_base) <= 0)
+                continue;
+            if (n_names >= n_cap) {
+                n_cap = n_cap ? n_cap * 2 : 64;
+                names = ogs_realloc(names, n_cap * sizeof(*names));
+                ogs_assert(names);
+            }
+            names[n_names++] = ogs_strdup(fd.cFileName);
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+#else
+    {
+        DIR *d;
+        struct dirent *ent;
+
+        d = opendir(cgf_self()->ready_dir);
+        if (!d) return OGS_ERROR;
+
+        while ((ent = readdir(d)) != NULL) {
+            if (!spool_is_cdr_name(ent->d_name)) continue;
+            if (after_base && after_base[0] &&
+                    strcmp(ent->d_name, after_base) <= 0)
+                continue;
+            if (n_names >= n_cap) {
+                n_cap = n_cap ? n_cap * 2 : 64;
+                names = ogs_realloc(names, n_cap * sizeof(*names));
+                ogs_assert(names);
+            }
+            names[n_names++] = ogs_strdup(ent->d_name);
+        }
+        closedir(d);
+    }
+#endif
+
+    if (n_names == 0) {
+        if (names) ogs_free(names);
+        return OGS_ERROR;
+    }
+
+    qsort(names, n_names, sizeof(*names), cmp_basename);
+
+    g_pending_queue = ogs_calloc(n_names, sizeof(*g_pending_queue));
+    ogs_assert(g_pending_queue);
+    for (i = 0; i < n_names; i++) {
+        char path[512];
+        ogs_snprintf(path, sizeof(path), "%s/%s",
+                cgf_self()->ready_dir, names[i]);
+        g_pending_queue[i] = ogs_strdup(path);
+        ogs_free(names[i]);
+    }
+    ogs_free(names);
+    g_pending_count = n_names;
+    g_pending_idx = 0;
+    return OGS_OK;
+}
+
 static void spool_reset_scan_state(void)
 {
     g_last_handled_valid = false;
     g_last_handled_base[0] = '\0';
     spool_clear_cached_next();
     g_empty_until = 0;
+    pending_queue_free();
 }
 
 static bool spool_is_cdr_name(const char *name)
@@ -165,58 +268,6 @@ static int slurp(const char *path, uint8_t **out, size_t *out_len)
     return OGS_OK;
 }
 
-static int find_next_cdr(char *out_path, size_t out_cap,
-        const char *after_base)
-{
-    /* Return the lexicographically smallest *.cdr in ready/, or — when
-     * after_base is set — the smallest name strictly greater than it.
-     * Filenames carry an epoch prefix so this matches insertion order. */
-#ifdef _WIN32
-    WIN32_FIND_DATAA fd;
-    HANDLE h;
-    char pattern[512];
-    char best[256] = "";
-    ogs_snprintf(pattern, sizeof(pattern), "%s\\*.cdr",
-            cgf_self()->ready_dir);
-    h = FindFirstFileA(pattern, &fd);
-    if (h == INVALID_HANDLE_VALUE) return OGS_ERROR;
-    do {
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-        if (!spool_is_cdr_name(fd.cFileName)) continue;
-        if (after_base && after_base[0] &&
-                strcmp(fd.cFileName, after_base) <= 0)
-            continue;
-        if (best[0] == '\0' || strcmp(fd.cFileName, best) < 0)
-            ogs_snprintf(best, sizeof(best), "%s", fd.cFileName);
-    } while (FindNextFileA(h, &fd));
-    FindClose(h);
-    if (best[0] == '\0') return OGS_ERROR;
-    ogs_snprintf(out_path, out_cap, "%s/%s", cgf_self()->ready_dir, best);
-    return OGS_OK;
-#else
-    DIR *d;
-    struct dirent *ent;
-    char best[256] = "";
-
-    d = opendir(cgf_self()->ready_dir);
-    if (!d) return OGS_ERROR;
-
-    while ((ent = readdir(d)) != NULL) {
-        if (!spool_is_cdr_name(ent->d_name)) continue;
-        if (after_base && after_base[0] &&
-                strcmp(ent->d_name, after_base) <= 0)
-            continue;
-        if (best[0] == '\0' || strcmp(ent->d_name, best) < 0)
-            ogs_snprintf(best, sizeof(best), "%s", ent->d_name);
-    }
-    closedir(d);
-
-    if (best[0] == '\0') return OGS_ERROR;
-    ogs_snprintf(out_path, out_cap, "%s/%s", cgf_self()->ready_dir, best);
-    return OGS_OK;
-#endif
-}
-
 static int pick_next_path(char *out_path, size_t out_cap)
 {
     const char *after = g_last_handled_valid ? g_last_handled_base : NULL;
@@ -227,12 +278,36 @@ static int pick_next_path(char *out_path, size_t out_cap)
     }
 
     spool_clear_cached_next();
-    if (find_next_cdr(out_path, out_cap, after) != OGS_OK)
+
+    while (g_pending_idx < g_pending_count) {
+        const char *candidate = g_pending_queue[g_pending_idx];
+
+        g_pending_idx++;
+        if (spool_path_ready(candidate)) {
+            ogs_snprintf(out_path, out_cap, "%s", candidate);
+            ogs_snprintf(g_cached_next_path, sizeof(g_cached_next_path),
+                    "%s", candidate);
+            return OGS_OK;
+        }
+    }
+
+    if (pending_queue_build(after) != OGS_OK)
         return OGS_ERROR;
 
-    ogs_snprintf(g_cached_next_path, sizeof(g_cached_next_path),
-            "%s", out_path);
-    return OGS_OK;
+    while (g_pending_idx < g_pending_count) {
+        const char *candidate = g_pending_queue[g_pending_idx];
+
+        g_pending_idx++;
+        if (spool_path_ready(candidate)) {
+            ogs_snprintf(out_path, out_cap, "%s", candidate);
+            ogs_snprintf(g_cached_next_path, sizeof(g_cached_next_path),
+                    "%s", candidate);
+            return OGS_OK;
+        }
+    }
+
+    pending_queue_free();
+    return OGS_ERROR;
 }
 
 static int quarantine_bad_header(const char *path)

@@ -197,6 +197,11 @@ void cgf_sm_on_dtrr_response(cgf_peer_t *peer, uint16_t seq, uint8_t cause)
         if (peer->xact.file)
             cgf_spool_nack_batch(peer->xact.file);
     } else {
+        if (peer->state != CGF_PEER_STATE_UP) {
+            ogs_info("cgf: peer '%s' is UP (DTRR accepted)",
+                    peer->address_str);
+            peer->state = CGF_PEER_STATE_UP;
+        }
         ogs_debug("cgf: DTRR seq=%u accepted by '%s' (cause=%u, %u records)",
                 seq, peer->address_str, cause, peer->xact.records_in_batch);
         if (peer->xact.file)
@@ -299,7 +304,9 @@ void cgf_sm_try_drain(void)
 
     p = active_peer();
     if (!p) return;
-    if (p->state != CGF_PEER_STATE_UP) return;
+    if (p->state != CGF_PEER_STATE_UP &&
+            p->state != CGF_PEER_STATE_PROBING)
+        return;
     if (p->xact.in_flight) return;
 
     f = cgf_spool_get_active();

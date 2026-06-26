@@ -67,14 +67,14 @@ cgf:
     request_rto_ms: 3000             # DTRR retransmit timeout
     request_retries: 4               # attempts before giving up on a peer
     failover_after_missed_echoes: 3  # consecutive missed echoes => DOWN
-    spool_poll_ms: 1000              # how often to scan ready/ for new files
+    spool_poll_ms: 250               # how often to scan ready/ for new files
 
   batch:
     # Maximum number of encoded CDRs packed into a single GTP'
     # DataRecordTransferRequest. Keeping the UDP payload below MTU
     # avoids fragmentation and makes retransmission cheaper.
-    max_records_per_packet: 5
-    max_bytes_per_packet: 1300
+    max_records_per_packet: 32
+    max_bytes_per_packet: 1400
 
   # Data Record Packet IE sub-header. Four octets sitting between the
   # `fc <len>` TLIV header and the list of length-prefixed BER records:
