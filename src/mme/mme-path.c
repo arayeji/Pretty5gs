@@ -148,13 +148,33 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
         if (!do_purge)
             continue;
 
-        anchor = mme_ue->idle_since ?
-                mme_ue->idle_since : mme_ue->context_created;
+        /*
+         * Anchor the grace on the fixed creation time, never on idle_since.
+         *
+         * idle_since is restamped to "now" on every enb_ue_remove() and
+         * zeroed on every enb_ue_associate_mme_ue(). Under an attach /
+         * Service-Request failure storm - e.g. the SGW returning Create
+         * Session Response cause=103 - a session-less stub briefly gets an
+         * enb_ue then loses it every few seconds, so its idle_since never
+         * ages past the grace window. Anchoring on idle_since therefore lets
+         * such a stub evade the sweep forever: ue_count climbs without bound
+         * while mme_session / enb_ue stay low.
+         *
+         * context_created is stamped once in mme_ue_add() and never moves, so
+         * any context that has held no ESM session for longer than the grace
+         * is reclaimed regardless of churn. This only changes behaviour for
+         * ECM-IDLE stubs: ECM-CONNECTED UEs already have idle_since == 0 (so
+         * they were anchored on context_created already), and registered UEs
+         * keep their bearer in sess_list and were excluded above. Only true
+         * session-less orphans are reaped.
+         */
+        anchor = mme_ue->context_created ?
+                mme_ue->context_created : mme_ue->idle_since;
         if (anchor) {
             if ((now - anchor) < grace)
                 continue;
         }
-        /* No anchor: legacy leak before context_created was added. */
+        /* No anchor at all: legacy stub, reclaim it. */
 
         ogs_warn("orphan sweep: purge imsi=%s (no session, S1=%s)",
                 mme_ue->imsi_bcd[0] ? mme_ue->imsi_bcd : "-",
