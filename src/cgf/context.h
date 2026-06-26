@@ -33,7 +33,22 @@ extern int __cgf_log_domain;
 #define OGS_LOG_DOMAIN __cgf_log_domain
 
 #define CGF_MAX_PEERS            4
+#define CGF_MAX_INFLIGHT         8
 #define CGF_DEFAULT_GTPP_PORT    3386
+
+/* One outstanding DataRecordTransferRequest slot per peer. GTP' allows
+ * multiple in-flight requests distinguished by sequence number; the
+ * window size is capped by max_inflight in cgf_context_t. */
+typedef struct cgf_xact_s {
+    bool active;
+    uint16_t seq;
+    uint32_t retries;
+    ogs_time_t sent_at;
+    ogs_pkbuf_t *pkbuf;
+    struct cgf_spool_file_s *file;
+    size_t batch_start;
+    uint32_t records_in_batch;
+} cgf_xact_t;
 
 /* Peer role. Only the primary is used under normal conditions; failover
  * switches to a secondary when the primary stops answering echoes. */
@@ -73,22 +88,7 @@ typedef struct cgf_peer_s {
     uint8_t peer_restart_counter;   /* last Recovery IE value observed */
     bool peer_restart_counter_valid;
 
-    /* The single in-flight DataRecordTransferRequest for this peer, if
-     * any. GTP' as implemented here is strictly serial per peer: one
-     * outstanding request, waiting for its matching response or for the
-     * retransmit timeout. */
-    struct {
-        bool in_flight;
-        uint16_t seq;
-        uint32_t retries;
-        ogs_time_t sent_at;
-        ogs_pkbuf_t *pkbuf;     /* retained for retransmit */
-        /* Back-reference to the active spool cursor so the response
-         * handler knows which chunk of which file it just confirmed. */
-        struct cgf_spool_file_s *file;
-        size_t first_record_offset;
-        uint32_t records_in_batch;
-    } xact;
+    cgf_xact_t xacts[CGF_MAX_INFLIGHT];
 } cgf_peer_t;
 
 typedef struct cgf_context_s {
@@ -122,6 +122,7 @@ typedef struct cgf_context_s {
     /* Batching caps for DataRecordTransferRequest. */
     uint32_t max_records_per_packet;
     uint32_t max_bytes_per_packet;
+    uint32_t max_inflight;      /* pipelined DTRRs per peer (1..CGF_MAX_INFLIGHT) */
 
     /*
      * Data Record Packet sub-header fields (TS 32.295 §6.2.4.2, wire

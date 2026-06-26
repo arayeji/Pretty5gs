@@ -353,6 +353,7 @@ static bool open_spool_file(const char *path)
     f->data = data;
     f->data_len = data_len;
     f->next_record_offset = 0;
+    f->send_offset = 0;
     g_active = f;
     spool_clear_cached_next();
 
@@ -396,8 +397,8 @@ uint32_t cgf_spool_stage_batch(cgf_spool_file_t *file,
     size_t off;
 
     ogs_assert(file && out && out_used);
-    file->pending_batch_start = file->next_record_offset;
-    off = file->next_record_offset;
+    file->pending_batch_start = file->send_offset;
+    off = file->send_offset;
 
     while (n < max_records && off + CDR_RECORD_HDR_LEN <= file->data_len) {
         uint8_t *h = file->data + off;
@@ -441,6 +442,28 @@ uint32_t cgf_spool_stage_batch(cgf_spool_file_t *file,
     return n;
 }
 
+static size_t offset_after_records(
+        const cgf_spool_file_t *file, size_t start, uint32_t records)
+{
+    size_t off = start;
+    uint32_t i;
+
+    for (i = 0; i < records; i++) {
+        const uint8_t *h = file->data + off;
+        uint16_t rl = (uint16_t)((h[6] << 8) | h[7]);
+        off += CDR_RECORD_HDR_LEN + rl;
+    }
+    return off;
+}
+
+void cgf_spool_commit_send(cgf_spool_file_t *file,
+        size_t batch_start, uint32_t records)
+{
+    ogs_assert(file);
+    file->send_offset = offset_after_records(file, batch_start, records);
+    file->pending_batch_records = 0;
+}
+
 static void move_to(cgf_spool_file_t *file, const char *dstdir)
 {
     const char *base = strrchr(file->path, '/');
@@ -458,25 +481,16 @@ static void move_to(cgf_spool_file_t *file, const char *dstdir)
     }
 }
 
-void cgf_spool_ack_batch(cgf_spool_file_t *file)
+void cgf_spool_ack_batch(cgf_spool_file_t *file,
+        size_t batch_start, uint32_t records)
 {
     ogs_assert(file);
-    file->next_record_offset += 0; /* intentionally a no-op; we already
-                                      advanced while staging */
-    {
-        /* Compute the new cursor: sum over pending batch records. */
-        size_t off = file->pending_batch_start;
-        uint32_t i;
-        for (i = 0; i < file->pending_batch_records; i++) {
-            uint8_t *h = file->data + off;
-            uint16_t rl = (uint16_t)((h[6] << 8) | h[7]);
-            off += CDR_RECORD_HDR_LEN + rl;
-        }
-        file->next_record_offset = off;
-    }
+    file->next_record_offset = offset_after_records(
+            file, batch_start, records);
     file->pending_batch_records = 0;
 
-    if (file->next_record_offset >= file->data_len) {
+    if (file->next_record_offset >= file->data_len &&
+            file->send_offset >= file->data_len) {
         /*
          * Retention policy for fully-acked files:
          *   cgf.purge_on_success=true  -> unlink (keeps disk bounded)
@@ -511,10 +525,7 @@ void cgf_spool_ack_batch(cgf_spool_file_t *file)
 void cgf_spool_nack_batch(cgf_spool_file_t *file)
 {
     ogs_assert(file);
-    /* Cursor hasn't advanced (we advance only on ACK), so NACK is a
-     * no-op on the file itself. Callers typically follow up by closing
-     * the active file (freeing g_active) so the next refill picks it
-     * back up once the peer comes back. */
+    file->send_offset = file->next_record_offset;
     file->pending_batch_records = 0;
 }
 

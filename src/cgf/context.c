@@ -51,8 +51,9 @@ int cgf_context_init(void)
     self.request_retries = 4;
     self.failover_after_missed_echoes = 3;
     self.spool_poll_ms = 250;
-    self.max_records_per_packet = 32;
-    self.max_bytes_per_packet = 1400;
+    self.max_records_per_packet = 255;
+    self.max_bytes_per_packet = 32000;
+    self.max_inflight = 8;
     self.purge_on_success = false;
 
     /* DRP IE sub-header defaults. Matches the working peer capture:
@@ -230,6 +231,8 @@ int cgf_context_parse_config(void)
                         self.max_records_per_packet = (uint32_t)atoi(bv);
                     else if (!strcmp(bk, "max_bytes_per_packet"))
                         self.max_bytes_per_packet = (uint32_t)atoi(bv);
+                    else if (!strcmp(bk, "max_inflight"))
+                        self.max_inflight = (uint32_t)atoi(bv);
                     else ogs_warn("cgf: unknown batch `%s`", bk);
                 }
             } else if (!strcmp(k, "drp")) {
@@ -263,6 +266,9 @@ int cgf_context_parse_config(void)
         ogs_error("cgf: at least one peer must be configured");
         return OGS_ERROR;
     }
+
+    if (!self.max_inflight || self.max_inflight > CGF_MAX_INFLIGHT)
+        self.max_inflight = CGF_MAX_INFLIGHT;
 
     ogs_snprintf(path, sizeof(path), "%s/ready", self.spool_dir);
     self.ready_dir = ogs_strdup(path);

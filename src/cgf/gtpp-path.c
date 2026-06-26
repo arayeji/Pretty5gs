@@ -193,13 +193,70 @@ void cgf_gtpp_close(void)
 /*  Hot reload                                                        */
 /* ================================================================== */
 
+static void free_xact(cgf_xact_t *xact)
+{
+    if (!xact || !xact->active) return;
+    if (xact->pkbuf) {
+        ogs_pkbuf_free(xact->pkbuf);
+        xact->pkbuf = NULL;
+    }
+    memset(xact, 0, sizeof(*xact));
+}
+
+uint32_t cgf_gtpp_inflight_count(const cgf_peer_t *peer)
+{
+    uint32_t i, n = 0;
+
+    ogs_assert(peer);
+    for (i = 0; i < CGF_MAX_INFLIGHT; i++) {
+        if (peer->xacts[i].active) n++;
+    }
+    return n;
+}
+
+cgf_xact_t *cgf_gtpp_find_xact(cgf_peer_t *peer, uint16_t seq)
+{
+    uint32_t i;
+
+    ogs_assert(peer);
+    for (i = 0; i < CGF_MAX_INFLIGHT; i++) {
+        if (peer->xacts[i].active && peer->xacts[i].seq == seq)
+            return &peer->xacts[i];
+    }
+    return NULL;
+}
+
+void cgf_gtpp_free_xact(cgf_xact_t *xact)
+{
+    free_xact(xact);
+}
+
+void cgf_gtpp_abort_all_xacts(cgf_peer_t *peer)
+{
+    uint32_t i;
+
+    ogs_assert(peer);
+    for (i = 0; i < CGF_MAX_INFLIGHT; i++)
+        free_xact(&peer->xacts[i]);
+}
+
+static cgf_xact_t *alloc_xact(cgf_peer_t *peer)
+{
+    uint32_t i;
+
+    for (i = 0; i < CGF_MAX_INFLIGHT; i++) {
+        if (!peer->xacts[i].active)
+            return &peer->xacts[i];
+    }
+    return NULL;
+}
+
 static void close_peer(cgf_peer_t *p)
 {
     if (p->poll) { ogs_pollset_remove(p->poll); p->poll = NULL; }
     if (p->sock) { ogs_sock_destroy(p->sock); p->sock = NULL; }
     if (p->addr) { ogs_freeaddrinfo(p->addr);  p->addr = NULL; }
-    if (p->xact.pkbuf) { ogs_pkbuf_free(p->xact.pkbuf); p->xact.pkbuf = NULL; }
-    memset(&p->xact, 0, sizeof(p->xact));
+    cgf_gtpp_abort_all_xacts(p);
     p->state = CGF_PEER_STATE_DOWN;
 }
 
@@ -245,6 +302,7 @@ int cgf_gtpp_apply_runtime(const cgf_hot_config_t *hot)
         ctx->failover_after_missed_echoes   = hot->failover_after_missed_echoes;
     if (hot->max_records_per_packet)        ctx->max_records_per_packet = hot->max_records_per_packet;
     if (hot->max_bytes_per_packet)          ctx->max_bytes_per_packet = hot->max_bytes_per_packet;
+    if (hot->max_inflight)                  ctx->max_inflight = hot->max_inflight;
     if (hot->purge_on_success >= 0) {
         bool new_val = hot->purge_on_success ? true : false;
         if (new_val != ctx->purge_on_success) {
@@ -419,14 +477,16 @@ int cgf_gtpp_send_data_record_transfer(
         size_t first_record_offset)
 {
     ogs_pkbuf_t *pkbuf;
+    cgf_xact_t *xact;
     uint16_t seq;
     size_t payload_len;
     uint8_t *p;
 
-    if (peer->xact.in_flight) {
-        ogs_warn("cgf: DTRR dropped, peer '%s' already has xact in-flight",
+    xact = alloc_xact(peer);
+    if (!xact) {
+        ogs_debug("cgf: DTRR deferred, peer '%s' inflight window full",
                 peer->address_str);
-        return OGS_ERROR;
+        return OGS_RETRY;
     }
 
     /* Number of Records lives in a single octet — cap the batch so
@@ -484,33 +544,50 @@ int cgf_gtpp_send_data_record_transfer(
         return OGS_ERROR;
     }
 
-    peer->xact.in_flight = true;
-    peer->xact.seq = seq;
-    peer->xact.retries = 0;
-    peer->xact.sent_at = ogs_time_now();
-    peer->xact.pkbuf = pkbuf;
-    peer->xact.file = file;
-    peer->xact.first_record_offset = first_record_offset;
-    peer->xact.records_in_batch = records_in_batch;
+    xact->active = true;
+    xact->seq = seq;
+    xact->retries = 0;
+    xact->sent_at = ogs_time_now();
+    xact->pkbuf = pkbuf;
+    xact->file = file;
+    xact->batch_start = first_record_offset;
+    xact->records_in_batch = records_in_batch;
 
-    ogs_debug("cgf: dtrr -> '%s' seq=%u records=%u bytes=%zu",
-            peer->address_str, seq, records_in_batch, records_len);
+    ogs_debug("cgf: dtrr -> '%s' seq=%u records=%u bytes=%zu inflight=%u",
+            peer->address_str, seq, records_in_batch, records_len,
+            cgf_gtpp_inflight_count(peer));
     return OGS_OK;
 }
 
-int cgf_gtpp_retransmit_xact(cgf_peer_t *peer)
+int cgf_gtpp_retransmit_xact(cgf_xact_t *xact)
 {
-    if (!peer->xact.in_flight || !peer->xact.pkbuf) return OGS_ERROR;
-    peer->xact.retries++;
-    peer->xact.sent_at = ogs_time_now();
+    cgf_peer_t *peer;
+
+    if (!xact || !xact->active || !xact->pkbuf) return OGS_ERROR;
+    peer = NULL;
+    {
+        cgf_context_t *ctx = cgf_self();
+        uint32_t i, j;
+        for (i = 0; i < ctx->num_of_peers && !peer; i++) {
+            for (j = 0; j < CGF_MAX_INFLIGHT; j++) {
+                if (&ctx->peers[i].xacts[j] == xact) {
+                    peer = &ctx->peers[i];
+                    break;
+                }
+            }
+        }
+    }
+    ogs_assert(peer);
+
+    xact->retries++;
+    xact->sent_at = ogs_time_now();
 
     ogs_warn("cgf: retransmit dtrr seq=%u to '%s' (attempt %u/%u)",
-            peer->xact.seq, peer->address_str,
-            peer->xact.retries, cgf_self()->request_retries);
+            xact->seq, peer->address_str,
+            xact->retries, cgf_self()->request_retries);
 
-    /* pkbuf is already built, just re-send its bytes. */
     {
-        ogs_pkbuf_t *dup = ogs_pkbuf_copy(peer->xact.pkbuf);
+        ogs_pkbuf_t *dup = ogs_pkbuf_copy(xact->pkbuf);
         int rv;
         ogs_assert(dup);
         rv = raw_send(peer, dup);

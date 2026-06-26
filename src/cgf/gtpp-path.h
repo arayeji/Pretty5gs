@@ -90,9 +90,14 @@ int cgf_gtpp_send_data_record_transfer(
         struct cgf_spool_file_s *file,
         size_t first_record_offset);
 
-/* Re-send the packet currently stored in peer->xact.pkbuf without
- * allocating a new sequence number. Used by the RTO timer. */
-int cgf_gtpp_retransmit_xact(cgf_peer_t *peer);
+/* Re-send the packet stored in `xact->pkbuf` without allocating a new
+ * sequence number. Used by the RTO timer. */
+int cgf_gtpp_retransmit_xact(cgf_xact_t *xact);
+
+uint32_t cgf_gtpp_inflight_count(const cgf_peer_t *peer);
+cgf_xact_t *cgf_gtpp_find_xact(cgf_peer_t *peer, uint16_t seq);
+void cgf_gtpp_free_xact(cgf_xact_t *xact);
+void cgf_gtpp_abort_all_xacts(cgf_peer_t *peer);
 
 /* Dispatch a received datagram. Called from the main loop with an
  * OGS_POLLIN event. */
@@ -126,6 +131,7 @@ typedef struct cgf_hot_config_s {
     uint32_t failover_after_missed_echoes;
     uint32_t max_records_per_packet;
     uint32_t max_bytes_per_packet;
+    uint32_t max_inflight;
     /* -1 = "not provided in payload, keep current value"; 0 = off;
      * 1 = purge fully-acked files on unlink. Using a tri-state here
      * so a PUT that only adjusts e.g. timers doesn't inadvertently
