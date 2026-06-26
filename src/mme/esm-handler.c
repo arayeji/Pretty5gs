@@ -219,8 +219,16 @@ int esm_handle_pdn_connectivity_request(
             }
         }
 
-        ogs_assert(OGS_OK ==
-            mme_gtp_send_create_session_request(enb_ue, sess, create_action));
+        r = mme_gtp_send_create_session_request(enb_ue, sess, create_action);
+        if (r != OGS_OK) {
+            ogs_warn("[%s] Create Session Request failed", mme_ue->imsi_bcd);
+            r = nas_eps_send_pdn_connectivity_reject(
+                    sess, OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
+                    create_action);
+            ogs_expect(r == OGS_OK);
+            ogs_assert(r != OGS_ERROR);
+            return OGS_ERROR;
+        }
     } else {
         ogs_error("[%s] No APN", mme_ue->imsi_bcd);
         r = nas_eps_send_pdn_connectivity_reject(
@@ -321,9 +329,29 @@ int esm_handle_information_response(
                 }
             }
         } else {
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_create_session_request(
-                    enb_ue, sess, OGS_GTP_CREATE_IN_ATTACH_REQUEST));
+            if (mme_self()->maintenance_mode) {
+                ogs_warn("[%s] Attach PDN rejected: MME maintenance mode",
+                        mme_ue->imsi_bcd);
+                r = nas_eps_send_pdn_connectivity_reject(
+                        sess, OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
+                        OGS_GTP_CREATE_IN_ATTACH_REQUEST);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+                return OGS_ERROR;
+            }
+
+            r = mme_gtp_send_create_session_request(
+                    enb_ue, sess, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
+            if (r != OGS_OK) {
+                ogs_warn("[%s] Create Session Request failed",
+                        mme_ue->imsi_bcd);
+                r = nas_eps_send_pdn_connectivity_reject(
+                        sess, OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
+                        OGS_GTP_CREATE_IN_ATTACH_REQUEST);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+                return OGS_ERROR;
+            }
         }
     } else {
         if (rsp->access_point_name.length)
