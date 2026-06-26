@@ -59,8 +59,6 @@ static char **g_pending_queue = NULL;
 static uint32_t g_pending_count = 0;
 static uint32_t g_pending_idx = 0;
 
-#define CGF_SPOOL_EMPTY_BACKOFF_MAX_MS 30000
-
 /* ------------------------------------------------------------------ */
 
 cgf_spool_file_t *cgf_spool_get_active(void) { return g_active; }
@@ -214,19 +212,13 @@ static void spool_reset_scan_state(void)
 static void spool_mark_empty(void)
 {
     uint32_t poll_ms = cgf_self()->spool_poll_ms;
-    static uint32_t empty_backoff_ms;
-    ogs_time_t delay;
 
-    if (!poll_ms) poll_ms = 1000;
-    if (!empty_backoff_ms) empty_backoff_ms = poll_ms * 5;
-    else if (empty_backoff_ms < CGF_SPOOL_EMPTY_BACKOFF_MAX_MS)
-        empty_backoff_ms *= 2;
-    if (empty_backoff_ms > CGF_SPOOL_EMPTY_BACKOFF_MAX_MS)
-        empty_backoff_ms = CGF_SPOOL_EMPTY_BACKOFF_MAX_MS;
-
-    delay = ogs_time_from_msec(empty_backoff_ms);
-    g_empty_until = ogs_time_now() + delay;
+    /* Back off only one poll tick. Exponential backoff up to 30 s delayed
+     * pickup of newly rotated files while cgfd was idle. */
+    if (!poll_ms) poll_ms = 250;
+    g_empty_until = ogs_time_now() + ogs_time_from_msec(poll_ms);
     spool_clear_cached_next();
+    pending_queue_free();
 }
 
 static void spool_clear_empty_backoff(void)
