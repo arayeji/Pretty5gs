@@ -50,8 +50,6 @@ static cgf_spool_file_t *g_active = NULL;
  * backlog). We scan once into a sorted queue and consume it in order;
  * a new scan runs only when the queue is exhausted.
  */
-static char g_last_handled_base[256];
-static bool g_last_handled_valid;
 static char g_cached_next_path[512];
 static ogs_time_t g_empty_until;
 
@@ -75,15 +73,6 @@ static const char *path_basename(const char *path)
 static void spool_clear_cached_next(void)
 {
     g_cached_next_path[0] = '\0';
-}
-
-static void spool_remember_handled(const char *path)
-{
-    const char *base = path_basename(path);
-    ogs_snprintf(g_last_handled_base, sizeof(g_last_handled_base),
-            "%s", base);
-    g_last_handled_valid = (g_last_handled_base[0] != '\0');
-    spool_clear_cached_next();
 }
 
 static void pending_queue_free(void)
@@ -121,7 +110,7 @@ static bool spool_path_ready(const char *path)
     return stat(path, &st) == 0 && S_ISREG(st.st_mode);
 }
 
-static int pending_queue_build(const char *after_base)
+static int pending_queue_build(void)
 {
     char **names = NULL;
     uint32_t n_names = 0, n_cap = 0;
@@ -142,9 +131,6 @@ static int pending_queue_build(const char *after_base)
         do {
             if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
             if (!spool_is_cdr_name(fd.cFileName)) continue;
-            if (after_base && after_base[0] &&
-                    strcmp(fd.cFileName, after_base) <= 0)
-                continue;
             if (n_names >= n_cap) {
                 n_cap = n_cap ? n_cap * 2 : 64;
                 names = ogs_realloc(names, n_cap * sizeof(*names));
@@ -164,9 +150,6 @@ static int pending_queue_build(const char *after_base)
 
         while ((ent = readdir(d)) != NULL) {
             if (!spool_is_cdr_name(ent->d_name)) continue;
-            if (after_base && after_base[0] &&
-                    strcmp(ent->d_name, after_base) <= 0)
-                continue;
             if (n_names >= n_cap) {
                 n_cap = n_cap ? n_cap * 2 : 64;
                 names = ogs_realloc(names, n_cap * sizeof(*names));
@@ -202,8 +185,6 @@ static int pending_queue_build(const char *after_base)
 
 static void spool_reset_scan_state(void)
 {
-    g_last_handled_valid = false;
-    g_last_handled_base[0] = '\0';
     spool_clear_cached_next();
     g_empty_until = 0;
     pending_queue_free();
@@ -262,8 +243,6 @@ static int slurp(const char *path, uint8_t **out, size_t *out_len)
 
 static int pick_next_path(char *out_path, size_t out_cap)
 {
-    const char *after = g_last_handled_valid ? g_last_handled_base : NULL;
-
     if (g_cached_next_path[0] && spool_path_ready(g_cached_next_path)) {
         ogs_snprintf(out_path, out_cap, "%s", g_cached_next_path);
         return OGS_OK;
@@ -283,7 +262,7 @@ static int pick_next_path(char *out_path, size_t out_cap)
         }
     }
 
-    if (pending_queue_build(after) != OGS_OK)
+    if (pending_queue_build() != OGS_OK)
         return OGS_ERROR;
 
     while (g_pending_idx < g_pending_count) {
@@ -319,7 +298,7 @@ static bool open_spool_file(const char *path)
 
     if (slurp(path, &data, &data_len) != OGS_OK) {
         ogs_warn("cgf: cannot read '%s'", path);
-        spool_remember_handled(path);
+        spool_clear_cached_next();
         return false;
     }
 
@@ -334,7 +313,7 @@ static bool open_spool_file(const char *path)
                 ogs_warn("cgf: quarantine rename failed for '%s': %s",
                         path, strerror(errno));
             }
-            spool_remember_handled(path);
+            spool_clear_cached_next();
             return false;
         }
     }
@@ -507,7 +486,7 @@ static void maybe_finish_file(cgf_spool_file_t *file)
         move_to(file, cgf_self()->done_dir);
     }
     if (file == g_active) g_active = NULL;
-    spool_remember_handled(file->path);
+    spool_clear_cached_next();
     spool_clear_empty_backoff();
     free_file(file);
 }
@@ -548,7 +527,7 @@ void cgf_spool_quarantine(cgf_spool_file_t *file)
     move_to(file, cgf_self()->failed_dir);
     if (file == g_active) {
         g_active = NULL;
-        spool_remember_handled(file->path);
+        spool_clear_cached_next();
     }
     spool_clear_empty_backoff();
     free_file(file);
