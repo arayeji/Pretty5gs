@@ -416,7 +416,8 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                  * flow through the normal maintenance handlers below.
                  */
                 if (mme_self()->maintenance_mode) {
-                    r = mme_maintenance_reject_without_ue(enb_ue, &nas_message);
+                    r = mme_maintenance_reject_without_ue(
+                            enb_ue, &nas_message, e->nas_type);
                     ogs_expect(r == OGS_OK);
                     ogs_pkbuf_free(pkbuf);
                     return;

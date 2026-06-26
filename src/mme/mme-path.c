@@ -46,7 +46,8 @@ void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue)
 }
 
 int mme_maintenance_reject_without_ue(
-        enb_ue_t *enb_ue, const ogs_nas_eps_message_t *message)
+        enb_ue_t *enb_ue, const ogs_nas_eps_message_t *message,
+        uint8_t nas_type)
 {
     ogs_pkbuf_t *emmbuf = NULL;
     ogs_nas_emm_cause_t emm_cause = OGS_NAS_EMM_CAUSE_CONGESTION;
@@ -55,14 +56,15 @@ int mme_maintenance_reject_without_ue(
     ogs_assert(enb_ue);
     ogs_assert(message);
 
-    switch (message->emm.h.message_type) {
+    if (nas_type == OGS_NAS_SECURITY_HEADER_FOR_SERVICE_REQUEST_MESSAGE) {
+        emmbuf = emm_build_service_reject(emm_cause, NULL);
+    } else switch (message->emm.h.message_type) {
     case OGS_NAS_EPS_ATTACH_REQUEST:
         emmbuf = emm_build_attach_reject(emm_cause, NULL);
         break;
     case OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST:
         emmbuf = emm_build_tau_reject(emm_cause, NULL);
         break;
-    case OGS_NAS_EPS_SERVICE_REQUEST:
     case OGS_NAS_EPS_EXTENDED_SERVICE_REQUEST:
         emmbuf = emm_build_service_reject(emm_cause, NULL);
         break;
