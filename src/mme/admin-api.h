@@ -78,7 +78,9 @@
  *
  *   POST /admin/maintenance/enable
  *   POST /admin/maintenance/disable
- *        Toggle maintenance mode (blocks new attach / PDN).
+ *        Toggle maintenance mode (blocks new attach / PDN). Enable also
+ *        reclaims stale MME-UE contexts with no ESM session
+ *        older than the S1 holding timer (default 30s).
  *
  *   POST /admin/maintenance/drain[?force=1]
  *        Enable maintenance and graceful-detach every UE (default).

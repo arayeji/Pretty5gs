@@ -92,6 +92,17 @@ static size_t get_query_size_t(struct MHD_Connection *connection,
     return (size_t)v;
 }
 
+static size_t get_query_page(struct MHD_Connection *connection)
+{
+    const char *val = MHD_lookup_connection_value(
+            connection, MHD_GET_ARGUMENT_KIND, "page");
+    if (!val || !*val)
+        return 0;
+    if (strcmp(val, "-1") == 0)
+        return SIZE_MAX;
+    return get_query_size_t(connection, "page", 0);
+}
+
 void ogs_metrics_server_init(ogs_metrics_context_t *ctx)
 {
     ogs_list_init(&ctx->server_list);
@@ -601,16 +612,8 @@ mhd_server_access_handler(void *cls, struct MHD_Connection *connection,
         return (_MHD_Result)ret;
     }
 
-    size_t page = get_query_size_t(connection, "page", 0);
-    /*
-     * page_size default is 100 if not provided, but the upper bound
-     * is no longer clamped here - the dumper is allowed to honour
-     * any value (including SIZE_MAX) and serve_json_from_dumper()
-     * grows its output buffer to fit, bounded by
-     * DUMPER_BUF_CAP_MAX. Pass `page_size=0` or omit the key for
-     * the default; pass an explicit big number to disable paging
-     * effectively without going through page=-1.
-     */
+    size_t page = get_query_page(connection);
+    /* page_size default is 100 when omitted; dumpers honour page=-1 via SIZE_MAX. */
     size_t page_size = get_query_size_t(connection, "page_size", 100);
 
     ogs_metrics_query_t q;

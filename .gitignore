@@ -58,3 +58,6 @@ webui/.next
 # Local admin-api deploy scripts (kept local, not tracked)
 tools/admin-api/scripts/install-linux.sh
 tools/admin-api/scripts/publish-linux.sh
+
+# Local WSL2 pre-push compile-check helper (kept local, not tracked)
+/wsl-build.sh

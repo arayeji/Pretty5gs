@@ -127,14 +127,8 @@ size_t mme_dump_enb_info_paged(char *buf, size_t buflen,
 {
     if (!buf || buflen == 0) return 0;
 
-    const bool no_paging = (page == SIZE_MAX);
-    if (!no_paging) {
-        if (page_size == 0) page_size = ENB_INFO_PAGE_SIZE_DEFAULT;
-        /* No upper clamp - the HTTP layer grows the buffer to fit. */
-    } else {
-        page_size = SIZE_MAX;
-        page = 0;
-    }
+    const bool no_paging = json_pager_setup(&page, &page_size,
+            ENB_INFO_PAGE_SIZE_DEFAULT);
 
     const size_t start_index = json_pager_safe_start_index(no_paging, page, page_size);
 
@@ -157,7 +151,7 @@ size_t mme_dump_enb_info_paged(char *buf, size_t buflen,
         return 0;
     }
 
-    size_t idx = 0, emitted = 0;
+    size_t idx = 0, emitted = 0, total = 0;
     bool has_next = false;
     bool oom = false;
 
@@ -182,10 +176,11 @@ size_t mme_dump_enb_info_paged(char *buf, size_t buflen,
         if (q && q->ip && *q->ip && !sa_matches_ip(enb->sctp.addr, q->ip))
             continue;
 
+        total++;
+
         int act = json_pager_advance(no_paging, idx, start_index, emitted, page_size, &has_next);
         if (act == 1) { idx++; continue; }
-        if (act == 2) break;
-
+        if (act == 0) {
         /*
          * Use the maintained per-eNB counter rather than walking
          * enb->enb_ue_list. The list is mutated by the MME main
@@ -286,13 +281,14 @@ size_t mme_dump_enb_info_paged(char *buf, size_t buflen,
         /* success -> append to items[] */
         cJSON_AddItemToArray(items, e);
         emitted++;
+        }
         idx++;
     }
 
     ogs_metrics_dump_unlock();
 
     json_pager_add_trailing(root, no_paging, page, page_size,
-                            emitted, has_next && !oom, "/enb-info", oom);
+                            emitted, total, has_next && !oom, "/enb-info", oom);
 
     return json_pager_finalize(root, buf, buflen);
 }

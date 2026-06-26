@@ -50,6 +50,7 @@ json_pager_add_trailing(cJSON *root,
                         size_t page,
                         size_t page_size,
                         size_t count,
+                        size_t total,
                         bool has_next,
                         const char *base_path,
                         bool truncated)
@@ -58,6 +59,7 @@ json_pager_add_trailing(cJSON *root,
     cJSON_AddNumberToObject(pager, "page",      (double)(no_paging ? 0 : page));
     cJSON_AddNumberToObject(pager, "page_size", (double)(no_paging ? 0 : page_size));
     cJSON_AddNumberToObject(pager, "count",     (double)count);
+    cJSON_AddNumberToObject(pager, "total",     (double)total);
 
     /* Only add "truncated" when true */
     if (truncated)

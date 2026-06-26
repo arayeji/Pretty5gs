@@ -1362,14 +1362,8 @@ size_t smf_dump_pdu_info_paged(char *buf, size_t buflen,
 {
     if (!buf || buflen == 0) return 0;
 
-    const bool no_paging = (page == SIZE_MAX);
-    if (!no_paging) {
-        if (page_size == 0) page_size = PDU_INFO_PAGE_SIZE_DEFAULT;
-        /* No upper clamp - HTTP layer grows its buffer to fit. */
-    } else {
-        page_size = SIZE_MAX;
-        page = 0;
-    }
+    const bool no_paging = json_pager_setup(&page, &page_size,
+            PDU_INFO_PAGE_SIZE_DEFAULT);
 
     const size_t start_index = json_pager_safe_start_index(no_paging, page, page_size);
 
@@ -1388,7 +1382,7 @@ size_t smf_dump_pdu_info_paged(char *buf, size_t buflen,
         return 0;
     }
 
-    size_t idx = 0, emitted = 0;
+    size_t idx = 0, emitted = 0, total = 0;
     bool has_next = false, oom = false;
 
     smf_context_t *smf = smf_self();
@@ -1418,15 +1412,17 @@ size_t smf_dump_pdu_info_paged(char *buf, size_t buflen,
                 continue;
         }
 
+        total++;
+
         int act = json_pager_advance(no_paging, idx, start_index, emitted, page_size, &has_next);
         if (act == 1) { idx++; continue; }
-        if (act == 2) break;
-
+        if (act == 0) {
         cJSON *ueo = build_ue_object(ue, q);
         if (!ueo) { oom = true; break; }
 
         cJSON_AddItemToArray(items, ueo);
         emitted++;
+        }
         idx++;
     }
 
@@ -1437,7 +1433,8 @@ size_t smf_dump_pdu_info_paged(char *buf, size_t buflen,
         cJSON_AddItemToObjectCS(root, "summary", summary);
     else
         cJSON_Delete(summary);
-    json_pager_add_trailing(root, no_paging, page, page_size, emitted, has_next && !oom, "/pdu-info", oom);
+    json_pager_add_trailing(root, no_paging, page, page_size, emitted, total,
+            has_next && !oom, "/pdu-info", oom);
 
     return json_pager_finalize(root, buf, buflen);
 }
@@ -1445,18 +1442,6 @@ size_t smf_dump_pdu_info_paged(char *buf, size_t buflen,
 size_t smf_dump_pdu_info(char *buf, size_t buflen,
         size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
-    /*
-     * Default to 100 per page when unspecified. page=-1 triggers
-     * no-paging mode inside the _paged() function. Upper-bound
-     * clamp removed - HTTP layer grows its buffer.
-     */
-    if (page == SIZE_MAX) {
-        page_size = SIZE_MAX;
-        page = 0;
-    } else if (page_size == 0) {
-        page_size = PDU_INFO_PAGE_SIZE_DEFAULT;
-    }
-
     return smf_dump_pdu_info_paged(buf, buflen, page, page_size, q);
 }
 

@@ -54,6 +54,8 @@ void mme_state_initial(ogs_fsm_t *s, mme_event_t *e)
 
     ogs_assert(s);
 
+    mme_orphan_timer_start();
+
     OGS_FSM_TRAN(s, &mme_state_operational);
 }
 
@@ -134,6 +136,8 @@ void mme_state_final(ogs_fsm_t *s, mme_event_t *e)
     mme_sm_debug(e);
 
     ogs_assert(s);
+
+    mme_orphan_timer_stop();
 }
 
 void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
@@ -1343,6 +1347,19 @@ cleanup:
     case MME_EVENT_ADMIN_MAINTENANCE_ENABLE:
         mme_self()->maintenance_mode = true;
         ogs_info("admin maintenance: enabled");
+        {
+            int ue_purged = 0, enb_purged = 0, ue_remaining, enb_remaining;
+            ogs_time_t grace =
+                    mme_timer_cfg(MME_TIMER_S1_HOLDING)->duration;
+
+            ue_remaining = mme_orphan_ue_sweep(true, grace, &ue_purged);
+            enb_remaining = mme_orphan_enb_sweep(true, grace, &enb_purged);
+            if (ue_purged || enb_purged)
+                ogs_warn("admin maintenance: orphan sweep purged %d "
+                        "stale UE(s) (%d left), %d failed-setup eNB(s) "
+                        "(%d left)",
+                        ue_purged, ue_remaining, enb_purged, enb_remaining);
+        }
         break;
 
     case MME_EVENT_ADMIN_MAINTENANCE_DISABLE:
@@ -1355,6 +1372,28 @@ cleanup:
         ogs_info("admin maintenance drain: mode=%s",
                 e->admin_force ? "force" : "graceful");
         mme_admin_queue_detach_all_ues(e->admin_force);
+        break;
+
+    case MME_EVENT_ORPHAN_SWEEP:
+        {
+            int ue_purged = 0, enb_purged = 0, ue_remaining, enb_remaining;
+            ogs_time_t grace =
+                    mme_timer_cfg(MME_TIMER_S1_HOLDING)->duration;
+
+            ue_remaining = mme_orphan_ue_sweep(true, grace, &ue_purged);
+            enb_remaining = mme_orphan_enb_sweep(true, grace, &enb_purged);
+
+            if (ue_purged || enb_purged)
+                ogs_warn("orphan sweep: purged %d stale UE(s) (%d left), "
+                        "%d failed-setup eNB(s) (%d left)",
+                        ue_purged, ue_remaining, enb_purged, enb_remaining);
+            else if (ue_remaining || enb_remaining)
+                ogs_debug("orphan sweep: %d stale UE(s), %d failed-setup "
+                        "eNB(s) within grace",
+                        ue_remaining, enb_remaining);
+
+            mme_orphan_timer_rearm();
+        }
         break;
 
     case MME_EVENT_SGSAP_LO_SCTP_COMM_UP:
