@@ -92,6 +92,35 @@ int mme_maintenance_reject_without_ue(
 
 static ogs_timer_t *t_orphan_sweep = NULL;
 
+/*
+ * Last orphan-sweep outcome, surfaced via /admin/maintenance/status so the
+ * sweep can be observed even when the logger is at "error" (its own logs are
+ * ogs_warn/ogs_info). Written on the MME main thread, read on the MHD thread;
+ * plain ints, a torn read is harmless for a diagnostic counter.
+ */
+static ogs_time_t orphan_sweep_last_run = 0;
+static int orphan_sweep_last_ue_purged = 0;
+static int orphan_sweep_last_ue_remaining = 0;
+static uint64_t orphan_sweep_total_ue_purged = 0;
+
+void mme_orphan_sweep_record(int ue_purged, int ue_remaining)
+{
+    orphan_sweep_last_run = ogs_time_now();
+    orphan_sweep_last_ue_purged = ue_purged;
+    orphan_sweep_last_ue_remaining = ue_remaining;
+    if (ue_purged > 0)
+        orphan_sweep_total_ue_purged += (uint64_t)ue_purged;
+}
+
+void mme_orphan_sweep_get_stats(ogs_time_t *last_run, int *last_purged,
+        int *last_remaining, uint64_t *total_purged)
+{
+    if (last_run) *last_run = orphan_sweep_last_run;
+    if (last_purged) *last_purged = orphan_sweep_last_ue_purged;
+    if (last_remaining) *last_remaining = orphan_sweep_last_ue_remaining;
+    if (total_purged) *total_purged = orphan_sweep_total_ue_purged;
+}
+
 static void orphan_sweep_timer_cb(void *data)
 {
     mme_event_t *e = NULL;
@@ -124,8 +153,27 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
         enb_ue_t *enb_ue = NULL;
         ogs_time_t anchor;
 
-        if (mme_ue->ue_context_will_remove)
-            continue;
+        /*
+         * Intentionally do NOT blanket-skip ue_context_will_remove==true.
+         *
+         * Several teardown paths set this flag and then rely on "the
+         * caller" to drive the emm_state_ue_context_will_remove transition
+         * (see mme_send_delete_session_or_detach(), mme-path.c:449). When
+         * that caller never completes the transition - e.g. an S6a/S11
+         * failure on a UE that already lost its S1 link during an eNB SCTP
+         * reset storm - the context is left session-less and flagged but is
+         * never freed. Blanket-skipping the flag here let those stubs
+         * accumulate without bound: ue_count stays pinned far above
+         * mme_session / enb_ue (the reported slow, stable leak), and the
+         * sweep - the very mechanism meant to reclaim them - could not.
+         *
+         * Only skip a context that is genuinely already in the removal
+         * state (it is freed on entry, so it must never be touched again).
+         * A flagged-but-un-transitioned stub instead falls through to the
+         * session-less / pending / S1 / age gates below; the purge step
+         * then re-drives mme_ue_enter_ue_context_will_remove() to finish
+         * the removal that its original caller failed to complete.
+         */
         if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
             continue;
         /*

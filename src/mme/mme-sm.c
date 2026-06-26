@@ -1398,6 +1398,9 @@ cleanup:
             ue_remaining = mme_orphan_ue_sweep(true, grace, &ue_purged);
             enb_remaining = mme_orphan_enb_sweep(true, grace, &enb_purged);
 
+            /* Heartbeat for /admin/maintenance/status (visible at any log level). */
+            mme_orphan_sweep_record(ue_purged, ue_remaining);
+
             if (ue_purged || enb_purged)
                 ogs_warn("orphan sweep: purged %d stale UE(s) (%d left), "
                         "%d failed-setup eNB(s) (%d left)",
