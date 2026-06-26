@@ -106,6 +106,23 @@ static int cmp_basename(const void *a, const void *b)
     return strcmp(*(const char * const *)a, *(const char * const *)b);
 }
 
+static bool spool_is_cdr_name(const char *name)
+{
+    size_t nl;
+
+    if (!name) return false;
+    nl = strlen(name);
+    return nl >= 4 && strcmp(name + nl - 4, ".cdr") == 0;
+}
+
+static bool spool_path_ready(const char *path)
+{
+    struct stat st;
+
+    if (!path || !path[0]) return false;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode);
+}
+
 static int pending_queue_build(const char *after_base)
 {
     char **names = NULL;
@@ -192,23 +209,6 @@ static void spool_reset_scan_state(void)
     spool_clear_cached_next();
     g_empty_until = 0;
     pending_queue_free();
-}
-
-static bool spool_is_cdr_name(const char *name)
-{
-    size_t nl;
-
-    if (!name) return false;
-    nl = strlen(name);
-    return nl >= 4 && strcmp(name + nl - 4, ".cdr") == 0;
-}
-
-static bool spool_path_ready(const char *path)
-{
-    struct stat st;
-
-    if (!path || !path[0]) return false;
-    return stat(path, &st) == 0 && S_ISREG(st.st_mode);
 }
 
 static void spool_mark_empty(void)
