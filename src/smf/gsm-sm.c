@@ -2653,22 +2653,46 @@ void smf_gsm_state_wait_pfcp_deletion(ogs_fsm_t *s, smf_event_t *e)
                 }
 
                 if (pfcp_cause != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
-                    /* FIXME: tear down Gy and Gx */
-                    if (!gtp_xact) {
-                        ogs_warn("GTP transaction already removed on "
-                                "PFCP deletion failure");
-                        OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
-                        break;
+                    /*
+                     * The UPF could not delete the PFCP session - most often
+                     * "session context not found", i.e. the UPF had already
+                     * freed (or never had) it. The UPF side is gone either
+                     * way, so the SMF MUST still release its own context.
+                     *
+                     * Previously this path only answered the SGW and then
+                     * broke, leaving the smf_sess allocated forever: the SMF
+                     * session count then drifts permanently above SGW-C/UPF
+                     * (and the orphan sweep cannot reclaim it because
+                     * upf_n4_seid is still set from the earlier establish).
+                     * Answer the SGW when the GTP xact still exists, then free
+                     * the session via SMF_SESS_CLEAR() in session_will_release.
+                     *
+                     * FIXME: Gx/Gy are not gracefully terminated on this error
+                     * path; the local teardown still prevents the leak.
+                     */
+                    ogs_warn("[%s] PFCP deletion cause[%u] not accepted; "
+                            "releasing EPC session to avoid leak",
+                            smf_log_id(smf_ue_find_by_id(sess->smf_ue_id)),
+                            pfcp_cause);
+                    if (gtp_xact) {
+                        gtp_cause = gtp_cause_from_pfcp(
+                                pfcp_cause, gtp_xact->gtp_version);
+                        send_gtp_delete_err_msg(sess, gtp_xact, gtp_cause);
                     }
-                    gtp_cause = gtp_cause_from_pfcp(
-                            pfcp_cause, gtp_xact->gtp_version);
-                    send_gtp_delete_err_msg(sess, gtp_xact, gtp_cause);
+                    OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
                     break;
                 }
                 if (send_ccr_termination_req_gx_gy_s6b(
-                            sess, gtp_xact) == true)
+                            sess, gtp_xact) == true) {
                     OGS_FSM_TRAN(s, smf_gsm_state_wait_epc_auth_release);
-                /* else: free session? */
+                } else {
+                    /*
+                     * No Gy peer: send_ccr_termination_req_gx_gy_s6b() already
+                     * answered the SGW with an error. Free the session now so
+                     * it does not leak (this "else" was unhandled before).
+                     */
+                    OGS_FSM_TRAN(s, smf_gsm_state_session_will_release);
+                }
             } else {
                 int r, trigger;
 

@@ -359,6 +359,15 @@ uint8_t smf_s5c_handle_create_session_request(
     /* Serving Network */
     ogs_nas_to_plmn_id(&sess->serving_plmn_id, req->serving_network.data);
 
+    /*
+     * Serving PLMN is now known: take the per-PLMN session count here (rather
+     * than at session-add, where the PLMN is still 000000) so this inc and the
+     * matching dec in smf_sess_remove() use the same plmnid label. Without this
+     * the fivegs_smffunction_sm_sessionnbr gauge drives negative for the real
+     * PLMN. Idempotent via sess->metrics_session_counted.
+     */
+    smf_metrics_session_active_inc(sess);
+
     /* Select PGW based on UE Location Information */
     smf_sess_select_upf(sess);
 

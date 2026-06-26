@@ -2024,7 +2024,22 @@ smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)
     ogs_list_add(&smf_ue->sess_list, sess);
 
     stats_add_smf_session();
-    smf_metrics_session_active_inc(sess);
+    /*
+     * EPC sessions must also bump the global PFCP-sessions gauge. It is
+     * decremented unconditionally for every session in smf_sess_remove(),
+     * so without this the gauge underflows into negative values once EPC
+     * sessions begin to tear down (5GC bumps it in smf_sess_add_by_psi()).
+     */
+    smf_metrics_inst_global_inc(SMF_METR_GLOB_GAUGE_PFCP_SESSIONS_ACTIVE);
+
+    /*
+     * NOTE: the per-PLMN session gauge (smf_metrics_session_active_inc) is
+     * intentionally NOT bumped here. At session-add the serving PLMN is not
+     * known yet (set later from the CSR serving-network / ULI), so counting
+     * now would increment under plmnid="000000" and later decrement under the
+     * real PLMN, driving the per-PLMN gauge negative. The EPC count is taken
+     * once the serving PLMN is set (s5c-handler / gn-handler).
+     */
 
     return sess;
 }

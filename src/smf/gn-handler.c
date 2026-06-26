@@ -187,6 +187,14 @@ uint8_t smf_gn_handle_create_pdp_context_request(
     /* default: should not happen */
     }
 
+    /*
+     * Serving PLMN is now known from the ULI: take the per-PLMN session count
+     * here (rather than at session-add, where the PLMN is still 000000) so this
+     * inc and the matching dec in smf_sess_remove() use the same plmnid label.
+     * Idempotent via sess->metrics_session_counted.
+     */
+    smf_metrics_session_active_inc(sess);
+
     /* Set MSISDN: */
     /* TS 29.060 sec 7.7.33, TS 29.002 ISDN-AddressString
      * 1 byte offset: Get rid of address and numbering plan indicator  */
