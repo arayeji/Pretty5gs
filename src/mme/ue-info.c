@@ -112,18 +112,6 @@
 size_t mme_dump_ue_info(char *buf, size_t buflen,
         size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
-    /*
-     * Default page_size to the historic 100 when unspecified. The
-     * upper-bound clamp is gone - HTTP grows its own buffer. Pass
-     * page=-1 (SIZE_MAX) to dump everything in one response.
-     */
-    if (page == SIZE_MAX) {
-        page_size = SIZE_MAX;
-        page = 0;
-    } else if (page_size == 0) {
-        page_size = MME_UE_INFO_PAGE_SIZE_DEFAULT;
-    }
-
     return mme_dump_ue_info_paged(buf, buflen, page, page_size, q);
 }
 
@@ -481,14 +469,8 @@ size_t mme_dump_ue_info_paged(char *buf, size_t buflen,
 {
     if (!buf || buflen == 0) return 0;
 
-    const bool no_paging = (page == SIZE_MAX);
-    if (!no_paging) {
-        if (page_size == 0) page_size = MME_UE_INFO_PAGE_SIZE_DEFAULT;
-        /* No upper clamp - HTTP layer grows its buffer to fit. */
-    } else {
-        page_size = SIZE_MAX;
-        page = 0;
-    }
+    const bool no_paging = json_pager_setup(&page, &page_size,
+            MME_UE_INFO_PAGE_SIZE_DEFAULT);
 
     const size_t start_index = json_pager_safe_start_index(no_paging, page, page_size);
 
@@ -507,7 +489,7 @@ size_t mme_dump_ue_info_paged(char *buf, size_t buflen,
         return 0;
     }
 
-    size_t idx = 0, emitted = 0;
+    size_t idx = 0, emitted = 0, total = 0;
     bool has_next = false, oom = false;
 
     mme_context_t *ctxt = mme_self();
@@ -545,15 +527,17 @@ size_t mme_dump_ue_info_paged(char *buf, size_t buflen,
             if (!e || e->enb_id != q->enb_id) continue;
         }
 
+        total++;
+
         int act = json_pager_advance(no_paging, idx, start_index, emitted, page_size, &has_next);
         if (act == 1) { idx++; continue; }
-        if (act == 2) break;
+        if (act == 0) {
+            cJSON *one = ue_to_json(ue);
+            if (!one) { oom = true; break; }
 
-        cJSON *one = ue_to_json(ue);
-        if (!one) { oom = true; break; }
-
-        cJSON_AddItemToArray(items, one);
-        emitted++;
+            cJSON_AddItemToArray(items, one);
+            emitted++;
+        }
         idx++;
     }
 
@@ -561,7 +545,7 @@ size_t mme_dump_ue_info_paged(char *buf, size_t buflen,
 
     /* attach only when array is fully built */
     cJSON_AddItemToObjectCS(root, "items", items);
-    json_pager_add_trailing(root, no_paging, page, page_size, emitted,
+    json_pager_add_trailing(root, no_paging, page, page_size, emitted, total,
                             has_next && !oom, "/ue-info", oom);
 
     return json_pager_finalize(root, buf, buflen);

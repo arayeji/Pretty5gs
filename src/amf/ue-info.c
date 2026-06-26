@@ -600,14 +600,7 @@ size_t amf_dump_ue_info_paged(char *buf, size_t buflen,
 {
     if (!buf || buflen == 0) return 0;
 
-    const bool no_paging = (page == SIZE_MAX);
-    if (!no_paging) {
-        if (page_size == 0) page_size = 100;
-        /* No upper clamp - HTTP layer grows its buffer to fit. */
-    } else {
-        page_size = SIZE_MAX;
-        page = 0;
-    }
+    const bool no_paging = json_pager_setup(&page, &page_size, 100);
 
     const size_t start_index = json_pager_safe_start_index(no_paging, page, page_size);
 
@@ -620,7 +613,7 @@ size_t amf_dump_ue_info_paged(char *buf, size_t buflen,
     if (!items) { cJSON_Delete(root); if (buflen) buf[0] = '\0'; return 0; }
     cJSON_AddItemToObjectCS(root, "items", items);
 
-    size_t idx = 0, emitted = 0;
+    size_t idx = 0, emitted = 0, total = 0;
     bool has_next = false;
     bool oom = false;
 
@@ -655,22 +648,24 @@ size_t amf_dump_ue_info_paged(char *buf, size_t buflen,
             if (!gnb || gnb->gnb_id != q->enb_id) continue;
         }
 
+        total++;
+
         int act = json_pager_advance(no_paging, idx, start_index, emitted, page_size, &has_next);
         if (act == 1) { idx++; continue; }
-        if (act == 2) break;
+        if (act == 0) {
+            cJSON *one = amf_ue_to_json(ue);
+            if (!one) { oom = true; break; }
 
-        cJSON *one = amf_ue_to_json(ue);
-        if (!one) { oom = true; break; }
-
-        cJSON_AddItemToArray(items, one);
-        emitted++;
+            cJSON_AddItemToArray(items, one);
+            emitted++;
+        }
         idx++;
     }
 
     ogs_metrics_dump_unlock();
 
     /* add trailing pager info (json_pager_finalize will free 'root') */
-    json_pager_add_trailing(root, no_paging, page, page_size, emitted,
+    json_pager_add_trailing(root, no_paging, page, page_size, emitted, total,
                             has_next && !oom, "/ue-info", oom);
 
     return json_pager_finalize(root, buf, buflen);

@@ -406,6 +406,8 @@ typedef struct mme_enb_s {
 
     ogs_list_t      enb_ue_list;
 
+    ogs_time_t      context_created;
+
     /*
      * Approximate count of enb_ue's hanging off this eNB, maintained
      * alongside the list itself. The /enb-info JSON dumper now runs
@@ -853,6 +855,8 @@ struct mme_ue_s {
      * candidates first when the mme_ue_pool runs low.
      */
     ogs_time_t      idle_since;
+    /* Wall-clock time at mme_ue_add(); used by orphan sweep grace. */
+    ogs_time_t      context_created;
     ogs_time_t      idle_t3346; /* active T3346 backoff (seconds), 0 if none */
 
 #define HOLDING_S1_CONTEXT(__mME) \

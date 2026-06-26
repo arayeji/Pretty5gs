@@ -44,6 +44,160 @@ void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue)
     ogs_fsm_tran(&mme_ue->sm, &emm_state_ue_context_will_remove, &e);
 }
 
+static ogs_timer_t *t_orphan_sweep = NULL;
+
+static void orphan_sweep_timer_cb(void *data)
+{
+    mme_event_t *e = NULL;
+    int rv;
+
+    (void)data;
+
+    e = mme_event_new(MME_EVENT_ORPHAN_SWEEP);
+    if (!e) {
+        ogs_error("mme_event_new() failed for orphan sweep");
+        return;
+    }
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_queue_push() failed [%d] for orphan sweep", rv);
+        mme_event_free(e);
+    } else {
+        ogs_pollset_notify(ogs_app()->pollset);
+    }
+}
+
+int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
+{
+    mme_ue_t *mme_ue = NULL, *next = NULL;
+    ogs_time_t now = ogs_time_now();
+    int remaining = 0, purged = 0;
+
+    ogs_list_for_each_safe(&mme_self()->mme_ue_list, next, mme_ue) {
+        enb_ue_t *enb_ue = NULL;
+        ogs_time_t anchor;
+
+        if (mme_ue->ue_context_will_remove)
+            continue;
+        if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
+            continue;
+        /*
+         * A live ESM session means this is a real subscriber (ECM-IDLE
+         * or not). Only reclaim contexts with no session at all — that
+         * is what drives ue_count above mme_session / enb_ue.
+         */
+        if (!ogs_list_empty(&mme_ue->sess_list))
+            continue;
+        if (MME_SESSION_RELEASE_PENDING(mme_ue))
+            continue;
+
+        enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+        if (enb_ue &&
+                enb_ue->ue_ctx_rel_action != S1AP_UE_CTX_REL_INVALID_ACTION)
+            continue;
+
+        remaining++;
+
+        if (!do_purge)
+            continue;
+
+        anchor = mme_ue->idle_since ?
+                mme_ue->idle_since : mme_ue->context_created;
+        if (anchor) {
+            if ((now - anchor) < grace)
+                continue;
+        }
+        /* No anchor: legacy leak before context_created was added. */
+
+        ogs_warn("orphan sweep: purge imsi=%s (no session, S1=%s)",
+                mme_ue->imsi_bcd[0] ? mme_ue->imsi_bcd : "-",
+                enb_ue ? "present" : "gone");
+        mme_ue_enter_ue_context_will_remove(mme_ue);
+        purged++;
+    }
+
+    if (out_purged)
+        *out_purged = purged;
+
+    return remaining;
+}
+
+int mme_orphan_enb_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
+{
+    mme_enb_t *enb = NULL, *next = NULL;
+    ogs_time_t now = ogs_time_now();
+    int remaining = 0, purged = 0;
+
+    ogs_list_for_each_safe(&mme_self()->enb_list, next, enb) {
+        if (enb->state.s1_setup_success)
+            continue;
+        if (enb->num_enb_ues > 0)
+            continue;
+
+        remaining++;
+
+        if (!do_purge)
+            continue;
+
+        if (enb->context_created && (now - enb->context_created) < grace)
+            continue;
+
+        ogs_warn("orphan sweep: removing eNB without S1 setup "
+                "(id=0x%x addr=%s age=%llus)",
+                enb->enb_id,
+                enb->sctp.addr ?
+                    ogs_sockaddr_to_string_static(enb->sctp.addr) : "-",
+                enb->context_created ?
+                    (unsigned long long)ogs_time_to_sec(now -
+                        enb->context_created) : 0ULL);
+        mme_enb_remove(enb);
+        purged++;
+    }
+
+    if (out_purged)
+        *out_purged = purged;
+
+    return remaining;
+}
+
+void mme_orphan_timer_start(void)
+{
+    ogs_time_t interval;
+
+    if (t_orphan_sweep)
+        return;
+
+    t_orphan_sweep = ogs_timer_add(
+            ogs_app()->timer_mgr, orphan_sweep_timer_cb, NULL);
+    ogs_assert(t_orphan_sweep);
+
+    interval = mme_timer_cfg(MME_TIMER_S1_HOLDING)->duration;
+    ogs_timer_start(t_orphan_sweep, interval);
+
+    ogs_info("MME orphan UE sweep started: interval=%llus grace=%llus",
+            (unsigned long long)ogs_time_to_sec(interval),
+            (unsigned long long)ogs_time_to_sec(interval));
+}
+
+void mme_orphan_timer_stop(void)
+{
+    if (!t_orphan_sweep)
+        return;
+
+    ogs_timer_delete(t_orphan_sweep);
+    t_orphan_sweep = NULL;
+}
+
+void mme_orphan_timer_rearm(void)
+{
+    if (!t_orphan_sweep)
+        return;
+
+    ogs_timer_start(t_orphan_sweep,
+            mme_timer_cfg(MME_TIMER_S1_HOLDING)->duration);
+}
+
 void mme_admin_detach_ue(mme_ue_t *mme_ue, bool force)
 {
     enb_ue_t *enb_ue = NULL;

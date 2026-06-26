@@ -1589,8 +1589,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
 
     case SMF_EVT_ADMIN_MAINTENANCE_ENABLE:
         smf_self()->maintenance_mode = true;
-        ogs_info("admin maintenance: enabled (force drain all sessions)");
-        smf_admin_drain_sessions(1);
+        ogs_info("admin maintenance: enabled");
         break;
 
     case SMF_EVT_ADMIN_MAINTENANCE_DISABLE:

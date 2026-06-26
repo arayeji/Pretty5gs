@@ -27,6 +27,19 @@ extern "C" {
 #endif
 
 void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue);
+
+/*
+ * Reclaim MME-UE contexts with no ESM session (regardless of EMM state).
+ * Registered ECM-IDLE subscribers always retain at least one session until
+ * detach; empty sess_list means the context is stale.
+ * Returns the number of orphan candidates still on mme_ue_list after the
+ * sweep; writes the number actually purged to out_purged when non-NULL.
+ */
+int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
+int mme_orphan_enb_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
+void mme_orphan_timer_start(void);
+void mme_orphan_timer_stop(void);
+void mme_orphan_timer_rearm(void);
 void mme_admin_detach_ue(mme_ue_t *mme_ue, bool force);
 
 void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue);

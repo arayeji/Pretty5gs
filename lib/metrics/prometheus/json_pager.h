@@ -30,18 +30,45 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+#include "ogs-core.h"
+
 /* Forward-declare so callers don't need to include cJSON.h here */
 typedef struct cJSON cJSON;
 
 /* Safe start_index = page * page_size with overflow guard. */
 size_t json_pager_safe_start_index(bool no_paging, size_t page, size_t page_size);
 
-/* Append trailing { "pager": { page, page_size, count, [truncated], prev?, next? } }.  */
+/*
+ * Normalise page / page_size after HTTP query parsing.
+ * page == SIZE_MAX (from ?page=-1) selects no-paging mode.
+ * Returns true when the caller should emit every filtered item.
+ */
+static inline bool json_pager_setup(size_t *page, size_t *page_size,
+        size_t default_page_size)
+{
+    ogs_assert(page);
+    ogs_assert(page_size);
+
+    if (*page == SIZE_MAX) {
+        *page = 0;
+        *page_size = SIZE_MAX;
+        return true;
+    }
+
+    if (*page_size == 0)
+        *page_size = default_page_size;
+
+    return false;
+}
+
+/* Append trailing { "pager": { page, page_size, count, total, ... } }.
+ * count = items on this page; total = filtered items across all pages. */
 void json_pager_add_trailing(cJSON *root,
                              bool no_paging,
                              size_t page,
                              size_t page_size,
                              size_t count,
+                             size_t total,
                              bool has_next,
                              const char *base_path,
                              bool truncated);

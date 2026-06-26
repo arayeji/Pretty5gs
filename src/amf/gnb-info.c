@@ -150,14 +150,8 @@ size_t amf_dump_gnb_info_paged(char *buf, size_t buflen,
 {
     if (!buf || buflen == 0) return 0;
 
-    const bool no_paging = (page == SIZE_MAX);
-    if (!no_paging) {
-        if (page_size == 0) page_size = GNB_INFO_PAGE_SIZE_DEFAULT;
-        /* No upper clamp - HTTP layer grows its buffer to fit. */
-    } else {
-        page_size = SIZE_MAX;
-        page = 0;
-    }
+    const bool no_paging = json_pager_setup(&page, &page_size,
+            GNB_INFO_PAGE_SIZE_DEFAULT);
 
     amf_context_t *ctxt = amf_self();
 
@@ -167,7 +161,7 @@ size_t amf_dump_gnb_info_paged(char *buf, size_t buflen,
     cJSON *items = cJSON_AddArrayToObject(root, "items");
     if (!items) { cJSON_Delete(root); if (buflen >= 3) { memcpy(buf, "{}", 3); return 2; } buf[0] = '\0'; return 0; }
 
-    size_t idx = 0, emitted = 0;
+    size_t idx = 0, emitted = 0, total = 0;
     bool has_next = false, oom = false;
 
     const size_t start_index = json_pager_safe_start_index(no_paging, page, page_size);
@@ -188,10 +182,11 @@ size_t amf_dump_gnb_info_paged(char *buf, size_t buflen,
         if (q && q->ip && *q->ip && !sa_matches_ip(gnb->sctp.addr, q->ip))
             continue;
 
+        total++;
+
         int act = json_pager_advance(no_paging, idx, start_index, emitted, page_size, &has_next);
         if (act == 1) { idx++; continue; }
-        if (act == 2) break;
-
+        if (act == 0) {
         /* Build the item completely before attaching to items[] */
         cJSON *g = cJSON_CreateObject();
         if (!g) { oom = true; break; }
@@ -308,12 +303,14 @@ size_t amf_dump_gnb_info_paged(char *buf, size_t buflen,
         /* attach completed item */
         cJSON_AddItemToArray(items, g);
         emitted++;
+        }
         idx++;
     }
 
     ogs_metrics_dump_unlock();
 
-    json_pager_add_trailing(root, no_paging, page, page_size, emitted, has_next && !oom,"/gnb-info", oom);
+    json_pager_add_trailing(root, no_paging, page, page_size, emitted, total,
+            has_next && !oom,"/gnb-info", oom);
 
     return json_pager_finalize(root, buf, buflen);
 }

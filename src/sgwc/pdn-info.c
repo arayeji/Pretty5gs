@@ -519,25 +519,18 @@ static cJSON *build_ue_object(const sgwc_ue_t *ue)
 size_t sgwc_dump_pdn_info(char *buf, size_t buflen,
         size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
-    const bool no_paging = (page == SIZE_MAX);
+    if (!buf || buflen == 0)
+        return 0;
+
+    const bool no_paging = json_pager_setup(&page, &page_size,
+            PDN_INFO_PAGE_SIZE_DEFAULT);
     const size_t start_index = json_pager_safe_start_index(no_paging, page, page_size);
     cJSON *root = NULL;
     cJSON *items = NULL;
     sgwc_context_t *ctx = sgwc_self();
     sgwc_ue_t *ue = NULL;
-    size_t idx = 0, emitted = 0;
+    size_t idx = 0, emitted = 0, total = 0;
     bool has_next = false, oom = false;
-
-    if (!buf || buflen == 0)
-        return 0;
-
-    if (!no_paging) {
-        if (page_size == 0)
-            page_size = PDN_INFO_PAGE_SIZE_DEFAULT;
-    } else {
-        page_size = SIZE_MAX;
-        page = 0;
-    }
 
     root = cJSON_CreateObject();
     if (!root) {
@@ -593,6 +586,8 @@ size_t sgwc_dump_pdn_info(char *buf, size_t buflen,
                 continue;
         }
 
+        total++;
+
         {
             int act = json_pager_advance(no_paging, idx, start_index,
                     emitted, page_size, &has_next);
@@ -600,11 +595,7 @@ size_t sgwc_dump_pdn_info(char *buf, size_t buflen,
                 idx++;
                 continue;
             }
-            if (act == 2)
-                break;
-        }
-
-        {
+            if (act == 0) {
             cJSON *ueo = build_ue_object(ue);
             if (!ueo) {
                 oom = true;
@@ -612,14 +603,15 @@ size_t sgwc_dump_pdn_info(char *buf, size_t buflen,
             }
             cJSON_AddItemToArray(items, ueo);
             emitted++;
-            idx++;
+            }
         }
+        idx++;
     }
 
     ogs_metrics_dump_unlock();
 
     cJSON_AddItemToObjectCS(root, "items", items);
-    json_pager_add_trailing(root, no_paging, page, page_size, emitted,
+    json_pager_add_trailing(root, no_paging, page, page_size, emitted, total,
             has_next && !oom, "/pdn-info", oom);
 
     return json_pager_finalize(root, buf, buflen);

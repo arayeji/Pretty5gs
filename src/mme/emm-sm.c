@@ -2314,6 +2314,10 @@ void emm_state_exception(ogs_fsm_t *s, mme_event_t *e)
             ogs_warn("[%s] EMM exception: releasing S1/UE context "
                     "(no eNB-initiated release)", mme_ue->imsi_bcd);
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+        } else if (!enb_ue && !MME_SESSION_RELEASE_PENDING(mme_ue)) {
+            ogs_warn("[%s] EMM exception: no S1 context, removing UE",
+                    mme_ue->imsi_bcd);
+            mme_ue_enter_ue_context_will_remove(mme_ue);
         }
         break;
     case OGS_FSM_EXIT_SIG:

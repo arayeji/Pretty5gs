@@ -5154,6 +5154,7 @@ mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
     enb->ostream_id = 0;
 
     ogs_list_init(&enb->enb_ue_list);
+    enb->context_created = ogs_time_now();
     enb->enb_ue_hash = ogs_hash_make();
     ogs_assert(enb->enb_ue_hash);
 
@@ -6174,6 +6175,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
 
     /* Initialization */
     mme_ue->nas_eps.mme.ksi = OGS_NAS_KSI_NO_KEY_IS_AVAILABLE;
+    mme_ue->context_created = ogs_time_now();
 
     mme_ue_fsm_init(mme_ue);
 
