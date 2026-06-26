@@ -25,6 +25,7 @@
 #include "mme-fd-path.h"
 #include "mme-sm.h"
 #include "mme-trace.h"
+#include "mme-timer.h"
 
 void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue)
 {
@@ -41,6 +42,108 @@ void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue)
     e.id = OGS_FSM_USER_SIG;
     e.mme_ue_id = mme_ue->id;
     ogs_fsm_tran(&mme_ue->sm, &emm_state_ue_context_will_remove, &e);
+}
+
+void mme_admin_detach_ue(mme_ue_t *mme_ue, bool force)
+{
+    enb_ue_t *enb_ue = NULL;
+    int r;
+
+    ogs_assert(mme_ue);
+
+    if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
+        return;
+
+    if (force) {
+        ogs_info("admin detach ue (force/implicit): imsi=%s",
+                mme_ue->imsi_bcd);
+
+        mme_ue->ue_context_will_remove = false;
+        mme_ue->detach_type = MME_DETACH_TYPE_MME_IMPLICIT;
+
+        if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
+            if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
+                ogs_error("sgsap_send_detach_indication() failed");
+            /*
+             * CS/PS combined UEs still in registered state use the
+             * normal async implicit-detach timer path.
+             */
+            if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_registered)) {
+                mme_timer_implicit_detach_expire(
+                        OGS_UINT_TO_POINTER(mme_ue->id));
+                return;
+            }
+        }
+
+        enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+        mme_send_delete_session_or_detach(enb_ue, mme_ue);
+
+        if (mme_ue->ue_context_will_remove) {
+            mme_ue_enter_ue_context_will_remove(mme_ue);
+            return;
+        }
+
+        if (MME_SESSION_RELEASE_PENDING(mme_ue))
+            return;
+
+        /*
+         * Failed-attach stubs and other non-registered EMM states never
+         * handled the queued implicit-detach timer event, so admin drain
+         * left them behind. With no GTP work pending, remove locally.
+         */
+        if (!OGS_FSM_CHECK(&mme_ue->sm, emm_state_registered)) {
+            mme_ue_enter_ue_context_will_remove(mme_ue);
+            return;
+        }
+
+        if (!enb_ue)
+            mme_ue_enter_ue_context_will_remove(mme_ue);
+
+        return;
+    }
+
+    ogs_info("admin detach ue (graceful): imsi=%s state=%s",
+            mme_ue->imsi_bcd,
+            ECM_CONNECTED(mme_ue) ? "ECM-CONNECTED" : "ECM-IDLE");
+
+    mme_ue->detach_type = MME_DETACH_TYPE_MME_EXPLICIT;
+
+    if (ECM_IDLE(mme_ue)) {
+        enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+        if (!enb_ue) {
+            ogs_warn("admin detach ue: no S1 context for imsi=%s",
+                    mme_ue->imsi_bcd);
+            if (!MME_SESSION_RELEASE_PENDING(mme_ue))
+                mme_ue_enter_ue_context_will_remove(mme_ue);
+            return;
+        }
+
+        MME_STORE_PAGING_INFO(mme_ue,
+                MME_PAGING_TYPE_DETACH_TO_UE, NULL);
+        r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return;
+    }
+
+    MME_CLEAR_PAGING_INFO(mme_ue);
+    r = nas_eps_send_detach_request(mme_ue);
+    ogs_expect(r == OGS_OK);
+    ogs_assert(r != OGS_ERROR);
+
+    if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
+        ogs_assert(OGS_OK == sgsap_send_detach_indication(mme_ue));
+    } else {
+        enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+        if (enb_ue) {
+            mme_send_delete_session_or_detach(enb_ue, mme_ue);
+        } else {
+            ogs_warn("admin detach ue: no S1 context for imsi=%s",
+                    mme_ue->imsi_bcd);
+            if (!MME_SESSION_RELEASE_PENDING(mme_ue))
+                mme_ue_enter_ue_context_will_remove(mme_ue);
+        }
+    }
 }
 
 void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
