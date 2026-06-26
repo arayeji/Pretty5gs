@@ -75,8 +75,8 @@ cgf:
     # file (~64 KiB on disk) in one or two datagrams on a LAN path.
     max_records_per_packet: 255
     max_bytes_per_packet: 32000
-    # Pipelined in-flight DTRRs per peer (stop-and-wait was ~1 batch/RTT).
-    max_inflight: 8
+    # Reserved; only one in-flight DTRR per spool file is allowed today.
+    max_inflight: 1
 
   # Data Record Packet IE sub-header. Four octets sitting between the
   # `fc <len>` TLIV header and the list of length-prefixed BER records:

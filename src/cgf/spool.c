@@ -449,19 +449,18 @@ static size_t offset_after_records(
     uint32_t i;
 
     for (i = 0; i < records; i++) {
-        const uint8_t *h = file->data + off;
-        uint16_t rl = (uint16_t)((h[6] << 8) | h[7]);
+        const uint8_t *h;
+        uint16_t rl;
+
+        if (off + CDR_RECORD_HDR_LEN > file->data_len)
+            return file->data_len;
+        h = file->data + off;
+        rl = (uint16_t)((h[6] << 8) | h[7]);
+        if (off + CDR_RECORD_HDR_LEN + rl > file->data_len)
+            return file->data_len;
         off += CDR_RECORD_HDR_LEN + rl;
     }
     return off;
-}
-
-void cgf_spool_commit_send(cgf_spool_file_t *file,
-        size_t batch_start, uint32_t records)
-{
-    ogs_assert(file);
-    file->send_offset = offset_after_records(file, batch_start, records);
-    file->pending_batch_records = 0;
 }
 
 static void move_to(cgf_spool_file_t *file, const char *dstdir)
@@ -481,27 +480,27 @@ static void move_to(cgf_spool_file_t *file, const char *dstdir)
     }
 }
 
-void cgf_spool_ack_batch(cgf_spool_file_t *file,
+void cgf_spool_commit_send(cgf_spool_file_t *file,
         size_t batch_start, uint32_t records)
 {
     ogs_assert(file);
-    file->next_record_offset = offset_after_records(
-            file, batch_start, records);
+    file->send_offset = offset_after_records(file, batch_start, records);
     file->pending_batch_records = 0;
+    file->inflight_batches++;
+}
 
-    if (file->next_record_offset >= file->data_len &&
-            file->send_offset >= file->data_len) {
-        /*
-         * Retention policy for fully-acked files:
-         *   cgf.purge_on_success=true  -> unlink (keeps disk bounded)
-         *   cgf.purge_on_success=false -> move to done/ (default, legacy)
-         *
-         * We still free the in-memory cgf_spool_file_t in both paths.
-         * unlink() is best-effort: a failure (EACCES, etc.) logs a
-         * warning but is not fatal; the next sweep will NOT re-pick the
-         * file because the spool poller only scans ready/.
-         */
-        if (cgf_self()->purge_on_success) {
+static void maybe_finish_file(cgf_spool_file_t *file)
+{
+    if (!file) return;
+    if (file->next_record_offset < file->data_len) return;
+    if (file->inflight_batches > 0) return;
+
+    /*
+     * Retention policy for fully-acked files:
+     *   cgf.purge_on_success=true  -> unlink (keeps disk bounded)
+     *   cgf.purge_on_success=false -> move to done/ (default, legacy)
+     */
+    if (cgf_self()->purge_on_success) {
             if (unlink(file->path) != 0) {
                 ogs_warn("cgf: fully delivered '%s' but unlink failed: %s "
                         "(file kept in ready/; will be re-sent on next "
@@ -510,16 +509,36 @@ void cgf_spool_ack_batch(cgf_spool_file_t *file,
             } else {
                 ogs_info("cgf: fully delivered '%s' (purged)", file->path);
             }
-        } else {
-            ogs_info("cgf: fully delivered '%s', moving to done/",
-                    file->path);
-            move_to(file, cgf_self()->done_dir);
-        }
-        if (file == g_active) g_active = NULL;
-        spool_remember_handled(file->path);
-        spool_clear_empty_backoff();
-        free_file(file);
+    } else {
+        ogs_info("cgf: fully delivered '%s', moving to done/",
+                file->path);
+        move_to(file, cgf_self()->done_dir);
     }
+    if (file == g_active) g_active = NULL;
+    spool_remember_handled(file->path);
+    spool_clear_empty_backoff();
+    free_file(file);
+}
+
+void cgf_spool_ack_batch(cgf_spool_file_t *file,
+        size_t batch_start, uint32_t records)
+{
+    ogs_assert(file);
+
+    if (batch_start != file->next_record_offset) {
+        ogs_warn("cgf: out-of-order DTRR ack for '%s' "
+                "(got offset %zu, expected %zu)",
+                file->path, batch_start, file->next_record_offset);
+        return;
+    }
+
+    file->next_record_offset = offset_after_records(
+            file, batch_start, records);
+    file->pending_batch_records = 0;
+    if (file->inflight_batches > 0)
+        file->inflight_batches--;
+
+    maybe_finish_file(file);
 }
 
 void cgf_spool_nack_batch(cgf_spool_file_t *file)
@@ -527,6 +546,7 @@ void cgf_spool_nack_batch(cgf_spool_file_t *file)
     ogs_assert(file);
     file->send_offset = file->next_record_offset;
     file->pending_batch_records = 0;
+    file->inflight_batches = 0;
 }
 
 void cgf_spool_quarantine(cgf_spool_file_t *file)

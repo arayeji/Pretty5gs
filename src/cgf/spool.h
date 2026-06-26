@@ -41,6 +41,7 @@ typedef struct cgf_spool_file_s {
 
     size_t pending_batch_start;
     uint32_t pending_batch_records;
+    uint32_t inflight_batches;  /* DTRRs sent, not yet ACKed/NAKed */
 } cgf_spool_file_t;
 
 cgf_spool_file_t *cgf_spool_get_active(void);
