@@ -230,6 +230,22 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             enb = NULL;
         }
 
+        /*
+         * The exact-addr replace above only catches reconnects that
+         * reuse the same SCTP source port. eNBs that reconnect from a
+         * new ephemeral port leave their previous (often
+         * setup_success) context behind when the old association's
+         * SHUTDOWN/COMM_LOST is never delivered; the orphan sweep
+         * skips setup_success eNBs, so they accumulate. Drop any such
+         * stale context(s) from the same IP now.
+         */
+        {
+            int stale = mme_enb_remove_stale_by_ip(addr, NULL);
+            if (stale)
+                ogs_warn("eNB-S1[%s] reconnected; dropped %d stale "
+                        "context(s) from same IP", OGS_ADDR(addr, buf), stale);
+        }
+
         enb = mme_enb_add(sock, addr);
         if (!enb) {
             ogs_error("mme_enb_add() failed");
@@ -271,6 +287,20 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
         ogs_info("eNB-S1[%s] max_num_of_ostreams : %d",
             OGS_ADDR(enb->sctp.addr, buf), enb->max_num_of_ostreams);
+
+        /*
+         * Drop any stale context(s) from the same eNB IP that used a
+         * different SCTP source port (reconnect storms) and whose
+         * SHUTDOWN/COMM_LOST never arrived. Keep the current one.
+         */
+        {
+            int stale = mme_enb_remove_stale_by_ip(
+                    enb->sctp.addr, enb->sctp.addr);
+            if (stale)
+                ogs_warn("eNB-S1[%s] COMM_UP; dropped %d stale context(s) "
+                        "from same IP",
+                        OGS_ADDR(enb->sctp.addr, buf), stale);
+        }
 
         break;
 
