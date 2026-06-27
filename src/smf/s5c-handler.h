@@ -30,6 +30,8 @@ void smf_s5c_handle_echo_request(
         ogs_gtp_xact_t *xact, ogs_gtp2_echo_request_t *req);
 void smf_s5c_handle_echo_response(
         ogs_gtp_xact_t *xact, ogs_gtp2_echo_response_t *req);
+void smf_s5_check_peer_recovery(
+        smf_gtp_node_t *smf_gnode, ogs_gtp2_message_t *message);
 
 uint8_t smf_s5c_handle_create_session_request(
         smf_sess_t *sess, ogs_gtp_xact_t *xact,
