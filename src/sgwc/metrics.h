@@ -12,6 +12,7 @@ typedef struct sgwc_sess_s sgwc_sess_t;
 
 typedef enum sgwc_metric_type_global_s {
     SGWC_METR_GLOB_GAUGE_SESSIONS_ORPHAN = 0,
+    SGWC_METR_GLOB_GAUGE_UE_ORPHAN,
     _SGWC_METR_GLOB_MAX,
 } sgwc_metric_type_global_t;
 

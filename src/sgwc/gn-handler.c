@@ -689,6 +689,7 @@ void sgwc_gn_csr_replace_continue(
     sgwc_ue->csr_replace_s11_xact_id = OGS_INVALID_POOL_ID;
     sgwc_ue->csr_replace_gtpbuf = NULL;
     sgwc_ue->csr_replace_sess_id = OGS_INVALID_POOL_ID;
+    sgwc_ue->csr_replace_t0 = 0;
 
     old_sess->sgwu_sxa_seid = 0;
     sgwc_sess_remove(old_sess);

@@ -217,6 +217,12 @@ typedef struct sgwc_ue_s {
     ogs_pool_id_t   csr_replace_s11_xact_id;
     ogs_pkbuf_t     *csr_replace_gtpbuf;
     ogs_pool_id_t   csr_replace_sess_id;
+    /*
+     * Monotonic time the CSR-replace pin was armed. Used by the orphan sweep
+     * to detect a pin that never cleared (deferred Create Session lost) so an
+     * otherwise-empty UE is not leaked forever in sgwc_ue_remove_if_empty().
+     */
+    ogs_time_t      csr_replace_t0;
 
     unsigned        metrics_ue_counted : 1;
     unsigned        gn : 1;         /* UE reached via GTPv1 Gn */
