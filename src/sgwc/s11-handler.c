@@ -564,8 +564,11 @@ bool sgwc_csr_replace_start(
         sgwc_ue->csr_replace_gtpbuf = NULL;
         sgwc_ue->csr_replace_s11_xact_id = OGS_INVALID_POOL_ID;
         sgwc_ue->csr_replace_sess_id = OGS_INVALID_POOL_ID;
+        sgwc_ue->csr_replace_t0 = 0;
         return false;
     }
+
+    sgwc_ue->csr_replace_t0 = ogs_time_now();
 
     ogs_info("[%s] CSR replace: waiting for PFCP Session Deletion "
             "(EBI collision, SGWU-SEID=0x%llx)",
@@ -591,6 +594,7 @@ void sgwc_csr_replace_continue(
     sgwc_ue->csr_replace_s11_xact_id = OGS_INVALID_POOL_ID;
     sgwc_ue->csr_replace_gtpbuf = NULL;
     sgwc_ue->csr_replace_sess_id = OGS_INVALID_POOL_ID;
+    sgwc_ue->csr_replace_t0 = 0;
 
     /*
      * Tear down the OLD PGW-C/SMF session on S5/S8 before dropping it.

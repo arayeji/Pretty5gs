@@ -1334,6 +1334,7 @@ sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len)
     sgwc_ue->csr_replace_s11_xact_id = OGS_INVALID_POOL_ID;
     sgwc_ue->csr_replace_gtpbuf = NULL;
     sgwc_ue->csr_replace_sess_id = OGS_INVALID_POOL_ID;
+    sgwc_ue->csr_replace_t0 = 0;
 
     ogs_hash_set(self.imsi_ue_hash, sgwc_ue->imsi, sgwc_ue->imsi_len, sgwc_ue);
 
@@ -1375,6 +1376,7 @@ int sgwc_ue_remove(sgwc_ue_t *sgwc_ue)
     }
     sgwc_ue->csr_replace_s11_xact_id = OGS_INVALID_POOL_ID;
     sgwc_ue->csr_replace_sess_id = OGS_INVALID_POOL_ID;
+    sgwc_ue->csr_replace_t0 = 0;
 
     sgwc_sess_remove_all(sgwc_ue);
 
@@ -1774,7 +1776,7 @@ int sgwc_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
     sgwc_ue_t *ue = NULL, *next_ue = NULL;
     sgwc_sess_t *sess = NULL, *next_sess = NULL;
     ogs_time_t now = ogs_time_now();
-    int remaining = 0, purged = 0;
+    int remaining = 0, purged = 0, empty_ue_lingering = 0;
 
     /*
      * Main-thread only: this walks and mutates sgw_ue_list / sess_list and may
@@ -1811,8 +1813,47 @@ int sgwc_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
             /* Orphan that survives this sweep (in grace, or purge disabled). */
             remaining++;
         }
+
+        /*
+         * Reclaim empty UE contexts. sgwc_ue_remove_if_empty() refuses to free
+         * a UE while a CSR-replace is still pinned. A pin that never cleared
+         * (the deferred Create Session was lost, e.g. the PFCP Session Deletion
+         * response from SGW-U never arrived) would otherwise keep an empty UE
+         * alive forever -- the root cause of sgwc_ue_active drifting far above
+         * the active session count. Once the pin ages past the grace window,
+         * drop it so the empty UE is released on this pass.
+         */
+        if (ogs_list_empty(&ue->sess_list) &&
+                (ue->csr_replace_s11_xact_id != OGS_INVALID_POOL_ID ||
+                 ue->csr_replace_sess_id != OGS_INVALID_POOL_ID)) {
+            bool pin_stale = (ue->csr_replace_t0 == 0) ||
+                    ((now - ue->csr_replace_t0) > grace);
+
+            if (pin_stale) {
+                ogs_warn("orphan sweep: clearing stale CSR-replace pin on "
+                         "empty UE imsi=%s (age=%lldms)",
+                         ue->imsi_bcd,
+                         ue->csr_replace_t0 ?
+                            (long long)ogs_time_to_msec(now - ue->csr_replace_t0)
+                            : -1);
+                if (ue->csr_replace_gtpbuf) {
+                    ogs_pkbuf_free(ue->csr_replace_gtpbuf);
+                    ue->csr_replace_gtpbuf = NULL;
+                }
+                ue->csr_replace_s11_xact_id = OGS_INVALID_POOL_ID;
+                ue->csr_replace_sess_id = OGS_INVALID_POOL_ID;
+                ue->csr_replace_t0 = 0;
+            } else {
+                /* Pin still within grace; a real CSR-replace may complete. */
+                empty_ue_lingering++;
+            }
+        }
+
         sgwc_ue_remove_if_empty(ue);
     }
+
+    sgwc_metrics_global_set(
+            SGWC_METR_GLOB_GAUGE_UE_ORPHAN, empty_ue_lingering);
 
     if (out_purged)
         *out_purged = purged;

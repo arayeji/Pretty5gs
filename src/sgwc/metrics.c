@@ -72,6 +72,12 @@ sgwc_metrics_spec_def_t sgwc_metrics_spec_def_global[_SGWC_METR_GLOB_MAX] = {
     .description = "SGWC sessions detected as orphan/stuck "
         "(no SGW-U PFCP session or never fully established)",
 },
+[SGWC_METR_GLOB_GAUGE_UE_ORPHAN] = {
+    .type = OGS_METRICS_METRIC_TYPE_GAUGE,
+    .name = "sgwc_ue_orphan",
+    .description = "SGWC UE contexts with no active session lingering "
+        "(empty UE pinned by an unfinished CSR-replace, awaiting reclamation)",
+},
 };
 
 void sgwc_metrics_global_set(sgwc_metric_type_global_t t, int val)
