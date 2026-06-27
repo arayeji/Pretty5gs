@@ -666,7 +666,18 @@ static void sgwc_pgw_purge_sessions(ogs_gtp_node_t *gnode)
 
             ogs_warn("[%s] PGW recovery restart: delete session",
                     sgwc_ue->imsi_bcd);
-            sgwc_gtp_send_network_delete_session(sgwc_ue, sess);
+            /*
+             * Notify the MME so it releases the UE/bearer contexts. This MUST
+             * be a Delete Bearer Request (network-initiated, carrying the
+             * default-bearer EBI): the MME has no handler for a received Delete
+             * Session Request and silently drops it ("Not implemented"), which
+             * left stale UE contexts on the MME after a PGW/SMF restart.
+             * Fire-and-forget with the same per-bearer timeout fallback used by
+             * the admin detach path; sgwc_sess_remove() below frees the local
+             * context (and the SGW-U PFCP session) immediately afterward.
+             */
+            sgwc_gtp_send_delete_bearer_request_to_mme(
+                    sgwc_ue, sess, OGS_INVALID_POOL_ID);
             sgwc_sess_remove(sess);
         }
 

@@ -933,7 +933,16 @@ cleanup:
             break;
         }
 
-        mme_s11_check_peer_recovery(gnode, &gtp_message);
+        /*
+         * NOTE: SGW (peer) restart detection via the Recovery IE is
+         * intentionally DEFERRED to the end of this case, after the message
+         * below has been fully handled. mme_sgw_purge_sessions() calls
+         * ogs_gtp_xact_delete_all() on this gnode and frees every mme_ue/sgw_ue
+         * for the SGW -- doing that here would free the `xact` we just received
+         * (and the `mme_ue` the switch handler dereferences), a use-after-free
+         * that crashed the MME on every SGW-C restart. See the deferred
+         * mme_s11_check_peer_recovery() call just before ogs_pkbuf_free().
+         */
 
         /*
          * 5.5.2 in spec 29.274
@@ -1052,6 +1061,14 @@ cleanup:
          */
         if (mme_ue && mme_ue->ue_context_will_remove)
             mme_ue_enter_ue_context_will_remove(mme_ue);
+
+        /*
+         * Deferred SGW restart detection (see the note after
+         * ogs_gtp_xact_receive above). Safe to run only here: the message has
+         * been fully handled, and nothing below dereferences `xact` or
+         * `mme_ue`, both of which mme_sgw_purge_sessions() may free.
+         */
+        mme_s11_check_peer_recovery(gnode, &gtp_message);
 
         ogs_pkbuf_free(pkbuf);
         break;
