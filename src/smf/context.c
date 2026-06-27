@@ -18,6 +18,16 @@
  */
 
 #include <inttypes.h>
+#include <errno.h>
+#include <string.h>
+#ifdef _WIN32
+#include <direct.h>
+#define smf_recovery_mkdir(p) _mkdir(p)
+#else
+#include <sys/stat.h>
+#include <sys/types.h>
+#define smf_recovery_mkdir(p) mkdir((p), 0755)
+#endif
 
 #include "context.h"
 #include "event.h"
@@ -32,27 +42,90 @@
 
 #define SMF_RECOVERY_COUNTER_FILE "/var/lib/open5gs/smf_recovery_counter"
 
-static uint8_t
+/* Returns the persisted counter (0..255), or -1 if the file is missing
+ * or unreadable so the caller can fall back to a time-based seed. */
+static int
 smf_load_recovery_counter(const char *path)
 {
-    FILE *f = fopen(path, "rb");
-    if (!f) return 0;
+    FILE *f = NULL;
     uint8_t val = 0;
-    (void)fread(&val, 1, 1, f);
+    size_t n;
+
+    if (!path)
+        return -1;
+
+    f = fopen(path, "rb");
+    if (!f)
+        return -1;
+    n = fread(&val, 1, 1, f);
     fclose(f);
-    return val;
+    if (n != 1)
+        return -1;
+    return (int)val;
 }
 
+/* Best-effort recursive directory creation (e.g. /var/lib/open5gs). */
 static void
+smf_recovery_mkdir_p(const char *dir)
+{
+    char tmp[512];
+    char *p = NULL;
+    size_t len;
+
+    if (!dir || !dir[0])
+        return;
+
+    ogs_cpystrn(tmp, dir, sizeof(tmp));
+    len = strlen(tmp);
+    if (len && tmp[len - 1] == '/')
+        tmp[len - 1] = '\0';
+
+    for (p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            if (smf_recovery_mkdir(tmp) != 0 && errno != EEXIST)
+                ogs_warn("mkdir(%s) failed: %s", tmp, strerror(errno));
+            *p = '/';
+        }
+    }
+    if (smf_recovery_mkdir(tmp) != 0 && errno != EEXIST)
+        ogs_warn("mkdir(%s) failed: %s", tmp, strerror(errno));
+}
+
+/* Returns true if the counter was persisted to disk. */
+static bool
 smf_save_recovery_counter(const char *path, uint8_t val)
 {
-    FILE *f = fopen(path, "wb");
-    if (!f) {
-        ogs_warn("failed to persist GTP-C recovery counter to %s", path);
-        return;
+    FILE *f = NULL;
+    char dir[512];
+    char *slash = NULL;
+    size_t n;
+
+    if (!path)
+        return false;
+
+    /* Make sure the parent directory exists before writing. */
+    ogs_cpystrn(dir, path, sizeof(dir));
+    slash = strrchr(dir, '/');
+    if (slash && slash != dir) {
+        *slash = '\0';
+        smf_recovery_mkdir_p(dir);
     }
-    (void)fwrite(&val, 1, 1, f);
+
+    f = fopen(path, "wb");
+    if (!f) {
+        ogs_error("failed to persist GTP-C recovery counter to %s: %s -- "
+                "SMF restart detection by peers will be degraded; "
+                "fix directory ownership/permissions", path, strerror(errno));
+        return false;
+    }
+    n = fwrite(&val, 1, 1, f);
     fclose(f);
+    if (n != 1) {
+        ogs_error("failed to write GTP-C recovery counter to %s", path);
+        return false;
+    }
+    return true;
 }
 
 static smf_context_t self;
@@ -1445,13 +1518,33 @@ int smf_context_parse_config(void)
     rv = smf_context_validation();
     if (rv != OGS_OK) return rv;
 
-    self.gtpc_recovery = smf_load_recovery_counter(self.recovery_counter_file);
-    self.gtpc_recovery++;
-    if (self.gtpc_recovery == 0)
-        self.gtpc_recovery = 1;
-    smf_save_recovery_counter(self.recovery_counter_file, self.gtpc_recovery);
-    ogs_info("SMF GTP-C recovery counter: %u (file: %s)",
-             self.gtpc_recovery, self.recovery_counter_file);
+    {
+        int loaded = smf_load_recovery_counter(self.recovery_counter_file);
+        bool persisted;
+
+        if (loaded < 0) {
+            /*
+             * No persisted counter (file missing or unreadable). Seed from the
+             * wall clock so the advertised Recovery value still differs across
+             * restarts; otherwise peers could never detect an SMF restart.
+             */
+            self.gtpc_recovery =
+                (uint8_t)ogs_time_to_sec(ogs_time_now());
+        } else {
+            self.gtpc_recovery = (uint8_t)loaded;
+        }
+        self.gtpc_recovery++;
+        if (self.gtpc_recovery == 0)
+            self.gtpc_recovery = 1;
+
+        persisted = smf_save_recovery_counter(
+                self.recovery_counter_file, self.gtpc_recovery);
+        ogs_info("SMF GTP-C recovery counter: %u (file: %s, %s)",
+                 self.gtpc_recovery, self.recovery_counter_file,
+                 persisted ? "persisted" :
+                    (loaded < 0 ? "NOT persisted - time-seeded" :
+                                  "NOT persisted"));
+    }
 
     ogs_reload_audit_record_startup("SMF");
 
