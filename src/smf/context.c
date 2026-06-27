@@ -2720,6 +2720,90 @@ void smf_sess_set_paging_n1n2message_location(
             sess);
 }
 
+static bool smf_sgw_recovery_is_restart(uint8_t stored, uint8_t received)
+{
+    /* 8-bit restart counter with wrap-around (TS 23.007). */
+    if (received > stored)
+        return true;
+    if (received < stored && (uint8_t)(stored - received) > 127)
+        return true;
+    return false;
+}
+
+static void smf_sgw_purge_sessions(ogs_gtp_node_t *gnode)
+{
+    smf_ue_t *ue = NULL, *next_ue = NULL;
+    smf_sess_t *sess = NULL, *next_sess = NULL;
+    char buf[OGS_ADDRSTRLEN];
+    int purged = 0;
+
+    ogs_assert(gnode);
+
+    ogs_warn("SGW [%s]:%d recovery restart: purging SMF PDN sessions",
+            OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
+
+    /*
+     * Per 3GPP TS 23.007, on detecting an S-GW restart the P-GW/SMF deletes the
+     * PDN connections anchored on that S-GW. The SGW has lost all of its state,
+     * so we must NOT signal it back (no S5-C Delete Session Response/Request):
+     * tear the data plane down on the UPF best-effort and free the local PDN
+     * context. Only EPC (GTP-C) sessions are affected; 5GC PDU sessions follow
+     * their own AMF/SBI-driven lifecycle.
+     */
+    ogs_list_for_each_safe(&self.smf_ue_list, next_ue, ue) {
+        ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
+            if (!sess->epc)
+                continue;
+            if (sess->gnode != gnode)
+                continue;
+
+            ogs_warn("[%s] SGW recovery restart: delete PDN apn=%s",
+                    ue->imsi_bcd,
+                    sess->session.name ? sess->session.name : "-");
+
+            smf_epc_pfcp_send_session_deletion_best_effort(sess);
+            smf_sess_remove(sess);
+            purged++;
+        }
+        if (ogs_list_empty(&ue->sess_list))
+            smf_ue_remove(ue);
+    }
+
+    ogs_warn("SGW [%s]:%d recovery restart: purged %d PDN session(s)",
+            OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr), purged);
+}
+
+bool smf_sgw_recovery_update(smf_gtp_node_t *smf_gnode, uint8_t recovery)
+{
+    ogs_gtp_node_t *gnode = NULL;
+    char buf[OGS_ADDRSTRLEN];
+
+    ogs_assert(smf_gnode);
+    gnode = smf_gnode->gnode;
+    ogs_assert(gnode);
+
+    if (!smf_gnode->peer_recovery_valid) {
+        smf_gnode->peer_recovery = recovery;
+        smf_gnode->peer_recovery_valid = true;
+        ogs_info("SGW [%s]:%d recovery=%u (initial)",
+                OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr),
+                recovery);
+        return false;
+    }
+
+    if (!smf_sgw_recovery_is_restart(smf_gnode->peer_recovery, recovery)) {
+        smf_gnode->peer_recovery = recovery;
+        return false;
+    }
+
+    ogs_warn("SGW [%s]:%d recovery changed %u -> %u",
+            OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr),
+            smf_gnode->peer_recovery, recovery);
+    smf_gnode->peer_recovery = recovery;
+    smf_sgw_purge_sessions(gnode);
+    return true;
+}
+
 int smf_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
 {
     smf_ue_t *ue = NULL, *next_ue = NULL;

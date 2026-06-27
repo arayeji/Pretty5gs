@@ -4065,13 +4065,20 @@ static void mme_sgw_purge_sessions(mme_sgw_t *sgw)
 {
     sgw_ue_t *sgw_ue = NULL, *next = NULL;
     mme_ue_t *mme_ue = NULL;
-    enb_ue_t *enb_ue = NULL;
     char buf[OGS_ADDRSTRLEN];
 
     ogs_assert(sgw);
 
     ogs_warn("SGW [%s]:%d recovery restart: purging MME sessions",
             OGS_ADDR(&sgw->gnode.addr, buf), OGS_PORT(&sgw->gnode.addr));
+
+    /*
+     * The SGW lost all of its bearer state on restart. Any S11 transaction
+     * still outstanding toward it (Delete Session, Modify Bearer, ...) will
+     * never get a meaningful reply, so drop them up front rather than letting
+     * them time out against a context that no longer exists.
+     */
+    ogs_gtp_xact_delete_all(&sgw->gnode);
 
     ogs_list_for_each_safe(&sgw->sgw_ue_list, next, sgw_ue) {
         mme_ue = mme_ue_find_by_id(sgw_ue->mme_ue_id);
@@ -4084,21 +4091,19 @@ static void mme_sgw_purge_sessions(mme_sgw_t *sgw)
         if (mme_ue->sgw_ue_id != sgw_ue->id)
             continue;
 
-        enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-        ogs_warn("[%s] SGW recovery restart: implicit detach",
-                mme_ue->imsi_bcd);
-
-        mme_ue->detach_type = MME_DETACH_TYPE_MME_IMPLICIT;
-        mme_send_delete_session_or_detach(enb_ue, mme_ue);
-
         /*
-         * If there were no sessions to delete AND no S1 context,
-         * mme_send_delete_session_or_detach() sets ue_context_will_remove
-         * but returns without removing the UE (it defers to "the caller").
-         * Drive the removal immediately here so these UEs do not leak.
+         * Per 3GPP TS 23.007, on detecting an S-GW restart the MME deletes the
+         * affected bearer contexts. Do NOT signal the restarted SGW: sending
+         * Delete Session toward it is pointless (it has no context) and used to
+         * leave these UEs stuck when the new SGW answered Context Not Found,
+         * which is exactly why stale MME UE contexts remained after an SGW-C
+         * restart. Tear the UE down locally instead -- this releases the S1
+         * context toward the eNB and frees the EPS bearer / sgw_ue / mme_ue
+         * contexts without any S11 signalling.
          */
-        if (mme_ue->ue_context_will_remove)
-            mme_ue_enter_ue_context_will_remove(mme_ue);
+        ogs_warn("[%s] SGW recovery restart: local UE context release",
+                mme_ue->imsi_bcd);
+        mme_ue_enter_ue_context_will_remove(mme_ue);
     }
 }
 

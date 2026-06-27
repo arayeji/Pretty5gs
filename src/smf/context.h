@@ -366,6 +366,10 @@ typedef struct smf_context_s {
 typedef struct smf_gtp_node_s {
     ogs_gtp_node_t *gnode;
     ogs_metrics_inst_t *metrics[_SMF_METR_GTP_NODE_MAX];
+
+    /* TS 29.274 Recovery: SGW (S5/S8) peer restart detection */
+    uint8_t         peer_recovery;
+    bool            peer_recovery_valid;
 } smf_gtp_node_t;
 
 typedef struct smf_ue_s {
@@ -1024,6 +1028,13 @@ int smf_use_gy_iface(void);
 
 smf_gtp_node_t *smf_gtp_node_new(ogs_gtp_node_t *gnode);
 void smf_gtp_node_free(smf_gtp_node_t *smf_gnode);
+
+/*
+ * TS 29.274 Recovery: compare the SGW (S5/S8) peer's restart counter against
+ * the last seen value. On an increment (peer restart) delete all PDN
+ * connections anchored on that SGW. Returns true if a restart was detected.
+ */
+bool smf_sgw_recovery_update(smf_gtp_node_t *smf_gnode, uint8_t recovery);
 
 smf_ue_t *smf_ue_add_by_supi(char *supi);
 smf_ue_t *smf_ue_add_by_imsi(uint8_t *imsi, int imsi_len);

@@ -128,6 +128,58 @@ void smf_s5c_handle_echo_response(
     /* Not Implemented */
 }
 
+static bool smf_s5_message_recovery(
+        ogs_gtp2_message_t *message, uint8_t *recovery)
+{
+    ogs_gtp2_tlv_recovery_t *tlv = NULL;
+
+    ogs_assert(message);
+    ogs_assert(recovery);
+
+    /*
+     * Recovery IE carried by messages the SGW sends toward the SMF/PGW on S5.
+     * The SGW-C emits periodic Echo Requests to the PGW, so the Echo Request
+     * is the primary restart-detection path; Create Session / Modify Bearer
+     * may also carry Recovery (e.g. inbound-roam SGW-C).
+     */
+    switch (message->h.type) {
+    case OGS_GTP2_ECHO_REQUEST_TYPE:
+        tlv = &message->echo_request.recovery;
+        break;
+    case OGS_GTP2_ECHO_RESPONSE_TYPE:
+        tlv = &message->echo_response.recovery;
+        break;
+    case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
+        tlv = &message->create_session_request.recovery;
+        break;
+    case OGS_GTP2_MODIFY_BEARER_REQUEST_TYPE:
+        tlv = &message->modify_bearer_request.recovery;
+        break;
+    default:
+        return false;
+    }
+
+    if (!tlv->presence)
+        return false;
+
+    *recovery = tlv->u8;
+    return true;
+}
+
+void smf_s5_check_peer_recovery(
+        smf_gtp_node_t *smf_gnode, ogs_gtp2_message_t *message)
+{
+    uint8_t recovery = 0;
+
+    if (!smf_gnode || !message)
+        return;
+
+    if (!smf_s5_message_recovery(message, &recovery))
+        return;
+
+    smf_sgw_recovery_update(smf_gnode, recovery);
+}
+
 uint8_t smf_s5c_handle_create_session_request(
         smf_sess_t *sess, ogs_gtp_xact_t *xact,
         ogs_gtp2_create_session_request_t *req)

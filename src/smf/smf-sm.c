@@ -180,6 +180,13 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         }
         e->gtp_xact_id = gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID;
 
+        /*
+         * TS 23.007: detect an SGW (S5/S8) restart via its Recovery counter and
+         * purge the PDN connections anchored on it. Checked once per received
+         * S5-C message (Echo Request is the primary path) before dispatch.
+         */
+        smf_s5_check_peer_recovery(smf_gnode, &gtp2_message);
+
         if (gtp2_message.h.teid_presence && gtp2_message.h.teid != 0)
             sess = smf_sess_find_active_by_teid(gtp2_message.h.teid);
 
