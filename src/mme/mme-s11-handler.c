@@ -69,36 +69,24 @@ static bool mme_s11_message_recovery(
     ogs_assert(message);
     ogs_assert(recovery);
 
+    /*
+     * SGW restart detection MUST use ONLY the Recovery IE carried in Echo
+     * Request/Response. On S11 the Echo is the one message whose Recovery IE
+     * unambiguously reflects the *SGW's own* restart counter. Other S11
+     * messages the MME receives are either responses the SGW builds without a
+     * Recovery IE, or messages whose Recovery (when present) may reflect a
+     * relayed/peer value -- driving restart detection off those made the
+     * counter appear to bounce between two values and triggered a full
+     * mme_sgw_purge_sessions() on essentially every request (mass UE loss).
+     * The MME actively polls the SGW with Echo (default 60s), so Echo-only
+     * detection still catches a real restart promptly.
+     */
     switch (message->h.type) {
     case OGS_GTP2_ECHO_REQUEST_TYPE:
         tlv = &message->echo_request.recovery;
         break;
     case OGS_GTP2_ECHO_RESPONSE_TYPE:
         tlv = &message->echo_response.recovery;
-        break;
-    case OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE:
-        tlv = &message->create_session_response.recovery;
-        break;
-    case OGS_GTP2_MODIFY_BEARER_RESPONSE_TYPE:
-        tlv = &message->modify_bearer_response.recovery;
-        break;
-    case OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE:
-        tlv = &message->delete_session_response.recovery;
-        break;
-    case OGS_GTP2_RELEASE_ACCESS_BEARERS_RESPONSE_TYPE:
-        tlv = &message->release_access_bearers_response.recovery;
-        break;
-    case OGS_GTP2_MODIFY_BEARER_FAILURE_INDICATION_TYPE:
-        tlv = &message->modify_bearer_failure_indication.recovery;
-        break;
-    case OGS_GTP2_DELETE_BEARER_FAILURE_INDICATION_TYPE:
-        tlv = &message->delete_bearer_failure_indication.recovery;
-        break;
-    case OGS_GTP2_CREATE_INDIRECT_DATA_FORWARDING_TUNNEL_RESPONSE_TYPE:
-        tlv = &message->create_indirect_data_forwarding_tunnel_response.recovery;
-        break;
-    case OGS_GTP2_DELETE_INDIRECT_DATA_FORWARDING_TUNNEL_RESPONSE_TYPE:
-        tlv = &message->delete_indirect_data_forwarding_tunnel_response.recovery;
         break;
     default:
         return false;
