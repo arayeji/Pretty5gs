@@ -124,6 +124,16 @@ void smf_metrics_inst_by_rat_add(
     const char *rat, const char *gtp_if,
     smf_metric_type_by_rat_t t, int val);
 
+/* BY VISITED NETWORK (outbound roaming) */
+typedef enum smf_metric_type_by_visited_s {
+    SMF_METR_BY_VISITED_GAUGE_SESSION_ACTIVE = 0,
+    _SMF_METR_BY_VISITED_MAX,
+} smf_metric_type_by_visited_t;
+
+void smf_metrics_inst_by_visited_add(
+    const char *visited_plmnid, const char *apn,
+    smf_metric_type_by_visited_t t, int val);
+
 void smf_metrics_init(void);
 void smf_metrics_final(void);
 

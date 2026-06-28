@@ -317,9 +317,45 @@ void smf_metrics_inst_by_slice_add(ogs_plmn_id_t *plmn,
     ogs_metrics_inst_add(metrics, val);
 }
 
+/*
+ * Outbound-roaming detection for the per-visited-network gauge.
+ *
+ * A session is treated as roaming when the serving network (VPLMN, taken from
+ * the GTP-C Serving Network IE / SBI servingNetwork) differs from the
+ * subscriber's home PLMN derived from their own IMSI. In a home-routed
+ * deployment this is exactly "our subscriber attached via another operator".
+ * Returns true and fills vplmn (PLMN string) when the session is roaming and
+ * the serving PLMN is known.
+ */
+static bool smf_sess_is_outbound_roaming(smf_sess_t *sess, char *vplmn)
+{
+    smf_ue_t *smf_ue = NULL;
+    ogs_plmn_id_t home_plmn_id;
+
+    if (!(sess->serving_plmn_id.mcc1 || sess->serving_plmn_id.mcc2 ||
+            sess->serving_plmn_id.mcc3))
+        return false;
+
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+    if (!smf_ue || !smf_ue->imsi_len)
+        return false;
+
+    ogs_plmn_id_from_imsi_bcd(smf_ue->imsi_bcd, &home_plmn_id);
+
+    if (ogs_plmn_id_mcc(&home_plmn_id) ==
+                ogs_plmn_id_mcc(&sess->serving_plmn_id) &&
+        ogs_plmn_id_mnc(&home_plmn_id) ==
+                ogs_plmn_id_mnc(&sess->serving_plmn_id))
+        return false;
+
+    ogs_plmn_id_to_string(&sess->serving_plmn_id, vplmn);
+    return true;
+}
+
 void smf_metrics_session_active_inc(smf_sess_t *sess)
 {
     const char *rat = NULL, *gtp_if = NULL;
+    char vplmn[OGS_PLMNIDSTRLEN];
 
     ogs_assert(sess);
 
@@ -336,6 +372,13 @@ void smf_metrics_session_active_inc(smf_sess_t *sess)
         sess->metrics_rat_labeled = 1;
         smf_metrics_inst_by_rat_add(sess->metrics_rat, sess->metrics_gtp_if,
                 SMF_METR_GAUGE_SM_SESSIONNBR_BY_RAT, 1);
+    }
+
+    if (smf_sess_is_outbound_roaming(sess, vplmn)) {
+        smf_metrics_inst_by_visited_add(vplmn,
+                sess->session.name ? sess->session.name : "-",
+                SMF_METR_BY_VISITED_GAUGE_SESSION_ACTIVE, 1);
+        sess->metrics_visited_labeled = 1;
     }
 
     sess->metrics_session_counted = 1;
@@ -357,6 +400,21 @@ void smf_metrics_session_active_dec(smf_sess_t *sess)
         sess->metrics_rat_labeled = 0;
         sess->metrics_rat[0] = '\0';
         sess->metrics_gtp_if[0] = '\0';
+    }
+
+    if (sess->metrics_visited_labeled) {
+        char vplmn[OGS_PLMNIDSTRLEN];
+        /*
+         * serving_plmn_id and session.name are stable for the session's
+         * lifetime and still valid here (session.name is freed later in
+         * smf_sess_remove), so recomputing the labels matches the inc path
+         * exactly and keeps the gauge balanced.
+         */
+        ogs_plmn_id_to_string(&sess->serving_plmn_id, vplmn);
+        smf_metrics_inst_by_visited_add(vplmn,
+                sess->session.name ? sess->session.name : "-",
+                SMF_METR_BY_VISITED_GAUGE_SESSION_ACTIVE, -1);
+        sess->metrics_visited_labeled = 0;
     }
 
     sess->metrics_session_counted = 0;
@@ -695,6 +753,80 @@ void smf_metrics_inst_by_rat_add(
     ogs_metrics_inst_add(metrics, val);
 }
 
+/* BY VISITED NETWORK (outbound roaming) */
+const char *labels_visited[] = {
+    "visited_plmnid",
+    "apn"
+};
+
+#define SMF_METR_BY_VISITED_GAUGE_ENTRY(_id, _name, _desc) \
+    [_id] = { \
+        .type = OGS_METRICS_METRIC_TYPE_GAUGE, \
+        .name = _name, \
+        .description = _desc, \
+        .num_labels = OGS_ARRAY_SIZE(labels_visited), \
+        .labels = labels_visited, \
+    },
+ogs_metrics_spec_t *smf_metrics_spec_by_visited[_SMF_METR_BY_VISITED_MAX];
+ogs_hash_t *metrics_hash_by_visited = NULL;
+smf_metrics_spec_def_t smf_metrics_spec_def_by_visited[_SMF_METR_BY_VISITED_MAX] = {
+SMF_METR_BY_VISITED_GAUGE_ENTRY(
+    SMF_METR_BY_VISITED_GAUGE_SESSION_ACTIVE,
+    "smf_roaming_session_active",
+    "Active sessions of home subscribers roaming on a visited network "
+    "(serving PLMN differs from IMSI/home PLMN), by visited PLMN and APN")
+};
+typedef struct smf_metric_key_by_visited_s {
+    char                            visited_plmnid[OGS_PLMNIDSTRLEN];
+    char                            apn[OGS_MAX_APN_LEN+1];
+    smf_metric_type_by_visited_t    t;
+} smf_metric_key_by_visited_t;
+
+static void smf_metrics_init_by_visited(void)
+{
+    metrics_hash_by_visited = ogs_hash_make();
+    ogs_assert(metrics_hash_by_visited);
+}
+
+void smf_metrics_inst_by_visited_add(
+        const char *visited_plmnid, const char *apn,
+        smf_metric_type_by_visited_t t, int val)
+{
+    ogs_metrics_inst_t *metrics = NULL;
+    smf_metric_key_by_visited_t *visited_key;
+
+    ogs_assert(visited_plmnid);
+    if (!metrics_hash_by_visited)
+        return;
+
+    visited_key = ogs_calloc(1, sizeof(*visited_key));
+    ogs_assert(visited_key);
+
+    ogs_cpystrn(visited_key->visited_plmnid, visited_plmnid,
+            sizeof(visited_key->visited_plmnid));
+    ogs_cpystrn(visited_key->apn, apn ? apn : "",
+            sizeof(visited_key->apn));
+    visited_key->t = t;
+
+    metrics = ogs_hash_get(metrics_hash_by_visited,
+            visited_key, sizeof(*visited_key));
+
+    if (!metrics) {
+        metrics = ogs_metrics_inst_new(smf_metrics_spec_by_visited[t],
+                smf_metrics_spec_def_by_visited->num_labels,
+                (const char *[]){ visited_key->visited_plmnid,
+                    visited_key->apn });
+
+        ogs_assert(metrics);
+        ogs_hash_set(metrics_hash_by_visited,
+                visited_key, sizeof(*visited_key), metrics);
+    } else {
+        ogs_free(visited_key);
+    }
+
+    ogs_metrics_inst_add(metrics, val);
+}
+
 void smf_metrics_init(void)
 {
     ogs_metrics_context_t *ctx = ogs_metrics_self();
@@ -716,6 +848,8 @@ void smf_metrics_init(void)
             smf_metrics_spec_def_by_plmn, _SMF_METR_BY_PLMN_MAX);
     smf_metrics_init_spec(ctx, smf_metrics_spec_by_rat,
             smf_metrics_spec_def_by_rat, _SMF_METR_BY_RAT_MAX);
+    smf_metrics_init_spec(ctx, smf_metrics_spec_by_visited,
+            smf_metrics_spec_def_by_visited, _SMF_METR_BY_VISITED_MAX);
 
     smf_metrics_init_inst_global();
     smf_metrics_init_by_slice();
@@ -723,6 +857,7 @@ void smf_metrics_init(void)
     smf_metrics_init_by_cause();
     smf_metrics_init_by_plmn();
     smf_metrics_init_by_rat();
+    smf_metrics_init_by_visited();
 }
 
 void smf_metrics_final(void)
@@ -800,6 +935,19 @@ void smf_metrics_final(void)
         }
         ogs_hash_destroy(metrics_hash_by_rat);
         metrics_hash_by_rat = NULL;
+    }
+    if (metrics_hash_by_visited) {
+        for (hi = ogs_hash_first(metrics_hash_by_visited); hi;
+                hi = ogs_hash_next(hi)) {
+            smf_metric_key_by_visited_t *key =
+                (smf_metric_key_by_visited_t *)ogs_hash_this_key(hi);
+
+            ogs_hash_set(metrics_hash_by_visited, key, sizeof(*key), NULL);
+
+            ogs_free(key);
+        }
+        ogs_hash_destroy(metrics_hash_by_visited);
+        metrics_hash_by_visited = NULL;
     }
 
     ogs_metrics_context_final();
