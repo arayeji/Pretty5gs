@@ -4148,11 +4148,18 @@ mme_sgw_t *mme_sgw_find_by_addr(const ogs_sockaddr_t *addr)
 
 static bool mme_sgw_recovery_is_restart(uint8_t stored, uint8_t received)
 {
-    if (received > stored)
-        return true;
-    if (received < stored && (uint8_t)(stored - received) > 127)
-        return true;
-    return false;
+    /*
+     * 3GPP TS 23.007: the Restart Counter is an 8-bit serial number. A peer
+     * restart is indicated ONLY when the received value is STRICTLY NEWER than
+     * the stored one in mod-256 serial-number arithmetic (RFC 1982): the
+     * forward distance (received - stored) lies in 1..127. The previous check
+     * (naive "received > stored") flagged a restart in BOTH directions, so two
+     * interleaved values would each look like a restart and purge on every
+     * message.
+     */
+    if (received == stored)
+        return false;
+    return (uint8_t)(received - stored) < 128;
 }
 
 static void mme_sgw_purge_sessions(mme_sgw_t *sgw)
@@ -4216,12 +4223,23 @@ bool mme_sgw_recovery_update(mme_sgw_t *sgw, uint8_t recovery)
         return false;
     }
 
+    /* Unchanged: the common case -- keep the stored value, do nothing. */
+    if (recovery == sgw->peer_recovery)
+        return false;
+
     if (!mme_sgw_recovery_is_restart(sgw->peer_recovery, recovery)) {
-        sgw->peer_recovery = recovery;
+        /*
+         * Older / out-of-order value (reordered datagram or a stray Recovery).
+         * Do NOT advance the baseline and do NOT purge -- advancing it here is
+         * what let the counter ping-pong and purge repeatedly.
+         */
+        ogs_warn("SGW [%s]:%d ignoring non-newer recovery %u (stored %u)",
+                OGS_ADDR(&sgw->gnode.addr, buf), OGS_PORT(&sgw->gnode.addr),
+                recovery, sgw->peer_recovery);
         return false;
     }
 
-    ogs_warn("SGW [%s]:%d recovery changed %u -> %u",
+    ogs_warn("SGW [%s]:%d recovery changed %u -> %u (restart)",
             OGS_ADDR(&sgw->gnode.addr, buf), OGS_PORT(&sgw->gnode.addr),
             sgw->peer_recovery, recovery);
     sgw->peer_recovery = recovery;

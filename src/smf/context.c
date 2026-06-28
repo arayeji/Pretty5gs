@@ -2815,12 +2815,16 @@ void smf_sess_set_paging_n1n2message_location(
 
 static bool smf_sgw_recovery_is_restart(uint8_t stored, uint8_t received)
 {
-    /* 8-bit restart counter with wrap-around (TS 23.007). */
-    if (received > stored)
-        return true;
-    if (received < stored && (uint8_t)(stored - received) > 127)
-        return true;
-    return false;
+    /*
+     * 3GPP TS 23.007: the 8-bit Restart Counter is a serial number (RFC 1982).
+     * A restart is indicated ONLY when the received value is STRICTLY NEWER
+     * than the stored one, i.e. the forward distance (received - stored) is in
+     * 1..127. A naive "received > stored" flags both directions and lets two
+     * interleaved values purge on every message.
+     */
+    if (received == stored)
+        return false;
+    return (uint8_t)(received - stored) < 128;
 }
 
 static void smf_sgw_purge_sessions(ogs_gtp_node_t *gnode)
@@ -2884,12 +2888,19 @@ bool smf_sgw_recovery_update(smf_gtp_node_t *smf_gnode, uint8_t recovery)
         return false;
     }
 
+    /* Unchanged: keep the stored value, do nothing. */
+    if (recovery == smf_gnode->peer_recovery)
+        return false;
+
     if (!smf_sgw_recovery_is_restart(smf_gnode->peer_recovery, recovery)) {
-        smf_gnode->peer_recovery = recovery;
+        /* Older / out-of-order: do NOT advance the baseline and do NOT purge. */
+        ogs_warn("SGW [%s]:%d ignoring non-newer recovery %u (stored %u)",
+                OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr),
+                recovery, smf_gnode->peer_recovery);
         return false;
     }
 
-    ogs_warn("SGW [%s]:%d recovery changed %u -> %u",
+    ogs_warn("SGW [%s]:%d recovery changed %u -> %u (restart)",
             OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr),
             smf_gnode->peer_recovery, recovery);
     smf_gnode->peer_recovery = recovery;
