@@ -37,6 +37,8 @@ sgwc:
     pgw:
       - address: 127.0.0.4
         port: 2123
+      - address: 10.1.1.1
+        imsi_prefix: "99970"
 
   gtpu:
     force_cp_teid: true

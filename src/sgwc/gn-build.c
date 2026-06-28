@@ -328,12 +328,20 @@ static ogs_pkbuf_t *sgwc_gn_build_create_session_request(
             req->charging_characteristics.len;
     }
 
-    if (sgwc_self()->gn_pgw_f_teid_len) {
+    {
+        sgwc_gn_pgw_t *gn_pgw = sgwc_gn_pgw_find_for_ue(sgwc_ue);
+
+        if (!gn_pgw || !gn_pgw->f_teid_len) {
+            ogs_error("[%s] No Gn PGW/SMF match for IMSI",
+                    sgwc_ue->imsi_bcd);
+            return NULL;
+        }
+
         csr->pgw_s5_s8_address_for_control_plane_or_pmip.presence = 1;
         csr->pgw_s5_s8_address_for_control_plane_or_pmip.data =
-            &sgwc_self()->gn_pgw_f_teid;
+            &gn_pgw->f_teid;
         csr->pgw_s5_s8_address_for_control_plane_or_pmip.len =
-            sgwc_self()->gn_pgw_f_teid_len;
+            gn_pgw->f_teid_len;
     }
 
     ogs_gtp1_qos_profile_to_qci(&sess->gn_qos_pdec, &qci);

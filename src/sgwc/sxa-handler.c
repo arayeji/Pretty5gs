@@ -347,9 +347,14 @@ static bool sgwc_resolve_pgw_s5c_teid(
             pgw_s5_s8_address_for_control_plane_or_pmip.data) {
         pgw_s5c_teid = create_session_request->
             pgw_s5_s8_address_for_control_plane_or_pmip.data;
-    } else if (sess->gn && sgwc_self()->gn_pgw_f_teid_len) {
-        pgw_s5c_teid = &sgwc_self()->gn_pgw_f_teid;
-        ogs_debug("Gn session: PGW S5-C F-TEID from sgwc.gn.pgw/smf");
+    } else if (sess->gn) {
+        sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        sgwc_gn_pgw_t *gn_pgw = sgwc_gn_pgw_find_for_ue(sgwc_ue);
+
+        if (gn_pgw && gn_pgw->f_teid_len) {
+            pgw_s5c_teid = &gn_pgw->f_teid;
+            ogs_debug("Gn session: PGW S5-C F-TEID from sgwc.gn.pgw/smf");
+        }
     }
 
     if (!pgw_s5c_teid)

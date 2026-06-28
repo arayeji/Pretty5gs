@@ -523,6 +523,55 @@ static void sgwc_reload_inbound_roam(ogs_yaml_iter_t *sgwc_iter)
     }
 }
 
+static void sgwc_reload_gn(ogs_yaml_iter_t *sgwc_iter)
+{
+    ogs_yaml_iter_t gn_iter;
+    ogs_list_t tmp_list;
+    sgwc_gn_pgw_t *pgw = NULL, *next_pgw = NULL;
+    int count = 0;
+
+    ogs_assert(sgwc_iter);
+
+    ogs_list_init(&tmp_list);
+
+    /*
+     * Rebuild the Gn PGW/SMF selection list from scratch into a temporary
+     * list (replace semantics): SIGHUP may add, remove, or reorder entries,
+     * and the default (no imsi_prefix) entry must be replaceable. The bind
+     * address (gn.server) and gn enable state still require a restart.
+     */
+    ogs_yaml_iter_recurse(sgwc_iter, &gn_iter);
+    while (ogs_yaml_iter_next(&gn_iter)) {
+        const char *gn_key = ogs_yaml_iter_key(&gn_iter);
+        ogs_assert(gn_key);
+
+        if (!strcmp(gn_key, "pgw") || !strcmp(gn_key, "smf")) {
+            sgwc_gn_pgw_yaml_add(&tmp_list, &gn_iter);
+        } else if (!strcmp(gn_key, "server")) {
+            ogs_reload_audit_warn(
+                    "sgwc.gn.server ignored (bind address; restart required)");
+        }
+    }
+
+    count = ogs_list_count(&tmp_list);
+    if (count == 0) {
+        ogs_reload_audit_warn(
+                "sgwc.gn.pgw empty on reload; keeping current PGW list");
+        sgwc_gn_pgw_clear_list(&tmp_list);
+        return;
+    }
+
+    /* Swap: drop the old list, move the freshly built entries in order. */
+    sgwc_gn_pgw_clear_list(&sgwc_self()->gn_pgw_list);
+    ogs_list_for_each_safe(&tmp_list, next_pgw, pgw) {
+        ogs_list_remove(&tmp_list, pgw);
+        ogs_list_add(&sgwc_self()->gn_pgw_list, pgw);
+    }
+
+    sgwc_reload_lists_changed++;
+    ogs_reload_audit_note("sgwc.gn.pgw reloaded (%d entries)", count);
+}
+
 void sgwc_context_reload_runtime(void)
 {
     yaml_document_t *document = NULL;
@@ -613,6 +662,9 @@ void sgwc_context_reload_runtime(void)
                 found = true;
             } else if (!strcmp(sgwc_key, "inbound_roam")) {
                 sgwc_reload_inbound_roam(&sgwc_iter);
+                found = true;
+            } else if (!strcmp(sgwc_key, "gn")) {
+                sgwc_reload_gn(&sgwc_iter);
                 found = true;
             } else if (!strcmp(sgwc_key, "cdr")) {
                 sgwc_reload_cdr_scalars(&sgwc_iter);

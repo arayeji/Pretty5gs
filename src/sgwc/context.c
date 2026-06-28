@@ -201,6 +201,23 @@ static void sgwc_sgwu_nwi_rewrite_clear(void)
     }
 }
 
+void sgwc_gn_pgw_clear_list(ogs_list_t *list)
+{
+    sgwc_gn_pgw_t *pgw = NULL, *next_pgw = NULL;
+
+    ogs_assert(list);
+
+    ogs_list_for_each_safe(list, next_pgw, pgw) {
+        ogs_list_remove(list, pgw);
+        ogs_free(pgw);
+    }
+}
+
+static void sgwc_gn_pgw_clear(void)
+{
+    sgwc_gn_pgw_clear_list(&self.gn_pgw_list);
+}
+
 static void sgwc_sgwu_nwi_rewrite_add(const char *match, const char *replace)
 {
     sgwc_sgwu_nwi_rewrite_rule_t *rule = NULL;
@@ -429,6 +446,7 @@ void sgwc_context_init(void)
     ogs_list_init(&self.sgsn_gn_list);
     ogs_list_init(&self.gn_server_list);
     ogs_list_init(&self.gn_server_list6);
+    ogs_list_init(&self.gn_pgw_list);
 
     self.cdr.enabled = false;
     self.cdr.interim_interval_s = 300;
@@ -488,6 +506,7 @@ void sgwc_context_final(void)
     ogs_gtp_node_remove_all(&self.pgw_s5c_list);
 
     sgwc_sgwu_nwi_rewrite_clear();
+    sgwc_gn_pgw_clear();
 
     context_initialized = 0;
 }
@@ -959,11 +978,13 @@ static int sgwc_gn_yaml_add_server(ogs_yaml_iter_t *parent, const char *key,
     return OGS_OK;
 }
 
-static int sgwc_gn_config_apply_pgw(ogs_sockaddr_t *addr, uint16_t port)
+static int sgwc_gn_pgw_apply_addr(
+        sgwc_gn_pgw_t *pgw, ogs_sockaddr_t *addr, uint16_t port)
 {
     int rv;
     ogs_sockaddr_t *v4 = NULL, *v6 = NULL;
 
+    ogs_assert(pgw);
     ogs_assert(addr);
 
     rv = ogs_copyaddrinfo(&v4, addr);
@@ -975,11 +996,10 @@ static int sgwc_gn_config_apply_pgw(ogs_sockaddr_t *addr, uint16_t port)
     rv = ogs_filteraddrinfo(&v6, AF_INET6);
     ogs_assert(rv == OGS_OK);
 
-    memset(&self.gn_pgw_f_teid, 0, sizeof(self.gn_pgw_f_teid));
-    self.gn_pgw_f_teid.interface_type = OGS_GTP2_F_TEID_S5_S8_PGW_GTP_C;
-    self.gn_pgw_f_teid.teid = 0;
-    rv = ogs_gtp2_sockaddr_to_f_teid(v4, v6, &self.gn_pgw_f_teid,
-            &self.gn_pgw_f_teid_len);
+    memset(&pgw->f_teid, 0, sizeof(pgw->f_teid));
+    pgw->f_teid.interface_type = OGS_GTP2_F_TEID_S5_S8_PGW_GTP_C;
+    pgw->f_teid.teid = 0;
+    rv = ogs_gtp2_sockaddr_to_f_teid(v4, v6, &pgw->f_teid, &pgw->f_teid_len);
     ogs_freeaddrinfo(v4);
     ogs_freeaddrinfo(v6);
 
@@ -991,6 +1011,124 @@ static int sgwc_gn_config_apply_pgw(ogs_sockaddr_t *addr, uint16_t port)
     return rv;
 }
 
+static sgwc_gn_pgw_t *sgwc_gn_pgw_add(ogs_list_t *list,
+        const char *hostname, uint16_t port, const char *imsi_prefix)
+{
+    int rv;
+    ogs_sockaddr_t *addr = NULL;
+    sgwc_gn_pgw_t *pgw = NULL;
+
+    ogs_assert(list);
+    ogs_assert(hostname);
+
+    if (!port)
+        port = ogs_gtp_self()->gtpc_port;
+
+    rv = ogs_addaddrinfo(&addr, AF_UNSPEC, hostname, port, 0);
+    if (rv != OGS_OK || !addr) {
+        ogs_error("gn.pgw address resolution failed [%s]", hostname);
+        return NULL;
+    }
+
+    pgw = ogs_calloc(1, sizeof(*pgw));
+    if (!pgw) {
+        ogs_error("gn.pgw alloc failed");
+        ogs_freeaddrinfo(addr);
+        return NULL;
+    }
+
+    if (imsi_prefix && imsi_prefix[0]) {
+        ogs_cpystrn(pgw->imsi_prefix, imsi_prefix, sizeof(pgw->imsi_prefix));
+    }
+
+    rv = sgwc_gn_pgw_apply_addr(pgw, addr, port);
+    ogs_freeaddrinfo(addr);
+    if (rv != OGS_OK) {
+        ogs_error("gn.pgw F-TEID build failed [%s]", hostname);
+        ogs_free(pgw);
+        return NULL;
+    }
+
+    ogs_list_add(list, pgw);
+    return pgw;
+}
+
+void sgwc_gn_pgw_yaml_add(ogs_list_t *list, ogs_yaml_iter_t *parent_iter)
+{
+    ogs_yaml_iter_t pgw_array, pgw_item;
+
+    ogs_assert(list);
+    ogs_assert(parent_iter);
+
+    ogs_yaml_iter_recurse(parent_iter, &pgw_array);
+    do {
+        const char *hostname = NULL;
+        const char *imsi_prefix = NULL;
+        uint16_t port = 0;
+
+        if (ogs_yaml_iter_type(&pgw_array) == YAML_SEQUENCE_NODE) {
+            if (!ogs_yaml_iter_next(&pgw_array))
+                break;
+            ogs_yaml_iter_recurse(&pgw_array, &pgw_item);
+        } else {
+            ogs_yaml_iter_recurse(parent_iter, &pgw_item);
+        }
+
+        while (ogs_yaml_iter_next(&pgw_item)) {
+            const char *pk = ogs_yaml_iter_key(&pgw_item);
+            const char *pv = ogs_yaml_iter_value(&pgw_item);
+            ogs_assert(pk);
+            if (!strcmp(pk, "address") || !strcmp(pk, "addr") ||
+                    !strcmp(pk, "name"))
+                hostname = pv;
+            else if (!strcmp(pk, "port") && pv)
+                port = (uint16_t)atoi(pv);
+            else if (!strcmp(pk, "imsi_prefix") && pv)
+                imsi_prefix = pv;
+        }
+
+        if (hostname) {
+            if (!sgwc_gn_pgw_add(list, hostname, port, imsi_prefix)) {
+                ogs_error("Failed to add gn.pgw [%s]", hostname);
+            }
+        }
+
+        if (ogs_yaml_iter_type(&pgw_array) != YAML_SEQUENCE_NODE)
+            break;
+    } while (ogs_yaml_iter_type(&pgw_array) == YAML_SEQUENCE_NODE);
+}
+
+sgwc_gn_pgw_t *sgwc_gn_pgw_find_for_ue(sgwc_ue_t *sgwc_ue)
+{
+    sgwc_gn_pgw_t *pgw = NULL;
+    sgwc_gn_pgw_t *default_pgw = NULL;
+
+    ogs_list_for_each(&self.gn_pgw_list, pgw) {
+        if (!pgw->imsi_prefix[0]) {
+            if (!default_pgw)
+                default_pgw = pgw;
+            continue;
+        }
+
+        if (!sgwc_ue || !sgwc_ue->imsi_bcd[0])
+            continue;
+
+        if (strncmp(sgwc_ue->imsi_bcd, pgw->imsi_prefix,
+                    strlen(pgw->imsi_prefix)) == 0) {
+            ogs_debug("Gn PGW selected imsi_prefix:%s IMSI:%s",
+                    pgw->imsi_prefix, sgwc_ue->imsi_bcd);
+            return pgw;
+        }
+    }
+
+    if (default_pgw) {
+        ogs_debug("Gn PGW selected default IMSI:%s",
+                sgwc_ue && sgwc_ue->imsi_bcd[0] ? sgwc_ue->imsi_bcd : "-");
+    }
+
+    return default_pgw;
+}
+
 static int sgwc_context_validation(void)
 {
     if (ogs_list_empty(&ogs_gtp_self()->gtpc_list) &&
@@ -998,7 +1136,7 @@ static int sgwc_context_validation(void)
         ogs_error("No sgwc.gtpc in '%s'", ogs_app()->file);
         return OGS_ERROR;
     }
-    if (self.gn_enabled && self.gn_pgw_f_teid_len == 0) {
+    if (self.gn_enabled && ogs_list_empty(&self.gn_pgw_list)) {
         ogs_error("sgwc.gn requires pgw/smf address in '%s'", ogs_app()->file);
         return OGS_ERROR;
     }
@@ -1205,6 +1343,7 @@ int sgwc_context_parse_config(void)
                     ogs_yaml_iter_t gn_iter;
                     ogs_yaml_iter_recurse(&sgwc_iter, &gn_iter);
                     self.gn_enabled = true;
+                    sgwc_gn_pgw_clear();
                     while (ogs_yaml_iter_next(&gn_iter)) {
                         const char *gn_key = ogs_yaml_iter_key(&gn_iter);
                         ogs_assert(gn_key);
@@ -1214,51 +1353,15 @@ int sgwc_context_parse_config(void)
                                     &self.gn_server_list6);
                         } else if (!strcmp(gn_key, "pgw") ||
                                 !strcmp(gn_key, "smf")) {
-                            ogs_yaml_iter_t pgw_iter, pgw_array, pgw_item;
-                            const char *hostname = NULL;
-                            uint16_t port = 0;
-                            ogs_sockaddr_t *addr = NULL;
-                            int rv;
-
-                            ogs_yaml_iter_recurse(&gn_iter, &pgw_array);
-                            if (ogs_yaml_iter_type(&pgw_array) ==
-                                    YAML_SEQUENCE_NODE) {
-                                if (!ogs_yaml_iter_next(&pgw_array))
-                                    continue;
-                                ogs_yaml_iter_recurse(&pgw_array, &pgw_item);
-                            } else {
-                                ogs_yaml_iter_recurse(&gn_iter, &pgw_iter);
-                                pgw_item = pgw_iter;
-                            }
-
-                            while (ogs_yaml_iter_next(&pgw_item)) {
-                                const char *pk = ogs_yaml_iter_key(&pgw_item);
-                                const char *pv = ogs_yaml_iter_value(&pgw_item);
-                                ogs_assert(pk);
-                                if (!strcmp(pk, "address") ||
-                                        !strcmp(pk, "addr") ||
-                                        !strcmp(pk, "name"))
-                                    hostname = pv;
-                                else if (!strcmp(pk, "port") && pv)
-                                    port = (uint16_t)atoi(pv);
-                            }
-
-                            if (hostname) {
-                                if (!port)
-                                    port = ogs_gtp_self()->gtpc_port;
-                                rv = ogs_addaddrinfo(&addr, AF_UNSPEC,
-                                        hostname, port, 0);
-                                ogs_assert(rv == OGS_OK);
-                                sgwc_gn_config_apply_pgw(addr, port);
-                                ogs_freeaddrinfo(addr);
-                            }
+                            sgwc_gn_pgw_yaml_add(&self.gn_pgw_list, &gn_iter);
                         } else
                             ogs_warn("unknown key `%s` in sgwc.gn", gn_key);
                     }
-                    if (self.gn_pgw_f_teid_len == 0)
+                    if (ogs_list_empty(&self.gn_pgw_list))
                         ogs_error("sgwc.gn enabled but no pgw/smf address");
                     else
-                        ogs_info("Gn interface enabled (default PGW configured)");
+                        ogs_info("Gn interface enabled (%d PGW/SMF entries)",
+                                ogs_list_count(&self.gn_pgw_list));
                 } else if (!strcmp(sgwc_key, "cdr")) {
                     ogs_yaml_iter_t c_iter;
                     ogs_yaml_iter_recurse(&sgwc_iter, &c_iter);
