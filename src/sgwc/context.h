@@ -44,6 +44,13 @@ typedef struct sgwc_sgwu_nwi_rewrite_rule_s {
     char *replace;
 } sgwc_sgwu_nwi_rewrite_rule_t;
 
+typedef struct sgwc_gn_pgw_s {
+    ogs_lnode_t lnode;
+    char imsi_prefix[OGS_MAX_IMSI_BCD_LEN+1];
+    ogs_gtp2_f_teid_t f_teid;
+    int f_teid_len;
+} sgwc_gn_pgw_t;
+
 typedef struct sgwc_mme_peer_s {
     ogs_gtp_node_t *gnode;
     uint8_t peer_recovery;
@@ -169,16 +176,17 @@ typedef struct sgwc_context_s {
     bool maintenance_mode;
 
     /*
-     * GTPv1 Gn (2G/3G SGSN): optional separate listener and default PGW/SMF.
+     * GTPv1 Gn (2G/3G SGSN): optional separate listener and PGW/SMF list.
      * When gn.server is omitted, GTPv1 on gtpc.server is dispatched to Gn.
+     * gn_pgw_list: ordered rules; first imsi_prefix match wins, else default
+     * entry (no imsi_prefix). List order matters — put specific prefixes first.
      */
     bool gn_enabled;
     ogs_list_t gn_server_list;
     ogs_list_t gn_server_list6;
     ogs_sockaddr_t *gn_addr;
     ogs_sockaddr_t *gn_addr6;
-    ogs_gtp2_f_teid_t gn_pgw_f_teid;
-    int gn_pgw_f_teid_len;
+    ogs_list_t gn_pgw_list;
     uint8_t gn_gtpc_recovery;
 } sgwc_context_t;
 
@@ -386,6 +394,9 @@ sgwc_ue_t *sgwc_ue_find_by_id(ogs_pool_id_t id);
 sgwc_sess_t *sgwc_sess_add(sgwc_ue_t *sgwc_ue, char *apn);
 
 bool sgwc_sess_is_inbound_roam(sgwc_sess_t *sess);
+sgwc_gn_pgw_t *sgwc_gn_pgw_find_for_ue(sgwc_ue_t *sgwc_ue);
+void sgwc_gn_pgw_yaml_add(ogs_list_t *list, ogs_yaml_iter_t *parent_iter);
+void sgwc_gn_pgw_clear_list(ogs_list_t *list);
 void sgwc_inbound_roam_teid_offset_apply(sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess);
 void sgwc_sess_sync_pfcp_pdr_nwi(sgwc_sess_t *sess);
 

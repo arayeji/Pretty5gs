@@ -42,7 +42,8 @@ sgwc:
   #
   # GTPv1 Gn (2G/3G SGSN toward SGWC; S5 toward SMF/PGW):
   #   server — GTPv1-C listen (optional; GTPv1 on gtpc.server if omitted)
-  #   pgw/smf — default S5 PGW (Open5GS SMF) for Create Session Request
+  #   pgw/smf — S5 PGW list for Create Session Request (first imsi_prefix
+  #             match wins; entry without imsi_prefix is default)
   #
 #  gn:
 #    server:
@@ -51,6 +52,8 @@ sgwc:
 #    pgw:
 #      - address: 127.0.0.4
 #        port: 2123
+#      - address: 10.1.1.1
+#        imsi_prefix: "99970"
   #
   # GTP-U (all sessions): force SGWC F-TEID (CH=0) instead of SGW-U FTUP.
   #
