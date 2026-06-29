@@ -199,7 +199,17 @@ uint8_t mme_s6a_handle_ula(
              mme_ue->nas_eps.update.value ==
              OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING_WITH_IMSI_ATTACH)) {
 
-            ogs_assert(OGS_OK == sgsap_send_location_update_request(mme_ue));
+            if (sgsap_send_location_update_request(mme_ue) != OGS_OK) {
+                /*
+                 * SGs/VLR association down or send failed. Do not abort the
+                 * MME (this was ogs_assert()). Return "CS domain not
+                 * available"; the caller (OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION
+                 * in mme-sm.c) sends a TAU reject and releases the context.
+                 */
+                ogs_error("[%s] Combined TAU(ULA): SGsAP Location-Update not "
+                        "sent (VLR/SGs unavailable)", mme_ue->imsi_bcd);
+                return OGS_NAS_EMM_CAUSE_CS_DOMAIN_NOT_AVAILABLE;
+            }
 
         } else {
             ogs_info("[%s] TAU accept(Diameter ULA)", mme_ue->imsi_bcd);

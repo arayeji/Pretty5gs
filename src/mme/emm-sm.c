@@ -1030,8 +1030,27 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                  mme_ue->nas_eps.update.value ==
                  OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING_WITH_IMSI_ATTACH)) {
 
-                ogs_assert(OGS_OK ==
-                    sgsap_send_location_update_request(mme_ue));
+                if (sgsap_send_location_update_request(mme_ue) != OGS_OK) {
+                    /*
+                     * SGs/VLR association is down or the send failed. This
+                     * used to be ogs_assert(), which aborted the entire MME
+                     * (FATAL) on a recoverable per-UE condition - a single
+                     * combined TA/LA update while the MSC/VLR link was
+                     * unavailable would crash the daemon.
+                     *
+                     * Instead reject the combined update with "CS domain not
+                     * available" (TS 24.301), so the UE stays EPS-attached and
+                     * stops attempting the CS leg, and release the context.
+                     */
+                    ogs_error("[%s] Combined TAU: SGsAP Location-Update not "
+                            "sent (VLR/SGs unavailable); rejecting CS domain",
+                            mme_ue->imsi_bcd);
+                    r = nas_eps_send_tau_reject(enb_ue, mme_ue,
+                            OGS_NAS_EMM_CAUSE_CS_DOMAIN_NOT_AVAILABLE);
+                    ogs_expect(r == OGS_OK);
+                    OGS_FSM_TRAN(s, &emm_state_exception);
+                    break;
+                }
 
             } else {
 
@@ -1162,15 +1181,33 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                     OGS_NAS_SERVICE_TYPE_CS_FALLBACK_EMERGENCY_CALL_FROM_UE) {
                     ogs_debug("    MO-CSFB-INDICATION[%d]",
                             mme_ue->nas_eps.service.value);
-                    ogs_assert(OGS_OK ==
-                        sgsap_send_mo_csfb_indication(mme_ue));
+                    if (sgsap_send_mo_csfb_indication(mme_ue) != OGS_OK) {
+                        /* Was ogs_assert() - SGs/VLR down must not abort MME */
+                        ogs_error("[%s] MO-CSFB-Indication not sent "
+                                "(VLR/SGs unavailable); rejecting CSFB",
+                                mme_ue->imsi_bcd);
+                        r = nas_eps_send_service_reject(enb_ue, mme_ue,
+                            OGS_NAS_EMM_CAUSE_CS_DOMAIN_NOT_AVAILABLE);
+                        ogs_expect(r == OGS_OK);
+                        MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
+                        break;
+                    }
                 } else if (mme_ue->nas_eps.service.value ==
                         OGS_NAS_SERVICE_TYPE_CS_FALLBACK_TO_UE) {
                     ogs_debug("    SERVICE_REQUEST[%d]",
                             mme_ue->nas_eps.service.value);
-                    ogs_assert(OGS_OK ==
-                        sgsap_send_service_request(mme_ue, SGSAP_EMM_IDLE_MODE)
-                    );
+                    if (sgsap_send_service_request(
+                            mme_ue, SGSAP_EMM_IDLE_MODE) != OGS_OK) {
+                        /* Was ogs_assert() - SGs/VLR down must not abort MME */
+                        ogs_error("[%s] SGsAP Service-Request not sent "
+                                "(VLR/SGs unavailable); rejecting CSFB",
+                                mme_ue->imsi_bcd);
+                        r = nas_eps_send_service_reject(enb_ue, mme_ue,
+                            OGS_NAS_EMM_CAUSE_CS_DOMAIN_NOT_AVAILABLE);
+                        ogs_expect(r == OGS_OK);
+                        MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
+                        break;
+                    }
                 } else {
                     ogs_warn(" Unknown CSFB Service Type[%d]",
                             mme_ue->nas_eps.service.value);
@@ -1207,15 +1244,33 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                     OGS_NAS_SERVICE_TYPE_CS_FALLBACK_EMERGENCY_CALL_FROM_UE) {
                     ogs_debug("    MO-CSFB-INDICATION[%d]",
                             mme_ue->nas_eps.service.value);
-                    ogs_assert(OGS_OK ==
-                        sgsap_send_mo_csfb_indication(mme_ue));
+                    if (sgsap_send_mo_csfb_indication(mme_ue) != OGS_OK) {
+                        /* Was ogs_assert() - SGs/VLR down must not abort MME */
+                        ogs_error("[%s] MO-CSFB-Indication not sent "
+                                "(VLR/SGs unavailable); rejecting CSFB",
+                                mme_ue->imsi_bcd);
+                        r = nas_eps_send_service_reject(enb_ue, mme_ue,
+                            OGS_NAS_EMM_CAUSE_CS_DOMAIN_NOT_AVAILABLE);
+                        ogs_expect(r == OGS_OK);
+                        MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
+                        break;
+                    }
                 } else if (mme_ue->nas_eps.service.value ==
                         OGS_NAS_SERVICE_TYPE_CS_FALLBACK_TO_UE) {
                     ogs_debug("    SERVICE_REQUEST[%d]",
                             mme_ue->nas_eps.service.value);
-                    ogs_assert(OGS_OK ==
-                        sgsap_send_service_request(
-                            mme_ue, SGSAP_EMM_CONNECTED_MODE));
+                    if (sgsap_send_service_request(
+                            mme_ue, SGSAP_EMM_CONNECTED_MODE) != OGS_OK) {
+                        /* Was ogs_assert() - SGs/VLR down must not abort MME */
+                        ogs_error("[%s] SGsAP Service-Request not sent "
+                                "(VLR/SGs unavailable); rejecting CSFB",
+                                mme_ue->imsi_bcd);
+                        r = nas_eps_send_service_reject(enb_ue, mme_ue,
+                            OGS_NAS_EMM_CAUSE_CS_DOMAIN_NOT_AVAILABLE);
+                        ogs_expect(r == OGS_OK);
+                        MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
+                        break;
+                    }
                 } else {
                     ogs_warn(" Unknown CSFB Service Type[%d]",
                             mme_ue->nas_eps.service.value);
@@ -1303,9 +1358,11 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             ogs_debug("Uplink NAS Transport");
             ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
             if (MME_SGSAP_IS_CONNECTED(mme_ue)) {
-                ogs_assert(OGS_OK ==
-                    sgsap_send_uplink_unitdata(mme_ue, &message->emm.
-                        uplink_nas_transport.nas_message_container));
+                /* Was ogs_assert() - SGs/VLR down must not abort MME */
+                if (sgsap_send_uplink_unitdata(mme_ue, &message->emm.
+                        uplink_nas_transport.nas_message_container) != OGS_OK)
+                    ogs_error("[%s] SGsAP Uplink-Unitdata (SMS) not sent "
+                            "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
             } else {
                 S1AP_MME_UE_S1AP_ID_t MME_UE_S1AP_ID;
                 S1AP_ENB_UE_S1AP_ID_t ENB_UE_S1AP_ID;
@@ -1380,8 +1437,9 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             if (MME_NEXT_P_TMSI_IS_AVAILABLE(mme_ue)) {
                 mme_ue_confirm_p_tmsi(mme_ue);
 
-                ogs_assert(OGS_OK ==
-                    sgsap_send_tmsi_reallocation_complete(mme_ue));
+                if (sgsap_send_tmsi_reallocation_complete(mme_ue) != OGS_OK)
+                    ogs_error("[%s] SGsAP TMSI-Reallocation-Complete not sent "
+                            "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
 
                 if (!mme_ue->nas_eps.update.active_flag) {
                     enb_ue->relcause.group = S1AP_Cause_PR_nas;
@@ -2009,8 +2067,9 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
             /* Confirm P-TMSI */
             if (MME_NEXT_P_TMSI_IS_AVAILABLE(mme_ue)) {
                 mme_ue_confirm_p_tmsi(mme_ue);
-                ogs_assert(OGS_OK ==
-                    sgsap_send_tmsi_reallocation_complete(mme_ue));
+                if (sgsap_send_tmsi_reallocation_complete(mme_ue) != OGS_OK)
+                    ogs_error("[%s] SGsAP TMSI-Reallocation-Complete not sent "
+                            "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
             }
 
             mme_metrics_attach_success(mme_ue);
@@ -2078,8 +2137,9 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
             if (MME_NEXT_P_TMSI_IS_AVAILABLE(mme_ue)) {
                 mme_ue_confirm_p_tmsi(mme_ue);
 
-                ogs_assert(OGS_OK ==
-                    sgsap_send_tmsi_reallocation_complete(mme_ue));
+                if (sgsap_send_tmsi_reallocation_complete(mme_ue) != OGS_OK)
+                    ogs_error("[%s] SGsAP TMSI-Reallocation-Complete not sent "
+                            "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
 
                 if (!mme_ue->nas_eps.update.active_flag) {
                     enb_ue->relcause.group = S1AP_Cause_PR_nas;
