@@ -400,7 +400,9 @@ void mme_admin_detach_ue(mme_ue_t *mme_ue, bool force)
     ogs_assert(r != OGS_ERROR);
 
     if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
-        ogs_assert(OGS_OK == sgsap_send_detach_indication(mme_ue));
+        if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
+            ogs_error("[%s] SGsAP Detach-Indication not sent "
+                    "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
     } else {
         enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
         if (enb_ue) {
@@ -712,22 +714,25 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         break;
     case MME_PAGING_TYPE_CS_CALL_SERVICE:
         if (failed == true) {
-            ogs_assert(OGS_OK ==
-                sgsap_send_paging_reject(
-                    mme_ue, SGSAP_SGS_CAUSE_UE_UNREACHABLE));
+            if (sgsap_send_paging_reject(
+                    mme_ue, SGSAP_SGS_CAUSE_UE_UNREACHABLE) != OGS_OK)
+                ogs_error("[%s] SGsAP Paging-Reject not sent "
+                        "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
         } else {
             /* Nothing */
         }
         break;
     case MME_PAGING_TYPE_SMS_SERVICE:
         if (failed == true) {
-            ogs_assert(OGS_OK ==
-                sgsap_send_paging_reject(
-                    mme_ue, SGSAP_SGS_CAUSE_UE_UNREACHABLE));
+            if (sgsap_send_paging_reject(
+                    mme_ue, SGSAP_SGS_CAUSE_UE_UNREACHABLE) != OGS_OK)
+                ogs_error("[%s] SGsAP Paging-Reject not sent "
+                        "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
         } else {
-            ogs_assert(OGS_OK ==
-                sgsap_send_service_request(
-                    mme_ue, SGSAP_EMM_CONNECTED_MODE));
+            if (sgsap_send_service_request(
+                    mme_ue, SGSAP_EMM_CONNECTED_MODE) != OGS_OK)
+                ogs_error("[%s] SGsAP Service-Request not sent "
+                        "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
         }
         break;
     case MME_PAGING_TYPE_DETACH_TO_UE:

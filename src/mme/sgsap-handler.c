@@ -675,9 +675,11 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
         } else if (SMS_SERVICE_INDICATOR(mme_ue)) {
-            ogs_assert(OGS_OK ==
-                sgsap_send_service_request(
-                    mme_ue, SGSAP_EMM_CONNECTED_MODE));
+            /* Was ogs_assert() - SGs/VLR down must not abort MME */
+            if (sgsap_send_service_request(
+                    mme_ue, SGSAP_EMM_CONNECTED_MODE) != OGS_OK)
+                ogs_error("[%s] SGsAP Service-Request not sent "
+                        "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
         } else {
             sgs_cause = SGSAP_SGS_CAUSE_MT_CS_FALLBACK_REJECT_BY_USER;
             goto paging_reject;
