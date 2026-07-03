@@ -966,19 +966,52 @@ void smf_gsm_state_wait_pfcp_establishment(ogs_fsm_t *s, smf_event_t *e)
                             pfcp_cause ==
                             OGS_PFCP_CAUSE_RULE_CREATION_MODIFICATION_FAILURE &&
                             e->pkbuf) {
-                        uint64_t orphan_seid = 0;
+                        uint64_t orphan_up_seid = 0, orphan_cp_seid = 0;
+                        smf_sess_t *conflict_sess = NULL;
+                        char buf1[OGS_ADDRSTRLEN];
 
                         if (smf_pfcp_parse_travelping_conflict_seid(
-                                    e->pkbuf, &orphan_seid)) {
+                                    e->pkbuf,
+                                    &orphan_up_seid, &orphan_cp_seid) &&
+                                (conflict_sess = smf_sess_find_active_by_seid(
+                                    orphan_cp_seid)) != NULL) {
+                            /*
+                             * The "conflicting" UPF session belongs to a LIVE
+                             * session on this SMF: another PDN (often the same
+                             * UE on a different APN provisioned with the same
+                             * static UE IP) legitimately owns this IP on the
+                             * UPF. Purging it would destroy that user's
+                             * user plane while its control-plane context
+                             * stays behind, leaving an SMF<->UPF mismatch.
+                             * Reject the new session instead.
+                             */
+                            smf_ue_t *conflict_ue =
+                                smf_ue_find_by_id(conflict_sess->smf_ue_id);
+                            ogs_error("[%s] UE IP conflict on UPF with LIVE "
+                                    "session [%s APN:%s IP:%s seid:0x%llx]; "
+                                    "not purging - rejecting the new session. "
+                                    "Check static UE IP provisioning: two "
+                                    "PDNs were assigned the same address",
+                                    smf_log_id(
+                                        smf_ue_find_by_id(sess->smf_ue_id)),
+                                    conflict_ue ? conflict_ue->imsi_bcd : "-",
+                                    conflict_sess->session.name ?
+                                        conflict_sess->session.name : "-",
+                                    conflict_sess->ipv4 ?
+                                        OGS_INET_NTOP(
+                                            &conflict_sess->ipv4->addr,
+                                            buf1) : "-",
+                                    (unsigned long long)orphan_up_seid);
+                        } else if (orphan_up_seid) {
                             ogs_warn("[%s] UE IP conflict on UPF, "
                                     "purging orphan SEID=0x%llx",
                                     smf_log_id(
                                         smf_ue_find_by_id(sess->smf_ue_id)),
-                                    (unsigned long long)orphan_seid);
+                                    (unsigned long long)orphan_up_seid);
                             sess->sm_data.pfcp_ue_ip_purge_pending = true;
                             sess->sm_data.pfcp_ue_ip_retry_done = true;
                             if (smf_epc_pfcp_send_orphan_session_purge(
-                                        sess, orphan_seid) == OGS_OK)
+                                        sess, orphan_up_seid) == OGS_OK)
                                 break;
                             sess->sm_data.pfcp_ue_ip_purge_pending = false;
                         } else {
