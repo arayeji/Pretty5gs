@@ -326,7 +326,13 @@ bool smf_apn_radius_ip_assignment_enabled(const char *apn)
     return cfg->skip ? false : cfg->ip_assignment;
 }
 
-static void smf_apn_radius_cfg_add(
+void smf_apn_radius_cfg_reset(void)
+{
+    memset(self.apn_radius, 0, sizeof(self.apn_radius));
+    self.num_apn_radius = 0;
+}
+
+void smf_apn_radius_cfg_add(
         const char *apn, const smf_apn_radius_cfg_t *tmpl)
 {
     smf_apn_radius_cfg_t *slot = NULL;
@@ -370,6 +376,97 @@ static void smf_apn_radius_cfg_add(
             slot->apn, slot->auth, slot->ip_assignment, slot->skip);
 }
 
+void smf_apn_radius_parse_session_list(ogs_yaml_iter_t *parent_iter)
+{
+    yaml_document_t *document = ogs_app()->document;
+    ogs_yaml_iter_t sess_array, sess_iter;
+
+    ogs_assert(parent_iter);
+    ogs_assert(document);
+
+    ogs_yaml_iter_recurse(parent_iter, &sess_array);
+
+    do {
+        const char *dnn[OGS_MAX_NUM_OF_DNN];
+        int num_of_dnn = 0;
+        bool have_radius = false;
+        smf_apn_radius_cfg_t cfg;
+        int i;
+
+        /* Defaults: no auth, no IP from RADIUS, not skipped
+         * (accounting & co. still sent). */
+        memset(&cfg, 0, sizeof cfg);
+
+        if (ogs_yaml_iter_type(&sess_array) == YAML_MAPPING_NODE) {
+            memcpy(&sess_iter, &sess_array, sizeof(ogs_yaml_iter_t));
+        } else if (ogs_yaml_iter_type(&sess_array) == YAML_SEQUENCE_NODE) {
+            if (!ogs_yaml_iter_next(&sess_array))
+                break;
+            ogs_yaml_iter_recurse(&sess_array, &sess_iter);
+        } else if (ogs_yaml_iter_type(&sess_array) == YAML_SCALAR_NODE) {
+            break;
+        } else
+            ogs_assert_if_reached();
+
+        while (ogs_yaml_iter_next(&sess_iter)) {
+            const char *sess_key = ogs_yaml_iter_key(&sess_iter);
+            ogs_assert(sess_key);
+            if (!strcmp(sess_key, "apn") || !strcmp(sess_key, "dnn")) {
+                yaml_node_t *dnn_node = yaml_document_get_node(
+                        document, sess_iter.pair->value);
+                if (dnn_node && dnn_node->type == YAML_SEQUENCE_NODE) {
+                    ogs_yaml_iter_t dnn_sq;
+                    ogs_yaml_iter_recurse(&sess_iter, &dnn_sq);
+                    while (ogs_yaml_iter_next(&dnn_sq) &&
+                            num_of_dnn < OGS_MAX_NUM_OF_DNN) {
+                        const char *dv = ogs_yaml_iter_value(&dnn_sq);
+                        if (dv && *dv)
+                            dnn[num_of_dnn++] = dv;
+                    }
+                } else {
+                    const char *dv = ogs_yaml_iter_value(&sess_iter);
+                    if (dv && *dv && num_of_dnn < OGS_MAX_NUM_OF_DNN)
+                        dnn[num_of_dnn++] = dv;
+                }
+            } else if (!strcmp(sess_key, "radius")) {
+                ogs_yaml_iter_t rad_iter;
+                ogs_yaml_iter_recurse(&sess_iter, &rad_iter);
+                have_radius = true;
+                while (ogs_yaml_iter_next(&rad_iter)) {
+                    const char *rk = ogs_yaml_iter_key(&rad_iter);
+                    ogs_assert(rk);
+                    if (!strcmp(rk, "auth") ||
+                            !strcmp(rk, "authentication")) {
+                        cfg.auth = ogs_yaml_iter_bool(&rad_iter);
+                    } else if (!strcmp(rk, "no_auth") ||
+                            !strcmp(rk, "no_authentication")) {
+                        cfg.auth = !ogs_yaml_iter_bool(&rad_iter);
+                    } else if (!strcmp(rk, "ip_assignment") ||
+                            !strcmp(rk, "use_framed_ip")) {
+                        cfg.ip_assignment = ogs_yaml_iter_bool(&rad_iter);
+                    } else if (!strcmp(rk, "no_ip_assignment")) {
+                        cfg.ip_assignment = !ogs_yaml_iter_bool(&rad_iter);
+                    } else if (!strcmp(rk, "skip")) {
+                        cfg.skip = ogs_yaml_iter_bool(&rad_iter);
+                    } else
+                        ogs_warn("unknown key `%s` in smf.session.radius",
+                                rk);
+                }
+            }
+            /* everything else (subnet, gateway, dev, range) is parsed
+             * by the pfcp library */
+        }
+
+        if (have_radius) {
+            if (num_of_dnn == 0)
+                ogs_warn("smf.session entry has a `radius:` block "
+                        "but no dnn/apn; ignored");
+            for (i = 0; i < num_of_dnn; i++)
+                smf_apn_radius_cfg_add(dnn[i], &cfg);
+        }
+    } while (ogs_yaml_iter_type(&sess_array) == YAML_SEQUENCE_NODE);
+}
+
 static int smf_context_prepare(void)
 {
     self.diam_config->cnf_port = DIAMETER_PORT;
@@ -396,8 +493,7 @@ static int smf_context_prepare(void)
     self.radius.use_framed_ip_for_ue = true;
 
     /* Per-APN RADIUS overrides; re-populated on every config parse. */
-    memset(self.apn_radius, 0, sizeof(self.apn_radius));
-    self.num_apn_radius = 0;
+    smf_apn_radius_cfg_reset();
 
     self.default_pdr_precedence = OGS_PFCP_DEFAULT_PDR_PRECEDENCE;
 
@@ -1557,112 +1653,7 @@ int smf_context_parse_config(void)
                      * library; here we only pick up the per-APN
                      * `radius:` block sitting beside the APN definition.
                      */
-                    ogs_yaml_iter_t sess_array, sess_iter;
-                    ogs_yaml_iter_recurse(&smf_iter, &sess_array);
-
-                    do {
-                        const char *dnn[OGS_MAX_NUM_OF_DNN];
-                        int num_of_dnn = 0;
-                        bool have_radius = false;
-                        smf_apn_radius_cfg_t cfg;
-                        int i;
-
-                        /* Defaults: no auth, no IP from RADIUS, not
-                         * skipped (accounting & co. still sent). */
-                        memset(&cfg, 0, sizeof cfg);
-
-                        if (ogs_yaml_iter_type(&sess_array) ==
-                                YAML_MAPPING_NODE) {
-                            memcpy(&sess_iter, &sess_array,
-                                    sizeof(ogs_yaml_iter_t));
-                        } else if (ogs_yaml_iter_type(&sess_array) ==
-                                YAML_SEQUENCE_NODE) {
-                            if (!ogs_yaml_iter_next(&sess_array))
-                                break;
-                            ogs_yaml_iter_recurse(&sess_array, &sess_iter);
-                        } else if (ogs_yaml_iter_type(&sess_array) ==
-                                YAML_SCALAR_NODE) {
-                            break;
-                        } else
-                            ogs_assert_if_reached();
-
-                        while (ogs_yaml_iter_next(&sess_iter)) {
-                            const char *sess_key =
-                                ogs_yaml_iter_key(&sess_iter);
-                            ogs_assert(sess_key);
-                            if (!strcmp(sess_key, "apn") ||
-                                    !strcmp(sess_key, "dnn")) {
-                                yaml_node_t *dnn_node =
-                                    yaml_document_get_node(document,
-                                            sess_iter.pair->value);
-                                if (dnn_node && dnn_node->type ==
-                                        YAML_SEQUENCE_NODE) {
-                                    ogs_yaml_iter_t dnn_sq;
-                                    ogs_yaml_iter_recurse(
-                                            &sess_iter, &dnn_sq);
-                                    while (ogs_yaml_iter_next(&dnn_sq) &&
-                                            num_of_dnn <
-                                                OGS_MAX_NUM_OF_DNN) {
-                                        const char *dv =
-                                            ogs_yaml_iter_value(&dnn_sq);
-                                        if (dv && *dv)
-                                            dnn[num_of_dnn++] = dv;
-                                    }
-                                } else {
-                                    const char *dv =
-                                        ogs_yaml_iter_value(&sess_iter);
-                                    if (dv && *dv &&
-                                            num_of_dnn < OGS_MAX_NUM_OF_DNN)
-                                        dnn[num_of_dnn++] = dv;
-                                }
-                            } else if (!strcmp(sess_key, "radius")) {
-                                ogs_yaml_iter_t rad_iter;
-                                ogs_yaml_iter_recurse(&sess_iter, &rad_iter);
-                                have_radius = true;
-                                while (ogs_yaml_iter_next(&rad_iter)) {
-                                    const char *rk =
-                                        ogs_yaml_iter_key(&rad_iter);
-                                    ogs_assert(rk);
-                                    if (!strcmp(rk, "auth") ||
-                                            !strcmp(rk, "authentication")) {
-                                        cfg.auth =
-                                            ogs_yaml_iter_bool(&rad_iter);
-                                    } else if (!strcmp(rk, "no_auth") ||
-                                            !strcmp(rk,
-                                                "no_authentication")) {
-                                        cfg.auth =
-                                            !ogs_yaml_iter_bool(&rad_iter);
-                                    } else if (!strcmp(rk,
-                                                "ip_assignment") ||
-                                            !strcmp(rk, "use_framed_ip")) {
-                                        cfg.ip_assignment =
-                                            ogs_yaml_iter_bool(&rad_iter);
-                                    } else if (!strcmp(rk,
-                                                "no_ip_assignment")) {
-                                        cfg.ip_assignment =
-                                            !ogs_yaml_iter_bool(&rad_iter);
-                                    } else if (!strcmp(rk, "skip")) {
-                                        cfg.skip =
-                                            ogs_yaml_iter_bool(&rad_iter);
-                                    } else
-                                        ogs_warn("unknown key `%s` in "
-                                                "smf.session.radius", rk);
-                                }
-                            }
-                            /* everything else (subnet, gateway, dev,
-                             * range) is parsed by the pfcp library */
-                        }
-
-                        if (have_radius) {
-                            if (num_of_dnn == 0)
-                                ogs_warn("smf.session entry has a "
-                                        "`radius:` block but no dnn/apn; "
-                                        "ignored");
-                            for (i = 0; i < num_of_dnn; i++)
-                                smf_apn_radius_cfg_add(dnn[i], &cfg);
-                        }
-                    } while (ogs_yaml_iter_type(&sess_array) ==
-                            YAML_SEQUENCE_NODE);
+                    smf_apn_radius_parse_session_list(&smf_iter);
                 } else if (!strcmp(smf_key, "default")) {
                     /* handle config in sbi library */
                 } else if (!strcmp(smf_key, "sbi")) {

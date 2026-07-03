@@ -225,6 +225,19 @@ typedef struct smf_apn_radius_cfg_s {
 /* NULL when the APN has no explicit `radius:` block (defaults apply). */
 const smf_apn_radius_cfg_t *smf_apn_radius_cfg_find(const char *apn);
 
+/* Table maintenance, used by startup parse and SIGHUP reload. */
+void smf_apn_radius_cfg_reset(void);
+void smf_apn_radius_cfg_add(const char *apn, const smf_apn_radius_cfg_t *tmpl);
+
+/*
+ * Scan a smf.session YAML list and (re)register every per-APN `radius:`
+ * block found in it. `parent_iter` must be positioned on the `session`
+ * key. Call smf_apn_radius_cfg_reset() first for full-replace semantics
+ * (SIGHUP); the startup parse relies on smf_context_prepare() doing the
+ * reset.
+ */
+void smf_apn_radius_parse_session_list(ogs_yaml_iter_t *parent_iter);
+
 /* Effective per-APN switches (defaults applied when not configured). */
 bool smf_apn_radius_skip(const char *apn);
 bool smf_apn_radius_auth_enabled(const char *apn);

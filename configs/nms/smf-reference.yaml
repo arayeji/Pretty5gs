@@ -53,15 +53,24 @@ smf:
         port: 9090
 
   session:
+    # Per-APN RADIUS block (all keys optional, defaults shown here).
+    # Keyed by APN name: for APNs spanning several entries (IPv4+IPv6)
+    # set it on one entry or repeat it identically on all of them.
     - subnet: 10.45.0.0/16
       gateway: 10.45.0.1
       dnn: internet
+      radius:
+        auth: false           # true = Access-Request required (Access-Reject blocks the session)
+        ip_assignment: false  # true = UE IP from Framed-IP-Address / Framed-IPv6-Prefix (needs auth: true)
+        skip: false           # true = no RADIUS at all for this APN (no auth, no accounting)
     - subnet: 2001:db8:cafe::/48
       gateway: 2001:db8:cafe::1
       dnn: internet
     - subnet: 10.46.0.0/16
       gateway: 10.46.0.1
       dnn: ims
+      radius:
+        skip: true
 
   dns:
     - 8.8.8.8
