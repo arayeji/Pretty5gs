@@ -4524,13 +4524,13 @@ void mme_pgw_remove_all(void)
 static bool mme_ue_inbound_roam_on_tai(
         mme_ue_t *mme_ue, const ogs_eps_tai_t *tai)
 {
-    ogs_plmn_id_t home_plmn_id;
-
     if (!mme_ue || !MME_UE_HAVE_IMSI(mme_ue) || !tai)
         return false;
 
-    ogs_plmn_id_from_imsi_bcd(mme_ue->imsi_bcd, &home_plmn_id);
-    return memcmp(&home_plmn_id, &tai->plmn_id, OGS_PLMN_ID_LEN) != 0;
+    /* Home iff the IMSI starts with the serving TAI PLMN digits; the
+     * TAI PLMN carries its true MNC length, unlike a PLMN derived from
+     * the IMSI (see ogs_plmn_id_imsi_prefix_match). */
+    return !ogs_plmn_id_imsi_prefix_match(mme_ue->imsi_bcd, &tai->plmn_id);
 }
 
 static void mme_gtpc_client_parse_plmn_id_key(
@@ -4603,7 +4603,6 @@ static bool compare_pgw_info(
         const mme_pgw_t *pgw, const mme_sess_t *sess)
 {
     mme_ue_t *mme_ue = NULL;
-    ogs_plmn_id_t home_plmn_id;
     int i;
 
     ogs_assert(pgw);
@@ -4627,11 +4626,10 @@ static bool compare_pgw_info(
         if (pgw->tac[i] == mme_ue->tai.tac)
             return true;
 
-    if (pgw->imsi_plmn_present && MME_UE_HAVE_IMSI(mme_ue)) {
-        ogs_plmn_id_from_imsi_bcd(mme_ue->imsi_bcd, &home_plmn_id);
-        if (memcmp(&pgw->imsi_plmn_id, &home_plmn_id, OGS_PLMN_ID_LEN) == 0)
-            return true;
-    }
+    if (pgw->imsi_plmn_present && MME_UE_HAVE_IMSI(mme_ue) &&
+            ogs_plmn_id_imsi_prefix_match(
+                mme_ue->imsi_bcd, &pgw->imsi_plmn_id))
+        return true;
 
     if (!mme_ue_inbound_roam_on_tai(mme_ue, &mme_ue->tai) &&
             pgw->serving_plmn_present &&
@@ -5107,6 +5105,60 @@ mme_hssmap_t *mme_hssmap_find_by_imsi_bcd(const char *imsi_bcd)
     return NULL;
 }
 
+/*
+ * Resolve the home PLMN of an IMSI, preferring configured PLMNs
+ * (which carry their true MNC length) over the digit-6 heuristic in
+ * ogs_plmn_id_from_imsi_bcd(). Sources checked: hss_map, gtpc client
+ * smf/sgwc imsi_plmn rules, access_control PLMN entries.
+ */
+void mme_home_plmn_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id)
+{
+    mme_hssmap_t *hssmap = NULL;
+    mme_pgw_t *pgw = NULL;
+    mme_sgw_t *sgw = NULL;
+    int i;
+
+    ogs_assert(imsi_bcd);
+    ogs_assert(plmn_id);
+
+    ogs_list_for_each(&self.hssmap_list, hssmap) {
+        if (ogs_plmn_id_imsi_prefix_match(imsi_bcd, &hssmap->plmn_id)) {
+            memcpy(plmn_id, &hssmap->plmn_id, sizeof(*plmn_id));
+            return;
+        }
+    }
+
+    ogs_list_for_each(&self.pgw_list, pgw) {
+        if (pgw->imsi_plmn_present &&
+                ogs_plmn_id_imsi_prefix_match(
+                    imsi_bcd, &pgw->imsi_plmn_id)) {
+            memcpy(plmn_id, &pgw->imsi_plmn_id, sizeof(*plmn_id));
+            return;
+        }
+    }
+
+    ogs_list_for_each(&self.sgw_list, sgw) {
+        if (sgw->imsi_plmn_present &&
+                ogs_plmn_id_imsi_prefix_match(
+                    imsi_bcd, &sgw->imsi_plmn_id)) {
+            memcpy(plmn_id, &sgw->imsi_plmn_id, sizeof(*plmn_id));
+            return;
+        }
+    }
+
+    for (i = 0; i < self.num_of_access_control; i++) {
+        if (self.access_control[i].plmn_id_configured &&
+                ogs_plmn_id_imsi_prefix_match(
+                    imsi_bcd, &self.access_control[i].plmn_id)) {
+            memcpy(plmn_id, &self.access_control[i].plmn_id,
+                    sizeof(*plmn_id));
+            return;
+        }
+    }
+
+    ogs_plmn_id_from_imsi_bcd(imsi_bcd, plmn_id);
+}
+
 static bool mme_imsi_acl_match(const char *imsi_bcd)
 {
     int i;
@@ -5148,7 +5200,6 @@ static bool mme_access_control_imsi_prefix_match(const char *imsi_bcd)
 uint8_t mme_emm_cause_from_access_control_imsi_bcd(const char *imsi_bcd)
 {
     mme_access_control_t *ac = NULL;
-    ogs_plmn_id_t plmn_id;
     int i, best = -1;
     bool has_plmn_acl = false;
 
@@ -5165,8 +5216,7 @@ uint8_t mme_emm_cause_from_access_control_imsi_bcd(const char *imsi_bcd)
 
         has_plmn_acl = true;
 
-        ogs_plmn_id_from_imsi_bcd(imsi_bcd, &plmn_id);
-        if (!memcmp(&plmn_id, &entry->plmn_id, sizeof(ogs_plmn_id_t)))
+        if (ogs_plmn_id_imsi_prefix_match(imsi_bcd, &entry->plmn_id))
             best = i;
     }
 
@@ -5827,7 +5877,6 @@ static bool compare_sgw_info(
         mme_sgw_t *node, enb_ue_t *enb_ue, mme_ue_t *mme_ue)
 {
     int i;
-    ogs_plmn_id_t home_plmn_id;
 
     ogs_assert(node);
     ogs_assert(enb_ue);
@@ -5843,11 +5892,10 @@ static bool compare_sgw_info(
         if (node->e_cell_id[i] == enb_ue->saved.e_cgi.cell_id)
             return true;
 
-    if (node->imsi_plmn_present && mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
-        ogs_plmn_id_from_imsi_bcd(mme_ue->imsi_bcd, &home_plmn_id);
-        if (memcmp(&node->imsi_plmn_id, &home_plmn_id, OGS_PLMN_ID_LEN) == 0)
-            return true;
-    }
+    if (node->imsi_plmn_present && mme_ue && MME_UE_HAVE_IMSI(mme_ue) &&
+            ogs_plmn_id_imsi_prefix_match(
+                mme_ue->imsi_bcd, &node->imsi_plmn_id))
+        return true;
 
     if (!mme_ue_inbound_roam_on_tai(mme_ue, &enb_ue->saved.tai) &&
             node->serving_plmn_present &&

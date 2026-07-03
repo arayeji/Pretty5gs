@@ -130,6 +130,28 @@ void *ogs_nas_to_plmn_id(
     return plmn_id;
 }
 
+/*
+ * True when imsi_bcd starts with the digits of plmn_id (MCC followed by
+ * MNC at the PLMN's own MNC length).
+ *
+ * The MNC length can NOT be derived from an IMSI alone (TS 23.003), so
+ * ogs_plmn_id_from_imsi_bcd()'s digit-6 heuristic misreads any IMSI
+ * whose MSIN begins with '0' (e.g. 43211 0904337493 -> MCC 432 MNC 110
+ * instead of MNC 11). When a *configured* PLMN is available, prefix
+ * matching against it is the only reliable comparison.
+ */
+bool ogs_plmn_id_imsi_prefix_match(
+        const char *imsi_bcd, const ogs_plmn_id_t *plmn_id)
+{
+    char plmn_str[OGS_PLMNIDSTRLEN] = "";
+
+    if (!imsi_bcd || !imsi_bcd[0] || !plmn_id)
+        return false;
+
+    ogs_plmn_id_to_string(plmn_id, plmn_str);
+    return strncmp(imsi_bcd, plmn_str, strlen(plmn_str)) == 0;
+}
+
 char *ogs_plmn_id_mcc_string(const ogs_plmn_id_t *plmn_id)
 {
     ogs_assert(plmn_id);

@@ -1381,6 +1381,11 @@ void mme_hssmap_remove_all(void);
 
 mme_hssmap_t *mme_hssmap_find_by_imsi_bcd(const char *imsi_bcd);
 
+/* Home PLMN of an IMSI; prefers configured PLMNs (hss_map, gtpc client
+ * imsi_plmn rules, access_control) whose digits prefix the IMSI, since
+ * MNC length cannot be derived from the IMSI alone. */
+void mme_home_plmn_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id);
+
 bool mme_imsi_hss_allowed(mme_ue_t *mme_ue);
 
 uint8_t mme_emm_cause_from_access_control_imsi_bcd(const char *imsi_bcd);

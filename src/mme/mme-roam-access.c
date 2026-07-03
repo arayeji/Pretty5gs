@@ -47,12 +47,9 @@ static mme_access_control_t *mme_access_control_find_inbound(
         const char *imsi_bcd)
 {
     mme_context_t *self = mme_self();
-    ogs_plmn_id_t plmn_id;
     int i, best = -1, best_prefix_len = -1;
 
     ogs_assert(imsi_bcd);
-
-    ogs_plmn_id_from_imsi_bcd(imsi_bcd, &plmn_id);
 
     for (i = 0; i < self->num_of_access_control; i++) {
         mme_access_control_t *ac = &self->access_control[i];
@@ -72,7 +69,7 @@ static mme_access_control_t *mme_access_control_find_inbound(
         }
 
         if (ac->plmn_id_configured &&
-                !memcmp(&plmn_id, &ac->plmn_id, sizeof(ogs_plmn_id_t))) {
+                ogs_plmn_id_imsi_prefix_match(imsi_bcd, &ac->plmn_id)) {
             if (best_prefix_len < 5) {
                 best_prefix_len = 5;
                 best = i;
