@@ -48,7 +48,13 @@ void mme_apn_oi_plmn_id(
     ogs_assert(session);
     ogs_assert(oi_plmn_id);
 
-    ogs_plmn_id_from_imsi_bcd(mme_ue->imsi_bcd, &home_plmn_id);
+    /* Home subscriber: OI from the serving TAI PLMN (exact MNC length). */
+    if (!mme_ue_is_inbound_roam(mme_ue)) {
+        memcpy(oi_plmn_id, &mme_ue->tai.plmn_id, OGS_PLMN_ID_LEN);
+        return;
+    }
+
+    mme_home_plmn_from_imsi_bcd(mme_ue->imsi_bcd, &home_plmn_id);
 
     /*
      * TS 23.003 9.1 / TS 23.401 5.10.2:
@@ -64,27 +70,21 @@ void mme_apn_oi_plmn_id(
      * serving/visited TAI PLMN. Using the visited PLMN (LBO) made the SGW-U/UPF
      * reject sessions ("no such NWI: mcinet.mnc012...").
      */
-    if (session->smf_ip.ipv4 || session->smf_ip.ipv6) {
-        memcpy(oi_plmn_id, &home_plmn_id, OGS_PLMN_ID_LEN);
-        return;
-    }
-
-    if (memcmp(&home_plmn_id, &mme_ue->tai.plmn_id, OGS_PLMN_ID_LEN) != 0) {
-        memcpy(oi_plmn_id, &home_plmn_id, OGS_PLMN_ID_LEN);
-        return;
-    }
-
-    memcpy(oi_plmn_id, &mme_ue->tai.plmn_id, OGS_PLMN_ID_LEN);
+    memcpy(oi_plmn_id, &home_plmn_id, OGS_PLMN_ID_LEN);
 }
 
 bool mme_ue_is_inbound_roam(mme_ue_t *mme_ue)
 {
-    ogs_plmn_id_t home_plmn_id;
-
     ogs_assert(mme_ue);
 
-    ogs_plmn_id_from_imsi_bcd(mme_ue->imsi_bcd, &home_plmn_id);
-    return memcmp(&home_plmn_id, &mme_ue->tai.plmn_id, OGS_PLMN_ID_LEN) != 0;
+    if (!MME_UE_HAVE_IMSI(mme_ue))
+        return false;
+
+    /* Home iff the IMSI starts with the serving TAI PLMN digits; the
+     * TAI PLMN carries its true MNC length, unlike a PLMN derived from
+     * the IMSI (see ogs_plmn_id_imsi_prefix_match). */
+    return !ogs_plmn_id_imsi_prefix_match(
+            mme_ue->imsi_bcd, &mme_ue->tai.plmn_id);
 }
 
 int mme_apn_for_gtp(

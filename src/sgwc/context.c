@@ -1688,20 +1688,21 @@ sgwc_ue_t *sgwc_ue_find_by_id(ogs_pool_id_t id)
     return ogs_pool_find_by_id(&sgwc_ue_pool, id);
 }
 
-static bool sgwc_imsi_plmn_is_operator_home(const ogs_plmn_id_t *home_plmn_id)
+/*
+ * IMSI-prefix matching against configured/serving PLMNs (which carry
+ * their true MNC length) instead of deriving a PLMN from the IMSI:
+ * ogs_plmn_id_from_imsi_bcd() misreads any IMSI whose MSIN begins with
+ * '0' (digit-6 heuristic), misclassifying home subscribers as roamers.
+ */
+static bool sgwc_imsi_is_operator_home(const char *imsi_bcd)
 {
     int i;
 
-    ogs_assert(home_plmn_id);
-
-    if (ogs_local_conf()->num_of_serving_plmn_id == 0)
-        return false;
+    ogs_assert(imsi_bcd);
 
     for (i = 0; i < ogs_local_conf()->num_of_serving_plmn_id; i++) {
-        if (ogs_plmn_id_mcc(home_plmn_id) ==
-                ogs_plmn_id_mcc(&ogs_local_conf()->serving_plmn_id[i]) &&
-            ogs_plmn_id_mnc(home_plmn_id) ==
-                ogs_plmn_id_mnc(&ogs_local_conf()->serving_plmn_id[i]))
+        if (ogs_plmn_id_imsi_prefix_match(imsi_bcd,
+                    &ogs_local_conf()->serving_plmn_id[i]))
             return true;
     }
 
@@ -1711,7 +1712,6 @@ static bool sgwc_imsi_plmn_is_operator_home(const ogs_plmn_id_t *home_plmn_id)
 bool sgwc_sess_is_inbound_roam(sgwc_sess_t *sess)
 {
     sgwc_ue_t *sgwc_ue = NULL;
-    ogs_plmn_id_t home_plmn_id;
     ogs_plmn_id_t zero_plmn_id;
 
     ogs_assert(sess);
@@ -1720,21 +1720,15 @@ bool sgwc_sess_is_inbound_roam(sgwc_sess_t *sess)
     if (!sgwc_ue)
         return true;
 
-    ogs_plmn_id_from_imsi_bcd(sgwc_ue->imsi_bcd, &home_plmn_id);
-
-    if (sgwc_imsi_plmn_is_operator_home(&home_plmn_id))
+    if (sgwc_imsi_is_operator_home(sgwc_ue->imsi_bcd))
         return false;
 
     memset(&zero_plmn_id, 0, sizeof(zero_plmn_id));
     if (memcmp(&sess->serving_plmn_id, &zero_plmn_id, OGS_PLMN_ID_LEN) == 0)
         return true;
 
-    if (ogs_plmn_id_mcc(&home_plmn_id) != ogs_plmn_id_mcc(&sess->serving_plmn_id))
-        return true;
-    if (ogs_plmn_id_mnc(&home_plmn_id) != ogs_plmn_id_mnc(&sess->serving_plmn_id))
-        return true;
-
-    return false;
+    return !ogs_plmn_id_imsi_prefix_match(
+            sgwc_ue->imsi_bcd, &sess->serving_plmn_id);
 }
 
 static uint32_t sgwc_inbound_roam_teid(uint32_t raw)
