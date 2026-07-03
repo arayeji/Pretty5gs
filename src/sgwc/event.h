@@ -54,6 +54,7 @@ typedef enum {
     SGWC_EVT_ADMIN_DETACH_SESSION,
     SGWC_EVT_ADMIN_DETACH_SESS_ONE,   /* detach one specific session (sgwc_sess_id) */
     SGWC_EVT_ADMIN_PURGE_ORPHANS,     /* delete all orphan sessions                 */
+    SGWC_EVT_ADMIN_PURGE_SEID,        /* delete one stale SGW-U SEID (NMS audit)    */
 
     SGWC_EVT_ORPHAN_SWEEP,            /* periodic orphan metric + optional purge    */
 
@@ -79,6 +80,11 @@ typedef struct sgwc_event_s {
     int admin_force;
     ogs_pool_id_t sgwc_ue_id;
     ogs_pool_id_t admin_sess_id;  /* SGWC_EVT_ADMIN_DETACH_SESS_ONE: specific session */
+
+    /* SGWC_EVT_ADMIN_PURGE_SEID: raw SGW-U F-SEID to delete + optional
+     * SGW-U address filter (NULL -> the single associated SGW-U peer). */
+    uint64_t admin_seid;
+    ogs_sockaddr_t *admin_upf_addr;
 } sgwc_event_t;
 
 OGS_STATIC_ASSERT(OGS_EVENT_SIZE >= sizeof(sgwc_event_t));

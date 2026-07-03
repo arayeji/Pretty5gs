@@ -161,6 +161,14 @@ typedef struct ogs_metrics_query_s {
     const char *match;     /* ?match=exact for full IMSI match */
     const char *sync;      /* MME: ?sync=sgwc,smf propagate to peers */
     int         orphan;    /* ?orphan=1 filter stale/incomplete sessions */
+
+    /*
+     * ?seid=0x<hex> (or decimal): a raw UP-function F-SEID targeted by the
+     * NMS stale-session audit. Used by /admin/pfcp/purge-seid to delete a
+     * PFCP session on the UPF/SGW-U that the control plane no longer owns.
+     */
+    uint64_t    seid;      /* ?seid=0x... parsed value */
+    int         has_seid;  /* seid was present and parsed */
 } ogs_metrics_query_t;
 
 typedef size_t (*ogs_metrics_custom_ep_hdlr_t)(

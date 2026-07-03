@@ -49,6 +49,16 @@ int sgwc_pfcp_send_session_deletion_request(
 int sgwc_pfcp_send_session_report_response(
         ogs_pfcp_xact_t *xact, sgwc_sess_t *sess, uint8_t cause);
 
+/*
+ * Delete a stale SGW-U PFCP session by raw UP F-SEID, without a local
+ * session context. Used by the NMS stale-session audit (see
+ * /admin/pfcp/purge-seid). `upf_addr` selects the SGW-U peer; when NULL and
+ * exactly one SGW-U is associated, that peer is used. Returns OGS_OK when
+ * the deletion request was sent.
+ */
+int sgwc_pfcp_purge_seid(
+        ogs_sockaddr_t *upf_addr, uint64_t up_seid);
+
 void sgwc_pfcp_request_reassociation(ogs_pfcp_node_t *node);
 
 ogs_pfcp_node_t *sgwc_pfcp_admin_add_sgwu_peer(

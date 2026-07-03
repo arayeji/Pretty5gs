@@ -63,6 +63,15 @@ int smf_epc_pfcp_send_session_deletion_best_effort(smf_sess_t *sess);
 int smf_epc_pfcp_send_orphan_session_purge(
         smf_sess_t *sess, uint64_t upf_seid);
 
+/*
+ * Delete a stale UPF PFCP session by raw UP F-SEID, without a local session
+ * context. Used by the NMS stale-session audit (see /admin/pfcp/purge-seid).
+ * `upf_addr` selects the UPF peer; when NULL and exactly one UPF is
+ * associated, that peer is used. Returns OGS_OK when the deletion request
+ * was sent.
+ */
+int smf_pfcp_purge_seid(ogs_sockaddr_t *upf_addr, uint64_t up_seid);
+
 int smf_epc_pfcp_send_deactivation(smf_sess_t *sess, uint8_t gtp_cause);
 
 int smf_pfcp_send_session_report_response(

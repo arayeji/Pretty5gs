@@ -54,6 +54,8 @@ sgwc_event_t *sgwc_event_new(sgwc_event_e id)
 void sgwc_event_free(sgwc_event_t *e)
 {
     ogs_assert(e);
+    if (e->admin_upf_addr)
+        ogs_freeaddrinfo(e->admin_upf_addr);
     ogs_pool_free(&pool, e);
 }
 
@@ -99,6 +101,8 @@ const char *sgwc_event_get_name(sgwc_event_t *e)
         return "SGWC_EVT_ADMIN_DETACH_SESS_ONE";
     case SGWC_EVT_ADMIN_PURGE_ORPHANS:
         return "SGWC_EVT_ADMIN_PURGE_ORPHANS";
+    case SGWC_EVT_ADMIN_PURGE_SEID:
+        return "SGWC_EVT_ADMIN_PURGE_SEID";
 
     case SGWC_EVT_ORPHAN_SWEEP:
         return "SGWC_EVT_ORPHAN_SWEEP";

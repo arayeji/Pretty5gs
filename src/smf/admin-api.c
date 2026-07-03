@@ -15,6 +15,7 @@
 
 #include <stdarg.h>
 #include <string.h>
+#include <inttypes.h>
 
 #define ADMIN_HTTP_ACCEPTED            202
 #define ADMIN_HTTP_BAD_REQUEST         400
@@ -210,6 +211,112 @@ static int smf_admin_session_detach(const ogs_metrics_query_t *q,
     return ADMIN_HTTP_ACCEPTED;
 }
 
+/*
+ * GET /admin/seids
+ *
+ * Lightweight companion for the NMS stale-session audit: emits ONLY the UPF
+ * F-SEIDs this SMF currently owns, one hex value per line, no JSON tree. At
+ * 200k sessions this is ~2 MB and a single list pass. The NMS diffs this set
+ * against `vppctl show upf association` on the PGW-U/UPF and purges (via
+ * /admin/pfcp/purge-seid) any SEID present on VPP but absent here.
+ */
+static size_t smf_admin_list_seids(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
+{
+    smf_ue_t *ue = NULL;
+    smf_sess_t *sess = NULL;
+    char tmp[32];
+    size_t pos = 0;
+    bool overflow = false;
+
+    (void)page; (void)page_size; (void)q;
+
+    ogs_metrics_dump_lock();
+    ogs_list_for_each(&smf_self()->smf_ue_list, ue) {
+        ogs_list_for_each(&ue->sess_list, sess) {
+            int n;
+            if (!sess->upf_n4_seid)
+                continue;
+            n = snprintf(tmp, sizeof(tmp), "0x%"PRIx64"\n",
+                    sess->upf_n4_seid);
+            if (n > 0 && pos + (size_t)n < buflen) {
+                memcpy(buf + pos, tmp, (size_t)n);
+                pos += (size_t)n;
+            } else if (n > 0) {
+                overflow = true;
+            }
+        }
+    }
+    ogs_metrics_dump_unlock();
+
+    /*
+     * A truncated SEID list would make the NMS treat the missing sessions
+     * as stale and purge them. Returning >= buflen-1 makes the HTTP layer
+     * double the buffer and call us again until everything fits.
+     */
+    if (overflow)
+        return buflen;
+
+    return pos;
+}
+
+/*
+ * POST /admin/pfcp/purge-seid?seid=0x<hex>[&ip=<upf-addr>]
+ *
+ * Deletes a single stale PFCP session on the UPF by raw UP F-SEID, for SEIDs
+ * the NMS audit found on VPP but not in /admin/seids. No local session
+ * context is needed or touched; SMF just emits a PFCP Session Deletion to
+ * the UPF. With one associated UPF the address is optional; with several,
+ * pass ?ip= to name the owner.
+ */
+static int smf_admin_purge_seid(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    ogs_sockaddr_t *upf_addr = NULL;
+
+    if (!q || !q->has_seid || !q->seid) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_BAD_REQUEST, "missing or invalid ?seid=0x...");
+        return ADMIN_HTTP_BAD_REQUEST;
+    }
+
+    if (q->ip && *q->ip) {
+        if (ogs_getaddrinfo(&upf_addr, AF_UNSPEC, q->ip,
+                    ogs_pfcp_self()->pfcp_port, 0) != OGS_OK || !upf_addr) {
+            *body_len = fmt_json_status(body, body_cap,
+                    ADMIN_HTTP_BAD_REQUEST, "invalid ?ip=%s", q->ip);
+            return ADMIN_HTTP_BAD_REQUEST;
+        }
+    }
+
+    smf_event_t *e = smf_event_new(SMF_EVT_ADMIN_PURGE_SEID);
+    if (!e) {
+        if (upf_addr) ogs_freeaddrinfo(upf_addr);
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_INTERNAL_ERROR, "event_new failed");
+        return ADMIN_HTTP_INTERNAL_ERROR;
+    }
+    e->admin_seid = q->seid;
+    e->admin_upf_addr = upf_addr; /* freed by the event handler */
+
+    int rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        if (upf_addr) ogs_freeaddrinfo(upf_addr);
+        ogs_event_free(e);
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
+        return ADMIN_HTTP_SERVICE_UNAVAIL;
+    }
+
+    ogs_pollset_notify(ogs_app()->pollset);
+
+    *body_len = fmt_json_status(body, body_cap, ADMIN_HTTP_ACCEPTED,
+            "purge-seid queued seid=0x%"PRIx64"%s%s",
+            q->seid, (q->ip && *q->ip) ? " ip=" : "",
+            (q->ip && *q->ip) ? q->ip : "");
+    return ADMIN_HTTP_ACCEPTED;
+}
+
 void smf_admin_api_register(void)
 {
     ogs_metrics_register_custom_ep(smf_dump_runtime_config,
@@ -236,5 +343,14 @@ void smf_admin_api_register(void)
             OGS_METRICS_ADMIN_METHOD_GET);
     ogs_metrics_register_admin_ep(smf_admin_session_detach,
             "/admin/session/detach",
+            OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
+
+    /* SEID-only listing for the NMS stale-session audit (lightweight). */
+    ogs_metrics_register_custom_ep(smf_admin_list_seids,
+            "/admin/seids");
+
+    /* Purge one stale UPF SEID: POST /admin/pfcp/purge-seid?seid=0x..[&ip=] */
+    ogs_metrics_register_admin_ep(smf_admin_purge_seid,
+            "/admin/pfcp/purge-seid",
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
 }
