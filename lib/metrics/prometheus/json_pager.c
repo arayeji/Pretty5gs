@@ -109,12 +109,20 @@ json_pager_finalize(cJSON *root, char *buf, size_t buflen)
         memcpy(buf, tmp, need + 1);
         outlen = need;
     } else {
-        if (buflen >= 3) {
+        /*
+         * The rendered JSON does not fit. Historically this returned 2
+         * with "{}" in the buffer, which the HTTP layer treated as a
+         * complete (tiny) response -- so /ue-info?page=-1 silently
+         * degraded to "{}" once the UE count pushed the document past
+         * the initial 512 KB buffer. serve_json_from_dumper() grows the
+         * buffer and retries whenever the dumper returns >= buflen-1,
+         * so signal "too small" by claiming the buffer was filled.
+         */
+        if (buflen >= 3)
             memcpy(buf, "{}", 3);
-            outlen = 2;
-        } else if (buflen) {
+        else if (buflen)
             buf[0] = '\0';
-        }
+        outlen = buflen;
     }
     cJSON_free(tmp);
     cJSON_Delete(root);

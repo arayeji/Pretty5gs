@@ -333,8 +333,11 @@ static size_t sgwc_admin_list_sessions(char *buf, size_t buflen,
             continue;
 
         ogs_list_for_each(&ue->sess_list, sess) {
+            /* Keep in sync with sgwc_orphan_sweep(): bearer-less stubs
+             * count as orphans too. */
+            bool no_bearer = ogs_list_empty(&sess->bearer_list);
             bool is_orphan = (!sess->metrics_session_counted ||
-                              sess->sgwu_sxa_seid == 0);
+                              sess->sgwu_sxa_seid == 0 || no_bearer);
             if (orphan_only && !is_orphan) continue;
 
             if (!first) APPEND(",");
@@ -342,11 +345,13 @@ static size_t sgwc_admin_list_sessions(char *buf, size_t buflen,
             APPEND("{\"imsi\":\"%s\","
                    "\"apn\":\"%s\","
                    "\"orphan\":%s,"
+                   "\"bearers\":%d,"
                    "\"pfcp_seid\":\"0x%"PRIx64"\","
                    "\"smf_connected\":%s}",
                    ue->imsi_bcd,
                    sess->session.name ? sess->session.name : "",
                    is_orphan ? "true" : "false",
+                   ogs_list_count(&sess->bearer_list),
                    sess->sgwu_sxa_seid,
                    sess->gnode ? "true" : "false");
         }

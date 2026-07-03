@@ -1736,7 +1736,8 @@ void sgwc_s11_handle_delete_bearer_response(
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
         goto cleanup;
 
-    if (rsp->linked_eps_bearer_id.presence) {
+    if (rsp->linked_eps_bearer_id.presence ||
+            bearer == sgwc_default_bearer_in_sess(sess)) {
        /*
         * << Linked EPS Bearer ID >>
         *
@@ -1747,7 +1748,19 @@ void sgwc_s11_handle_delete_bearer_response(
         *
         * 1. SMF sends Delete Bearer Request(DEFAULT BEARER) to ePDG.
         * 2. ePDG sends Delete Bearer Response(DEFAULT BEARER) to SMF.
+        *
+        * Route on our own bearer context too, not only on the response IE:
+        * an MME that answers with an error cause (UE unreachable, paging
+        * failure) may omit linked_eps_bearer_id entirely. Deleting the
+        * DEFAULT bearer always tears down the whole PDN connection -- the
+        * PGW/SMF has already released its side -- so falling into the
+        * dedicated-bearer branch here stranded a bearer-less session on
+        * SGW-C and its twin PFCP session on SGW-U.
         */
+        if (!rsp->linked_eps_bearer_id.presence)
+            ogs_warn("[%s] Delete Bearer Response without Linked EBI for "
+                    "default bearer EBI[%d]; treating as PDN teardown",
+                    sgwc_ue->imsi_bcd, bearer->ebi);
         if (rsp->cause.presence) {
             ogs_gtp2_cause_t *cause = rsp->cause.data;
             ogs_assert(cause);

@@ -2023,8 +2023,20 @@ int sgwc_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
      */
     ogs_list_for_each_safe(&self.sgw_ue_list, next_ue, ue) {
         ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
+            /*
+             * Three ways a session is dead weight:
+             *  - never completed establishment (not counted),
+             *  - lost its SGW-U user plane (sxa_seid == 0),
+             *  - lost ALL bearers but was kept alive (bearer-less stub).
+             * The last one is produced by a default-bearer Delete Bearer
+             * procedure that got routed down the dedicated-bearer path
+             * (see sgwc_s11_handle_delete_bearer_response); the PGW/SMF
+             * freed its side, so the stub (and its SGW-U twin) can never
+             * become usable again.
+             */
+            bool no_bearer = ogs_list_empty(&sess->bearer_list);
             bool is_orphan = (!sess->metrics_session_counted ||
-                              sess->sgwu_sxa_seid == 0);
+                              sess->sgwu_sxa_seid == 0 || no_bearer);
             bool aged_out;
 
             if (!is_orphan)
@@ -2035,10 +2047,11 @@ int sgwc_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
 
             if (do_purge && aged_out) {
                 ogs_info("orphan sweep: purge imsi=%s apn=%s "
-                         "(counted=%d sxa_seid=0x%" PRIx64 ")",
+                         "(counted=%d sxa_seid=0x%" PRIx64 " bearers=%s)",
                          ue->imsi_bcd,
                          sess->session.name ? sess->session.name : "-",
-                         sess->metrics_session_counted, sess->sgwu_sxa_seid);
+                         sess->metrics_session_counted, sess->sgwu_sxa_seid,
+                         no_bearer ? "none" : "yes");
                 sgwc_sess_abort_create(sess);
                 purged++;
                 continue; /* sess is freed; do not count as remaining */
