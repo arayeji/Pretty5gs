@@ -42,6 +42,24 @@ smf:
         port: 9090
   session:
     # Optional dnn / apn: omit or use dnn: [a, b] or dnn: a, b — same UE IP pool for listed DNNs
+    #
+    # Per-APN RADIUS behaviour lives here, beside the APN definition
+    # (requires the global smf.radius block to be enabled):
+    #
+    #   - subnet: 10.46.0.0/16
+    #     dnn: ims
+    #     radius:
+    #       auth: false           # send Access-Request before session setup.
+    #                             # default false: no authentication needed,
+    #                             # only accounting and the other messages.
+    #       ip_assignment: false  # take the UE IP from Framed-IP-Address /
+    #                             # Framed-IPv6-Prefix in Access-Accept
+    #                             # (also requires use_framed_ip_for_ue and
+    #                             # auth: true). default false.
+    #       skip: false           # true = no RADIUS at all for this APN
+    #                             # (no auth, no accounting). default false.
+    #
+    # APNs without a `radius:` block use exactly those defaults.
     - subnet: 10.45.0.0/16
       gateway: 10.45.0.1
     - subnet: 2001:db8:cafe::/48
@@ -144,6 +162,8 @@ smf:
 #    # UE IP priority when true (default): HSS/UDM static IP, then RADIUS
 #    # Framed-IP / Framed-IPv6-Prefix, then local subnet pool. When false,
 #    # RADIUS still auth/accounting but framed addresses are not used for UE IP.
+#    # NOTE: framed IP is additionally gated per APN — the session entry
+#    # must also set radius.ip_assignment: true (see smf.session above).
 #    use_framed_ip_for_ue: true
 #
 #  Ga / GTP' offline charging CDR writer.

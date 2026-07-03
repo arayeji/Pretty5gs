@@ -510,6 +510,7 @@ static int radius_parse_access_accept(smf_sess_t *sess,
     int v4_routes_count = 0;
     char *v6_routes[OGS_MAX_NUM_OF_FRAMED_ROUTES_IN_PDI];
     int v6_routes_count = 0;
+    bool use_framed_ip;
 
     ogs_assert(smf_ue);
     memset(v6, 0, sizeof v6);
@@ -714,8 +715,15 @@ static int radius_parse_access_accept(smf_sess_t *sess,
 
     /* UE IP priority: HSS/UDM subscription (already in sess->session.ue_ip),
      * then RADIUS Framed-IP / Framed-IPv6-Prefix per family, then pool in
-     * smf_sess_set_ue_ip() when an address is still unset. */
-    if (smf_self()->radius.use_framed_ip_for_ue) {
+     * smf_sess_set_ue_ip() when an address is still unset.
+     *
+     * Both the global smf.radius.use_framed_ip_for_ue switch and the
+     * per-APN session.radius.ip_assignment flag (default: false) must
+     * allow it. */
+    use_framed_ip = smf_self()->radius.use_framed_ip_for_ue &&
+            smf_apn_radius_ip_assignment_enabled(sess->session.name);
+
+    if (use_framed_ip) {
         ogs_ip_t *ue_ip = &sess->session.ue_ip;
         const char *imsi = smf_ue && smf_ue->imsi_len ? smf_ue->imsi_bcd :
             (smf_ue && smf_ue->supi ? smf_ue->supi : "-");
@@ -775,10 +783,11 @@ static int radius_parse_access_accept(smf_sess_t *sess,
         }
     } else if (got_v4 || got_v6) {
         ogs_debug("RADIUS: ignoring framed UE IP/prefix from Access-Accept "
-                "(smf.radius.use_framed_ip_for_ue: false)");
+                "(disabled globally or per-APN for DNN[%s])",
+                sess->session.name ? sess->session.name : "-");
     }
 
-    if (smf_self()->radius.use_framed_ip_for_ue && (got_v4 || got_v6)) {
+    if (use_framed_ip && (got_v4 || got_v6)) {
         char buf1[OGS_ADDRSTRLEN];
         char buf2[OGS_ADDRSTRLEN];
 
@@ -1324,6 +1333,20 @@ int smf_radius_authorize_for_session(smf_sess_t *sess)
         return OGS_OK;
 
     ogs_assert(sess);
+
+    if (smf_apn_radius_skip(sess->session.name)) {
+        ogs_debug("RADIUS: fully skipped for APN[%s] "
+                "(session.radius.skip: true)",
+                sess->session.name ? sess->session.name : "-");
+        return OGS_OK;
+    }
+    if (!smf_apn_radius_auth_enabled(sess->session.name)) {
+        ogs_debug("RADIUS: Access-Request not sent for APN[%s] "
+                "(per-APN auth disabled; accounting still active)",
+                sess->session.name ? sess->session.name : "-");
+        return OGS_OK;
+    }
+
     smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
     ogs_assert(smf_ue);
 
@@ -1593,6 +1616,9 @@ void smf_radius_accounting_interim_update(smf_sess_t *sess)
         return;
     ogs_assert(sess);
 
+    if (smf_apn_radius_skip(sess->session.name))
+        return;
+
     if (!sess->radius.acct_started || !sess->radius.acct_session_id)
         return;
 
@@ -1609,6 +1635,13 @@ void smf_radius_accounting_session_started(smf_sess_t *sess)
         return;
 
     ogs_assert(sess);
+
+    if (smf_apn_radius_skip(sess->session.name)) {
+        ogs_debug("RADIUS Accounting-Start skipped for APN[%s] "
+                "(session.radius.skip: true)",
+                sess->session.name ? sess->session.name : "-");
+        return;
+    }
 
     if (sess->radius.acct_session_id)
         return;
@@ -1638,6 +1671,13 @@ void smf_radius_accounting_session_stopping(smf_sess_t *sess)
         return;
     }
     ogs_assert(sess);
+
+    if (smf_apn_radius_skip(sess->session.name)) {
+        ogs_debug("RADIUS Accounting-Stop skipped for APN[%s] "
+                "(session.radius.skip: true)",
+                sess->session.name ? sess->session.name : "-");
+        return;
+    }
 
     if (!sess->radius.acct_started) {
         ogs_warn("RADIUS Accounting-Stop skipped: acct_started=false "
