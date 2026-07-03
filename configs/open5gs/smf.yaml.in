@@ -60,6 +60,12 @@ smf:
     #                             # (no auth, no accounting). default false.
     #
     # APNs without a `radius:` block use exactly those defaults.
+    #
+    # The block is keyed by APN name, not by subnet entry: when the same
+    # APN spans several entries (e.g. IPv4 + IPv6 subnets), define the
+    # block on any ONE of them (or repeat it identically on all — that's
+    # accepted silently). Conflicting blocks for the same APN log a
+    # warning and the last one wins.
     - subnet: 10.45.0.0/16
       gateway: 10.45.0.1
     - subnet: 2001:db8:cafe::/48

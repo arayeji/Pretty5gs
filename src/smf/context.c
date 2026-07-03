@@ -335,12 +335,21 @@ static void smf_apn_radius_cfg_add(
     ogs_assert(apn);
     ogs_assert(tmpl);
 
-    /* Last definition wins so a later session entry can override. */
+    /*
+     * The same APN routinely appears in several session entries (one per
+     * subnet, e.g. IPv4 + IPv6). Identical repeated blocks are fine and
+     * silently collapse into one; only genuinely conflicting values get
+     * a warning (last definition wins).
+     */
     for (i = 0; i < self.num_apn_radius; i++) {
         if (ogs_strcasecmp(self.apn_radius[i].apn, apn) == 0) {
             slot = &self.apn_radius[i];
-            ogs_warn("smf.session: duplicate `radius:` block for APN[%s], "
-                    "using the last one", apn);
+            if (slot->auth == tmpl->auth &&
+                    slot->ip_assignment == tmpl->ip_assignment &&
+                    slot->skip == tmpl->skip)
+                return; /* same settings repeated; nothing to do */
+            ogs_warn("smf.session: conflicting `radius:` blocks for APN[%s] "
+                    "(multiple subnet entries); using the last one", apn);
             break;
         }
     }
