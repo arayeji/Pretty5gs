@@ -272,6 +272,15 @@ void mme_metrics_ue_registered_inc(mme_ue_t *mme_ue)
 
     mme_metrics_inst_by_plmn_add(&plmn_id,
             MME_METR_BY_PLMN_GAUGE_UE_REGISTERED, 1);
+
+    /*
+     * Remember the exact label we incremented so the decrement in
+     * mme_metrics_on_ue_remove() hits the same PLMN even if the
+     * context is later re-keyed to a different IMSI by
+     * mme_ue_set_imsi() (GUTI collision after GUTI reuse).
+     */
+    mme_ue->metrics_plmn_id = plmn_id;
+    mme_ue->metrics_plmn_valid = true;
 }
 
 static const char *mme_metrics_detach_reason(mme_ue_t *mme_ue)
@@ -294,16 +303,22 @@ static const char *mme_metrics_detach_reason(mme_ue_t *mme_ue)
 
 void mme_metrics_on_ue_remove(mme_ue_t *mme_ue)
 {
-    ogs_plmn_id_t plmn_id;
-
     ogs_assert(mme_ue);
 
     if (!mme_ue->metrics_registered)
         return;
 
-    if (mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
-        mme_metrics_inst_by_plmn_add(&plmn_id,
+    /*
+     * Decrement the PLMN label recorded at increment time. Re-deriving
+     * the PLMN from mme_ue->imsi_bcd here underflowed the gauge when
+     * the context had been re-keyed to an IMSI of another PLMN between
+     * registration and removal.
+     */
+    if (mme_ue->metrics_plmn_valid) {
+        mme_metrics_inst_by_plmn_add(&mme_ue->metrics_plmn_id,
                 MME_METR_BY_PLMN_GAUGE_UE_REGISTERED, -1);
+        mme_ue->metrics_plmn_valid = false;
+    }
 
     mme_metrics_inst_by_reason_add(mme_metrics_detach_reason(mme_ue),
             MME_METR_BY_REASON_CTR_UE_LOST, 1);
