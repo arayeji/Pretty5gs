@@ -833,7 +833,21 @@ ogs_pkbuf_t *mme_s11_build_delete_bearer_response(
     rsp->cause.len = sizeof(cause);
     rsp->cause.data = &cause;
 
-    if (cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+    /*
+     * The EBI IEs must be present regardless of the Cause value.
+     *
+     * When they were only included on REQUEST_ACCEPTED, an error response
+     * (e.g. UE unreachable / paging failure) for a DEFAULT-bearer delete
+     * carried neither linked_eps_bearer_id nor bearer_contexts. The SGW-C
+     * routes on linked_eps_bearer_id.presence to decide between "delete the
+     * whole PFCP session" and "remove one bearer"; without the IE it took
+     * the dedicated-bearer path, removed the only bearer, and stranded a
+     * bearer-less session on SGW-C plus its twin on SGW-U forever (the
+     * SMF/PGW side had already freed its context). TS 29.274 marks the
+     * Linked EPS Bearer ID as conditional on what the request carried,
+     * not on the outcome.
+     */
+    {
         mme_bearer_t *linked_bearer = mme_linked_bearer(bearer);
         ogs_assert(linked_bearer);
 
