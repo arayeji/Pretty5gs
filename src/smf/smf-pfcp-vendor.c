@@ -27,27 +27,36 @@ void smf_pfcp_log_travelping_errors(ogs_pkbuf_t *pkbuf)
 }
 
 bool smf_pfcp_parse_travelping_conflict_seid(
-        ogs_pkbuf_t *pkbuf, uint64_t *up_seid_out)
+        ogs_pkbuf_t *pkbuf, uint64_t *up_seid_out, uint64_t *cp_seid_out)
 {
     char msg[512];
     char *p = NULL;
-    unsigned long long seid = 0;
+    unsigned long long up_seid = 0, cp_seid = 0;
 
     ogs_assert(up_seid_out);
+    ogs_assert(cp_seid_out);
     *up_seid_out = 0;
+    *cp_seid_out = 0;
 
     if (!ogs_pfcp_travelping_error_message(pkbuf, msg, sizeof(msg)))
         return false;
 
     p = strstr(msg, "up_seid ");
-    if (!p)
-        p = strstr(msg, "cp_seid ");
-    if (!p)
-        return false;
+    if (p && sscanf(p, "%*s 0x%llx", &up_seid) != 1)
+        up_seid = 0;
 
-    if (sscanf(p, "%*s 0x%llx", &seid) != 1)
-        return false;
+    p = strstr(msg, "cp_seid ");
+    if (p && sscanf(p, "%*s 0x%llx", &cp_seid) != 1)
+        cp_seid = 0;
 
-    *up_seid_out = (uint64_t)seid;
+    /* Fall back to the other SEID when only one is present:
+     * upg-vpp allocates the UP SEID equal to the CP SEID anyway. */
+    if (!up_seid)
+        up_seid = cp_seid;
+    if (!cp_seid)
+        cp_seid = up_seid;
+
+    *up_seid_out = (uint64_t)up_seid;
+    *cp_seid_out = (uint64_t)cp_seid;
     return *up_seid_out != 0;
 }

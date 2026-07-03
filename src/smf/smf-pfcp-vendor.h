@@ -28,7 +28,7 @@ extern "C" {
 
 void smf_pfcp_log_travelping_errors(ogs_pkbuf_t *pkbuf);
 bool smf_pfcp_parse_travelping_conflict_seid(
-        ogs_pkbuf_t *pkbuf, uint64_t *up_seid_out);
+        ogs_pkbuf_t *pkbuf, uint64_t *up_seid_out, uint64_t *cp_seid_out);
 
 #ifdef __cplusplus
 }
