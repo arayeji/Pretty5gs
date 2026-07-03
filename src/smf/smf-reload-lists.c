@@ -814,6 +814,21 @@ void smf_context_reload_runtime(void)
 
             if (!strcmp(smf_key, "session")) {
                 lists_added += smf_reload_session_add_only(&smf_iter);
+
+                /*
+                 * Per-APN `radius:` blocks are plain scalars with no
+                 * live references, so unlike subnets they support
+                 * full-replace semantics on reload: rebuild the table
+                 * from scratch so flips (auth on/off, skip, ...) and
+                 * removed blocks all take effect immediately.
+                 */
+                smf_apn_radius_cfg_reset();
+                smf_apn_radius_parse_session_list(&smf_iter);
+                ogs_reload_audit_note(
+                        " per-APN radius table rebuilt (%d entr%s)",
+                        smf_self()->num_apn_radius,
+                        smf_self()->num_apn_radius == 1 ? "y" : "ies");
+                smf_reload_lists_changed++;
                 found = true;
             } else if (!strcmp(smf_key, "pfcp")) {
                 lists_added += smf_reload_pfcp_upf_add_only(&smf_iter);
