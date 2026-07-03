@@ -719,6 +719,18 @@ struct mme_ue_s {
 
     bool            metrics_registered;
 
+    /*
+     * PLMN label the mme_ue_registered gauge was incremented under.
+     *
+     * The PLMN must NOT be re-derived from the IMSI at decrement time:
+     * mme_ue_set_imsi() can re-key a registered context to a different
+     * IMSI (GUTI collision after GUTI reuse / MME restart), so deriving
+     * the label twice underflows one PLMN's gauge (to -1) and leaves the
+     * other permanently inflated.
+     */
+    bool            metrics_plmn_valid;
+    ogs_plmn_id_t   metrics_plmn_id;
+
     /* Memento of context fields */
     mme_ue_memento_t memento;
 
