@@ -191,6 +191,46 @@ typedef struct smf_radius_config_s {
 } smf_radius_config_t;
 
 /*
+ * Per-APN RADIUS behaviour. Configured beside the APN definition in the
+ * smf.session YAML list (NOT under smf.radius):
+ *
+ *   session:
+ *     - subnet: 10.45.0.0/16
+ *       dnn: internet
+ *       radius:
+ *         auth: false            # send Access-Request (default false:
+ *                                #   no authentication, only accounting
+ *                                #   and the other RADIUS messages)
+ *         ip_assignment: false   # accept Framed-IP-Address /
+ *                                #   Framed-IPv6-Prefix as UE IP
+ *                                #   (default false: never take the UE
+ *                                #   IP from RADIUS for this APN)
+ *         skip: false            # default false; true = no RADIUS at
+ *                                #   all for this APN (no auth, no
+ *                                #   accounting)
+ *
+ * APNs without a `radius:` block get the defaults above. The global
+ * smf.radius.enabled and smf.radius.use_framed_ip_for_ue switches still
+ * apply on top (both must allow the feature for it to be active).
+ */
+typedef struct smf_apn_radius_cfg_s {
+    char apn[OGS_MAX_DNN_LEN+1];
+    bool auth;              /* default false: skip Access-Request */
+    bool ip_assignment;     /* default false: ignore Framed-IP(v6) */
+    bool skip;              /* default false: RADIUS fully active */
+} smf_apn_radius_cfg_t;
+
+#define SMF_MAX_APN_RADIUS_CFG 64
+
+/* NULL when the APN has no explicit `radius:` block (defaults apply). */
+const smf_apn_radius_cfg_t *smf_apn_radius_cfg_find(const char *apn);
+
+/* Effective per-APN switches (defaults applied when not configured). */
+bool smf_apn_radius_skip(const char *apn);
+bool smf_apn_radius_auth_enabled(const char *apn);
+bool smf_apn_radius_ip_assignment_enabled(const char *apn);
+
+/*
  * CDR writer configuration (Ga interface / GTP' offline charging).
  *
  * The SMF only builds the ASN.1 BER CDR and appends it to a local spool
@@ -326,6 +366,10 @@ typedef struct smf_context_s {
     } security_indication;
 
     smf_radius_config_t radius;
+
+    /* Per-APN RADIUS overrides parsed from the smf.session list. */
+    smf_apn_radius_cfg_t apn_radius[SMF_MAX_APN_RADIUS_CFG];
+    int num_apn_radius;
 
     smf_cdr_config_t cdr;
     /*

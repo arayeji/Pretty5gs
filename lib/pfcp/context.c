@@ -1033,6 +1033,9 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                                 } while (
                                     ogs_yaml_iter_type(&range_iter) ==
                                     YAML_SEQUENCE_NODE);
+                            } else if (!strcmp(subnet_key, "radius")) {
+                                /* per-APN RADIUS options are parsed by
+                                 * the SMF (smf_context_parse_config()) */
                             } else
                                 ogs_warn("unknown key `%s`", subnet_key);
                         }
