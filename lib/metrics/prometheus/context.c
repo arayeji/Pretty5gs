@@ -362,6 +362,18 @@ static void fill_query_from_connection(struct MHD_Connection *connection,
             MHD_GET_ARGUMENT_KIND, "match");
     q->sync = MHD_lookup_connection_value(connection,
             MHD_GET_ARGUMENT_KIND, "sync");
+
+    const char *sv = MHD_lookup_connection_value(connection,
+            MHD_GET_ARGUMENT_KIND, "seid");
+    if (sv && *sv) {
+        char *end = NULL;
+        /* base 0: accepts 0x-prefixed hex (as VPP prints) or decimal */
+        unsigned long long v = strtoull(sv, &end, 0);
+        if (end != sv && *end == '\0') {
+            q->seid = (uint64_t)v;
+            q->has_seid = 1;
+        }
+    }
 }
 
 /*

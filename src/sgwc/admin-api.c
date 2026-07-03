@@ -400,6 +400,113 @@ static int sgwc_admin_purge_orphans(const ogs_metrics_query_t *q,
     return ADMIN_HTTP_ACCEPTED;
 }
 
+/*
+ * GET /admin/seids
+ *
+ * Lightweight companion to /admin/sessions for the NMS stale-session audit:
+ * emits ONLY the SGW-U F-SEIDs this SGW-C currently owns, one hex value per
+ * line, no JSON tree. At 200k sessions this is ~2 MB and a single list pass,
+ * versus the multi-hundred-MB JSON that /admin/sessions?page=-1 would build.
+ * The NMS diffs this set against `vppctl show upf association` on the SGW-U
+ * and purges (via /admin/pfcp/purge-seid) any SEID present on VPP but absent
+ * here.
+ */
+static size_t sgwc_admin_list_seids(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
+{
+    sgwc_ue_t *ue = NULL;
+    sgwc_sess_t *sess = NULL;
+    char tmp[32];
+    size_t pos = 0;
+    bool overflow = false;
+
+    (void)page; (void)page_size; (void)q;
+
+    ogs_metrics_dump_lock();
+    ogs_list_for_each(&sgwc_self()->sgw_ue_list, ue) {
+        ogs_list_for_each(&ue->sess_list, sess) {
+            int n;
+            if (!sess->sgwu_sxa_seid)
+                continue;
+            n = snprintf(tmp, sizeof(tmp), "0x%"PRIx64"\n",
+                    sess->sgwu_sxa_seid);
+            if (n > 0 && pos + (size_t)n < buflen) {
+                memcpy(buf + pos, tmp, (size_t)n);
+                pos += (size_t)n;
+            } else if (n > 0) {
+                overflow = true;
+            }
+        }
+    }
+    ogs_metrics_dump_unlock();
+
+    /*
+     * A truncated SEID list would make the NMS treat the missing sessions
+     * as stale and purge them. Returning >= buflen-1 makes the HTTP layer
+     * double the buffer and call us again until everything fits.
+     */
+    if (overflow)
+        return buflen;
+
+    return pos;
+}
+
+/*
+ * POST /admin/pfcp/purge-seid?seid=0x<hex>[&ip=<sgwu-addr>]
+ *
+ * Deletes a single stale PFCP session on the SGW-U by raw UP F-SEID, for
+ * SEIDs the NMS audit found on VPP but not in /admin/seids. No local session
+ * context is needed or touched; SGW-C just emits a PFCP Session Deletion to
+ * the SGW-U. With one associated SGW-U the address is optional; with several,
+ * pass ?ip= to name the owner.
+ */
+static int sgwc_admin_purge_seid(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    ogs_sockaddr_t *upf_addr = NULL;
+
+    if (!q || !q->has_seid || !q->seid) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_BAD_REQUEST, "missing or invalid ?seid=0x...");
+        return ADMIN_HTTP_BAD_REQUEST;
+    }
+
+    if (q->ip && *q->ip) {
+        if (ogs_getaddrinfo(&upf_addr, AF_UNSPEC, q->ip,
+                    ogs_pfcp_self()->pfcp_port, 0) != OGS_OK || !upf_addr) {
+            *body_len = fmt_json_status(body, body_cap,
+                    ADMIN_HTTP_BAD_REQUEST, "invalid ?ip=%s", q->ip);
+            return ADMIN_HTTP_BAD_REQUEST;
+        }
+    }
+
+    sgwc_event_t *e = sgwc_event_new(SGWC_EVT_ADMIN_PURGE_SEID);
+    if (!e) {
+        if (upf_addr) ogs_freeaddrinfo(upf_addr);
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_INTERNAL_ERROR, "event_new failed");
+        return ADMIN_HTTP_INTERNAL_ERROR;
+    }
+    e->admin_seid = q->seid;
+    e->admin_upf_addr = upf_addr; /* ownership moves to the event */
+
+    int rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        sgwc_event_free(e); /* frees admin_upf_addr too */
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
+        return ADMIN_HTTP_SERVICE_UNAVAIL;
+    }
+
+    ogs_pollset_notify(ogs_app()->pollset);
+
+    *body_len = fmt_json_status(body, body_cap, ADMIN_HTTP_ACCEPTED,
+            "purge-seid queued seid=0x%"PRIx64"%s%s",
+            q->seid, (q->ip && *q->ip) ? " ip=" : "",
+            (q->ip && *q->ip) ? q->ip : "");
+    return ADMIN_HTTP_ACCEPTED;
+}
+
 void sgwc_admin_api_register(void)
 {
     ogs_metrics_register_custom_ep(sgwc_dump_runtime_config,
@@ -444,5 +551,14 @@ void sgwc_admin_api_register(void)
      * Sends PFCP delete to SGW-U (VPP) and S5 delete to SMF for each. */
     ogs_metrics_register_admin_ep(sgwc_admin_purge_orphans,
             "/admin/sessions/purge-orphans",
+            OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
+
+    /* SEID-only listing for the NMS stale-session audit (lightweight). */
+    ogs_metrics_register_custom_ep(sgwc_admin_list_seids,
+            "/admin/seids");
+
+    /* Purge one stale SGW-U SEID: POST /admin/pfcp/purge-seid?seid=0x..[&ip=] */
+    ogs_metrics_register_admin_ep(sgwc_admin_purge_seid,
+            "/admin/pfcp/purge-seid",
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
 }

@@ -1625,6 +1625,18 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         }
         break;
 
+    case SMF_EVT_ADMIN_PURGE_SEID:
+        ogs_info("admin purge-seid: UPF SEID=0x%llx",
+                (unsigned long long)e->admin_seid);
+        if (smf_pfcp_purge_seid(e->admin_upf_addr, e->admin_seid) != OGS_OK)
+            ogs_error("admin purge-seid: failed for SEID=0x%llx",
+                    (unsigned long long)e->admin_seid);
+        if (e->admin_upf_addr) {
+            ogs_freeaddrinfo(e->admin_upf_addr);
+            e->admin_upf_addr = NULL;
+        }
+        break;
+
     case SMF_EVT_ORPHAN_SWEEP:
         {
             int purged = 0, remaining;

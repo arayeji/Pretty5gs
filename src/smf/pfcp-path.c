@@ -1169,6 +1169,114 @@ int smf_epc_pfcp_send_orphan_session_purge(
     return rv;
 }
 
+static void purge_seid_timeout(ogs_pfcp_xact_t *xact, void *data)
+{
+    (void)data;
+
+    ogs_assert(xact);
+    ogs_warn("purge-seid: no Session Deletion Response from UPF "
+            "(SEID may already be gone)");
+}
+
+int smf_pfcp_purge_seid(ogs_sockaddr_t *upf_addr, uint64_t up_seid)
+{
+    int rv;
+    ogs_pfcp_node_t *pfcp_node = NULL, *iter = NULL;
+    ogs_pkbuf_t *n4buf = NULL;
+    ogs_pfcp_message_t *pfcp_message = NULL;
+    ogs_pfcp_header_t h;
+    ogs_pfcp_xact_t *xact = NULL;
+    char buf[OGS_ADDRSTRLEN];
+
+    if (!up_seid) {
+        ogs_error("purge-seid: SEID must be non-zero");
+        return OGS_ERROR;
+    }
+
+    /*
+     * Resolve the target UPF. With an explicit address, match it; without
+     * one, use the sole associated peer. Refuse to guess when several UPF
+     * peers are associated -- the NMS must name the one that owns the SEID.
+     */
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, iter) {
+        if (!OGS_FSM_CHECK(&iter->sm, smf_pfcp_state_associated))
+            continue;
+        if (upf_addr) {
+            ogs_sockaddr_t *a = NULL;
+            bool match = false;
+            for (a = iter->addr_list; a; a = a->next) {
+                if (ogs_sockaddr_is_equal_addr(a, upf_addr)) {
+                    match = true;
+                    break;
+                }
+            }
+            if (match) {
+                pfcp_node = iter;
+                break;
+            }
+        } else if (!pfcp_node) {
+            pfcp_node = iter;
+        } else {
+            ogs_error("purge-seid: multiple UPF peers associated; "
+                    "specify ?ip=<upf-addr>");
+            return OGS_ERROR;
+        }
+    }
+
+    if (!pfcp_node) {
+        ogs_error("purge-seid: no matching associated UPF peer%s%s",
+                upf_addr ? " for " : "",
+                upf_addr ? OGS_ADDR(upf_addr, buf) : "");
+        return OGS_ERROR;
+    }
+
+    xact = ogs_pfcp_xact_local_create(pfcp_node, purge_seid_timeout, NULL);
+    if (!xact) {
+        ogs_error("purge-seid: ogs_pfcp_xact_local_create() failed");
+        return OGS_ERROR;
+    }
+
+    xact->delete_trigger = OGS_PFCP_DELETE_TRIGGER_ORPHAN_PURGE;
+    xact->assoc_xact_id = OGS_INVALID_POOL_ID;
+    xact->local_seid = 0;
+
+    memset(&h, 0, sizeof(ogs_pfcp_header_t));
+    h.type = OGS_PFCP_SESSION_DELETION_REQUEST_TYPE;
+    h.seid = up_seid;
+
+    /* Session Deletion Request body is empty; just the SEID in the header. */
+    pfcp_message = ogs_calloc(1, sizeof(*pfcp_message));
+    if (!pfcp_message) {
+        ogs_error("purge-seid: ogs_calloc() failed");
+        ogs_pfcp_xact_delete(xact);
+        return OGS_ERROR;
+    }
+    pfcp_message->h.type = h.type;
+    n4buf = ogs_pfcp_build_msg(pfcp_message);
+    ogs_free(pfcp_message);
+    if (!n4buf) {
+        ogs_error("purge-seid: ogs_pfcp_build_msg() failed");
+        ogs_pfcp_xact_delete(xact);
+        return OGS_ERROR;
+    }
+
+    rv = ogs_pfcp_xact_update_tx(xact, &h, n4buf);
+    if (rv != OGS_OK) {
+        ogs_error("purge-seid: ogs_pfcp_xact_update_tx() failed");
+        ogs_pfcp_xact_delete(xact);
+        return OGS_ERROR;
+    }
+
+    rv = ogs_pfcp_xact_commit(xact);
+    ogs_expect(rv == OGS_OK);
+
+    ogs_warn("purge-seid: sent PFCP Session Deletion to UPF %s SEID=0x%llx",
+            ogs_sockaddr_to_string_static(pfcp_node->addr_list),
+            (unsigned long long)up_seid);
+
+    return rv;
+}
+
 int smf_epc_pfcp_send_deactivation(smf_sess_t *sess, uint8_t gtp_cause)
 {
     int rv;
