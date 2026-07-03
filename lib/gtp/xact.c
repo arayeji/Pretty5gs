@@ -171,7 +171,15 @@ int ogs_gtp_xact_init(void)
 
     ogs_pool_init(&pool, ogs_app()->pool.xact);
 
-    g_xact_id = 0;
+    /*
+     * Start the sequence number space at a random point instead of 0 so a
+     * restarted daemon does not immediately reuse the sequence numbers its
+     * previous incarnation still has in flight; late/retransmitted responses
+     * from peers would otherwise be matched to new, unrelated transactions.
+     * Bounded by the GTPv1 range (the counter is shared with GTPv2 and wraps
+     * within each version's own range on allocation).
+     */
+    g_xact_id = ogs_random32() % (OGS_GTP1_MAX_XACT_ID + 1);
 
     ogs_gtp_xact_initialized = 1;
 

@@ -94,7 +94,15 @@ int ogs_pfcp_xact_init(void)
 
     ogs_pool_init(&pool, ogs_app()->pool.xact);
 
-    g_xact_id = 0;
+    /*
+     * Start the SQN space at a random point instead of 0. UDP peers (e.g.
+     * upg-vpp) can still be retransmitting responses to the PREVIOUS
+     * incarnation's requests after a restart; if the new process reuses the
+     * same low sequence numbers, those stale responses are matched to new,
+     * unrelated transactions (wrong session, wrong buffered message).
+     */
+    g_xact_id = ogs_random32() %
+            (PFCP_MAX_XACT_ID - PFCP_MIN_XACT_ID) + PFCP_MIN_XACT_ID;
 
     ogs_pfcp_xact_initialized = 1;
 
@@ -436,6 +444,29 @@ static int ogs_pfcp_xact_update_rx(ogs_pfcp_xact_t *xact, uint8_t type)
             if (xact->step != 1) {
                 ogs_error("invalid step[%d] type[%d]", xact->step, type);
                 return OGS_ERROR;
+            }
+            /*
+             * PFCP transactions are matched by sequence number only. After a
+             * CP restart the SQN counter restarts too, so a late/retransmitted
+             * response from the UP function (answering the PREVIOUS
+             * incarnation's request with the same SQN) can be matched to a
+             * brand-new transaction of a DIFFERENT type. Dispatching it would
+             * run the wrong handler against the wrong session/buffered
+             * message (observed as an SGW-C crash: a stale Session
+             * Establishment Response matched a Session Modification xact).
+             * A PFCP response type is always request type + 1; discard any
+             * response that does not answer what this transaction sent,
+             * keeping the transaction alive for its real response.
+             */
+            if (type != OGS_PFCP_VERSION_NOT_SUPPORTED_RESPONSE_TYPE &&
+                xact->seq[0].type + 1 != type) {
+                ogs_warn("[%d] LOCAL response type [%d] does not match "
+                        "request type [%d]; discarding stale response "
+                        "peer %s",
+                        xact->xid, type, xact->seq[0].type,
+                        ogs_sockaddr_to_string_static(
+                            xact->node->addr_list));
+                return OGS_RETRY;
             }
             break;
 

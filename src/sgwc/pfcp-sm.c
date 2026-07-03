@@ -323,6 +323,21 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
                 }
                 sess->sgwu_sxa_seid = be64toh(up_f_seid->seid);
             } else {
+                /*
+                 * The establishment path always buffers a Create Session
+                 * Request (S11 CSR, or the CSR synthesized from a Gn Create
+                 * PDP Context Request). Anything else means the transaction
+                 * or its buffer got crossed (e.g. a stale response matched by
+                 * SQN after restart); interpreting it as a CSR reads garbage
+                 * union fields and crashes. Treat it as missing.
+                 */
+                if (e->gtp_message && e->gtp_message->h.type !=
+                        OGS_GTP2_CREATE_SESSION_REQUEST_TYPE) {
+                    ogs_error("PFCP Session Establishment Response with "
+                            "unexpected buffered GTP message type [%d]; "
+                            "discarding buffer", e->gtp_message->h.type);
+                    e->gtp_message = NULL;
+                }
                 if (!e->gtp_message) {
                     ogs_gtp_xact_t *s11_xact = NULL;
                     sgwc_ue_t *sgwc_ue = NULL;
