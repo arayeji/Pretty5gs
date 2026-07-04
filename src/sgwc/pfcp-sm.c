@@ -364,6 +364,12 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
                     if (sess && rsp_up_seid)
                         sess->sgwu_sxa_seid = rsp_up_seid;
 
+                    /* With no local session, the teardown paths below have
+                     * nothing to purge; delete the just-created UP session
+                     * by raw SEID no matter whether an S11 answer is due. */
+                    if (!sess && rsp_up_seid)
+                        sgwc_pfcp_purge_seid_node(node, rsp_up_seid);
+
                     s11_xact = ogs_gtp_xact_find_by_id(xact->assoc_xact_id);
                     if (sess)
                         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
@@ -381,8 +387,6 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
                     } else if (sess) {
                         sgwc_sess_abort_create(sess);
                         sess = NULL;
-                    } else if (rsp_up_seid) {
-                        sgwc_pfcp_purge_seid_node(node, rsp_up_seid);
                     }
                     ogs_pfcp_xact_commit(xact);
                     break;
