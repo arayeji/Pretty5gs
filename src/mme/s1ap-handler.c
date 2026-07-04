@@ -3306,10 +3306,13 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
         return;
     }
 
+    mme_ue = mme_ue_find_by_id(source_ue->mme_ue_id);
+
     target_enb = mme_enb_find_by_enb_id(target_enb_id);
     if (target_enb == NULL) {
-        ogs_error("Handover required : cannot find target eNB-id[0x%x]",
-                    target_enb_id);
+        ogs_warn("Handover required : cannot find target eNB-id[0x%x] IMSI[%s]",
+                    target_enb_id,
+                    mme_ue ? mme_ue->imsi_bcd : "-");
         r = s1ap_send_handover_preparation_failure(source_ue,
                 S1AP_Cause_PR_radioNetwork,
                 S1AP_CauseRadioNetwork_unknown_targetID);
@@ -3318,7 +3321,6 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
         return;
     }
 
-    mme_ue = mme_ue_find_by_id(source_ue->mme_ue_id);
     if (!mme_ue) {
         ogs_error("No UE(mme-ue) context");
         return;
