@@ -72,6 +72,13 @@ int smf_epc_pfcp_send_orphan_session_purge(
  */
 int smf_pfcp_purge_seid(ogs_sockaddr_t *upf_addr, uint64_t up_seid);
 
+/*
+ * Same as smf_pfcp_purge_seid() but for an already-known PFCP node.
+ * Used internally to tear down UPF sessions that were just created for a
+ * control-plane context that no longer exists.
+ */
+int smf_pfcp_purge_seid_node(ogs_pfcp_node_t *node, uint64_t up_seid);
+
 int smf_epc_pfcp_send_deactivation(smf_sess_t *sess, uint8_t gtp_cause);
 
 int smf_pfcp_send_session_report_response(

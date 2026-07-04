@@ -317,11 +317,34 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
             if (!message->h.seid_presence) ogs_error("No SEID");
 
             if (!sess) {
+                ogs_pfcp_session_establishment_response_t *rsp =
+                    &message->pfcp_session_establishment_response;
                 ogs_gtp_xact_t *gtp_xact =
                     ogs_gtp_xact_find_by_id(xact->assoc_xact_id);
                 ogs_error("No Session");
+
+                /*
+                 * The SMF session was removed while the establishment was
+                 * in flight, but the UPF accepted the request and created
+                 * the user-plane session. Nobody owns it now: delete it
+                 * right away, or it stays on the UPF (VPP) forever.
+                 */
+                if (rsp->cause.presence &&
+                        rsp->cause.u8 == OGS_PFCP_CAUSE_REQUEST_ACCEPTED &&
+                        rsp->up_f_seid.presence && rsp->up_f_seid.data) {
+                    uint64_t rsp_up_seid = be64toh(((ogs_pfcp_f_seid_t *)
+                            rsp->up_f_seid.data)->seid);
+                    if (rsp_up_seid) {
+                        ogs_warn("Purging orphaned UPF session created for "
+                                "a removed SMF context (UP-SEID=0x%llx)",
+                                (unsigned long long)rsp_up_seid);
+                        smf_pfcp_purge_seid_node(node, rsp_up_seid);
+                    }
+                }
+
                 if (!gtp_xact) {
                     ogs_error("No associated GTP transaction");
+                    ogs_pfcp_xact_commit(xact);
                     break;
                 }
                 if (gtp_xact->gtp_version == 1)
@@ -332,6 +355,7 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
                     ogs_gtp2_send_error_message(gtp_xact, 0,
                         OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
                         OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
+                ogs_pfcp_xact_commit(xact);
                 break;
             }
             ogs_fsm_dispatch(&sess->sm, e);

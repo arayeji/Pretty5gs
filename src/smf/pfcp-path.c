@@ -1178,55 +1178,16 @@ static void purge_seid_timeout(ogs_pfcp_xact_t *xact, void *data)
             "(SEID may already be gone)");
 }
 
-int smf_pfcp_purge_seid(ogs_sockaddr_t *upf_addr, uint64_t up_seid)
+int smf_pfcp_purge_seid_node(ogs_pfcp_node_t *pfcp_node, uint64_t up_seid)
 {
     int rv;
-    ogs_pfcp_node_t *pfcp_node = NULL, *iter = NULL;
     ogs_pkbuf_t *n4buf = NULL;
     ogs_pfcp_message_t *pfcp_message = NULL;
     ogs_pfcp_header_t h;
     ogs_pfcp_xact_t *xact = NULL;
-    char buf[OGS_ADDRSTRLEN];
 
-    if (!up_seid) {
-        ogs_error("purge-seid: SEID must be non-zero");
-        return OGS_ERROR;
-    }
-
-    /*
-     * Resolve the target UPF. With an explicit address, match it; without
-     * one, use the sole associated peer. Refuse to guess when several UPF
-     * peers are associated -- the NMS must name the one that owns the SEID.
-     */
-    ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, iter) {
-        if (!OGS_FSM_CHECK(&iter->sm, smf_pfcp_state_associated))
-            continue;
-        if (upf_addr) {
-            ogs_sockaddr_t *a = NULL;
-            bool match = false;
-            for (a = iter->addr_list; a; a = a->next) {
-                if (ogs_sockaddr_is_equal_addr(a, upf_addr)) {
-                    match = true;
-                    break;
-                }
-            }
-            if (match) {
-                pfcp_node = iter;
-                break;
-            }
-        } else if (!pfcp_node) {
-            pfcp_node = iter;
-        } else {
-            ogs_error("purge-seid: multiple UPF peers associated; "
-                    "specify ?ip=<upf-addr>");
-            return OGS_ERROR;
-        }
-    }
-
-    if (!pfcp_node) {
-        ogs_error("purge-seid: no matching associated UPF peer%s%s",
-                upf_addr ? " for " : "",
-                upf_addr ? OGS_ADDR(upf_addr, buf) : "");
+    if (!pfcp_node || !up_seid) {
+        ogs_error("purge-seid: node and SEID are required");
         return OGS_ERROR;
     }
 
@@ -1275,6 +1236,56 @@ int smf_pfcp_purge_seid(ogs_sockaddr_t *upf_addr, uint64_t up_seid)
             (unsigned long long)up_seid);
 
     return rv;
+}
+
+int smf_pfcp_purge_seid(ogs_sockaddr_t *upf_addr, uint64_t up_seid)
+{
+    ogs_pfcp_node_t *pfcp_node = NULL, *iter = NULL;
+    char buf[OGS_ADDRSTRLEN];
+
+    if (!up_seid) {
+        ogs_error("purge-seid: SEID must be non-zero");
+        return OGS_ERROR;
+    }
+
+    /*
+     * Resolve the target UPF. With an explicit address, match it; without
+     * one, use the sole associated peer. Refuse to guess when several UPF
+     * peers are associated -- the NMS must name the one that owns the SEID.
+     */
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, iter) {
+        if (!OGS_FSM_CHECK(&iter->sm, smf_pfcp_state_associated))
+            continue;
+        if (upf_addr) {
+            ogs_sockaddr_t *a = NULL;
+            bool match = false;
+            for (a = iter->addr_list; a; a = a->next) {
+                if (ogs_sockaddr_is_equal_addr(a, upf_addr)) {
+                    match = true;
+                    break;
+                }
+            }
+            if (match) {
+                pfcp_node = iter;
+                break;
+            }
+        } else if (!pfcp_node) {
+            pfcp_node = iter;
+        } else {
+            ogs_error("purge-seid: multiple UPF peers associated; "
+                    "specify ?ip=<upf-addr>");
+            return OGS_ERROR;
+        }
+    }
+
+    if (!pfcp_node) {
+        ogs_error("purge-seid: no matching associated UPF peer%s%s",
+                upf_addr ? " for " : "",
+                upf_addr ? OGS_ADDR(upf_addr, buf) : "");
+        return OGS_ERROR;
+    }
+
+    return smf_pfcp_purge_seid_node(pfcp_node, up_seid);
 }
 
 int smf_epc_pfcp_send_deactivation(smf_sess_t *sess, uint8_t gtp_cause)
