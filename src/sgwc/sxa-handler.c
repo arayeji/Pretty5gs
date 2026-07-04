@@ -400,6 +400,9 @@ void sgwc_sxa_handle_session_establishment_response(
     ogs_gtp2_indication_t *indication = NULL;
     ogs_nas_plmn_id_t gn_serving_plmn_id;
 
+    ogs_pfcp_node_t *pfcp_node = NULL;
+    uint64_t rsp_up_seid = 0;
+
     ogs_debug("Session Establishment Response");
 
     ogs_assert(pfcp_xact);
@@ -409,11 +412,40 @@ void sgwc_sxa_handle_session_establishment_response(
     create_session_request = &recv_message->create_session_request;
     ogs_assert(create_session_request);
 
+    /*
+     * Capture the UP F-SEID and node before committing the transaction.
+     * If the SGW-U accepted the establishment but our control-plane
+     * context (sess and/or the S11 transaction) is already gone, we must
+     * still delete the user-plane session the SGW-U just created --
+     * otherwise it stays on the UPF forever with no CP owner (stale
+     * session on SGW-U VPP).
+     */
+    pfcp_node = pfcp_xact->node;
+    if (pfcp_rsp->cause.presence &&
+            pfcp_rsp->cause.u8 == OGS_PFCP_CAUSE_REQUEST_ACCEPTED &&
+            pfcp_rsp->up_f_seid.presence && pfcp_rsp->up_f_seid.data)
+        rsp_up_seid = be64toh(
+                ((ogs_pfcp_f_seid_t *)pfcp_rsp->up_f_seid.data)->seid);
+
+    /* The UPF-side session exists from this point on; make sure any
+     * teardown path below can purge it. */
+    if (sess && rsp_up_seid)
+        sess->sgwu_sxa_seid = rsp_up_seid;
+
     s11_xact = ogs_gtp_xact_find_by_id(pfcp_xact->assoc_xact_id);
     if (!s11_xact) {
-        ogs_error("GTP transaction(S11) has already been removed [%d]",
-                pfcp_xact->assoc_xact_id);
+        ogs_error("GTP transaction(S11) has already been removed [%d]; "
+                "tearing down orphaned SGW-U session (UP-SEID=0x%llx)",
+                pfcp_xact->assoc_xact_id,
+                (unsigned long long)rsp_up_seid);
         ogs_pfcp_xact_commit(pfcp_xact);
+        if (sess) {
+            sgwc_ue_t *owner_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+            sgwc_sess_abort_create(sess);
+            sgwc_ue_remove_if_empty(owner_ue);
+        } else if (rsp_up_seid && pfcp_node) {
+            sgwc_pfcp_purge_seid_node(pfcp_node, rsp_up_seid);
+        }
         return;
     }
 
@@ -424,6 +456,18 @@ void sgwc_sxa_handle_session_establishment_response(
     if (!sess) {
         ogs_error("No Context");
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+        /*
+         * The SGWC session was removed while the establishment was in
+         * flight (UE detached or re-attached meanwhile), but the SGW-U
+         * accepted the request and created the user-plane session.
+         * Nobody owns it now: delete it right away.
+         */
+        if (rsp_up_seid && pfcp_node) {
+            ogs_warn("Purging orphaned SGW-U session created for a removed "
+                    "SGWC context (UP-SEID=0x%llx)",
+                    (unsigned long long)rsp_up_seid);
+            sgwc_pfcp_purge_seid_node(pfcp_node, rsp_up_seid);
+        }
     }
 
     if (pfcp_rsp->up_f_seid.presence == 0) {

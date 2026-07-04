@@ -195,6 +195,17 @@ uint8_t smf_5gc_n4_handle_session_establishment_response(
 
     ogs_debug("Session Establishment Response [5gc]");
 
+    /*
+     * Record UPF F-SEID before any local failure path below so teardown
+     * can send Session Deletion with a valid UP SEID even when later
+     * PDR/F-TEID checks reject the establishment locally.
+     */
+    if (rsp->cause.presence &&
+            rsp->cause.u8 == OGS_PFCP_CAUSE_REQUEST_ACCEPTED &&
+            rsp->up_f_seid.presence && rsp->up_f_seid.data)
+        sess->upf_n4_seid = be64toh(
+                ((ogs_pfcp_f_seid_t *)rsp->up_f_seid.data)->seid);
+
     ogs_pfcp_xact_commit(xact);
 
     if (rsp->up_f_seid.presence == 0) {
@@ -1273,6 +1284,17 @@ uint8_t smf_epc_n4_handle_session_establishment_response(
     ogs_assert(rsp);
 
     ogs_debug("Session Establishment Response [epc]");
+
+    /*
+     * Record UPF F-SEID before any local failure path below so teardown
+     * (including the gsm-sm orphan path when the S5 GTP transaction is
+     * already gone) can send Session Deletion with a valid UP SEID.
+     */
+    if (rsp->cause.presence &&
+            rsp->cause.u8 == OGS_PFCP_CAUSE_REQUEST_ACCEPTED &&
+            rsp->up_f_seid.presence && rsp->up_f_seid.data)
+        sess->upf_n4_seid = be64toh(
+                ((ogs_pfcp_f_seid_t *)rsp->up_f_seid.data)->seid);
 
     ogs_pfcp_xact_commit(xact);
 

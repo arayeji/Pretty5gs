@@ -341,10 +341,29 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
                 if (!e->gtp_message) {
                     ogs_gtp_xact_t *s11_xact = NULL;
                     sgwc_ue_t *sgwc_ue = NULL;
+                    ogs_pfcp_session_establishment_response_t *rsp =
+                        &message->pfcp_session_establishment_response;
+                    uint64_t rsp_up_seid = 0;
 
                     ogs_error("No buffered GTP message for PFCP Session "
                             "Establishment Response (local_seid=0x%llx)",
                             (unsigned long long)xact->local_seid);
+
+                    /*
+                     * If the SGW-U accepted the establishment, a user-plane
+                     * session now exists. Record its UP F-SEID before any
+                     * teardown below so sgwc_sess_purge_upf() can actually
+                     * delete it; with no local session at all, purge the raw
+                     * SEID directly. Otherwise it leaks on SGW-U (VPP).
+                     */
+                    if (rsp->cause.presence &&
+                            rsp->cause.u8 == OGS_PFCP_CAUSE_REQUEST_ACCEPTED &&
+                            rsp->up_f_seid.presence && rsp->up_f_seid.data)
+                        rsp_up_seid = be64toh(((ogs_pfcp_f_seid_t *)
+                                rsp->up_f_seid.data)->seid);
+                    if (sess && rsp_up_seid)
+                        sess->sgwu_sxa_seid = rsp_up_seid;
+
                     s11_xact = ogs_gtp_xact_find_by_id(xact->assoc_xact_id);
                     if (sess)
                         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
@@ -361,6 +380,9 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
                         }
                     } else if (sess) {
                         sgwc_sess_abort_create(sess);
+                        sess = NULL;
+                    } else if (rsp_up_seid) {
+                        sgwc_pfcp_purge_seid_node(node, rsp_up_seid);
                     }
                     ogs_pfcp_xact_commit(xact);
                     break;

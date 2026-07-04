@@ -59,6 +59,13 @@ int sgwc_pfcp_send_session_report_response(
 int sgwc_pfcp_purge_seid(
         ogs_sockaddr_t *upf_addr, uint64_t up_seid);
 
+/*
+ * Same as sgwc_pfcp_purge_seid() but for an already-known PFCP node.
+ * Used internally to tear down UP-function sessions the SGW-U just
+ * created for a control-plane context that no longer exists.
+ */
+int sgwc_pfcp_purge_seid_node(ogs_pfcp_node_t *node, uint64_t up_seid);
+
 void sgwc_pfcp_request_reassociation(ogs_pfcp_node_t *node);
 
 ogs_pfcp_node_t *sgwc_pfcp_admin_add_sgwu_peer(
