@@ -64,6 +64,23 @@ static void smf_reload_radius_cfg_clear(smf_radius_config_t *cfg)
 
     ogs_assert(cfg);
 
+    /*
+     * Legacy flat server/secret are aliased into servers[0] when no
+     * servers[] list is present (see smf_reload_parse_radius). Free
+     * each heap pointer once.
+     */
+    for (i = 0; i < cfg->num_servers; i++) {
+        if (cfg->servers[i].host &&
+                cfg->servers[i].host != cfg->server) {
+            ogs_free((void *)cfg->servers[i].host);
+            cfg->servers[i].host = NULL;
+        }
+        if (cfg->servers[i].secret &&
+                cfg->servers[i].secret != cfg->secret) {
+            ogs_free((void *)cfg->servers[i].secret);
+            cfg->servers[i].secret = NULL;
+        }
+    }
     if (cfg->server) {
         ogs_free((void *)cfg->server);
         cfg->server = NULL;
@@ -87,16 +104,6 @@ static void smf_reload_radius_cfg_clear(smf_radius_config_t *cfg)
     if (cfg->pod_secret) {
         ogs_free((void *)cfg->pod_secret);
         cfg->pod_secret = NULL;
-    }
-    for (i = 0; i < cfg->num_servers; i++) {
-        if (cfg->servers[i].host) {
-            ogs_free((void *)cfg->servers[i].host);
-            cfg->servers[i].host = NULL;
-        }
-        if (cfg->servers[i].secret) {
-            ogs_free((void *)cfg->servers[i].secret);
-            cfg->servers[i].secret = NULL;
-        }
     }
 }
 
