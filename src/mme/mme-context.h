@@ -81,6 +81,7 @@ typedef struct mme_access_control_s {
     ogs_plmn_id_t plmn_id;
     bool plmn_id_configured;
     char imsi_prefix[OGS_MAX_IMSI_BCD_LEN + 1];
+    int selection_order;
     ogs_hash_t *tac_hash;
     ogs_hash_t *enb_id_hash;
 } mme_access_control_t;
@@ -286,6 +287,8 @@ typedef struct mme_context_s {
     bool maintenance_mode;
 } mme_context_t;
 
+#define MME_GTPC_SELECTION_ORDER_STEP OGS_SELECTION_ORDER_STEP
+
 typedef struct mme_sgsn_route_s {
     ogs_list_t    list;       /* listed in mme_sgsn_t->route_list */
     ogs_nas_rai_t rai;
@@ -310,6 +313,8 @@ typedef struct mme_sgw_s {
     ogs_plmn_id_t   serving_plmn_id;
     bool            imsi_plmn_present;
     ogs_plmn_id_t   imsi_plmn_id;
+    char            imsi_prefix[OGS_MAX_IMSI_BCD_LEN + 1];
+    int             selection_order;
 
     ogs_list_t      sgw_ue_list;
 
@@ -335,6 +340,8 @@ typedef struct mme_pgw_s {
     ogs_plmn_id_t   serving_plmn_id;
     bool            imsi_plmn_present;
     ogs_plmn_id_t   imsi_plmn_id;
+    char            imsi_prefix[OGS_MAX_IMSI_BCD_LEN + 1];
+    int             selection_order;
 } mme_pgw_t;
 
 #define MME_SGSAP_IS_CONNECTED(__mME) \
@@ -377,6 +384,7 @@ typedef struct mme_hssmap_s {
     ogs_plmn_id_t   plmn_id;
     char            *realm;
     char            *host;
+    int             selection_order;
 } mme_hssmap_t;
 
 typedef struct mme_enb_s {
@@ -1376,9 +1384,10 @@ mme_csmap_t *mme_csmap_find_by_tai_and_imsi(
 mme_csmap_t *mme_csmap_find_by_nas_lai(const ogs_nas_lai_t *lai);
 
 mme_hssmap_t *mme_hssmap_add(ogs_plmn_id_t *plmn_id, const char *realm,
-                             const char *host);
+                             const char *host, int selection_order);
 void mme_hssmap_remove(mme_hssmap_t *hssmap);
 void mme_hssmap_remove_all(void);
+void mme_hssmap_resort_by_order(void);
 
 mme_hssmap_t *mme_hssmap_find_by_imsi_bcd(const char *imsi_bcd);
 

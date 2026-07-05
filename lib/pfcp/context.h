@@ -123,6 +123,7 @@ typedef struct ogs_pfcp_node_s {
 
     ogs_pfcp_up_function_features_t up_function_features;
     int up_function_features_len;
+    int selection_order;
 } ogs_pfcp_node_t;
 
 typedef enum {
@@ -388,6 +389,7 @@ typedef struct ogs_pfcp_subnet_s {
     OGS_POOL(pool, ogs_pfcp_ue_ip_t);
 
     ogs_pfcp_dev_t  *dev;           /* Related Context */
+    int             selection_order;
 } ogs_pfcp_subnet_t;
 
 typedef struct ogs_pfcp_rule_s {
@@ -535,6 +537,10 @@ void ogs_pfcp_subnet_remove(ogs_pfcp_subnet_t *subnet);
 void ogs_pfcp_subnet_remove_all(void);
 ogs_pfcp_subnet_t *ogs_pfcp_find_subnet(int family);
 ogs_pfcp_subnet_t *ogs_pfcp_find_subnet_by_dnn(int family, const char *dnn);
+
+int ogs_pfcp_entry_selection_order(int yaml_index, const char *order_v);
+void ogs_pfcp_peer_list_resort_by_order(ogs_list_t *peer_list);
+void ogs_pfcp_subnet_list_resort_by_order(ogs_list_t *subnet_list);
 
 void ogs_pfcp_pool_init(ogs_pfcp_sess_t *sess);
 void ogs_pfcp_pool_final(ogs_pfcp_sess_t *sess);

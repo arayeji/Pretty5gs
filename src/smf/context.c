@@ -18,6 +18,7 @@
  */
 
 #include <inttypes.h>
+#include <limits.h>
 #include <errno.h>
 #include <string.h>
 #ifdef _WIN32
@@ -2181,22 +2182,24 @@ static ogs_pfcp_node_t *selected_upf_node(
         ogs_pfcp_node_t *current, smf_sess_t *sess)
 {
     ogs_pfcp_node_t *next, *node;
+    ogs_pfcp_node_t *best = NULL;
+    int best_order = INT_MAX;
 
     ogs_assert(current);
     ogs_assert(sess);
 
-    /* continue search from current position */
-    next = ogs_list_next(current);
-    for (node = next; node; node = ogs_list_next(node)) {
-        if (OGS_FSM_CHECK(&node->sm, smf_pfcp_state_associated) &&
-            compare_ue_info(node, sess) == true) return node;
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, node) {
+        if (!OGS_FSM_CHECK(&node->sm, smf_pfcp_state_associated))
+            continue;
+        if (compare_ue_info(node, sess) &&
+                node->selection_order < best_order) {
+            best_order = node->selection_order;
+            best = node;
+        }
     }
-    /* cyclic search from top to current position */
-    for (node = ogs_list_first(&ogs_pfcp_self()->pfcp_peer_list);
-            node != next; node = ogs_list_next(node)) {
-        if (OGS_FSM_CHECK(&node->sm, smf_pfcp_state_associated) &&
-            compare_ue_info(node, sess) == true) return node;
-    }
+
+    if (best)
+        return best;
 
     if (ogs_global_conf()->parameter.no_pfcp_rr_select == 0) {
         /* continue search from current position */

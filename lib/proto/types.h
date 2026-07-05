@@ -110,6 +110,7 @@ extern "C" {
 
 #define OGS_BCD_TO_BUFFER_LEN(x)        (((x)+1)/2)
 #define OGS_MAX_IMSI_BCD_LEN            15
+#define OGS_SELECTION_ORDER_STEP          10
 #define OGS_MAX_IMSI_LEN                \
     OGS_BCD_TO_BUFFER_LEN(OGS_MAX_IMSI_BCD_LEN)
 

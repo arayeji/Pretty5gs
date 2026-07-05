@@ -19,6 +19,7 @@
 
 #include "app/ogs-app.h"
 #include "ogs-pfcp.h"
+#include <limits.h>
 
 int __ogs_pfcp_domain;
 static ogs_pfcp_context_t self;
@@ -494,11 +495,14 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                                 ogs_assert(client_key);
                                 if (!strcmp(client_key, remote)) {
                                     ogs_yaml_iter_t remote_array, remote_iter;
+                                    int remote_entry_idx = 0;
+
                                     ogs_yaml_iter_recurse(
                                             &client_iter, &remote_array);
                                     do {
                                         ogs_pfcp_node_t *node = NULL;
                                         ogs_sockaddr_t *addr = NULL;
+                                        const char *order_v = NULL;
                                         int family = AF_UNSPEC;
                                         int i, num = 0;
                                         const char *hostname[
@@ -815,6 +819,10 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                                                 } while (ogs_yaml_iter_type(
                                                         &nr_cell_id_iter) ==
                                                         YAML_SEQUENCE_NODE);
+                                            } else if (!strcmp(remote_key,
+                                                        "order")) {
+                                                order_v = ogs_yaml_iter_value(
+                                                        &remote_iter);
                                             } else
                                                 ogs_warn("unknown key `%s`",
                                                         remote_key);
@@ -889,6 +897,11 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                                             memcpy(node->nr_cell_id, nr_cell_id,
                                                     sizeof(node->nr_cell_id));
 
+                                        node->selection_order =
+                                            ogs_pfcp_entry_selection_order(
+                                                    remote_entry_idx, order_v);
+                                        remote_entry_idx++;
+
                                     } while (ogs_yaml_iter_type(
                                                 &remote_array) ==
                                             YAML_SEQUENCE_NODE);
@@ -902,10 +915,13 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                     }
                 } else if (!strcmp(local_key, "session")) {
                     ogs_yaml_iter_t subnet_array, subnet_iter;
+                    int subnet_entry_idx = 0;
+
                     ogs_yaml_iter_recurse(&local_iter, &subnet_array);
 
                     do {
                         ogs_pfcp_subnet_t *subnet = NULL;
+                        const char *order_v = NULL;
                         const char *ipstr = NULL;
                         const char *gateway = NULL;
                         const char *mask_or_numbits = NULL;
@@ -1036,6 +1052,8 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                             } else if (!strcmp(subnet_key, "radius")) {
                                 /* per-APN RADIUS options are parsed by
                                  * the SMF (smf_context_parse_config()) */
+                            } else if (!strcmp(subnet_key, "order")) {
+                                order_v = ogs_yaml_iter_value(&subnet_iter);
                             } else
                                 ogs_warn("unknown key `%s`", subnet_key);
                         }
@@ -1061,6 +1079,11 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
                             subnet->range[i].high = high[i];
                         }
 
+                        subnet->selection_order =
+                            ogs_pfcp_entry_selection_order(
+                                    subnet_entry_idx, order_v);
+                        subnet_entry_idx++;
+
                         ogs_free(dnn_seq);
 
                     } while (ogs_yaml_iter_type(&subnet_array) ==
@@ -1069,6 +1092,9 @@ int ogs_pfcp_context_parse_config(const char *local, const char *remote)
             }
         }
     }
+
+    ogs_pfcp_peer_list_resort_by_order(&self.pfcp_peer_list);
+    ogs_pfcp_subnet_list_resort_by_order(&self.subnet_list);
 
     rv = ogs_pfcp_context_validation(local);
     if (rv != OGS_OK) return rv;
@@ -2911,6 +2937,79 @@ static bool subnet_matches_ue_dnn(
     return false;
 }
 
+int ogs_pfcp_entry_selection_order(int yaml_index, const char *order_v)
+{
+    if (order_v && order_v[0])
+        return atoi(order_v);
+    return yaml_index * OGS_SELECTION_ORDER_STEP;
+}
+
+static int ogs_pfcp_node_order_cmp(const void *a, const void *b)
+{
+    const ogs_pfcp_node_t * const *pa = a;
+    const ogs_pfcp_node_t * const *pb = b;
+
+    return (*pa)->selection_order - (*pb)->selection_order;
+}
+
+static int ogs_pfcp_subnet_order_cmp(const void *a, const void *b)
+{
+    const ogs_pfcp_subnet_t * const *pa = a;
+    const ogs_pfcp_subnet_t * const *pb = b;
+
+    return (*pa)->selection_order - (*pb)->selection_order;
+}
+
+void ogs_pfcp_peer_list_resort_by_order(ogs_list_t *peer_list)
+{
+    ogs_pfcp_node_t *node = NULL;
+    ogs_pfcp_node_t *nodes[256];
+    int i, n = 0;
+
+    ogs_assert(peer_list);
+
+    ogs_list_for_each(peer_list, node) {
+        if (n < (int)(sizeof(nodes) / sizeof(nodes[0])))
+            nodes[n++] = node;
+    }
+
+    if (n <= 1)
+        return;
+
+    qsort(nodes, n, sizeof(nodes[0]), ogs_pfcp_node_order_cmp);
+
+    while ((node = ogs_list_first(peer_list)) != NULL)
+        ogs_list_remove(peer_list, node);
+
+    for (i = 0; i < n; i++)
+        ogs_list_add(peer_list, nodes[i]);
+}
+
+void ogs_pfcp_subnet_list_resort_by_order(ogs_list_t *subnet_list)
+{
+    ogs_pfcp_subnet_t *subnet = NULL;
+    ogs_pfcp_subnet_t *nodes[256];
+    int i, n = 0;
+
+    ogs_assert(subnet_list);
+
+    ogs_list_for_each(subnet_list, subnet) {
+        if (n < (int)(sizeof(nodes) / sizeof(nodes[0])))
+            nodes[n++] = subnet;
+    }
+
+    if (n <= 1)
+        return;
+
+    qsort(nodes, n, sizeof(nodes[0]), ogs_pfcp_subnet_order_cmp);
+
+    while ((subnet = ogs_list_first(subnet_list)) != NULL)
+        ogs_list_remove(subnet_list, subnet);
+
+    for (i = 0; i < n; i++)
+        ogs_list_add(subnet_list, nodes[i]);
+}
+
 static void ogs_pfcp_log_matching_pools(int family, const char *dnn)
 {
     ogs_pfcp_subnet_t *subnet = NULL;
@@ -2955,22 +3054,29 @@ static void ogs_pfcp_log_matching_pools(int family, const char *dnn)
 ogs_pfcp_subnet_t *ogs_pfcp_find_subnet(int family)
 {
     ogs_pfcp_subnet_t *subnet = NULL;
+    ogs_pfcp_subnet_t *best = NULL;
+    int best_order = INT_MAX;
 
     ogs_assert(family == AF_INET || family == AF_INET6);
 
     ogs_list_for_each(&self.subnet_list, subnet) {
         if ((subnet->family == AF_UNSPEC || subnet->family == family) &&
             (subnet->num_of_dnn == 0) &&
-            subnet->pool.avail)
-            break;
+            subnet->pool.avail &&
+            subnet->selection_order < best_order) {
+            best_order = subnet->selection_order;
+            best = subnet;
+        }
     }
 
-    return subnet;
+    return best;
 }
 
 ogs_pfcp_subnet_t *ogs_pfcp_find_subnet_by_dnn(int family, const char *dnn)
 {
     ogs_pfcp_subnet_t *subnet = NULL;
+    ogs_pfcp_subnet_t *best = NULL;
+    int best_order = INT_MAX;
 
     ogs_assert(dnn);
     ogs_assert(family == AF_INET || family == AF_INET6);
@@ -2978,11 +3084,14 @@ ogs_pfcp_subnet_t *ogs_pfcp_find_subnet_by_dnn(int family, const char *dnn)
     ogs_list_for_each(&self.subnet_list, subnet) {
         if ((subnet->family == AF_UNSPEC || subnet->family == family) &&
             subnet_matches_ue_dnn(subnet, dnn) &&
-            subnet->pool.avail)
-            break;
+            subnet->pool.avail &&
+            subnet->selection_order < best_order) {
+            best_order = subnet->selection_order;
+            best = subnet;
+        }
     }
 
-    return subnet;
+    return best;
 }
 
 void ogs_pfcp_pool_init(ogs_pfcp_sess_t *sess)

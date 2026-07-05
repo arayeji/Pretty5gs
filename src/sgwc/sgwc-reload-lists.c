@@ -152,16 +152,19 @@ static int sgwc_reload_nwi_append(ogs_yaml_iter_t *parent_iter)
 {
     ogs_yaml_iter_t rule_array, rule_iter;
     int added = 0;
+    static int rule_entry_idx;
 
     if (!sgwc_nwi_reload_cleared) {
         sgwc_sgwu_nwi_rewrite_clear();
         sgwc_nwi_reload_cleared = true;
+        rule_entry_idx = 0;
     }
 
     ogs_yaml_iter_recurse(parent_iter, &rule_array);
     do {
         const char *match = NULL;
         const char *replace = NULL;
+        const char *order_v = NULL;
         sgwc_sgwu_nwi_rewrite_rule_t *rule = NULL;
 
         if (ogs_yaml_iter_type(&rule_array) == YAML_MAPPING_NODE) {
@@ -181,6 +184,8 @@ static int sgwc_reload_nwi_append(ogs_yaml_iter_t *parent_iter)
                 match = ogs_yaml_iter_value(&rule_iter);
             else if (!strcmp(key, "replace") || !strcmp(key, "to"))
                 replace = ogs_yaml_iter_value(&rule_iter);
+            else if (!strcmp(key, "order"))
+                order_v = ogs_yaml_iter_value(&rule_iter);
         }
 
         if (!match || !replace || !match[0] || !replace[0])
@@ -191,6 +196,9 @@ static int sgwc_reload_nwi_append(ogs_yaml_iter_t *parent_iter)
         rule->match = ogs_strdup(match);
         rule->replace = ogs_strdup(replace);
         ogs_assert(rule->match && rule->replace);
+        rule->selection_order = ogs_pfcp_entry_selection_order(
+                rule_entry_idx, order_v);
+        rule_entry_idx++;
         ogs_list_add(&sgwc_self()->sgwu_nwi_rewrite_list, rule);
         added++;
         sgwc_reload_lists_changed++;
@@ -232,7 +240,14 @@ static void sgwc_reload_gtpu_key(
     }
 }
 
+static ogs_pfcp_node_t *sgwc_reload_pfcp_peer_find(ogs_sockaddr_t *addr);
+
 static bool sgwc_reload_pfcp_peer_exists(ogs_sockaddr_t *addr)
+{
+    return sgwc_reload_pfcp_peer_find(addr) != NULL;
+}
+
+static ogs_pfcp_node_t *sgwc_reload_pfcp_peer_find(ogs_sockaddr_t *addr)
 {
     ogs_pfcp_node_t *node = NULL;
 
@@ -242,18 +257,20 @@ static bool sgwc_reload_pfcp_peer_exists(ogs_sockaddr_t *addr)
         if (node->config_addr &&
                 sgwc_reload_sockaddr_lists_match(
                     addr, node->config_addr, NULL))
-            return true;
+            return node;
     }
 
-    return false;
+    return NULL;
 }
 
-static int sgwc_reload_sgwu_peer_add_only(ogs_yaml_iter_t *sgwu_array)
+static int sgwc_reload_sgwu_peer_add_only(
+        ogs_yaml_iter_t *sgwu_array, int *entry_idx)
 {
     yaml_document_t *document = ogs_app()->document;
     int added = 0;
 
     ogs_assert(sgwu_array);
+    ogs_assert(entry_idx);
 
     do {
         ogs_yaml_iter_t remote_iter;
@@ -265,6 +282,7 @@ static int sgwc_reload_sgwu_peer_add_only(ogs_yaml_iter_t *sgwu_array)
         uint8_t num_of_tac = 0;
         const char *dnn[OGS_MAX_NUM_OF_DNN];
         int num_of_dnn = 0;
+        const char *order_v = NULL;
         ogs_sockaddr_t *addr = NULL;
         ogs_pfcp_node_t *node = NULL;
         int rv;
@@ -350,6 +368,8 @@ static int sgwc_reload_sgwu_peer_add_only(ogs_yaml_iter_t *sgwu_array)
                     if (v && num_of_dnn < OGS_MAX_NUM_OF_DNN)
                         dnn[num_of_dnn++] = v;
                 }
+            } else if (!strcmp(remote_key, "order")) {
+                order_v = ogs_yaml_iter_value(&remote_iter);
             }
         }
 
@@ -367,7 +387,11 @@ static int sgwc_reload_sgwu_peer_add_only(ogs_yaml_iter_t *sgwu_array)
         if (!addr)
             continue;
 
-        if (sgwc_reload_pfcp_peer_exists(addr)) {
+        node = sgwc_reload_pfcp_peer_find(addr);
+        if (node) {
+            node->selection_order = ogs_pfcp_entry_selection_order(
+                    *entry_idx, order_v);
+            (*entry_idx)++;
             ogs_freeaddrinfo(addr);
             continue;
         }
@@ -382,6 +406,10 @@ static int sgwc_reload_sgwu_peer_add_only(ogs_yaml_iter_t *sgwu_array)
         if (num_of_tac)
             memcpy(node->tac, tac, sizeof(node->tac));
 
+        node->selection_order = ogs_pfcp_entry_selection_order(
+                *entry_idx, order_v);
+        (*entry_idx)++;
+
         ogs_reload_audit_note(" SGW-U peer added [%s]:%d",
                 ogs_sockaddr_to_string_static(addr), OGS_PORT(addr));
         added++;
@@ -394,6 +422,7 @@ static int sgwc_reload_sgwu_peer_add_only(ogs_yaml_iter_t *sgwu_array)
 static int sgwc_reload_pfcp_sgwu_add_only(ogs_yaml_iter_t *pfcp_iter)
 {
     ogs_yaml_iter_t pfcp_sub_iter;
+    int entry_idx = 0;
 
     ogs_yaml_iter_recurse(pfcp_iter, &pfcp_sub_iter);
     while (ogs_yaml_iter_next(&pfcp_sub_iter)) {
@@ -412,7 +441,8 @@ static int sgwc_reload_pfcp_sgwu_add_only(ogs_yaml_iter_t *pfcp_iter)
                     ogs_yaml_iter_t sgwu_array;
 
                     ogs_yaml_iter_recurse(&client_iter, &sgwu_array);
-                    return sgwc_reload_sgwu_peer_add_only(&sgwu_array);
+                    return sgwc_reload_sgwu_peer_add_only(
+                            &sgwu_array, &entry_idx);
                 }
             }
         } else if (!strcmp(pfcp_key, "server")) {
@@ -582,6 +612,7 @@ static int sgwc_reload_pfcp_sgwu_sync(ogs_yaml_iter_t *pfcp_iter)
     int added = sgwc_reload_pfcp_sgwu_add_only(pfcp_iter);
 
     sgwc_reload_sgwu_remove_stale(pfcp_iter);
+    ogs_pfcp_peer_list_resort_by_order(&ogs_pfcp_self()->pfcp_peer_list);
     return added;
 }
 
@@ -845,6 +876,7 @@ void sgwc_context_reload_runtime(void)
     }
 
     if (sgwc_nwi_reload_cleared) {
+        sgwc_sgwu_nwi_rewrite_resort();
         sgwc_reload_lists_changed++;
         ogs_reload_audit_note(" sgwu_nwi_rewrite replaced (%d entries)",
                 ogs_list_count(&sgwc_self()->sgwu_nwi_rewrite_list));

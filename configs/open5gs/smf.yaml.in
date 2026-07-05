@@ -508,6 +508,7 @@ smf:
 #      upf:
 #        - address: 127.0.0.7
 #          tac: 1
+#          order: 10               # optional; lower = higher priority among matches
 #        - address: 127.0.0.12
 #          tac: [3,5,8]
 #

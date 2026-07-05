@@ -85,8 +85,8 @@ Top-level section in each NF YAML (`mme.yaml`, `smf.yaml`, `sgwc.yaml`).
 | YAML path | SIGHUP | Notes |
 |-----------|--------|-------|
 | `mme.gtpc.echo_interval` | yes | reschedules S11 GTP echo to all SGWC peers |
-| `mme.gtpc.client.sgwc[]` | yes | **peer sync**: add new; remove when no S11 context |
-| `mme.gtpc.client.smf[]` | yes | **peer sync**: add new; remove from PGW selection list |
+| `mme.gtpc.client.sgwc[]` | yes | **peer sync**: add new; remove when no S11 context; `order` and `imsi_prefix` per entry updated on reload |
+| `mme.gtpc.client.smf[]` | yes | **peer sync**: add new; remove from PGW selection list; `order` and `imsi_prefix` per entry updated on reload |
 | `mme.gtpc.recovery` | **no** | restart required |
 | `mme.gtpc.recovery_counter_file` | **no** | restart required |
 | `mme.gtpc.server` | **no** | bind address — restart required |
@@ -98,8 +98,8 @@ Peer entry fields on add/sync: `address`, `port`, `family`, `tac`, `e_cell_id`, 
 | YAML path | SIGHUP | Notes |
 |-----------|--------|-------|
 | `mme.tai[]` | yes | empty/bad section rejected — previous list kept |
-| `mme.access_control[]` | yes | incl. `default_reject_cause`, `imsi_prefix`, `plmn_id`, `reject_cause`, `tac`, `enb_id` |
-| `mme.hss_map[]` | yes | PLMN → Diameter realm/host |
+| `mme.access_control[]` | yes | incl. `default_reject_cause`, `imsi_prefix`, `plmn_id`, `reject_cause`, `tac`, `enb_id`, `order` |
+| `mme.hss_map[]` | yes | PLMN → Diameter realm/host; `order` per entry |
 | `mme.equivalent_plmn[]` | yes | |
 | `mme.imsi_acl[]` | yes | |
 | `mme.trace_imsi[]` | yes | |
@@ -138,6 +138,7 @@ S1/SCTP bind addresses, pool sizes, GUMMEI, NAS security algorithms, metrics lis
 | `smf.session[].range` | yes | |
 | `smf.session[].dev` | yes | |
 | `smf.session[].apn` / `dnn` | yes | |
+| `smf.session[].order` | yes | lower = higher priority when multiple pools match |
 | Per-APN `radius:` blocks inside session entries | yes | table rebuilt on reload |
 
 Removal: only when **all IPs in the pool are free**.
@@ -146,10 +147,10 @@ Removal: only when **all IPs in the pool are free**.
 
 | YAML path | SIGHUP | Notes |
 |-----------|--------|-------|
-| `smf.pfcp.client.upf[]` | yes | **peer sync**: add; remove when no PFCP sessions |
+| `smf.pfcp.client.upf[]` | yes | **peer sync**: add; remove when no PFCP sessions; `order` updated on reload |
 | `smf.pfcp.server` | **no** | bind address — restart required |
 
-UPF entry fields: `address`, `port`, `family`, `apn`/`dnn`, `tac`.
+UPF entry fields: `address`, `port`, `family`, `apn`/`dnn`, `tac`, `order`.
 
 ### Lists / blocks — full replace
 
@@ -212,7 +213,7 @@ Alternative: SMF CDR/RADIUS can also be pushed via the **admin API** file watche
 
 | YAML path | SIGHUP | Notes |
 |-----------|--------|-------|
-| `sgwc.pfcp.client.sgwu[]` | yes | **peer sync** |
+| `sgwc.pfcp.client.sgwu[]` | yes | **peer sync**; `order` updated on reload |
 | `sgwc.sgwu[]` (legacy top-level alias) | yes | same sync path |
 | `sgwc.pfcp.send_user_id` / `send_user_id_to_sgwu` | yes | |
 | `sgwc.pfcp.server` | **no** | bind address — restart required |
@@ -234,8 +235,8 @@ Removal: only when **no PFCP sessions** on that SGW-U.
 
 | YAML path | SIGHUP | Notes |
 |-----------|--------|-------|
-| `sgwc.sgwu_nwi_rewrite[]` | yes | aliases: `nwi_rewrite`, `pfcp_nwi_rewrite` |
-| `sgwc.gn.pgw[]` / `gn.smf[]` | yes | empty list rejected — previous kept |
+| `sgwc.sgwu_nwi_rewrite[]` | yes | aliases: `nwi_rewrite`, `pfcp_nwi_rewrite`; `order` per rule |
+| `sgwc.gn.pgw[]` / `gn.smf[]` | yes | empty list rejected — previous kept; `order`, `imsi_prefix` |
 | `sgwc.trace_imsi[]` | yes | |
 | `sgwc.cdr.enabled` | yes | writer close/reopen |
 | `sgwc.cdr.spool_dir` / `directory` | yes | |

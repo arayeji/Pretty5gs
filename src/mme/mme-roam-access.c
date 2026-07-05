@@ -19,6 +19,8 @@
 
 #include "mme-roam-access.h"
 
+#include <limits.h>
+
 #include "mme-apn.h"
 #include "mme-context.h"
 
@@ -47,7 +49,7 @@ static mme_access_control_t *mme_access_control_find_inbound(
         const char *imsi_bcd)
 {
     mme_context_t *self = mme_self();
-    int i, best = -1, best_prefix_len = -1;
+    int i, best = -1, best_prefix_len = -1, best_order = INT_MAX;
 
     ogs_assert(imsi_bcd);
 
@@ -61,8 +63,11 @@ static mme_access_control_t *mme_access_control_find_inbound(
                 continue;
             if (strncmp(imsi_bcd, ac->imsi_prefix, prefix_len) != 0)
                 continue;
-            if ((int)prefix_len > best_prefix_len) {
+            if ((int)prefix_len > best_prefix_len ||
+                    ((int)prefix_len == best_prefix_len &&
+                     ac->selection_order < best_order)) {
                 best_prefix_len = (int)prefix_len;
+                best_order = ac->selection_order;
                 best = i;
             }
             continue;
@@ -70,8 +75,12 @@ static mme_access_control_t *mme_access_control_find_inbound(
 
         if (ac->plmn_id_configured &&
                 ogs_plmn_id_imsi_prefix_match(imsi_bcd, &ac->plmn_id)) {
-            if (best_prefix_len < 5) {
-                best_prefix_len = 5;
+            if (best_prefix_len < 5 ||
+                    (best_prefix_len == 5 &&
+                     ac->selection_order < best_order)) {
+                if (best_prefix_len < 5)
+                    best_prefix_len = 5;
+                best_order = ac->selection_order;
                 best = i;
             }
         }

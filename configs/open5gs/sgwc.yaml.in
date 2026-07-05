@@ -54,6 +54,7 @@ sgwc:
 #        port: 2123
 #      - address: 10.1.1.1
 #        imsi_prefix: "99970"
+#        order: 10          # optional; lower = higher priority (default: index*10)
   #
   # GTP-U (all sessions): force SGWC F-TEID (CH=0) instead of SGW-U FTUP.
   #
@@ -82,6 +83,7 @@ sgwc:
 #    sgwu_nwi_rewrite:
 #      - match: '*mnc070*'
 #        replace: roamapn
+#        order: 10                 # optional; first matching rule by order wins
 #      - match: internet.mnc070.mcc999.gprs
 #        replace: roamapn
 #  # Same rules may be placed at sgwc.sgwu_nwi_rewrite (applies to all sessions).

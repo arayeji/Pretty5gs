@@ -24,7 +24,76 @@
 #include "eplmn-config.h"
 #include "mme-reload-lists.h"
 
-int mme_reload_lists_changed = 0;
+volatile int mme_reload_lists_changed = 0;
+
+static int reload_gtpc_entry_selection_order(int yaml_index, const char *order_v)
+{
+    if (order_v && order_v[0])
+        return atoi(order_v);
+    return yaml_index * OGS_SELECTION_ORDER_STEP;
+}
+
+static int reload_gtpc_sgw_order_cmp(const void *a, const void *b)
+{
+    const mme_sgw_t * const *pa = a;
+    const mme_sgw_t * const *pb = b;
+
+    return (*pa)->selection_order - (*pb)->selection_order;
+}
+
+static int reload_gtpc_pgw_order_cmp(const void *a, const void *b)
+{
+    const mme_pgw_t * const *pa = a;
+    const mme_pgw_t * const *pb = b;
+
+    return (*pa)->selection_order - (*pb)->selection_order;
+}
+
+static void reload_gtpc_resort_sgw_list(void)
+{
+    mme_sgw_t *sgw = NULL;
+    mme_sgw_t *nodes[256];
+    int i, n = 0;
+
+    ogs_list_for_each(&mme_self()->sgw_list, sgw) {
+        if (n < (int)(sizeof(nodes) / sizeof(nodes[0])))
+            nodes[n++] = sgw;
+    }
+
+    if (n <= 1)
+        return;
+
+    qsort(nodes, n, sizeof(nodes[0]), reload_gtpc_sgw_order_cmp);
+
+    while ((sgw = ogs_list_first(&mme_self()->sgw_list)) != NULL)
+        ogs_list_remove(&mme_self()->sgw_list, sgw);
+
+    for (i = 0; i < n; i++)
+        ogs_list_add(&mme_self()->sgw_list, nodes[i]);
+}
+
+static void reload_gtpc_resort_pgw_list(void)
+{
+    mme_pgw_t *pgw = NULL;
+    mme_pgw_t *nodes[256];
+    int i, n = 0;
+
+    ogs_list_for_each(&mme_self()->pgw_list, pgw) {
+        if (n < (int)(sizeof(nodes) / sizeof(nodes[0])))
+            nodes[n++] = pgw;
+    }
+
+    if (n <= 1)
+        return;
+
+    qsort(nodes, n, sizeof(nodes[0]), reload_gtpc_pgw_order_cmp);
+
+    while ((pgw = ogs_list_first(&mme_self()->pgw_list)) != NULL)
+        ogs_list_remove(&mme_self()->pgw_list, pgw);
+
+    for (i = 0; i < n; i++)
+        ogs_list_add(&mme_self()->pgw_list, nodes[i]);
+}
 
 static uint16_t reload_yaml_parse_port(const char *v, uint16_t default_port)
 {
@@ -458,11 +527,14 @@ static int reload_hss_map_replace(ogs_yaml_iter_t *mme_iter)
 {
     ogs_yaml_iter_t hss_map_array, hss_map_iter;
     int count = 0;
+    int hss_map_entry_idx = 0;
 
     mme_hssmap_remove_all();
 
     ogs_yaml_iter_recurse(mme_iter, &hss_map_array);
     do {
+        const char *order_v = NULL;
+
         if (ogs_yaml_iter_type(&hss_map_array) == YAML_MAPPING_NODE) {
             memcpy(&hss_map_iter, &hss_map_array, sizeof(ogs_yaml_iter_t));
         } else if (ogs_yaml_iter_type(&hss_map_array) == YAML_SEQUENCE_NODE) {
@@ -482,7 +554,9 @@ static int reload_hss_map_replace(ogs_yaml_iter_t *mme_iter)
             const char *hss_map_key = ogs_yaml_iter_key(&hss_map_iter);
             ogs_assert(hss_map_key);
 
-            if (!strcmp(hss_map_key, "plmn_id")) {
+            if (!strcmp(hss_map_key, "order")) {
+                order_v = ogs_yaml_iter_value(&hss_map_iter);
+            } else if (!strcmp(hss_map_key, "plmn_id")) {
                 ogs_yaml_iter_t plmn_id_iter;
 
                 ogs_yaml_iter_recurse(&hss_map_iter, &plmn_id_iter);
@@ -511,8 +585,11 @@ static int reload_hss_map_replace(ogs_yaml_iter_t *mme_iter)
                     ogs_plmn_id_build(&plmn_id,
                             atoi(mcc), atoi(mnc), strlen(mnc));
 
-                    hssmap = mme_hssmap_add(&plmn_id, realm, host);
+                    hssmap = mme_hssmap_add(&plmn_id, realm, host,
+                            reload_gtpc_entry_selection_order(
+                                    hss_map_entry_idx, order_v));
                     ogs_assert(hssmap);
+                    hss_map_entry_idx++;
                     count++;
                     mme_reload_lists_changed++;
 
@@ -522,6 +599,8 @@ static int reload_hss_map_replace(ogs_yaml_iter_t *mme_iter)
             }
         }
     } while (ogs_yaml_iter_type(&hss_map_array) == YAML_SEQUENCE_NODE);
+
+    mme_hssmap_resort_by_order();
 
     if (count > 0 || ogs_list_first(&mme_self()->hssmap_list) == NULL) {
         mme_reload_lists_changed++;
@@ -593,6 +672,7 @@ static int reload_access_control_replace(ogs_yaml_iter_t *mme_iter)
     mme_context_t *self = mme_self();
     ogs_yaml_iter_t access_control_array, access_control_iter;
     int added = 0;
+    int entry_idx = 0;
 
     mme_access_control_free_all();
     self->num_of_access_control = 0;
@@ -604,6 +684,7 @@ static int reload_access_control_replace(ogs_yaml_iter_t *mme_iter)
         bool plmn_configured = false;
         bool entry_configured = false;
         int entry_reject_cause = 0;
+        const char *order_v = NULL;
         mme_access_control_t *ac = NULL;
         int before;
 
@@ -708,6 +789,8 @@ static int reload_access_control_replace(ogs_yaml_iter_t *mme_iter)
                 reload_access_control_parse_uint32_list(
                         &access_control_iter, ac,
                         !strcmp(access_control_key, "enb_id"));
+            } else if (!strcmp(access_control_key, "order")) {
+                order_v = ogs_yaml_iter_value(&access_control_iter);
             }
         }
 
@@ -741,6 +824,12 @@ static int reload_access_control_replace(ogs_yaml_iter_t *mme_iter)
                 mme_reload_lists_changed++;
                 ogs_reload_audit_note(" access_control entry added");
             }
+        }
+
+        if (ac) {
+            ac->selection_order = reload_gtpc_entry_selection_order(
+                    entry_idx, order_v);
+            entry_idx++;
         }
 
         if (mme_reload_lists_changed == before && ac &&
@@ -1295,7 +1384,7 @@ static void reload_gtpc_remove_stale(ogs_yaml_iter_t *gtpc_iter)
 }
 
 static int reload_gtpc_client_entry_add_only(
-        ogs_yaml_iter_t *client_array, bool pgw)
+        ogs_yaml_iter_t *client_array, bool pgw, int *entry_idx)
 {
     ogs_yaml_iter_t client_iter;
     int added = 0;
@@ -1306,6 +1395,9 @@ static int reload_gtpc_client_entry_add_only(
         int i, num = 0;
         const char *hostname[OGS_MAX_NUM_OF_HOSTNAME];
         uint16_t port = ogs_gtp_self()->gtpc_port;
+        const char *order_v = NULL;
+        char imsi_prefix_buf[OGS_MAX_IMSI_BCD_LEN + 1];
+        bool imsi_prefix_set = false;
         uint16_t *tac = ogs_calloc(ogs_global_conf()->max.tai,
                 sizeof(uint16_t));
         int num_of_tac = 0;
@@ -1322,6 +1414,8 @@ static int reload_gtpc_client_entry_add_only(
         int before = mme_reload_lists_changed;
 
         ogs_assert(tac);
+        ogs_assert(entry_idx);
+        imsi_prefix_buf[0] = '\0';
 
         if (ogs_yaml_iter_type(client_array) == YAML_MAPPING_NODE) {
             memcpy(&client_iter, client_array, sizeof(ogs_yaml_iter_t));
@@ -1423,6 +1517,15 @@ static int reload_gtpc_client_entry_add_only(
                         &client_iter, client_key,
                         &serving_plmn_parsed, &serving_plmn,
                         &imsi_plmn_parsed, &imsi_plmn);
+            } else if (!strcmp(client_key, "order")) {
+                order_v = ogs_yaml_iter_value(&client_iter);
+            } else if (!strcmp(client_key, "imsi_prefix")) {
+                const char *v = ogs_yaml_iter_value(&client_iter);
+
+                if (v) {
+                    ogs_cpystrn(imsi_prefix_buf, v, sizeof(imsi_prefix_buf));
+                    imsi_prefix_set = true;
+                }
             }
         }
 
@@ -1491,6 +1594,13 @@ static int reload_gtpc_client_entry_add_only(
                 memcpy(&sgw->imsi_plmn_id, &imsi_plmn, sizeof(ogs_plmn_id_t));
                 mme_reload_lists_changed++;
             }
+            sgw->selection_order = reload_gtpc_entry_selection_order(
+                    *entry_idx, order_v);
+            if (imsi_prefix_set) {
+                ogs_cpystrn(sgw->imsi_prefix, imsi_prefix_buf,
+                        sizeof(sgw->imsi_prefix));
+                mme_reload_lists_changed++;
+            }
         } else {
             pgw_node = reload_pgw_find_by_addr(addr);
             if (!pgw_node) {
@@ -1526,12 +1636,20 @@ static int reload_gtpc_client_entry_add_only(
                         sizeof(ogs_plmn_id_t));
                 mme_reload_lists_changed++;
             }
+            pgw_node->selection_order = reload_gtpc_entry_selection_order(
+                    *entry_idx, order_v);
+            if (imsi_prefix_set) {
+                ogs_cpystrn(pgw_node->imsi_prefix, imsi_prefix_buf,
+                        sizeof(pgw_node->imsi_prefix));
+                mme_reload_lists_changed++;
+            }
         }
 
         if (mme_reload_lists_changed > before)
             added++;
 
         ogs_free(tac);
+        (*entry_idx)++;
     } while (ogs_yaml_iter_type(client_array) == YAML_SEQUENCE_NODE);
 
     return added;
@@ -1557,16 +1675,20 @@ int mme_reload_gtpc_client_add_only(ogs_yaml_iter_t *gtpc_iter)
 
                 if (!strcmp(client_key, "sgwc")) {
                     ogs_yaml_iter_t sgwc_array;
+                    int entry_idx = 0;
 
                     ogs_yaml_iter_recurse(&client_iter, &sgwc_array);
                     added += reload_gtpc_client_entry_add_only(
-                            &sgwc_array, false);
+                            &sgwc_array, false, &entry_idx);
+                    reload_gtpc_resort_sgw_list();
                 } else if (!strcmp(client_key, "smf")) {
                     ogs_yaml_iter_t smf_array;
+                    int entry_idx = 0;
 
                     ogs_yaml_iter_recurse(&client_iter, &smf_array);
                     added += reload_gtpc_client_entry_add_only(
-                            &smf_array, true);
+                            &smf_array, true, &entry_idx);
+                    reload_gtpc_resort_pgw_list();
                 }
             }
         }

@@ -193,6 +193,8 @@ mme:
 # GTP-C Client
 ################################################################################
 #  o SGW selection by serving PLMN (TAI PLMN) and/or home IMSI PLMN
+#  o Optional order (lower = higher priority) and imsi_prefix filter.
+#    When several entries match, the lowest order wins (not YAML list position).
 #  o With inbound_roam.gtpc_plmn_id_is_imsi_plmn (default true),
 #    plmn_id on sgwc/smf means IMSI home PLMN; use serving_plmn_id for TAI.
 #  gtpc:
@@ -232,8 +234,10 @@ mme:
 #        - address: 127.0.2.2
 #          e_cell_id: [12345, a9413, 98765]
 #
-#  o SMF/PGW selection by home IMSI PLMN and/or serving PLMN (list order matters:
-#    put imsi_plmn_id entries before serving plmn_id / apn / default)
+#  o SMF/PGW selection by home IMSI PLMN and/or serving PLMN.
+#    Optional order (lower = higher priority) and imsi_prefix filter.
+#    When several entries match, the lowest order wins.
+#    Default order follows list index (0, 10, 20, ...) when order is omitted.
 #  gtpc:
 #    client:
 #      smf:
@@ -437,6 +441,7 @@ mme:
 #  access_control:
 #    - default_reject_cause: 13
 #    - imsi_prefix: "00101"       # inbound roam only; longest prefix match
+#      order: 10                   # optional; lower = higher priority
 #      reject_cause: 13
 #      tac: [10003, 10012]        # optional; omit = all TACs OK for this prefix
 #      enb_id: [260003, 450004]   # optional; omit = all eNB IDs OK

@@ -20,6 +20,7 @@
 #include <yaml.h>
 #include <stdio.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <errno.h>
 #include <string.h>
 #ifdef _WIN32
@@ -218,7 +219,8 @@ static void sgwc_gn_pgw_clear(void)
     sgwc_gn_pgw_clear_list(&self.gn_pgw_list);
 }
 
-static void sgwc_sgwu_nwi_rewrite_add(const char *match, const char *replace)
+static void sgwc_sgwu_nwi_rewrite_add(
+        const char *match, const char *replace, int selection_order)
 {
     sgwc_sgwu_nwi_rewrite_rule_t *rule = NULL;
 
@@ -236,16 +238,49 @@ static void sgwc_sgwu_nwi_rewrite_add(const char *match, const char *replace)
     ogs_assert(rule->match);
     rule->replace = ogs_strdup(replace);
     ogs_assert(rule->replace);
+    rule->selection_order = selection_order;
     ogs_list_add(&self.sgwu_nwi_rewrite_list, rule);
 
-    ogs_info("SGW-U NWI rewrite: [%s] -> [%s] "
+    ogs_info("SGW-U NWI rewrite: [%s] -> [%s] order:%d "
             "(case-insensitive, * wildcard)",
-            rule->match, rule->replace);
+            rule->match, rule->replace, rule->selection_order);
+}
+
+static int sgwc_sgwu_nwi_rewrite_order_cmp(const void *a, const void *b)
+{
+    const sgwc_sgwu_nwi_rewrite_rule_t * const *pa = a;
+    const sgwc_sgwu_nwi_rewrite_rule_t * const *pb = b;
+
+    return (*pa)->selection_order - (*pb)->selection_order;
+}
+
+void sgwc_sgwu_nwi_rewrite_resort(void)
+{
+    sgwc_sgwu_nwi_rewrite_rule_t *rule = NULL;
+    sgwc_sgwu_nwi_rewrite_rule_t *rules[256];
+    int i, n = 0;
+
+    ogs_list_for_each(&self.sgwu_nwi_rewrite_list, rule) {
+        if (n < (int)(sizeof(rules) / sizeof(rules[0])))
+            rules[n++] = rule;
+    }
+
+    if (n <= 1)
+        return;
+
+    qsort(rules, n, sizeof(rules[0]), sgwc_sgwu_nwi_rewrite_order_cmp);
+
+    while ((rule = ogs_list_first(&self.sgwu_nwi_rewrite_list)) != NULL)
+        ogs_list_remove(&self.sgwu_nwi_rewrite_list, rule);
+
+    for (i = 0; i < n; i++)
+        ogs_list_add(&self.sgwu_nwi_rewrite_list, rules[i]);
 }
 
 static void sgwc_sgwu_nwi_rewrite_parse(ogs_yaml_iter_t *parent_iter)
 {
     ogs_yaml_iter_t rule_array, rule_iter;
+    int rule_entry_idx = 0;
 
     ogs_assert(parent_iter);
 
@@ -253,6 +288,7 @@ static void sgwc_sgwu_nwi_rewrite_parse(ogs_yaml_iter_t *parent_iter)
     do {
         const char *match = NULL;
         const char *replace = NULL;
+        const char *order_v = NULL;
 
         if (ogs_yaml_iter_type(&rule_array) == YAML_MAPPING_NODE) {
             memcpy(&rule_iter, &rule_array, sizeof(ogs_yaml_iter_t));
@@ -272,15 +308,21 @@ static void sgwc_sgwu_nwi_rewrite_parse(ogs_yaml_iter_t *parent_iter)
                 match = ogs_yaml_iter_value(&rule_iter);
             else if (!strcmp(key, "replace") || !strcmp(key, "to"))
                 replace = ogs_yaml_iter_value(&rule_iter);
+            else if (!strcmp(key, "order"))
+                order_v = ogs_yaml_iter_value(&rule_iter);
             else
                 ogs_warn("unknown key `%s` in sgwu_nwi_rewrite rule", key);
         }
 
-        if (match && replace)
-            sgwc_sgwu_nwi_rewrite_add(match, replace);
-        else if (match || replace)
+        if (match && replace) {
+            sgwc_sgwu_nwi_rewrite_add(match, replace,
+                    ogs_pfcp_entry_selection_order(rule_entry_idx, order_v));
+            rule_entry_idx++;
+        } else if (match || replace)
             ogs_warn("sgwu_nwi_rewrite rule needs both match and replace");
     } while (ogs_yaml_iter_type(&rule_array) == YAML_SEQUENCE_NODE);
+
+    sgwc_sgwu_nwi_rewrite_resort();
 }
 
 static bool sgwc_sgwu_nwi_rewrite_key(const char *key)
@@ -1012,7 +1054,8 @@ static int sgwc_gn_pgw_apply_addr(
 }
 
 static sgwc_gn_pgw_t *sgwc_gn_pgw_add(ogs_list_t *list,
-        const char *hostname, uint16_t port, const char *imsi_prefix)
+        const char *hostname, uint16_t port, const char *imsi_prefix,
+        int selection_order)
 {
     int rv;
     ogs_sockaddr_t *addr = NULL;
@@ -1041,6 +1084,8 @@ static sgwc_gn_pgw_t *sgwc_gn_pgw_add(ogs_list_t *list,
         ogs_cpystrn(pgw->imsi_prefix, imsi_prefix, sizeof(pgw->imsi_prefix));
     }
 
+    pgw->selection_order = selection_order;
+
     rv = sgwc_gn_pgw_apply_addr(pgw, addr, port);
     ogs_freeaddrinfo(addr);
     if (rv != OGS_OK) {
@@ -1056,6 +1101,7 @@ static sgwc_gn_pgw_t *sgwc_gn_pgw_add(ogs_list_t *list,
 void sgwc_gn_pgw_yaml_add(ogs_list_t *list, ogs_yaml_iter_t *parent_iter)
 {
     ogs_yaml_iter_t pgw_array, pgw_item;
+    int pgw_entry_idx = 0;
 
     ogs_assert(list);
     ogs_assert(parent_iter);
@@ -1064,6 +1110,7 @@ void sgwc_gn_pgw_yaml_add(ogs_list_t *list, ogs_yaml_iter_t *parent_iter)
     do {
         const char *hostname = NULL;
         const char *imsi_prefix = NULL;
+        const char *order_v = NULL;
         uint16_t port = 0;
 
         if (ogs_yaml_iter_type(&pgw_array) == YAML_SEQUENCE_NODE) {
@@ -1085,11 +1132,17 @@ void sgwc_gn_pgw_yaml_add(ogs_list_t *list, ogs_yaml_iter_t *parent_iter)
                 port = (uint16_t)atoi(pv);
             else if (!strcmp(pk, "imsi_prefix") && pv)
                 imsi_prefix = pv;
+            else if (!strcmp(pk, "order") && pv)
+                order_v = pv;
         }
 
         if (hostname) {
-            if (!sgwc_gn_pgw_add(list, hostname, port, imsi_prefix)) {
+            if (!sgwc_gn_pgw_add(list, hostname, port, imsi_prefix,
+                        ogs_pfcp_entry_selection_order(pgw_entry_idx,
+                            order_v))) {
                 ogs_error("Failed to add gn.pgw [%s]", hostname);
+            } else {
+                pgw_entry_idx++;
             }
         }
 
@@ -1101,11 +1154,15 @@ void sgwc_gn_pgw_yaml_add(ogs_list_t *list, ogs_yaml_iter_t *parent_iter)
 sgwc_gn_pgw_t *sgwc_gn_pgw_find_for_ue(sgwc_ue_t *sgwc_ue)
 {
     sgwc_gn_pgw_t *pgw = NULL;
+    sgwc_gn_pgw_t *best = NULL;
     sgwc_gn_pgw_t *default_pgw = NULL;
+    int best_prefix_len = -1;
+    int best_order = INT_MAX;
 
     ogs_list_for_each(&self.gn_pgw_list, pgw) {
         if (!pgw->imsi_prefix[0]) {
-            if (!default_pgw)
+            if (!default_pgw ||
+                    pgw->selection_order < default_pgw->selection_order)
                 default_pgw = pgw;
             continue;
         }
@@ -1115,15 +1172,28 @@ sgwc_gn_pgw_t *sgwc_gn_pgw_find_for_ue(sgwc_ue_t *sgwc_ue)
 
         if (strncmp(sgwc_ue->imsi_bcd, pgw->imsi_prefix,
                     strlen(pgw->imsi_prefix)) == 0) {
-            ogs_debug("Gn PGW selected imsi_prefix:%s IMSI:%s",
-                    pgw->imsi_prefix, sgwc_ue->imsi_bcd);
-            return pgw;
+            int plen = (int)strlen(pgw->imsi_prefix);
+
+            if (plen > best_prefix_len ||
+                    (plen == best_prefix_len &&
+                     pgw->selection_order < best_order)) {
+                best_prefix_len = plen;
+                best_order = pgw->selection_order;
+                best = pgw;
+            }
         }
     }
 
+    if (best) {
+        ogs_debug("Gn PGW selected imsi_prefix:%s IMSI:%s order:%d",
+                best->imsi_prefix, sgwc_ue->imsi_bcd, best->selection_order);
+        return best;
+    }
+
     if (default_pgw) {
-        ogs_debug("Gn PGW selected default IMSI:%s",
-                sgwc_ue && sgwc_ue->imsi_bcd[0] ? sgwc_ue->imsi_bcd : "-");
+        ogs_debug("Gn PGW selected default IMSI:%s order:%d",
+                sgwc_ue && sgwc_ue->imsi_bcd[0] ? sgwc_ue->imsi_bcd : "-",
+                default_pgw->selection_order);
     }
 
     return default_pgw;
@@ -1894,22 +1964,24 @@ static ogs_pfcp_node_t *selected_sgwu_node(
         ogs_pfcp_node_t *current, sgwc_sess_t *sess)
 {
     ogs_pfcp_node_t *next, *node;
+    ogs_pfcp_node_t *best = NULL;
+    int best_order = INT_MAX;
 
     ogs_assert(current);
     ogs_assert(sess);
 
-    /* continue search from current position */
-    next = ogs_list_next(current);
-    for (node = next; node; node = ogs_list_next(node)) {
-        if (OGS_FSM_CHECK(&node->sm, sgwc_pfcp_state_associated) &&
-            compare_ue_info(node, sess) == true) return node;
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, node) {
+        if (!OGS_FSM_CHECK(&node->sm, sgwc_pfcp_state_associated))
+            continue;
+        if (compare_ue_info(node, sess) &&
+                node->selection_order < best_order) {
+            best_order = node->selection_order;
+            best = node;
+        }
     }
-    /* cyclic search from top to current position */
-    for (node = ogs_list_first(&ogs_pfcp_self()->pfcp_peer_list);
-            node != next; node = ogs_list_next(node)) {
-        if (OGS_FSM_CHECK(&node->sm, sgwc_pfcp_state_associated) &&
-            compare_ue_info(node, sess) == true) return node;
-    }
+
+    if (best)
+        return best;
 
     if (ogs_global_conf()->parameter.no_pfcp_rr_select == 0) {
         /* continue search from current position */

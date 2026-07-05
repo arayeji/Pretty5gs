@@ -42,11 +42,13 @@ typedef struct sgwc_sgwu_nwi_rewrite_rule_s {
     ogs_lnode_t lnode;
     char *match;
     char *replace;
+    int selection_order;
 } sgwc_sgwu_nwi_rewrite_rule_t;
 
 typedef struct sgwc_gn_pgw_s {
     ogs_lnode_t lnode;
     char imsi_prefix[OGS_MAX_IMSI_BCD_LEN+1];
+    int selection_order;
     ogs_gtp2_f_teid_t f_teid;
     int f_teid_len;
 } sgwc_gn_pgw_t;
@@ -429,6 +431,7 @@ sgwc_sess_t *sgwc_sess_find_by_nsapi(sgwc_ue_t *sgwc_ue, uint8_t nsapi);
 sgwc_sess_t *sgwc_sess_find_by_id(ogs_pool_id_t id);
 bool sgwc_pfcp_peer_in_use(const ogs_pfcp_node_t *node);
 void sgwc_sgwu_nwi_rewrite_clear(void);
+void sgwc_sgwu_nwi_rewrite_resort(void);
 
 #define SGWC_SESSION_SYNC_DONE(__sGWC, __tYPE, __fLAGS) \
     (sgwc_sess_pfcp_xact_count(__sGWC, __tYPE, __fLAGS) == 0)

@@ -332,7 +332,14 @@ static void smf_reload_session_sync(ogs_yaml_iter_t *smf_iter)
         ogs_reload_audit_note(" session pools synced (%d removed)", removed);
 }
 
+static ogs_pfcp_node_t *smf_reload_pfcp_peer_find(ogs_sockaddr_t *addr);
+
 static bool smf_reload_pfcp_peer_exists(ogs_sockaddr_t *addr)
+{
+    return smf_reload_pfcp_peer_find(addr) != NULL;
+}
+
+static ogs_pfcp_node_t *smf_reload_pfcp_peer_find(ogs_sockaddr_t *addr)
 {
     ogs_pfcp_node_t *node = NULL;
 
@@ -342,13 +349,44 @@ static bool smf_reload_pfcp_peer_exists(ogs_sockaddr_t *addr)
         if (node->config_addr &&
                 smf_reload_sockaddr_lists_match(
                     addr, node->config_addr, NULL))
-            return true;
+            return node;
     }
 
-    return false;
+    return NULL;
 }
 
-static int smf_reload_session_entry_add_only(ogs_yaml_iter_t *subnet_iter)
+static ogs_pfcp_subnet_t *smf_reload_subnet_find(
+        const char *ipstr, const char *mask_or_numbits,
+        const char dnnv[][OGS_MAX_DNN_LEN+1], int num_of_dnn)
+{
+    ogs_ipsubnet_t probe;
+    ogs_pfcp_subnet_t *subnet = NULL;
+    int probe_prefix = 0;
+
+    if (!ipstr || !mask_or_numbits)
+        return NULL;
+
+    if (ogs_ipsubnet(&probe, ipstr, mask_or_numbits) != OGS_OK)
+        return NULL;
+
+    if (mask_or_numbits)
+        probe_prefix = atoi(mask_or_numbits);
+
+    ogs_list_for_each(&ogs_pfcp_self()->subnet_list, subnet) {
+        if (subnet->family != probe.family ||
+                subnet->prefixlen != (uint8_t)probe_prefix)
+            continue;
+        if (memcmp(subnet->sub.sub, probe.sub, sizeof(probe.sub)) != 0)
+            continue;
+        if (smf_reload_dnn_set_equal(subnet, dnnv, num_of_dnn))
+            return subnet;
+    }
+
+    return NULL;
+}
+
+static int smf_reload_session_entry_add_only(
+        ogs_yaml_iter_t *subnet_iter, int *entry_idx)
 {
     ogs_pfcp_subnet_t *subnet = NULL;
     const char *ipstr = NULL;
@@ -359,6 +397,7 @@ static int smf_reload_session_entry_add_only(ogs_yaml_iter_t *subnet_iter)
     int dnn_seq_n = 0;
     const char *dnn_scalar = NULL;
     const char *dev = ogs_pfcp_self()->tun_ifname;
+    const char *order_v = NULL;
     const char *low[OGS_MAX_NUM_OF_SUBNET_RANGE];
     const char *high[OGS_MAX_NUM_OF_SUBNET_RANGE];
     char subnet_buf[OGS_ADDRSTRLEN+16];
@@ -366,6 +405,7 @@ static int smf_reload_session_entry_add_only(ogs_yaml_iter_t *subnet_iter)
 
     ogs_assert(subnet_iter);
     ogs_assert(dnn_seq);
+    ogs_assert(entry_idx);
 
     memset(low, 0, sizeof(low));
     memset(high, 0, sizeof(high));
@@ -419,6 +459,8 @@ static int smf_reload_session_entry_add_only(ogs_yaml_iter_t *subnet_iter)
             }
         } else if (!strcmp(subnet_key, "dev")) {
             dev = ogs_yaml_iter_value(subnet_iter);
+        } else if (!strcmp(subnet_key, "order")) {
+            order_v = ogs_yaml_iter_value(subnet_iter);
         } else if (!strcmp(subnet_key, "range")) {
             ogs_yaml_iter_t range_iter;
 
@@ -458,19 +500,20 @@ static int smf_reload_session_entry_add_only(ogs_yaml_iter_t *subnet_iter)
     }
 
     if (dnn_seq_n > 0) {
-        if (smf_reload_subnet_exists(ipstr, mask_or_numbits,
-                    (const char (*)[OGS_MAX_DNN_LEN+1])dnn_seq, dnn_seq_n)) {
-            ogs_free(dnn_seq);
-            return 0;
-        }
+        subnet = smf_reload_subnet_find(ipstr, mask_or_numbits,
+                (const char (*)[OGS_MAX_DNN_LEN+1])dnn_seq, dnn_seq_n);
     } else if (dnn_scalar && dnn_scalar[0]) {
         char one[1][OGS_MAX_DNN_LEN+1];
         ogs_cpystrn(one[0], dnn_scalar, OGS_MAX_DNN_LEN);
-        if (smf_reload_subnet_exists(ipstr, mask_or_numbits, one, 1)) {
-            ogs_free(dnn_seq);
-            return 0;
-        }
-    } else if (smf_reload_subnet_exists(ipstr, mask_or_numbits, NULL, 0)) {
+        subnet = smf_reload_subnet_find(ipstr, mask_or_numbits, one, 1);
+    } else {
+        subnet = smf_reload_subnet_find(ipstr, mask_or_numbits, NULL, 0);
+    }
+
+    if (subnet) {
+        subnet->selection_order = ogs_pfcp_entry_selection_order(
+                *entry_idx, order_v);
+        (*entry_idx)++;
         ogs_free(dnn_seq);
         return 0;
     }
@@ -496,6 +539,10 @@ static int smf_reload_session_entry_add_only(ogs_yaml_iter_t *subnet_iter)
         subnet->range[i].high = high[i] ? ogs_strdup(high[i]) : NULL;
     }
 
+    subnet->selection_order = ogs_pfcp_entry_selection_order(
+            *entry_idx, order_v);
+    (*entry_idx)++;
+
     ogs_reload_audit_note(" subnet added %s/%s (dnn=%d)",
             ipstr, mask_or_numbits, dnn_seq_n > 0 ? dnn_seq_n :
             (dnn_scalar ? 1 : 0));
@@ -507,6 +554,7 @@ static int smf_reload_session_add_only(ogs_yaml_iter_t *smf_iter)
 {
     ogs_yaml_iter_t subnet_array, subnet_iter;
     int added = 0;
+    int entry_idx = 0;
 
     ogs_yaml_iter_recurse(smf_iter, &subnet_array);
     do {
@@ -520,18 +568,22 @@ static int smf_reload_session_add_only(ogs_yaml_iter_t *smf_iter)
             break;
         }
 
-        added += smf_reload_session_entry_add_only(&subnet_iter);
+        added += smf_reload_session_entry_add_only(&subnet_iter, &entry_idx);
     } while (ogs_yaml_iter_type(&subnet_array) == YAML_SEQUENCE_NODE);
+
+    ogs_pfcp_subnet_list_resort_by_order(&ogs_pfcp_self()->subnet_list);
 
     return added;
 }
 
-static int smf_reload_upf_peer_entry_add_only(ogs_yaml_iter_t *upf_array)
+static int smf_reload_upf_peer_entry_add_only(
+        ogs_yaml_iter_t *upf_array, int *entry_idx)
 {
     yaml_document_t *document = ogs_app()->document;
     int added = 0;
 
     ogs_assert(upf_array);
+    ogs_assert(entry_idx);
 
     do {
         ogs_yaml_iter_t remote_iter;
@@ -543,6 +595,7 @@ static int smf_reload_upf_peer_entry_add_only(ogs_yaml_iter_t *upf_array)
         uint8_t num_of_tac = 0;
         const char *dnn[OGS_MAX_NUM_OF_DNN];
         int num_of_dnn = 0;
+        const char *order_v = NULL;
         ogs_sockaddr_t *addr = NULL;
         ogs_pfcp_node_t *node = NULL;
         int rv;
@@ -628,6 +681,8 @@ static int smf_reload_upf_peer_entry_add_only(ogs_yaml_iter_t *upf_array)
                     if (v && num_of_dnn < OGS_MAX_NUM_OF_DNN)
                         dnn[num_of_dnn++] = v;
                 }
+            } else if (!strcmp(remote_key, "order")) {
+                order_v = ogs_yaml_iter_value(&remote_iter);
             }
         }
 
@@ -645,7 +700,11 @@ static int smf_reload_upf_peer_entry_add_only(ogs_yaml_iter_t *upf_array)
         if (!addr)
             continue;
 
-        if (smf_reload_pfcp_peer_exists(addr)) {
+        node = smf_reload_pfcp_peer_find(addr);
+        if (node) {
+            node->selection_order = ogs_pfcp_entry_selection_order(
+                    *entry_idx, order_v);
+            (*entry_idx)++;
             ogs_freeaddrinfo(addr);
             continue;
         }
@@ -659,6 +718,10 @@ static int smf_reload_upf_peer_entry_add_only(ogs_yaml_iter_t *upf_array)
         node->num_of_tac = num_of_tac;
         if (num_of_tac)
             memcpy(node->tac, tac, sizeof(node->tac));
+
+        node->selection_order = ogs_pfcp_entry_selection_order(
+                *entry_idx, order_v);
+        (*entry_idx)++;
 
         ogs_reload_audit_note(" UPF peer added [%s]:%d",
                 ogs_sockaddr_to_string_static(addr), OGS_PORT(addr));
@@ -818,6 +881,7 @@ static void smf_reload_upf_remove_stale(ogs_yaml_iter_t *pfcp_iter)
 static int smf_reload_pfcp_upf_add_only(ogs_yaml_iter_t *pfcp_iter)
 {
     ogs_yaml_iter_t pfcp_sub_iter;
+    int entry_idx = 0;
 
     ogs_yaml_iter_recurse(pfcp_iter, &pfcp_sub_iter);
     while (ogs_yaml_iter_next(&pfcp_sub_iter)) {
@@ -836,7 +900,8 @@ static int smf_reload_pfcp_upf_add_only(ogs_yaml_iter_t *pfcp_iter)
                     ogs_yaml_iter_t upf_array;
 
                     ogs_yaml_iter_recurse(&client_iter, &upf_array);
-                    return smf_reload_upf_peer_entry_add_only(&upf_array);
+                    return smf_reload_upf_peer_entry_add_only(
+                            &upf_array, &entry_idx);
                 }
             }
         } else if (!strcmp(pfcp_key, "server")) {
@@ -852,6 +917,7 @@ static int smf_reload_pfcp_upf_sync(ogs_yaml_iter_t *pfcp_iter)
     int added = smf_reload_pfcp_upf_add_only(pfcp_iter);
 
     smf_reload_upf_remove_stale(pfcp_iter);
+    ogs_pfcp_peer_list_resort_by_order(&ogs_pfcp_self()->pfcp_peer_list);
     return added;
 }
 
