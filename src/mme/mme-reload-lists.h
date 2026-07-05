@@ -27,8 +27,9 @@ extern "C" {
 #endif
 
 /*
- * Phase-1 SIGHUP reload: add-only list updates (new attach / new session).
- * Returns the number of new entries merged or appended.
+ * SIGHUP reload: list updates with full replace semantics (add, remove,
+ * reorder). Returns the number of new entries merged or appended where
+ * add-only helpers are still used internally.
  */
 int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter);
 int mme_reload_gtpc_client_add_only(ogs_yaml_iter_t *gtpc_iter);

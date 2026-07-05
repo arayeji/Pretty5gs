@@ -80,6 +80,7 @@ void ogs_log_cycle(void);
 ogs_log_t *ogs_log_add_stderr(void);
 ogs_log_t *ogs_log_add_file(const char *name);
 void ogs_log_remove(ogs_log_t *log);
+int ogs_log_reload_file(const char *path);
 
 ogs_log_domain_t *ogs_log_add_domain(const char *name, ogs_log_level_e level);
 ogs_log_domain_t *ogs_log_find_domain(const char *name);

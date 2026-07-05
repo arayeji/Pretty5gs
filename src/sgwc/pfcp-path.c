@@ -18,6 +18,7 @@
  */
 
 #include "pfcp-path.h"
+#include "context.h"
 #include "gtp-path.h"
 #include "s11-handler.h"
 #include "gn-handler.h"
@@ -933,6 +934,18 @@ ogs_pfcp_node_t *sgwc_pfcp_admin_add_sgwu_peer(
             "(num_of_dnn=%u)", (unsigned)node->num_of_dnn);
 
     return node;
+}
+
+bool sgwc_pfcp_remove_sgwu_peer(ogs_pfcp_node_t *node)
+{
+    ogs_assert(node);
+
+    if (sgwc_pfcp_peer_in_use(node))
+        return false;
+
+    pfcp_node_fsm_fini(node);
+    ogs_pfcp_node_remove(&ogs_pfcp_self()->pfcp_peer_list, node);
+    return true;
 }
 
 void sgwc_pfcp_request_reassociation(ogs_pfcp_node_t *node)

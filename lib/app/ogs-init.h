@@ -35,6 +35,7 @@ void ogs_app_terminate(void);
 
 int ogs_app_config_read(void);
 int ogs_app_config_reload(void);
+int ogs_app_logger_apply_from_document(void);
 
 #include "ogs-reload-audit.h"
 void ogs_app_config_document_lock(void);

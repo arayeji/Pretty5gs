@@ -72,6 +72,8 @@ ogs_pfcp_node_t *sgwc_pfcp_admin_add_sgwu_peer(
         ogs_sockaddr_t *addr,
         const char **dnns, int num_of_dnns);
 
+bool sgwc_pfcp_remove_sgwu_peer(ogs_pfcp_node_t *node);
+
 #ifdef __cplusplus
 }
 #endif

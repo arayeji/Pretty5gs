@@ -4637,6 +4637,22 @@ smf_sess_t *smf_sess_find_by_id(ogs_pool_id_t id)
     return ogs_pool_find_by_id(&smf_sess_pool, id);
 }
 
+bool smf_pfcp_peer_in_use(const ogs_pfcp_node_t *node)
+{
+    int i;
+    smf_sess_t *sess = NULL;
+
+    ogs_assert(node);
+
+    for (i = 0; i < smf_sess_pool.size; i++) {
+        sess = smf_sess_pool.index[i];
+        if (sess && sess->pfcp_node == node)
+            return true;
+    }
+
+    return false;
+}
+
 smf_bearer_t *smf_bearer_find_by_id(ogs_pool_id_t id)
 {
     return ogs_pool_find_by_id(&smf_bearer_pool, id);

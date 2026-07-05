@@ -427,6 +427,8 @@ sgwc_sess_t *sgwc_sess_find_by_apn(sgwc_ue_t *sgwc_ue, char *apn);
 sgwc_sess_t *sgwc_sess_find_by_ebi(sgwc_ue_t *sgwc_ue, uint8_t ebi);
 sgwc_sess_t *sgwc_sess_find_by_nsapi(sgwc_ue_t *sgwc_ue, uint8_t nsapi);
 sgwc_sess_t *sgwc_sess_find_by_id(ogs_pool_id_t id);
+bool sgwc_pfcp_peer_in_use(const ogs_pfcp_node_t *node);
+void sgwc_sgwu_nwi_rewrite_clear(void);
 
 #define SGWC_SESSION_SYNC_DONE(__sGWC, __tYPE, __fLAGS) \
     (sgwc_sess_pfcp_xact_count(__sGWC, __tYPE, __fLAGS) == 0)

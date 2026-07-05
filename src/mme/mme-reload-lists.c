@@ -127,6 +127,22 @@ static ogs_eps_tai0_list_t *reload_served_tai_list0(int index)
     return *list0;
 }
 
+static void reload_served_tai_clear_all(void)
+{
+    mme_context_t *self = mme_self();
+    int i;
+
+    for (i = 0; i < OGS_MAX_NUM_OF_SUPPORTED_TA; i++) {
+        if (self->served_tai[i].list0) {
+            ogs_free(self->served_tai[i].list0);
+            self->served_tai[i].list0 = NULL;
+        }
+    }
+
+    memset(self->served_tai, 0, sizeof(self->served_tai));
+    self->num_of_served_tai = 0;
+}
+
 static int reload_served_tai_add_one(
         const ogs_plmn_id_t *plmn_id, uint16_t tac)
 {
@@ -482,10 +498,12 @@ static bool reload_emerg_exists(uint8_t categories, const char *digits)
     return false;
 }
 
-static int reload_hss_map_add_only(ogs_yaml_iter_t *mme_iter)
+static int reload_hss_map_replace(ogs_yaml_iter_t *mme_iter)
 {
     ogs_yaml_iter_t hss_map_array, hss_map_iter;
-    int added = 0;
+    int count = 0;
+
+    mme_hssmap_remove_all();
 
     ogs_yaml_iter_recurse(mme_iter, &hss_map_array);
     do {
@@ -537,14 +555,10 @@ static int reload_hss_map_add_only(ogs_yaml_iter_t *mme_iter)
                     ogs_plmn_id_build(&plmn_id,
                             atoi(mcc), atoi(mnc), strlen(mnc));
 
-                    if (!reload_hssmap_find_by_plmn(&plmn_id)) {
-                        hssmap = mme_hssmap_add(&plmn_id, realm, host);
-                        ogs_assert(hssmap);
-                        added++;
-                        mme_reload_lists_changed++;
-                        ogs_reload_audit_note(" hss_map added PLMN=%06x",
-                                ogs_plmn_id_hexdump(&plmn_id));
-                    }
+                    hssmap = mme_hssmap_add(&plmn_id, realm, host);
+                    ogs_assert(hssmap);
+                    count++;
+                    mme_reload_lists_changed++;
 
                     if (host) ogs_free(host);
                     if (realm) ogs_free(realm);
@@ -553,14 +567,24 @@ static int reload_hss_map_add_only(ogs_yaml_iter_t *mme_iter)
         }
     } while (ogs_yaml_iter_type(&hss_map_array) == YAML_SEQUENCE_NODE);
 
-    return added;
+    if (count > 0 || ogs_list_first(&mme_self()->hssmap_list) == NULL) {
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" hss_map replaced (%d entries)", count);
+    }
+
+    return count;
 }
 
-static int reload_imsi_acl_add_only(ogs_yaml_iter_t *mme_iter)
+static int reload_imsi_acl_replace(ogs_yaml_iter_t *mme_iter)
 {
     mme_context_t *self = mme_self();
     ogs_yaml_iter_t acl_array, acl_iter;
-    int added = 0;
+    char new_acl[MME_MAX_IMSI_ACL][OGS_MAX_IMSI_BCD_LEN + 1];
+    int new_count = 0;
+
+    /* Zero-fill so the change-detection memcmp below compares defined
+     * bytes past each prefix's NUL terminator */
+    memset(new_acl, 0, sizeof(new_acl));
 
     ogs_yaml_iter_recurse(mme_iter, &acl_array);
     do {
@@ -582,31 +606,40 @@ static int reload_imsi_acl_add_only(ogs_yaml_iter_t *mme_iter)
 
             if (!v || !v[0])
                 continue;
-            if (reload_imsi_acl_has_prefix(v))
-                continue;
-            if (self->num_of_imsi_acl >= MME_MAX_IMSI_ACL) {
+            if (new_count >= MME_MAX_IMSI_ACL) {
                 ogs_reload_audit_warn("imsi_acl list full (max %d)", MME_MAX_IMSI_ACL);
                 break;
             }
 
-            ogs_cpystrn(self->imsi_acl[self->num_of_imsi_acl].prefix,
-                    v, OGS_MAX_IMSI_BCD_LEN + 1);
-            self->num_of_imsi_acl++;
-            added++;
-            mme_reload_lists_changed++;
-            ogs_reload_audit_note(" imsi_acl added prefix `%s'", v);
+            ogs_cpystrn(new_acl[new_count], v, OGS_MAX_IMSI_BCD_LEN + 1);
+            new_count++;
         }
     } while (ogs_yaml_iter_type(&acl_array) == YAML_SEQUENCE_NODE &&
             ogs_yaml_iter_next(&acl_array));
 
-    return added;
+    if (new_count != self->num_of_imsi_acl ||
+            (new_count > 0 && memcmp(new_acl, self->imsi_acl,
+             new_count * sizeof(new_acl[0])) != 0) ||
+            (new_count == 0 && self->num_of_imsi_acl > 0)) {
+        self->num_of_imsi_acl = new_count;
+        if (new_count > 0)
+            memcpy(self->imsi_acl, new_acl,
+                    new_count * sizeof(self->imsi_acl[0]));
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" imsi_acl replaced (%d entries)", new_count);
+    }
+
+    return new_count;
 }
 
-static int reload_access_control_add_only(ogs_yaml_iter_t *mme_iter)
+static int reload_access_control_replace(ogs_yaml_iter_t *mme_iter)
 {
     mme_context_t *self = mme_self();
     ogs_yaml_iter_t access_control_array, access_control_iter;
     int added = 0;
+
+    mme_access_control_free_all();
+    self->num_of_access_control = 0;
 
     ogs_yaml_iter_recurse(mme_iter, &access_control_array);
     do {
@@ -760,59 +793,48 @@ static int reload_access_control_add_only(ogs_yaml_iter_t *mme_iter)
     } while (ogs_yaml_iter_type(&access_control_array) ==
             YAML_SEQUENCE_NODE);
 
+    if (self->num_of_access_control > 0 || added > 0) {
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" access_control replaced (%d entries)",
+                self->num_of_access_control);
+    } else if (added == 0) {
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" access_control replaced (0 entries)");
+    }
+
     return added;
 }
 
-static int reload_equivalent_plmn_add_only(ogs_yaml_iter_t *mme_iter)
+static int reload_equivalent_plmn_replace(ogs_yaml_iter_t *mme_iter)
 {
     mme_context_t *self = mme_self();
-    ogs_yaml_iter_t eplmn_array, eplmn_iter;
-    int added = 0;
+    ogs_plmn_id_t new_eplmn[OGS_NAS_MAX_PLMN];
+    int new_count = 0;
+    int rv;
 
-    ogs_yaml_iter_recurse(mme_iter, &eplmn_array);
-    do {
-        const char *mcc = NULL, *mnc = NULL;
-        ogs_plmn_id_t plmn_id;
+    rv = mme_eplmn_parse_config(mme_iter, &new_count, new_eplmn);
+    if (rv != OGS_OK) {
+        ogs_reload_audit_warn("equivalent_plmn YAML parse failed");
+        return 0;
+    }
 
-        if (ogs_yaml_iter_type(&eplmn_array) == YAML_MAPPING_NODE) {
-            memcpy(&eplmn_iter, &eplmn_array, sizeof(ogs_yaml_iter_t));
-        } else if (ogs_yaml_iter_type(&eplmn_array) == YAML_SEQUENCE_NODE) {
-            if (!ogs_yaml_iter_next(&eplmn_array))
-                break;
-            ogs_yaml_iter_recurse(&eplmn_array, &eplmn_iter);
-        } else if (ogs_yaml_iter_type(&eplmn_array) == YAML_SCALAR_NODE) {
-            break;
-        } else {
-            ogs_reload_audit_warn("unexpected YAML node in equivalent_plmn reload");
-            break;
-        }
+    if (new_count != self->num_of_eplmn ||
+            (new_count > 0 && memcmp(new_eplmn, self->eplmn,
+             new_count * sizeof(new_eplmn[0])) != 0) ||
+            (new_count == 0 && self->num_of_eplmn > 0)) {
+        self->num_of_eplmn = new_count;
+        if (new_count > 0)
+            memcpy(self->eplmn, new_eplmn,
+                    new_count * sizeof(self->eplmn[0]));
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" equivalent_plmn replaced (%d entries)",
+                new_count);
+    }
 
-        while (ogs_yaml_iter_next(&eplmn_iter)) {
-            const char *eplmn_key = ogs_yaml_iter_key(&eplmn_iter);
-            ogs_assert(eplmn_key);
-
-            if (!strcmp(eplmn_key, "mcc"))
-                mcc = ogs_yaml_iter_value(&eplmn_iter);
-            else if (!strcmp(eplmn_key, "mnc"))
-                mnc = ogs_yaml_iter_value(&eplmn_iter);
-        }
-
-        if (!mcc || !mnc)
-            continue;
-
-        ogs_plmn_id_build(&plmn_id, atoi(mcc), atoi(mnc), strlen(mnc));
-        if (mme_eplmn_add_if_new(&self->num_of_eplmn, self->eplmn, &plmn_id)) {
-            added++;
-            mme_reload_lists_changed++;
-            ogs_reload_audit_note(" equivalent_plmn added PLMN=%06x",
-                    ogs_plmn_id_hexdump(&plmn_id));
-        }
-    } while (ogs_yaml_iter_type(&eplmn_array) == YAML_SEQUENCE_NODE);
-
-    return added;
+    return new_count;
 }
 
-static int reload_served_tai_add_only(ogs_yaml_iter_t *mme_iter)
+static int reload_served_tai_add_from_yaml(ogs_yaml_iter_t *mme_iter)
 {
     ogs_yaml_iter_t tai_array, tai_iter;
     int added = 0;
@@ -931,10 +953,64 @@ static int reload_served_tai_add_only(ogs_yaml_iter_t *mme_iter)
     return added;
 }
 
-static int reload_trace_imsi_add_only(ogs_yaml_iter_t *mme_iter)
+static int reload_served_tai_replace(ogs_yaml_iter_t *mme_iter)
+{
+    /* Mirror of the anonymous served_tai element in mme_context_t,
+     * used to walk the detached backup copy */
+    struct served_tai_entry {
+        ogs_eps_tai0_list_t *list0;
+        ogs_eps_tai1_list_t list1;
+        ogs_eps_tai2_list_t list2;
+    } *backup = NULL;
+    mme_context_t *self = mme_self();
+    int backup_num, added, i;
+
+    ogs_assert(sizeof(backup[0]) == sizeof(self->served_tai[0]));
+
+    /*
+     * Detach the current TAI table into a backup so a bad/empty `tai:`
+     * section can be rejected instead of leaving the MME with zero
+     * served TAIs (which would reject every attach).
+     */
+    backup = ogs_malloc(sizeof(self->served_tai));
+    ogs_assert(backup);
+    memcpy(backup, self->served_tai, sizeof(self->served_tai));
+    backup_num = self->num_of_served_tai;
+
+    memset(self->served_tai, 0, sizeof(self->served_tai));
+    self->num_of_served_tai = 0;
+
+    added = reload_served_tai_add_from_yaml(mme_iter);
+
+    if (added <= 0 && backup_num > 0) {
+        /* Roll back: drop partial allocations, restore previous table */
+        reload_served_tai_clear_all();
+        memcpy(self->served_tai, backup, sizeof(self->served_tai));
+        self->num_of_served_tai = backup_num;
+        ogs_free(backup);
+        ogs_reload_audit_warn(
+                "tai yielded no entries; previous served TAI list kept");
+        return 0;
+    }
+
+    for (i = 0; i < OGS_MAX_NUM_OF_SUPPORTED_TA; i++) {
+        if (backup[i].list0)
+            ogs_free(backup[i].list0);
+    }
+    ogs_free(backup);
+
+    mme_reload_lists_changed++;
+    ogs_reload_audit_note(" served TAI replaced (%d TAC entries)", added);
+
+    return added;
+}
+
+static int reload_trace_imsi_replace(ogs_yaml_iter_t *mme_iter)
 {
     ogs_yaml_iter_t trace_array, trace_iter;
-    int added = 0;
+    int count = 0;
+
+    ogs_trace_filter_clear();
 
     ogs_yaml_iter_recurse(mme_iter, &trace_array);
     do {
@@ -953,7 +1029,6 @@ static int reload_trace_imsi_add_only(ogs_yaml_iter_t *mme_iter)
 
         while (ogs_yaml_iter_next(&trace_iter)) {
             const char *v = ogs_yaml_iter_value(&trace_iter);
-            int count_before = ogs_trace_filter_count();
 
             if (!v || !v[0])
                 continue;
@@ -961,23 +1036,24 @@ static int reload_trace_imsi_add_only(ogs_yaml_iter_t *mme_iter)
                 ogs_reload_audit_warn("trace_imsi could not add `%s'", v);
                 continue;
             }
-            if (ogs_trace_filter_count() > count_before) {
-                added++;
-                mme_reload_lists_changed++;
-                ogs_reload_audit_note(" trace_imsi added `%s'", v);
-            }
+            count++;
         }
     } while (ogs_yaml_iter_type(&trace_array) == YAML_SEQUENCE_NODE &&
             ogs_yaml_iter_next(&trace_array));
 
-    return added;
+    mme_reload_lists_changed++;
+    ogs_reload_audit_note(" trace_imsi replaced (%d entries)", count);
+
+    return count;
 }
 
-static int reload_emergency_add_only(ogs_yaml_iter_t *mme_iter)
+static int reload_emergency_replace(ogs_yaml_iter_t *mme_iter)
 {
     mme_context_t *self = mme_self();
     ogs_yaml_iter_t emerg_iter;
     int added = 0;
+
+    mme_emerg_remove_all();
 
     ogs_yaml_iter_recurse(mme_iter, &emerg_iter);
     while (ogs_yaml_iter_next(&emerg_iter)) {
@@ -1065,13 +1141,9 @@ static int reload_emergency_add_only(ogs_yaml_iter_t *mme_iter)
                     }
                 }
 
-                if (digits && categories > 0 && categories <= 0x1f &&
-                        !reload_emerg_exists(categories, digits)) {
+                if (digits && categories > 0 && categories <= 0x1f) {
                     if (mme_emerg_add(categories, digits)) {
                         added++;
-                        mme_reload_lists_changed++;
-                        ogs_reload_audit_note(" emergency number added `%s'",
-                                digits);
                     }
                 }
             } while (ogs_yaml_iter_type(&number_array) ==
@@ -1079,7 +1151,180 @@ static int reload_emergency_add_only(ogs_yaml_iter_t *mme_iter)
         }
     }
 
+    mme_reload_lists_changed++;
+    ogs_reload_audit_note(" emergency config replaced (%d numbers)", added);
+
     return added;
+}
+
+static bool reload_gtpc_addr_wanted(
+        ogs_yaml_iter_t *gtpc_iter, bool pgw, const ogs_sockaddr_t *addr,
+        bool *resolve_failed)
+{
+    ogs_yaml_iter_t gtpc_sub_iter;
+    const char *client_key_want = pgw ? "smf" : "sgwc";
+
+    ogs_assert(gtpc_iter);
+    ogs_assert(addr);
+    ogs_assert(resolve_failed);
+
+    ogs_yaml_iter_recurse(gtpc_iter, &gtpc_sub_iter);
+    while (ogs_yaml_iter_next(&gtpc_sub_iter)) {
+        const char *gtpc_key = ogs_yaml_iter_key(&gtpc_sub_iter);
+
+        if (!gtpc_key || strcmp(gtpc_key, "client"))
+            continue;
+
+        ogs_yaml_iter_t client_iter;
+        ogs_yaml_iter_recurse(&gtpc_sub_iter, &client_iter);
+        while (ogs_yaml_iter_next(&client_iter)) {
+            const char *client_key = ogs_yaml_iter_key(&client_iter);
+            ogs_yaml_iter_t peer_array;
+
+            if (!client_key || strcmp(client_key, client_key_want))
+                continue;
+
+            ogs_yaml_iter_recurse(&client_iter, &peer_array);
+            do {
+                ogs_yaml_iter_t peer_iter;
+                int family = AF_UNSPEC;
+                int i, num = 0;
+                const char *hostname[OGS_MAX_NUM_OF_HOSTNAME];
+                uint16_t port = ogs_gtp_self()->gtpc_port;
+                ogs_sockaddr_t *resolved = NULL;
+
+                if (ogs_yaml_iter_type(&peer_array) == YAML_MAPPING_NODE) {
+                    memcpy(&peer_iter, &peer_array, sizeof(ogs_yaml_iter_t));
+                } else if (ogs_yaml_iter_type(&peer_array) ==
+                        YAML_SEQUENCE_NODE) {
+                    if (!ogs_yaml_iter_next(&peer_array))
+                        break;
+                    ogs_yaml_iter_recurse(&peer_array, &peer_iter);
+                } else {
+                    break;
+                }
+
+                while (ogs_yaml_iter_next(&peer_iter)) {
+                    const char *peer_key = ogs_yaml_iter_key(&peer_iter);
+
+                    if (!peer_key)
+                        continue;
+                    if (!strcmp(peer_key, "family")) {
+                        const char *v = ogs_yaml_iter_value(&peer_iter);
+                        if (v)
+                            family = atoi(v);
+                    } else if (!strcmp(peer_key, "address")) {
+                        ogs_yaml_iter_t hostname_iter;
+
+                        ogs_yaml_iter_recurse(&peer_iter, &hostname_iter);
+                        do {
+                            if (ogs_yaml_iter_type(&hostname_iter) ==
+                                    YAML_SEQUENCE_NODE) {
+                                if (!ogs_yaml_iter_next(&hostname_iter))
+                                    break;
+                            }
+                            if (num >= OGS_MAX_NUM_OF_HOSTNAME)
+                                break;
+                            hostname[num++] =
+                                ogs_yaml_iter_value(&hostname_iter);
+                        } while (ogs_yaml_iter_type(&hostname_iter) ==
+                                YAML_SEQUENCE_NODE);
+                    } else if (!strcmp(peer_key, "port")) {
+                        const char *v = ogs_yaml_iter_value(&peer_iter);
+                        if (v)
+                            port = reload_yaml_parse_port(v, port);
+                    }
+                }
+
+                for (i = 0; i < num; i++) {
+                    if (ogs_addaddrinfo(&resolved, family, hostname[i],
+                            port, 0) != OGS_OK) {
+                        *resolve_failed = true;
+                        continue;
+                    }
+                }
+
+                ogs_filter_ip_version(&resolved,
+                        ogs_global_conf()->parameter.no_ipv4,
+                        ogs_global_conf()->parameter.no_ipv6,
+                        ogs_global_conf()->parameter.prefer_ipv4);
+
+                if (resolved &&
+                        ogs_sockaddr_is_equal(resolved, addr)) {
+                    ogs_freeaddrinfo(resolved);
+                    return true;
+                }
+
+                if (resolved)
+                    ogs_freeaddrinfo(resolved);
+            } while (ogs_yaml_iter_type(&peer_array) == YAML_SEQUENCE_NODE);
+        }
+    }
+
+    return false;
+}
+
+static void reload_gtpc_remove_stale(ogs_yaml_iter_t *gtpc_iter)
+{
+    mme_sgw_t *sgw = NULL, *next_sgw = NULL;
+    mme_pgw_t *pgw = NULL, *next_pgw = NULL;
+    char peer_buf[OGS_ADDRSTRLEN];
+
+    ogs_list_for_each_safe(&mme_self()->sgw_list, next_sgw, sgw) {
+        bool resolve_failed = false;
+
+        if (reload_gtpc_addr_wanted(gtpc_iter, false, &sgw->gnode.addr,
+                &resolve_failed))
+            continue;
+
+        if (resolve_failed) {
+            /* Cannot trust the wanted-set when DNS resolution failed;
+             * keep the peer rather than dropping it on a transient error */
+            ogs_reload_audit_warn(
+                    "sgwc peer removal skipped (DNS resolution failure) "
+                    "[%s]:%d",
+                    OGS_ADDR(&sgw->gnode.addr, peer_buf),
+                    OGS_PORT(&sgw->gnode.addr));
+            continue;
+        }
+
+        if (mme_sgw_in_use(sgw)) {
+            ogs_reload_audit_warn(
+                    "sgwc peer removal skipped (S11 contexts) [%s]:%d",
+                    OGS_ADDR(&sgw->gnode.addr, peer_buf),
+                    OGS_PORT(&sgw->gnode.addr));
+            continue;
+        }
+
+        ogs_reload_audit_note(" sgwc peer removed [%s]:%d",
+                OGS_ADDR(&sgw->gnode.addr, peer_buf),
+                OGS_PORT(&sgw->gnode.addr));
+        mme_sgw_remove(sgw);
+        mme_reload_lists_changed++;
+    }
+
+    ogs_list_for_each_safe(&mme_self()->pgw_list, next_pgw, pgw) {
+        bool resolve_failed = false;
+
+        if (reload_gtpc_addr_wanted(gtpc_iter, true, &pgw->gnode.addr,
+                &resolve_failed))
+            continue;
+
+        if (resolve_failed) {
+            ogs_reload_audit_warn(
+                    "smf/pgw peer removal skipped (DNS resolution failure) "
+                    "[%s]:%d",
+                    OGS_ADDR(&pgw->gnode.addr, peer_buf),
+                    OGS_PORT(&pgw->gnode.addr));
+            continue;
+        }
+
+        ogs_reload_audit_note(" smf/pgw peer removed [%s]:%d",
+                OGS_ADDR(&pgw->gnode.addr, peer_buf),
+                OGS_PORT(&pgw->gnode.addr));
+        mme_pgw_remove(pgw);
+        mme_reload_lists_changed++;
+    }
 }
 
 static int reload_gtpc_client_entry_add_only(
@@ -1360,6 +1605,8 @@ int mme_reload_gtpc_client_add_only(ogs_yaml_iter_t *gtpc_iter)
         }
     }
 
+    reload_gtpc_remove_stale(gtpc_iter);
+
     return added;
 }
 
@@ -1398,19 +1645,19 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
     ogs_assert(mme_iter);
 
     if (!strcmp(mme_key, "tai"))
-        return reload_served_tai_add_only(mme_iter);
+        return reload_served_tai_replace(mme_iter);
     if (!strcmp(mme_key, "access_control"))
-        return reload_access_control_add_only(mme_iter);
+        return reload_access_control_replace(mme_iter);
     if (!strcmp(mme_key, "hss_map"))
-        return reload_hss_map_add_only(mme_iter);
+        return reload_hss_map_replace(mme_iter);
     if (!strcmp(mme_key, "equivalent_plmn"))
-        return reload_equivalent_plmn_add_only(mme_iter);
+        return reload_equivalent_plmn_replace(mme_iter);
     if (!strcmp(mme_key, "imsi_acl"))
-        return reload_imsi_acl_add_only(mme_iter);
+        return reload_imsi_acl_replace(mme_iter);
     if (!strcmp(mme_key, "trace_imsi"))
-        return reload_trace_imsi_add_only(mme_iter);
+        return reload_trace_imsi_replace(mme_iter);
     if (!strcmp(mme_key, "emergency"))
-        return reload_emergency_add_only(mme_iter);
+        return reload_emergency_replace(mme_iter);
     if (!strcmp(mme_key, "attach_accept")) {
         reload_attach_accept_scalars(mme_iter);
         return 0;

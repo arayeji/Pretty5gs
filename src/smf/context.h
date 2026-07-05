@@ -1185,6 +1185,7 @@ void smf_bearer_qos_update(smf_bearer_t *bearer);
 smf_ue_t *smf_ue_find_by_id(ogs_pool_id_t id);
 smf_ue_t *smf_ue_find_active(ogs_pool_id_t id);
 smf_sess_t *smf_sess_find_by_id(ogs_pool_id_t id);
+bool smf_pfcp_peer_in_use(const ogs_pfcp_node_t *node);
 smf_bearer_t *smf_bearer_find_by_id(ogs_pool_id_t id);
 smf_bearer_t *smf_qos_flow_find_by_id(ogs_pool_id_t id);
 smf_pf_t *smf_pf_find_by_id(ogs_pool_id_t id);

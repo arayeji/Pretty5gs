@@ -18,6 +18,7 @@
  */
 
 #include "sbi-path.h"
+#include "context.h"
 #include "pfcp-path.h"
 #include "collision-replace.h"
 #include "smf-trace.h"
@@ -1426,6 +1427,18 @@ ogs_pfcp_node_t *smf_pfcp_admin_add_upf_peer(
             "(num_of_dnn=%u)", (unsigned)node->num_of_dnn);
 
     return node;
+}
+
+bool smf_pfcp_remove_upf_peer(ogs_pfcp_node_t *node)
+{
+    ogs_assert(node);
+
+    if (smf_pfcp_peer_in_use(node))
+        return false;
+
+    pfcp_node_fsm_fini(node);
+    ogs_pfcp_node_remove(&ogs_pfcp_self()->pfcp_peer_list, node);
+    return true;
 }
 
 void smf_pfcp_request_reassociation(ogs_pfcp_node_t *node)

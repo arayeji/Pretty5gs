@@ -610,6 +610,77 @@ void sgwc_ga_writer_close(void)
     g.initialized = false;
 }
 
+static char *g_owned_spool_dir;
+static char *g_owned_node_id;
+static char *g_owned_local_address;
+
+static void replace_owned_string(const char **field, char **owned,
+        const char *new_value)
+{
+    if (*owned) {
+        ogs_free(*owned);
+        *owned = NULL;
+    }
+    if (new_value && *new_value) {
+        *owned = ogs_strdup(new_value);
+        *field = *owned;
+    } else {
+        *field = NULL;
+    }
+}
+
+int sgwc_ga_writer_apply_runtime(const sgwc_cdr_config_t *new_cfg)
+{
+    sgwc_cdr_config_t *cur = &sgwc_self()->cdr;
+
+    ogs_assert(new_cfg);
+
+    ogs_info("sgwc_ga_writer: apply_runtime "
+            "(enabled=%d->%d spool=%s->%s node=%s->%s)",
+            cur->enabled, new_cfg->enabled,
+            cur->spool_dir ? cur->spool_dir : "(unset)",
+            new_cfg->spool_dir ? new_cfg->spool_dir : "(unset)",
+            cur->node_id ? cur->node_id : "(unset)",
+            new_cfg->node_id ? new_cfg->node_id : "(unset)");
+
+    sgwc_ga_writer_close();
+
+    replace_owned_string(&cur->spool_dir, &g_owned_spool_dir,
+            new_cfg->spool_dir);
+    replace_owned_string(&cur->node_id, &g_owned_node_id,
+            new_cfg->node_id);
+    replace_owned_string(&cur->local_address, &g_owned_local_address,
+            new_cfg->local_address);
+
+    if (new_cfg->interim_interval_s)
+        cur->interim_interval_s = new_cfg->interim_interval_s;
+    cur->rotate_max_records = new_cfg->rotate_max_records
+            ? new_cfg->rotate_max_records : 100;
+    cur->rotate_max_bytes = new_cfg->rotate_max_bytes
+            ? new_cfg->rotate_max_bytes : 65536;
+    cur->rotate_max_seconds = new_cfg->rotate_max_seconds
+            ? new_cfg->rotate_max_seconds : 30;
+    cur->triggers = new_cfg->triggers
+            ? new_cfg->triggers
+            : (SGWC_CDR_TRIG_START | SGWC_CDR_TRIG_INTERIM |
+               SGWC_CDR_TRIG_STOP);
+    cur->enabled = new_cfg->enabled;
+
+    if (!cur->enabled) {
+        ogs_info("sgwc_ga_writer: now disabled by reload");
+        return OGS_OK;
+    }
+
+    if (sgwc_ga_writer_open() != OGS_OK) {
+        ogs_error("sgwc_ga_writer: reopen after reload failed "
+                "— writer disabled until next successful reload");
+        cur->enabled = false;
+        return OGS_ERROR;
+    }
+
+    return OGS_OK;
+}
+
 void sgwc_ga_cdr_session_start(sgwc_sess_t *sess)
 {
     sgwc_ue_t *sgwc_ue = NULL;

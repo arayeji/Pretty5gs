@@ -15,6 +15,7 @@ extern "C" {
 
 int sgwc_ga_writer_open(void);
 void sgwc_ga_writer_close(void);
+int sgwc_ga_writer_apply_runtime(const sgwc_cdr_config_t *new_cfg);
 
 void sgwc_ga_cdr_session_start(sgwc_sess_t *sess);
 void sgwc_ga_cdr_session_interim(sgwc_sess_t *sess, uint32_t interval_duration_s);

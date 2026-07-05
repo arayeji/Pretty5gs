@@ -4121,6 +4121,22 @@ void mme_sgw_remove_all(void)
         mme_sgw_remove(sgw);
 }
 
+bool mme_sgw_in_use(const mme_sgw_t *sgw)
+{
+    int i;
+    sgw_ue_t *sgw_ue = NULL;
+
+    ogs_assert(sgw);
+
+    for (i = 0; i < sgw_ue_pool.size; i++) {
+        sgw_ue = sgw_ue_pool.index[i];
+        if (sgw_ue && sgw_ue->sgw == sgw)
+            return true;
+    }
+
+    return false;
+}
+
 mme_sgw_t *mme_sgw_find_by_addr(const ogs_sockaddr_t *addr)
 {
     mme_sgw_t *sgw = NULL;

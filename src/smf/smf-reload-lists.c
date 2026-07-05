@@ -166,6 +166,155 @@ static bool smf_reload_subnet_exists(
     return false;
 }
 
+static bool smf_reload_subnet_in_session_yaml(
+        ogs_yaml_iter_t *smf_iter, const ogs_pfcp_subnet_t *subnet)
+{
+    ogs_yaml_iter_t subnet_array, subnet_iter;
+    char ipstr[OGS_ADDRSTRLEN];
+    char maskbuf[16];
+
+    ogs_assert(smf_iter);
+    ogs_assert(subnet);
+
+    if (subnet->family == AF_INET6)
+        OGS_INET6_NTOP(&subnet->sub.sub[0], ipstr);
+    else
+        OGS_INET_NTOP(&subnet->sub.sub[0], ipstr);
+    ogs_snprintf(maskbuf, sizeof(maskbuf), "%u", subnet->prefixlen);
+
+    ogs_yaml_iter_recurse(smf_iter, &subnet_array);
+    do {
+        char dnn_seq[OGS_MAX_NUM_OF_DNN][OGS_MAX_DNN_LEN+1];
+        char subnet_buf[OGS_ADDRSTRLEN+16];
+        int dnn_seq_n = 0;
+        const char *entry_ip = NULL;
+        const char *entry_mask = NULL;
+        const char *dnn_scalar = NULL;
+
+        if (ogs_yaml_iter_type(&subnet_array) == YAML_MAPPING_NODE) {
+            memcpy(&subnet_iter, &subnet_array, sizeof(ogs_yaml_iter_t));
+        } else if (ogs_yaml_iter_type(&subnet_array) == YAML_SEQUENCE_NODE) {
+            if (!ogs_yaml_iter_next(&subnet_array))
+                break;
+            ogs_yaml_iter_recurse(&subnet_array, &subnet_iter);
+        } else {
+            break;
+        }
+
+        memset(dnn_seq, 0, sizeof(dnn_seq));
+        while (ogs_yaml_iter_next(&subnet_iter)) {
+            const char *subnet_key = ogs_yaml_iter_key(&subnet_iter);
+            ogs_assert(subnet_key);
+
+            if (!strcmp(subnet_key, "subnet")) {
+                /* Copy before splitting: strsep on the YAML scalar would
+                 * corrupt the document for later passes in this reload */
+                const char *raw = ogs_yaml_iter_value(&subnet_iter);
+                if (raw) {
+                    char *v = subnet_buf;
+                    ogs_cpystrn(subnet_buf, raw, sizeof(subnet_buf));
+                    entry_ip = (const char *)strsep(&v, "/");
+                    if (entry_ip)
+                        entry_mask = (const char *)v;
+                }
+            } else if (!strcmp(subnet_key, "apn") ||
+                    !strcmp(subnet_key, "dnn")) {
+                yaml_document_t *document = ogs_app()->document;
+                yaml_node_t *dnn_node = yaml_document_get_node(
+                        document, subnet_iter.pair->value);
+
+                if (dnn_node && dnn_node->type == YAML_SEQUENCE_NODE) {
+                    ogs_yaml_iter_t dnn_sq;
+
+                    ogs_yaml_iter_recurse(&subnet_iter, &dnn_sq);
+                    while (ogs_yaml_iter_next(&dnn_sq) &&
+                            dnn_seq_n < OGS_MAX_NUM_OF_DNN) {
+                        const char *dv = ogs_yaml_iter_value(&dnn_sq);
+                        int j, dup = 0;
+
+                        if (!dv || !*dv)
+                            continue;
+                        for (j = 0; j < dnn_seq_n; j++) {
+                            if (ogs_strcasecmp(dnn_seq[j], dv) == 0) {
+                                dup = 1;
+                                break;
+                            }
+                        }
+                        if (dup)
+                            continue;
+                        ogs_cpystrn(dnn_seq[dnn_seq_n++], dv,
+                                OGS_MAX_DNN_LEN);
+                    }
+                } else {
+                    dnn_scalar = ogs_yaml_iter_value(&subnet_iter);
+                }
+            }
+        }
+
+        if (!entry_ip || !entry_mask)
+            continue;
+
+        if (dnn_seq_n > 0) {
+            if (smf_reload_dnn_set_equal(subnet,
+                        (const char (*)[OGS_MAX_DNN_LEN+1])dnn_seq,
+                        dnn_seq_n) &&
+                    ogs_strcasecmp(entry_ip, ipstr) == 0 &&
+                    atoi(entry_mask) == subnet->prefixlen)
+                return true;
+        } else if (dnn_scalar && dnn_scalar[0]) {
+            char one[1][OGS_MAX_DNN_LEN+1];
+            ogs_cpystrn(one[0], dnn_scalar, OGS_MAX_DNN_LEN);
+            if (smf_reload_dnn_set_equal(subnet, one, 1) &&
+                    ogs_strcasecmp(entry_ip, ipstr) == 0 &&
+                    atoi(entry_mask) == subnet->prefixlen)
+                return true;
+        } else if (subnet->num_of_dnn == 0 &&
+                ogs_strcasecmp(entry_ip, ipstr) == 0 &&
+                atoi(entry_mask) == subnet->prefixlen) {
+            return true;
+        }
+    } while (ogs_yaml_iter_type(&subnet_array) == YAML_SEQUENCE_NODE);
+
+    return false;
+}
+
+static void smf_reload_session_sync(ogs_yaml_iter_t *smf_iter)
+{
+    ogs_pfcp_subnet_t *subnet = NULL, *next = NULL;
+    char ip[OGS_ADDRSTRLEN];
+    int removed = 0;
+
+    (void)smf_reload_session_add_only(smf_iter);
+
+    ogs_list_for_each_safe(&ogs_pfcp_self()->subnet_list, next, subnet) {
+        if (smf_reload_subnet_in_session_yaml(smf_iter, subnet))
+            continue;
+
+        if (subnet->pool.avail != subnet->pool.size) {
+            if (subnet->family == AF_INET6)
+                OGS_INET6_NTOP(&subnet->sub.sub[0], ip);
+            else
+                OGS_INET_NTOP(&subnet->sub.sub[0], ip);
+            ogs_reload_audit_warn(
+                    "subnet removal skipped (IPs allocated) %s/%u",
+                    ip, subnet->prefixlen);
+            continue;
+        }
+
+        if (subnet->family == AF_INET6)
+            OGS_INET6_NTOP(&subnet->sub.sub[0], ip);
+        else
+            OGS_INET_NTOP(&subnet->sub.sub[0], ip);
+        ogs_pfcp_subnet_remove(subnet);
+        removed++;
+        smf_reload_lists_changed++;
+        ogs_reload_audit_note(" subnet removed %s/%u", ip, subnet->prefixlen);
+    }
+
+    if (removed > 0)
+        ogs_reload_audit_note(" session pools synced (%d removed)", removed);
+}
+
 static bool smf_reload_pfcp_peer_exists(ogs_sockaddr_t *addr)
 {
     ogs_pfcp_node_t *node = NULL;
@@ -194,6 +343,7 @@ static int smf_reload_session_entry_add_only(ogs_yaml_iter_t *subnet_iter)
     const char *dev = ogs_pfcp_self()->tun_ifname;
     const char *low[OGS_MAX_NUM_OF_SUBNET_RANGE];
     const char *high[OGS_MAX_NUM_OF_SUBNET_RANGE];
+    char subnet_buf[OGS_ADDRSTRLEN+16];
     int i, num = 0;
 
     ogs_assert(subnet_iter);
@@ -207,8 +357,12 @@ static int smf_reload_session_entry_add_only(ogs_yaml_iter_t *subnet_iter)
         ogs_assert(subnet_key);
 
         if (!strcmp(subnet_key, "subnet")) {
-            char *v = (char *)ogs_yaml_iter_value(subnet_iter);
-            if (v) {
+            /* Copy before splitting: strsep on the YAML scalar would
+             * corrupt the document for the stale-subnet check pass */
+            const char *raw = ogs_yaml_iter_value(subnet_iter);
+            if (raw) {
+                char *v = subnet_buf;
+                ogs_cpystrn(subnet_buf, raw, sizeof(subnet_buf));
                 ipstr = (const char *)strsep(&v, "/");
                 if (ipstr)
                     mask_or_numbits = (const char *)v;
@@ -497,6 +651,151 @@ static int smf_reload_upf_peer_entry_add_only(ogs_yaml_iter_t *upf_array)
     return added;
 }
 
+static bool smf_reload_upf_peer_wanted(
+        ogs_yaml_iter_t *pfcp_iter, const ogs_pfcp_node_t *node,
+        bool *resolve_failed)
+{
+    ogs_yaml_iter_t pfcp_sub_iter;
+
+    ogs_assert(pfcp_iter);
+    ogs_assert(node);
+    ogs_assert(node->config_addr);
+    ogs_assert(resolve_failed);
+
+    ogs_yaml_iter_recurse(pfcp_iter, &pfcp_sub_iter);
+    while (ogs_yaml_iter_next(&pfcp_sub_iter)) {
+        const char *pfcp_key = ogs_yaml_iter_key(&pfcp_sub_iter);
+
+        if (!pfcp_key || strcmp(pfcp_key, "client"))
+            continue;
+
+        ogs_yaml_iter_t client_iter;
+        ogs_yaml_iter_recurse(&pfcp_sub_iter, &client_iter);
+        while (ogs_yaml_iter_next(&client_iter)) {
+            const char *client_key = ogs_yaml_iter_key(&client_iter);
+            ogs_yaml_iter_t upf_array;
+
+            if (!client_key || strcmp(client_key, "upf"))
+                continue;
+
+            ogs_yaml_iter_recurse(&client_iter, &upf_array);
+            do {
+                ogs_yaml_iter_t remote_iter;
+                int family = AF_UNSPEC;
+                int i, num = 0;
+                uint16_t port = ogs_pfcp_self()->pfcp_port;
+                const char *hostname[OGS_MAX_NUM_OF_HOSTNAME];
+                ogs_sockaddr_t *addr = NULL;
+                int rv;
+                bool wanted = false;
+
+                if (ogs_yaml_iter_type(&upf_array) == YAML_MAPPING_NODE) {
+                    memcpy(&remote_iter, &upf_array, sizeof(ogs_yaml_iter_t));
+                } else if (ogs_yaml_iter_type(&upf_array) ==
+                        YAML_SEQUENCE_NODE) {
+                    if (!ogs_yaml_iter_next(&upf_array))
+                        break;
+                    ogs_yaml_iter_recurse(&upf_array, &remote_iter);
+                } else {
+                    break;
+                }
+
+                memset(hostname, 0, sizeof(hostname));
+                while (ogs_yaml_iter_next(&remote_iter)) {
+                    const char *remote_key = ogs_yaml_iter_key(&remote_iter);
+
+                    if (!remote_key)
+                        continue;
+                    if (!strcmp(remote_key, "family")) {
+                        const char *v = ogs_yaml_iter_value(&remote_iter);
+                        if (v)
+                            family = atoi(v);
+                    } else if (!strcmp(remote_key, "address")) {
+                        ogs_yaml_iter_t hostname_iter;
+
+                        ogs_yaml_iter_recurse(&remote_iter, &hostname_iter);
+                        do {
+                            if (ogs_yaml_iter_type(&hostname_iter) ==
+                                    YAML_SEQUENCE_NODE) {
+                                if (!ogs_yaml_iter_next(&hostname_iter))
+                                    break;
+                            }
+                            if (num >= OGS_MAX_NUM_OF_HOSTNAME)
+                                break;
+                            hostname[num++] =
+                                ogs_yaml_iter_value(&hostname_iter);
+                        } while (ogs_yaml_iter_type(&hostname_iter) ==
+                                YAML_SEQUENCE_NODE);
+                    } else if (!strcmp(remote_key, "port")) {
+                        const char *v = ogs_yaml_iter_value(&remote_iter);
+                        if (v)
+                            port = atoi(v);
+                    }
+                }
+
+                for (i = 0; i < num; i++) {
+                    rv = ogs_addaddrinfo(&addr, family, hostname[i], port, 0);
+                    if (rv != OGS_OK) {
+                        *resolve_failed = true;
+                        continue;
+                    }
+                }
+
+                ogs_filter_ip_version(&addr,
+                        ogs_global_conf()->parameter.no_ipv4,
+                        ogs_global_conf()->parameter.no_ipv6,
+                        ogs_global_conf()->parameter.prefer_ipv4);
+
+                if (addr &&
+                        ogs_sockaddr_is_equal(node->config_addr, addr))
+                    wanted = true;
+
+                if (addr)
+                    ogs_freeaddrinfo(addr);
+                if (wanted)
+                    return true;
+            } while (ogs_yaml_iter_type(&upf_array) == YAML_SEQUENCE_NODE);
+        }
+    }
+
+    return false;
+}
+
+static void smf_reload_upf_remove_stale(ogs_yaml_iter_t *pfcp_iter)
+{
+    ogs_pfcp_node_t *node = NULL, *next = NULL;
+
+    ogs_list_for_each_safe(&ogs_pfcp_self()->pfcp_peer_list, next, node) {
+        bool resolve_failed = false;
+
+        if (!node->config_addr)
+            continue;
+        if (smf_reload_upf_peer_wanted(pfcp_iter, node, &resolve_failed))
+            continue;
+
+        if (resolve_failed) {
+            /* Cannot trust the wanted-set when DNS resolution failed;
+             * keep the peer rather than dropping it on a transient error */
+            ogs_reload_audit_warn(
+                    "UPF peer removal skipped (DNS resolution failure) %s",
+                    ogs_sockaddr_to_string_static(node->config_addr));
+            continue;
+        }
+
+        if (!smf_pfcp_remove_upf_peer(node)) {
+            ogs_reload_audit_warn(
+                    "UPF peer removal skipped (sessions active) %s",
+                    ogs_sockaddr_to_string_static(node->config_addr));
+            continue;
+        }
+
+        smf_reload_lists_changed++;
+        ogs_reload_audit_note(" UPF peer removed [%s]:%d",
+                ogs_sockaddr_to_string_static(node->config_addr),
+                OGS_PORT(node->config_addr));
+    }
+}
+
 static int smf_reload_pfcp_upf_add_only(ogs_yaml_iter_t *pfcp_iter)
 {
     ogs_yaml_iter_t pfcp_sub_iter;
@@ -529,10 +828,20 @@ static int smf_reload_pfcp_upf_add_only(ogs_yaml_iter_t *pfcp_iter)
     return 0;
 }
 
-static int smf_reload_trace_imsi_add_only(ogs_yaml_iter_t *smf_iter)
+static int smf_reload_pfcp_upf_sync(ogs_yaml_iter_t *pfcp_iter)
+{
+    int added = smf_reload_pfcp_upf_add_only(pfcp_iter);
+
+    smf_reload_upf_remove_stale(pfcp_iter);
+    return added;
+}
+
+static int smf_reload_trace_imsi_replace(ogs_yaml_iter_t *smf_iter)
 {
     ogs_yaml_iter_t trace_array, trace_iter;
-    int added = 0;
+    int count = 0;
+
+    ogs_trace_filter_clear();
 
     ogs_yaml_iter_recurse(smf_iter, &trace_array);
     do {
@@ -550,7 +859,6 @@ static int smf_reload_trace_imsi_add_only(ogs_yaml_iter_t *smf_iter)
 
         while (ogs_yaml_iter_next(&trace_iter)) {
             const char *v = ogs_yaml_iter_value(&trace_iter);
-            int count_before = ogs_trace_filter_count();
 
             if (!v || !v[0])
                 continue;
@@ -558,16 +866,57 @@ static int smf_reload_trace_imsi_add_only(ogs_yaml_iter_t *smf_iter)
                 ogs_reload_audit_warn("trace_imsi could not add `%s'", v);
                 continue;
             }
-            if (ogs_trace_filter_count() > count_before) {
-                added++;
-                smf_reload_lists_changed++;
-                ogs_reload_audit_note(" trace_imsi added `%s'", v);
-            }
+            count++;
         }
     } while (ogs_yaml_iter_type(&trace_array) == YAML_SEQUENCE_NODE &&
             ogs_yaml_iter_next(&trace_array));
 
-    return added;
+    smf_reload_lists_changed++;
+    ogs_reload_audit_note(" trace_imsi replaced (%d entries)", count);
+
+    return count;
+}
+
+static void smf_reload_dns_replace(ogs_yaml_iter_t *smf_iter)
+{
+    smf_context_t *self = smf_self();
+    ogs_yaml_iter_t dns_iter;
+    const char *dns4[2] = {NULL, NULL};
+    const char *dns6[2] = {NULL, NULL};
+    int n4 = 0, n6 = 0;
+    int i;
+
+    ogs_yaml_iter_recurse(smf_iter, &dns_iter);
+    do {
+        const char *v = NULL;
+        ogs_ipsubnet_t ipsub;
+
+        if (ogs_yaml_iter_type(&dns_iter) == YAML_SEQUENCE_NODE) {
+            if (!ogs_yaml_iter_next(&dns_iter))
+                break;
+        }
+
+        v = ogs_yaml_iter_value(&dns_iter);
+        if (!v || !strlen(v))
+            continue;
+        if (ogs_ipsubnet(&ipsub, v, NULL) != OGS_OK)
+            continue;
+
+        if (ipsub.family == AF_INET && n4 < 2)
+            dns4[n4++] = v;
+        else if (ipsub.family == AF_INET6 && n6 < 2)
+            dns6[n6++] = v;
+    } while (ogs_yaml_iter_type(&dns_iter) == YAML_SEQUENCE_NODE);
+
+    for (i = 0; i < 2; i++) {
+        smf_reload_replace_dns(&self->dns[i], &smf_reload_owned_dns[i],
+                i < n4 ? dns4[i] : NULL);
+        smf_reload_replace_dns(&self->dns6[i], &smf_reload_owned_dns6[i],
+                i < n6 ? dns6[i] : NULL);
+    }
+
+    smf_reload_lists_changed++;
+    ogs_reload_audit_note("smf.dns replaced (v4=%d v6=%d)", n4, n6);
 }
 
 static void smf_reload_parse_cdr(ogs_yaml_iter_t *smf_iter, smf_cdr_config_t *cfg)
@@ -823,7 +1172,7 @@ void smf_context_reload_runtime(void)
             ogs_assert(smf_key);
 
             if (!strcmp(smf_key, "session")) {
-                lists_added += smf_reload_session_add_only(&smf_iter);
+                smf_reload_session_sync(&smf_iter);
 
                 /*
                  * Per-APN `radius:` blocks are plain scalars with no
@@ -841,62 +1190,13 @@ void smf_context_reload_runtime(void)
                 smf_reload_lists_changed++;
                 found = true;
             } else if (!strcmp(smf_key, "pfcp")) {
-                lists_added += smf_reload_pfcp_upf_add_only(&smf_iter);
+                lists_added += smf_reload_pfcp_upf_sync(&smf_iter);
                 found = true;
             } else if (!strcmp(smf_key, "trace_imsi")) {
-                lists_added += smf_reload_trace_imsi_add_only(&smf_iter);
+                lists_added += smf_reload_trace_imsi_replace(&smf_iter);
                 found = true;
             } else if (!strcmp(smf_key, "dns")) {
-                ogs_yaml_iter_t dns_iter;
-                ogs_yaml_iter_recurse(&smf_iter, &dns_iter);
-
-                do {
-                    const char *v = NULL;
-                    ogs_ipsubnet_t ipsub;
-
-                    if (ogs_yaml_iter_type(&dns_iter) ==
-                            YAML_SEQUENCE_NODE) {
-                        if (!ogs_yaml_iter_next(&dns_iter))
-                            break;
-                    }
-
-                    v = ogs_yaml_iter_value(&dns_iter);
-                    if (!v || !strlen(v))
-                        continue;
-                    if (ogs_ipsubnet(&ipsub, v, NULL) != OGS_OK)
-                        continue;
-
-                    if (ipsub.family == AF_INET) {
-                        if (!self->dns[0]) {
-                            smf_reload_replace_dns(
-                                    &self->dns[0],
-                                    &smf_reload_owned_dns[0], v);
-                            ogs_reload_audit_note("smf.dns added %s", v);
-                        } else if (!self->dns[1] &&
-                                strcmp(self->dns[0], v) != 0) {
-                            smf_reload_replace_dns(
-                                    &self->dns[1],
-                                    &smf_reload_owned_dns[1], v);
-                            smf_reload_lists_changed++;
-                            ogs_reload_audit_note("smf.dns added %s", v);
-                        }
-                    } else if (ipsub.family == AF_INET6) {
-                        if (!self->dns6[0]) {
-                            smf_reload_replace_dns(
-                                    &self->dns6[0],
-                                    &smf_reload_owned_dns6[0], v);
-                            ogs_reload_audit_note("smf.dns6 added %s", v);
-                        } else if (!self->dns6[1] &&
-                                strcmp(self->dns6[0], v) != 0) {
-                            smf_reload_replace_dns(
-                                    &self->dns6[1],
-                                    &smf_reload_owned_dns6[1], v);
-                            smf_reload_lists_changed++;
-                            ogs_reload_audit_note("smf.dns6 added %s", v);
-                        }
-                    }
-                } while (ogs_yaml_iter_type(&dns_iter) ==
-                        YAML_SEQUENCE_NODE);
+                smf_reload_dns_replace(&smf_iter);
                 found = true;
             } else if (!strcmp(smf_key, "mtu")) {
                 const char *v = ogs_yaml_iter_value(&smf_iter);

@@ -29,8 +29,8 @@ Upstream docs: [open5gs.org](https://open5gs.org/open5gs/docs/). This README des
 | **CDR (4G)** | Partial ULI | ULI in MME/SMF/SGWC CDRs; SGWC `servedMSISDN`; higher APN / SGsAP caps |
 | **Milenage K4** | Not present | Optional Huawei HSS9860 K/OPc unwrap (**off by default**) |
 | **PCRF / Gx + PyHSS** | MongoDB `db_uri` | Optional PyHSS MySQL policy (**off by default**); YAML policy unchanged |
-| **Runtime config reload (MME)** | Restart for any YAML change | **SIGHUP** reload: timers, GTP echo interval, add-only lists (TAI, ACL, peers, trace) without dropping UEs |
-| **Runtime config reload (SMF / SGWC)** | Restart for bind addresses | **SIGHUP** reload: SMF session subnets/APN pools, UPF peers; SGWC roam/TEID/CDR/NWI/SGW-U peers (add-only lists) |
+| **Runtime config reload (MME)** | Restart for any YAML change | **SIGHUP** reload: timers, GTP echo interval, full-replace lists (TAI, ACL, peers, trace), **logger** without dropping UEs |
+| **Runtime config reload (SMF / SGWC)** | Restart for bind addresses | **SIGHUP** reload: SMF session subnets/APN pools, UPF peers, CDR/RADIUS; SGWC roam/TEID/**CDR spool_dir**/NWI/SGW-U peers, **logger** (add/remove lists) |
 
 ## Build and install
 
@@ -208,17 +208,20 @@ sudo systemctl reload open5gs-mmed
 # or: sudo kill -HUP "$(pidof open5gs-mmed)"
 ```
 
-On success, `mme.log` shows `MME runtime config reloaded` and lines like `SIGHUP: sgwc peer added` or `SIGHUP: trace_imsi added`.
+On success, `mme.log` shows `MME SIGHUP reload completed` and lines like `SIGHUP: sgwc peer added` or `SIGHUP: trace_imsi replaced`.
 
 | Reload type | Keys | Behaviour |
 |-------------|------|-----------|
 | **Scalars** | `mme.time` (`t3402`, `t3396`, `t3412`, `t3423`, `idle`, `t3346`, `bearer_setup`, `s11_holding`) | Re-read from YAML; applies to **new** timer starts |
 | **Scalars** | `mme.gtpc.echo_interval` | Reschedules S11 GTP echo to all SGWC peers |
-| **Add-only lists** | `tai`, `access_control`, `hss_map`, `equivalent_plmn`, `imsi_acl`, `trace_imsi`, `emergency` | **Append** new entries only; existing rows are never removed |
-| **Add-only peers** | `mme.gtpc.client.sgwc`, `mme.gtpc.client.smf` | New address/port rows connect immediately; can add `tac`, `apn`, `e_cell_id` on existing peers |
+| **Full replace lists** | `tai`, `access_control`, `hss_map`, `equivalent_plmn`, `imsi_acl`, `trace_imsi`, `emergency` | Rebuilt from YAML on each reload (add, remove, reorder) |
+| **Peer sync** | `mme.gtpc.client.sgwc`, `mme.gtpc.client.smf` | New peers connect immediately; removed peers dropped when no S11 context (SGWC) or anytime (SMF/PGW selection list) |
 | **Policy scalars** | `attach_accept`, `equivalent_plmn_serving_only`, `ims_voice_over_ps_in_s1_mode`, `tai_list_in_accept`, `require_hss_map`, `ambr_limit` | Updated in memory for subsequent attach/TAU |
+| **Logger** | `logger.level`, `logger.domain`, `logger.file`, timestamps | Applied on every SIGHUP |
 
-**Not reloadable via SIGHUP** (daemon restart required): removing or editing existing list entries, `mme.gtpc.recovery`, SCTP/S1 bind addresses, pool sizes, and most other `mme:` keys. If reload fails, the previous config is kept (`Configuration reload failed` in the log).
+**Not reloadable via SIGHUP** (daemon restart required): `mme.gtpc.recovery`, SCTP/S1 bind addresses, pool sizes, and most other `mme:` keys. If reload fails, the previous config is kept (`Configuration reload failed` in the log).
+
+**Key-absent semantics (all NFs):** full-replace keys are rebuilt only when the key is *present* in the YAML — deleting a key entirely keeps the previous values. To clear a list, keep the key with an empty value (e.g. `trace_imsi: []`). Exception: an empty or unparsable `tai:` section is rejected and the previous served TAI list is kept, so the MME never ends up serving zero TAIs.
 
 **Runtime config reload (SMF)**
 
@@ -231,11 +234,12 @@ sudo systemctl reload open5gs-smfd
 
 | Reload type | Keys | Behaviour |
 |-------------|------|-----------|
-| **Add-only IP pools** | `smf.session[]` (`subnet`, `dnn`/`apn`, `gateway`, `range`, `dev`) | New UE IP pools for APN(s); existing pools unchanged |
-| **Add-only peers** | `smf.pfcp.client.upf[]` | New UPF PFCP peers associate immediately |
-| **Add-only** | `smf.trace_imsi` | Append IMSI trace prefixes |
-| **Scalars** | `smf.dns`, `smf.mtu` | Updated for subsequent sessions |
+| **Session pools** | `smf.session[]` (`subnet`, `dnn`/`apn`, `gateway`, `range`, `dev`) | Add new pools; remove pools no longer in YAML when all IPs are free |
+| **Peer sync** | `smf.pfcp.client.upf[]` | Add new UPF PFCP peers; remove peers no longer in YAML when no PFCP sessions |
+| **Full replace** | `smf.trace_imsi`, `smf.dns` | Rebuilt from YAML on each reload |
+| **Scalars** | `smf.mtu` | Updated for subsequent sessions |
 | **Full replace** | `smf.cdr`, `smf.radius` | Same safe path as admin API: CDR writer close/reopen; RADIUS farm + optional PoD listener swap |
+| **Logger** | `logger.level`, `logger.domain`, `logger.file`, timestamps | Applied on every SIGHUP |
 
 **Not reloadable:** `smf.pfcp.server`, `smf.gtpc.server`, `smf.sbi.server`, metrics listen addresses. Admin API watcher remains an alternative for the same CDR/RADIUS keys.
 
@@ -250,10 +254,14 @@ sudo systemctl reload open5gs-sgwcd
 
 | Reload type | Keys | Behaviour |
 |-------------|------|-----------|
-| **Scalars** | `sgwc.gtpc.echo_interval`, `sgwc.gtpu.*`, `sgwc.inbound_roam.gtpc` (except source port), `sgwc.inbound_roam.gtpu.*`, `sgwc.cdr` (except spool_dir) | Applied in memory |
-| **Add-only lists** | `sgwc.sgwu_nwi_rewrite`, `sgwc.pfcp.client.sgwu[]` / `sgwc.sgwu[]` | New NWI rewrite rules and SGW-U PFCP peers |
+| **Scalars** | `sgwc.gtpc.echo_interval`, `sgwc.gtpu.*`, `sgwc.inbound_roam.gtpc` (except source port), `sgwc.inbound_roam.gtpu.*` | Applied in memory |
+| **Full replace** | `sgwc.cdr` (incl. `spool_dir`) | Writer close/reopen (same as SMF) |
+| **Full replace lists** | `sgwc.sgwu_nwi_rewrite`, `sgwc.inbound_roam.sgwu_nwi_rewrite` | Rebuilt from YAML (both keys merge into one list per reload pass) |
+| **Peer sync** | `sgwc.pfcp.client.sgwu[]` / `sgwc.sgwu[]` | Add new SGW-U PFCP peers; remove peers no longer in YAML when no PFCP sessions |
+| **Full replace** | `sgwc.gn.pgw`, `sgwc.trace_imsi` | Rebuilt from YAML on each reload |
+| **Logger** | `logger.level`, `logger.domain`, `logger.file`, timestamps | Applied on every SIGHUP (MME/SMF/SGWC) |
 
-**Not reloadable:** `sgwc.gtpc.server`, `sgwc.pfcp.server`, `sgwc.metrics.server`, `sgwc.inbound_roam.gtpc.source_port` (extra S5 bind socket — restart required).
+**Not reloadable:** `sgwc.gtpc.server`, `sgwc.pfcp.server`, `sgwc.metrics.server`, `sgwc.inbound_roam.gtpc.source_port` (extra S5 bind socket), **`sgwc.gn.server`** (GTPv1 Gn bind).
 
 SMF RADIUS/Ga and CGF GTP' peer changes can also be pushed through the **admin API** file watcher — see `tools/admin-api/README.md`.
 

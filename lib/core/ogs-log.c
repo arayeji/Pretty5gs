@@ -178,12 +178,46 @@ ogs_log_t *ogs_log_add_file(const char *name)
     log = add_log(OGS_LOG_FILE_TYPE);
     ogs_assert(log);
 
-    log->file.name = name;
+    /* Own a copy: callers may pass pointers into the YAML document,
+     * which is freed on configuration reload */
+    log->file.name = ogs_strdup(name);
+    ogs_assert(log->file.name);
     log->file.out = out;
 
     log->writer = file_writer;
 
     return log;
+}
+
+int ogs_log_reload_file(const char *path)
+{
+    ogs_log_t *log = NULL, *file_log = NULL, *new_log = NULL;
+
+    ogs_list_for_each(&log_list, log) {
+        if (log->type == OGS_LOG_FILE_TYPE) {
+            file_log = log;
+            break;
+        }
+    }
+
+    if (!path || !path[0]) {
+        if (file_log)
+            ogs_log_remove(file_log);
+        return OGS_OK;
+    }
+
+    if (file_log && file_log->file.name &&
+            !strcmp(file_log->file.name, path))
+        return OGS_OK;
+
+    new_log = ogs_log_add_file(path);
+    if (!new_log)
+        return OGS_ERROR;
+
+    if (file_log)
+        ogs_log_remove(file_log);
+
+    return OGS_OK;
 }
 
 void ogs_log_remove(ogs_log_t *log)
@@ -196,6 +230,10 @@ void ogs_log_remove(ogs_log_t *log)
         ogs_assert(log->file.out);
         fclose(log->file.out);
         log->file.out = NULL;
+        if (log->file.name) {
+            ogs_free((void *)log->file.name);
+            log->file.name = NULL;
+        }
     }
 
     ogs_pool_free(&log_pool, log);

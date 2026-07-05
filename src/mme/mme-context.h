@@ -1338,6 +1338,7 @@ mme_sgsn_t *mme_sgsn_find_by_default_routing_address(void);
 mme_sgw_t *mme_sgw_add(ogs_sockaddr_t *addr);
 void mme_sgw_remove(mme_sgw_t *sgw);
 void mme_sgw_remove_all(void);
+bool mme_sgw_in_use(const mme_sgw_t *sgw);
 mme_sgw_t *mme_sgw_find_by_addr(const ogs_sockaddr_t *addr);
 bool mme_sgw_recovery_update(mme_sgw_t *sgw, uint8_t recovery);
 void mme_sgw_echo_schedule(mme_sgw_t *sgw);

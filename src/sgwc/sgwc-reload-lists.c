@@ -20,22 +20,110 @@
 #include "context.h"
 #include "sgwc-reload-lists.h"
 #include "pfcp-path.h"
+#include "ga-writer.h"
 
 volatile int sgwc_reload_lists_changed = 0;
 
-static char *sgwc_reload_owned_cdr_node_id;
-static char *sgwc_reload_owned_cdr_local_address;
+static bool sgwc_nwi_reload_cleared = false;
 
-static void sgwc_reload_replace_cdr_string(const char **field, char **owned,
-        const char *cv)
+static void sgwc_reload_cdr_cfg_clear(sgwc_cdr_config_t *cfg)
 {
-    char *dup = (cv && cv[0]) ? ogs_strdup(cv) : NULL;
-    char *old = *owned;
+    ogs_assert(cfg);
 
-    *field = dup;
-    *owned = dup;
-    if (old)
-        ogs_free(old);
+    if (cfg->spool_dir) {
+        ogs_free((void *)cfg->spool_dir);
+        cfg->spool_dir = NULL;
+    }
+    if (cfg->node_id) {
+        ogs_free((void *)cfg->node_id);
+        cfg->node_id = NULL;
+    }
+    if (cfg->local_address) {
+        ogs_free((void *)cfg->local_address);
+        cfg->local_address = NULL;
+    }
+}
+
+static void sgwc_reload_parse_cdr(ogs_yaml_iter_t *sgwc_iter,
+        sgwc_cdr_config_t *cfg)
+{
+    ogs_yaml_iter_t c_iter;
+
+    ogs_assert(sgwc_iter);
+    ogs_assert(cfg);
+
+    memset(cfg, 0, sizeof(*cfg));
+    cfg->interim_interval_s = 300;
+    cfg->rotate_max_records = 100;
+    cfg->rotate_max_bytes = 65536;
+    cfg->rotate_max_seconds = 30;
+    cfg->triggers = SGWC_CDR_TRIG_START | SGWC_CDR_TRIG_INTERIM |
+            SGWC_CDR_TRIG_STOP;
+
+    ogs_yaml_iter_recurse(sgwc_iter, &c_iter);
+    while (ogs_yaml_iter_next(&c_iter)) {
+        const char *ck = ogs_yaml_iter_key(&c_iter);
+        const char *cv = ogs_yaml_iter_value(&c_iter);
+
+        ogs_assert(ck);
+        if (!strcmp(ck, "enabled")) {
+            cfg->enabled = ogs_yaml_iter_bool(&c_iter);
+        } else if (!strcmp(ck, "spool_dir") ||
+                !strcmp(ck, "directory")) {
+            cfg->spool_dir = cv ? ogs_strdup(cv) : NULL;
+        } else if (!strcmp(ck, "node_id") ||
+                !strcmp(ck, "nodeid")) {
+            cfg->node_id = cv ? ogs_strdup(cv) : NULL;
+        } else if (!strcmp(ck, "local_address") ||
+                !strcmp(ck, "sgw_address")) {
+            cfg->local_address = cv ? ogs_strdup(cv) : NULL;
+        } else if (!strcmp(ck, "interim_interval_s") ||
+                !strcmp(ck, "interim_interval")) {
+            if (cv)
+                cfg->interim_interval_s = (uint32_t)atoi(cv);
+        } else if (!strcmp(ck, "max_records")) {
+            if (cv)
+                cfg->rotate_max_records = (uint32_t)atoi(cv);
+        } else if (!strcmp(ck, "max_bytes")) {
+            if (cv)
+                cfg->rotate_max_bytes = (uint32_t)atoi(cv);
+        } else if (!strcmp(ck, "max_seconds")) {
+            if (cv)
+                cfg->rotate_max_seconds = (uint32_t)atoi(cv);
+        } else if (!strcmp(ck, "triggers")) {
+            uint32_t t = 0;
+
+            if (cv) {
+                const char *p = cv;
+
+                while (*p) {
+                    while (*p == ' ' || *p == ',') p++;
+                    if (!strncmp(p, "start", 5)) {
+                        t |= SGWC_CDR_TRIG_START; p += 5;
+                    } else if (!strncmp(p, "interim", 7)) {
+                        t |= SGWC_CDR_TRIG_INTERIM; p += 7;
+                    } else if (!strncmp(p, "stop", 4)) {
+                        t |= SGWC_CDR_TRIG_STOP; p += 4;
+                    } else {
+                        while (*p && *p != ',') p++;
+                    }
+                }
+            }
+            if (t)
+                cfg->triggers = t;
+        }
+    }
+}
+
+static void sgwc_reload_cdr_replace(ogs_yaml_iter_t *sgwc_iter)
+{
+    sgwc_cdr_config_t cfg;
+
+    sgwc_reload_parse_cdr(sgwc_iter, &cfg);
+    (void)sgwc_ga_writer_apply_runtime(&cfg);
+    sgwc_reload_cdr_cfg_clear(&cfg);
+    sgwc_reload_lists_changed++;
+    ogs_reload_audit_note("sgwc.cdr configuration replaced");
 }
 
 static bool sgwc_reload_nwi_rule_key(const char *key)
@@ -45,24 +133,15 @@ static bool sgwc_reload_nwi_rule_key(const char *key)
            !strcmp(key, "pfcp_nwi_rewrite");
 }
 
-static bool sgwc_reload_nwi_exists(const char *match, const char *replace)
-{
-    sgwc_sgwu_nwi_rewrite_rule_t *rule = NULL;
-
-    ogs_list_for_each(&sgwc_self()->sgwu_nwi_rewrite_list, rule) {
-        if (rule->match && rule->replace &&
-                ogs_strcasecmp(rule->match, match) == 0 &&
-                ogs_strcasecmp(rule->replace, replace) == 0)
-            return true;
-    }
-
-    return false;
-}
-
-static int sgwc_reload_nwi_add_only(ogs_yaml_iter_t *parent_iter)
+static int sgwc_reload_nwi_append(ogs_yaml_iter_t *parent_iter)
 {
     ogs_yaml_iter_t rule_array, rule_iter;
     int added = 0;
+
+    if (!sgwc_nwi_reload_cleared) {
+        sgwc_sgwu_nwi_rewrite_clear();
+        sgwc_nwi_reload_cleared = true;
+    }
 
     ogs_yaml_iter_recurse(parent_iter, &rule_array);
     do {
@@ -91,8 +170,6 @@ static int sgwc_reload_nwi_add_only(ogs_yaml_iter_t *parent_iter)
 
         if (!match || !replace || !match[0] || !replace[0])
             continue;
-        if (sgwc_reload_nwi_exists(match, replace))
-            continue;
 
         rule = ogs_calloc(1, sizeof(*rule));
         ogs_assert(rule);
@@ -100,8 +177,6 @@ static int sgwc_reload_nwi_add_only(ogs_yaml_iter_t *parent_iter)
         rule->replace = ogs_strdup(replace);
         ogs_assert(rule->match && rule->replace);
         ogs_list_add(&sgwc_self()->sgwu_nwi_rewrite_list, rule);
-        ogs_reload_audit_note(" sgwu_nwi_rewrite added [%s] -> [%s]",
-                rule->match, rule->replace);
         added++;
         sgwc_reload_lists_changed++;
     } while (ogs_yaml_iter_type(&rule_array) == YAML_SEQUENCE_NODE);
@@ -340,88 +415,165 @@ static int sgwc_reload_pfcp_sgwu_add_only(ogs_yaml_iter_t *pfcp_iter)
     return 0;
 }
 
-static void sgwc_reload_cdr_scalars(ogs_yaml_iter_t *sgwc_iter)
+static bool sgwc_reload_sgwu_peer_wanted(
+        ogs_yaml_iter_t *pfcp_iter, const ogs_pfcp_node_t *node,
+        bool *resolve_failed)
 {
-    sgwc_context_t *self = sgwc_self();
-    ogs_yaml_iter_t c_iter;
+    ogs_yaml_iter_t pfcp_sub_iter;
 
-    ogs_yaml_iter_recurse(sgwc_iter, &c_iter);
-    while (ogs_yaml_iter_next(&c_iter)) {
-        const char *ck = ogs_yaml_iter_key(&c_iter);
-        const char *cv = ogs_yaml_iter_value(&c_iter);
-        ogs_assert(ck);
+    ogs_assert(pfcp_iter);
+    ogs_assert(node);
+    ogs_assert(node->config_addr);
+    ogs_assert(resolve_failed);
 
-        if (!strcmp(ck, "enabled")) {
-            self->cdr.enabled = ogs_yaml_iter_bool(&c_iter);
-            sgwc_reload_lists_changed++;
-            ogs_reload_audit_note("sgwc.cdr.enabled=%s",
-                    self->cdr.enabled ? "true" : "false");
-        } else if (!strcmp(ck, "spool_dir") ||
-                !strcmp(ck, "directory")) {
-            ogs_reload_audit_warn("sgwc.cdr.spool_dir change ignored "
-                    "(restart required)");
-        } else if (!strcmp(ck, "node_id") ||
-                !strcmp(ck, "nodeid")) {
-            sgwc_reload_replace_cdr_string(&self->cdr.node_id,
-                    &sgwc_reload_owned_cdr_node_id, cv);
-            sgwc_reload_lists_changed++;
-        } else if (!strcmp(ck, "local_address") ||
-                !strcmp(ck, "sgw_address")) {
-            sgwc_reload_replace_cdr_string(&self->cdr.local_address,
-                    &sgwc_reload_owned_cdr_local_address, cv);
-            sgwc_reload_lists_changed++;
-        } else if (!strcmp(ck, "interim_interval_s") ||
-                !strcmp(ck, "interim_interval")) {
-            if (cv) {
-                self->cdr.interim_interval_s = (uint32_t)atoi(cv);
-                sgwc_reload_lists_changed++;
-            }
-        } else if (!strcmp(ck, "max_records")) {
-            if (cv) {
-                self->cdr.rotate_max_records = (uint32_t)atoi(cv);
-                sgwc_reload_lists_changed++;
-            }
-        } else if (!strcmp(ck, "max_bytes")) {
-            if (cv) {
-                self->cdr.rotate_max_bytes = (uint32_t)atoi(cv);
-                sgwc_reload_lists_changed++;
-            }
-        } else if (!strcmp(ck, "max_seconds")) {
-            if (cv) {
-                self->cdr.rotate_max_seconds = (uint32_t)atoi(cv);
-                sgwc_reload_lists_changed++;
-            }
-        } else if (!strcmp(ck, "triggers")) {
-            uint32_t t = 0;
+    ogs_yaml_iter_recurse(pfcp_iter, &pfcp_sub_iter);
+    while (ogs_yaml_iter_next(&pfcp_sub_iter)) {
+        const char *pfcp_key = ogs_yaml_iter_key(&pfcp_sub_iter);
 
-            if (cv) {
-                const char *p = cv;
+        if (!pfcp_key || strcmp(pfcp_key, "client"))
+            continue;
 
-                while (*p) {
-                    while (*p == ' ' || *p == ',') p++;
-                    if (!strncmp(p, "start", 5)) {
-                        t |= SGWC_CDR_TRIG_START; p += 5;
-                    } else if (!strncmp(p, "interim", 7)) {
-                        t |= SGWC_CDR_TRIG_INTERIM; p += 7;
-                    } else if (!strncmp(p, "stop", 4)) {
-                        t |= SGWC_CDR_TRIG_STOP; p += 4;
-                    } else {
-                        while (*p && *p != ',') p++;
+        ogs_yaml_iter_t client_iter;
+        ogs_yaml_iter_recurse(&pfcp_sub_iter, &client_iter);
+        while (ogs_yaml_iter_next(&client_iter)) {
+            const char *client_key = ogs_yaml_iter_key(&client_iter);
+            ogs_yaml_iter_t sgwu_array;
+
+            if (!client_key || strcmp(client_key, "sgwu"))
+                continue;
+
+            ogs_yaml_iter_recurse(&client_iter, &sgwu_array);
+            do {
+                ogs_yaml_iter_t remote_iter;
+                int family = AF_UNSPEC;
+                int i, num = 0;
+                uint16_t port = ogs_pfcp_self()->pfcp_port;
+                const char *hostname[OGS_MAX_NUM_OF_HOSTNAME];
+                ogs_sockaddr_t *addr = NULL;
+                int rv;
+                bool wanted = false;
+
+                if (ogs_yaml_iter_type(&sgwu_array) == YAML_MAPPING_NODE) {
+                    memcpy(&remote_iter, &sgwu_array, sizeof(ogs_yaml_iter_t));
+                } else if (ogs_yaml_iter_type(&sgwu_array) ==
+                        YAML_SEQUENCE_NODE) {
+                    if (!ogs_yaml_iter_next(&sgwu_array))
+                        break;
+                    ogs_yaml_iter_recurse(&sgwu_array, &remote_iter);
+                } else {
+                    break;
+                }
+
+                memset(hostname, 0, sizeof(hostname));
+                while (ogs_yaml_iter_next(&remote_iter)) {
+                    const char *remote_key = ogs_yaml_iter_key(&remote_iter);
+
+                    if (!remote_key)
+                        continue;
+                    if (!strcmp(remote_key, "family")) {
+                        const char *v = ogs_yaml_iter_value(&remote_iter);
+                        if (v)
+                            family = atoi(v);
+                    } else if (!strcmp(remote_key, "address")) {
+                        ogs_yaml_iter_t hostname_iter;
+
+                        ogs_yaml_iter_recurse(&remote_iter, &hostname_iter);
+                        do {
+                            if (ogs_yaml_iter_type(&hostname_iter) ==
+                                    YAML_SEQUENCE_NODE) {
+                                if (!ogs_yaml_iter_next(&hostname_iter))
+                                    break;
+                            }
+                            if (num >= OGS_MAX_NUM_OF_HOSTNAME)
+                                break;
+                            hostname[num++] =
+                                ogs_yaml_iter_value(&hostname_iter);
+                        } while (ogs_yaml_iter_type(&hostname_iter) ==
+                                YAML_SEQUENCE_NODE);
+                    } else if (!strcmp(remote_key, "port")) {
+                        const char *v = ogs_yaml_iter_value(&remote_iter);
+                        if (v)
+                            port = atoi(v);
                     }
                 }
-            }
-            if (t) {
-                self->cdr.triggers = t;
-                sgwc_reload_lists_changed++;
-            }
+
+                for (i = 0; i < num; i++) {
+                    rv = ogs_addaddrinfo(&addr, family, hostname[i], port, 0);
+                    if (rv != OGS_OK) {
+                        *resolve_failed = true;
+                        continue;
+                    }
+                }
+
+                ogs_filter_ip_version(&addr,
+                        ogs_global_conf()->parameter.no_ipv4,
+                        ogs_global_conf()->parameter.no_ipv6,
+                        ogs_global_conf()->parameter.prefer_ipv4);
+
+                if (addr &&
+                        ogs_sockaddr_is_equal(node->config_addr, addr))
+                    wanted = true;
+
+                if (addr)
+                    ogs_freeaddrinfo(addr);
+                if (wanted)
+                    return true;
+            } while (ogs_yaml_iter_type(&sgwu_array) == YAML_SEQUENCE_NODE);
         }
+    }
+
+    return false;
+}
+
+static void sgwc_reload_sgwu_remove_stale(ogs_yaml_iter_t *pfcp_iter)
+{
+    ogs_pfcp_node_t *node = NULL, *next = NULL;
+
+    ogs_list_for_each_safe(&ogs_pfcp_self()->pfcp_peer_list, next, node) {
+        bool resolve_failed = false;
+
+        if (!node->config_addr)
+            continue;
+        if (sgwc_reload_sgwu_peer_wanted(pfcp_iter, node, &resolve_failed))
+            continue;
+
+        if (resolve_failed) {
+            /* Cannot trust the wanted-set when DNS resolution failed;
+             * keep the peer rather than dropping it on a transient error */
+            ogs_reload_audit_warn(
+                    "SGW-U peer removal skipped (DNS resolution failure) %s",
+                    ogs_sockaddr_to_string_static(node->config_addr));
+            continue;
+        }
+
+        if (!sgwc_pfcp_remove_sgwu_peer(node)) {
+            ogs_reload_audit_warn(
+                    "SGW-U peer removal skipped (sessions active) %s",
+                    ogs_sockaddr_to_string_static(node->config_addr));
+            continue;
+        }
+
+        sgwc_reload_lists_changed++;
+        ogs_reload_audit_note(" SGW-U peer removed [%s]:%d",
+                ogs_sockaddr_to_string_static(node->config_addr),
+                OGS_PORT(node->config_addr));
     }
 }
 
-static int sgwc_reload_trace_imsi_add_only(ogs_yaml_iter_t *sgwc_iter)
+static int sgwc_reload_pfcp_sgwu_sync(ogs_yaml_iter_t *pfcp_iter)
+{
+    int added = sgwc_reload_pfcp_sgwu_add_only(pfcp_iter);
+
+    sgwc_reload_sgwu_remove_stale(pfcp_iter);
+    return added;
+}
+
+static int sgwc_reload_trace_imsi_replace(ogs_yaml_iter_t *sgwc_iter)
 {
     ogs_yaml_iter_t trace_array, trace_iter;
-    int added = 0;
+    int count = 0;
+
+    ogs_trace_filter_clear();
 
     ogs_yaml_iter_recurse(sgwc_iter, &trace_array);
     do {
@@ -439,7 +591,6 @@ static int sgwc_reload_trace_imsi_add_only(ogs_yaml_iter_t *sgwc_iter)
 
         while (ogs_yaml_iter_next(&trace_iter)) {
             const char *v = ogs_yaml_iter_value(&trace_iter);
-            int count_before = ogs_trace_filter_count();
 
             if (!v || !v[0])
                 continue;
@@ -447,16 +598,15 @@ static int sgwc_reload_trace_imsi_add_only(ogs_yaml_iter_t *sgwc_iter)
                 ogs_reload_audit_warn("trace_imsi could not add `%s'", v);
                 continue;
             }
-            if (ogs_trace_filter_count() > count_before) {
-                added++;
-                sgwc_reload_lists_changed++;
-                ogs_reload_audit_note(" trace_imsi added `%s'", v);
-            }
+            count++;
         }
     } while (ogs_yaml_iter_type(&trace_array) == YAML_SEQUENCE_NODE &&
             ogs_yaml_iter_next(&trace_array));
 
-    return added;
+    sgwc_reload_lists_changed++;
+    ogs_reload_audit_note(" trace_imsi replaced (%d entries)", count);
+
+    return count;
 }
 
 static void sgwc_reload_inbound_roam(ogs_yaml_iter_t *sgwc_iter)
@@ -518,7 +668,7 @@ static void sgwc_reload_inbound_roam(ogs_yaml_iter_t *sgwc_iter)
                 sgwc_reload_lists_changed++;
             }
         } else if (sgwc_reload_nwi_rule_key(rk)) {
-            (void)sgwc_reload_nwi_add_only(&roam_iter);
+            (void)sgwc_reload_nwi_append(&roam_iter);
         }
     }
 }
@@ -583,6 +733,7 @@ void sgwc_context_reload_runtime(void)
 
     ogs_reload_audit_begin();
     sgwc_reload_lists_changed = 0;
+    sgwc_nwi_reload_cleared = false;
 
     if (ogs_app_config_reload() != OGS_OK) {
         ogs_warn("Configuration reload failed; keeping previous config");
@@ -654,11 +805,11 @@ void sgwc_context_reload_runtime(void)
                 ogs_reload_audit_note("sgwc.gtpu settings reloaded");
                 found = true;
             } else if (sgwc_reload_nwi_rule_key(sgwc_key)) {
-                lists_added += sgwc_reload_nwi_add_only(&sgwc_iter);
+                lists_added += sgwc_reload_nwi_append(&sgwc_iter);
                 found = true;
             } else if (!strcmp(sgwc_key, "pfcp") ||
                     !strcmp(sgwc_key, "sgwu")) {
-                lists_added += sgwc_reload_pfcp_sgwu_add_only(&sgwc_iter);
+                lists_added += sgwc_reload_pfcp_sgwu_sync(&sgwc_iter);
                 found = true;
             } else if (!strcmp(sgwc_key, "inbound_roam")) {
                 sgwc_reload_inbound_roam(&sgwc_iter);
@@ -667,13 +818,19 @@ void sgwc_context_reload_runtime(void)
                 sgwc_reload_gn(&sgwc_iter);
                 found = true;
             } else if (!strcmp(sgwc_key, "cdr")) {
-                sgwc_reload_cdr_scalars(&sgwc_iter);
+                sgwc_reload_cdr_replace(&sgwc_iter);
                 found = true;
             } else if (!strcmp(sgwc_key, "trace_imsi")) {
-                lists_added += sgwc_reload_trace_imsi_add_only(&sgwc_iter);
+                lists_added += sgwc_reload_trace_imsi_replace(&sgwc_iter);
                 found = true;
             }
         }
+    }
+
+    if (sgwc_nwi_reload_cleared) {
+        sgwc_reload_lists_changed++;
+        ogs_reload_audit_note(" sgwu_nwi_rewrite replaced (%d entries)",
+                ogs_list_count(&sgwc_self()->sgwu_nwi_rewrite_list));
     }
 
     (void)found;

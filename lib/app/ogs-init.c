@@ -232,6 +232,9 @@ int ogs_app_config_reload(void)
 
     ogs_info("Configuration reloaded: '%s'", ogs_app()->file);
 
+    if (ogs_app_logger_apply_from_document() != OGS_OK)
+        ogs_warn("Logger reload failed; previous log file sink kept");
+
     return OGS_OK;
 }
 
@@ -564,6 +567,78 @@ static void parse_config_logger_file(ogs_yaml_iter_t *logger_iter,
             }
         }
     }
+}
+
+static bool parse_logger_from_document(yaml_document_t *document)
+{
+    ogs_yaml_iter_t root_iter;
+
+    ogs_assert(document);
+
+    ogs_yaml_iter_init(&root_iter, document);
+    while (ogs_yaml_iter_next(&root_iter)) {
+        const char *root_key = ogs_yaml_iter_key(&root_iter);
+
+        if (!root_key || strcmp(root_key, "logger"))
+            continue;
+
+        ogs_yaml_iter_t logger_iter;
+        ogs_yaml_iter_recurse(&root_iter, &logger_iter);
+        while (ogs_yaml_iter_next(&logger_iter)) {
+            const char *logger_key = ogs_yaml_iter_key(&logger_iter);
+
+            ogs_assert(logger_key);
+            parse_config_logger_file(&logger_iter, logger_key);
+            if (!strcmp(logger_key, "level")) {
+                ogs_app()->logger.level =
+                    ogs_yaml_iter_value(&logger_iter);
+            } else if (!strcmp(logger_key, "domain")) {
+                ogs_app()->logger.domain =
+                    ogs_yaml_iter_value(&logger_iter);
+            }
+        }
+        return true;
+    }
+
+    return false;
+}
+
+int ogs_app_logger_apply_from_document(void)
+{
+    yaml_document_t *document = NULL;
+    int rv;
+
+    document = ogs_app()->document;
+    if (!document)
+        return OGS_ERROR;
+
+    /*
+     * If the new YAML has no logger section, keep the current logger
+     * untouched. Applying here would dereference logger.level/domain/file
+     * pointers left over from an older document that has been freed.
+     */
+    if (!parse_logger_from_document(document)) {
+        ogs_reload_audit_note("logger section absent; settings kept");
+        return OGS_OK;
+    }
+
+    rv = ogs_log_config_domain(
+            ogs_app()->logger.domain, ogs_app()->logger.level);
+    if (rv != OGS_OK)
+        return rv;
+
+    ogs_log_set_timestamp(ogs_app()->logger_default.timestamp,
+            ogs_app()->logger.timestamp);
+
+    rv = ogs_log_reload_file(ogs_app()->logger.file);
+    if (rv != OGS_OK)
+        return rv;
+
+    ogs_reload_audit_note("logger reloaded (level=%s, file=%s)",
+            ogs_app()->logger.level ? ogs_app()->logger.level : "default",
+            ogs_app()->logger.file ? ogs_app()->logger.file : "stderr");
+
+    return OGS_OK;
 }
 
 static int parse_config(void)

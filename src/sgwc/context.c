@@ -187,7 +187,7 @@ static bool sgwc_wildcard_match_ci(const char *pattern, const char *s)
     return *p == '\0';
 }
 
-static void sgwc_sgwu_nwi_rewrite_clear(void)
+void sgwc_sgwu_nwi_rewrite_clear(void)
 {
     sgwc_sgwu_nwi_rewrite_rule_t *rule = NULL, *next_rule = NULL;
 
@@ -2326,6 +2326,22 @@ sgwc_sess_t *sgwc_sess_find_by_nsapi(sgwc_ue_t *sgwc_ue, uint8_t nsapi)
 sgwc_sess_t *sgwc_sess_find_by_id(ogs_pool_id_t id)
 {
     return ogs_pool_find_by_id(&sgwc_sess_pool, id);
+}
+
+bool sgwc_pfcp_peer_in_use(const ogs_pfcp_node_t *node)
+{
+    int i;
+    sgwc_sess_t *sess = NULL;
+
+    ogs_assert(node);
+
+    for (i = 0; i < sgwc_sess_pool.size; i++) {
+        sess = sgwc_sess_pool.index[i];
+        if (sess && sess->pfcp_node == node)
+            return true;
+    }
+
+    return false;
 }
 
 int sgwc_sess_pfcp_xact_count(

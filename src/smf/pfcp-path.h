@@ -99,6 +99,8 @@ ogs_pfcp_node_t *smf_pfcp_admin_add_upf_peer(
         ogs_sockaddr_t *addr,
         const char **dnns, int num_of_dnns);
 
+bool smf_pfcp_remove_upf_peer(ogs_pfcp_node_t *node);
+
 void smf_pfcp_request_reassociation(ogs_pfcp_node_t *node);
 
 #ifdef __cplusplus
