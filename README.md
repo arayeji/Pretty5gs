@@ -201,6 +201,8 @@ sgwc:
 
 **Runtime config reload (MME)**
 
+Full NMS matrix (every reloadable YAML key): **`docs/nms-sighup-reload.md`**.
+
 Edit `/etc/open5gs/mme.yaml`, then reload without restarting the daemon (attached UEs stay up):
 
 ```bash
