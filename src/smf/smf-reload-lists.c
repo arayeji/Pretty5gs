@@ -166,6 +166,8 @@ static bool smf_reload_subnet_exists(
     return false;
 }
 
+static int smf_reload_session_add_only(ogs_yaml_iter_t *smf_iter);
+
 static bool smf_reload_subnet_in_session_yaml(
         ogs_yaml_iter_t *smf_iter, const ogs_pfcp_subnet_t *subnet)
 {

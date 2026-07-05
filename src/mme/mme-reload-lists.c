@@ -212,35 +212,6 @@ static int reload_served_tai_add_range(
     return added;
 }
 
-static mme_hssmap_t *reload_hssmap_find_by_plmn(const ogs_plmn_id_t *plmn_id)
-{
-    mme_hssmap_t *hssmap = NULL;
-
-    ogs_assert(plmn_id);
-
-    ogs_list_for_each(&mme_self()->hssmap_list, hssmap) {
-        if (memcmp(&hssmap->plmn_id, plmn_id, OGS_PLMN_ID_LEN) == 0)
-            return hssmap;
-    }
-
-    return NULL;
-}
-
-static bool reload_imsi_acl_has_prefix(const char *prefix)
-{
-    mme_context_t *self = mme_self();
-    int i;
-
-    ogs_assert(prefix);
-
-    for (i = 0; i < self->num_of_imsi_acl; i++) {
-        if (strcmp(self->imsi_acl[i].prefix, prefix) == 0)
-            return true;
-    }
-
-    return false;
-}
-
 static mme_access_control_t *reload_access_control_find(
         const char *imsi_prefix, bool plmn_configured,
         const ogs_plmn_id_t *plmn_id)
@@ -481,21 +452,6 @@ static void reload_pgw_ecell_add(mme_pgw_t *pgw, uint32_t e_cell_id)
 
     pgw->e_cell_id[pgw->num_of_e_cell_id++] = e_cell_id;
     mme_reload_lists_changed++;
-}
-
-static bool reload_emerg_exists(uint8_t categories, const char *digits)
-{
-    mme_emerg_t *emerg = NULL;
-
-    ogs_assert(digits);
-
-    ogs_list_for_each(&mme_self()->emerg_list, emerg) {
-        if (emerg->categories == categories &&
-                emerg->digits && strcmp(emerg->digits, digits) == 0)
-            return true;
-    }
-
-    return false;
 }
 
 static int reload_hss_map_replace(ogs_yaml_iter_t *mme_iter)
@@ -1305,8 +1261,12 @@ static void reload_gtpc_remove_stale(ogs_yaml_iter_t *gtpc_iter)
 
     ogs_list_for_each_safe(&mme_self()->pgw_list, next_pgw, pgw) {
         bool resolve_failed = false;
+        ogs_sockaddr_t *pgw_addr = pgw->sa_list;
 
-        if (reload_gtpc_addr_wanted(gtpc_iter, true, &pgw->gnode.addr,
+        if (!pgw_addr)
+            continue;
+
+        if (reload_gtpc_addr_wanted(gtpc_iter, true, pgw_addr,
                 &resolve_failed))
             continue;
 
@@ -1314,14 +1274,14 @@ static void reload_gtpc_remove_stale(ogs_yaml_iter_t *gtpc_iter)
             ogs_reload_audit_warn(
                     "smf/pgw peer removal skipped (DNS resolution failure) "
                     "[%s]:%d",
-                    OGS_ADDR(&pgw->gnode.addr, peer_buf),
-                    OGS_PORT(&pgw->gnode.addr));
+                    OGS_ADDR(pgw_addr, peer_buf),
+                    OGS_PORT(pgw_addr));
             continue;
         }
 
         ogs_reload_audit_note(" smf/pgw peer removed [%s]:%d",
-                OGS_ADDR(&pgw->gnode.addr, peer_buf),
-                OGS_PORT(&pgw->gnode.addr));
+                OGS_ADDR(pgw_addr, peer_buf),
+                OGS_PORT(pgw_addr));
         mme_pgw_remove(pgw);
         mme_reload_lists_changed++;
     }
