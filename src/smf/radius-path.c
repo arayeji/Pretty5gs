@@ -300,6 +300,51 @@ static uint8_t *append_class_attrs(uint8_t *p, const uint8_t *buf, size_t len)
     return p;
 }
 
+/*
+ * Concatenate all Class attribute values into a NUL-terminated log
+ * string. Class is opaque per RFC 2865, but AAA servers often return
+ * ASCII reject/accept hints (e.g. "6133795526: User Not Exist").
+ */
+static void radius_class_attrs_to_string(const uint8_t *attrs, size_t attrs_len,
+        char *out, size_t out_sz)
+{
+    const uint8_t *p = attrs;
+    const uint8_t *end = attrs + attrs_len;
+    size_t off = 0;
+
+    if (!out || out_sz == 0)
+        return;
+    out[0] = '\0';
+
+    while (p + 2 <= end) {
+        uint8_t t = p[0];
+        uint8_t alen = p[1];
+
+        if (alen < 2 || p + alen > end)
+            break;
+
+        if (t == RADIUS_ATTR_CLASS && alen >= 2) {
+            size_t vlen = alen - 2;
+            const uint8_t *val = p + 2;
+
+            if (off && off + 1 < out_sz) {
+                out[off++] = ' ';
+                out[off] = '\0';
+            }
+            if (off + vlen >= out_sz) {
+                vlen = out_sz - off - 1;
+                if (vlen == 0)
+                    break;
+            }
+            memcpy(out + off, val, vlen);
+            off += vlen;
+            out[off] = '\0';
+        }
+
+        p += alen;
+    }
+}
+
 static void md5_digest(const void *data, size_t len, uint8_t out[16])
 {
     /*
@@ -621,8 +666,8 @@ static int radius_parse_access_accept(smf_sess_t *sess,
         ogs_assert(sess->radius.class_buf);
         memcpy(sess->radius.class_buf, class_tmp, class_off);
         sess->radius.class_len = class_off;
-        ogs_debug("RADIUS: stored %u bytes of Class AVP",
-                (unsigned)class_off);
+        ogs_debug("RADIUS: stored Class AVP (%u bytes): %.*s",
+                (unsigned)class_off, (int)class_off, class_tmp);
     }
 
     /*
@@ -1414,14 +1459,31 @@ int smf_radius_authorize_for_session(smf_sess_t *sess)
     sess->radius.server_idx = picked_idx;
 
     if (res[0] == RADIUS_CODE_ACCESS_REJECT) {
-        ogs_error("RADIUS Access-Reject for IMSI[%s] DNN[%s]",
-                user, called ? called : "");
+        char class_reason[256];
+
+        radius_class_attrs_to_string(res + RADIUS_HDR_LEN,
+                res_len - RADIUS_HDR_LEN,
+                class_reason, sizeof(class_reason));
+        if (class_reason[0]) {
+            ogs_error("RADIUS Access-Reject for IMSI[%s] DNN[%s] reason[%s]",
+                    user, called ? called : "", class_reason);
+        } else {
+            ogs_error("RADIUS Access-Reject for IMSI[%s] DNN[%s]",
+                    user, called ? called : "");
+        }
         return OGS_ERROR;
     }
 
     if (radius_parse_access_accept(sess, res + RADIUS_HDR_LEN,
                 res_len - RADIUS_HDR_LEN) != OGS_OK)
         return OGS_ERROR;
+
+    if (sess->radius.class_len && sess->radius.class_buf) {
+        ogs_debug("RADIUS Access-Accept for IMSI[%s] DNN[%s] Class[%.*s]",
+                user, called ? called : "",
+                (int)ogs_min(sess->radius.class_len, (size_t)200),
+                (char *)sess->radius.class_buf);
+    }
 
     ogs_info("RADIUS Access-Accept for IMSI[%s] DNN[%s]",
             user, called ? called : "");
