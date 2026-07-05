@@ -4,6 +4,28 @@ These files mirror the layout of **`/etc/open5gs/<daemon>.yaml`** on a live node
 All PLMNs, IMSIs, IP addresses, secrets, and hostnames are **placeholders** for
 schema mapping and lab use — not real operator data.
 
+## How these files are built
+
+Regenerate from repo root:
+
+```bash
+python3 tools/gen_nms_full_samples.py
+```
+
+Each sample is derived from the upstream Meson template **`configs/open5gs/<daemon>.yaml.in`**
+(path placeholders substituted, PLMN `999/70`, lab `127.0.0.x` addresses).
+
+| Section | MME / SMF / SGWC | All other daemons |
+|---------|------------------|-------------------|
+| **Active fictional values** | Full deployable YAML merged from [../mme-reference.yaml](../mme-reference.yaml), [../smf-reference.yaml](../smf-reference.yaml), [../sgwc-reference.yaml](../sgwc-reference.yaml) | Active keys from `yaml.in` only |
+| **Parameter reference** | Entire `yaml.in` body appended with active lines commented out (comment blocks list every optional key, list, and scalar) | Same as `yaml.in` (active + commented examples) |
+
+Use the **top active block** when copying to `/etc/open5gs/`. The reference section
+documents keys that are commented in upstream templates (bind addresses, pool sizes,
+optional lists, SCTP options, attach_accept, inbound_roam, CDR, RADIUS, etc.).
+
+## Daemons
+
 | File | systemd unit | SIGHUP reload |
 |------|--------------|---------------|
 | [mme.yaml](mme.yaml) | `open5gs-mmed` | yes (see [docs/nms-sighup-reload.md](../../../docs/nms-sighup-reload.md)) |
@@ -23,6 +45,8 @@ schema mapping and lab use — not real operator data.
 | [bsf.yaml](bsf.yaml) | `open5gs-bsfd` | no — restart |
 | [udr.yaml](udr.yaml) | `open5gs-udrd` | no — restart |
 | [cgf.yaml](cgf.yaml) | `open5gs-cgfd` | no — restart |
+| [sepp1.yaml](sepp1.yaml) | `open5gs-seppd` (instance 1) | no — restart |
+| [sepp2.yaml](sepp2.yaml) | `open5gs-seppd` (instance 2) | no — restart |
 
 ## Fictional lab addressing
 
@@ -51,7 +75,9 @@ schema mapping and lab use — not real operator data.
 
 ## Deploy on a lab host
 
-Copy one file per daemon (do not merge into a single YAML — each process reads its own file):
+Copy one file per daemon (do not merge into a single YAML — each process reads its own file).
+For MME/SMF/SGWC, copy only through the end of the **Active fictional values** section,
+or use the whole file (reference lines are comments and are ignored by the parser):
 
 ```bash
 sudo cp configs/nms/samples/mme.yaml  /etc/open5gs/mme.yaml
@@ -66,4 +92,4 @@ Diameter peer `.conf` files live under `/etc/open5gs/freeDiameter/` (see upstrea
 
 - SIGHUP reload matrix: [docs/nms-sighup-reload.md](../../../docs/nms-sighup-reload.md)
 - Operator summary: [README.md](../../../README.md) (runtime reload sections)
-- Shorter NMS field references (MME/SMF/SGWC only): [../mme-reference.yaml](../mme-reference.yaml), [../smf-reference.yaml](../smf-reference.yaml), [../sgwc-reference.yaml](../sgwc-reference.yaml)
+- Fork field references (MME/SMF/SGWC): [../mme-reference.yaml](../mme-reference.yaml), [../smf-reference.yaml](../smf-reference.yaml), [../sgwc-reference.yaml](../sgwc-reference.yaml)

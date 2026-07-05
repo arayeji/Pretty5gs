@@ -4450,13 +4450,14 @@ void mme_context_reload_runtime(void)
                     ogs_reload_audit_note("mme.time timers reloaded");
                     found = true;
                 } else if (!strcmp(mme_key, "gtpc")) {
-                    ogs_yaml_iter_t gtpc_iter;
-                    ogs_yaml_iter_recurse(&mme_iter, &gtpc_iter);
-                    while (ogs_yaml_iter_next(&gtpc_iter)) {
-                        const char *gtpc_key = ogs_yaml_iter_key(&gtpc_iter);
+                    ogs_yaml_iter_t gtpc_scan;
+
+                    ogs_yaml_iter_recurse(&mme_iter, &gtpc_scan);
+                    while (ogs_yaml_iter_next(&gtpc_scan)) {
+                        const char *gtpc_key = ogs_yaml_iter_key(&gtpc_scan);
                         ogs_assert(gtpc_key);
                         if (!strcmp(gtpc_key, "echo_interval")) {
-                            const char *v = ogs_yaml_iter_value(&gtpc_iter);
+                            const char *v = ogs_yaml_iter_value(&gtpc_scan);
                             if (v) {
                                 self.gtpc_echo_interval = atoi(v);
                                 ogs_reload_audit_note(

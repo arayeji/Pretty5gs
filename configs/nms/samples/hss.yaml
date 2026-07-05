@@ -1,18 +1,25 @@
-# FICTIONAL SAMPLE — /etc/open5gs/hss.yaml
+# =============================================================================
+# FICTIONAL NMS SAMPLE — not real operator data
+# Generated from configs/open5gs/hss.yaml.in (+ fork reference overlay when present)
+# PLMN 999/70, IMSI prefix 99970, 127.0.0.x lab addresses
+# Regenerate: python3 tools/gen_nms_full_samples.py
+# =============================================================================
+
 
 db_uri: mongodb://127.0.0.1/open5gs
-
 logger:
   file:
     path: /var/log/open5gs/hss.log
-  level: info
+#  level: info   # fatal|error|warn|info(default)|debug|trace
 
 global:
   max:
-    ue: 4096
+    ue: 1024  # The number of UE can be increased depending on memory size.
+#    peer: 64
+  # Optional Huawei HSS9860 Milenage K4 unwrap (disabled by default).
   # milenage:
-  #   enabled: false
-  #   k4_file: /etc/open5gs/milenage_k4.key
+  #   enabled: true
+  #   k4_file: /etc/open5gs/open5gs/milenage_k4.key
 
 hss:
   freeDiameter: /etc/open5gs/freeDiameter/hss.conf
@@ -20,5 +27,6 @@ hss:
     server:
       - address: 127.0.0.8
         port: 9090
-  # sms_over_ims: "sip:smsc.mnc070.mcc999.3gppnetwork.org:7060;transport=tcp"
-  # use_mongodb_change_stream: true
+#  sms_over_ims: "sip:smsc.mnc001.mcc001.3gppnetwork.org:7060;transport=tcp"
+#  use_mongodb_change_stream: true
+

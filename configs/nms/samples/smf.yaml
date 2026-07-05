@@ -1,122 +1,696 @@
-# FICTIONAL SAMPLE — /etc/open5gs/smf.yaml
+# =============================================================================
+# FICTIONAL NMS SAMPLE — not real operator data
+# Generated from configs/open5gs/smf.yaml.in (+ fork reference overlay when present)
+# PLMN 999/70, IMSI prefix 99970, 127.0.0.x lab addresses
+# Regenerate: python3 tools/gen_nms_full_samples.py
+# =============================================================================
 
+
+# --- Active fictional values (fork reference overlay) ---
 logger:
   file:
     path: /var/log/open5gs/smf.log
   level: info
-
 global:
   max:
     ue: 4096
   parameter:
     use_upg_vpp: true
     no_ipv4v6_local_addr_in_packet_filter: true
-
 smf:
-  trace_imsi:
-    - "999700000000001"
-
   sbi:
     server:
-      - address: 127.0.0.4
-        port: 7777
-        advertise: open5gs-smf.example.net:7777
+    - address: 127.0.0.4
+      port: 7777
+      advertise: open5gs-smf.example.net:7777
     client:
-      nrf:
-        - uri: http://127.0.0.10:7777
       scp:
-        - uri: http://127.0.0.200:7777
-
+      - uri: http://127.0.0.200:7777
+      nrf:
+      - uri: http://127.0.0.10:7777
   pfcp:
     server:
-      - address: 127.0.0.4
-        advertise: open5gs-smf-pfcp.example.net
+    - address: 127.0.0.4
+      advertise: open5gs-smf-pfcp.example.net
     client:
       upf:
-        - address: 127.0.0.7
-          service_addr: 10.13.37.7
-          tac: [1]
-          dnn: internet
-
+      - address: 127.0.0.7
+        service_addr: 10.13.37.7
+        tac:
+        - 1
+        dnn: internet
   gtpc:
     server:
-      - address: 127.0.0.4
-        port: 2123
-
+    - address: 127.0.0.4
+      port: 2123
   gtpu:
     server:
-      - address: 127.0.0.4
-
+    - address: 127.0.0.4
   metrics:
     server:
-      - address: 127.0.0.4
-        port: 9090
-
+    - address: 127.0.0.4
+      port: 9090
   session:
-    - subnet: 10.45.0.0/16
-      gateway: 10.45.0.1
-      dnn: internet
-      radius:
-        auth: false
-        ip_assignment: false
-        skip: false
-    - subnet: 2001:db8:cafe::/48
-      gateway: 2001:db8:cafe::1
-      dnn: internet
-    - subnet: 10.46.0.0/16
-      gateway: 10.46.0.1
-      dnn: ims
-      radius:
-        skip: true
-
+  - subnet: 10.45.0.0/16
+    gateway: 10.45.0.1
+    dnn: internet
+    radius:
+      auth: false
+      ip_assignment: false
+      skip: false
+  - subnet: 2001:db8:cafe::/48
+    gateway: 2001:db8:cafe::1
+    dnn: internet
+  - subnet: 10.46.0.0/16
+    gateway: 10.46.0.1
+    dnn: ims
+    radius:
+      skip: true
   dns:
-    - 8.8.8.8
-    - 2001:4860:4860::8888
-
+  - 8.8.8.8
+  - 2001:4860:4860::8888
   mtu: 1400
+  freeDiameter: /etc/open5gs/freeDiameter/smf.conf
+  trace_imsi:
+  - '999700000000001'
   default_pdr_precedence: 65535
-
   p-cscf:
-    - 127.0.0.50
-    - 2001:db8:50::1
-
+  - 127.0.0.50
+  - 2001:db8:50::1
   ctf:
     enabled: auto
-
   cdr:
     enabled: true
     spool_dir: /var/spool/open5gs/cdr
     node_id: open5gs-smf-1
     local_address: 127.0.0.4
-    max_records: 100
-    max_bytes: 65536
-    max_seconds: 30
-    triggers: start,interim,stop
-
   radius:
     enabled: false
     select: primary_failover
     nas_identifier: open5gs-smf
     nas_ip: 127.0.0.4
-    timeout: 3000
-    retry: 3
-    acct_interim_interval: 300
-    pod_enabled: false
-    pod_port: 3799
-    use_framed_ip_for_ue: true
     servers:
-      - host: 127.0.0.99
-        secret: example-radius-secret-change-me
-        role: primary
-
+    - host: 127.0.0.99
+      secret: example-radius-secret
+      role: primary
   info:
-    - s_nssai:
-        - sst: 1
-          dnn: [internet, ims]
-      tai:
-        - plmn_id:
-            mcc: "999"
-            mnc: "70"
-          tac: [1, 2]
+  - s_nssai:
+    - sst: 1
+      dnn:
+      - internet
+      - ims
+    tai:
+    - plmn_id:
+        mcc: '999'
+        mnc: '70'
+      tac:
+      - 1
+      - 2
 
-  freeDiameter: /etc/open5gs/freeDiameter/smf.conf
+# --- Full parameter reference (upstream yaml.in; active lines commented) ---
+#logger:
+#  file:
+#    path: /var/log/open5gs/smf.log
+#  level: error   # production; UE IP / pool failures stay at error
+#  domain:
+#    smf: error
+#    pfcp: error
+#    gtp: warn
+
+#global:
+#  max:
+#    ue: 1024  # The number of UE can be increased depending on memory size.
+#    peer: 64
+
+#smf:
+#  trace_imsi:        # same prefix list as MME (lib/core ogs_trace_filter)
+#    - 99970
+#  sbi:
+#    server:
+#      - address: 127.0.0.4
+#        port: 7777
+#    client:
+#      nrf:
+#        - uri: http://127.0.0.10:7777
+#      scp:
+#        - uri: http://127.0.0.200:7777
+#  pfcp:
+#    server:
+#      - address: 127.0.0.4
+#    client:
+#      upf:
+#        - address: 127.0.0.7
+#  gtpc:
+#    server:
+#      - address: 127.0.0.4
+#  gtpu:
+#    server:
+#      - address: 127.0.0.4
+#  metrics:
+#    server:
+#      - address: 127.0.0.4
+#        port: 9090
+#  session:
+    # Optional dnn / apn: omit or use dnn: [a, b] or dnn: a, b — same UE IP pool for listed DNNs
+    #
+    # Per-APN RADIUS behaviour lives here, beside the APN definition
+    # (requires the global smf.radius block to be enabled):
+    #
+    #   - subnet: 10.46.0.0/16
+    #     dnn: ims
+    #     radius:
+    #       auth: false           # send Access-Request before session setup.
+    #                             # default false: no authentication needed,
+    #                             # only accounting and the other messages.
+    #       ip_assignment: false  # take the UE IP from Framed-IP-Address /
+    #                             # Framed-IPv6-Prefix in Access-Accept
+    #                             # (also requires use_framed_ip_for_ue and
+    #                             # auth: true). default false.
+    #       skip: false           # true = no RADIUS at all for this APN
+    #                             # (no auth, no accounting). default false.
+    #
+    # APNs without a `radius:` block use exactly those defaults.
+    #
+    # The block is keyed by APN name, not by subnet entry: when the same
+    # APN spans several entries (e.g. IPv4 + IPv6 subnets), define the
+    # block on any ONE of them (or repeat it identically on all — that's
+    # accepted silently). Conflicting blocks for the same APN log a
+    # warning and the last one wins.
+#    - subnet: 10.45.0.0/16
+#      gateway: 10.45.0.1
+#    - subnet: 2001:db8:cafe::/48
+#      gateway: 2001:db8:cafe::1
+#  dns:
+#    - 8.8.8.8
+#    - 8.8.4.4
+#    - 2001:4860:4860::8888
+#    - 2001:4860:4860::8844
+#  mtu: 1400  # Advertised as IPv4 link MTU in PCO/ePCO whenever non-zero
+#  default_pdr_precedence: 65535  # default bearer DL/UL PDR (TS 29.244); try e.g. 100 for some UPG-VPP builds
+#  RADIUS (optional): Access-Request before UE IP assignment; framed IPv4/IPv6
+#  from Access-Accept; Accounting Start / Interim-Update / Stop. Use `secret`
+#  or `community` for the shared secret. `port` sets auth (UDP) and
+#  acct = port+1 unless overridden.
+#
+#  Class AVP(s) (RFC 2865 §5.25) received in Access-Accept are saved per
+#  session and echoed back verbatim in every Accounting-Request.
+#
+#  Volume counters (Acct-Input-Octets/Output-Octets plus Gigaword extensions)
+#  and Acct-Session-Time are included in Interim-Update and Stop; values come
+#  from PFCP URR volume measurements reported by the UPF. Interim-Update is
+#  UPF-driven: the SMF programs a periodic Measurement Period in the URR and
+#  emits Accounting-Request (Interim-Update=3) each time the UPF sends a
+#  Usage Report. Accounting-Stop uses the final Usage Report delivered in
+#  the PFCP Session Deletion Response.
+#
+#  RFC 5176 Dynamic Authorization: set pod_enabled to accept Disconnect-Request
+#  from the AAA server. Sessions are matched (in order) by Acct-Session-Id,
+#  Framed-IP-Address, Framed-IPv6-Prefix, then User-Name (+ optional
+#  Called-Station-Id). CoA-Request is currently NAKed with Unsupported-Service.
+#
+#  radius:
+#    enabled: true
+#    # === Legacy single-server form (still supported) ===
+#    server: 127.0.0.1
+#    auth_port: 1812
+#    acct_port: 1813
+#    secret: your_radius_shared_secret
+#    # === Multi-server / failover form ===
+#    # Preferred when you want primary + backup AAA(s). Each server gets
+#    # its own shared secret so heterogeneous farms work. If `servers:`
+#    # is present, the legacy flat `server`/`secret` above is ignored.
+#    # Up to 4 entries; at least one must have role: primary.
+#    #
+#    # servers:
+#    #   - host: 10.0.0.10
+#    #     secret: primary-secret
+#    #     role: primary
+#    #   - host: 10.0.0.11
+#    #     secret: backup-secret
+#    #     role: secondary
+#    #
+#    # select: primary_failover | hash_imsi
+#    #   primary_failover (default) - every request tries the primary
+#    #     first; if it times out (timeout * retry), the SMF falls over
+#    #     to the next server. A server that fails 3 consecutive attempts
+#    #     is blacklisted for 30s.
+#    #   hash_imsi - hash(IMSI) picks a preferred server; same failover
+#    #     rules apply. Useful for sticky session affinity to a farm.
+#    # Sessions remember which server accepted Access-Request so
+#    # Interim/Stop for the same session go to the same AAA.
+#    # PoD accepts any configured secret (per-server or pod_secret).
+#    select: primary_failover
+#    nas_identifier: open5gs-smf
+#    # NAS-IP-Address (attribute 4). If unset, the first IPv4 SBI server
+#    # address is used; as a last resort 127.0.0.1 is sent so the
+#    # attribute is never missing (some AAA servers reject otherwise).
+#    nas_ip: 127.0.0.4
+#    timeout: 3000
+#    retry: 3
+#
+#  The following 3GPP Vendor-Specific (vendor 10415) attributes are added
+#  to every Access-Request and Accounting-Request automatically when the
+#  data is available on the session (no configuration required):
+#    - 3GPP-IMSI (1)                from IMSI
+#    - 3GPP-IMEISV (20)             from NAS IMEISV reported by UE/MME/AMF
+#    - 3GPP-User-Location-Info (22) TS 29.061 packed format:
+#        EPC sessions -> TAI + ECGI   (geo type 130)
+#        5GC sessions -> TAI + NR-CGI (geo type 136)
+#    # Interim-Update interval in seconds (0 = disabled). This value is
+#    # programmed as the PFCP URR Measurement Period on the UPF at session
+#    # establishment, so both open5gs-upfd and upg-vpp (or any standards
+#    # compliant UPF) emit a periodic Usage Report at this cadence. The SMF
+#    # forwards each report as a RADIUS Accounting-Request (Interim-Update).
+#    # No UPF-side configuration is required.
+#    acct_interim_interval: 300
+#    # Packet-of-Disconnect / CoA (RFC 5176) listener
+#    pod_enabled: true
+#    pod_bind: 0.0.0.0   # optional; any by default
+#    pod_port: 3799
+#    pod_secret: your_pod_shared_secret   # optional; falls back to `secret`
+#    # PoD teardown watchdog (EPC only). After the SMF sends a GTPv2 Delete
+#    # Bearer Request in response to a Disconnect-Request, it waits at most
+#    # this many milliseconds for the MME's Delete Bearer Response. If the
+#    # MME goes silent (e.g. paging/NAS-deactivate never completes), the SMF
+#    # forces local PFCP session deletion so the UPF tunnel is torn down and
+#    # RADIUS Accounting-Stop is still emitted. 0 disables the watchdog.
+#    pod_teardown_timeout_ms: 5000
+#    # UE IP priority when true (default): HSS/UDM static IP, then RADIUS
+#    # Framed-IP / Framed-IPv6-Prefix, then local subnet pool. When false,
+#    # RADIUS still auth/accounting but framed addresses are not used for UE IP.
+#    # NOTE: framed IP is additionally gated per APN — the session entry
+#    # must also set radius.ip_assignment: true (see smf.session above).
+#    use_framed_ip_for_ue: true
+#
+#  Ga / GTP' offline charging CDR writer.
+#
+#  The SMF only appends ASN.1 BER CDRs (TS 32.298 PGWRecord) to a local
+#  spool directory; a separate daemon (open5gs-cgfd) ships them to the
+#  CGF over GTP'. This split keeps session handling independent of CGF
+#  availability and lets CDRs survive SMF restarts.
+#
+#  Directory layout created under spool_dir:
+#    current/   -- the active file being appended to
+#    ready/     -- rotated files, picked up by the CGF client
+#    .seq       -- persisted localSequenceNumber counter
+#
+#  cdr:
+#    enabled: true
+#    spool_dir: /var/spool/open5gs/cdr
+#    # Value of CDR [18] nodeID; also used as filename prefix.
+#    node_id: open5gs-smf-1
+#    # IPv4 address emitted as CDR [4] p-GWAddress. If unset the field
+#    # is omitted.
+#    local_address: 10.0.0.1
+#    # Rotate the active file when any of these is first hit. Set to 0
+#    # to disable an individual trigger.
+#    max_records: 100
+#    max_bytes: 65536
+#    max_seconds: 30
+#    # Which lifecycle events produce a record. Defaults to all three.
+#    triggers: start,interim,stop
+#  p-cscf:
+#    - 127.0.0.1
+#    - ::1
+#  ctf:
+#    enabled: auto   # auto(default)|yes|no
+#  freeDiameter: /etc/open5gs/freeDiameter/smf.conf
+
+################################################################################
+# SMF Info
+################################################################################
+#  <SMF Selection - 5G Core only>
+#  1. SMF sends SmfInfo(S-NSSAI, DNN, TAI) to the NRF
+#  2. NRF responds to AMF with SmfInfo during NF-Discovery.
+#  3. AMF selects SMF based on S-NSSAI, DNN and TAI in SmfInfo.
+#
+#  Note that if there is no SmfInfo, any AMF can select this SMF.
+#
+#  o S-NSSAI[SST:1] and DNN[internet] - At least 1 DNN is required in S-NSSAI
+#  info:
+#    - s_nssai:
+#        - sst: 1
+#          dnn:
+#            - internet
+#
+#  o S-NSSAI[SST:1 SD:009000] and DNN[internet or ims]
+#  info:
+#    - s_nssai:
+#        - sst: 1
+#          sd: 009000
+#          dnn:
+#            - internet
+#            - ims
+#
+#  o S-NSSAI[SST:1] and DNN[internet] and TAI[PLMN-ID:99970 TAC:1]
+#  info:
+#    - s_nssai:
+#        - sst: 1
+#          dnn:
+#            - internet
+#      tai:
+#        - plmn_id:
+#            mcc: 999
+#            mnc: 70
+#          tac: 1
+#
+#  o If any of conditions below are met:
+#   - S-NSSAI[SST:1] and DNN[internet] and TAI[PLMN-ID:99970 TAC:1-9]
+#   - S-NSSAI[SST:2 SD:000080] and DNN[internet or ims]
+#   - S-NSSAI[SST:4] and DNN[internet] and TAI[PLMN-ID:99970 TAC:10-20,30-40]
+#  info:
+#    - s_nssai:
+#        - sst: 1
+#          dnn:
+#            - internet
+#      tai:
+#        - plmn_id:
+#            mcc: 999
+#            mnc: 70
+#          tac:
+#            - 1-9
+#    - s_nssai:
+#        - sst: 2
+#          sd: 000080
+#          dnn:
+#            - internet
+#            - ims
+#    - s_nssai:
+#        - sst: 4
+#          dnn:
+#            - internet
+#      tai:
+#        - plmn_id:
+#            mcc: 999
+#            mnc: 70
+#          tac:
+#            - 10-20
+#            - 30-40
+#
+#  o Complex Example
+#  info:
+#    - s_nssai:
+#        - sst: 1
+#          dnn:
+#            - internet
+#        - sst: 1
+#          sd: 000080
+#          dnn:
+#            - internet
+#            - ims
+#        - sst: 1
+#          sd: 009000
+#          dnn:
+#            [internet, ims]
+#        - sst: 2
+#          dnn:
+#            - internet
+#        - sst: 3
+#          sd: 123456
+#          dnn:
+#            - internet
+#      tai:
+#        - plmn_id:
+#            mcc: 999
+#            mnc: 70
+#          tac: [1, 2, 3]
+#        - plmn_id:
+#            mcc: 999
+#            mnc: 70
+#          tac: 4
+#        - plmn_id:
+#            mcc: 999
+#            mnc: 70
+#          tac:
+#            - 5
+#            - 6
+#        - plmn_id:
+#            mcc: 999
+#            mnc: 70
+#          tac:
+#            - 100-200
+#            - 300-400
+#        - plmn_id:
+#            mcc: 999
+#            mnc: 70
+#          tac:
+#            - 500-600
+#            - 700-800
+#            - 900-1000
+#    - s_nssai:
+#        - sst: 4
+#          dnn:
+#            - internet
+#      tai:
+#        - plmn_id:
+#            mcc: 999
+#            mnc: 70
+#          tac: 99
+#
+################################################################################
+# SBI Server
+################################################################################
+#  o Bind to the address on the eth0 and advertise as open5gs-smf.svc.local
+#  sbi:
+#    server:
+#      - dev:eth0
+#        advertise: open5gs-smf.svc.local
+#
+#  o Specify a custom port number 7777 while binding to the given address
+#  sbi:
+#    server:
+#      - address: smf.localdomain
+#        port: 7777
+#
+#  o Bind to 127.0.0.4 and advertise as open5gs-smf.svc.local
+#  sbi:
+#    server:
+#      - address: 127.0.0.4
+#        port: 7777
+#        advertise: open5gs-smf.svc.local
+#
+#  o Bind to port 7777 but advertise with a different port number 8888
+#  sbi:
+#    server:
+#      - address: 127.0.0.4
+#        port: 7777
+#        advertise: open5gs-smf.svc.local:8888
+#
+################################################################################
+# SBI Client
+################################################################################
+#  o Direct Communication with NRF
+#  sbi:
+#    client:
+#      nrf:
+#        - uri: http://127.0.0.10:7777
+#
+#  o Indirect Communication by Delegating to SCP
+#  sbi:
+#    client:
+#      scp:
+#        - uri: http://127.0.0.200:7777
+#
+#  o Indirect Communication without Delegation
+#  sbi:
+#    client:
+#      nrf:
+#        - uri: http://127.0.0.10:7777
+#      scp:
+#        - uri: http://127.0.0.200:7777
+#      delegated:
+#        nrf:
+#          nfm: no    # Directly communicate NRF management functions
+#          disc: no   # Directly communicate NRF discovery
+#        scp:
+#          next: no   # Do not delegate to SCP for next-hop
+#
+#  o Indirect Communication with Delegated Discovery
+#  sbi:
+#    client:
+#      nrf:
+#        - uri: http://127.0.0.10:7777
+#      scp:
+#        - uri: http://127.0.0.200:7777
+#      delegated:
+#        nrf:
+#          nfm: no    # Directly communicate NRF management functions
+#          disc: yes  # Delegate discovery to SCP
+#        scp:
+#          next: yes  # Delegate to SCP for next-hop communications
+#
+#  o Default delegation: all communications are delegated to the SCP
+#  sbi:
+#    client:
+#      nrf:
+#        - uri: http://127.0.0.10:7777
+#      scp:
+#        - uri: http://127.0.0.200:7777
+#      # No 'delegated' section; defaults to AUTO delegation
+#
+################################################################################
+# HTTPS scheme with TLS
+################################################################################
+#  o Set as default if not individually set
+#  default:
+#    tls:
+#      server:
+#        scheme: https
+#        private_key: /etc/open5gs/open5gs/tls/smf.key
+#        cert: /etc/open5gs/open5gs/tls/smf.crt
+#      client:
+#        scheme: https
+#        cacert: /etc/open5gs/open5gs/tls/ca.crt
+#  sbi:
+#    server:
+#      - address: smf.localdomain
+#    client:
+#      nrf:
+#        - uri: https://nrf.localdomain
+#
+#  o Enable SSL key logging for Wireshark
+#    - This configuration allows capturing SSL/TLS session keys
+#      for debugging or analysis purposes using Wireshark.
+#  default:
+#    tls:
+#      server:
+#        scheme: https
+#        private_key: /etc/open5gs/open5gs/tls/smf.key
+#        cert: /etc/open5gs/open5gs/tls/smf.crt
+#        sslkeylogfile: /var/log/open5gs/tls/smf-server-sslkeylog.log
+#      client:
+#        scheme: https
+#        cacert: /etc/open5gs/open5gs/tls/ca.crt
+#        client_sslkeylogfile: /var/log/open5gs/tls/smf-client-sslkeylog.log
+#  sbi:
+#    server:
+#      - address: smf.localdomain
+#    client:
+#      nrf:
+#        - uri: https://nrf.localdomain
+#
+#  o Add client TLS verification
+#  default:
+#    tls:
+#      server:
+#        scheme: https
+#        private_key: /etc/open5gs/open5gs/tls/smf.key
+#        cert: /etc/open5gs/open5gs/tls/smf.crt
+#        verify_client: true
+#        verify_client_cacert: /etc/open5gs/open5gs/tls/ca.crt
+#      client:
+#        scheme: https
+#        cacert: /etc/open5gs/open5gs/tls/ca.crt
+#        client_private_key: /etc/open5gs/open5gs/tls/smf.key
+#        client_cert: /etc/open5gs/open5gs/tls/smf.crt
+#  sbi:
+#    server:
+#      - address: smf.localdomain
+#    client:
+#      nrf:
+#        - uri: https://nrf.localdomain
+#
+################################################################################
+# PFCP Server
+################################################################################
+#  o Override PFCP address to be advertised to UPF in PFCP association
+#  pfcp:
+#    server:
+#      - dev: eth0
+#        advertise: open5gs-smf.svc.local
+#
+################################################################################
+# PFCP Client
+################################################################################
+#  o PFCP client address vs managed-service address (VPP / agent mapping):
+#    address:       PFCP peer on the wire (/pdu-info n4.pfcp_addr)
+#    service_addr:  host in your service inventory (/pdu-info n4.service_addr)
+#  pfcp:
+#    client:
+#      upf:
+#        - address: 127.0.0.7
+#          service_addr: 10.0.0.7
+#          tac: 1
+#  o UPF selection by eNodeB TAC
+#   (either single TAC or multiple TACs, DECIMAL representation)
+#  pfcp:
+#    client:
+#      upf:
+#        - address: 127.0.0.7
+#          tac: 1
+#        - address: 127.0.0.12
+#          tac: [3,5,8]
+#
+#  o UPF selection by UE's DNN/APN (either single DNN/APN or multiple DNNs/APNs)
+#  pfcp:
+#    client:
+#      upf:
+#        - address: 127.0.0.7
+#          dnn: ims
+#        - address: 127.0.0.12
+#          dnn: [internet, web]
+#
+#  o UPF selection by CellID(e_cell_id: 28bit, nr_cell_id: 36bit)
+#    (either single enb_id or multiple enb_ids, HEX representation)
+#  pfcp:
+#    client:
+#      upf:
+#        - address: 127.0.0.7
+#          e_cell_id: 463
+#        - address: 127.0.0.12
+#          nr_cell_id: [123456789, 9413]
+#
+################################################################################
+# GTP-C Server
+################################################################################
+#  o Listen on IPv4 and IPv6
+#  gtpc:
+#    server:
+#      - address: 127.0.0.4
+#      - address: fd69:f21d:873c:fa::3
+#
+################################################################################
+# GTP-U Server
+################################################################################
+#  o Listen on IPv4 and IPv6
+#  gtpu:
+#    server:
+#      - address: 127.0.0.4
+#      - address: ::1
+#
+################################################################################
+# 3GPP Specification
+################################################################################
+#  o Specific DNN/APN(e.g 'ims') uses 10.46.0.1/16, 2001:db8:babe::1/48
+#   (If the UE has unknown DNN/APN(not internet/ims), SMF/UPF will crash.)
+#  session:
+#    - subnet: 10.45.0.0/16
+#      gateway: 10.45.0.1
+#      dnn: internet
+#    - subnet: 2001:db8:cafe::/48
+#      dnn: internet
+#    - subnet: 10.46.0.0/16
+#      gateway: 10.46.0.1
+#      dnn: ims
+#    - subnet: 2001:db8:babe::/48
+#      dnn: ims
+#
+#  o Pool Range
+#  session:
+#    - subnet: 10.45.0.0/16
+#      gateway: 10.45.0.1
+#      range:
+#        - 10.45.0.100-10.45.0.200
+#        - 10.45.1.100-
+#        - -10.45.0.200
+#    - subnet: 2001:db8:cafe::/48
+#      range:
+#        - 2001:db8:cafe:a0::0-2001:db8:cafe:b0::0
+#        - 2001:db8:cafe:c0::0-2001:db8:cafe:d0::0
+#
+#  o Security Indication(5G Core only)
+#  security_indication:
+#    integrity_protection_indication: required|preferred|not-needed
+#    confidentiality_protection_indication: required|preferred|not-needed
+#    maximum_integrity_protected_data_rate_uplink: bitrate64kbs|maximum-UE-rate
+#    maximum_integrity_protected_data_rate_downlink: bitrate64kbs|maximum-UE-rate

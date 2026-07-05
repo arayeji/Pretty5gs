@@ -28,6 +28,21 @@ volatile int smf_reload_lists_changed = 0;
 static char *smf_reload_owned_dns[2];
 static char *smf_reload_owned_dns6[2];
 
+static bool smf_reload_sockaddr_lists_match(
+        ogs_sockaddr_t *configured, ogs_sockaddr_t *peer_list,
+        const ogs_sockaddr_t *peer_single)
+{
+    if (!configured)
+        return false;
+
+    if (ogs_sockaddr_check_any_match(configured, peer_list, peer_single, true))
+        return true;
+    if (ogs_sockaddr_check_any_match(configured, peer_list, peer_single, false))
+        return true;
+
+    return false;
+}
+
 static void smf_reload_replace_dns(const char **slot, char **owned,
         const char *v)
 {
@@ -325,7 +340,8 @@ static bool smf_reload_pfcp_peer_exists(ogs_sockaddr_t *addr)
 
     ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, node) {
         if (node->config_addr &&
-                ogs_sockaddr_is_equal(node->config_addr, addr))
+                smf_reload_sockaddr_lists_match(
+                    addr, node->config_addr, NULL))
             return true;
     }
 
@@ -749,7 +765,8 @@ static bool smf_reload_upf_peer_wanted(
                         ogs_global_conf()->parameter.prefer_ipv4);
 
                 if (addr &&
-                        ogs_sockaddr_is_equal(node->config_addr, addr))
+                        smf_reload_sockaddr_lists_match(
+                            addr, node->config_addr, NULL))
                     wanted = true;
 
                 if (addr)

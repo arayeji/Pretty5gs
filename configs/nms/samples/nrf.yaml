@@ -1,21 +1,110 @@
-# FICTIONAL SAMPLE — /etc/open5gs/nrf.yaml
+# =============================================================================
+# FICTIONAL NMS SAMPLE — not real operator data
+# Generated from configs/open5gs/nrf.yaml.in (+ fork reference overlay when present)
+# PLMN 999/70, IMSI prefix 99970, 127.0.0.x lab addresses
+# Regenerate: python3 tools/gen_nms_full_samples.py
+# =============================================================================
+
 
 logger:
   file:
     path: /var/log/open5gs/nrf.log
-  level: info
+#  level: info   # fatal|error|warn|info(default)|debug|trace
 
 global:
   max:
-    ue: 4096
+    ue: 1024  # The number of UE can be increased depending on memory size.
+#    peer: 64
 
 nrf:
+  serving:  # 5G roaming requires PLMN in NRF
+    - plmn_id:
+        mcc: 999
+        mnc: 70
   sbi:
     server:
       - address: 127.0.0.10
         port: 7777
-        advertise: open5gs-nrf.example.net:7777
-  metrics:
-    server:
-      - address: 127.0.0.10
-        port: 9090
+
+################################################################################
+# SBI Server
+################################################################################
+#  o Bind to the address on the eth0 and advertise as open5gs-nrf.svc.local
+#  sbi:
+#    server:
+#      - dev:eth0
+#        advertise: open5gs-nrf.svc.local
+#
+#  o Specify a custom port number 7777 while binding to the given address
+#  sbi:
+#    server:
+#      - address: nrf.localdomain
+#        port: 7777
+#
+#  o Bind to 127.0.0.10 and advertise as open5gs-nrf.svc.local
+#  sbi:
+#    server:
+#      - address: 127.0.0.10
+#        port: 7777
+#        advertise: open5gs-nrf.svc.local
+#
+#  o Bind to port 7777 but advertise with a different port number 8888
+#  sbi:
+#    server:
+#      - address: 127.0.0.10
+#        port: 7777
+#        advertise: open5gs-nrf.svc.local:8888
+#
+################################################################################
+# HTTPS scheme with TLS
+################################################################################
+#  o Set as default if not individually set
+#  default:
+#    tls:
+#      server:
+#        scheme: https
+#        private_key: /etc/open5gs/open5gs/tls/nrf.key
+#        cert: /etc/open5gs/open5gs/tls/nrf.crt
+#      client:
+#        scheme: https
+#        cacert: /etc/open5gs/open5gs/tls/ca.crt
+#  sbi:
+#    server:
+#      - address: nrf.localdomain
+#
+#  o Enable SSL key logging for Wireshark
+#    - This configuration allows capturing SSL/TLS session keys
+#      for debugging or analysis purposes using Wireshark.
+#  default:
+#    tls:
+#      server:
+#        scheme: https
+#        private_key: /etc/open5gs/open5gs/tls/nrf.key
+#        cert: /etc/open5gs/open5gs/tls/nrf.crt
+#        sslkeylogfile: /var/log/open5gs/tls/nrf-server-sslkeylog.log
+#      client:
+#        scheme: https
+#        cacert: /etc/open5gs/open5gs/tls/ca.crt
+#        client_sslkeylogfile: /var/log/open5gs/tls/nrf-client-sslkeylog.log
+#  sbi:
+#    server:
+#      - address: nrf.localdomain
+#
+#  o Add client TLS verification
+#  default:
+#    tls:
+#      server:
+#        scheme: https
+#        private_key: /etc/open5gs/open5gs/tls/nrf.key
+#        cert: /etc/open5gs/open5gs/tls/nrf.crt
+#        verify_client: true
+#        verify_client_cacert: /etc/open5gs/open5gs/tls/ca.crt
+#      client:
+#        scheme: https
+#        cacert: /etc/open5gs/open5gs/tls/ca.crt
+#        client_private_key: /etc/open5gs/open5gs/tls/nrf.key
+#        client_cert: /etc/open5gs/open5gs/tls/nrf.crt
+#  sbi:
+#    server:
+#      - address: nrf.localdomain
+

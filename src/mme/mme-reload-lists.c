@@ -1113,16 +1113,17 @@ static int reload_emergency_replace(ogs_yaml_iter_t *mme_iter)
     return added;
 }
 
-static bool reload_gtpc_addr_wanted(
-        ogs_yaml_iter_t *gtpc_iter, bool pgw, const ogs_sockaddr_t *addr,
+static bool reload_gtpc_peer_wanted(
+        ogs_yaml_iter_t *gtpc_iter, bool pgw,
+        ogs_sockaddr_t *peer_sa_list, const ogs_sockaddr_t *peer_addr,
         bool *resolve_failed)
 {
     ogs_yaml_iter_t gtpc_sub_iter;
     const char *client_key_want = pgw ? "smf" : "sgwc";
 
     ogs_assert(gtpc_iter);
-    ogs_assert(addr);
     ogs_assert(resolve_failed);
+    ogs_assert(peer_sa_list || peer_addr);
 
     ogs_yaml_iter_recurse(gtpc_iter, &gtpc_sub_iter);
     while (ogs_yaml_iter_next(&gtpc_sub_iter)) {
@@ -1205,14 +1206,20 @@ static bool reload_gtpc_addr_wanted(
                         ogs_global_conf()->parameter.no_ipv6,
                         ogs_global_conf()->parameter.prefer_ipv4);
 
-                if (resolved &&
-                        ogs_sockaddr_is_equal(resolved, addr)) {
+                if (resolved) {
+                    /*
+                     * Match like mme_sgw_find_by_addr(): port first, then IP
+                     * only (SGWC inbound roam may use a different source port).
+                     */
+                    if (ogs_sockaddr_check_any_match(
+                                resolved, peer_sa_list, peer_addr, true) ||
+                            ogs_sockaddr_check_any_match(
+                                resolved, peer_sa_list, peer_addr, false)) {
+                        ogs_freeaddrinfo(resolved);
+                        return true;
+                    }
                     ogs_freeaddrinfo(resolved);
-                    return true;
                 }
-
-                if (resolved)
-                    ogs_freeaddrinfo(resolved);
             } while (ogs_yaml_iter_type(&peer_array) == YAML_SEQUENCE_NODE);
         }
     }
@@ -1229,8 +1236,8 @@ static void reload_gtpc_remove_stale(ogs_yaml_iter_t *gtpc_iter)
     ogs_list_for_each_safe(&mme_self()->sgw_list, next_sgw, sgw) {
         bool resolve_failed = false;
 
-        if (reload_gtpc_addr_wanted(gtpc_iter, false, &sgw->gnode.addr,
-                &resolve_failed))
+        if (reload_gtpc_peer_wanted(gtpc_iter, false, sgw->gnode.sa_list,
+                &sgw->gnode.addr, &resolve_failed))
             continue;
 
         if (resolve_failed) {
@@ -1266,7 +1273,7 @@ static void reload_gtpc_remove_stale(ogs_yaml_iter_t *gtpc_iter)
         if (!pgw_addr)
             continue;
 
-        if (reload_gtpc_addr_wanted(gtpc_iter, true, pgw_addr,
+        if (reload_gtpc_peer_wanted(gtpc_iter, true, pgw->sa_list, NULL,
                 &resolve_failed))
             continue;
 

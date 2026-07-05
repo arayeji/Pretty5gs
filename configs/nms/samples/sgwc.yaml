@@ -1,85 +1,242 @@
-# FICTIONAL SAMPLE — /etc/open5gs/sgwc.yaml
+# =============================================================================
+# FICTIONAL NMS SAMPLE — not real operator data
+# Generated from configs/open5gs/sgwc.yaml.in (+ fork reference overlay when present)
+# PLMN 999/70, IMSI prefix 99970, 127.0.0.x lab addresses
+# Regenerate: python3 tools/gen_nms_full_samples.py
+# =============================================================================
 
+
+# --- Active fictional values (fork reference overlay) ---
 logger:
   file:
     path: /var/log/open5gs/sgwc.log
   level: info
-
 global:
   max:
     ue: 4096
     peer: 64
   parameter:
     use_upg_vpp: true
-
-sgwc:
-  metrics:
-    server:
-      - address: 127.0.0.3
-        port: 9090
-
-  gtpc:
-    server:
-      - address: 127.0.0.3
-        port: 2123
-    echo_interval: 60
-
-  gn:
-    server:
-      - address: 127.0.0.3
-        port: 2123
-    pgw:
-      - address: 127.0.0.4
-        port: 2123
-      - address: 10.1.1.1
-        imsi_prefix: "99970"
-
-  gtpu:
-    force_cp_teid: true
-    teid_offset: 0
-    teid_range_indication: 4
-    teid_range: 10
-
-  inbound_roam:
-    gtpc:
-      source_port: 2124
-      teid_offset: 0x80000000
-      send_recovery_on_s5_csr: false
-    gtpu:
-      force_cp_teid: true
-      teid_offset: 0x80000000
-    sgwu_nwi_rewrite:
-      - match: '*mnc071*'
-        replace: internet.mnc070.mcc999.gprs
-      - match: internet.mnc071.mcc999.gprs
-        replace: internet.mnc070.mcc999.gprs
-
-  sgwu_nwi_rewrite:
-    - match: '*mnc071*'
-      replace: internet.mnc070.mcc999.gprs
-
-  pfcp:
-    server:
-      - address: 127.0.0.3
-        advertise: open5gs-sgwc.example.net
-    client:
-      sgwu:
-        - address: 127.0.0.6
-          service_addr: 10.13.37.6
-          tac: [1, 2]
-          apn: [internet, ims]
-    send_user_id: true
-
   cdr:
     enabled: true
     spool_dir: /var/spool/open5gs/cdr
     node_id: open5gs-sgwc-1
     local_address: 127.0.0.3
-    interim_interval_s: 300
-    max_records: 100
-    max_bytes: 65536
-    max_seconds: 30
     triggers: start,interim,stop
-
+sgwc:
+  metrics:
+    server:
+    - address: 127.0.0.3
+      port: 9090
+  gtpc:
+    server:
+    - address: 127.0.0.3
+      port: 2123
+    echo_interval: 60
+  pfcp:
+    server:
+    - address: 127.0.0.3
+      advertise: open5gs-sgwc.example.net
+    client:
+      sgwu:
+      - address: 127.0.0.6
+        service_addr: 10.13.37.6
+        tac:
+        - 1
+        - 2
+        apn:
+        - internet
+        - ims
+    send_user_id: true
+  gn:
+    server:
+    - address: 127.0.0.3
+      port: 2123
+    pgw:
+    - address: 127.0.0.4
+      port: 2123
+    - address: 10.1.1.1
+      imsi_prefix: '99970'
+  gtpu:
+    force_cp_teid: true
+    teid_offset: 0
+    teid_range_indication: 4
+    teid_range: 10
+  inbound_roam:
+    gtpc:
+      source_port: 2124
+      teid_offset: 2147483648
+    gtpu:
+      force_cp_teid: true
+      teid_offset: 2147483648
+    sgwu_nwi_rewrite:
+    - match: '*mnc071*'
+      replace: internet.mnc070.mcc999.gprs
+    - match: internet.mnc071.mcc999.gprs
+      replace: internet.mnc070.mcc999.gprs
+  sgwu_nwi_rewrite:
+  - match: '*mnc071*'
+    replace: internet.mnc070.mcc999.gprs
   trace_imsi:
-    - "999700000000001"
+  - '999700000000001'
+
+# --- Full parameter reference (upstream yaml.in; active lines commented) ---
+#logger:
+#  file:
+#    path: /var/log/open5gs/sgwc.log
+#  level: info   # fatal|error|warn|info(default)|debug|trace
+
+#global:
+#  max:
+#    ue: 1024  # The number of UE can be increased depending on memory size.
+#    peer: 64
+
+#
+#  UPG/VPP user plane (SGW-U at pfcp.client.sgwu): Create-FAR must precede
+#  Create-PDR in Session Modification. Required for VoLTE dedicated bearer.
+#
+#  parameter:
+#    use_upg_vpp: true
+#
+#  Spool files use format byte OGS_CDR_FORMAT_BER_SGW (0x02); SMF PGW-CDRs
+#  use 0x01. Both are forwarded by open5gs-cgfd from the same spool_dir.
+#
+#  cdr:
+#    enabled: true
+#    spool_dir: /var/spool/open5gs/cdr
+#    node_id: open5gs-sgwc-1
+#    local_address: 127.0.0.3
+#    interim_interval_s: 300
+#    max_records: 100
+#    max_bytes: 65536
+#    max_seconds: 30
+#    triggers: start,interim,stop
+#
+#sgwc:
+#  metrics:
+#    server:
+#      - address: 127.0.0.3
+#        port: 9090
+#  gtpc:
+#    server:
+#      - address: 127.0.0.3
+#        port: 2123
+#    echo_interval: 60  # S11 Echo Request to each MME peer (default: 60)
+  #
+  # GTPv1 Gn (2G/3G SGSN toward SGWC; S5 toward SMF/PGW):
+  #   server — GTPv1-C listen (optional; GTPv1 on gtpc.server if omitted)
+  #   pgw/smf — S5 PGW list for Create Session Request (first imsi_prefix
+  #             match wins; entry without imsi_prefix is default)
+  #
+#  gn:
+#    server:
+#      - address: 127.0.0.3
+#        port: 2123
+#    pgw:
+#      - address: 127.0.0.4
+#        port: 2123
+#      - address: 10.1.1.1
+#        imsi_prefix: "99970"
+  #
+  # GTP-U (all sessions): force SGWC F-TEID (CH=0) instead of SGW-U FTUP.
+  #
+#  gtpu:
+#    force_cp_teid: true
+#    teid_offset: 0
+#    teid_range_indication: 4
+#    teid_range: 10
+  #
+  # Inbound roam (Huawei HR, etc.):
+  #   gtpc — GTP-C source_port / teid_offset (S11+S5-C)
+  #   gtpu — GTP-U force_cp_teid + teid_offset/range (needs force_cp_teid if FTUP)
+  #
+#  inbound_roam:
+#    gtpc:
+#      source_port: 2124
+#      teid_offset: 0x80000000
+#      send_recovery_on_s5_csr: false
+#    gtpu:
+#      force_cp_teid: true
+#      teid_offset: 0x80000000
+#      teid_range_indication: 4
+#      teid_range: 10
+#    # PFCP Network Instance to SGW-U/UPG (default: GTP session APN FQDN).
+#    # match supports * wildcard (case-insensitive), e.g. *mnc070*
+#    sgwu_nwi_rewrite:
+#      - match: '*mnc070*'
+#        replace: roamapn
+#      - match: internet.mnc070.mcc999.gprs
+#        replace: roamapn
+#  # Same rules may be placed at sgwc.sgwu_nwi_rewrite (applies to all sessions).
+#  pfcp:
+#    server:
+#      - address: 127.0.0.3
+#    client:
+#      sgwu:
+#        - address: 127.0.0.6
+#    send_user_id: true   # PFCP User ID (IMSI/MSISDN) to SGW-U (default: true)
+#  trace_imsi:          # IMSI prefix list (also GET /admin/trace/imsi on :9090)
+#    - "999700000000001"
+
+################################################################################
+# GTP-C Server
+################################################################################
+#  o Listen on IPv4 and IPv6
+#  o GTP-C listen port (default 2123). S11; PGW S5 destination stays 2123.
+#  o echo_interval: periodic S11 Echo to each known MME (TS 29.274 recovery)
+#  gtpc:
+#    server:
+#      - address: 127.0.0.3
+#        port: 2123
+#    echo_interval: 60
+#      - address: fd69:f21d:873c:fa::2
+#
+################################################################################
+# PFCP Server
+################################################################################
+#  o Override PFCP address to be advertised to SGW-U in PFCP association
+#  pfcp:
+#    server:
+#      - dev: eth0
+#        advertise: open5gs-sgwc.svc.local
+#
+################################################################################
+# PFCP Client
+################################################################################
+#  o PFCP client address vs managed-service address (VPP / agent mapping):
+#    address:       PFCP peer used on the wire (also in /pdn-info pfcp_addr)
+#    service_addr:  host in your service inventory (/pdn-info service_addr)
+#  pfcp:
+#    client:
+#      sgwu:
+#        - address: 127.0.0.6
+#          service_addr: 10.0.0.6
+#          tac: 1
+#  o SGWU selection by eNodeB TAC
+#   (either single TAC or multiple TACs, DECIMAL representation)
+#  pfcp:
+#    client:
+#      sgwu:
+#        - address: 127.0.0.6
+#          tac: 1
+#        - address: 127.0.0.12
+#          tac: [3,5,8]
+#
+#  o SGWU selection by UE's APN (either single APN or multiple APNs)
+#  pfcp:
+#    client:
+#      sgwu:
+#        - address: 127.0.0.6
+#          apn: ims
+#        - address: 127.0.0.12
+#          apn: [internet, web]
+#
+#  o SGWU selection by CellID(e_cell_id: 28bit)
+#   (either single e_cell_id or multiple e_cell_id, HEX representation)
+#  pfcp:
+#    client:
+#      sgwu:
+#        - address: 127.0.0.6
+#          e_cell_id: 463
+#        - address: 127.0.0.12
+#          e_cell_id: [123456789, 9413]
