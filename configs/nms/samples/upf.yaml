@@ -1,0 +1,42 @@
+# FICTIONAL SAMPLE — /etc/open5gs/upf.yaml
+
+logger:
+  file:
+    path: /var/log/open5gs/upf.log
+  level: info
+
+global:
+  max:
+    ue: 4096
+    peer: 64
+  parameter:
+    use_upg_vpp: true
+
+upf:
+  pfcp:
+    server:
+      - address: 127.0.0.7
+        advertise: open5gs-upf.example.net
+    client:
+      smf:
+        - address: 127.0.0.4
+  gtpu:
+    server:
+      - address: 127.0.0.7
+  session:
+    - subnet: 10.45.0.0/16
+      gateway: 10.45.0.1
+      dnn: internet
+    - subnet: 2001:db8:cafe::/48
+      gateway: 2001:db8:cafe::1
+      dnn: internet
+    - subnet: 10.46.0.0/16
+      gateway: 10.46.0.1
+      dnn: ims
+    - subnet: 2001:db8:babe::/48
+      gateway: 2001:db8:babe::1
+      dnn: ims
+  metrics:
+    server:
+      - address: 127.0.0.7
+        port: 9090

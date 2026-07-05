@@ -1,0 +1,29 @@
+# FICTIONAL SAMPLE — /etc/open5gs/sgwu.yaml
+
+logger:
+  file:
+    path: /var/log/open5gs/sgwu.log
+  level: info
+
+global:
+  max:
+    ue: 4096
+    peer: 64
+  parameter:
+    use_upg_vpp: true
+
+sgwu:
+  pfcp:
+    server:
+      - address: 127.0.0.6
+        advertise: open5gs-sgwu.example.net
+    client:
+      sgwc:
+        - address: 127.0.0.3
+  gtpu:
+    server:
+      - address: 127.0.0.6
+        teid_range_indication: 4
+        teid_range: 10
+        network_instance: internet
+        source_interface: 0

@@ -1,0 +1,85 @@
+# FICTIONAL SAMPLE — /etc/open5gs/sgwc.yaml
+
+logger:
+  file:
+    path: /var/log/open5gs/sgwc.log
+  level: info
+
+global:
+  max:
+    ue: 4096
+    peer: 64
+  parameter:
+    use_upg_vpp: true
+
+sgwc:
+  metrics:
+    server:
+      - address: 127.0.0.3
+        port: 9090
+
+  gtpc:
+    server:
+      - address: 127.0.0.3
+        port: 2123
+    echo_interval: 60
+
+  gn:
+    server:
+      - address: 127.0.0.3
+        port: 2123
+    pgw:
+      - address: 127.0.0.4
+        port: 2123
+      - address: 10.1.1.1
+        imsi_prefix: "99970"
+
+  gtpu:
+    force_cp_teid: true
+    teid_offset: 0
+    teid_range_indication: 4
+    teid_range: 10
+
+  inbound_roam:
+    gtpc:
+      source_port: 2124
+      teid_offset: 0x80000000
+      send_recovery_on_s5_csr: false
+    gtpu:
+      force_cp_teid: true
+      teid_offset: 0x80000000
+    sgwu_nwi_rewrite:
+      - match: '*mnc071*'
+        replace: internet.mnc070.mcc999.gprs
+      - match: internet.mnc071.mcc999.gprs
+        replace: internet.mnc070.mcc999.gprs
+
+  sgwu_nwi_rewrite:
+    - match: '*mnc071*'
+      replace: internet.mnc070.mcc999.gprs
+
+  pfcp:
+    server:
+      - address: 127.0.0.3
+        advertise: open5gs-sgwc.example.net
+    client:
+      sgwu:
+        - address: 127.0.0.6
+          service_addr: 10.13.37.6
+          tac: [1, 2]
+          apn: [internet, ims]
+    send_user_id: true
+
+  cdr:
+    enabled: true
+    spool_dir: /var/spool/open5gs/cdr
+    node_id: open5gs-sgwc-1
+    local_address: 127.0.0.3
+    interim_interval_s: 300
+    max_records: 100
+    max_bytes: 65536
+    max_seconds: 30
+    triggers: start,interim,stop
+
+  trace_imsi:
+    - "999700000000001"

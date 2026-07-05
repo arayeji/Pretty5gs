@@ -1,0 +1,24 @@
+# FICTIONAL SAMPLE — /etc/open5gs/scp.yaml
+
+logger:
+  file:
+    path: /var/log/open5gs/scp.log
+  level: info
+
+global:
+  max:
+    ue: 4096
+
+scp:
+  sbi:
+    server:
+      - address: 127.0.0.200
+        port: 7777
+        advertise: open5gs-scp.example.net:7777
+    client:
+      nrf:
+        - uri: http://127.0.0.10:7777
+  metrics:
+    server:
+      - address: 127.0.0.200
+        port: 9090

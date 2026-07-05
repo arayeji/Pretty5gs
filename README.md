@@ -203,6 +203,8 @@ sgwc:
 
 Full NMS matrix (every reloadable YAML key): **`docs/nms-sighup-reload.md`**.
 
+Fictional full config samples (all services, lab PLMN 999/70): **`configs/nms/samples/`**.
+
 Edit `/etc/open5gs/mme.yaml`, then reload without restarting the daemon (attached UEs stay up):
 
 ```bash

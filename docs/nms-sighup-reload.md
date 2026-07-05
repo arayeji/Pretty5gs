@@ -287,4 +287,5 @@ Removal: only when **no PFCP sessions** on that SGW-U.
 ## Related docs
 
 - Operator summary in repo root: `README.md` (Runtime config reload sections)
+- **Full fictional config samples (all services):** `configs/nms/samples/README.md`
 - SMF admin API (CDR/RADIUS alternative): `tools/admin-api/README.md`

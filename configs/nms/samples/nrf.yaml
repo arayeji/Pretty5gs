@@ -1,0 +1,21 @@
+# FICTIONAL SAMPLE — /etc/open5gs/nrf.yaml
+
+logger:
+  file:
+    path: /var/log/open5gs/nrf.log
+  level: info
+
+global:
+  max:
+    ue: 4096
+
+nrf:
+  sbi:
+    server:
+      - address: 127.0.0.10
+        port: 7777
+        advertise: open5gs-nrf.example.net:7777
+  metrics:
+    server:
+      - address: 127.0.0.10
+        port: 9090

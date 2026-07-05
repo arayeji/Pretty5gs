@@ -1,0 +1,122 @@
+# FICTIONAL SAMPLE — /etc/open5gs/smf.yaml
+
+logger:
+  file:
+    path: /var/log/open5gs/smf.log
+  level: info
+
+global:
+  max:
+    ue: 4096
+  parameter:
+    use_upg_vpp: true
+    no_ipv4v6_local_addr_in_packet_filter: true
+
+smf:
+  trace_imsi:
+    - "999700000000001"
+
+  sbi:
+    server:
+      - address: 127.0.0.4
+        port: 7777
+        advertise: open5gs-smf.example.net:7777
+    client:
+      nrf:
+        - uri: http://127.0.0.10:7777
+      scp:
+        - uri: http://127.0.0.200:7777
+
+  pfcp:
+    server:
+      - address: 127.0.0.4
+        advertise: open5gs-smf-pfcp.example.net
+    client:
+      upf:
+        - address: 127.0.0.7
+          service_addr: 10.13.37.7
+          tac: [1]
+          dnn: internet
+
+  gtpc:
+    server:
+      - address: 127.0.0.4
+        port: 2123
+
+  gtpu:
+    server:
+      - address: 127.0.0.4
+
+  metrics:
+    server:
+      - address: 127.0.0.4
+        port: 9090
+
+  session:
+    - subnet: 10.45.0.0/16
+      gateway: 10.45.0.1
+      dnn: internet
+      radius:
+        auth: false
+        ip_assignment: false
+        skip: false
+    - subnet: 2001:db8:cafe::/48
+      gateway: 2001:db8:cafe::1
+      dnn: internet
+    - subnet: 10.46.0.0/16
+      gateway: 10.46.0.1
+      dnn: ims
+      radius:
+        skip: true
+
+  dns:
+    - 8.8.8.8
+    - 2001:4860:4860::8888
+
+  mtu: 1400
+  default_pdr_precedence: 65535
+
+  p-cscf:
+    - 127.0.0.50
+    - 2001:db8:50::1
+
+  ctf:
+    enabled: auto
+
+  cdr:
+    enabled: true
+    spool_dir: /var/spool/open5gs/cdr
+    node_id: open5gs-smf-1
+    local_address: 127.0.0.4
+    max_records: 100
+    max_bytes: 65536
+    max_seconds: 30
+    triggers: start,interim,stop
+
+  radius:
+    enabled: false
+    select: primary_failover
+    nas_identifier: open5gs-smf
+    nas_ip: 127.0.0.4
+    timeout: 3000
+    retry: 3
+    acct_interim_interval: 300
+    pod_enabled: false
+    pod_port: 3799
+    use_framed_ip_for_ue: true
+    servers:
+      - host: 127.0.0.99
+        secret: example-radius-secret-change-me
+        role: primary
+
+  info:
+    - s_nssai:
+        - sst: 1
+          dnn: [internet, ims]
+      tai:
+        - plmn_id:
+            mcc: "999"
+            mnc: "70"
+          tac: [1, 2]
+
+  freeDiameter: /etc/open5gs/freeDiameter/smf.conf

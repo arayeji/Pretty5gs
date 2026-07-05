@@ -1,0 +1,24 @@
+# FICTIONAL SAMPLE — /etc/open5gs/cgf.yaml (open5gs-cgfd — GTP' CDR forwarder)
+
+logger:
+  file:
+    path: /var/log/open5gs/cgf.log
+  level: info
+
+global:
+  max:
+    ue: 4096
+
+cgf:
+  spool_dir: /var/spool/open5gs/cdr
+  node_id: open5gs-cgf-1
+  purge_on_success: false
+  peer:
+    - address: 127.0.0.100
+      port: 3386
+      role: primary
+  timers:
+    echo_interval_s: 60
+    request_rto_ms: 3000
+    request_retries: 4
+    spool_poll_ms: 250

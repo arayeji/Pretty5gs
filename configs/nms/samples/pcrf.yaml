@@ -1,0 +1,25 @@
+# FICTIONAL SAMPLE — /etc/open5gs/pcrf.yaml
+
+db_uri: mongodb://127.0.0.1/open5gs
+
+logger:
+  file:
+    path: /var/log/open5gs/pcrf.log
+  level: info
+
+global:
+  max:
+    ue: 4096
+  # pcrf_mysql:
+  #   enabled: false
+  #   host: 127.0.0.1
+  #   user: open5gs
+  #   password: example-password-change-me
+  #   database: pyhss
+
+pcrf:
+  freeDiameter: /etc/open5gs/freeDiameter/pcrf.conf
+  metrics:
+    server:
+      - address: 127.0.0.9
+        port: 9090

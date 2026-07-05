@@ -1,0 +1,31 @@
+# FICTIONAL SAMPLE — /etc/open5gs/udm.yaml
+
+logger:
+  file:
+    path: /var/log/open5gs/udm.log
+  level: info
+
+global:
+  max:
+    ue: 4096
+
+udm:
+  hnet:
+    - id: 1
+      scheme: 1
+      key: /etc/open5gs/hnet/curve25519-1.key
+    - id: 2
+      scheme: 2
+      key: /etc/open5gs/hnet/secp256r1-2.key
+  sbi:
+    server:
+      - address: 127.0.0.12
+        port: 7777
+        advertise: open5gs-udm.example.net:7777
+    client:
+      scp:
+        - uri: http://127.0.0.200:7777
+  metrics:
+    server:
+      - address: 127.0.0.12
+        port: 9090

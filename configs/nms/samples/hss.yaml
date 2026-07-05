@@ -1,0 +1,24 @@
+# FICTIONAL SAMPLE — /etc/open5gs/hss.yaml
+
+db_uri: mongodb://127.0.0.1/open5gs
+
+logger:
+  file:
+    path: /var/log/open5gs/hss.log
+  level: info
+
+global:
+  max:
+    ue: 4096
+  # milenage:
+  #   enabled: false
+  #   k4_file: /etc/open5gs/milenage_k4.key
+
+hss:
+  freeDiameter: /etc/open5gs/freeDiameter/hss.conf
+  metrics:
+    server:
+      - address: 127.0.0.8
+        port: 9090
+  # sms_over_ims: "sip:smsc.mnc070.mcc999.3gppnetwork.org:7060;transport=tcp"
+  # use_mongodb_change_stream: true

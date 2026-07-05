@@ -1,0 +1,26 @@
+# FICTIONAL SAMPLE — /etc/open5gs/pcf.yaml
+
+db_uri: mongodb://127.0.0.1/open5gs
+
+logger:
+  file:
+    path: /var/log/open5gs/pcf.log
+  level: info
+
+global:
+  max:
+    ue: 4096
+
+pcf:
+  sbi:
+    server:
+      - address: 127.0.0.13
+        port: 7777
+        advertise: open5gs-pcf.example.net:7777
+    client:
+      scp:
+        - uri: http://127.0.0.200:7777
+  metrics:
+    server:
+      - address: 127.0.0.13
+        port: 9090
