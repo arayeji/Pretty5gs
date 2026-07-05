@@ -966,66 +966,17 @@ int smf_context_parse_config(void)
                     ogs_yaml_iter_recurse(&smf_iter, &r_iter);
                     while (ogs_yaml_iter_next(&r_iter)) {
                         const char *rk = ogs_yaml_iter_key(&r_iter);
-                        const char *rv = ogs_yaml_iter_value(&r_iter);
 
                         ogs_assert(rk);
                         if (!strcmp(rk, "enabled")) {
                             self.radius.enabled = ogs_yaml_iter_bool(&r_iter);
-                        } else if (!strcmp(rk, "server")) {
-                            self.radius.server = rv;
-                        } else if (!strcmp(rk, "auth_port")) {
-                            if (rv) self.radius.auth_port = atoi(rv);
-                        } else if (!strcmp(rk, "acct_port")) {
-                            if (rv) self.radius.acct_port = atoi(rv);
-                        } else if (!strcmp(rk, "port")) {
-                            if (rv) {
-                                int p = atoi(rv);
-
-                                self.radius.auth_port = (uint16_t)p;
-                                self.radius.acct_port = (uint16_t)(p + 1);
-                            }
-                        } else if (!strcmp(rk, "secret") ||
-                                !strcmp(rk, "community")) {
-                            self.radius.secret = rv;
-                        } else if (!strcmp(rk, "nas_identifier")) {
-                            self.radius.nas_id = rv;
-                        } else if (!strcmp(rk, "nas_ip")) {
-                            self.radius.nas_ip = rv;
-                        } else if (!strcmp(rk, "timeout")) {
-                            if (rv) self.radius.timeout_ms = (unsigned)atoi(rv);
-                        } else if (!strcmp(rk, "retry")) {
-                            if (rv) self.radius.retry = atoi(rv);
-                        } else if (!strcmp(rk, "acct_interim_interval")) {
-                            if (rv)
-                                self.radius.acct_interim_interval =
-                                    (unsigned)atoi(rv);
                         } else if (!strcmp(rk, "pod_enabled") ||
                                 !strcmp(rk, "pod")) {
                             self.radius.pod_enabled =
                                 ogs_yaml_iter_bool(&r_iter);
-                        } else if (!strcmp(rk, "pod_bind") ||
-                                !strcmp(rk, "pod_address")) {
-                            self.radius.pod_bind = rv;
-                        } else if (!strcmp(rk, "pod_port")) {
-                            if (rv) self.radius.pod_port =
-                                (uint16_t)atoi(rv);
-                        } else if (!strcmp(rk, "pod_secret")) {
-                            self.radius.pod_secret = rv;
-                        } else if (!strcmp(rk, "pod_teardown_timeout_ms") ||
-                                !strcmp(rk, "pod_teardown_timeout")) {
-                            if (rv) self.radius.pod_teardown_timeout_ms =
-                                (uint32_t)atoi(rv);
                         } else if (!strcmp(rk, "use_framed_ip_for_ue")) {
                             self.radius.use_framed_ip_for_ue =
                                 ogs_yaml_iter_bool(&r_iter);
-                        } else if (!strcmp(rk, "select") ||
-                                !strcmp(rk, "select_mode")) {
-                            if (rv && !strcmp(rv, "hash_imsi"))
-                                self.radius.select_mode =
-                                    SMF_RADIUS_SELECT_HASH_IMSI;
-                            else
-                                self.radius.select_mode =
-                                    SMF_RADIUS_SELECT_PRIMARY_FAILOVER;
                         } else if (!strcmp(rk, "servers")) {
                             /*
                              * Modern multi-server form:
@@ -1040,6 +991,7 @@ int smf_context_parse_config(void)
                              *       secret: s2
                              */
                             ogs_yaml_iter_t s_arr;
+
                             ogs_yaml_iter_recurse(&r_iter, &s_arr);
                             while (ogs_yaml_iter_type(&s_arr)
                                     == YAML_SEQUENCE_NODE) {
@@ -1104,8 +1056,60 @@ int smf_context_parse_config(void)
                                 }
                                 self.radius.num_servers++;
                             }
-                        } else
-                            ogs_warn("unknown key `%s` in smf.radius", rk);
+                        } else {
+                            const char *rv = ogs_yaml_iter_value(&r_iter);
+
+                            if (!strcmp(rk, "server")) {
+                                self.radius.server = rv;
+                            } else if (!strcmp(rk, "auth_port")) {
+                                if (rv) self.radius.auth_port = atoi(rv);
+                            } else if (!strcmp(rk, "acct_port")) {
+                                if (rv) self.radius.acct_port = atoi(rv);
+                            } else if (!strcmp(rk, "port")) {
+                                if (rv) {
+                                    int p = atoi(rv);
+
+                                    self.radius.auth_port = (uint16_t)p;
+                                    self.radius.acct_port = (uint16_t)(p + 1);
+                                }
+                            } else if (!strcmp(rk, "secret") ||
+                                    !strcmp(rk, "community")) {
+                                self.radius.secret = rv;
+                            } else if (!strcmp(rk, "nas_identifier")) {
+                                self.radius.nas_id = rv;
+                            } else if (!strcmp(rk, "nas_ip")) {
+                                self.radius.nas_ip = rv;
+                            } else if (!strcmp(rk, "timeout")) {
+                                if (rv) self.radius.timeout_ms = (unsigned)atoi(rv);
+                            } else if (!strcmp(rk, "retry")) {
+                                if (rv) self.radius.retry = atoi(rv);
+                            } else if (!strcmp(rk, "acct_interim_interval")) {
+                                if (rv)
+                                    self.radius.acct_interim_interval =
+                                        (unsigned)atoi(rv);
+                            } else if (!strcmp(rk, "pod_bind") ||
+                                    !strcmp(rk, "pod_address")) {
+                                self.radius.pod_bind = rv;
+                            } else if (!strcmp(rk, "pod_port")) {
+                                if (rv) self.radius.pod_port =
+                                    (uint16_t)atoi(rv);
+                            } else if (!strcmp(rk, "pod_secret")) {
+                                self.radius.pod_secret = rv;
+                            } else if (!strcmp(rk, "pod_teardown_timeout_ms") ||
+                                    !strcmp(rk, "pod_teardown_timeout")) {
+                                if (rv) self.radius.pod_teardown_timeout_ms =
+                                    (uint32_t)atoi(rv);
+                            } else if (!strcmp(rk, "select") ||
+                                    !strcmp(rk, "select_mode")) {
+                                if (rv && !strcmp(rv, "hash_imsi"))
+                                    self.radius.select_mode =
+                                        SMF_RADIUS_SELECT_HASH_IMSI;
+                                else
+                                    self.radius.select_mode =
+                                        SMF_RADIUS_SELECT_PRIMARY_FAILOVER;
+                            } else
+                                ogs_warn("unknown key `%s` in smf.radius", rk);
+                        }
                     }
                 } else if (!strcmp(smf_key, "cdr")) {
                     /*

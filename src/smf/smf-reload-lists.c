@@ -651,54 +651,14 @@ static bool smf_reload_parse_radius(
     ogs_yaml_iter_recurse(smf_iter, &r_iter);
     while (ogs_yaml_iter_next(&r_iter)) {
         const char *rk = ogs_yaml_iter_key(&r_iter);
-        const char *rv = ogs_yaml_iter_value(&r_iter);
 
         ogs_assert(rk);
         if (!strcmp(rk, "enabled")) {
             cfg->enabled = ogs_yaml_iter_bool(&r_iter);
-        } else if (!strcmp(rk, "server")) {
-            cfg->server = rv ? ogs_strdup(rv) : NULL;
-        } else if (!strcmp(rk, "auth_port")) {
-            if (rv) cfg->auth_port = (uint16_t)atoi(rv);
-        } else if (!strcmp(rk, "acct_port")) {
-            if (rv) cfg->acct_port = (uint16_t)atoi(rv);
-        } else if (!strcmp(rk, "port")) {
-            if (rv) {
-                int p = atoi(rv);
-
-                cfg->auth_port = (uint16_t)p;
-                cfg->acct_port = (uint16_t)(p + 1);
-            }
-        } else if (!strcmp(rk, "secret") || !strcmp(rk, "community")) {
-            cfg->secret = rv ? ogs_strdup(rv) : NULL;
-        } else if (!strcmp(rk, "nas_identifier")) {
-            cfg->nas_id = rv ? ogs_strdup(rv) : NULL;
-        } else if (!strcmp(rk, "nas_ip")) {
-            cfg->nas_ip = rv ? ogs_strdup(rv) : NULL;
-        } else if (!strcmp(rk, "timeout")) {
-            if (rv) cfg->timeout_ms = (unsigned)atoi(rv);
-        } else if (!strcmp(rk, "retry")) {
-            if (rv) cfg->retry = atoi(rv);
-        } else if (!strcmp(rk, "acct_interim_interval")) {
-            if (rv) cfg->acct_interim_interval = (unsigned)atoi(rv);
         } else if (!strcmp(rk, "pod_enabled") || !strcmp(rk, "pod")) {
             cfg->pod_enabled = ogs_yaml_iter_bool(&r_iter);
-        } else if (!strcmp(rk, "pod_bind") || !strcmp(rk, "pod_address")) {
-            cfg->pod_bind = rv ? ogs_strdup(rv) : NULL;
-        } else if (!strcmp(rk, "pod_port")) {
-            if (rv) cfg->pod_port = (uint16_t)atoi(rv);
-        } else if (!strcmp(rk, "pod_secret")) {
-            cfg->pod_secret = rv ? ogs_strdup(rv) : NULL;
-        } else if (!strcmp(rk, "pod_teardown_timeout_ms") ||
-                !strcmp(rk, "pod_teardown_timeout")) {
-            if (rv) cfg->pod_teardown_timeout_ms = (uint32_t)atoi(rv);
         } else if (!strcmp(rk, "use_framed_ip_for_ue")) {
             cfg->use_framed_ip_for_ue = ogs_yaml_iter_bool(&r_iter);
-        } else if (!strcmp(rk, "select") || !strcmp(rk, "select_mode")) {
-            if (rv && !strcmp(rv, "hash_imsi"))
-                cfg->select_mode = SMF_RADIUS_SELECT_HASH_IMSI;
-            else
-                cfg->select_mode = SMF_RADIUS_SELECT_PRIMARY_FAILOVER;
         } else if (!strcmp(rk, "servers")) {
             ogs_yaml_iter_t s_arr;
 
@@ -752,6 +712,49 @@ static bool smf_reload_parse_radius(
                 if (!d->host || !d->secret)
                     continue;
                 cfg->num_servers++;
+            }
+        } else {
+            const char *rv = ogs_yaml_iter_value(&r_iter);
+
+            if (!strcmp(rk, "server")) {
+                cfg->server = rv ? ogs_strdup(rv) : NULL;
+            } else if (!strcmp(rk, "auth_port")) {
+                if (rv) cfg->auth_port = (uint16_t)atoi(rv);
+            } else if (!strcmp(rk, "acct_port")) {
+                if (rv) cfg->acct_port = (uint16_t)atoi(rv);
+            } else if (!strcmp(rk, "port")) {
+                if (rv) {
+                    int p = atoi(rv);
+
+                    cfg->auth_port = (uint16_t)p;
+                    cfg->acct_port = (uint16_t)(p + 1);
+                }
+            } else if (!strcmp(rk, "secret") || !strcmp(rk, "community")) {
+                cfg->secret = rv ? ogs_strdup(rv) : NULL;
+            } else if (!strcmp(rk, "nas_identifier")) {
+                cfg->nas_id = rv ? ogs_strdup(rv) : NULL;
+            } else if (!strcmp(rk, "nas_ip")) {
+                cfg->nas_ip = rv ? ogs_strdup(rv) : NULL;
+            } else if (!strcmp(rk, "timeout")) {
+                if (rv) cfg->timeout_ms = (unsigned)atoi(rv);
+            } else if (!strcmp(rk, "retry")) {
+                if (rv) cfg->retry = atoi(rv);
+            } else if (!strcmp(rk, "acct_interim_interval")) {
+                if (rv) cfg->acct_interim_interval = (unsigned)atoi(rv);
+            } else if (!strcmp(rk, "pod_bind") || !strcmp(rk, "pod_address")) {
+                cfg->pod_bind = rv ? ogs_strdup(rv) : NULL;
+            } else if (!strcmp(rk, "pod_port")) {
+                if (rv) cfg->pod_port = (uint16_t)atoi(rv);
+            } else if (!strcmp(rk, "pod_secret")) {
+                cfg->pod_secret = rv ? ogs_strdup(rv) : NULL;
+            } else if (!strcmp(rk, "pod_teardown_timeout_ms") ||
+                    !strcmp(rk, "pod_teardown_timeout")) {
+                if (rv) cfg->pod_teardown_timeout_ms = (uint32_t)atoi(rv);
+            } else if (!strcmp(rk, "select") || !strcmp(rk, "select_mode")) {
+                if (rv && !strcmp(rv, "hash_imsi"))
+                    cfg->select_mode = SMF_RADIUS_SELECT_HASH_IMSI;
+                else
+                    cfg->select_mode = SMF_RADIUS_SELECT_PRIMARY_FAILOVER;
             }
         }
     }
