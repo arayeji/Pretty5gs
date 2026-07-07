@@ -1779,6 +1779,60 @@ static bool sgwc_imsi_is_operator_home(const char *imsi_bcd)
     return false;
 }
 
+void sgwc_home_plmn_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id)
+{
+    sgwc_gn_pgw_t *pgw = NULL;
+    sgwc_gn_pgw_t *best = NULL;
+    int best_len = 0;
+
+    ogs_assert(imsi_bcd);
+    ogs_assert(plmn_id);
+
+    if (ogs_plmn_id_pick_imsi_prefix_match(imsi_bcd,
+            ogs_local_conf()->serving_plmn_id,
+            ogs_local_conf()->num_of_serving_plmn_id,
+            plmn_id))
+        return;
+
+    /*
+     * For inbound roamers whose home PLMN is not in serving_plmn_id, use the
+     * longest matching gn.pgw imsi_prefix (operator-configured PLMN digits).
+     */
+    ogs_list_for_each(&self.gn_pgw_list, pgw) {
+        int plen;
+
+        if (!pgw->imsi_prefix[0])
+            continue;
+
+        plen = (int)strlen(pgw->imsi_prefix);
+        if (plen < 5)
+            continue;
+
+        if (strncmp(imsi_bcd, pgw->imsi_prefix, plen) == 0 && plen > best_len) {
+            best = pgw;
+            best_len = plen;
+        }
+    }
+
+    if (best) {
+        char mcc_buf[4];
+        const char *pfx = best->imsi_prefix;
+        int mnc_len = best_len - 3;
+        uint16_t mcc, mnc;
+
+        if (mnc_len >= 2 && mnc_len <= 3) {
+            memcpy(mcc_buf, pfx, 3);
+            mcc_buf[3] = '\0';
+            mcc = (uint16_t)atoi(mcc_buf);
+            mnc = (uint16_t)atoi(pfx + 3);
+            ogs_plmn_id_build(plmn_id, mcc, mnc, (uint16_t)mnc_len);
+            return;
+        }
+    }
+
+    ogs_plmn_id_from_imsi_bcd(imsi_bcd, plmn_id);
+}
+
 bool sgwc_sess_is_inbound_roam(sgwc_sess_t *sess)
 {
     sgwc_ue_t *sgwc_ue = NULL;

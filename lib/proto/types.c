@@ -152,6 +152,41 @@ bool ogs_plmn_id_imsi_prefix_match(
     return strncmp(imsi_bcd, plmn_str, strlen(plmn_str)) == 0;
 }
 
+bool ogs_plmn_id_pick_imsi_prefix_match(
+        const char *imsi_bcd,
+        const ogs_plmn_id_t *candidates, int num_candidates,
+        ogs_plmn_id_t *plmn_id)
+{
+    int i;
+
+    if (!imsi_bcd || !imsi_bcd[0] || !plmn_id || !candidates || num_candidates <= 0)
+        return false;
+
+    for (i = 0; i < num_candidates; i++) {
+        if (ogs_plmn_id_imsi_prefix_match(imsi_bcd, &candidates[i])) {
+            memcpy(plmn_id, &candidates[i], sizeof(*plmn_id));
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void ogs_plmn_id_home_from_imsi_bcd(
+        const char *imsi_bcd,
+        const ogs_plmn_id_t *candidates, int num_candidates,
+        ogs_plmn_id_t *plmn_id)
+{
+    ogs_assert(imsi_bcd);
+    ogs_assert(plmn_id);
+
+    if (ogs_plmn_id_pick_imsi_prefix_match(
+                imsi_bcd, candidates, num_candidates, plmn_id))
+        return;
+
+    ogs_plmn_id_from_imsi_bcd(imsi_bcd, plmn_id);
+}
+
 char *ogs_plmn_id_mcc_string(const ogs_plmn_id_t *plmn_id)
 {
     ogs_assert(plmn_id);

@@ -1101,6 +1101,7 @@ void smf_ue_remove_all(void);
 smf_ue_t *smf_ue_find_by_supi(char *supi);
 smf_ue_t *smf_ue_find_by_imsi(uint8_t *imsi, int imsi_len);
 smf_ue_t *smf_ue_find_by_imsi_bcd(const char *imsi_bcd);
+void smf_home_plmn_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id);
 
 smf_sess_t *smf_sess_add_by_gtp1_message(ogs_gtp1_message_t *message);
 smf_sess_t *smf_sess_add_by_gtp2_message(ogs_gtp2_message_t *message);

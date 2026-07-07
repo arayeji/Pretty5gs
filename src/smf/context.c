@@ -1850,6 +1850,17 @@ static int smf_ue_set_supi(smf_ue_t *smf_ue, const char *supi)
     return OGS_OK;
 }
 
+void smf_home_plmn_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id)
+{
+    ogs_assert(imsi_bcd);
+    ogs_assert(plmn_id);
+
+    ogs_plmn_id_home_from_imsi_bcd(imsi_bcd,
+            ogs_local_conf()->serving_plmn_id,
+            ogs_local_conf()->num_of_serving_plmn_id,
+            plmn_id);
+}
+
 /*
  * Set and index IMSI in one place.  Convert first to a temporary buffer
  * so an existing hash key is not modified before mismatch detection.
@@ -1900,7 +1911,7 @@ static int smf_ue_set_imsi_bcd(smf_ue_t *smf_ue, const char *imsi_bcd)
 
     {
         ogs_plmn_id_t plmn_id;
-        ogs_plmn_id_from_imsi_bcd(smf_ue->imsi_bcd, &plmn_id);
+        smf_home_plmn_from_imsi_bcd(smf_ue->imsi_bcd, &plmn_id);
         smf_metrics_inst_by_plmn_add(&plmn_id,
                 SMF_METR_BY_PLMN_GAUGE_UE_ACTIVE, 1);
     }
@@ -2089,7 +2100,7 @@ void smf_ue_remove(smf_ue_t *smf_ue)
     if (smf_ue->imsi_len) {
         ogs_plmn_id_t plmn_id;
 
-        ogs_plmn_id_from_imsi_bcd(smf_ue->imsi_bcd, &plmn_id);
+        smf_home_plmn_from_imsi_bcd(smf_ue->imsi_bcd, &plmn_id);
         smf_metrics_inst_by_plmn_add(&plmn_id,
                 SMF_METR_BY_PLMN_GAUGE_UE_ACTIVE, -1);
 

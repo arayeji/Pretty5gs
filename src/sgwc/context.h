@@ -396,6 +396,7 @@ sgwc_ue_t *sgwc_ue_find_by_id(ogs_pool_id_t id);
 sgwc_sess_t *sgwc_sess_add(sgwc_ue_t *sgwc_ue, char *apn);
 
 bool sgwc_sess_is_inbound_roam(sgwc_sess_t *sess);
+void sgwc_home_plmn_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id);
 sgwc_gn_pgw_t *sgwc_gn_pgw_find_for_ue(sgwc_ue_t *sgwc_ue);
 void sgwc_gn_pgw_yaml_add(ogs_list_t *list, ogs_yaml_iter_t *parent_iter);
 void sgwc_gn_pgw_clear_list(ogs_list_t *list);

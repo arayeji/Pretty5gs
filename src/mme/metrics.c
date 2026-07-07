@@ -79,7 +79,7 @@ static bool mme_metrics_plmn_from_ue(mme_ue_t *mme_ue, ogs_plmn_id_t *plmn_id)
     if (!mme_ue->imsi_len)
         return false;
 
-    ogs_plmn_id_from_imsi_bcd(mme_ue->imsi_bcd, plmn_id);
+    mme_home_plmn_from_imsi_bcd(mme_ue->imsi_bcd, plmn_id);
     return true;
 }
 

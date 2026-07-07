@@ -289,6 +289,15 @@ void ogs_plmn_id_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id);
 bool ogs_plmn_id_imsi_prefix_match(
         const char *imsi_bcd, const ogs_plmn_id_t *plmn_id);
 
+bool ogs_plmn_id_pick_imsi_prefix_match(
+        const char *imsi_bcd,
+        const ogs_plmn_id_t *candidates, int num_candidates,
+        ogs_plmn_id_t *plmn_id);
+void ogs_plmn_id_home_from_imsi_bcd(
+        const char *imsi_bcd,
+        const ogs_plmn_id_t *candidates, int num_candidates,
+        ogs_plmn_id_t *plmn_id);
+
 char *ogs_plmn_id_mcc_string(const ogs_plmn_id_t *plmn_id);
 char *ogs_plmn_id_mnc_string(const ogs_plmn_id_t *plmn_id);
 

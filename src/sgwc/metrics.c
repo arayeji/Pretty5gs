@@ -97,7 +97,7 @@ static bool sgwc_metrics_plmn_from_ue(sgwc_ue_t *sgwc_ue, ogs_plmn_id_t *plmn_id
     if (!sgwc_ue->imsi_len)
         return false;
 
-    ogs_plmn_id_from_imsi_bcd(sgwc_ue->imsi_bcd, plmn_id);
+    sgwc_home_plmn_from_imsi_bcd(sgwc_ue->imsi_bcd, plmn_id);
     return true;
 }
 

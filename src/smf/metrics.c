@@ -340,7 +340,7 @@ static bool smf_sess_is_outbound_roaming(smf_sess_t *sess, char *vplmn)
     if (!smf_ue || !smf_ue->imsi_len)
         return false;
 
-    ogs_plmn_id_from_imsi_bcd(smf_ue->imsi_bcd, &home_plmn_id);
+    smf_home_plmn_from_imsi_bcd(smf_ue->imsi_bcd, &home_plmn_id);
 
     if (ogs_plmn_id_mcc(&home_plmn_id) ==
                 ogs_plmn_id_mcc(&sess->serving_plmn_id) &&
