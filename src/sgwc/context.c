@@ -1845,6 +1845,35 @@ void sgwc_inbound_roam_teid_offset_apply(sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess)
             sgwc_ue->sgw_s11_teid, sess->sgw_s5c_teid);
 }
 
+static void sgwc_sess_pfcp_nwi_base(sgwc_sess_t *sess, char *nwi, int buflen)
+{
+    char apn_full[OGS_MAX_APN_LEN+1];
+
+    ogs_assert(sess);
+    ogs_assert(nwi);
+    ogs_assert(buflen > OGS_MAX_APN_LEN);
+    ogs_assert(sess->session.name);
+
+    /*
+     * Inbound roam: MME sends APN FQDN on S11 (home PLMN OI) and VPP/UPG
+     * expects that FQDN as the PFCP Network Instance.  session.name holds
+     * APN-NI only (for pfcp.client apn matching and Gn-handover safety).
+     *
+     * Home / Gn-handover: keep APN-NI for PFCP NWI even when S11 carried
+     * a full APN (3G->4G mobility); the home SGW-U has no FQDN NWI.
+     */
+    if (sess->apn_fqdn_len > 0 &&
+            ogs_fqdn_parse(apn_full, sess->apn_fqdn,
+                ogs_min(sess->apn_fqdn_len, (int)sizeof(sess->apn_fqdn))) > 0 &&
+            ogs_dnn_oi_from_fqdn(apn_full) &&
+            sgwc_sess_is_inbound_roam(sess)) {
+        ogs_cpystrn(nwi, apn_full, buflen);
+        return;
+    }
+
+    ogs_cpystrn(nwi, sess->session.name, buflen);
+}
+
 void sgwc_sess_sync_pfcp_pdr_nwi(sgwc_sess_t *sess)
 {
     ogs_pfcp_pdr_t *pdr = NULL;
@@ -1857,7 +1886,7 @@ void sgwc_sess_sync_pfcp_pdr_nwi(sgwc_sess_t *sess)
     if (!sess->session.name || !sess->session.name[0])
         return;
 
-    ogs_cpystrn(nwi, sess->session.name, sizeof(nwi));
+    sgwc_sess_pfcp_nwi_base(sess, nwi, sizeof(nwi));
     rewritten = sgwc_sgwu_nwi_rewrite_apply(sess, nwi, sizeof(nwi));
 
     /*

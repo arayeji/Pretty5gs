@@ -280,6 +280,10 @@ static void sgwc_s11_create_session_proceed(
     sess = sgwc_sess_add(sgwc_ue, apn);
     ogs_assert(sess);
 
+    sess->apn_fqdn_len = ogs_min(req->access_point_name.len,
+            (int)sizeof(sess->apn_fqdn));
+    memcpy(sess->apn_fqdn, req->access_point_name.data, sess->apn_fqdn_len);
+
     if (req->rat_type.presence)
         sess->gtp_rat_type = req->rat_type.u8;
 
