@@ -150,37 +150,6 @@ static bool smf_reload_dnn_set_equal(
     return true;
 }
 
-static bool smf_reload_subnet_exists(
-        const char *ipstr, const char *mask_or_numbits,
-        const char dnnv[][OGS_MAX_DNN_LEN+1], int num_of_dnn)
-{
-    ogs_ipsubnet_t probe;
-    ogs_pfcp_subnet_t *subnet = NULL;
-
-    if (!ipstr || !mask_or_numbits)
-        return false;
-
-    int probe_prefix = 0;
-
-    if (ogs_ipsubnet(&probe, ipstr, mask_or_numbits) != OGS_OK)
-        return false;
-
-    if (mask_or_numbits)
-        probe_prefix = atoi(mask_or_numbits);
-
-    ogs_list_for_each(&ogs_pfcp_self()->subnet_list, subnet) {
-        if (subnet->family != probe.family ||
-                subnet->prefixlen != (uint8_t)probe_prefix)
-            continue;
-        if (memcmp(subnet->sub.sub, probe.sub, sizeof(probe.sub)) != 0)
-            continue;
-        if (smf_reload_dnn_set_equal(subnet, dnnv, num_of_dnn))
-            return true;
-    }
-
-    return false;
-}
-
 static int smf_reload_session_add_only(ogs_yaml_iter_t *smf_iter);
 
 static bool smf_reload_subnet_in_session_yaml(
@@ -330,13 +299,6 @@ static void smf_reload_session_sync(ogs_yaml_iter_t *smf_iter)
 
     if (removed > 0)
         ogs_reload_audit_note(" session pools synced (%d removed)", removed);
-}
-
-static ogs_pfcp_node_t *smf_reload_pfcp_peer_find(ogs_sockaddr_t *addr);
-
-static bool smf_reload_pfcp_peer_exists(ogs_sockaddr_t *addr)
-{
-    return smf_reload_pfcp_peer_find(addr) != NULL;
 }
 
 static ogs_pfcp_node_t *smf_reload_pfcp_peer_find(ogs_sockaddr_t *addr)
