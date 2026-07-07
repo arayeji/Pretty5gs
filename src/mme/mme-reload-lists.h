@@ -38,7 +38,7 @@ int mme_reload_gtpc_client_add_only(ogs_yaml_iter_t *gtpc_iter);
  * Incremented by add-only reload helpers (including scalar policy keys).
  * Reset at the start of each SIGHUP reload pass.
  */
-extern int mme_reload_lists_changed;
+extern volatile int mme_reload_lists_changed;
 
 #ifdef __cplusplus
 }

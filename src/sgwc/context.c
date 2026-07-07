@@ -1863,7 +1863,7 @@ static void sgwc_sess_pfcp_nwi_base(sgwc_sess_t *sess, char *nwi, int buflen)
      * a full APN (3G->4G mobility); the home SGW-U has no FQDN NWI.
      */
     if (sess->apn_fqdn_len > 0 &&
-            ogs_fqdn_parse(apn_full, sess->apn_fqdn,
+            ogs_fqdn_parse(apn_full, (const char *)sess->apn_fqdn,
                 ogs_min(sess->apn_fqdn_len, (int)sizeof(sess->apn_fqdn))) > 0 &&
             ogs_dnn_oi_from_fqdn(apn_full) &&
             sgwc_sess_is_inbound_roam(sess)) {
