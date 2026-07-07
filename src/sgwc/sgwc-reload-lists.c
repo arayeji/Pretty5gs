@@ -240,13 +240,6 @@ static void sgwc_reload_gtpu_key(
     }
 }
 
-static ogs_pfcp_node_t *sgwc_reload_pfcp_peer_find(ogs_sockaddr_t *addr);
-
-static bool sgwc_reload_pfcp_peer_exists(ogs_sockaddr_t *addr)
-{
-    return sgwc_reload_pfcp_peer_find(addr) != NULL;
-}
-
 static ogs_pfcp_node_t *sgwc_reload_pfcp_peer_find(ogs_sockaddr_t *addr)
 {
     ogs_pfcp_node_t *node = NULL;
