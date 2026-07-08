@@ -20,6 +20,8 @@
 #include "ogs-sctp.h"
 
 #include "mme-event.h"
+#include "mme-context.h"
+#include "mme-trace.h"
 #include "s1ap-path.h"
 
 #if HAVE_USRSCTP
@@ -206,7 +208,8 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
         ogs_pkbuf_free(pkbuf);
         if (ogs_sctp_recv_would_block(size))
             return 0;
-        ogs_error("ogs_sctp_recvmsg(%d) failed(%d:%s)",
+        mme_ran_error(mme_enb_find_by_addr(&from), NULL, NULL, "s1ap", NULL,
+                "ogs_sctp_recvmsg(%d) failed(%d:%s)",
                 size, errno, strerror(errno));
         return -1;
     }
@@ -279,12 +282,14 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
 
         case SCTP_SEND_FAILED :
 #if HAVE_USRSCTP
-            ogs_error("SCTP_SEND_FAILED:[T:%d, F:0x%x, S:%d]",
+            mme_ran_error(mme_enb_find_by_addr(&from), NULL, NULL, "s1ap", NULL,
+                    "SCTP_SEND_FAILED:[T:%d, F:0x%x, S:%d]",
                     not->sn_send_failed_event.ssfe_type,
                     not->sn_send_failed_event.ssfe_flags,
                     not->sn_send_failed_event.ssfe_error);
 #else
-            ogs_error("SCTP_SEND_FAILED:[T:%d, F:0x%x, S:%d]",
+            mme_ran_error(mme_enb_find_by_addr(&from), NULL, NULL, "s1ap", NULL,
+                    "SCTP_SEND_FAILED:[T:%d, F:0x%x, S:%d]",
                     not->sn_send_failed.ssf_type,
                     not->sn_send_failed.ssf_flags,
                     not->sn_send_failed.ssf_error);

@@ -612,7 +612,8 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         bearer = mme_bearer_find_by_id(
                 OGS_POINTER_TO_UINT(mme_ue->paging.data));
         if (!bearer) {
-            ogs_error("No Bearer [%d]", mme_ue->paging.type);
+            mme_ue_error(mme_ue, NULL, "paging", NULL,
+                    "No Bearer [type=%d]", mme_ue->paging.type);
             goto cleanup;
         }
 
@@ -630,7 +631,8 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         bearer = mme_bearer_find_by_id(
                 OGS_POINTER_TO_UINT(mme_ue->paging.data));
         if (!bearer) {
-            ogs_error("No Bearer [%d]", mme_ue->paging.type);
+            mme_ue_error(mme_ue, NULL, "paging", NULL,
+                    "No Bearer [type=%d]", mme_ue->paging.type);
             goto cleanup;
         }
 
@@ -656,7 +658,8 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         bearer = mme_bearer_find_by_id(
                 OGS_POINTER_TO_UINT(mme_ue->paging.data));
         if (!bearer) {
-            ogs_error("No Bearer [%d]", mme_ue->paging.type);
+            mme_ue_error(mme_ue, NULL, "paging", NULL,
+                    "No Bearer [type=%d]", mme_ue->paging.type);
             goto cleanup;
         }
 
@@ -698,7 +701,8 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         bearer = mme_bearer_find_by_id(
                 OGS_POINTER_TO_UINT(mme_ue->paging.data));
         if (!bearer) {
-            ogs_error("No Bearer [%d]", mme_ue->paging.type);
+            mme_ue_error(mme_ue, NULL, "paging", NULL,
+                    "No Bearer [type=%d]", mme_ue->paging.type);
             goto cleanup;
         }
 

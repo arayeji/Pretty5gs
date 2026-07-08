@@ -2268,7 +2268,8 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
         if (mme_ue)
             enb_ue_deassociate_mme_ue(enb_ue, mme_ue);
         else
-            ogs_error("No UE(mme-ue) context");
+            mme_ran_error(mme_enb_find_by_id(enb_ue->enb_id), enb_ue, NULL,
+                    "s1ap", NULL, "No UE(mme-ue) context");
 
         enb_ue_remove(enb_ue);
         break;
@@ -2294,7 +2295,8 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
         }
         enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
         if (!enb_ue) {
-            ogs_error("No UE(target-enb-ue) context");
+            mme_ue_error(mme_ue, NULL, "s1ap", NULL,
+                    "No UE(target-enb-ue) context");
             return;
         }
         if (mme_ue_have_indirect_tunnel(mme_ue) == true) {
@@ -2320,7 +2322,8 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
         }
         enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
         if (!enb_ue) {
-            ogs_error("No UE(target-enb-ue) context");
+            mme_ue_error(mme_ue, NULL, "s1ap", NULL,
+                    "No UE(target-enb-ue) context");
             return;
         }
         if (mme_ue_have_indirect_tunnel(mme_ue) == true) {
@@ -4081,7 +4084,9 @@ void s1ap_handle_handover_cancel(mme_enb_t *enb, ogs_s1ap_message_t *message)
 
     target_ue = enb_ue_find_by_id(source_ue->target_ue_id);
     if (!target_ue) {
-        ogs_error("No Target UE");
+        mme_ran_error(enb, source_ue,
+                mme_ue_find_by_id(source_ue->mme_ue_id),
+                "s1ap", NULL, "No Target UE");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -4209,7 +4214,9 @@ void s1ap_handle_enb_status_transfer(
 
     target_ue = enb_ue_find_by_id(source_ue->target_ue_id);
     if (!target_ue) {
-        ogs_error("No Target UE");
+        mme_ran_error(enb, source_ue,
+                mme_ue_find_by_id(source_ue->mme_ue_id),
+                "s1ap", NULL, "No Target UE");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);

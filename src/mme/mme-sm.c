@@ -910,24 +910,29 @@ cleanup:
             if (gtp_message.h.teid_presence && gtp_message.h.teid)
                 ue_hint = mme_ue_find_by_s11_local_teid(gtp_message.h.teid);
 
-            ogs_error("S11 GTP receive dropped [%s]:%d type[%u] "
-                    "teid[0x%x] sqn[0x%x] rv=%d%s",
-                    OGS_ADDR(&gnode->addr, peer),
-                    OGS_PORT(&gnode->addr),
-                    gtp_message.h.type,
-                    gtp_message.h.teid_presence ? gtp_message.h.teid : 0,
-                    sqn, rv,
-                    (ue_hint && MME_UE_HAVE_IMSI(ue_hint)) ? "" : " IMSI[-]");
-            if (ue_hint && MME_UE_HAVE_IMSI(ue_hint)) {
+            if (ue_hint) {
                 mme_ue_error(ue_hint, NULL, "s11", NULL,
-                        "late Create Session Response or invalid GTP "
-                        "transaction step (type=%u teid=0x%x)",
+                        "S11 GTP receive dropped [%s]:%d type[%u] "
+                        "teid[0x%x] sqn[0x%x] rv=%d (late response or "
+                        "invalid GTP transaction step)",
+                        OGS_ADDR(&gnode->addr, peer),
+                        OGS_PORT(&gnode->addr),
                         gtp_message.h.type,
                         gtp_message.h.teid_presence ?
-                            gtp_message.h.teid : 0);
+                            gtp_message.h.teid : 0,
+                        sqn, rv);
                 if (gtp_message.h.type ==
                         OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE)
                     mme_ue_progress(ue_hint, "create_session_rsp_late");
+            } else {
+                ogs_error("S11 GTP receive dropped [%s]:%d type[%u] "
+                        "teid[0x%x] sqn[0x%x] rv=%d IMSI[-]",
+                        OGS_ADDR(&gnode->addr, peer),
+                        OGS_PORT(&gnode->addr),
+                        gtp_message.h.type,
+                        gtp_message.h.teid_presence ?
+                            gtp_message.h.teid : 0,
+                        sqn, rv);
             }
             ogs_pkbuf_free(pkbuf);
             break;

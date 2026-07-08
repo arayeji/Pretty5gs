@@ -286,50 +286,19 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
         char peer[OGS_ADDRSTRLEN];
         sgw_ue_t *sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
         const char *type_name = mme_gtp2_message_type_name(type);
+        const char *peer_addr = "unknown";
+        int peer_port = 0;
 
         if (xact && xact->gnode) {
-            if (MME_UE_HAVE_IMSI(mme_ue)) {
-                ogs_error("GTP Timeout S11 [%s]:%d IMSI[%s] "
-                        "Message-Type[%d:%s] SGW_S11_TEID[0x%x]",
-                        OGS_ADDR(&xact->gnode->addr, peer),
-                        OGS_PORT(&xact->gnode->addr),
-                        mme_ue->imsi_bcd, type, type_name,
-                        sgw_ue ? sgw_ue->sgw_s11_teid : 0);
-            } else {
-                mme_enb_t *enb = NULL;
-
-                if (enb_ue)
-                    enb = mme_enb_find_by_id(enb_ue->enb_id);
-
-                ogs_error("GTP Timeout S11 [%s]:%d IMSI[-] "
-                        "Message-Type[%d:%s] MME_UE[%u] ENB:%u "
-                        "ENB_S1AP:%u SGW_S11:0x%x",
-                        OGS_ADDR(&xact->gnode->addr, peer),
-                        OGS_PORT(&xact->gnode->addr),
-                        type, type_name, (unsigned)mme_ue->id,
-                        enb ? enb->enb_id : 0,
-                        enb_ue ? enb_ue->enb_ue_s1ap_id : 0,
-                        sgw_ue ? sgw_ue->sgw_s11_teid : 0);
-            }
-        } else if (MME_UE_HAVE_IMSI(mme_ue)) {
-            ogs_error("GTP Timeout S11 peer[unknown] IMSI[%s] "
-                    "Message-Type[%d:%s] SGW_S11_TEID[0x%x]",
-                    mme_ue->imsi_bcd, type, type_name,
-                    sgw_ue ? sgw_ue->sgw_s11_teid : 0);
-        } else {
-            mme_enb_t *enb = NULL;
-
-            if (enb_ue)
-                enb = mme_enb_find_by_id(enb_ue->enb_id);
-
-            ogs_error("GTP Timeout S11 peer[unknown] IMSI[-] "
-                    "Message-Type[%d:%s] MME_UE[%u] ENB:%u ENB_S1AP:%u "
-                    "SGW_S11:0x%x",
-                    type, type_name, (unsigned)mme_ue->id,
-                    enb ? enb->enb_id : 0,
-                    enb_ue ? enb_ue->enb_ue_s1ap_id : 0,
-                    sgw_ue ? sgw_ue->sgw_s11_teid : 0);
+            peer_addr = OGS_ADDR(&xact->gnode->addr, peer);
+            peer_port = OGS_PORT(&xact->gnode->addr);
         }
+
+        mme_ue_error(mme_ue, enb_ue, "s11", NULL,
+                "GTP Timeout S11 [%s]:%d Message-Type[%d:%s] "
+                "SGW_S11_TEID[0x%x]",
+                peer_addr, peer_port, type, type_name,
+                sgw_ue ? sgw_ue->sgw_s11_teid : 0);
     }
 }
 
@@ -801,14 +770,15 @@ int mme_gtp_send_delete_bearer_response(
     ogs_assert(bearer);
     ogs_assert(bearer->delete.xact_id >= OGS_MIN_POOL_ID &&
             bearer->delete.xact_id <= OGS_MAX_POOL_ID);
-    xact = ogs_gtp_xact_find_by_id(bearer->delete.xact_id);
-    if (!xact) {
-        ogs_error("GTP transaction(DELETE) has already been removed");
-        return OGS_OK;
-    }
-
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     ogs_assert(mme_ue);
+
+    xact = ogs_gtp_xact_find_by_id(bearer->delete.xact_id);
+    if (!xact) {
+        mme_ue_error(mme_ue, NULL, "s11", NULL,
+                "GTP transaction(DELETE) has already been removed");
+        return OGS_OK;
+    }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     ogs_assert(sgw_ue);
 
@@ -946,14 +916,15 @@ int mme_gtp_send_downlink_data_notification_ack(
     ogs_assert(bearer);
     ogs_assert(bearer->notify.xact_id >= OGS_MIN_POOL_ID &&
             bearer->notify.xact_id <= OGS_MAX_POOL_ID);
-    xact = ogs_gtp_xact_find_by_id(bearer->notify.xact_id);
-    if (!xact) {
-        ogs_error("GTP transaction(NOTIFY) has already been removed");
-        return OGS_OK;
-    }
-
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     ogs_assert(mme_ue);
+
+    xact = ogs_gtp_xact_find_by_id(bearer->notify.xact_id);
+    if (!xact) {
+        mme_ue_error(mme_ue, NULL, "s11", NULL,
+                "GTP transaction(NOTIFY) has already been removed");
+        return OGS_OK;
+    }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     ogs_assert(sgw_ue);
 

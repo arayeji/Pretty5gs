@@ -7345,10 +7345,12 @@ void enb_ue_source_deassociate_target(enb_ue_t *enb_ue)
                     target_ue->source_ue_id <= OGS_MAX_POOL_ID);
             target_ue->source_ue_id = OGS_INVALID_POOL_ID;
         } else
-            ogs_error("Target-UE-ID [%d] has already been removed "
-                    "(ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d])",
-                    source_ue->target_ue_id,
-                    source_ue->enb_ue_s1ap_id, source_ue->mme_ue_s1ap_id);
+            mme_ran_error(
+                    mme_enb_find_by_id(source_ue->enb_id),
+                    source_ue,
+                    mme_ue_find_by_id(source_ue->mme_ue_id),
+                    "s1ap", NULL,
+                    "Target-UE-ID has already been removed");
 
 
     } else if (enb_ue->source_ue_id >= OGS_MIN_POOL_ID &&

@@ -66,6 +66,15 @@ void mme_ue_log(
 #define mme_ue_debug(ue, enb, proc, apn, ...) \
     mme_ue_log(ue, enb, proc, apn, OGS_LOG_DEBUG, __VA_ARGS__)
 
+/*
+ * Per-UE log when mme_ue/enb_ue is available; eNB-only trace when only enb is
+ * known; plain ogs_error otherwise.
+ */
+void mme_ran_error(
+        mme_enb_t *enb, enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        const char *proc, const char *apn, const char *fmt, ...)
+    OGS_GNUC_PRINTF(6, 7);
+
 void mme_sess_removed_log(mme_ue_t *mme_ue, const char *apn);
 void mme_bearer_added_log(mme_ue_t *mme_ue, mme_bearer_t *bearer);
 void mme_bearer_removed_log(mme_ue_t *mme_ue, mme_bearer_t *bearer);
