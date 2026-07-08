@@ -41,8 +41,7 @@ ogs_sbi_request_t *pcf_naf_callback_build_policyauthorization_terminate(
 
     memset(&header, 0, sizeof(header));
     header.service.name =
-        OpenAPI_service_name_ToString(
-                OpenAPI_service_name_npcf_policyauthorization);
+        (char *)OGS_SBI_SERVICE_NAME_NPCF_POLICYAUTHORIZATION;
     header.api.version = (char *)OGS_SBI_API_V1;
     header.resource.component[0] = (char *)OGS_SBI_RESOURCE_NAME_APP_SESSIONS;
     header.resource.component[1] = app_session->app_session_id;

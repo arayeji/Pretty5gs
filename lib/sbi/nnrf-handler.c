@@ -1199,7 +1199,7 @@ static bool nf_profile_has_status_subscription(OpenAPI_nf_profile_t *NFProfile)
 
     if (ogs_sbi_nf_status_subscription_exists(
                 ogs_sbi_self()->nf_instance->id,
-                NFProfile->nf_type, OpenAPI_service_name_NULL, true))
+                NFProfile->nf_type, NULL, true))
         return true;
 
     OpenAPI_list_for_each(NFProfile->nf_services, node) {
@@ -1236,7 +1236,7 @@ static bool nf_instance_has_status_subscription(
 
     if (ogs_sbi_nf_status_subscription_exists(
                 ogs_sbi_self()->nf_instance->id,
-                nf_instance->nf_type, OpenAPI_service_name_NULL, true))
+                nf_instance->nf_type, NULL, true))
         return true;
 
     ogs_list_for_each(&nf_instance->nf_service_list, nf_service) {
