@@ -1817,20 +1817,29 @@ void sgwc_home_plmn_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id)
     if (best) {
         char mcc_buf[4];
         const char *pfx = best->imsi_prefix;
-        int mnc_len = best_len - 3;
+        int mnc_len;
         uint16_t mcc, mnc;
 
-        if (mnc_len >= 2 && mnc_len <= 3) {
+        /*
+         * Do not derive MNC length from imsi_prefix digit count alone
+         * (432110... + prefix "432110" -> 432-110). Try 2- then 3-digit
+         * MNC and keep the first that prefix-matches the IMSI.
+         */
+        for (mnc_len = 2; mnc_len <= 3; mnc_len++) {
+            if (best_len < 3 + mnc_len)
+                continue;
+
             memcpy(mcc_buf, pfx, 3);
             mcc_buf[3] = '\0';
             mcc = (uint16_t)atoi(mcc_buf);
             mnc = (uint16_t)atoi(pfx + 3);
             ogs_plmn_id_build(plmn_id, mcc, mnc, (uint16_t)mnc_len);
-            return;
+            if (ogs_plmn_id_imsi_prefix_match(imsi_bcd, plmn_id))
+                return;
         }
     }
 
-    ogs_plmn_id_from_imsi_bcd(imsi_bcd, plmn_id);
+    ogs_plmn_id_from_imsi_bcd_with_config_fallback(imsi_bcd, plmn_id);
 }
 
 bool sgwc_sess_is_inbound_roam(sgwc_sess_t *sess)

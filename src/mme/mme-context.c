@@ -5353,7 +5353,7 @@ void mme_home_plmn_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id)
         }
     }
 
-    ogs_plmn_id_from_imsi_bcd(imsi_bcd, plmn_id);
+    ogs_plmn_id_from_imsi_bcd_with_config_fallback(imsi_bcd, plmn_id);
 }
 
 static bool mme_imsi_acl_match(const char *imsi_bcd)

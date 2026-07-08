@@ -1914,6 +1914,8 @@ static int smf_ue_set_imsi_bcd(smf_ue_t *smf_ue, const char *imsi_bcd)
         smf_home_plmn_from_imsi_bcd(smf_ue->imsi_bcd, &plmn_id);
         smf_metrics_inst_by_plmn_add(&plmn_id,
                 SMF_METR_BY_PLMN_GAUGE_UE_ACTIVE, 1);
+        smf_ue->metrics_plmn_id = plmn_id;
+        smf_ue->metrics_plmn_valid = true;
     }
 
     return OGS_OK;
@@ -2098,11 +2100,11 @@ void smf_ue_remove(smf_ue_t *smf_ue)
         ogs_free(smf_ue->gpsi);
 
     if (smf_ue->imsi_len) {
-        ogs_plmn_id_t plmn_id;
-
-        smf_home_plmn_from_imsi_bcd(smf_ue->imsi_bcd, &plmn_id);
-        smf_metrics_inst_by_plmn_add(&plmn_id,
-                SMF_METR_BY_PLMN_GAUGE_UE_ACTIVE, -1);
+        if (smf_ue->metrics_plmn_valid) {
+            smf_metrics_inst_by_plmn_add(&smf_ue->metrics_plmn_id,
+                    SMF_METR_BY_PLMN_GAUGE_UE_ACTIVE, -1);
+            smf_ue->metrics_plmn_valid = false;
+        }
 
         ogs_hash_set(self.imsi_hash, smf_ue->imsi, smf_ue->imsi_len, NULL);
     }

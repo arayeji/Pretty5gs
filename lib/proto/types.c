@@ -184,6 +184,36 @@ void ogs_plmn_id_home_from_imsi_bcd(
                 imsi_bcd, candidates, num_candidates, plmn_id))
         return;
 
+    ogs_plmn_id_from_imsi_bcd_with_config_fallback(imsi_bcd, plmn_id);
+}
+
+void ogs_plmn_id_from_imsi_bcd_with_config_fallback(
+        const char *imsi_bcd, ogs_plmn_id_t *plmn_id)
+{
+    size_t len;
+
+    ogs_assert(imsi_bcd);
+    ogs_assert(plmn_id);
+
+    len = strlen(imsi_bcd);
+    if (len >= 6 && imsi_bcd[5] == '0') {
+        /*
+         * Digit 6 is 0 for 2-digit MNC when MSIN starts with 0 (432-11 /
+         * 432110...) and for 3-digit MNCs ending in 0. With no configured
+         * PLMN match, prefer 2-digit MNC over the digit-6 3-digit rule.
+         */
+        char mcc_buf[4];
+        char mnc_buf[3];
+
+        memcpy(mcc_buf, imsi_bcd, 3);
+        mcc_buf[3] = '\0';
+        memcpy(mnc_buf, imsi_bcd + 3, 2);
+        mnc_buf[2] = '\0';
+        ogs_plmn_id_build(plmn_id,
+                (uint16_t)atoi(mcc_buf), (uint16_t)atoi(mnc_buf), 2);
+        return;
+    }
+
     ogs_plmn_id_from_imsi_bcd(imsi_bcd, plmn_id);
 }
 

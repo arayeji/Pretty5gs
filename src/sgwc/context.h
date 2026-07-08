@@ -235,6 +235,8 @@ typedef struct sgwc_ue_s {
     ogs_time_t      csr_replace_t0;
 
     unsigned        metrics_ue_counted : 1;
+    unsigned        metrics_plmn_valid : 1;
+    ogs_plmn_id_t   metrics_plmn_id;
     unsigned        gn : 1;         /* UE reached via GTPv1 Gn */
 } sgwc_ue_t;
 

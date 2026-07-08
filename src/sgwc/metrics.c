@@ -260,23 +260,24 @@ void sgwc_metrics_ue_active_inc(sgwc_ue_t *sgwc_ue)
 
     sgwc_metrics_inst_by_plmn_add(&plmn_id,
             SGWC_METR_BY_PLMN_GAUGE_UE_ACTIVE, 1);
+    sgwc_ue->metrics_plmn_id = plmn_id;
+    sgwc_ue->metrics_plmn_valid = 1;
     sgwc_ue->metrics_ue_counted = 1;
 }
 
 void sgwc_metrics_ue_active_dec(sgwc_ue_t *sgwc_ue)
 {
-    ogs_plmn_id_t plmn_id;
-
     ogs_assert(sgwc_ue);
 
     if (!sgwc_ue->metrics_ue_counted)
         return;
 
-    if (!sgwc_metrics_plmn_from_ue(sgwc_ue, &plmn_id))
-        return;
+    if (sgwc_ue->metrics_plmn_valid) {
+        sgwc_metrics_inst_by_plmn_add(&sgwc_ue->metrics_plmn_id,
+                SGWC_METR_BY_PLMN_GAUGE_UE_ACTIVE, -1);
+        sgwc_ue->metrics_plmn_valid = 0;
+    }
 
-    sgwc_metrics_inst_by_plmn_add(&plmn_id,
-            SGWC_METR_BY_PLMN_GAUGE_UE_ACTIVE, -1);
     sgwc_ue->metrics_ue_counted = 0;
 }
 

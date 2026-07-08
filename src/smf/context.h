@@ -443,6 +443,8 @@ typedef struct smf_ue_s {
     uint8_t imsi[OGS_MAX_IMSI_LEN];
     int imsi_len;
     char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+    bool metrics_plmn_valid;
+    ogs_plmn_id_t metrics_plmn_id;
 
     /* MSISDN */
     uint8_t msisdn[OGS_MAX_MSISDN_LEN];
