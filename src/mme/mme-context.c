@@ -4368,6 +4368,11 @@ void mme_sgw_echo_reschedule_all(void)
         mme_sgw_echo_schedule(sgw);
 }
 
+/*
+ * Parse mme.time subtree.  Caller must pass an iterator recursed into the
+ * `time:` mapping (see ogs_yaml_iter_recurse); passing the parent `mme:`
+ * iterator would advance through every remaining mme key and skip reload.
+ */
 static void mme_time_config_parse(ogs_yaml_iter_t *time_iter)
 {
     ogs_yaml_iter_t t3402_iter, t3396_iter, t3412_iter, t3423_iter;
@@ -4529,7 +4534,10 @@ void mme_context_reload_runtime(void)
                 const char *mme_key = ogs_yaml_iter_key(&mme_iter);
                 ogs_assert(mme_key);
                 if (!strcmp(mme_key, "time")) {
-                    mme_time_config_parse(&mme_iter);
+                    ogs_yaml_iter_t time_iter;
+
+                    ogs_yaml_iter_recurse(&mme_iter, &time_iter);
+                    mme_time_config_parse(&time_iter);
                     ogs_reload_audit_note("mme.time timers reloaded");
                     found = true;
                 } else if (!strcmp(mme_key, "gtpc")) {
