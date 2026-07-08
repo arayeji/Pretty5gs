@@ -6800,6 +6800,123 @@ mme_ue_t *mme_ue_find_by_gn_local_teid(uint32_t teid)
     return ogs_hash_get(self.mme_gn_teid_hash, &teid, sizeof(teid));
 }
 
+static mme_ue_t *mme_ue_lookup_by_imsi_bcd(const char *imsi_bcd)
+{
+    mme_ue_t *mme_ue = NULL;
+
+    ogs_assert(imsi_bcd);
+
+    mme_ue = mme_ue_find_by_imsi_bcd(imsi_bcd);
+    if (mme_ue) {
+        ogs_mme_trace_set(
+                enb_ue_find_by_id(mme_ue->enb_ue_id),
+                mme_ue, NULL, "lookup");
+        OGS_TLOG_INFO("known UE by IMSI");
+    } else {
+        ogs_trace_ctx_t ctx;
+
+        memset(&ctx, 0, sizeof(ctx));
+        ogs_cpystrn(ctx.imsi, imsi_bcd, sizeof(ctx.imsi));
+        ogs_cpystrn(ctx.proc, "lookup", sizeof(ctx.proc));
+        ogs_trace_set(&ctx);
+        OGS_TLOG_INFO("Unknown UE by IMSI");
+    }
+
+    return mme_ue;
+}
+
+static mme_ue_t *mme_ue_lookup_by_eps_guti(
+        const ogs_nas_eps_mobile_identity_guti_t *eps_guti)
+{
+    mme_ue_t *mme_ue = NULL;
+    ogs_nas_eps_guti_t ogs_nas_guti;
+
+    ogs_assert(eps_guti);
+
+    ogs_nas_guti.nas_plmn_id = eps_guti->nas_plmn_id;
+    ogs_nas_guti.mme_gid = eps_guti->mme_gid;
+    ogs_nas_guti.mme_code = eps_guti->mme_code;
+    ogs_nas_guti.m_tmsi = eps_guti->m_tmsi;
+
+    mme_ue = mme_ue_find_by_guti(&ogs_nas_guti);
+    if (mme_ue) {
+        ogs_info("[%s] Known UE by GUTI[G:%d,C:%d,M_TMSI:0x%x]",
+                mme_ue->imsi_bcd,
+                ogs_nas_guti.mme_gid,
+                ogs_nas_guti.mme_code,
+                ogs_nas_guti.m_tmsi);
+    } else {
+        ogs_info("Unknown UE by GUTI[G:%d,C:%d,M_TMSI:0x%x]",
+                ogs_nas_guti.mme_gid,
+                ogs_nas_guti.mme_code,
+                ogs_nas_guti.m_tmsi);
+    }
+
+    return mme_ue;
+}
+
+static mme_ue_t *mme_ue_lookup_by_eps_mobile_identity(
+        const ogs_nas_eps_mobile_identity_t *eps_mobile_identity,
+        const char *proc)
+{
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+    uint8_t type;
+
+    ogs_assert(proc);
+
+    if (!eps_mobile_identity)
+        return NULL;
+
+    if (eps_mobile_identity->length == 0) {
+        ogs_debug("EPS mobile identity absent (length=0) [%s]", proc);
+        return NULL;
+    }
+
+    type = eps_mobile_identity->guti.type;
+
+    switch (type) {
+    case OGS_NAS_EPS_MOBILE_IDENTITY_IMSI:
+        if (sizeof(ogs_nas_mobile_identity_imsi_t) !=
+                eps_mobile_identity->length) {
+            ogs_error("mobile_identity length (%d != %d) [%s]",
+                    (int)sizeof(ogs_nas_mobile_identity_imsi_t),
+                    eps_mobile_identity->length, proc);
+            return NULL;
+        }
+        ogs_nas_eps_imsi_to_bcd(
+                &eps_mobile_identity->imsi, eps_mobile_identity->length,
+                imsi_bcd);
+        return mme_ue_lookup_by_imsi_bcd(imsi_bcd);
+
+    case OGS_NAS_EPS_MOBILE_IDENTITY_GUTI:
+        if (eps_mobile_identity->length <
+                sizeof(ogs_nas_eps_mobile_identity_guti_t)) {
+            ogs_error("GUTI mobile_identity length too short (%d) [%s]",
+                    eps_mobile_identity->length, proc);
+            return NULL;
+        }
+        return mme_ue_lookup_by_eps_guti(&eps_mobile_identity->guti);
+
+    case OGS_NAS_MOBILE_IDENTITY_NONE:
+        ogs_debug("EPS mobile identity type NONE (0) [%s]", proc);
+        return NULL;
+
+    case OGS_NAS_MOBILE_IDENTITY_IMEI:
+    case OGS_NAS_MOBILE_IDENTITY_IMEISV:
+        ogs_debug("EPS mobile identity type %u (IMEI/IMEISV) "
+                "not used for UE lookup [%s]", type, proc);
+        return NULL;
+
+    default:
+        ogs_error("Invalid EPS mobile identity type [%u] [%s]", type, proc);
+        ogs_log_hexdump(OGS_LOG_ERROR,
+                (unsigned char *)eps_mobile_identity,
+                ogs_min(eps_mobile_identity->length + 1,
+                    sizeof(ogs_nas_eps_mobile_identity_t)));
+        return NULL;
+    }
+}
+
 mme_ue_t *mme_ue_find_by_message(const ogs_nas_eps_message_t *message)
 {
     mme_ue_t *mme_ue = NULL;
@@ -6807,11 +6924,8 @@ mme_ue_t *mme_ue_find_by_message(const ogs_nas_eps_message_t *message)
     const ogs_nas_eps_detach_request_from_ue_t *detach_request = NULL;
     const ogs_nas_eps_tracking_area_update_request_t *tau_request = NULL;
     const ogs_nas_eps_extended_service_request_t *extended_service_request = NULL;
-    const ogs_nas_eps_mobile_identity_t *eps_mobile_identity = NULL;
     const ogs_nas_mobile_identity_t *mobile_identity = NULL;
 
-    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
-    const ogs_nas_eps_mobile_identity_guti_t *eps_mobile_identity_guti = NULL;
     const ogs_nas_mobile_identity_tmsi_t *mobile_identity_tmsi = NULL;
     const served_gummei_t *served_gummei = NULL;
     ogs_nas_eps_guti_t ogs_nas_guti;
@@ -6819,133 +6933,29 @@ mme_ue_t *mme_ue_find_by_message(const ogs_nas_eps_message_t *message)
     switch (message->emm.h.message_type) {
     case OGS_NAS_EPS_ATTACH_REQUEST:
         attach_request = &message->emm.attach_request;
-        eps_mobile_identity = &attach_request->eps_mobile_identity;
-
-        switch(eps_mobile_identity->imsi.type) {
-        case OGS_NAS_EPS_MOBILE_IDENTITY_IMSI:
-            if (sizeof(ogs_nas_mobile_identity_imsi_t) !=
-                    eps_mobile_identity->length) {
-                ogs_error("mobile_identity length (%d != %d)",
-                        (int)sizeof(ogs_nas_mobile_identity_imsi_t),
-                        eps_mobile_identity->length);
-                return NULL;
-            }
-            ogs_nas_eps_imsi_to_bcd(
-                &eps_mobile_identity->imsi, eps_mobile_identity->length,
-                imsi_bcd);
-
-            mme_ue = mme_ue_find_by_imsi_bcd(imsi_bcd);
-            if (mme_ue) {
-                ogs_mme_trace_set(
-                        enb_ue_find_by_id(mme_ue->enb_ue_id),
-                        mme_ue, NULL, "lookup");
-                OGS_TLOG_INFO("known UE by IMSI");
-            } else {
-                ogs_trace_ctx_t ctx;
-
-                memset(&ctx, 0, sizeof(ctx));
-                ogs_cpystrn(ctx.imsi, imsi_bcd, sizeof(ctx.imsi));
-                ogs_cpystrn(ctx.proc, "lookup", sizeof(ctx.proc));
-                ogs_trace_set(&ctx);
-                OGS_TLOG_INFO("Unknown UE by IMSI");
-            }
-            break;
-        case OGS_NAS_EPS_MOBILE_IDENTITY_GUTI:
-            eps_mobile_identity_guti = &eps_mobile_identity->guti;
-
-            ogs_nas_guti.nas_plmn_id = eps_mobile_identity_guti->nas_plmn_id;
-            ogs_nas_guti.mme_gid = eps_mobile_identity_guti->mme_gid;
-            ogs_nas_guti.mme_code = eps_mobile_identity_guti->mme_code;
-            ogs_nas_guti.m_tmsi = eps_mobile_identity_guti->m_tmsi;
-
-            mme_ue = mme_ue_find_by_guti(&ogs_nas_guti);
-            if (mme_ue) {
-                ogs_info("[%s] Known UE by GUTI[G:%d,C:%d,M_TMSI:0x%x]",
-                        mme_ue->imsi_bcd,
-                        ogs_nas_guti.mme_gid,
-                        ogs_nas_guti.mme_code,
-                        ogs_nas_guti.m_tmsi);
-            } else {
-                ogs_info("Unknown UE by GUTI[G:%d,C:%d,M_TMSI:0x%x]",
-                        ogs_nas_guti.mme_gid,
-                        ogs_nas_guti.mme_code,
-                        ogs_nas_guti.m_tmsi);
-            }
-            break;
-        default:
-            ogs_error("Unknown EPS Mobile Identity Type [%d]",
-                    eps_mobile_identity->imsi.type);
-        }
+        mme_ue = mme_ue_lookup_by_eps_mobile_identity(
+                &attach_request->eps_mobile_identity, "attach");
         break;
     case OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST:
         tau_request = &message->emm.tracking_area_update_request;
-        eps_mobile_identity = &tau_request->old_guti;
-
-        switch(eps_mobile_identity->imsi.type) {
-        case OGS_NAS_EPS_MOBILE_IDENTITY_GUTI:
-            eps_mobile_identity_guti = &eps_mobile_identity->guti;
-
-            ogs_nas_guti.nas_plmn_id = eps_mobile_identity_guti->nas_plmn_id;
-            ogs_nas_guti.mme_gid = eps_mobile_identity_guti->mme_gid;
-            ogs_nas_guti.mme_code = eps_mobile_identity_guti->mme_code;
-            ogs_nas_guti.m_tmsi = eps_mobile_identity_guti->m_tmsi;
-
-            mme_ue = mme_ue_find_by_guti(&ogs_nas_guti);
-            if (mme_ue) {
-                ogs_info("[%s] Known UE by GUTI[G:%d,C:%d,M_TMSI:0x%x]",
-                        mme_ue->imsi_bcd,
-                        ogs_nas_guti.mme_gid,
-                        ogs_nas_guti.mme_code,
-                        ogs_nas_guti.m_tmsi);
-            } else {
-                ogs_info("Unknown UE by GUTI[G:%d,C:%d,M_TMSI:0x%x]",
-                        ogs_nas_guti.mme_gid,
-                        ogs_nas_guti.mme_code,
-                        ogs_nas_guti.m_tmsi);
-            }
-            break;
-        default:
-            ogs_error("Unknown EPS Mobile Identity Type [%d]",
-                    eps_mobile_identity->imsi.type);
-        }
+        mme_ue = mme_ue_lookup_by_eps_mobile_identity(
+                &tau_request->old_guti, "tau");
         break;
     case OGS_NAS_EPS_DETACH_REQUEST:
         detach_request = &message->emm.detach_request_from_ue;
-        eps_mobile_identity = &detach_request->eps_mobile_identity;
-
-        switch(eps_mobile_identity->imsi.type) {
-        case OGS_NAS_EPS_MOBILE_IDENTITY_GUTI:
-            eps_mobile_identity_guti = &eps_mobile_identity->guti;
-
-            ogs_nas_guti.nas_plmn_id = eps_mobile_identity_guti->nas_plmn_id;
-            ogs_nas_guti.mme_gid = eps_mobile_identity_guti->mme_gid;
-            ogs_nas_guti.mme_code = eps_mobile_identity_guti->mme_code;
-            ogs_nas_guti.m_tmsi = eps_mobile_identity_guti->m_tmsi;
-
-            mme_ue = mme_ue_find_by_guti(&ogs_nas_guti);
-            if (mme_ue) {
-                ogs_info("[%s] Known UE by GUTI[G:%d,C:%d,M_TMSI:0x%x]",
-                        mme_ue->imsi_bcd,
-                        ogs_nas_guti.mme_gid,
-                        ogs_nas_guti.mme_code,
-                        ogs_nas_guti.m_tmsi);
-            } else {
-                ogs_info("Unknown UE by GUTI[G:%d,C:%d,M_TMSI:0x%x]",
-                        ogs_nas_guti.mme_gid,
-                        ogs_nas_guti.mme_code,
-                        ogs_nas_guti.m_tmsi);
-            }
-            break;
-        default:
-            ogs_error("Unknown EPS Mobile Identity Type [%d]",
-                    eps_mobile_identity->imsi.type);
-        }
+        mme_ue = mme_ue_lookup_by_eps_mobile_identity(
+                &detach_request->eps_mobile_identity, "detach");
         break;
     case OGS_NAS_EPS_EXTENDED_SERVICE_REQUEST:
         extended_service_request = &message->emm.extended_service_request;
         mobile_identity = &extended_service_request->m_tmsi;
 
-        switch(mobile_identity->tmsi.type) {
+        if (mobile_identity->length == 0) {
+            ogs_debug("Mobile identity absent (length=0) [service-req]");
+            break;
+        }
+
+        switch (mobile_identity->tmsi.type) {
         case OGS_NAS_MOBILE_IDENTITY_TMSI:
             mobile_identity_tmsi = &mobile_identity->tmsi;
             served_gummei = &mme_self()->served_gummei[0];
@@ -6971,9 +6981,17 @@ mme_ue_t *mme_ue_find_by_message(const ogs_nas_eps_message_t *message)
                         ogs_nas_guti.m_tmsi);
             }
             break;
+        case OGS_NAS_MOBILE_IDENTITY_NONE:
+            ogs_debug("Mobile identity type NONE (0) [service-req]");
+            break;
         default:
-            ogs_error("Unknown Mobile Identity Type [%d]",
+            ogs_error("Invalid mobile identity type [%u] [service-req]",
                     mobile_identity->tmsi.type);
+            ogs_log_hexdump(OGS_LOG_ERROR,
+                    (unsigned char *)mobile_identity,
+                    ogs_min(mobile_identity->length + 1,
+                        sizeof(ogs_nas_mobile_identity_t)));
+            break;
         }
         break;
     default:
