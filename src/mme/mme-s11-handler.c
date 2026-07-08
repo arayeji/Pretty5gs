@@ -999,7 +999,8 @@ void mme_s11_handle_delete_session_response(
             return;
         }
 
-        r = nas_eps_send_deactivate_bearer_context_request(bearer);
+        r = nas_eps_send_deactivate_bearer_context_request(
+                bearer, OGS_NAS_ESM_CAUSE_REGULAR_DEACTIVATION);
         ogs_expect(r == OGS_OK);
         ogs_assert(r != OGS_ERROR);
 
@@ -1511,6 +1512,7 @@ void mme_s11_handle_delete_bearer_request(
 {
     int r;
     uint8_t cause_value = OGS_GTP2_CAUSE_UNDEFINED_VALUE;
+    ogs_nas_esm_cause_t esm_cause = OGS_NAS_ESM_CAUSE_REGULAR_DEACTIVATION;
 
     mme_bearer_t *bearer = NULL;
     mme_sess_t *sess = NULL;
@@ -1613,15 +1615,23 @@ void mme_s11_handle_delete_bearer_request(
     ogs_assert(xact->id >= OGS_MIN_POOL_ID && xact->id <= OGS_MAX_POOL_ID);
     bearer->delete.xact_id = xact->id;
 
+    if (req->cause.presence && req->cause.data &&
+            req->linked_eps_bearer_id.presence) {
+        ogs_gtp2_cause_t *cause = req->cause.data;
+        if (cause->value == OGS_GTP2_CAUSE_REACTIVATION_REQUESTED)
+            esm_cause = OGS_NAS_ESM_CAUSE_REACTIVATION_REQUESTED;
+    }
+
     if (ECM_IDLE(mme_ue)) {
         MME_STORE_PAGING_INFO(mme_ue,
             MME_PAGING_TYPE_DELETE_BEARER, bearer->id);
+        mme_ue->paging.esm_cause = esm_cause;
         r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
         ogs_expect(r == OGS_OK);
         ogs_assert(r != OGS_ERROR);
     } else {
         MME_CLEAR_PAGING_INFO(mme_ue);
-        r = nas_eps_send_deactivate_bearer_context_request(bearer);
+        r = nas_eps_send_deactivate_bearer_context_request(bearer, esm_cause);
         ogs_expect(r == OGS_OK);
         ogs_assert(r != OGS_ERROR);
     }

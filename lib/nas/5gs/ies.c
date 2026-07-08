@@ -203,11 +203,16 @@ int ogs_nas_5gs_decode_dnn(ogs_nas_dnn_t *dnn, ogs_pkbuf_t *pkbuf)
 
     {
         char data_network_name[OGS_MAX_DNN_LEN+1];
-        dnn->length = ogs_fqdn_parse(data_network_name, dnn->value, ogs_min(dnn->length, OGS_MAX_DNN_LEN));
-        if (dnn->length > 0) {
-            ogs_cpystrn(dnn->value, data_network_name, ogs_min(dnn->length, OGS_MAX_DNN_LEN)+1);
-        } else {
+        int dnn_len;
+
+        dnn_len = ogs_fqdn_parse(data_network_name, dnn->value,
+                ogs_min(dnn->length, OGS_MAX_DNN_LEN));
+        if (dnn_len <= 0) {
             ogs_error("UE not APN setting");
+        } else {
+            dnn->length = dnn_len;
+            ogs_cpystrn(dnn->value, data_network_name,
+                    ogs_min(dnn->length, OGS_MAX_DNN_LEN)+1);
         }
     }
 

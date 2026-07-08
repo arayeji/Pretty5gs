@@ -1350,6 +1350,24 @@ int smf_epc_pfcp_send_deactivation(smf_sess_t *sess, uint8_t gtp_cause)
         }
         break;
 
+    case OGS_GTP2_CAUSE_REACTIVATION_REQUESTED:
+        if (ogs_list_first(&sess->bearer_list) == NULL) {
+            ogs_error("No Bearer List in Session");
+            return OGS_ERROR;
+        }
+
+        rv = smf_epc_pfcp_send_all_pdr_modification_request(
+                sess, OGS_INVALID_POOL_ID, NULL,
+                OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_DEACTIVATE,
+                OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED,
+                OGS_GTP2_CAUSE_REACTIVATION_REQUESTED);
+        if (rv != OGS_OK) {
+            ogs_error("smf_epc_pfcp_send_all_pdr_modification_request() "
+                    "failed");
+            return OGS_ERROR;
+        }
+        break;
+
     default:
         ogs_fatal("Invalid GTP-Cause[%d]", gtp_cause);
         ogs_assert_if_reached();

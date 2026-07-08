@@ -2024,11 +2024,37 @@ uint8_t smf_n4_handle_session_report_request(
     /* Error Indication is handled last */
     if (report_type.error_indication_report && far) {
         if (sess->epc == true) {
-            ogs_error("[%s:%s] Error Indication from SGW-C",
-                smf_ue->imsi_bcd, sess->session.name);
-            ogs_assert(OGS_OK ==
-                smf_epc_pfcp_send_session_deletion_request(
-                    sess, OGS_INVALID_POOL_ID));
+            smf_bearer_t *matched_bearer = NULL;
+            smf_bearer_t *b = NULL;
+
+            ogs_list_for_each(&sess->bearer_list, b) {
+                if (b->dl_far == far) {
+                    matched_bearer = b;
+                    break;
+                }
+            }
+            if (!matched_bearer) {
+                ogs_error("[%s:%s] Error Indication from SGW-U: "
+                        "no bearer found for FAR",
+                    smf_ue->imsi_bcd, sess->session.name);
+            } else if (matched_bearer == smf_default_bearer_in_sess(sess)) {
+                ogs_error("[%s:%s] Error Indication from SGW-U "
+                        "[EBI:%d] (default bearer)",
+                    smf_ue->imsi_bcd, sess->session.name, matched_bearer->ebi);
+                ogs_assert(OGS_OK ==
+                    smf_epc_pfcp_send_deactivation(
+                        sess, OGS_GTP2_CAUSE_REACTIVATION_REQUESTED));
+            } else {
+                ogs_error("[%s:%s] Error Indication from SGW-U "
+                        "[EBI:%d] (dedicated bearer)",
+                    smf_ue->imsi_bcd, sess->session.name, matched_bearer->ebi);
+                ogs_assert(OGS_OK ==
+                    smf_epc_pfcp_send_one_bearer_modification_request(
+                        matched_bearer, OGS_INVALID_POOL_ID,
+                        OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_DEACTIVATE,
+                        OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED,
+                        OGS_GTP2_CAUSE_UNDEFINED_VALUE));
+            }
         } else {
             ogs_warn("[%s:%s] Error Indication from gNB",
                 smf_ue->supi, sess->session.name);

@@ -4707,7 +4707,10 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
         ogs_assert(ogs_pkbuf_push(pkbuf, 1));
         decoded -= 1;
         size = ogs_nas_eps_decode_service_request(message, pkbuf);
-        ogs_assert(size >= 0);
+        if (size < 0) {
+            ogs_error("ogs_nas_eps_decode_service_request() failed");
+            return OGS_ERROR;
+        }
         decoded += size;
 
         goto out;

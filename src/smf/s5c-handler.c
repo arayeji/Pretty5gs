@@ -971,8 +971,11 @@ void smf_s5c_handle_modify_bearer_request(
         }
 
         if (indication && indication->handover_indication) {
-            ogs_assert(OGS_OK == smf_epc_pfcp_send_deactivation(sess,
-                    OGS_GTP2_CAUSE_ACCESS_CHANGED_FROM_NON_3GPP_TO_3GPP));
+            rv = smf_epc_pfcp_send_deactivation(sess,
+                    OGS_GTP2_CAUSE_ACCESS_CHANGED_FROM_NON_3GPP_TO_3GPP);
+            if (rv != OGS_OK)
+                ogs_error("smf_epc_pfcp_send_deactivation() failed "
+                        "[cause:ACCESS_CHANGED_FROM_NON_3GPP_TO_3GPP]");
         }
     }
 }

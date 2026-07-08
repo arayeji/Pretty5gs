@@ -5293,6 +5293,25 @@ void mme_home_plmn_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id)
     ogs_assert(imsi_bcd);
     ogs_assert(plmn_id);
 
+    if (ogs_plmn_id_pick_imsi_prefix_match(imsi_bcd,
+            ogs_local_conf()->serving_plmn_id,
+            ogs_local_conf()->num_of_serving_plmn_id,
+            plmn_id))
+        return;
+
+    for (i = 0; i < self.num_of_served_gummei; i++) {
+        served_gummei_t *gummei = &self.served_gummei[i];
+        int j;
+
+        for (j = 0; j < gummei->num_of_plmn_id; j++) {
+            if (ogs_plmn_id_imsi_prefix_match(
+                        imsi_bcd, &gummei->plmn_id[j])) {
+                memcpy(plmn_id, &gummei->plmn_id[j], sizeof(*plmn_id));
+                return;
+            }
+        }
+    }
+
     ogs_list_for_each(&self.hssmap_list, hssmap) {
         if (ogs_plmn_id_imsi_prefix_match(imsi_bcd, &hssmap->plmn_id)) {
             if (!found || hssmap->selection_order < best_order) {
@@ -5809,6 +5828,28 @@ void enb_ue_switch_to_enb(enb_ue_t *enb_ue, mme_enb_t *new_enb)
                 enb_ue);
 
     enb_ue->enb_id = new_enb->id;
+
+    if (new_enb->max_num_of_ostreams < 2) {
+        ogs_error("Target eNB has no UE-associated SCTP stream "
+                "[MAX:%d]; UE-associated signalling cannot be delivered",
+                new_enb->max_num_of_ostreams);
+        return;
+    }
+
+    if (enb_ue->enb_ostream_id >= new_enb->max_num_of_ostreams) {
+        uint16_t old_ostream_id = enb_ue->enb_ostream_id;
+
+        enb_ue->enb_ostream_id =
+            OGS_NEXT_ID(new_enb->ostream_id, 1,
+                    new_enb->max_num_of_ostreams-1);
+
+        ogs_warn("SCTP output stream re-bound to the target eNB "
+                "[OLD:%d NEW:%d MAX:%d] "
+                "ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
+                old_ostream_id, enb_ue->enb_ostream_id,
+                new_enb->max_num_of_ostreams,
+                enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
+    }
 }
 
 enb_ue_t *enb_ue_find_by_enb_ue_s1ap_id(

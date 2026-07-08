@@ -271,7 +271,7 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
             ogs_plmn_id_t home_plmn_id;
             char home_plmn[OGS_PLMNIDSTRLEN];
 
-            ogs_plmn_id_from_imsi_bcd(imsi_bcd, &home_plmn_id);
+            mme_home_plmn_from_imsi_bcd(imsi_bcd, &home_plmn_id);
             ogs_plmn_id_to_string(&home_plmn_id, home_plmn);
             ogs_warn("[%s] Rejected by PLMN-ID access control "
                     "[home_plmn:%s emm_cause:%d]",
@@ -522,7 +522,7 @@ int emm_handle_identity_response(
             ogs_plmn_id_t home_plmn_id;
             char home_plmn[OGS_PLMNIDSTRLEN];
 
-            ogs_plmn_id_from_imsi_bcd(imsi_bcd, &home_plmn_id);
+            mme_home_plmn_from_imsi_bcd(imsi_bcd, &home_plmn_id);
             ogs_plmn_id_to_string(&home_plmn_id, home_plmn);
             ogs_warn("[%s] Rejected by PLMN-ID access control "
                     "[home_plmn:%s emm_cause:%d]",

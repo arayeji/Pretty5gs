@@ -1495,6 +1495,29 @@ void ran_ue_switch_to_gnb(ran_ue_t *ran_ue, amf_gnb_t *new_gnb)
 
     /* Switch to gnb */
     ran_ue->gnb_id = new_gnb->id;
+
+    if (new_gnb->max_num_of_ostreams < 2) {
+        ogs_error("Target gNB has no UE-associated SCTP stream "
+                "[MAX:%d]; UE-associated signalling cannot be delivered",
+                new_gnb->max_num_of_ostreams);
+        return;
+    }
+
+    if (ran_ue->gnb_ostream_id >= new_gnb->max_num_of_ostreams) {
+        uint16_t old_ostream_id = ran_ue->gnb_ostream_id;
+
+        ran_ue->gnb_ostream_id =
+            OGS_NEXT_ID(new_gnb->ostream_id, 1,
+                    new_gnb->max_num_of_ostreams-1);
+
+        ogs_warn("SCTP output stream re-bound to the target gNB "
+                "[OLD:%d NEW:%d MAX:%d] "
+                "RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld]",
+                old_ostream_id, ran_ue->gnb_ostream_id,
+                new_gnb->max_num_of_ostreams,
+                (long long)ran_ue->ran_ue_ngap_id,
+                (long long)ran_ue->amf_ue_ngap_id);
+    }
 }
 
 ran_ue_t *ran_ue_find_by_ran_ue_ngap_id(

@@ -3623,11 +3623,16 @@ int ogs_nas_eps_decode_access_point_name(ogs_nas_access_point_name_t *access_poi
 
     {
         char apn[OGS_MAX_APN_LEN+1];
-        access_point_name->length = ogs_fqdn_parse(apn, access_point_name->apn, ogs_min(access_point_name->length, OGS_MAX_APN_LEN));
-        if (access_point_name->length > 0) {
-            ogs_cpystrn(access_point_name->apn, apn, ogs_min(access_point_name->length, OGS_MAX_APN_LEN)+1);
-        } else {
+        int apn_len;
+
+        apn_len = ogs_fqdn_parse(apn, access_point_name->apn,
+                ogs_min(access_point_name->length, OGS_MAX_APN_LEN));
+        if (apn_len <= 0) {
             ogs_error("UE not APN setting");
+        } else {
+            access_point_name->length = apn_len;
+            ogs_cpystrn(access_point_name->apn, apn,
+                    ogs_min(access_point_name->length, OGS_MAX_APN_LEN)+1);
         }
     }
 
