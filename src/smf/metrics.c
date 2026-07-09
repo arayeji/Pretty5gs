@@ -205,6 +205,71 @@ int smf_metrics_free_inst_gtp_node(ogs_metrics_inst_t **inst)
     return smf_metrics_free_inst(inst, _SMF_METR_GTP_NODE_MAX);
 }
 
+/* PFCP PEER */
+const char *labels_pfcp_peer[] = {
+    "addr"
+};
+#define SMF_METR_PFCP_PEER_GAUGE_ENTRY(_id, _name, _desc) \
+    [_id] = { \
+        .type = OGS_METRICS_METRIC_TYPE_GAUGE, \
+        .name = _name, \
+        .description = _desc, \
+        .num_labels = OGS_ARRAY_SIZE(labels_pfcp_peer), \
+        .labels = labels_pfcp_peer, \
+    },
+ogs_metrics_spec_t *smf_metrics_spec_pfcp_peer[_SMF_METR_PFCP_PEER_MAX];
+smf_metrics_spec_def_t smf_metrics_spec_def_pfcp_peer[_SMF_METR_PFCP_PEER_MAX] = {
+SMF_METR_PFCP_PEER_GAUGE_ENTRY(
+    SMF_METR_PFCP_PEER_GAUGE_UP,
+    "smf_pfcp_peer_up",
+    "UPF PFCP peer association state (1=associated, 0=down)")
+};
+
+typedef struct smf_metric_key_by_pfcp_peer_s {
+    char addr[OGS_ADDRSTRLEN];
+    smf_metric_type_pfcp_peer_t t;
+} smf_metric_key_by_pfcp_peer_t;
+
+static ogs_hash_t *metrics_hash_by_pfcp_peer = NULL;
+
+static void smf_metrics_init_by_pfcp_peer(void)
+{
+    metrics_hash_by_pfcp_peer = ogs_hash_make();
+    ogs_assert(metrics_hash_by_pfcp_peer);
+}
+
+void smf_metrics_pfcp_peer_up(const char *addr, int up)
+{
+    ogs_metrics_inst_t *metrics = NULL;
+    smf_metric_key_by_pfcp_peer_t *key;
+
+    if (!addr || !addr[0] || !metrics_hash_by_pfcp_peer)
+        return;
+
+    key = ogs_calloc(1, sizeof(*key));
+    ogs_assert(key);
+
+    ogs_cpystrn(key->addr, addr, sizeof(key->addr));
+    key->t = SMF_METR_PFCP_PEER_GAUGE_UP;
+
+    metrics = ogs_hash_get(metrics_hash_by_pfcp_peer,
+            key, sizeof(*key));
+
+    if (!metrics) {
+        metrics = ogs_metrics_inst_new(smf_metrics_spec_pfcp_peer[key->t],
+                smf_metrics_spec_def_pfcp_peer[key->t].num_labels,
+                (const char *[]){ key->addr });
+
+        ogs_assert(metrics);
+        ogs_hash_set(metrics_hash_by_pfcp_peer,
+                key, sizeof(*key), metrics);
+    } else {
+        ogs_free(key);
+    }
+
+    ogs_metrics_inst_set(metrics, up ? 1 : 0);
+}
+
 /* BY SLICE */
 const char *labels_slice[] = {
     "plmnid",
@@ -837,6 +902,8 @@ void smf_metrics_init(void)
 
     smf_metrics_init_spec(ctx, smf_metrics_spec_gtp_node, smf_metrics_spec_def_gtp_node,
             _SMF_METR_GTP_NODE_MAX);
+    smf_metrics_init_spec(ctx, smf_metrics_spec_pfcp_peer,
+            smf_metrics_spec_def_pfcp_peer, _SMF_METR_PFCP_PEER_MAX);
 
     smf_metrics_init_spec(ctx, smf_metrics_spec_by_slice,
             smf_metrics_spec_def_by_slice, _SMF_METR_BY_SLICE_MAX);
@@ -852,6 +919,7 @@ void smf_metrics_init(void)
             smf_metrics_spec_def_by_visited, _SMF_METR_BY_VISITED_MAX);
 
     smf_metrics_init_inst_global();
+    smf_metrics_init_by_pfcp_peer();
     smf_metrics_init_by_slice();
     smf_metrics_init_by_5qi();
     smf_metrics_init_by_cause();
@@ -864,6 +932,18 @@ void smf_metrics_final(void)
 {
     ogs_hash_index_t *hi;
 
+    if (metrics_hash_by_pfcp_peer) {
+        for (hi = ogs_hash_first(metrics_hash_by_pfcp_peer); hi;
+                hi = ogs_hash_next(hi)) {
+            smf_metric_key_by_pfcp_peer_t *key =
+                (smf_metric_key_by_pfcp_peer_t *)ogs_hash_this_key(hi);
+
+            ogs_hash_set(metrics_hash_by_pfcp_peer, key, sizeof(*key), NULL);
+            ogs_free(key);
+        }
+        ogs_hash_destroy(metrics_hash_by_pfcp_peer);
+        metrics_hash_by_pfcp_peer = NULL;
+    }
     if (metrics_hash_by_slice) {
         for (hi = ogs_hash_first(metrics_hash_by_slice); hi; hi = ogs_hash_next(hi)) {
             smf_metric_key_by_slice_t *key =

@@ -78,7 +78,63 @@ sgwc_metrics_spec_def_t sgwc_metrics_spec_def_global[_SGWC_METR_GLOB_MAX] = {
     .description = "SGWC UE contexts with no active session lingering "
         "(empty UE pinned by an unfinished CSR-replace, awaiting reclamation)",
 },
+[SGWC_METR_GLOB_GAUGE_PFCP_PEERS_ACTIVE] = {
+    .type = OGS_METRICS_METRIC_TYPE_GAUGE,
+    .name = "sgwc_pfcp_peers_active",
+    .description = "Number of PFCP-associated SGW-U peers",
+},
 };
+
+typedef struct sgwc_metric_key_by_pfcp_peer_s {
+    char addr[OGS_ADDRSTRLEN];
+    sgwc_metric_type_pfcp_peer_t t;
+} sgwc_metric_key_by_pfcp_peer_t;
+
+static const char *labels_pfcp_peer[] = { "addr" };
+
+static ogs_metrics_spec_t *sgwc_metrics_spec_pfcp_peer[_SGWC_METR_PFCP_PEER_MAX];
+static ogs_hash_t *metrics_hash_by_pfcp_peer = NULL;
+static sgwc_metrics_spec_def_t sgwc_metrics_spec_def_pfcp_peer[_SGWC_METR_PFCP_PEER_MAX] = {
+[SGWC_METR_PFCP_PEER_GAUGE_UP] = {
+    .type = OGS_METRICS_METRIC_TYPE_GAUGE,
+    .name = "sgwc_pfcp_peer_up",
+    .description = "SGW-U PFCP peer association state (1=associated, 0=down)",
+    .num_labels = OGS_ARRAY_SIZE(labels_pfcp_peer),
+    .labels = labels_pfcp_peer,
+},
+};
+
+void sgwc_metrics_pfcp_peer_up(const char *addr, int up)
+{
+    ogs_metrics_inst_t *metrics = NULL;
+    sgwc_metric_key_by_pfcp_peer_t *key;
+
+    if (!addr || !addr[0] || !metrics_hash_by_pfcp_peer)
+        return;
+
+    key = ogs_calloc(1, sizeof(*key));
+    ogs_assert(key);
+
+    ogs_cpystrn(key->addr, addr, sizeof(key->addr));
+    key->t = SGWC_METR_PFCP_PEER_GAUGE_UP;
+
+    metrics = ogs_hash_get(metrics_hash_by_pfcp_peer,
+            key, sizeof(*key));
+
+    if (!metrics) {
+        metrics = ogs_metrics_inst_new(sgwc_metrics_spec_pfcp_peer[key->t],
+                sgwc_metrics_spec_def_pfcp_peer[key->t].num_labels,
+                (const char *[]){ key->addr });
+
+        ogs_assert(metrics);
+        ogs_hash_set(metrics_hash_by_pfcp_peer,
+                key, sizeof(*key), metrics);
+    } else {
+        ogs_free(key);
+    }
+
+    ogs_metrics_inst_set(metrics, up ? 1 : 0);
+}
 
 void sgwc_metrics_global_set(sgwc_metric_type_global_t t, int val)
 {
@@ -551,6 +607,11 @@ void sgwc_metrics_init(void)
             sgwc_metrics_spec_def_by_plmn_apn, _SGWC_METR_BY_PLMN_APN_MAX);
     sgwc_metrics_init_spec(ctx, sgwc_metrics_spec_by_rat,
             sgwc_metrics_spec_def_by_rat, _SGWC_METR_BY_RAT_MAX);
+    sgwc_metrics_init_spec(ctx, sgwc_metrics_spec_pfcp_peer,
+            sgwc_metrics_spec_def_pfcp_peer, _SGWC_METR_PFCP_PEER_MAX);
+
+    metrics_hash_by_pfcp_peer = ogs_hash_make();
+    ogs_assert(metrics_hash_by_pfcp_peer);
 
     for (i = 0; i < _SGWC_METR_GLOB_MAX; i++)
         sgwc_metrics_inst_global[i] = ogs_metrics_inst_new(
@@ -619,6 +680,18 @@ void sgwc_metrics_final(void)
         }
         ogs_hash_destroy(metrics_hash_by_rat);
         metrics_hash_by_rat = NULL;
+    }
+    if (metrics_hash_by_pfcp_peer) {
+        for (hi = ogs_hash_first(metrics_hash_by_pfcp_peer); hi;
+                hi = ogs_hash_next(hi)) {
+            sgwc_metric_key_by_pfcp_peer_t *key =
+                (sgwc_metric_key_by_pfcp_peer_t *)ogs_hash_this_key(hi);
+
+            ogs_hash_set(metrics_hash_by_pfcp_peer, key, sizeof(*key), NULL);
+            ogs_free(key);
+        }
+        ogs_hash_destroy(metrics_hash_by_pfcp_peer);
+        metrics_hash_by_pfcp_peer = NULL;
     }
 
     ogs_metrics_context_final();

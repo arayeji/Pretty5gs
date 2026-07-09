@@ -70,6 +70,14 @@ static inline void smf_metrics_inst_gtp_node_dec(
     ogs_metrics_inst_t **inst, smf_metric_type_gtp_node_t t)
 { ogs_metrics_inst_dec(inst[t]); }
 
+/* PFCP PEER */
+typedef enum smf_metric_type_pfcp_peer_s {
+    SMF_METR_PFCP_PEER_GAUGE_UP = 0,
+    _SMF_METR_PFCP_PEER_MAX,
+} smf_metric_type_pfcp_peer_t;
+
+void smf_metrics_pfcp_peer_up(const char *addr, int up);
+
 /* BY SLICE */
 typedef enum smf_metric_type_by_slice_s {
     SMF_METR_GAUGE_SM_SESSIONNBR = 0,

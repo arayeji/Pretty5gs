@@ -14,6 +14,7 @@
 #include "ogs-app.h"
 #include "ogs-pfcp.h"
 #include "context.h"
+#include "smf-sm.h"
 
 #include "sbi/openapi/external/cJSON.h"
 
@@ -86,9 +87,16 @@ static void json_append_upf_peers(cJSON *runtime)
     cJSON_AddItemToObject(runtime, "upf_pfcp_peers", arr);
 
     ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, node) {
+        cJSON *entry = cJSON_CreateObject();
+
         addr = ogs_sockaddr_to_string_static(node->addr_list);
-        if (addr && addr[0])
-            cJSON_AddItemToArray(arr, cJSON_CreateString(addr));
+        if (!addr || !addr[0])
+            continue;
+
+        cJSON_AddStringToObject(entry, "addr", addr);
+        cJSON_AddBoolToObject(entry, "associated",
+                OGS_FSM_CHECK(&node->sm, smf_pfcp_state_associated));
+        cJSON_AddItemToArray(arr, entry);
     }
 }
 

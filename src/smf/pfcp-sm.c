@@ -20,6 +20,7 @@
 #include "sbi-path.h"
 #include "pfcp-path.h"
 #include "local-path.h"
+#include "metrics.h"
 
 #include "n4-handler.h"
 
@@ -210,6 +211,8 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
         }
 
         smf_metrics_inst_global_inc(SMF_METR_GLOB_GAUGE_PFCP_PEERS_ACTIVE);
+        smf_metrics_pfcp_peer_up(
+                ogs_sockaddr_to_string_static(node->addr_list), 1);
         break;
     case OGS_FSM_EXIT_SIG:
         ogs_info("PFCP de-associated %s",
@@ -217,6 +220,8 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
         ogs_timer_stop(node->t_no_heartbeat);
 
         smf_metrics_inst_global_dec(SMF_METR_GLOB_GAUGE_PFCP_PEERS_ACTIVE);
+        smf_metrics_pfcp_peer_up(
+                ogs_sockaddr_to_string_static(node->addr_list), 0);
         break;
     case SMF_EVT_N4_MESSAGE:
         message = e->pfcp_message;

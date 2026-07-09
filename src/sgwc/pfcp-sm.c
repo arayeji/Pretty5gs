@@ -20,6 +20,7 @@
 #include "pfcp-path.h"
 #include "sxa-handler.h"
 #include "gn-handler.h"
+#include "metrics.h"
 
 static void pfcp_restoration(ogs_pfcp_node_t *node);
 static void node_timeout(ogs_pfcp_xact_t *xact, void *data);
@@ -182,6 +183,10 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
         ogs_assert(OGS_OK ==
             ogs_pfcp_send_heartbeat_request(node, node_timeout));
 
+        sgwc_metrics_inst_global_inc(SGWC_METR_GLOB_GAUGE_PFCP_PEERS_ACTIVE);
+        sgwc_metrics_pfcp_peer_up(
+                ogs_sockaddr_to_string_static(node->addr_list), 1);
+
         if (node->restoration_required == true) {
             pfcp_restoration(node);
             node->restoration_required = false;
@@ -192,6 +197,10 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
         ogs_info("PFCP de-associated %s",
             ogs_sockaddr_to_string_static(node->addr_list));
         ogs_timer_stop(node->t_no_heartbeat);
+
+        sgwc_metrics_inst_global_dec(SGWC_METR_GLOB_GAUGE_PFCP_PEERS_ACTIVE);
+        sgwc_metrics_pfcp_peer_up(
+                ogs_sockaddr_to_string_static(node->addr_list), 0);
         break;
     case SGWC_EVT_SXA_MESSAGE:
         message = e->pfcp_message;
