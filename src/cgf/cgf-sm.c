@@ -21,6 +21,9 @@
 #include "gtpp-path.h"
 #include "spool.h"
 
+/* Stack buffer for one MTU-safe DTRR payload (+ GTP'/IE overhead). */
+#define CGF_BATCH_BUF_SIZE 4096
+
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
@@ -47,6 +50,20 @@ static void switch_to_next_peer(void)
             return;
         }
     }
+}
+
+static void abort_file_pipeline(cgf_peer_t *peer, cgf_spool_file_t *file)
+{
+    uint32_t i;
+
+    if (!peer || !file) return;
+
+    for (i = 0; i < CGF_MAX_INFLIGHT; i++) {
+        cgf_xact_t *x = &peer->xacts[i];
+        if (x->active && x->file == file)
+            cgf_gtpp_free_xact(x);
+    }
+    cgf_spool_nack_batch(file);
 }
 
 static void abort_in_flight(cgf_peer_t *peer, const char *reason)
@@ -208,18 +225,27 @@ void cgf_sm_on_dtrr_response(cgf_peer_t *peer, uint16_t seq, uint8_t cause)
         ogs_warn("cgf: DTRR seq=%u rejected by '%s' (cause=%u)",
                 seq, peer->address_str, cause);
         if (file)
-            cgf_spool_nack_batch(file);
-    } else {
-        if (peer->state != CGF_PEER_STATE_UP) {
-            ogs_info("cgf: peer '%s' is UP (DTRR accepted)",
-                    peer->address_str);
-            peer->state = CGF_PEER_STATE_UP;
+            abort_file_pipeline(peer, file);
+        cgf_gtpp_free_xact(xact);
+        cgf_sm_try_drain();
+        return;
+    }
+
+    if (peer->state != CGF_PEER_STATE_UP) {
+        ogs_info("cgf: peer '%s' is UP (DTRR accepted)",
+                peer->address_str);
+        peer->state = CGF_PEER_STATE_UP;
+    }
+
+    if (file) {
+        if (!cgf_spool_ack_batch(file, xact->batch_start,
+                xact->records_in_batch)) {
+            /* Out-of-order ACK: keep the xact slot until earlier batches
+             * are confirmed so the pipeline cursor stays consistent. */
+            return;
         }
         ogs_debug("cgf: DTRR seq=%u accepted by '%s' (cause=%u, %u records)",
                 seq, peer->address_str, cause, xact->records_in_batch);
-        if (file)
-            cgf_spool_ack_batch(file, xact->batch_start,
-                    xact->records_in_batch);
     }
 
     cgf_gtpp_free_xact(xact);
@@ -281,8 +307,9 @@ void cgf_sm_on_rto_tick(void)
             ogs_warn("cgf: DTRR seq=%u gave up after %u retries",
                     x->seq, x->retries);
             if (x->file)
-                cgf_spool_nack_batch(x->file);
-            cgf_gtpp_free_xact(x);
+                abort_file_pipeline(p, x->file);
+            else
+                cgf_gtpp_free_xact(x);
             gave_up = true;
             continue;
         }
@@ -307,25 +334,13 @@ void cgf_sm_on_spool_tick(void)
 /*  Drain                                                             */
 /* ------------------------------------------------------------------ */
 
-static bool peer_file_inflight(
-        const cgf_peer_t *peer, const cgf_spool_file_t *file)
-{
-    uint32_t i;
-
-    for (i = 0; i < CGF_MAX_INFLIGHT; i++) {
-        if (peer->xacts[i].active && peer->xacts[i].file == file)
-            return true;
-    }
-    return false;
-}
-
 void cgf_sm_try_drain(void)
 {
     cgf_context_t *self = cgf_self();
     cgf_peer_t *p;
     cgf_spool_file_t *f;
     uint32_t window;
-    static uint8_t batch[OGS_MAX_SDU_LEN];
+    static uint8_t batch[CGF_BATCH_BUF_SIZE];
 
     p = active_peer();
     if (!p || !peer_may_send(p)) return;
@@ -338,6 +353,7 @@ void cgf_sm_try_drain(void)
         size_t used = 0;
         size_t cap = self->max_bytes_per_packet;
         uint32_t n;
+        int rv;
 
         f = cgf_spool_get_active();
         if (!f) {
@@ -347,11 +363,6 @@ void cgf_sm_try_drain(void)
         }
 
         if (f->send_offset >= f->data_len) break;
-
-        /* One in-flight DTRR per spool file — pipelining multiple
-         * batches from the same file caused use-after-free when UDP
-         * delivered DTRR responses out of order. */
-        if (peer_file_inflight(p, f)) break;
 
         if (cap > sizeof(batch)) cap = sizeof(batch);
 
@@ -363,20 +374,16 @@ void cgf_sm_try_drain(void)
             break;
         }
 
-        {
-            int rv;
-
-            rv = cgf_gtpp_send_data_record_transfer(p, batch, used, n, f,
-                    f->pending_batch_start);
-            if (rv == OGS_RETRY)
-                break;
-            if (rv != OGS_OK) {
-                ogs_warn("cgf: send failed, backing off");
-                cgf_spool_nack_batch(f);
-                p->state = CGF_PEER_STATE_DOWN;
-                switch_to_next_peer();
-                break;
-            }
+        rv = cgf_gtpp_send_data_record_transfer(p, batch, used, n, f,
+                f->pending_batch_start);
+        if (rv == OGS_RETRY)
+            break;
+        if (rv != OGS_OK) {
+            ogs_warn("cgf: send failed, backing off");
+            abort_file_pipeline(p, f);
+            p->state = CGF_PEER_STATE_DOWN;
+            switch_to_next_peer();
+            break;
         }
 
         cgf_spool_commit_send(f, f->pending_batch_start, n);

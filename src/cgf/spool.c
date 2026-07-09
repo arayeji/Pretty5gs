@@ -491,7 +491,7 @@ static void maybe_finish_file(cgf_spool_file_t *file)
     free_file(file);
 }
 
-void cgf_spool_ack_batch(cgf_spool_file_t *file,
+bool cgf_spool_ack_batch(cgf_spool_file_t *file,
         size_t batch_start, uint32_t records)
 {
     ogs_assert(file);
@@ -500,7 +500,7 @@ void cgf_spool_ack_batch(cgf_spool_file_t *file,
         ogs_warn("cgf: out-of-order DTRR ack for '%s' "
                 "(got offset %zu, expected %zu)",
                 file->path, batch_start, file->next_record_offset);
-        return;
+        return false;
     }
 
     file->next_record_offset = offset_after_records(
@@ -510,6 +510,7 @@ void cgf_spool_ack_batch(cgf_spool_file_t *file,
         file->inflight_batches--;
 
     maybe_finish_file(file);
+    return true;
 }
 
 void cgf_spool_nack_batch(cgf_spool_file_t *file)

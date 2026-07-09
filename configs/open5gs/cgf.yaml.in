@@ -70,13 +70,11 @@ cgf:
     spool_poll_ms: 250               # how often to scan ready/ for new files
 
   batch:
-    # Maximum number of encoded CDRs packed into a single GTP'
-    # DataRecordTransferRequest. Sized to fit a typical rotated spool
-    # file (~64 KiB on disk) in one or two datagrams on a LAN path.
+    # MTU-safe GTP' datagram size (no IP fragmentation). Throughput comes
+    # from pipelining max_inflight DTRRs per peer, not oversized UDP.
     max_records_per_packet: 255
-    max_bytes_per_packet: 32000
-    # Reserved; only one in-flight DTRR per spool file is allowed today.
-    max_inflight: 1
+    max_bytes_per_packet: 1400
+    max_inflight: 16
 
   # Data Record Packet IE sub-header. Four octets sitting between the
   # `fc <len>` TLIV header and the list of length-prefixed BER records:

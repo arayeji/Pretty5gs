@@ -55,7 +55,10 @@ uint32_t cgf_spool_stage_batch(cgf_spool_file_t *file,
 void cgf_spool_commit_send(cgf_spool_file_t *file,
         size_t batch_start, uint32_t records);
 
-void cgf_spool_ack_batch(cgf_spool_file_t *file,
+/* Returns true when the ACK advanced the confirmed cursor. False on
+ * out-of-order responses — caller must keep the xact slot until the
+ * missing earlier ACKs arrive. */
+bool cgf_spool_ack_batch(cgf_spool_file_t *file,
         size_t batch_start, uint32_t records);
 
 void cgf_spool_nack_batch(cgf_spool_file_t *file);

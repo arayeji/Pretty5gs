@@ -33,8 +33,10 @@ extern int __cgf_log_domain;
 #define OGS_LOG_DOMAIN __cgf_log_domain
 
 #define CGF_MAX_PEERS            4
-#define CGF_MAX_INFLIGHT         8
+#define CGF_MAX_INFLIGHT         16
 #define CGF_DEFAULT_GTPP_PORT    3386
+#define CGF_DEFAULT_MAX_BYTES_PER_PACKET  1400
+#define CGF_DEFAULT_MAX_INFLIGHT            16
 
 /* One outstanding DataRecordTransferRequest slot per peer. GTP' allows
  * multiple in-flight requests distinguished by sequence number; the
