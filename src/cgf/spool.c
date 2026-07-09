@@ -460,6 +460,35 @@ void cgf_spool_commit_send(cgf_spool_file_t *file,
     file->inflight_batches++;
 }
 
+static void drain_pending_acks(cgf_spool_file_t *file)
+{
+    bool advanced;
+
+    do {
+        uint32_t i;
+
+        advanced = false;
+        for (i = 0; i < file->num_pending_acks; i++) {
+            cgf_spool_pending_ack_t *pa = &file->pending_acks[i];
+
+            if (pa->batch_start != file->next_record_offset)
+                continue;
+
+            file->next_record_offset = offset_after_records(
+                    file, pa->batch_start, pa->records);
+            if (i + 1 < file->num_pending_acks) {
+                memmove(&file->pending_acks[i],
+                        &file->pending_acks[i + 1],
+                        (file->num_pending_acks - i - 1) *
+                        sizeof(*file->pending_acks));
+            }
+            file->num_pending_acks--;
+            advanced = true;
+            break;
+        }
+    } while (advanced);
+}
+
 static void maybe_finish_file(cgf_spool_file_t *file)
 {
     if (!file) return;
@@ -491,24 +520,62 @@ static void maybe_finish_file(cgf_spool_file_t *file)
     free_file(file);
 }
 
+static bool pending_ack_exists(const cgf_spool_file_t *file,
+        size_t batch_start)
+{
+    uint32_t i;
+
+    for (i = 0; i < file->num_pending_acks; i++) {
+        if (file->pending_acks[i].batch_start == batch_start)
+            return true;
+    }
+    return false;
+}
+
 bool cgf_spool_ack_batch(cgf_spool_file_t *file,
         size_t batch_start, uint32_t records)
 {
     ogs_assert(file);
 
-    if (batch_start != file->next_record_offset) {
-        ogs_warn("cgf: out-of-order DTRR ack for '%s' "
-                "(got offset %zu, expected %zu)",
-                file->path, batch_start, file->next_record_offset);
-        return false;
-    }
-
-    file->next_record_offset = offset_after_records(
-            file, batch_start, records);
     file->pending_batch_records = 0;
     if (file->inflight_batches > 0)
         file->inflight_batches--;
 
+    if (batch_start < file->next_record_offset) {
+        ogs_debug("cgf: duplicate DTRR ack for '%s' at offset %zu "
+                "(confirmed through %zu)",
+                file->path, batch_start, file->next_record_offset);
+        maybe_finish_file(file);
+        return true;
+    }
+
+    if (batch_start == file->next_record_offset) {
+        file->next_record_offset = offset_after_records(
+                file, batch_start, records);
+        drain_pending_acks(file);
+        maybe_finish_file(file);
+        return true;
+    }
+
+    if (pending_ack_exists(file, batch_start)) {
+        ogs_debug("cgf: duplicate buffered DTRR ack for '%s' at offset %zu",
+                file->path, batch_start);
+        maybe_finish_file(file);
+        return true;
+    }
+
+    if (file->num_pending_acks >= CGF_MAX_INFLIGHT) {
+        ogs_error("cgf: pending DTRR ack buffer full for '%s'",
+                file->path);
+        return false;
+    }
+
+    ogs_debug("cgf: buffered out-of-order DTRR ack for '%s' "
+            "(got offset %zu, confirmed through %zu)",
+            file->path, batch_start, file->next_record_offset);
+    file->pending_acks[file->num_pending_acks].batch_start = batch_start;
+    file->pending_acks[file->num_pending_acks].records = records;
+    file->num_pending_acks++;
     maybe_finish_file(file);
     return true;
 }
@@ -519,6 +586,7 @@ void cgf_spool_nack_batch(cgf_spool_file_t *file)
     file->send_offset = file->next_record_offset;
     file->pending_batch_records = 0;
     file->inflight_batches = 0;
+    file->num_pending_acks = 0;
 }
 
 void cgf_spool_quarantine(cgf_spool_file_t *file)

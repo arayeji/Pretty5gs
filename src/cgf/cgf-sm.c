@@ -240,8 +240,9 @@ void cgf_sm_on_dtrr_response(cgf_peer_t *peer, uint16_t seq, uint8_t cause)
     if (file) {
         if (!cgf_spool_ack_batch(file, xact->batch_start,
                 xact->records_in_batch)) {
-            /* Out-of-order ACK: keep the xact slot until earlier batches
-             * are confirmed so the pipeline cursor stays consistent. */
+            abort_file_pipeline(peer, file);
+            cgf_gtpp_free_xact(xact);
+            cgf_sm_try_drain();
             return;
         }
         ogs_debug("cgf: DTRR seq=%u accepted by '%s' (cause=%u, %u records)",

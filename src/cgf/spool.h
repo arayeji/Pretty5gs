@@ -32,6 +32,11 @@ extern "C" {
  *   next_record_offset — last byte confirmed by the CGF (ACK cursor)
  *   send_offset        — next byte to pack into a pipelined batch
  */
+typedef struct {
+    size_t batch_start;
+    uint32_t records;
+} cgf_spool_pending_ack_t;
+
 typedef struct cgf_spool_file_s {
     char *path;
     uint8_t *data;
@@ -42,6 +47,10 @@ typedef struct cgf_spool_file_s {
     size_t pending_batch_start;
     uint32_t pending_batch_records;
     uint32_t inflight_batches;  /* DTRRs sent, not yet ACKed/NAKed */
+
+    /* Out-of-order DTRR acks buffered until the confirmed cursor catches up. */
+    cgf_spool_pending_ack_t pending_acks[CGF_MAX_INFLIGHT];
+    uint32_t num_pending_acks;
 } cgf_spool_file_t;
 
 cgf_spool_file_t *cgf_spool_get_active(void);
@@ -55,9 +64,8 @@ uint32_t cgf_spool_stage_batch(cgf_spool_file_t *file,
 void cgf_spool_commit_send(cgf_spool_file_t *file,
         size_t batch_start, uint32_t records);
 
-/* Returns true when the ACK advanced the confirmed cursor. False on
- * out-of-order responses — caller must keep the xact slot until the
- * missing earlier ACKs arrive. */
+/* Apply a DTRR ack (in-order, out-of-order, or duplicate). Returns false
+ * only when the pending-ack buffer is full (caller should abort pipeline). */
 bool cgf_spool_ack_batch(cgf_spool_file_t *file,
         size_t batch_start, uint32_t records);
 
