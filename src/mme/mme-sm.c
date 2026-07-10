@@ -1173,10 +1173,23 @@ cleanup:
             mme_gn_handle_sgsn_context_request(xact, &gtp1_message.sgsn_context_request);
             break;
         case OGS_GTP1_SGSN_CONTEXT_RESPONSE_TYPE:
-            /* Clang scan-build SA: NULL pointer dereference: mme_ue=NULL if both gtp1_message.h.teid=0 and
-             * xact->local_teid=0. The following function mme_gn_handle_sgsn_context_response() handles the NULL
-             * but the later calls to OGS_FSM_TRAN() to change state will be a NULL pointer dereference. */
-            ogs_assert(mme_ue);
+            /*
+             * mme_ue is NULL when both gtp1_message.h.teid==0 and
+             * xact->local_teid==0 - typically a late SGSN Context
+             * Response arriving after the original transaction timed
+             * out and was freed (seen in bursts from slow SGSNs).
+             * This must not abort the daemon: let the handler commit
+             * the xact and drop the message; without an MME-UE there
+             * is no FSM to drive, so skip the state transitions below.
+             */
+            if (!mme_ue) {
+                ogs_error("[Gn] SGSN Context Response without MME-UE "
+                        "context (TEID=0x%x, late response?) - dropped",
+                        gtp1_message.h.teid);
+                (void)mme_gn_handle_sgsn_context_response(
+                        xact, NULL, &gtp1_message.sgsn_context_response);
+                break;
+            }
             /*
              * Late or duplicate responses are normally filtered by the
              * GTP xact layer (duplicate -> OGS_RETRY, post-timeout ->
