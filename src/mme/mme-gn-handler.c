@@ -336,6 +336,8 @@ int mme_gn_handle_sgsn_context_response(
         return OGS_GTP1_CAUSE_IMSI_IMEI_NOT_KNOWN;
     }
 
+    mme_ue->gn.sgsn_context_pending = false;
+
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
 
     switch (resp->cause.u8) {

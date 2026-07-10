@@ -66,6 +66,8 @@ typedef enum {
     MME_TIMER_S11_HOLDING,
 
     MME_TIMER_GN_HOLDING,
+    /* Gn SGSN Context Response watchdog (GTP T3-RESPONSE expiry) */
+    MME_TIMER_GN_SGSN_CONTEXT,
 
     MME_TIMER_SGS_CLI_CONN_TO_SRV,
 

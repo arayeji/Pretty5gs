@@ -20,6 +20,7 @@
 #include "ogs-gtp.h"
 
 #include "mme-event.h"
+#include "mme-timer.h"
 #include "mme-gn-build.h"
 #include "mme-gtp-path.h"
 #include "mme-trace.h"
@@ -299,6 +300,44 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
                 "SGW_S11_TEID[0x%x]",
                 peer_addr, peer_port, type, type_name,
                 sgw_ue ? sgw_ue->sgw_s11_teid : 0);
+    }
+}
+
+static void gn_sgsn_context_timeout(ogs_gtp_xact_t *xact, void *data)
+{
+    int rv;
+    mme_event_t *e = NULL;
+    ogs_pool_id_t mme_ue_id = OGS_INVALID_POOL_ID;
+    char peer[OGS_ADDRSTRLEN];
+
+    ogs_assert(xact);
+    ogs_assert(data);
+
+    mme_ue_id = OGS_POINTER_TO_UINT(data);
+    ogs_assert(mme_ue_id >= OGS_MIN_POOL_ID &&
+            mme_ue_id <= OGS_MAX_POOL_ID);
+
+    if (!mme_ue_find_by_id(mme_ue_id))
+        return;
+
+    ogs_warn("Gn SGSN Context Response timeout MME-UE[%u] peer [%s]:%d",
+            mme_ue_id,
+            xact->gnode ? OGS_ADDR(&xact->gnode->addr, peer) : "-",
+            xact->gnode ? OGS_PORT(&xact->gnode->addr) : 0);
+
+    e = mme_event_new(MME_EVENT_GN_TIMER);
+    if (!e) {
+        ogs_error("mme_event_new() failed");
+        return;
+    }
+
+    e->timer_id = MME_TIMER_GN_SGSN_CONTEXT;
+    e->mme_ue_id = mme_ue_id;
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        mme_event_free(e);
     }
 }
 
@@ -1095,6 +1134,7 @@ int mme_gtp1_send_sgsn_context_request(
     ogs_gtp_xact_t *xact = NULL;
 
     ogs_assert(sgsn);
+    ogs_assert(mme_ue);
 
     memset(&h, 0, sizeof(ogs_gtp1_header_t));
     h.type = OGS_GTP1_SGSN_CONTEXT_REQUEST_TYPE;
@@ -1102,21 +1142,27 @@ int mme_gtp1_send_sgsn_context_request(
 
     pkbuf = mme_gn_build_sgsn_context_request(mme_ue, ptmsi_sig);
     if (!pkbuf) {
-        ogs_error("mme_gn_build_ran_information_relay() failed");
+        ogs_error("mme_gn_build_sgsn_context_request() failed");
         return OGS_ERROR;
     }
 
-    xact = ogs_gtp1_xact_local_create(&sgsn->gnode, &h, pkbuf, NULL, NULL);
+    xact = ogs_gtp1_xact_local_create(&sgsn->gnode, &h, pkbuf,
+            gn_sgsn_context_timeout, OGS_UINT_TO_POINTER(mme_ue->id));
     if (!xact) {
         ogs_error("ogs_gtp1_xact_local_create() failed");
         return OGS_ERROR;
     }
-    /* TS 29.060 8.2: "The SGSN Context Request message, where the Tunnel
-     * Endpoint Identifier shall be set to all zeroes." */
-    xact->local_teid = 0;
+    /* TS 29.060 8.2: GTP header TEID is zero; local_teid correlates the reply. */
+    xact->local_teid = mme_ue->gn.mme_gn_teid;
+
+    mme_ue->gn.sgsn_context_pending = true;
 
     rv = ogs_gtp_xact_commit(xact);
-    ogs_expect(rv == OGS_OK);
+    if (rv != OGS_OK) {
+        mme_ue->gn.sgsn_context_pending = false;
+        ogs_error("ogs_gtp_xact_commit() failed");
+        return OGS_ERROR;
+    }
 
     return rv;
 }

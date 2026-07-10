@@ -1162,8 +1162,20 @@ cleanup:
              * xact->local_teid=0. The following function mme_gn_handle_sgsn_context_response() handles the NULL
              * but the later calls to OGS_FSM_TRAN() to change state will be a NULL pointer dereference. */
             ogs_assert(mme_ue);
+            /*
+             * Late or duplicate responses are normally filtered by the
+             * GTP xact layer (duplicate -> OGS_RETRY, post-timeout ->
+             * update_rx error); this guard is a backstop. The xact, if
+             * any, self-cleans via its holding timer.
+             */
+            if (!mme_ue->gn.sgsn_context_pending) {
+                ogs_warn("Gn SGSN Context Response ignored "
+                        "(not awaiting context, late or duplicate)");
+                break;
+            }
             enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
             if (!enb_ue) {
+                mme_ue->gn.sgsn_context_pending = false;
                 ogs_error("ENB-S1 Context has already been removed");
                 if (OGS_FSM_STATE(&mme_ue->sm))
                     OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
@@ -1204,15 +1216,53 @@ cleanup:
                     e->mme_ue_id);
             break;
         }
-        sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-        if (!sgw_ue) {
-            ogs_error("Gn timer for MME-UE [%s] with no SGW-UE ignored",
-                    mme_ue->imsi_bcd);
-            break;
-        }
 
         switch (e->timer_id) {
+        case MME_TIMER_GN_SGSN_CONTEXT:
+            enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+            if (!mme_ue->gn.sgsn_context_pending) {
+                ogs_debug("Gn SGSN Context timeout ignored (not pending)");
+                break;
+            }
+            mme_ue->gn.sgsn_context_pending = false;
+
+            ogs_warn("[%s] Gn SGSN Context Response timeout (inter-RAT TAU)",
+                    mme_ue->imsi_bcd[0] ? mme_ue->imsi_bcd : "-");
+            mme_ue_progress(mme_ue, "gn_sgsn_context_timeout");
+
+            if (enb_ue) {
+                if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
+                    r = nas_eps_send_tau_reject(enb_ue, mme_ue,
+                            OGS_NAS_EMM_CAUSE_NETWORK_FAILURE);
+                    ogs_expect(r == OGS_OK);
+                }
+                r = s1ap_send_ue_context_release_command(enb_ue,
+                        S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
+                        S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
+                ogs_expect(r == OGS_OK);
+                if (OGS_FSM_STATE(&mme_ue->sm))
+                    OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
+            } else {
+                /*
+                 * No S1 context to reject/release toward. Remove the
+                 * half-built UE context now (frees mme_ue; do not touch
+                 * it afterwards) instead of stranding it until the
+                 * orphan sweep.
+                 */
+                ogs_warn("[%s] Gn SGSN Context timeout with no S1 context; "
+                        "removing UE",
+                        mme_ue->imsi_bcd[0] ? mme_ue->imsi_bcd : "-");
+                mme_ue_enter_ue_context_will_remove(mme_ue);
+            }
+            break;
+
         case MME_TIMER_GN_HOLDING:
+            sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+            if (!sgw_ue) {
+                ogs_error("Gn timer for MME-UE [%s] with no SGW-UE ignored",
+                        mme_ue->imsi_bcd);
+                break;
+            }
             /* 3GPP TS 23.401 Annex D.3.5 "Routing Area Update":
             * Step 13. "When the timer started in step 2) (see mme_gn_handle_sgsn_context_request()) expires the old MME
             * releases any RAN and Serving GW resources. If the PLMN has configured Secondary RAT usage data reporting,

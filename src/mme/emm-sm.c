@@ -893,8 +893,18 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                 }
                 if (message->emm.tracking_area_update_request.presencemask & OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_OLD_P_TMSI_SIGNATURE_TYPE)
                     ptmsi_sig = &message->emm.tracking_area_update_request.old_p_tmsi_signature;
-                mme_gtp1_send_sgsn_context_request(sgsn, mme_ue, ptmsi_sig);
-                /* FIXME: use a specific FSM state here to state we are waiting for resolution from Gn? */
+                rv = mme_gtp1_send_sgsn_context_request(sgsn, mme_ue, ptmsi_sig);
+                if (rv != OGS_OK) {
+                    ogs_warn("[%s] Gn SGSN Context Request send failed",
+                            mme_ue->imsi_bcd[0] ? mme_ue->imsi_bcd : "-");
+                    r = nas_eps_send_tau_reject(enb_ue, mme_ue,
+                            OGS_NAS_EMM_CAUSE_NETWORK_FAILURE);
+                    ogs_expect(r == OGS_OK);
+                    ogs_assert(r != OGS_ERROR);
+                    MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
+                    break;
+                }
+                /* Awaiting SGSN Context Response on Gn (TS 23.401 D.3.6). */
                 break;
             }
 

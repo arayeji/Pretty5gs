@@ -138,6 +138,10 @@ const char *mme_timer_get_name(mme_timer_e id)
         return "MME_TIMER_S1_HOLDING";
     case MME_TIMER_S11_HOLDING:
         return "MME_TIMER_S11_HOLDING";
+    case MME_TIMER_GN_HOLDING:
+        return "MME_TIMER_GN_HOLDING";
+    case MME_TIMER_GN_SGSN_CONTEXT:
+        return "MME_TIMER_GN_SGSN_CONTEXT";
     default:
        break;
     }
