@@ -855,13 +855,28 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                 } else
                     ogs_error("Invalid Type[%d]", mme_ue->nas_eps.type);
 
-                r = s1ap_send_ue_context_release_command(enb_ue,
-                        S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
-                        mme_ue_find_by_id(enb_ue->mme_ue_id) ?
-                            S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE :
-                            S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
-                ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
+                /*
+                 * enb_ue may be NULL: the S1 connection can be released
+                 * while the ULA is in flight (e.g. UE detached meanwhile).
+                 * The inline enb_ue->mme_ue_id dereference below crashed
+                 * the MME (segfault at offset 0x68). With no S1 context
+                 * there is nothing to release toward; remove the
+                 * unreachable UE context instead (frees mme_ue; do not
+                 * touch it afterwards).
+                 */
+                if (enb_ue) {
+                    r = s1ap_send_ue_context_release_command(enb_ue,
+                            S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
+                            mme_ue_find_by_id(enb_ue->mme_ue_id) ?
+                                S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE :
+                                S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
+                    ogs_expect(r == OGS_OK);
+                    ogs_assert(r != OGS_ERROR);
+                } else {
+                    ogs_warn("[%s] ULA reject with no S1 context; "
+                            "removing UE", mme_ue->imsi_bcd);
+                    mme_ue_enter_ue_context_will_remove(mme_ue);
+                }
             }
             break;
         case OGS_DIAM_S6A_CMD_CODE_PURGE_UE:
