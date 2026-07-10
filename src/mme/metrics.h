@@ -61,6 +61,12 @@ typedef enum mme_metric_type_by_sgw_plmn_apn_s {
     _MME_METR_BY_SGW_PLMN_APN_MAX,
 } mme_metric_type_by_sgw_plmn_apn_t;
 
+/* BY SGW and IMSI PLMN */
+typedef enum mme_metric_type_by_sgw_plmn_s {
+    MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE = 0,
+    _MME_METR_BY_SGW_PLMN_MAX,
+} mme_metric_type_by_sgw_plmn_t;
+
 void mme_metrics_attach_attempt(mme_ue_t *mme_ue);
 void mme_metrics_attach_success(mme_ue_t *mme_ue);
 void mme_metrics_attach_reject(mme_ue_t *mme_ue, uint8_t emm_cause);

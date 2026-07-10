@@ -68,6 +68,12 @@ typedef struct mme_metric_key_by_sgw_plmn_apn_s {
     mme_metric_type_by_sgw_plmn_apn_t   t;
 } mme_metric_key_by_sgw_plmn_apn_t;
 
+typedef struct mme_metric_key_by_sgw_plmn_s {
+    char                            sgw_addr[OGS_ADDRSTRLEN];
+    ogs_plmn_id_t                   plmn_id;
+    mme_metric_type_by_sgw_plmn_t   t;
+} mme_metric_key_by_sgw_plmn_t;
+
 extern ogs_metrics_spec_t *mme_metrics_spec_by_plmn[_MME_METR_BY_PLMN_MAX];
 extern ogs_hash_t *metrics_hash_by_plmn;
 extern mme_metrics_spec_def_t mme_metrics_spec_def_by_plmn[_MME_METR_BY_PLMN_MAX];
@@ -82,6 +88,11 @@ extern ogs_metrics_spec_t
 extern ogs_hash_t *metrics_hash_by_sgw_plmn_apn;
 extern mme_metrics_spec_def_t
     mme_metrics_spec_def_by_sgw_plmn_apn[_MME_METR_BY_SGW_PLMN_APN_MAX];
+extern ogs_metrics_spec_t
+    *mme_metrics_spec_by_sgw_plmn[_MME_METR_BY_SGW_PLMN_MAX];
+extern ogs_hash_t *metrics_hash_by_sgw_plmn;
+extern mme_metrics_spec_def_t
+    mme_metrics_spec_def_by_sgw_plmn[_MME_METR_BY_SGW_PLMN_MAX];
 
 static bool mme_metrics_plmn_from_ue(mme_ue_t *mme_ue, ogs_plmn_id_t *plmn_id)
 {
@@ -240,6 +251,46 @@ static void mme_metrics_inst_by_sgw_plmn_apn_add(
 
         ogs_assert(metrics);
         ogs_hash_set(metrics_hash_by_sgw_plmn_apn,
+                key, sizeof(*key), metrics);
+    } else {
+        ogs_free(key);
+    }
+
+    ogs_metrics_inst_add(metrics, val);
+}
+
+static void mme_metrics_inst_by_sgw_plmn_add(
+        const char *sgw_addr, const ogs_plmn_id_t *plmn,
+        mme_metric_type_by_sgw_plmn_t t, int val)
+{
+    ogs_metrics_inst_t *metrics = NULL;
+    mme_metric_key_by_sgw_plmn_t *key;
+    char plmn_id[OGS_PLMNIDSTRLEN] = "";
+
+    ogs_assert(sgw_addr);
+    ogs_assert(plmn);
+    if (!metrics_hash_by_sgw_plmn)
+        return;
+
+    key = ogs_calloc(1, sizeof(*key));
+    ogs_assert(key);
+
+    ogs_cpystrn(key->sgw_addr, sgw_addr, sizeof(key->sgw_addr));
+    key->plmn_id = *plmn;
+    key->t = t;
+
+    metrics = ogs_hash_get(metrics_hash_by_sgw_plmn,
+            key, sizeof(*key));
+
+    if (!metrics) {
+        ogs_plmn_id_to_string(&key->plmn_id, plmn_id);
+
+        metrics = ogs_metrics_inst_new(mme_metrics_spec_by_sgw_plmn[t],
+                mme_metrics_spec_def_by_sgw_plmn->num_labels,
+                (const char *[]){ key->sgw_addr, plmn_id });
+
+        ogs_assert(metrics);
+        ogs_hash_set(metrics_hash_by_sgw_plmn,
                 key, sizeof(*key), metrics);
     } else {
         ogs_free(key);
@@ -418,6 +469,8 @@ void mme_metrics_sess_active_update(mme_sess_t *sess)
                 sess->metrics_sgw_addr, &sess->metrics_plmn_id,
                 sess->metrics_apn,
                 MME_METR_BY_SGW_PLMN_APN_GAUGE_SESS_ACTIVE, -1);
+    } else {
+        mme_ue->metrics_sess_by_sgw_count++;
     }
 
     mme_metrics_inst_by_sgw_plmn_apn_add(sgw_addr, &plmn_id, apn,
@@ -428,10 +481,30 @@ void mme_metrics_sess_active_update(mme_sess_t *sess)
     sess->metrics_plmn_id = plmn_id;
     ogs_cpystrn(sess->metrics_apn, apn, sizeof(sess->metrics_apn));
     sess->metrics_sess_counted = true;
+
+    /* UE-level gauge: counted while >=1 session is counted */
+    if (!mme_ue->metrics_ue_sgw_counted) {
+        mme_metrics_inst_by_sgw_plmn_add(sgw_addr, &plmn_id,
+                MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, 1);
+    } else if (strcmp(mme_ue->metrics_ue_sgw_addr, sgw_addr) != 0 ||
+            memcmp(&mme_ue->metrics_ue_sgw_plmn_id, &plmn_id,
+                sizeof(plmn_id)) != 0) {
+        mme_metrics_inst_by_sgw_plmn_add(
+                mme_ue->metrics_ue_sgw_addr, &mme_ue->metrics_ue_sgw_plmn_id,
+                MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, -1);
+        mme_metrics_inst_by_sgw_plmn_add(sgw_addr, &plmn_id,
+                MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, 1);
+    }
+    ogs_cpystrn(mme_ue->metrics_ue_sgw_addr, sgw_addr,
+            sizeof(mme_ue->metrics_ue_sgw_addr));
+    mme_ue->metrics_ue_sgw_plmn_id = plmn_id;
+    mme_ue->metrics_ue_sgw_counted = true;
 }
 
 void mme_metrics_on_sess_remove(mme_sess_t *sess)
 {
+    mme_ue_t *mme_ue = NULL;
+
     ogs_assert(sess);
 
     if (!sess->metrics_sess_counted)
@@ -442,6 +515,21 @@ void mme_metrics_on_sess_remove(mme_sess_t *sess)
             sess->metrics_apn,
             MME_METR_BY_SGW_PLMN_APN_GAUGE_SESS_ACTIVE, -1);
     sess->metrics_sess_counted = false;
+
+    mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
+    if (!mme_ue)
+        return;
+
+    if (mme_ue->metrics_sess_by_sgw_count > 0)
+        mme_ue->metrics_sess_by_sgw_count--;
+
+    if (mme_ue->metrics_sess_by_sgw_count == 0 &&
+            mme_ue->metrics_ue_sgw_counted) {
+        mme_metrics_inst_by_sgw_plmn_add(
+                mme_ue->metrics_ue_sgw_addr, &mme_ue->metrics_ue_sgw_plmn_id,
+                MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, -1);
+        mme_ue->metrics_ue_sgw_counted = false;
+    }
 }
 
 /* GLOBAL */
@@ -624,6 +712,39 @@ static void mme_metrics_init_by_sgw_plmn_apn(void)
     ogs_assert(metrics_hash_by_sgw_plmn_apn);
 }
 
+/* BY SGW and IMSI PLMN */
+const char *labels_sgw_plmn[] = {
+    "sgw",
+    "plmnid"
+};
+
+#define MME_METR_BY_SGW_PLMN_GAUGE_ENTRY(_id, _name, _desc) \
+    [_id] = { \
+        .type = OGS_METRICS_METRIC_TYPE_GAUGE, \
+        .name = _name, \
+        .description = _desc, \
+        .num_labels = OGS_ARRAY_SIZE(labels_sgw_plmn), \
+        .labels = labels_sgw_plmn, \
+    },
+
+ogs_metrics_spec_t
+    *mme_metrics_spec_by_sgw_plmn[_MME_METR_BY_SGW_PLMN_MAX];
+ogs_hash_t *metrics_hash_by_sgw_plmn = NULL;
+mme_metrics_spec_def_t
+    mme_metrics_spec_def_by_sgw_plmn[_MME_METR_BY_SGW_PLMN_MAX] = {
+MME_METR_BY_SGW_PLMN_GAUGE_ENTRY(
+    MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE,
+    "mme_ue_active_by_sgw",
+    "UEs with at least one active session per selected SGW "
+    "and IMSI home PLMN")
+};
+
+static void mme_metrics_init_by_sgw_plmn(void)
+{
+    metrics_hash_by_sgw_plmn = ogs_hash_make();
+    ogs_assert(metrics_hash_by_sgw_plmn);
+}
+
 void mme_metrics_init(void)
 {
     ogs_metrics_context_t *ctx = ogs_metrics_self();
@@ -640,12 +761,16 @@ void mme_metrics_init(void)
     mme_metrics_init_spec(ctx, mme_metrics_spec_by_sgw_plmn_apn,
             mme_metrics_spec_def_by_sgw_plmn_apn,
             _MME_METR_BY_SGW_PLMN_APN_MAX);
+    mme_metrics_init_spec(ctx, mme_metrics_spec_by_sgw_plmn,
+            mme_metrics_spec_def_by_sgw_plmn,
+            _MME_METR_BY_SGW_PLMN_MAX);
 
     mme_metrics_init_inst_global();
     mme_metrics_init_by_plmn();
     mme_metrics_init_by_plmn_cause();
     mme_metrics_init_by_reason();
     mme_metrics_init_by_sgw_plmn_apn();
+    mme_metrics_init_by_sgw_plmn();
 }
 
 void mme_metrics_final(void)
@@ -698,6 +823,19 @@ void mme_metrics_final(void)
         }
         ogs_hash_destroy(metrics_hash_by_sgw_plmn_apn);
         metrics_hash_by_sgw_plmn_apn = NULL;
+    }
+    if (metrics_hash_by_sgw_plmn) {
+        for (hi = ogs_hash_first(metrics_hash_by_sgw_plmn); hi;
+                hi = ogs_hash_next(hi)) {
+            mme_metric_key_by_sgw_plmn_t *key =
+                (mme_metric_key_by_sgw_plmn_t *)ogs_hash_this_key(hi);
+
+            ogs_hash_set(metrics_hash_by_sgw_plmn,
+                    key, sizeof(*key), NULL);
+            ogs_free(key);
+        }
+        ogs_hash_destroy(metrics_hash_by_sgw_plmn);
+        metrics_hash_by_sgw_plmn = NULL;
     }
 
     ogs_metrics_context_final();
