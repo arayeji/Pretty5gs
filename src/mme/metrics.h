@@ -79,6 +79,9 @@ void mme_metrics_on_ue_remove(mme_ue_t *mme_ue);
 void mme_metrics_sess_active_update(mme_sess_t *sess);
 void mme_metrics_on_sess_remove(mme_sess_t *sess);
 
+void mme_metrics_ue_connected_update(mme_ue_t *mme_ue);
+void mme_metrics_ue_connected_clear(mme_ue_t *mme_ue);
+
 void mme_metrics_init(void);
 void mme_metrics_final(void);
 

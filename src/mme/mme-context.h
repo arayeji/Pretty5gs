@@ -741,13 +741,11 @@ struct mme_ue_s {
     ogs_plmn_id_t   metrics_plmn_id;
 
     /*
-     * mme_ue_active_by_sgw gauge bookkeeping (metrics.c): number of
-     * sessions currently counted in mme_session_active_by_sgw, plus the
-     * label set the UE gauge was incremented under. The UE is counted
-     * while it has at least one counted session; labels are frozen at
-     * increment time and moved (dec old / inc new) on SGW relocation.
+     * mme_ue_active_by_sgw gauge bookkeeping (metrics.c): ECM-CONNECTED
+     * UEs (same population as global enb_ue), labelled by selected SGW
+     * and IMSI home PLMN. Labels frozen at increment; moved on SGW
+     * relocation while the UE stays on S1.
      */
-    int             metrics_sess_by_sgw_count;
     bool            metrics_ue_sgw_counted;
     char            metrics_ue_sgw_addr[OGS_ADDRSTRLEN];
     ogs_plmn_id_t   metrics_ue_sgw_plmn_id;

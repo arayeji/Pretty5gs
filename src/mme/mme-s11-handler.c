@@ -744,8 +744,9 @@ void mme_s11_handle_create_session_response(
                     mme_timer_cfg(MME_TIMER_S11_HOLDING)->duration);
 
             sgw_ue_associate_mme_ue(target_ue, mme_ue);
-            /* Re-label the per-SGW session gauge to the target SGW */
             mme_metrics_sess_active_update(sess);
+            if (ECM_CONNECTED(mme_ue))
+                mme_metrics_ue_connected_update(mme_ue);
             r = s1ap_send_path_switch_ack(mme_ue, true);
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
