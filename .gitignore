@@ -8,6 +8,9 @@ deploy-bundle/
 server-sync/
 .cursor/
 
+# Local ops scripts with embedded credentials (kept local, not tracked)
+tools/smf_vpp_diff.sh
+
 # Local pcap / attach debug scripts and scratch output
 pfcp-out.txt
 tools/analyze_kkkk_pcap.py
