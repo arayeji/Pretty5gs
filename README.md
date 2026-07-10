@@ -283,6 +283,7 @@ Each NF exposes OpenMetrics on `GET /metrics` (default listener in YAML `metrics
 | MME | `mme_auth_fail_total` | `plmnid` | Authentication reject / failure |
 | MME | `mme_ue_registered` | `plmnid` | Currently registered UEs (home PLMN from IMSI) |
 | MME | `mme_ue_lost_total` | `reason` | Registered UE removed (`ue_detach`, `mme_explicit`, `hss_explicit`, `mme_implicit`, `hss_implicit`, `other`) |
+| MME | `mme_session_active_by_sgw` | `sgw`, `plmnid`, `apn` | Active PDN sessions per selected SGWC (S11 peer address), IMSI home PLMN and APN — counts sessions on SGWs that expose no metrics themselves (e.g. third-party cores) |
 | SGWC | `sgwc_ue_active` | `plmnid` | UEs with S11 context |
 | SGWC | `sgwc_session_active` | `plmnid`, `pgw_addr` | Active PDN sessions per PGW/SMF S5-C peer |
 | SMF | `smf_ue_active` | `plmnid` | UEs with at least one SMF context |

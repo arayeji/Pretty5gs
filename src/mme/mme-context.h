@@ -1187,6 +1187,18 @@ typedef struct mme_sess_s {
 
     /* Save Extended Protocol Configuration Options from PGW */
     ogs_tlv_octet_t pgw_epco;
+
+    /*
+     * Labels the mme_session_active_by_sgw gauge was incremented under
+     * (metrics.c). Frozen at Create Session Response time so the
+     * decrement in mme_sess_remove() hits the same series even if the
+     * UE later changes IMSI keying or the SGW list is reloaded; updated
+     * in place (dec old / inc new) on SGW relocation.
+     */
+    bool            metrics_sess_counted;
+    char            metrics_sgw_addr[OGS_ADDRSTRLEN];
+    ogs_plmn_id_t   metrics_plmn_id;
+    char            metrics_apn[OGS_MAX_APN_LEN+1];
 } mme_sess_t;
 
 #define MME_HAVE_ENB_S1U_PATH(__bEARER) \

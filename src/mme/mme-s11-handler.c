@@ -33,6 +33,7 @@
 
 #include "mme-s11-build.h"
 #include "mme-s11-handler.h"
+#include "metrics.h"
 
 static uint8_t esm_cause_from_gtp(uint8_t gtp_cause)
 {
@@ -700,6 +701,9 @@ void mme_s11_handle_create_session_response(
             mme_ue->mme_s11_teid, target_ue->sgw_s11_teid);
     mme_ue_progress(mme_ue, "create_session_rsp_ok");
 
+    if (create_action != OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST)
+        mme_metrics_sess_active_update(sess);
+
     if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST) {
         mme_csmap_t *csmap = mme_csmap_find_for_ue(mme_ue);
         mme_ue->csmap = csmap;
@@ -740,6 +744,8 @@ void mme_s11_handle_create_session_response(
                     mme_timer_cfg(MME_TIMER_S11_HOLDING)->duration);
 
             sgw_ue_associate_mme_ue(target_ue, mme_ue);
+            /* Re-label the per-SGW session gauge to the target SGW */
+            mme_metrics_sess_active_update(sess);
             r = s1ap_send_path_switch_ack(mme_ue, true);
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);

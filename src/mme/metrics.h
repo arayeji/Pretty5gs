@@ -8,6 +8,8 @@ extern "C" {
 #endif
 
 typedef struct mme_ue_s mme_ue_t;
+typedef struct mme_sess_s mme_sess_t;
+typedef struct sgw_ue_s sgw_ue_t;
 
 /* GLOBAL */
 typedef enum mme_metric_type_global_s {
@@ -53,6 +55,12 @@ typedef enum mme_metric_type_by_reason_s {
     _MME_METR_BY_REASON_MAX,
 } mme_metric_type_by_reason_t;
 
+/* BY SGW, IMSI PLMN and APN */
+typedef enum mme_metric_type_by_sgw_plmn_apn_s {
+    MME_METR_BY_SGW_PLMN_APN_GAUGE_SESS_ACTIVE = 0,
+    _MME_METR_BY_SGW_PLMN_APN_MAX,
+} mme_metric_type_by_sgw_plmn_apn_t;
+
 void mme_metrics_attach_attempt(mme_ue_t *mme_ue);
 void mme_metrics_attach_success(mme_ue_t *mme_ue);
 void mme_metrics_attach_reject(mme_ue_t *mme_ue, uint8_t emm_cause);
@@ -61,6 +69,9 @@ void mme_metrics_auth_success(mme_ue_t *mme_ue);
 void mme_metrics_auth_fail(mme_ue_t *mme_ue);
 void mme_metrics_ue_registered_inc(mme_ue_t *mme_ue);
 void mme_metrics_on_ue_remove(mme_ue_t *mme_ue);
+
+void mme_metrics_sess_active_update(mme_sess_t *sess);
+void mme_metrics_on_sess_remove(mme_sess_t *sess);
 
 void mme_metrics_init(void);
 void mme_metrics_final(void);

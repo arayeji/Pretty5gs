@@ -7510,6 +7510,8 @@ void mme_sess_remove(mme_sess_t *sess)
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     ogs_assert(mme_ue);
 
+    mme_metrics_on_sess_remove(sess);
+
     /*
      * Same as mme_sess_add - keep the dumper from observing a
      * half-removed sess or following a freed pointer.
