@@ -10,6 +10,7 @@ extern "C" {
 typedef struct mme_ue_s mme_ue_t;
 typedef struct mme_sess_s mme_sess_t;
 typedef struct sgw_ue_s sgw_ue_t;
+typedef struct enb_ue_s enb_ue_t;
 
 /* GLOBAL */
 typedef enum mme_metric_type_global_s {
@@ -79,8 +80,8 @@ void mme_metrics_on_ue_remove(mme_ue_t *mme_ue);
 void mme_metrics_sess_active_update(mme_sess_t *sess);
 void mme_metrics_on_sess_remove(mme_sess_t *sess);
 
-void mme_metrics_ue_connected_update(mme_ue_t *mme_ue);
-void mme_metrics_ue_connected_clear(mme_ue_t *mme_ue);
+void mme_metrics_enb_ue_connected_update(enb_ue_t *enb_ue);
+void mme_metrics_enb_ue_connected_clear(enb_ue_t *enb_ue);
 
 void mme_metrics_init(void);
 void mme_metrics_final(void);

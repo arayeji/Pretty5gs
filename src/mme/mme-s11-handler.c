@@ -745,8 +745,12 @@ void mme_s11_handle_create_session_response(
 
             sgw_ue_associate_mme_ue(target_ue, mme_ue);
             mme_metrics_sess_active_update(sess);
-            if (ECM_CONNECTED(mme_ue))
-                mme_metrics_ue_connected_update(mme_ue);
+            if (ECM_CONNECTED(mme_ue)) {
+                enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+
+                if (enb_ue)
+                    mme_metrics_enb_ue_connected_update(enb_ue);
+            }
             r = s1ap_send_path_switch_ack(mme_ue, true);
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);

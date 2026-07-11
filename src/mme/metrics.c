@@ -356,7 +356,12 @@ void mme_metrics_auth_success(mme_ue_t *mme_ue)
     mme_metrics_inst_by_plmn_add(&plmn_id,
             MME_METR_BY_PLMN_CTR_AUTH_SUCCESS, 1);
 
-    mme_metrics_ue_connected_update(mme_ue);
+    if (MME_UE_HAVE_IMSI(mme_ue) && ECM_CONNECTED(mme_ue)) {
+        enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+
+        if (enb_ue)
+            mme_metrics_enb_ue_connected_update(enb_ue);
+    }
 }
 
 void mme_metrics_auth_fail(mme_ue_t *mme_ue)
@@ -429,8 +434,6 @@ void mme_metrics_on_ue_remove(mme_ue_t *mme_ue)
 
     mme_metrics_inst_by_reason_add(mme_metrics_detach_reason(mme_ue),
             MME_METR_BY_REASON_CTR_UE_LOST, 1);
-
-    mme_metrics_ue_connected_clear(mme_ue);
 }
 
 static bool mme_metrics_sgw_plmn_from_ue(
@@ -455,50 +458,55 @@ static bool mme_metrics_sgw_plmn_from_ue(
 }
 
 /*
- * Count an ECM-CONNECTED UE (active S1, same population as enb_ue)
- * under the currently selected SGW and IMSI home PLMN.
+ * Count one enb_ue S1 context (same population as global enb_ue) under
+ * the owning UE's selected SGW and IMSI home PLMN.
  */
-void mme_metrics_ue_connected_update(mme_ue_t *mme_ue)
+void mme_metrics_enb_ue_connected_update(enb_ue_t *enb_ue)
 {
+    mme_ue_t *mme_ue = NULL;
     char sgw_addr[OGS_ADDRSTRLEN] = "";
     ogs_plmn_id_t plmn_id;
 
-    if (!mme_ue || !ECM_CONNECTED(mme_ue))
+    if (!enb_ue)
+        return;
+
+    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+    if (!mme_ue)
         return;
 
     if (!mme_metrics_sgw_plmn_from_ue(mme_ue, sgw_addr, sizeof(sgw_addr),
             &plmn_id))
         return;
 
-    if (mme_ue->metrics_ue_sgw_counted) {
-        if (strcmp(mme_ue->metrics_ue_sgw_addr, sgw_addr) == 0 &&
-            memcmp(&mme_ue->metrics_ue_sgw_plmn_id, &plmn_id,
+    if (enb_ue->metrics_sgw_counted) {
+        if (strcmp(enb_ue->metrics_sgw_addr, sgw_addr) == 0 &&
+            memcmp(&enb_ue->metrics_plmn_id, &plmn_id,
                 sizeof(plmn_id)) == 0)
             return;
 
         mme_metrics_inst_by_sgw_plmn_add(
-                mme_ue->metrics_ue_sgw_addr, &mme_ue->metrics_ue_sgw_plmn_id,
+                enb_ue->metrics_sgw_addr, &enb_ue->metrics_plmn_id,
                 MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, -1);
     }
 
     mme_metrics_inst_by_sgw_plmn_add(sgw_addr, &plmn_id,
             MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, 1);
 
-    ogs_cpystrn(mme_ue->metrics_ue_sgw_addr, sgw_addr,
-            sizeof(mme_ue->metrics_ue_sgw_addr));
-    mme_ue->metrics_ue_sgw_plmn_id = plmn_id;
-    mme_ue->metrics_ue_sgw_counted = true;
+    ogs_cpystrn(enb_ue->metrics_sgw_addr, sgw_addr,
+            sizeof(enb_ue->metrics_sgw_addr));
+    enb_ue->metrics_plmn_id = plmn_id;
+    enb_ue->metrics_sgw_counted = true;
 }
 
-void mme_metrics_ue_connected_clear(mme_ue_t *mme_ue)
+void mme_metrics_enb_ue_connected_clear(enb_ue_t *enb_ue)
 {
-    if (!mme_ue || !mme_ue->metrics_ue_sgw_counted)
+    if (!enb_ue || !enb_ue->metrics_sgw_counted)
         return;
 
     mme_metrics_inst_by_sgw_plmn_add(
-            mme_ue->metrics_ue_sgw_addr, &mme_ue->metrics_ue_sgw_plmn_id,
+            enb_ue->metrics_sgw_addr, &enb_ue->metrics_plmn_id,
             MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, -1);
-    mme_ue->metrics_ue_sgw_counted = false;
+    enb_ue->metrics_sgw_counted = false;
 }
 
 /*
@@ -770,7 +778,8 @@ mme_metrics_spec_def_t
 MME_METR_BY_SGW_PLMN_GAUGE_ENTRY(
     MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE,
     "mme_ue_active_by_sgw",
-    "ECM-CONNECTED UEs (active S1) per selected SGW and IMSI home PLMN")
+    "ECM-CONNECTED UEs (active S1, one per enb_ue context) per selected "
+    "SGW and IMSI home PLMN; sum equals global enb_ue")
 };
 
 static void mme_metrics_init_by_sgw_plmn(void)

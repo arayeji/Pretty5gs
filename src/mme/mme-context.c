@@ -5748,11 +5748,10 @@ void enb_ue_remove(enb_ue_t *enb_ue)
      * never observed. Stamp unconditionally — branch-free.
      */
     mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
-    if (mme_ue) {
+    if (mme_ue)
         mme_ue->idle_since = ogs_time_now();
-        if (mme_ue->enb_ue_id == enb_ue->id)
-            mme_metrics_ue_connected_clear(mme_ue);
-    }
+
+    mme_metrics_enb_ue_connected_clear(enb_ue);
 
     enb = mme_enb_find_by_id(enb_ue->enb_id);
 
@@ -6369,8 +6368,12 @@ void mme_sgw_reselect_for_ue_if_needed(mme_ue_t *mme_ue)
     sgw_ue_switch_to_sgw(sgw_ue, new_sgw);
     mme_sgw_log_pick(mme_ue, new_sgw, "reselected", current);
 
-    if (ECM_CONNECTED(mme_ue))
-        mme_metrics_ue_connected_update(mme_ue);
+    if (ECM_CONNECTED(mme_ue)) {
+        enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+
+        if (enb_ue)
+            mme_metrics_enb_ue_connected_update(enb_ue);
+    }
 }
 
 mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
@@ -7327,7 +7330,7 @@ void enb_ue_associate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
      */
     mme_s6a_report_urrp(mme_ue);
 
-    mme_metrics_ue_connected_update(mme_ue);
+    mme_metrics_enb_ue_connected_update(enb_ue);
 }
 
 void enb_ue_deassociate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
@@ -7340,8 +7343,6 @@ void enb_ue_deassociate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     else
         ogs_error("Cannot deassociate mme_ue->enb_ue_id[%d] != enb_ue->id[%d]",
                 mme_ue->enb_ue_id, enb_ue->id);
-
-    mme_metrics_ue_connected_clear(mme_ue);
 }
 
 void enb_ue_source_associate_target(enb_ue_t *source_ue, enb_ue_t *target_ue)

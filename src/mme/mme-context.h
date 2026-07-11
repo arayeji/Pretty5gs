@@ -525,6 +525,14 @@ struct enb_ue_s {
     /* Related Context */
     ogs_pool_id_t   enb_id;
     ogs_pool_id_t   mme_ue_id;
+
+    /*
+     * mme_ue_active_by_sgw gauge bookkeeping (metrics.c): one increment
+     * per enb_ue S1 context, mirroring global enb_ue add/remove.
+     */
+    bool            metrics_sgw_counted;
+    char            metrics_sgw_addr[OGS_ADDRSTRLEN];
+    ogs_plmn_id_t   metrics_plmn_id;
 };
 
 struct sgw_ue_s {
@@ -764,16 +772,6 @@ struct mme_ue_s {
      */
     bool            metrics_plmn_valid;
     ogs_plmn_id_t   metrics_plmn_id;
-
-    /*
-     * mme_ue_active_by_sgw gauge bookkeeping (metrics.c): ECM-CONNECTED
-     * UEs (same population as global enb_ue), labelled by selected SGW
-     * and IMSI home PLMN. Labels frozen at increment; moved on SGW
-     * relocation while the UE stays on S1.
-     */
-    bool            metrics_ue_sgw_counted;
-    char            metrics_ue_sgw_addr[OGS_ADDRSTRLEN];
-    ogs_plmn_id_t   metrics_ue_sgw_plmn_id;
 
     /* Memento of context fields */
     mme_ue_memento_t memento;
