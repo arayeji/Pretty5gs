@@ -99,6 +99,13 @@ mme:
 #    gtpc_plmn_id_is_imsi_plmn: true  # plmn_id on gtpc.client = IMSI HPLMN
 #                                     # use serving_plmn_id for visited TAI
 #    Home PGW (MIP-Home-Agent): GTP APN on S11; SGWC forwards on S5.
+#    allowed_apn: [internet]       # allowlist mode when non-empty (inbound roam)
+#    denied_apn: [ims]            # always wins over allowed_apn
+#    apn_reject_cause: 27         # ESM cause when APN blocked (default 27)
+#    apn_rule:                    # per-home-PLMN overrides (SIGHUP reloadable)
+#    - plmn_id: { mcc: 432, mnc: 11 }
+#      allowed_apn: [internet]
+#      denied_apn: [ims]
 #  ambr_limit:
 #    enabled: false
 #    force: false

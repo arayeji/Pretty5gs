@@ -49,6 +49,7 @@ libmme_sources = files('''
     mme-sm.h
     mme-path.h
     mme-trace.h
+    mme-inbound-roam-apn.h
     mme-roam-access.h
     metrics.h
 
@@ -57,6 +58,7 @@ libmme_sources = files('''
     mme-timer.c
     mme-context.c
     mme-reload-lists.c
+    mme-inbound-roam-apn.c
     mme-roam-access.c
     eplmn-config.c
     mme-apn.c

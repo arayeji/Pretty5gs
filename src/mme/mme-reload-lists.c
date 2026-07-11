@@ -23,6 +23,7 @@
 #include "mme-roam-access.h"
 #include "eplmn-config.h"
 #include "mme-reload-lists.h"
+#include "mme-inbound-roam-apn.h"
 
 volatile int mme_reload_lists_changed = 0;
 
@@ -1745,6 +1746,12 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
         return reload_imsi_acl_replace(mme_iter);
     if (!strcmp(mme_key, "trace_imsi"))
         return reload_trace_imsi_replace(mme_iter);
+    if (!strcmp(mme_key, "inbound_roam")) {
+        mme_inbound_roam_config_parse(mme_iter);
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" inbound_roam config replaced");
+        return 0;
+    }
     if (!strcmp(mme_key, "emergency"))
         return reload_emergency_replace(mme_iter);
     if (!strcmp(mme_key, "attach_accept")) {

@@ -29,6 +29,7 @@
 #include "ogs-app.h"
 #include "ogs-sctp.h"
 #include "metrics.h"
+#include "mme-inbound-roam-apn.h"
 
 /* S1AP */
 #include "S1AP_Cause.h"
@@ -193,6 +194,22 @@ typedef struct mme_context_s {
      * serving_plmn rules when selecting SGWC/SMF. Default: true.
      */
     bool            inbound_roam_gtpc_plmn_id_is_imsi_plmn;
+
+    /*
+     * Inbound-roam APN policy (SIGHUP-reloadable via mme.inbound_roam).
+     * denied_apn always wins; non-empty allowed_apn is an allow-list.
+     * apn_rule[] can override allowed/deny per home PLMN.
+     */
+    uint8_t         inbound_roam_apn_reject_cause;
+    int             num_of_inbound_roam_allowed_apn;
+    char            inbound_roam_allowed_apn[MME_MAX_INBOUND_ROAM_APN]
+                        [OGS_MAX_APN_LEN + 1];
+    int             num_of_inbound_roam_denied_apn;
+    char            inbound_roam_denied_apn[MME_MAX_INBOUND_ROAM_APN]
+                        [OGS_MAX_APN_LEN + 1];
+    int             num_of_inbound_roam_apn_rule;
+    mme_inbound_roam_apn_rule_t inbound_roam_apn_rule
+                        [MME_MAX_INBOUND_ROAM_APN_RULE];
 
     /* Cap AMBR from HSS (bps) before GTP/NAS/S1AP */
     struct {

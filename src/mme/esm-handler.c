@@ -23,6 +23,7 @@
 #include "mme-gtp-path.h"
 #include "mme-path.h"
 #include "mme-trace.h"
+#include "mme-inbound-roam-apn.h"
 
 #include "esm-build.h"
 #include "esm-handler.h"
@@ -130,6 +131,21 @@ int esm_handle_pdn_connectivity_request(
             sess->ue_request_type.value = 1;
         } else {
             apn = req->access_point_name.apn;
+        }
+        {
+            uint8_t roam_cause =
+                    mme_inbound_roam_apn_esm_cause(mme_ue, apn);
+
+            if (roam_cause != OGS_NAS_ESM_CAUSE_REQUEST_ACCEPTED) {
+                ogs_warn("[%s] inbound roam APN policy: reject PDN APN[%s] "
+                        "esm_cause=%u",
+                        mme_ue->imsi_bcd, apn, roam_cause);
+                r = nas_eps_send_pdn_connectivity_reject(
+                        sess, roam_cause, create_action);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+                return OGS_ERROR;
+            }
         }
         mme_ue_info(mme_ue, NULL, "esm", apn,
                 "PDN connectivity request APN[%s]", apn);
@@ -283,8 +299,22 @@ int esm_handle_information_response(
     }
 
     if (sess->session) {
+        uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(
+                mme_ue, sess->session->name);
+
         ogs_assert(sess->session->name);
         ogs_debug("    APN[%s]", sess->session->name);
+
+        if (roam_cause != OGS_NAS_ESM_CAUSE_REQUEST_ACCEPTED) {
+            ogs_warn("[%s] inbound roam APN policy: reject attach APN[%s] "
+                    "esm_cause=%u",
+                    mme_ue->imsi_bcd, sess->session->name, roam_cause);
+            r = nas_eps_send_pdn_connectivity_reject(
+                    sess, roam_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
+            ogs_expect(r == OGS_OK);
+            ogs_assert(r != OGS_ERROR);
+            return OGS_ERROR;
+        }
 
         if (sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
             sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV6 ||

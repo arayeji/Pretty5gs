@@ -143,6 +143,15 @@ mme:
     gtp_apn_lowercase: false
     strip_pap_from_gtp_pco: false
     gtpc_plmn_id_is_imsi_plmn: true
+    # APN policy for inbound roamers only (SIGHUP reloadable).
+    # denied_apn always wins. Non-empty allowed_apn = allowlist mode.
+    # allowed_apn: [internet]
+    # denied_apn: [ims]
+    # apn_reject_cause: 27
+    # apn_rule:
+    # - plmn_id: { mcc: 432, mnc: 11 }
+    #   allowed_apn: [internet]
+    #   denied_apn: [ims]
   ambr_limit:
     enabled: false
     downlink: 100

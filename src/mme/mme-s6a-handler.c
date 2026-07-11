@@ -22,6 +22,7 @@
 #include "sgsap-path.h"
 #include "mme-path.h"
 #include "mme-trace.h"
+#include "mme-inbound-roam-apn.h"
 
 #include "mme-sm.h"
 #include "mme-s6a-handler.h"
@@ -480,59 +481,74 @@ void mme_s6a_handle_clr(mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
 static uint8_t mme_ue_session_from_slice_data(mme_ue_t *mme_ue,
     ogs_slice_data_t *slice_data)
 {
-    int i;
+    int i, dst = 0;
+    bool default_present = false;
+
     for (i = 0; i < slice_data->num_of_session; i++) {
-        if (i >= OGS_MAX_NUM_OF_SESS) {
+        ogs_session_t *src = &slice_data->session[i];
+
+        if (dst >= OGS_MAX_NUM_OF_SESS) {
             ogs_warn("Ignore max session count overflow [%d>=%d]",
                     slice_data->num_of_session, OGS_MAX_NUM_OF_SESS);
             break;
         }
 
-        if (slice_data->session[i].name) {
-            mme_ue->session[i].name = ogs_strdup(slice_data->session[i].name);
-            ogs_assert(mme_ue->session[i].name);
+        if (src->name &&
+                !mme_inbound_roam_apn_allowed(mme_ue, src->name)) {
+            ogs_info("[%s] inbound roam APN policy: skip HSS session APN[%s]",
+                    mme_ue->imsi_bcd, src->name);
+            continue;
         }
 
-        mme_ue->session[i].context_identifier =
-            slice_data->session[i].context_identifier;
+        if (src->name) {
+            mme_ue->session[dst].name = ogs_strdup(src->name);
+            ogs_assert(mme_ue->session[dst].name);
+        }
 
-        if (slice_data->session[i].session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
-            slice_data->session[i].session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
-            slice_data->session[i].session_type ==
-                OGS_PDU_SESSION_TYPE_IPV4V6) {
-            mme_ue->session[i].session_type =
-                slice_data->session[i].session_type;
+        mme_ue->session[dst].context_identifier = src->context_identifier;
+        if (src->context_identifier == slice_data->context_identifier)
+            default_present = true;
+
+        if (src->session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
+            src->session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
+            src->session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
+            mme_ue->session[dst].session_type = src->session_type;
         } else {
-            ogs_error("Invalid PDN_TYPE[%d]",
-                slice_data->session[i].session_type);
-            if (mme_ue->session[i].name)
-                ogs_free(mme_ue->session[i].name);
+            ogs_error("Invalid PDN_TYPE[%d]", src->session_type);
+            if (mme_ue->session[dst].name)
+                ogs_free(mme_ue->session[dst].name);
             break;
         }
-        memcpy(&mme_ue->session[i].ue_ip, &slice_data->session[i].ue_ip,
-                sizeof(mme_ue->session[i].ue_ip));
+        memcpy(&mme_ue->session[dst].ue_ip, &src->ue_ip,
+                sizeof(mme_ue->session[dst].ue_ip));
 
-        memcpy(&mme_ue->session[i].qos, &slice_data->session[i].qos,
-                sizeof(mme_ue->session[i].qos));
-        memcpy(&mme_ue->session[i].ambr, &slice_data->session[i].ambr,
-                sizeof(mme_ue->session[i].ambr));
+        memcpy(&mme_ue->session[dst].qos, &src->qos,
+                sizeof(mme_ue->session[dst].qos));
+        memcpy(&mme_ue->session[dst].ambr, &src->ambr,
+                sizeof(mme_ue->session[dst].ambr));
 
-        memcpy(&mme_ue->session[i].smf_ip, &slice_data->session[i].smf_ip,
-                sizeof(mme_ue->session[i].smf_ip));
+        memcpy(&mme_ue->session[dst].smf_ip, &src->smf_ip,
+                sizeof(mme_ue->session[dst].smf_ip));
 
-        memcpy(&mme_ue->session[i].charging_characteristics,
-                &slice_data->session[i].charging_characteristics,
-                sizeof(mme_ue->session[i].charging_characteristics));
-        mme_ue->session[i].charging_characteristics_presence =
-            slice_data->session[i].charging_characteristics_presence;
+        memcpy(&mme_ue->session[dst].charging_characteristics,
+                &src->charging_characteristics,
+                sizeof(mme_ue->session[dst].charging_characteristics));
+        mme_ue->session[dst].charging_characteristics_presence =
+            src->charging_characteristics_presence;
 
-        mme_ue->session[i].vplmn_dynamic_address_allowed =
-            slice_data->session[i].vplmn_dynamic_address_allowed;
-        mme_ue->session[i].pdn_gw_allocation_type =
-            slice_data->session[i].pdn_gw_allocation_type;
+        mme_ue->session[dst].vplmn_dynamic_address_allowed =
+            src->vplmn_dynamic_address_allowed;
+        mme_ue->session[dst].pdn_gw_allocation_type =
+            src->pdn_gw_allocation_type;
+
+        dst++;
     }
 
-    return i;
+    if (dst > 0 && !default_present)
+        slice_data->context_identifier =
+                mme_ue->session[0].context_identifier;
+
+    return dst;
 }
 
 /* 3GPP TS 29.272 Annex A; Table A.1:

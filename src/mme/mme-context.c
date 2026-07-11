@@ -31,6 +31,7 @@
 #include "mme-trace.h"
 #include "nas-path.h"
 #include "mme-reload-lists.h"
+#include "mme-inbound-roam-apn.h"
 #include "s1ap-path.h"
 #include "s1ap-handler.h"
 #include "mme-sm.h"
@@ -425,6 +426,8 @@ void mme_context_init(void)
     self.inbound_roam_force_ipv4_pdn_on_home_pgw = false;
     self.inbound_roam_zero_bearer_mbr_for_non_gbr = false;
     self.inbound_roam_gtpc_plmn_id_is_imsi_plmn = true;
+    self.inbound_roam_apn_reject_cause =
+            OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN;
 
     self.ambr_limit.enabled = false;
     self.ambr_limit.force = false;
@@ -2399,78 +2402,7 @@ int mme_context_parse_config(void)
                             self.omit_indication_on_gtp_csr ?
                             "enabled" : "disabled");
                 } else if (!strcmp(mme_key, "inbound_roam")) {
-                    ogs_yaml_iter_t roam_iter;
-                    ogs_yaml_iter_recurse(&mme_iter, &roam_iter);
-                    while (ogs_yaml_iter_next(&roam_iter)) {
-                        const char *rk = ogs_yaml_iter_key(&roam_iter);
-                        const char *rv = ogs_yaml_iter_value(&roam_iter);
-                        ogs_assert(rk);
-                        if (!strcmp(rk, "gtp_apn_format") ||
-                                !strcmp(rk, "apn_format")) {
-                            if (rv && (!strcmp(rv, "received") ||
-                                        !strcmp(rv, "exact") ||
-                                        !strcmp(rv, "as_received"))) {
-                                self.inbound_roam_gtp_apn_format =
-                                    MME_INBOUND_ROAM_GTP_APN_RECEIVED;
-                            } else if (rv && (!strcmp(rv, "fqdn") ||
-                                        !strcmp(rv, "full"))) {
-                                self.inbound_roam_gtp_apn_format =
-                                    MME_INBOUND_ROAM_GTP_APN_FQDN;
-                            } else
-                                ogs_warn("unknown mme.inbound_roam."
-                                        "gtp_apn_format `%s` "
-                                        "(use received|fqdn)", rv);
-                        } else if (!strcmp(rk, "gtp_apn_lowercase") ||
-                                !strcmp(rk, "apn_lowercase") ||
-                                !strcmp(rk, "lowercase")) {
-                            self.inbound_roam_gtp_apn_lowercase =
-                                ogs_yaml_iter_bool(&roam_iter);
-                        } else if (!strcmp(rk, "strip_pap_from_gtp_pco") ||
-                                !strcmp(rk, "strip_pap_from_pco")) {
-                            self.inbound_roam_strip_pap_from_gtp_pco =
-                                ogs_yaml_iter_bool(&roam_iter);
-                        } else if (!strcmp(rk,
-                                    "omit_indication_on_gtp_csr") ||
-                                !strcmp(rk, "omit_gtp_indication")) {
-                            self.omit_indication_on_gtp_csr =
-                                ogs_yaml_iter_bool(&roam_iter);
-                            ogs_warn("mme.inbound_roam.omit_indication_on_gtp_csr "
-                                    "is deprecated; use mme.omit_indication_on_gtp_csr");
-                        } else if (!strcmp(rk, "force_ipv4_pdn_on_home_pgw") ||
-                                !strcmp(rk, "force_ipv4_pdn")) {
-                            self.inbound_roam_force_ipv4_pdn_on_home_pgw =
-                                ogs_yaml_iter_bool(&roam_iter);
-                        } else if (!strcmp(rk,
-                                    "zero_bearer_mbr_for_non_gbr") ||
-                                !strcmp(rk, "non_gbr_zero_bearer_mbr")) {
-                            self.inbound_roam_zero_bearer_mbr_for_non_gbr =
-                                ogs_yaml_iter_bool(&roam_iter);
-                        } else if (!strcmp(rk,
-                                    "gtpc_plmn_id_is_imsi_plmn") ||
-                                !strcmp(rk, "plmn_id_is_imsi_plmn")) {
-                            self.inbound_roam_gtpc_plmn_id_is_imsi_plmn =
-                                ogs_yaml_iter_bool(&roam_iter);
-                        } else
-                            ogs_warn("unknown key `%s` in mme.inbound_roam",
-                                    rk);
-                    }
-                    ogs_info("Inbound roam: apn=%s lowercase=%s "
-                            "sanitize_pco=%s "
-                            "force_ipv4_pdn=%s non_gbr_zero_mbr=%s "
-                            "gtpc_plmn_id_is_imsi_plmn=%s",
-                            self.inbound_roam_gtp_apn_format ==
-                            MME_INBOUND_ROAM_GTP_APN_FQDN ? "fqdn" :
-                            "received",
-                            self.inbound_roam_gtp_apn_lowercase ?
-                            "true" : "false",
-                            self.inbound_roam_strip_pap_from_gtp_pco ?
-                            "true" : "false",
-                            self.inbound_roam_force_ipv4_pdn_on_home_pgw ?
-                            "true" : "false",
-                            self.inbound_roam_zero_bearer_mbr_for_non_gbr ?
-                            "true" : "false",
-                            self.inbound_roam_gtpc_plmn_id_is_imsi_plmn ?
-                            "true" : "false");
+                    mme_inbound_roam_config_parse(&mme_iter);
                 } else if (!strcmp(mme_key, "ambr_limit")) {
                     ogs_yaml_iter_t ambr_iter;
                     ogs_yaml_iter_recurse(&mme_iter, &ambr_iter);
