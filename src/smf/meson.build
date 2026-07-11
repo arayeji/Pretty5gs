@@ -78,6 +78,7 @@ libsmf_sources = files('''
     ga-writer.h
     smf-reload-lists.h
     collision-replace.h
+    smf-li.h
     gx-restoration.h
     smf-pfcp-vendor.h
     admin-api.h
@@ -134,10 +135,12 @@ libsmf_sources = files('''
     pdu-info.c
     radius-path.c
     ga-writer.c
+    smf-li.c
     ../../lib/metrics/prometheus/json_pager.c
 '''.split())
 
 libsmf_deps = [libmetrics_dep,
+                libli_dep,
                 libsbi_dep,
                 libngap_dep,
                 libnas_5gs_dep,

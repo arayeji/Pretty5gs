@@ -49,6 +49,7 @@ libmme_sources = files('''
     mme-sm.h
     mme-path.h
     mme-trace.h
+    mme-li.h
     mme-inbound-roam-apn.h
     mme-roam-access.h
     metrics.h
@@ -93,6 +94,7 @@ libmme_sources = files('''
     mme-sm.c
     mme-path.c
     mme-trace.c
+    mme-li.c
     sbc-handler.c
     metrics.c
     enb-info.c
@@ -105,6 +107,7 @@ libmme_sources = files('''
 '''.split())
 
 libmme_deps = [libmetrics_dep,
+                libli_dep,
                 libsctp_dep,
                 libs1ap_dep,
                 libnas_eps_dep,

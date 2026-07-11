@@ -23,6 +23,7 @@
 #include "emm-build.h"
 #include "nas-path.h"
 #include "mme-event.h"
+#include "mme-li.h"
 #include "mme-trace.h"
 #include "mme-timer.h"
 #include "mme-sm.h"

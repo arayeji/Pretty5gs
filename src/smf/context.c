@@ -31,6 +31,7 @@
 #endif
 
 #include "context.h"
+#include "smf-li.h"
 #include "event.h"
 #include "timer.h"
 #include "radius-path.h"
@@ -232,6 +233,8 @@ void smf_context_init(void)
     self.gtpc_recovery = 0;
     self.recovery_counter_file = SMF_RECOVERY_COUNTER_FILE;
 
+    smf_li_init();
+
     context_initialized = 1;
 }
 
@@ -241,6 +244,8 @@ void smf_context_final(void)
 
     ogs_gtp_node_t *gnode = NULL, *next_gnode = NULL;
     ogs_assert(context_initialized == 1);
+
+    smf_li_final();
 
     smf_ue_remove_all();
 
@@ -1704,6 +1709,8 @@ int smf_context_parse_config(void)
 
                     ogs_info("trace_imsi: %d prefix(es) loaded",
                             ogs_trace_filter_count());
+                } else if (!strcmp(smf_key, "li")) {
+                    smf_li_parse_config(&smf_iter);
                 } else
                     ogs_warn("unknown key `%s`", smf_key);
             }
