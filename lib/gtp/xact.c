@@ -141,7 +141,7 @@ static void ogs_gtp_xact_log_state(
         return;
     }
 
-    if (why && strstr(why, "invalid step")) {
+    if (why && (strstr(why, "invalid step") || strstr(why, "orphan"))) {
         ogs_warn("%s: gtpv=%u xid=%u step=%d org=%u type=%u peer=[%s]:%d "
                 "local_teid=0x%x enb_ue_id=%d",
                 why, xact->gtp_version, xact->xid, xact->step, xact->org, type,
@@ -778,7 +778,8 @@ static int ogs_gtp_xact_update_rx(ogs_gtp_xact_t *xact, uint8_t type)
             break;
 
         case GTP_XACT_INTERMEDIATE_STAGE:
-            ogs_expect(0);
+            ogs_gtp_xact_log_state(xact, type,
+                    "orphan intermediate response for remote-origin xact");
             return OGS_ERROR;
 
         case GTP_XACT_FINAL_STAGE:
@@ -1120,6 +1121,21 @@ int ogs_gtp1_xact_receive(
     }
 
     if (!new) {
+        /*
+         * SGSN Context Response (INTERMEDIATE_STAGE) must match a LOCAL xact
+         * created when we sent SGSN Context Request. When the original xact
+         * already timed out or was committed, a late/duplicate response must
+         * not spawn a REMOTE xact: ogs_gtp_xact_update_rx() rejects
+         * REMOTE+INTERMEDIATE and used to log spurious ERROR noise.
+         */
+        if (stage == GTP_XACT_INTERMEDIATE_STAGE) {
+            ogs_debug("[%d] Late or duplicate GTPv1 response (type %u) from "
+                    "peer [%s]:%d - no matching local xact, discarded",
+                    xid, type, OGS_ADDR(&gnode->addr, buf),
+                    OGS_PORT(&gnode->addr));
+            return OGS_ERROR;
+        }
+
         ogs_debug("[%d] Cannot find xact type %u from GTPv1 peer [%s]:%d",
                   xid, type, OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
         new = ogs_gtp_xact_remote_create(gnode, 1, sqn);

@@ -1141,6 +1141,27 @@ cleanup:
 
         rv = ogs_gtp1_xact_receive(gnode, &gtp1_message.h, &xact);
         if (rv != OGS_OK) {
+            if (gtp1_message.h.type ==
+                    OGS_GTP1_SGSN_CONTEXT_RESPONSE_TYPE) {
+                char peer[OGS_ADDRSTRLEN];
+                mme_ue_t *late_mme_ue = NULL;
+                ogs_gtp1_sgsn_context_response_t *resp =
+                        &gtp1_message.sgsn_context_response;
+
+                if (gtp1_message.h.teid)
+                    late_mme_ue = mme_ue_find_by_gn_local_teid(
+                            gtp1_message.h.teid);
+
+                ogs_warn("[Gn] Late or duplicate SGSN Context Response "
+                        "from peer [%s]:%d discarded "
+                        "(TEID=0x%x gtp_cause=%u) IMSI[%s]",
+                        OGS_ADDR(&gnode->addr, peer),
+                        OGS_PORT(&gnode->addr),
+                        gtp1_message.h.teid,
+                        resp->cause.presence ? resp->cause.u8 : 0,
+                        late_mme_ue && MME_UE_HAVE_IMSI(late_mme_ue) ?
+                            late_mme_ue->imsi_bcd : "-");
+            }
             ogs_pkbuf_free(pkbuf);
             break;
         }
