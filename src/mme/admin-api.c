@@ -315,6 +315,8 @@ size_t mme_dump_maintenance_status(char *buf, size_t buflen,
     int ue_count = 0;
     int sessionless = 0, idle = 0, will_remove = 0, orphan_candidates = 0;
     bool maintenance = false;
+    bool drain_active = false;
+    unsigned drain_processed = 0;
     int written;
     mme_ue_t *mme_ue = NULL;
 
@@ -332,6 +334,8 @@ size_t mme_dump_maintenance_status(char *buf, size_t buflen,
 
     ogs_metrics_dump_lock();
     maintenance = mme_self()->maintenance_mode;
+    drain_active = mme_self()->drain_active;
+    drain_processed = mme_self()->drain_processed;
     ogs_list_for_each(&mme_self()->mme_ue_list, mme_ue) {
         bool no_sess = ogs_list_empty(&mme_ue->sess_list);
         bool is_idle = !ECM_CONNECTED(mme_ue);
@@ -360,10 +364,12 @@ size_t mme_dump_maintenance_status(char *buf, size_t buflen,
             "{\"maintenance\":%s,\"ue_count\":%d,"
             "\"sessionless\":%d,\"idle\":%d,\"will_remove\":%d,"
             "\"orphan_candidates\":%d,"
+            "\"drain\":{\"active\":%s,\"processed\":%u},"
             "\"sweep\":{\"age_s\":%lld,\"last_purged\":%d,"
             "\"last_remaining\":%d,\"total_purged\":%llu}}\n",
             maintenance ? "true" : "false", ue_count,
             sessionless, idle, will_remove, orphan_candidates,
+            drain_active ? "true" : "false", drain_processed,
             sweep_age_s, sweep_last_purged, sweep_last_remaining,
             (unsigned long long)sweep_total_purged);
     if (written < 0)

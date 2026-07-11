@@ -285,6 +285,25 @@ typedef struct mme_context_s {
      * attach and additional PDN connectivity; drain detaches all UEs.
      */
     bool maintenance_mode;
+
+    /*
+     * In-flight /admin/maintenance/drain bookkeeping. The drain walks
+     * mme_ue_list in batches on the MME main thread (see
+     * mme_admin_drain_begin/step in mme-path.c) instead of queueing one
+     * detach event per UE: with ~100k UEs the queued-event approach made
+     * every synchronous mme_ue_remove() -> mme_event_purge_mme_ue() scan
+     * the ~100k-deep queue, an O(N^2) stall that wedged the main thread.
+     *
+     * drain_generation is bumped per operator request and stamped onto
+     * each mme_ue as it is processed, so async detaches (paging, NAS
+     * Detach round-trips) are not re-issued by later batches. 0 on the
+     * UE means "never drained". Written on the main thread; the status
+     * endpoint reads them cross-thread (torn reads are harmless).
+     */
+    uint32_t drain_generation;
+    bool     drain_force;      /* mode of the in-flight drain */
+    bool     drain_active;
+    uint32_t drain_processed;  /* UEs handed to mme_admin_detach_ue() */
 } mme_context_t;
 
 #define MME_GTPC_SELECTION_ORDER_STEP OGS_SELECTION_ORDER_STEP
@@ -888,6 +907,13 @@ struct mme_ue_s {
     ogs_time_t      idle_since;
     /* Wall-clock time at mme_ue_add(); used by orphan sweep grace. */
     ogs_time_t      context_created;
+    /*
+     * mme_context_t.drain_generation value under which this UE was last
+     * handed to mme_admin_detach_ue() by the batched maintenance drain.
+     * 0 = never. Lets drain batches skip UEs whose detach is already in
+     * flight (paging / NAS Detach awaiting a response).
+     */
+    uint32_t        drain_generation;
     ogs_time_t      idle_t3346; /* active T3346 backoff (seconds), 0 if none */
 
 #define HOLDING_S1_CONTEXT(__mME) \

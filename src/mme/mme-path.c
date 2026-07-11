@@ -312,6 +312,109 @@ void mme_orphan_timer_rearm(void)
             mme_timer_cfg(MME_TIMER_S1_HOLDING)->duration);
 }
 
+/*
+ * Batched /admin/maintenance/drain.
+ *
+ * The old implementation queued one MME_EVENT_ADMIN_DETACH_UE per UE up
+ * front. Each session-less UE is then removed *synchronously* while its
+ * event is handled, and mme_ue_remove() -> mme_event_purge_mme_ue() pops
+ * and re-pushes the entire event queue to drop stale events. With N UEs
+ * the queue held ~N detach events, so every removal cost O(N) queue
+ * operations under the metrics dump lock: O(N^2) overall. At ~100k UEs
+ * the main thread got wedged for hours - no S11 toward the SGW-C, no new
+ * S1AP associations - while small drains appeared to work fine.
+ *
+ * Instead, walk mme_ue_list directly on the main thread in fixed-size
+ * batches, pacing batches with a timer so S11 responses, S1AP traffic
+ * and everything else queued in between keeps flowing. The event queue
+ * stays shallow, which also keeps mme_event_purge_mme_ue() cheap.
+ */
+#define MME_ADMIN_DRAIN_BATCH       256
+#define MME_ADMIN_DRAIN_INTERVAL    ogs_time_from_msec(100)
+
+static ogs_timer_t *t_admin_drain = NULL;
+
+/* Timer callbacks run on the MME main thread (ogs_timer_mgr_expire in
+ * mme_main), so the next batch can be driven directly - no event push
+ * that could fail against a full queue. */
+static void admin_drain_timer_cb(void *data)
+{
+    (void)data;
+    mme_admin_drain_step();
+}
+
+void mme_admin_drain_begin(bool force)
+{
+    mme_self()->drain_generation++;
+    if (mme_self()->drain_generation == 0)  /* skip 0: means "never" on UE */
+        mme_self()->drain_generation = 1;
+    mme_self()->drain_force = force;
+    mme_self()->drain_active = true;
+    mme_self()->drain_processed = 0;
+
+    ogs_info("admin maintenance drain: start mode=%s ue_count=%d "
+            "batch=%d interval=%dms",
+            force ? "force" : "graceful",
+            ogs_list_count(&mme_self()->mme_ue_list),
+            MME_ADMIN_DRAIN_BATCH,
+            (int)ogs_time_to_msec(MME_ADMIN_DRAIN_INTERVAL));
+
+    mme_admin_drain_step();
+}
+
+void mme_admin_drain_step(void)
+{
+    mme_ue_t *it = NULL, *next = NULL;
+    int processed = 0;
+    bool more = false;
+
+    if (!mme_self()->drain_active)
+        return;
+
+    ogs_list_for_each_safe(&mme_self()->mme_ue_list, next, it) {
+        /* Already handled by this drain (detach may still be in flight). */
+        if (it->drain_generation == mme_self()->drain_generation)
+            continue;
+        if (processed >= MME_ADMIN_DRAIN_BATCH) {
+            more = true;
+            break;
+        }
+        it->drain_generation = mme_self()->drain_generation;
+        processed++;
+        /* May remove `it` synchronously; `next` is already resolved. */
+        mme_admin_detach_ue(it, mme_self()->drain_force);
+    }
+
+    mme_self()->drain_processed += processed;
+
+    if (more) {
+        if (!t_admin_drain) {
+            t_admin_drain = ogs_timer_add(
+                    ogs_app()->timer_mgr, admin_drain_timer_cb, NULL);
+            ogs_assert(t_admin_drain);
+        }
+        ogs_timer_start(t_admin_drain, MME_ADMIN_DRAIN_INTERVAL);
+        return;
+    }
+
+    mme_self()->drain_active = false;
+    ogs_info("admin maintenance drain: detach issued to %u UEs "
+            "(%d still on list awaiting completion)",
+            mme_self()->drain_processed,
+            ogs_list_count(&mme_self()->mme_ue_list));
+}
+
+void mme_admin_drain_timer_stop(void)
+{
+    mme_self()->drain_active = false;
+
+    if (!t_admin_drain)
+        return;
+
+    ogs_timer_delete(t_admin_drain);
+    t_admin_drain = NULL;
+}
+
 void mme_admin_detach_ue(mme_ue_t *mme_ue, bool force)
 {
     enb_ue_t *enb_ue = NULL;

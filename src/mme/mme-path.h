@@ -56,6 +56,16 @@ void mme_orphan_sweep_get_stats(ogs_time_t *last_run, int *last_purged,
 
 void mme_admin_detach_ue(mme_ue_t *mme_ue, bool force);
 
+/*
+ * Batched maintenance drain (/admin/maintenance/drain). begin() bumps the
+ * drain generation and processes the first batch; subsequent batches are
+ * driven by a pacing timer on the MME main thread so normal signalling
+ * keeps flowing in between. See mme-path.c for the O(N^2) rationale.
+ */
+void mme_admin_drain_begin(bool force);
+void mme_admin_drain_step(void);
+void mme_admin_drain_timer_stop(void);
+
 void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 void mme_send_delete_session_or_mme_ue_context_release(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue);
