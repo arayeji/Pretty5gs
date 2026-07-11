@@ -221,13 +221,11 @@ static void mme_inbound_roam_apn_parse_rules(mme_context_t *self,
             if (!ogs_yaml_iter_next(&rule_array))
                 break;
             ogs_yaml_iter_recurse(&rule_array, &rule_iter);
+            mme_inbound_roam_apn_parse_rule(self, &rule_iter);
         } else {
             ogs_warn("unexpected YAML node in inbound_roam apn_rule");
             break;
         }
-
-        while (ogs_yaml_iter_next(&rule_iter))
-            mme_inbound_roam_apn_parse_rule(self, &rule_iter);
     } while (ogs_yaml_iter_type(&rule_array) == YAML_SEQUENCE_NODE &&
             ogs_yaml_iter_next(&rule_array));
 }
