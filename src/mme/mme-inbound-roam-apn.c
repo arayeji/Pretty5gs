@@ -367,7 +367,6 @@ static const mme_inbound_roam_apn_rule_t *mme_inbound_roam_apn_rule_for_ue(
         mme_ue_t *mme_ue)
 {
     mme_context_t *self = mme_self();
-    ogs_plmn_id_t home_plmn_id;
     int i;
 
     ogs_assert(mme_ue);
@@ -375,13 +374,12 @@ static const mme_inbound_roam_apn_rule_t *mme_inbound_roam_apn_rule_for_ue(
     if (!MME_UE_HAVE_IMSI(mme_ue))
         return NULL;
 
-    mme_home_plmn_from_imsi_bcd(mme_ue->imsi_bcd, &home_plmn_id);
-
     for (i = 0; i < self->num_of_inbound_roam_apn_rule; i++) {
         mme_inbound_roam_apn_rule_t *rule = &self->inbound_roam_apn_rule[i];
 
         if (rule->plmn_id_configured &&
-                memcmp(&home_plmn_id, &rule->plmn_id, OGS_PLMN_ID_LEN) == 0)
+                ogs_plmn_id_imsi_prefix_match(
+                    mme_ue->imsi_bcd, &rule->plmn_id))
             return rule;
     }
 
@@ -423,17 +421,22 @@ bool mme_inbound_roam_apn_allowed(mme_ue_t *mme_ue, const char *apn)
     const char (*allow)[OGS_MAX_APN_LEN + 1] = NULL;
     const char (*deny)[OGS_MAX_APN_LEN + 1] = NULL;
     const mme_inbound_roam_apn_rule_t *rule = NULL;
+    bool rule_policy = false;
 
     if (!mme_ue || !apn || !apn[0])
         return true;
-    if (!mme_ue_is_inbound_roam(mme_ue))
+
+    rule = mme_inbound_roam_apn_rule_for_ue(mme_ue);
+    rule_policy = rule &&
+        (rule->num_of_allowed_apn > 0 || rule->num_of_denied_apn > 0);
+
+    if (!rule_policy && !mme_ue_is_inbound_roam(mme_ue))
         return true;
 
     mme_apn_normalize_ni(apn_ni, sizeof(apn_ni), apn);
 
     mme_inbound_roam_apn_policy_for_ue(mme_ue,
             &num_allow, &allow, &num_deny, &deny);
-    rule = mme_inbound_roam_apn_rule_for_ue(mme_ue);
     if (rule)
         num_rule_deny = rule->num_of_denied_apn;
 

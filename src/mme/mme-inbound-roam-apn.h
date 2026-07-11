@@ -51,9 +51,9 @@ typedef struct mme_inbound_roam_apn_rule_s {
 void mme_inbound_roam_config_parse(ogs_yaml_iter_t *inbound_roam_iter);
 
 /*
- * Inbound roam only. Returns true when the APN (NI or FQDN) may proceed.
- * Policy: denied_apn always wins; when allowed_apn is non-empty the APN must
- * be listed. Per-home-PLMN apn_rule entries override the global lists.
+ * Inbound roam only for global allowed_apn/denied_apn. apn_rule[] matches the
+ * subscriber IMSI home PLMN and applies even when the UE is not inbound-roam
+ * by serving TAI.
  */
 bool mme_inbound_roam_apn_allowed(mme_ue_t *mme_ue, const char *apn);
 
