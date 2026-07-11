@@ -90,7 +90,7 @@ static int mme_inbound_roam_apn_yaml_list(ogs_yaml_iter_t *iter,
                 break;
             ogs_yaml_iter_recurse(&list_array, &list_iter);
         } else if (ogs_yaml_iter_type(&list_array) == YAML_SCALAR_NODE) {
-            const char *v = ogs_yaml_iter_value(iter);
+            const char *v = ogs_yaml_iter_value(&list_array);
             if (!v || !v[0])
                 return OGS_OK;
             if (count >= max_count) {
@@ -236,12 +236,13 @@ static void mme_inbound_roam_config_parse_key(mme_context_t *self,
         ogs_yaml_iter_t *roam_iter)
 {
     const char *rk = ogs_yaml_iter_key(roam_iter);
-    const char *rv = ogs_yaml_iter_value(roam_iter);
 
     ogs_assert(self);
     ogs_assert(rk);
 
     if (!strcmp(rk, "gtp_apn_format") || !strcmp(rk, "apn_format")) {
+        const char *rv = ogs_yaml_iter_value(roam_iter);
+
         if (rv && (!strcmp(rv, "received") || !strcmp(rv, "exact") ||
                     !strcmp(rv, "as_received"))) {
             self->inbound_roam_gtp_apn_format =
@@ -288,6 +289,8 @@ static void mme_inbound_roam_config_parse_key(mme_context_t *self,
                 &self->num_of_inbound_roam_denied_apn);
     } else if (!strcmp(rk, "apn_reject_cause") ||
             !strcmp(rk, "reject_cause")) {
+        const char *rv = ogs_yaml_iter_value(roam_iter);
+
         if (rv)
             self->inbound_roam_apn_reject_cause = (uint8_t)atoi(rv);
     } else if (!strcmp(rk, "apn_rule") || !strcmp(rk, "apn_policy")) {
