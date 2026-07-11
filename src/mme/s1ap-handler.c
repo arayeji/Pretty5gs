@@ -2376,7 +2376,22 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
         enb_ue_remove(enb_ue);
         break;
     default:
-        ogs_error("Invalid Action[%d]", enb_ue->ue_ctx_rel_action);
+        /*
+         * No release procedure was ever recorded for this S1 context
+         * (UEContextReleaseComplete without a Command, or t_s1_holding
+         * firing on a context that never got an action). Leaving the
+         * enb_ue alive here leaked it permanently - t_s1_holding is
+         * one-shot, so nothing would ever reclaim the context and the
+         * enb_ue pool (sized to global max.ue) slowly filled up until
+         * no new UE could connect. Reclaim it now.
+         */
+        ogs_error("Invalid Action[%d] - removing orphaned S1 context "
+                "ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
+                enb_ue->ue_ctx_rel_action,
+                enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
+        if (mme_ue && mme_ue->enb_ue_id == enb_ue->id)
+            enb_ue_deassociate_mme_ue(enb_ue, mme_ue);
+        enb_ue_remove(enb_ue);
         break;
     }
 }

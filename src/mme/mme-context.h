@@ -516,6 +516,12 @@ struct enb_ue_s {
 
     bool            part_of_s1_reset_requested;
 
+    /*
+     * Wall-clock time at enb_ue_add(); grace anchor for the orphan
+     * enb_ue sweep (mme_orphan_enb_ue_sweep). Never restamped.
+     */
+    ogs_time_t      context_created;
+
     /* Related Context */
     ogs_pool_id_t   enb_id;
     ogs_pool_id_t   mme_ue_id;

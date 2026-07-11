@@ -45,6 +45,7 @@ int mme_maintenance_reject_without_ue(
  */
 int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
 int mme_orphan_enb_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
+int mme_orphan_enb_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
 void mme_orphan_timer_start(void);
 void mme_orphan_timer_stop(void);
 void mme_orphan_timer_rearm(void);

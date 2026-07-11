@@ -46,14 +46,70 @@ static void sgwc_handle_echo_response(
     ogs_debug("[SGW] Receiving Echo Response");
 }
 
-static void sgwc_admin_drain_sessions(int admin_force)
+/*
+ * Batched /admin/maintenance/drain.
+ *
+ * The old implementation tore down every session in one main-thread pass:
+ * up to three messages per session (Delete Bearer toward MME, PFCP
+ * deletion toward SGW-U, Delete Session toward SMF). With hundreds of
+ * thousands of sessions this blocked the main loop for seconds and
+ * burst-flooded all three peers. Instead, process fixed-size UE batches
+ * paced by a timer so other traffic keeps flowing in between (same
+ * pattern as the MME drain).
+ */
+#define SGWC_ADMIN_DRAIN_BATCH      256 /* UEs per batch */
+#define SGWC_ADMIN_DRAIN_INTERVAL   ogs_time_from_msec(100)
+
+static ogs_timer_t *t_admin_drain = NULL;
+
+static void sgwc_admin_drain_step(void);
+
+static void admin_drain_timer_cb(void *data)
+{
+    (void)data;
+    sgwc_admin_drain_step();
+}
+
+static void sgwc_admin_drain_begin(bool force)
+{
+    sgwc_self()->drain_generation++;
+    if (sgwc_self()->drain_generation == 0)
+        sgwc_self()->drain_generation = 1;
+    sgwc_self()->drain_force = force;
+    sgwc_self()->drain_active = true;
+    sgwc_self()->drain_processed = 0;
+
+    ogs_info("admin maintenance drain: start mode=%s ue_count=%d "
+            "batch=%d interval=%dms",
+            force ? "force" : "graceful",
+            ogs_list_count(&sgwc_self()->sgw_ue_list),
+            SGWC_ADMIN_DRAIN_BATCH,
+            (int)ogs_time_to_msec(SGWC_ADMIN_DRAIN_INTERVAL));
+
+    sgwc_admin_drain_step();
+}
+
+static void sgwc_admin_drain_step(void)
 {
     sgwc_ue_t *ue = NULL, *next_ue = NULL;
     sgwc_sess_t *sess = NULL, *next_sess = NULL;
-    int count = 0;
+    int ues = 0, sessions = 0;
+    bool more = false;
     int rv;
 
+    if (!sgwc_self()->drain_active)
+        return;
+
     ogs_list_for_each_safe(&sgwc_self()->sgw_ue_list, next_ue, ue) {
+        if (ue->drain_generation == sgwc_self()->drain_generation)
+            continue;
+        if (ues >= SGWC_ADMIN_DRAIN_BATCH) {
+            more = true;
+            break;
+        }
+        ue->drain_generation = sgwc_self()->drain_generation;
+        ues++;
+
         ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
             rv = sgwc_gtp_send_network_delete_session(ue, sess);
             ogs_expect(rv == OGS_OK);
@@ -66,15 +122,41 @@ static void sgwc_admin_drain_sessions(int admin_force)
             if (sess->gnode)
                 sgwc_gtp_send_s5c_delete_session_request(sess);
 
-            if (admin_force)
+            if (sgwc_self()->drain_force)
                 sgwc_sess_remove(sess);
-            count++;
+            sessions++;
         }
-        if (admin_force && ogs_list_empty(&ue->sess_list))
+        if (sgwc_self()->drain_force && ogs_list_empty(&ue->sess_list))
             sgwc_ue_remove(ue);
     }
-    ogs_info("admin maintenance: %s %d sessions",
-            admin_force ? "removed" : "initiated drain for", count);
+
+    sgwc_self()->drain_processed += sessions;
+
+    if (more) {
+        if (!t_admin_drain) {
+            t_admin_drain = ogs_timer_add(
+                    ogs_app()->timer_mgr, admin_drain_timer_cb, NULL);
+            ogs_assert(t_admin_drain);
+        }
+        ogs_timer_start(t_admin_drain, SGWC_ADMIN_DRAIN_INTERVAL);
+        return;
+    }
+
+    sgwc_self()->drain_active = false;
+    ogs_info("admin maintenance drain: %s %u session(s)",
+            sgwc_self()->drain_force ? "removed" : "initiated teardown for",
+            sgwc_self()->drain_processed);
+}
+
+static void sgwc_admin_drain_timer_stop(void)
+{
+    sgwc_self()->drain_active = false;
+
+    if (!t_admin_drain)
+        return;
+
+    ogs_timer_delete(t_admin_drain);
+    t_admin_drain = NULL;
 }
 
 static void sgwc_admin_detach_ue_sessions(sgwc_ue_t *ue, int admin_force)
@@ -129,6 +211,7 @@ void sgwc_state_final(ogs_fsm_t *s, sgwc_event_t *e)
     ogs_assert(s);
 
     sgwc_orphan_timer_stop();
+    sgwc_admin_drain_timer_stop();
 }
 
 void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
@@ -509,9 +592,7 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
 
     case SGWC_EVT_ADMIN_MAINTENANCE_DRAIN:
         sgwc_self()->maintenance_mode = true;
-        ogs_info("admin maintenance drain: mode=%s",
-                e->admin_force ? "force" : "graceful");
-        sgwc_admin_drain_sessions(e->admin_force);
+        sgwc_admin_drain_begin(e->admin_force ? true : false);
         break;
 
     case SGWC_EVT_ADMIN_DETACH_SESSION:

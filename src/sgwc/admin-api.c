@@ -97,6 +97,8 @@ size_t sgwc_dump_maintenance_status(char *buf, size_t buflen,
 {
     int sess_count = 0;
     bool maintenance = false;
+    bool drain_active = false;
+    uint32_t drain_processed = 0;
     int written;
 
     (void)page;
@@ -108,12 +110,16 @@ size_t sgwc_dump_maintenance_status(char *buf, size_t buflen,
 
     ogs_metrics_dump_lock();
     maintenance = sgwc_self()->maintenance_mode;
+    drain_active = sgwc_self()->drain_active;
+    drain_processed = sgwc_self()->drain_processed;
     sess_count = sgwc_count_sessions();
     ogs_metrics_dump_unlock();
 
     written = snprintf(buf, buflen,
-            "{\"maintenance\":%s,\"session_count\":%d}\n",
-            maintenance ? "true" : "false", sess_count);
+            "{\"maintenance\":%s,\"session_count\":%d,"
+            "\"drain\":{\"active\":%s,\"processed\":%u}}\n",
+            maintenance ? "true" : "false", sess_count,
+            drain_active ? "true" : "false", drain_processed);
     if (written < 0)
         return 0;
     return (size_t)((size_t)written < buflen ? (size_t)written : buflen - 1);

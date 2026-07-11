@@ -80,6 +80,18 @@ static void mme_event_discard(mme_event_t *e)
     mme_event_free(e);
 }
 
+/*
+ * Skip the queue scan entirely when the queue is deep. The scan is O(queue)
+ * per removed UE: under overload (attach storm, mass drain) with tens of
+ * thousands of queued events it turned every mme_ue_remove() into a full
+ * pop/re-push cycle of the queue - O(N^2) overall - and wedged the main
+ * thread. Correctness does not depend on the purge: every event handler
+ * re-resolves contexts by pool id (returning NULL for removed UEs) and
+ * frees its payload on the missing-context path. The purge is kept for
+ * shallow queues only as a cheap way to drop stale work early.
+ */
+#define MME_EVENT_PURGE_MAX_QUEUE 2048
+
 void mme_event_purge_mme_ue(ogs_pool_id_t mme_ue_id)
 {
     ogs_queue_t *queue = NULL;
@@ -97,6 +109,13 @@ void mme_event_purge_mme_ue(ogs_pool_id_t mme_ue_id)
     n = ogs_queue_size(queue);
     if (n == 0)
         return;
+
+    if (n > MME_EVENT_PURGE_MAX_QUEUE) {
+        ogs_debug("Skipping event purge for MME-UE [id:%d]: "
+                "queue too deep (%u); stale events are dropped at "
+                "dispatch time", mme_ue_id, n);
+        return;
+    }
 
     pending = ogs_queue_create(n + 16);
     ogs_assert(pending);

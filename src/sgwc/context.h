@@ -178,6 +178,17 @@ typedef struct sgwc_context_s {
     bool maintenance_mode;
 
     /*
+     * Batched /admin/maintenance/drain bookkeeping (see sgwc-sm.c).
+     * Sessions are drained in fixed-size UE batches paced by a timer so
+     * a large drain cannot monopolise the main thread or burst-flood
+     * the MME/SGW-U/SMF with GTP/PFCP deletions.
+     */
+    uint32_t drain_generation;
+    bool     drain_force;
+    bool     drain_active;
+    uint32_t drain_processed;
+
+    /*
      * GTPv1 Gn (2G/3G SGSN): optional separate listener and PGW/SMF list.
      * When gn.server is omitted, GTPv1 on gtpc.server is dispatched to Gn.
      * gn_pgw_list: ordered rules; first imsi_prefix match wins, else default
@@ -208,6 +219,12 @@ typedef struct sgwc_ue_s {
     uint8_t         msisdn[OGS_MAX_MSISDN_LEN];
     int             msisdn_len;
     char            msisdn_bcd[OGS_MAX_MSISDN_BCD_LEN+1];
+
+    /*
+     * sgwc_context_t.drain_generation under which this UE's sessions
+     * were last handed to the batched maintenance drain. 0 = never.
+     */
+    uint32_t        drain_generation;
 
     /* User-Location-Info */
     bool            uli_presence;

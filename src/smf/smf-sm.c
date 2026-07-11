@@ -38,26 +38,108 @@
 #include "gx-restoration.h"
 #include "metrics.h"
 
-static void smf_admin_drain_sessions(int admin_force)
+/*
+ * Batched /admin/maintenance/drain.
+ *
+ * The old implementation walked every UE and tore down every session in
+ * a single event: one PFCP deletion (plus local removal in force mode)
+ * per session, all in one main-thread pass. With hundreds of thousands
+ * of sessions this blocked the main loop for seconds and burst-flooded
+ * the UPF with PFCP deletions. Instead, process fixed-size UE batches
+ * paced by a timer so other traffic keeps flowing in between (same
+ * pattern as the MME drain).
+ */
+#define SMF_ADMIN_DRAIN_BATCH       256 /* UEs per batch */
+#define SMF_ADMIN_DRAIN_INTERVAL    ogs_time_from_msec(100)
+
+static ogs_timer_t *t_admin_drain = NULL;
+
+static void smf_admin_drain_step(void);
+
+static void admin_drain_timer_cb(void *data)
+{
+    (void)data;
+    smf_admin_drain_step();
+}
+
+static void smf_admin_drain_begin(bool force)
+{
+    smf_self()->drain_generation++;
+    if (smf_self()->drain_generation == 0)
+        smf_self()->drain_generation = 1;
+    smf_self()->drain_force = force;
+    smf_self()->drain_active = true;
+    smf_self()->drain_processed = 0;
+
+    ogs_info("admin maintenance drain: start mode=%s ue_count=%d "
+            "batch=%d interval=%dms",
+            force ? "force" : "graceful",
+            ogs_list_count(&smf_self()->smf_ue_list),
+            SMF_ADMIN_DRAIN_BATCH,
+            (int)ogs_time_to_msec(SMF_ADMIN_DRAIN_INTERVAL));
+
+    smf_admin_drain_step();
+}
+
+static void smf_admin_drain_step(void)
 {
     smf_ue_t *ue = NULL, *next_ue = NULL;
     smf_sess_t *sess = NULL, *next_sess = NULL;
-    int count = 0;
+    int ues = 0, sessions = 0;
+    bool more = false;
     int rv;
 
+    if (!smf_self()->drain_active)
+        return;
+
     ogs_list_for_each_safe(&smf_self()->smf_ue_list, next_ue, ue) {
+        if (ue->drain_generation == smf_self()->drain_generation)
+            continue;
+        if (ues >= SMF_ADMIN_DRAIN_BATCH) {
+            more = true;
+            break;
+        }
+        ue->drain_generation = smf_self()->drain_generation;
+        ues++;
+
         ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
             rv = smf_epc_pfcp_send_session_deletion_best_effort(sess);
             ogs_expect(rv == OGS_OK);
-            if (admin_force)
+            if (smf_self()->drain_force)
                 smf_sess_remove(sess);
-            count++;
+            sessions++;
         }
-        if (admin_force && ogs_list_empty(&ue->sess_list))
+        if (smf_self()->drain_force && ogs_list_empty(&ue->sess_list))
             smf_ue_remove(ue);
     }
-    ogs_info("admin maintenance: %s %d sessions",
-            admin_force ? "removed" : "initiated drain for", count);
+
+    smf_self()->drain_processed += sessions;
+
+    if (more) {
+        if (!t_admin_drain) {
+            t_admin_drain = ogs_timer_add(
+                    ogs_app()->timer_mgr, admin_drain_timer_cb, NULL);
+            ogs_assert(t_admin_drain);
+        }
+        ogs_timer_start(t_admin_drain, SMF_ADMIN_DRAIN_INTERVAL);
+        return;
+    }
+
+    smf_self()->drain_active = false;
+    ogs_info("admin maintenance drain: %s %u session(s)",
+            smf_self()->drain_force ? "removed" : "initiated teardown for",
+            smf_self()->drain_processed);
+}
+
+static void smf_admin_drain_timer_stop(void)
+{
+    smf_self()->drain_active = false;
+
+    if (!t_admin_drain)
+        return;
+
+    ogs_timer_delete(t_admin_drain);
+    t_admin_drain = NULL;
 }
 
 static void smf_admin_detach_ue_sessions(smf_ue_t *ue, int admin_force)
@@ -100,6 +182,7 @@ void smf_state_final(ogs_fsm_t *s, smf_event_t *e)
     ogs_assert(s);
 
     smf_orphan_timer_stop();
+    smf_admin_drain_timer_stop();
 }
 
 void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
@@ -1606,9 +1689,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
 
     case SMF_EVT_ADMIN_MAINTENANCE_DRAIN:
         smf_self()->maintenance_mode = true;
-        ogs_info("admin maintenance drain: mode=%s",
-                e->admin_force ? "force" : "graceful");
-        smf_admin_drain_sessions(e->admin_force);
+        smf_admin_drain_begin(e->admin_force ? true : false);
         break;
 
     case SMF_EVT_ADMIN_DETACH_SESSION:

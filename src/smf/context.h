@@ -404,6 +404,17 @@ typedef struct smf_context_s {
     bool maintenance_mode;
 
     /*
+     * Batched /admin/maintenance/drain bookkeeping (see smf-sm.c).
+     * Sessions are drained in fixed-size UE batches paced by a timer so
+     * a large drain cannot monopolise the main thread or burst-flood
+     * the UPF/PGW with PFCP/GTP deletions.
+     */
+    uint32_t drain_generation;
+    bool     drain_force;
+    bool     drain_active;
+    uint32_t drain_processed;
+
+    /*
      * Periodic orphan-session sweep (EPC only). An "orphan" is an EPC session
      * that never finished establishment (metrics_session_counted == 0) or has
      * no PFCP session bound to the UPF (upf_n4_seid == 0). The sweep runs on
@@ -455,6 +466,12 @@ typedef struct smf_ue_s {
     uint8_t imeisv[OGS_MAX_IMEISV_LEN];
     int imeisv_len;
     char  imeisv_bcd[OGS_MAX_IMEISV_BCD_LEN+1];
+
+    /*
+     * smf_context_t.drain_generation under which this UE's sessions were
+     * last handed to the batched maintenance drain. 0 = never.
+     */
+    uint32_t drain_generation;
 
     /*
      * Stashed Create Session / Create PDP Context while an existing session

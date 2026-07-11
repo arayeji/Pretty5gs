@@ -275,6 +275,77 @@ int mme_orphan_enb_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
     return remaining;
 }
 
+/*
+ * Reclaim orphaned enb_ue (S1) contexts.
+ *
+ * An enb_ue is created on every Initial UE Message, but several failure
+ * paths could leave it behind with no NAS association, no release action
+ * and no t_s1_holding running - e.g. the queued EMM event being dropped
+ * under overload, or the owning mme_ue being torn down through a path
+ * that never released S1. Nothing ever reclaimed such contexts: the
+ * enb_ue pool (sized to global max.ue) filled up over eNB flap storms
+ * until enb_ue_add() failed for every new connection ("Active UE" gauge
+ * far above the real UE count is the visible symptom).
+ *
+ * Criteria (conservative):
+ *   - older than the grace period (creation-time anchored),
+ *   - t_s1_holding not running (otherwise removal is already scheduled),
+ *   - no release action recorded, and
+ *   - not the active or holding S1 context of a live mme_ue.
+ *
+ * Contexts that never had an mme_ue (or whose mme_ue is gone) are freed
+ * directly. Contexts still referenced by a live mme_ue are left alone.
+ * Work is capped per sweep so a large backlog cannot stall the main
+ * thread; successive sweeps drain the rest.
+ */
+#define MME_ORPHAN_ENB_UE_BATCH     20000
+
+int mme_orphan_enb_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
+{
+    mme_enb_t *enb = NULL;
+    enb_ue_t *enb_ue = NULL, *next = NULL;
+    ogs_time_t now = ogs_time_now();
+    int remaining = 0, purged = 0;
+
+    ogs_list_for_each(&mme_self()->enb_list, enb) {
+        ogs_list_for_each_safe(&enb->enb_ue_list, next, enb_ue) {
+            mme_ue_t *mme_ue = NULL;
+
+            if (enb_ue->ue_ctx_rel_action != S1AP_UE_CTX_REL_INVALID_ACTION)
+                continue;
+            if (enb_ue->t_s1_holding && enb_ue->t_s1_holding->running)
+                continue;
+
+            mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+            if (mme_ue &&
+                    (mme_ue->enb_ue_id == enb_ue->id ||
+                     mme_ue->enb_ue_holding_id == enb_ue->id))
+                continue;   /* live S1 of a live UE - not an orphan */
+
+            remaining++;
+
+            if (!do_purge || purged >= MME_ORPHAN_ENB_UE_BATCH)
+                continue;
+
+            if (enb_ue->context_created &&
+                    (now - enb_ue->context_created) < grace)
+                continue;
+
+            /*
+             * No deassociation needed: the owning mme_ue (if any) does
+             * not reference this enb_ue as active or holding context.
+             */
+            enb_ue_remove(enb_ue);
+            purged++;
+        }
+    }
+
+    if (out_purged)
+        *out_purged = purged;
+
+    return remaining - purged;
+}
+
 void mme_orphan_timer_start(void)
 {
     ogs_time_t interval;

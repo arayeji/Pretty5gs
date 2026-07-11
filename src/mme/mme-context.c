@@ -5708,6 +5708,7 @@ enb_ue_t *enb_ue_add(mme_enb_t *enb, uint32_t enb_ue_s1ap_id)
 
     enb_ue->enb_ue_s1ap_id = enb_ue_s1ap_id;
     enb_ue->mme_ue_s1ap_id = enb_ue->index;
+    enb_ue->context_created = ogs_time_now();
 
     /*
      * SCTP output stream identification

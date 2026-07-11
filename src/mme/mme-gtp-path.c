@@ -885,10 +885,130 @@ int mme_gtp_send_release_access_bearers_request(
     return rv;
 }
 
+/*
+ * Paced Release Access Bearers Request sender for eNB-level mass release
+ * (SCTP CONNREFUSED / fast reconnect).
+ *
+ * When an eNB association dies, every UE on it needs a Release Access
+ * Bearers Request toward the SGW-C. Doing that synchronously was fine for
+ * one eNB, but a site-wide flap (hundreds of eNBs, hundreds of thousands
+ * of UEs) burst-allocated one GTP transaction + retransmit timer per UE
+ * in a single event, monopolised the main thread for seconds and could
+ * exhaust the transaction pool (the ogs_assert on the send aborted the
+ * daemon). Instead, the S1 context teardown stays synchronous (it must
+ * finish before the eNB context is freed) and only the S11 sends are
+ * queued here and paced in batches.
+ *
+ * Safety: entries hold pool ids only. At send time the UE is re-resolved;
+ * if it is gone, or has re-attached (ECM-CONNECTED again - a new Modify
+ * Bearer Request already told the SGW about the new eNB, so a late RABR
+ * would wrongly release the live S1-U), the entry is dropped.
+ */
+#define MME_RABR_RELEASE_BATCH      512
+#define MME_RABR_RELEASE_INTERVAL   ogs_time_from_msec(50)
+
+typedef struct mme_pending_release_s {
+    ogs_lnode_t     lnode;
+    ogs_pool_id_t   mme_ue_id;
+    ogs_pool_id_t   enb_ue_id;  /* already removed; kept for xact bookkeeping */
+    int             action;
+} mme_pending_release_t;
+
+static OGS_LIST(pending_release_list);
+static ogs_timer_t *t_pending_release = NULL;
+
+static void mme_gtp_pending_release_step(void);
+
+static void pending_release_timer_cb(void *data)
+{
+    (void)data;
+    mme_gtp_pending_release_step();
+}
+
+static void mme_gtp_pending_release_enqueue(
+        ogs_pool_id_t mme_ue_id, ogs_pool_id_t enb_ue_id, int action)
+{
+    mme_pending_release_t *entry = NULL;
+
+    entry = ogs_calloc(1, sizeof(*entry));
+    ogs_assert(entry);
+
+    entry->mme_ue_id = mme_ue_id;
+    entry->enb_ue_id = enb_ue_id;
+    entry->action = action;
+
+    ogs_list_add(&pending_release_list, entry);
+}
+
+static void mme_gtp_pending_release_step(void)
+{
+    mme_pending_release_t *entry = NULL;
+    int sent = 0, skipped = 0;
+
+    while (sent < MME_RABR_RELEASE_BATCH &&
+            (entry = ogs_list_first(&pending_release_list)) != NULL) {
+        mme_ue_t *mme_ue = NULL;
+        sgw_ue_t *sgw_ue = NULL;
+
+        ogs_list_remove(&pending_release_list, entry);
+
+        mme_ue = mme_ue_find_by_id(entry->mme_ue_id);
+        if (!mme_ue || ECM_CONNECTED(mme_ue)) {
+            /* Removed meanwhile, or re-attached: RABR no longer valid. */
+            skipped++;
+            ogs_free(entry);
+            continue;
+        }
+
+        sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+        if (!sgw_ue) {
+            skipped++;
+            ogs_free(entry);
+            continue;
+        }
+
+        if (mme_gtp_send_release_access_bearers_request(
+                entry->enb_ue_id, mme_ue, entry->action) != OGS_OK)
+            ogs_error("Deferred Release Access Bearers Request failed "
+                    "[IMSI:%s]", mme_ue->imsi_bcd);
+
+        sent++;
+        ogs_free(entry);
+    }
+
+    if (ogs_list_first(&pending_release_list)) {
+        if (!t_pending_release) {
+            t_pending_release = ogs_timer_add(
+                    ogs_app()->timer_mgr, pending_release_timer_cb, NULL);
+            ogs_assert(t_pending_release);
+        }
+        ogs_timer_start(t_pending_release, MME_RABR_RELEASE_INTERVAL);
+    } else if (sent || skipped) {
+        ogs_info("eNB mass-release: paced sender drained "
+                "(last batch sent=%d skipped=%d)", sent, skipped);
+    }
+}
+
+void mme_gtp_pending_release_final(void)
+{
+    mme_pending_release_t *entry = NULL, *next = NULL;
+
+    ogs_list_for_each_safe(&pending_release_list, next, entry) {
+        ogs_list_remove(&pending_release_list, entry);
+        ogs_free(entry);
+    }
+
+    if (t_pending_release) {
+        ogs_timer_delete(t_pending_release);
+        t_pending_release = NULL;
+    }
+}
+
 void mme_gtp_send_release_all_ue_in_enb(mme_enb_t *enb, int action)
 {
     mme_ue_t *mme_ue = NULL;
     enb_ue_t *enb_ue = NULL, *next = NULL;
+    int deferred = 0;
 
     ogs_list_for_each_safe(&enb->enb_ue_list, next, enb_ue) {
         mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
@@ -920,6 +1040,14 @@ void mme_gtp_send_release_all_ue_in_enb(mme_enb_t *enb, int action)
                 enb_ue_deassociate_mme_ue(enb_ue, mme_ue);
                 enb_ue_remove(enb_ue);
                 enb_ue = NULL;
+
+                /*
+                 * S11 send deferred to the paced sender (see above).
+                 * The S1 side is already torn down at this point.
+                 */
+                mme_gtp_pending_release_enqueue(mme_ue->id, enb_ue_id, action);
+                deferred++;
+                continue;
             }
 
             ogs_assert(OGS_OK ==
@@ -938,6 +1066,16 @@ void mme_gtp_send_release_all_ue_in_enb(mme_enb_t *enb, int action)
                 ogs_assert_if_reached();
             }
         }
+    }
+
+    if (deferred) {
+        ogs_info("eNB mass-release: %d Release Access Bearers Request(s) "
+                "queued for paced sending (batch=%d interval=%dms, "
+                "%d already pending)",
+                deferred, MME_RABR_RELEASE_BATCH,
+                (int)ogs_time_to_msec(MME_RABR_RELEASE_INTERVAL),
+                ogs_list_count(&pending_release_list) - deferred);
+        mme_gtp_pending_release_step();
     }
 }
 

@@ -117,6 +117,7 @@ void mme_state_final(ogs_fsm_t *s, mme_event_t *e)
 
     mme_orphan_timer_stop();
     mme_admin_drain_timer_stop();
+    mme_gtp_pending_release_final();
 }
 
 void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
@@ -335,6 +336,17 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         enb_ue = enb_ue_find_by_id(e->enb_ue_id);
         if (!enb_ue) {
             ogs_error("S1 Context has already been removed");
+            /*
+             * A delayed-send event owns its pkbuf and one-shot timer;
+             * free both or they leak every time the S1 context vanishes
+             * before the timer fires.
+             */
+            if (e->timer_id == MME_TIMER_S1_DELAYED_SEND) {
+                if (e->pkbuf)
+                    ogs_pkbuf_free(e->pkbuf);
+                if (e->timer)
+                    ogs_timer_delete(e->timer);
+            }
             break;
         }
 
@@ -368,6 +380,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         enb_ue = enb_ue_find_by_id(e->enb_ue_id);
         if (!enb_ue) {
             ogs_error("S1 Context has already been removed");
+            ogs_pkbuf_free(pkbuf);
             break;
         }
 
@@ -1469,23 +1482,28 @@ cleanup:
     case MME_EVENT_ORPHAN_SWEEP:
         {
             int ue_purged = 0, enb_purged = 0, ue_remaining, enb_remaining;
+            int enb_ue_purged = 0, enb_ue_remaining;
             ogs_time_t grace =
                     mme_timer_cfg(MME_TIMER_S1_HOLDING)->duration;
 
             ue_remaining = mme_orphan_ue_sweep(true, grace, &ue_purged);
             enb_remaining = mme_orphan_enb_sweep(true, grace, &enb_purged);
+            enb_ue_remaining =
+                    mme_orphan_enb_ue_sweep(true, grace, &enb_ue_purged);
 
             /* Heartbeat for /admin/maintenance/status (visible at any log level). */
             mme_orphan_sweep_record(ue_purged, ue_remaining);
 
-            if (ue_purged || enb_purged)
+            if (ue_purged || enb_purged || enb_ue_purged)
                 ogs_warn("orphan sweep: purged %d stale UE(s) (%d left), "
-                        "%d failed-setup eNB(s) (%d left)",
-                        ue_purged, ue_remaining, enb_purged, enb_remaining);
-            else if (ue_remaining || enb_remaining)
+                        "%d failed-setup eNB(s) (%d left), "
+                        "%d orphan S1 context(s) (%d left)",
+                        ue_purged, ue_remaining, enb_purged, enb_remaining,
+                        enb_ue_purged, enb_ue_remaining);
+            else if (ue_remaining || enb_remaining || enb_ue_remaining)
                 ogs_debug("orphan sweep: %d stale UE(s), %d failed-setup "
-                        "eNB(s) within grace",
-                        ue_remaining, enb_remaining);
+                        "eNB(s), %d orphan S1 context(s) within grace",
+                        ue_remaining, enb_remaining, enb_ue_remaining);
 
             mme_orphan_timer_rearm();
         }
