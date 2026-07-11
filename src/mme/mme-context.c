@@ -38,6 +38,7 @@
 #include "mme-gtp-path.h"
 #include "metrics.h"
 #include "mme-apn.h"
+#include "mme-li.h"
 
 #include <errno.h>
 #include <string.h>
@@ -438,12 +439,16 @@ void mme_context_init(void)
 
     ogs_list_init(&self.mme_ue_list);
 
+    mme_li_init();
+
     context_initialized = 1;
 }
 
 void mme_context_final(void)
 {
     ogs_assert(context_initialized == 1);
+
+    mme_li_final();
 
     mme_enb_remove_all();
     mme_ue_remove_all();
@@ -3931,6 +3936,8 @@ int mme_context_parse_config(void)
 
                     ogs_info("trace_imsi: %d prefix(es) loaded",
                             ogs_trace_filter_count());
+                } else if (!strcmp(mme_key, "li")) {
+                    mme_li_parse_config(&mme_iter);
                 } else
                     ogs_warn("unknown key `%s`", mme_key);
             }
@@ -6579,6 +6586,7 @@ void mme_ue_remove(mme_ue_t *mme_ue)
      */
     ogs_metrics_dump_lock();
     mme_metrics_on_ue_remove(mme_ue);
+    mme_li_report(mme_ue, OGS_LI_EVENT_EPS_DETACH, "ue-removed");
     ogs_list_remove(&self.mme_ue_list, mme_ue);
 
     mme_ue_fsm_fini(mme_ue);

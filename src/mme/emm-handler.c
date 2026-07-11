@@ -656,6 +656,9 @@ int emm_handle_service_request(
     ogs_assert(mme_ue);
     ogs_assert(enb_ue);
 
+    if (MME_PAGING_ONGOING(mme_ue))
+        mme_metrics_paging_success(mme_ue);
+
     if (mme_self()->maintenance_mode &&
             mme_ue->paging.type != MME_PAGING_TYPE_DETACH_TO_UE) {
         int r;
@@ -848,6 +851,9 @@ int emm_handle_tau_request(
         return OGS_ERROR;
     }
     ogs_debug("    SERVED_TAI_INDEX[%d]", served_tai_index);
+
+    if (MME_UE_HAVE_IMSI(mme_ue))
+        mme_metrics_tau_attempt(mme_ue);
 
     if (MME_UE_HAVE_IMSI(mme_ue)) {
         if (emm_inbound_roam_access_reject(

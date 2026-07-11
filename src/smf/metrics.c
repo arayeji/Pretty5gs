@@ -81,6 +81,11 @@ smf_metrics_spec_def_t smf_metrics_spec_def_global[_SMF_METR_GLOB_MAX] = {
     .name = "s5c_rx_createsession",
     .description = "Received GTPv2C CreateSessionRequest messages",
 },
+[SMF_METR_GLOB_CTR_S5C_TX_CREATESESSIONSUCC] = {
+    .type = OGS_METRICS_METRIC_TYPE_COUNTER,
+    .name = "s5c_tx_createsession_success",
+    .description = "Sent GTPv2C CreateSessionResponse success messages",
+},
 [SMF_METR_GLOB_CTR_S5C_RX_DELETESESSIONREQ] = {
     .type = OGS_METRICS_METRIC_TYPE_COUNTER,
     .name = "s5c_rx_deletesession",
@@ -622,6 +627,10 @@ SMF_METR_BY_CAUSE_CTR_ENTRY(
     SMF_METR_CTR_SM_PDUSESSIONCREATIONFAIL,
     "fivegs_smffunction_sm_pdusessioncreationfail",
     "Number of PDU sessions failed to be created by the SMF")
+SMF_METR_BY_CAUSE_CTR_ENTRY(
+    SMF_METR_CTR_S5C_TX_CREATESESSIONFAIL,
+    "s5c_tx_createsession_fail",
+    "Sent GTPv2C CreateSessionResponse failure messages")
 };
 void smf_metrics_init_by_cause(void);
 int smf_metrics_free_inst_by_cause(ogs_metrics_inst_t **inst);

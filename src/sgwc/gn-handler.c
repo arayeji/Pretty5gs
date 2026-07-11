@@ -23,6 +23,7 @@
 #include "pfcp-path.h"
 #include "s11-handler.h"
 #include "sgwc-trace.h"
+#include "metrics.h"
 
 static void sgwc_gn_create_pdp_proceed(
         sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *gn_xact,
@@ -175,6 +176,7 @@ void sgwc_create_session_reject_and_cleanup(
         sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *s11_xact,
         uint8_t gtp2_cause)
 {
+    sgwc_metrics_create_session_fail(sgwc_ue, gtp2_cause);
     sgwc_gtp_create_reject(sess, sgwc_ue, s11_xact, gtp2_cause);
 
     if (sess && !sess->gn) {

@@ -74,6 +74,19 @@ typedef struct mme_metric_key_by_sgw_plmn_s {
     mme_metric_type_by_sgw_plmn_t   t;
 } mme_metric_key_by_sgw_plmn_t;
 
+typedef struct mme_metric_key_by_plmn_ho_s {
+    ogs_plmn_id_t                   plmn_id;
+    char                            ho_type[16];
+    uint16_t                        cause;
+    mme_metric_type_by_plmn_ho_t    t;
+} mme_metric_key_by_plmn_ho_t;
+
+typedef struct mme_metric_key_by_plmn_origin_s {
+    ogs_plmn_id_t                       plmn_id;
+    char                                origin[16];
+    mme_metric_type_by_plmn_origin_t    t;
+} mme_metric_key_by_plmn_origin_t;
+
 extern ogs_metrics_spec_t *mme_metrics_spec_by_plmn[_MME_METR_BY_PLMN_MAX];
 extern ogs_hash_t *metrics_hash_by_plmn;
 extern mme_metrics_spec_def_t mme_metrics_spec_def_by_plmn[_MME_METR_BY_PLMN_MAX];
@@ -93,6 +106,15 @@ extern ogs_metrics_spec_t
 extern ogs_hash_t *metrics_hash_by_sgw_plmn;
 extern mme_metrics_spec_def_t
     mme_metrics_spec_def_by_sgw_plmn[_MME_METR_BY_SGW_PLMN_MAX];
+extern ogs_metrics_spec_t *mme_metrics_spec_by_plmn_ho[_MME_METR_BY_PLMN_HO_MAX];
+extern ogs_hash_t *metrics_hash_by_plmn_ho;
+extern mme_metrics_spec_def_t
+    mme_metrics_spec_def_by_plmn_ho[_MME_METR_BY_PLMN_HO_MAX];
+extern ogs_metrics_spec_t
+    *mme_metrics_spec_by_plmn_origin[_MME_METR_BY_PLMN_ORIGIN_MAX];
+extern ogs_hash_t *metrics_hash_by_plmn_origin;
+extern mme_metrics_spec_def_t
+    mme_metrics_spec_def_by_plmn_origin[_MME_METR_BY_PLMN_ORIGIN_MAX];
 
 static bool mme_metrics_plmn_from_ue(mme_ue_t *mme_ue, ogs_plmn_id_t *plmn_id)
 {
@@ -175,6 +197,88 @@ static void mme_metrics_inst_by_plmn_cause_add(ogs_plmn_id_t *plmn,
 
         ogs_assert(metrics);
         ogs_hash_set(metrics_hash_by_plmn_cause,
+                key, sizeof(*key), metrics);
+    } else {
+        ogs_free(key);
+    }
+
+    ogs_metrics_inst_add(metrics, val);
+}
+
+static void mme_metrics_inst_by_plmn_ho_add(ogs_plmn_id_t *plmn,
+        const char *ho_type, uint16_t cause,
+        mme_metric_type_by_plmn_ho_t t, int val)
+{
+    ogs_metrics_inst_t *metrics = NULL;
+    mme_metric_key_by_plmn_ho_t *key;
+    char plmn_id[OGS_PLMNIDSTRLEN] = "";
+    char cause_str[8];
+    const char *type_label = ho_type ? ho_type : "unknown";
+
+    ogs_assert(plmn);
+    if (!metrics_hash_by_plmn_ho)
+        return;
+
+    key = ogs_calloc(1, sizeof(*key));
+    ogs_assert(key);
+
+    key->plmn_id = *plmn;
+    ogs_cpystrn(key->ho_type, type_label, sizeof(key->ho_type));
+    key->cause = cause;
+    key->t = t;
+
+    metrics = ogs_hash_get(metrics_hash_by_plmn_ho,
+            key, sizeof(*key));
+
+    if (!metrics) {
+        ogs_plmn_id_to_string(plmn, plmn_id);
+        ogs_snprintf(cause_str, sizeof(cause_str), "%u", (unsigned)cause);
+
+        metrics = ogs_metrics_inst_new(mme_metrics_spec_by_plmn_ho[t],
+                mme_metrics_spec_def_by_plmn_ho[t].num_labels,
+                (const char *[]){ plmn_id, key->ho_type, cause_str });
+
+        ogs_assert(metrics);
+        ogs_hash_set(metrics_hash_by_plmn_ho,
+                key, sizeof(*key), metrics);
+    } else {
+        ogs_free(key);
+    }
+
+    ogs_metrics_inst_add(metrics, val);
+}
+
+static void mme_metrics_inst_by_plmn_origin_add(ogs_plmn_id_t *plmn,
+        const char *origin, mme_metric_type_by_plmn_origin_t t, int val)
+{
+    ogs_metrics_inst_t *metrics = NULL;
+    mme_metric_key_by_plmn_origin_t *key;
+    char plmn_id[OGS_PLMNIDSTRLEN] = "";
+
+    ogs_assert(plmn);
+    ogs_assert(origin);
+    if (!metrics_hash_by_plmn_origin)
+        return;
+
+    key = ogs_calloc(1, sizeof(*key));
+    ogs_assert(key);
+
+    key->plmn_id = *plmn;
+    ogs_cpystrn(key->origin, origin, sizeof(key->origin));
+    key->t = t;
+
+    metrics = ogs_hash_get(metrics_hash_by_plmn_origin,
+            key, sizeof(*key));
+
+    if (!metrics) {
+        ogs_plmn_id_to_string(plmn, plmn_id);
+
+        metrics = ogs_metrics_inst_new(mme_metrics_spec_by_plmn_origin[t],
+                mme_metrics_spec_def_by_plmn_origin->num_labels,
+                (const char *[]){ plmn_id, key->origin });
+
+        ogs_assert(metrics);
+        ogs_hash_set(metrics_hash_by_plmn_origin,
                 key, sizeof(*key), metrics);
     } else {
         ogs_free(key);
@@ -347,6 +451,193 @@ void mme_metrics_esm_reject(mme_ue_t *mme_ue, uint8_t esm_cause)
 
     mme_metrics_inst_by_plmn_cause_add(&plmn_id, esm_cause,
             MME_METR_BY_PLMN_CAUSE_CTR_ESM_REJECT, 1);
+}
+
+void mme_metrics_tau_attempt(mme_ue_t *mme_ue)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_add(&plmn_id,
+            MME_METR_BY_PLMN_CTR_TAU_ATTEMPT, 1);
+}
+
+void mme_metrics_tau_success(mme_ue_t *mme_ue)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_add(&plmn_id,
+            MME_METR_BY_PLMN_CTR_TAU_SUCCESS, 1);
+}
+
+void mme_metrics_tau_reject(mme_ue_t *mme_ue, uint8_t emm_cause)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_cause_add(&plmn_id, emm_cause,
+            MME_METR_BY_PLMN_CAUSE_CTR_TAU_REJECT, 1);
+}
+
+void mme_metrics_service_request_attempt(mme_ue_t *mme_ue)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_add(&plmn_id,
+            MME_METR_BY_PLMN_CTR_SERVICE_REQUEST_ATTEMPT, 1);
+}
+
+void mme_metrics_service_request_success(mme_ue_t *mme_ue)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_add(&plmn_id,
+            MME_METR_BY_PLMN_CTR_SERVICE_REQUEST_SUCCESS, 1);
+}
+
+void mme_metrics_service_reject(mme_ue_t *mme_ue, uint8_t emm_cause)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_cause_add(&plmn_id, emm_cause,
+            MME_METR_BY_PLMN_CAUSE_CTR_SERVICE_REJECT, 1);
+}
+
+void mme_metrics_pdn_connectivity_attempt(mme_ue_t *mme_ue)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_add(&plmn_id,
+            MME_METR_BY_PLMN_CTR_PDN_CONNECTIVITY_ATTEMPT, 1);
+}
+
+void mme_metrics_pdn_connectivity_success(mme_ue_t *mme_ue)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_add(&plmn_id,
+            MME_METR_BY_PLMN_CTR_PDN_CONNECTIVITY_SUCCESS, 1);
+}
+
+void mme_metrics_s11_create_session_attempt(mme_ue_t *mme_ue)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_add(&plmn_id,
+            MME_METR_BY_PLMN_CTR_S11_CREATE_SESSION_ATTEMPT, 1);
+}
+
+void mme_metrics_s11_create_session_success(mme_ue_t *mme_ue)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_add(&plmn_id,
+            MME_METR_BY_PLMN_CTR_S11_CREATE_SESSION_SUCCESS, 1);
+}
+
+void mme_metrics_s11_create_session_fail(mme_ue_t *mme_ue, uint8_t gtp_cause)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_cause_add(&plmn_id, gtp_cause,
+            MME_METR_BY_PLMN_CAUSE_CTR_S11_CREATE_SESSION_FAIL, 1);
+}
+
+void mme_metrics_paging_attempt(mme_ue_t *mme_ue)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_add(&plmn_id,
+            MME_METR_BY_PLMN_CTR_PAGING_ATTEMPT, 1);
+}
+
+void mme_metrics_paging_success(mme_ue_t *mme_ue)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_add(&plmn_id,
+            MME_METR_BY_PLMN_CTR_PAGING_SUCCESS, 1);
+}
+
+void mme_metrics_ho_attempt(mme_ue_t *mme_ue, const char *ho_type)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_ho_add(&plmn_id, ho_type, 0,
+            MME_METR_BY_PLMN_HO_CTR_ATTEMPT, 1);
+}
+
+void mme_metrics_ho_success(mme_ue_t *mme_ue, const char *ho_type)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_ho_add(&plmn_id, ho_type, 0,
+            MME_METR_BY_PLMN_HO_CTR_SUCCESS, 1);
+}
+
+void mme_metrics_ho_fail(mme_ue_t *mme_ue, const char *ho_type, uint16_t cause)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_ho_add(&plmn_id, ho_type, cause,
+            MME_METR_BY_PLMN_HO_CTR_FAIL, 1);
+}
+
+void mme_metrics_detach(mme_ue_t *mme_ue, const char *origin)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue || !origin || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_origin_add(&plmn_id, origin,
+            MME_METR_BY_PLMN_ORIGIN_CTR_DETACH, 1);
 }
 
 void mme_metrics_auth_request(mme_ue_t *mme_ue)
@@ -665,6 +956,46 @@ MME_METR_BY_PLMN_CTR_ENTRY(
     MME_METR_BY_PLMN_CTR_AUTH_FAIL,
     "mme_auth_fail_total",
     "Authentication failures per IMSI PLMN")
+MME_METR_BY_PLMN_CTR_ENTRY(
+    MME_METR_BY_PLMN_CTR_TAU_ATTEMPT,
+    "mme_tau_attempt_total",
+    "Tracking area update attempts per IMSI PLMN")
+MME_METR_BY_PLMN_CTR_ENTRY(
+    MME_METR_BY_PLMN_CTR_TAU_SUCCESS,
+    "mme_tau_success_total",
+    "Successful tracking area updates per IMSI PLMN")
+MME_METR_BY_PLMN_CTR_ENTRY(
+    MME_METR_BY_PLMN_CTR_SERVICE_REQUEST_ATTEMPT,
+    "mme_service_request_attempt_total",
+    "Service request attempts per IMSI PLMN")
+MME_METR_BY_PLMN_CTR_ENTRY(
+    MME_METR_BY_PLMN_CTR_SERVICE_REQUEST_SUCCESS,
+    "mme_service_request_success_total",
+    "Successful service requests per IMSI PLMN")
+MME_METR_BY_PLMN_CTR_ENTRY(
+    MME_METR_BY_PLMN_CTR_PDN_CONNECTIVITY_ATTEMPT,
+    "mme_pdn_connectivity_attempt_total",
+    "PDN connectivity attempts per IMSI PLMN")
+MME_METR_BY_PLMN_CTR_ENTRY(
+    MME_METR_BY_PLMN_CTR_PDN_CONNECTIVITY_SUCCESS,
+    "mme_pdn_connectivity_success_total",
+    "Successful PDN connectivity procedures per IMSI PLMN")
+MME_METR_BY_PLMN_CTR_ENTRY(
+    MME_METR_BY_PLMN_CTR_S11_CREATE_SESSION_ATTEMPT,
+    "mme_s11_create_session_attempt_total",
+    "S11 Create Session attempts per IMSI PLMN")
+MME_METR_BY_PLMN_CTR_ENTRY(
+    MME_METR_BY_PLMN_CTR_S11_CREATE_SESSION_SUCCESS,
+    "mme_s11_create_session_success_total",
+    "Successful S11 Create Session procedures per IMSI PLMN")
+MME_METR_BY_PLMN_CTR_ENTRY(
+    MME_METR_BY_PLMN_CTR_PAGING_ATTEMPT,
+    "mme_paging_attempt_total",
+    "Paging attempts per IMSI PLMN")
+MME_METR_BY_PLMN_CTR_ENTRY(
+    MME_METR_BY_PLMN_CTR_PAGING_SUCCESS,
+    "mme_paging_success_total",
+    "Successful paging procedures per IMSI PLMN")
 MME_METR_BY_PLMN_GAUGE_ENTRY(
     MME_METR_BY_PLMN_GAUGE_UE_REGISTERED,
     "mme_ue_registered",
@@ -698,17 +1029,100 @@ mme_metrics_spec_def_t mme_metrics_spec_def_by_plmn_cause[_MME_METR_BY_PLMN_CAUS
 MME_METR_BY_PLMN_CAUSE_CTR_ENTRY(
     MME_METR_BY_PLMN_CAUSE_CTR_ATTACH_REJECT,
     "mme_attach_reject_total",
-    "Attach rejections per IMSI PLMN and EMM cause"),
+    "Attach rejections per IMSI PLMN and EMM cause")
 MME_METR_BY_PLMN_CAUSE_CTR_ENTRY(
     MME_METR_BY_PLMN_CAUSE_CTR_ESM_REJECT,
     "mme_esm_reject_total",
     "ESM rejections per IMSI PLMN and ESM cause")
+MME_METR_BY_PLMN_CAUSE_CTR_ENTRY(
+    MME_METR_BY_PLMN_CAUSE_CTR_TAU_REJECT,
+    "mme_tau_reject_total",
+    "TAU rejections per IMSI PLMN and EMM cause")
+MME_METR_BY_PLMN_CAUSE_CTR_ENTRY(
+    MME_METR_BY_PLMN_CAUSE_CTR_SERVICE_REJECT,
+    "mme_service_reject_total",
+    "Service rejections per IMSI PLMN and EMM cause")
+MME_METR_BY_PLMN_CAUSE_CTR_ENTRY(
+    MME_METR_BY_PLMN_CAUSE_CTR_S11_CREATE_SESSION_FAIL,
+    "mme_s11_create_session_fail_total",
+    "S11 Create Session failures per IMSI PLMN and GTP cause")
 };
 
 static void mme_metrics_init_by_plmn_cause(void)
 {
     metrics_hash_by_plmn_cause = ogs_hash_make();
     ogs_assert(metrics_hash_by_plmn_cause);
+}
+
+/* BY PLMN and HO type */
+const char *labels_plmn_ho[] = {
+    "plmnid",
+    "type",
+    "cause"
+};
+
+#define MME_METR_BY_PLMN_HO_CTR_ENTRY(_id, _name, _desc) \
+    [_id] = { \
+        .type = OGS_METRICS_METRIC_TYPE_COUNTER, \
+        .name = _name, \
+        .description = _desc, \
+        .num_labels = OGS_ARRAY_SIZE(labels_plmn_ho), \
+        .labels = labels_plmn_ho, \
+    },
+
+ogs_metrics_spec_t *mme_metrics_spec_by_plmn_ho[_MME_METR_BY_PLMN_HO_MAX];
+ogs_hash_t *metrics_hash_by_plmn_ho = NULL;
+mme_metrics_spec_def_t mme_metrics_spec_def_by_plmn_ho[_MME_METR_BY_PLMN_HO_MAX] = {
+MME_METR_BY_PLMN_HO_CTR_ENTRY(
+    MME_METR_BY_PLMN_HO_CTR_ATTEMPT,
+    "mme_ho_attempt_total",
+    "Handover attempts per IMSI PLMN and HO type")
+MME_METR_BY_PLMN_HO_CTR_ENTRY(
+    MME_METR_BY_PLMN_HO_CTR_SUCCESS,
+    "mme_ho_success_total",
+    "Successful handovers per IMSI PLMN and HO type")
+MME_METR_BY_PLMN_HO_CTR_ENTRY(
+    MME_METR_BY_PLMN_HO_CTR_FAIL,
+    "mme_ho_fail_total",
+    "Handover failures per IMSI PLMN, HO type and cause")
+};
+
+static void mme_metrics_init_by_plmn_ho(void)
+{
+    metrics_hash_by_plmn_ho = ogs_hash_make();
+    ogs_assert(metrics_hash_by_plmn_ho);
+}
+
+/* BY PLMN and detach origin */
+const char *labels_plmn_origin[] = {
+    "plmnid",
+    "origin"
+};
+
+#define MME_METR_BY_PLMN_ORIGIN_CTR_ENTRY(_id, _name, _desc) \
+    [_id] = { \
+        .type = OGS_METRICS_METRIC_TYPE_COUNTER, \
+        .name = _name, \
+        .description = _desc, \
+        .num_labels = OGS_ARRAY_SIZE(labels_plmn_origin), \
+        .labels = labels_plmn_origin, \
+    },
+
+ogs_metrics_spec_t
+    *mme_metrics_spec_by_plmn_origin[_MME_METR_BY_PLMN_ORIGIN_MAX];
+ogs_hash_t *metrics_hash_by_plmn_origin = NULL;
+mme_metrics_spec_def_t
+    mme_metrics_spec_def_by_plmn_origin[_MME_METR_BY_PLMN_ORIGIN_MAX] = {
+MME_METR_BY_PLMN_ORIGIN_CTR_ENTRY(
+    MME_METR_BY_PLMN_ORIGIN_CTR_DETACH,
+    "mme_detach_total",
+    "Detach procedures per IMSI PLMN and origin")
+};
+
+static void mme_metrics_init_by_plmn_origin(void)
+{
+    metrics_hash_by_plmn_origin = ogs_hash_make();
+    ogs_assert(metrics_hash_by_plmn_origin);
 }
 
 /* BY REASON */
@@ -826,10 +1240,17 @@ void mme_metrics_init(void)
     mme_metrics_init_spec(ctx, mme_metrics_spec_by_sgw_plmn,
             mme_metrics_spec_def_by_sgw_plmn,
             _MME_METR_BY_SGW_PLMN_MAX);
+    mme_metrics_init_spec(ctx, mme_metrics_spec_by_plmn_ho,
+            mme_metrics_spec_def_by_plmn_ho, _MME_METR_BY_PLMN_HO_MAX);
+    mme_metrics_init_spec(ctx, mme_metrics_spec_by_plmn_origin,
+            mme_metrics_spec_def_by_plmn_origin,
+            _MME_METR_BY_PLMN_ORIGIN_MAX);
 
     mme_metrics_init_inst_global();
     mme_metrics_init_by_plmn();
     mme_metrics_init_by_plmn_cause();
+    mme_metrics_init_by_plmn_ho();
+    mme_metrics_init_by_plmn_origin();
     mme_metrics_init_by_reason();
     mme_metrics_init_by_sgw_plmn_apn();
     mme_metrics_init_by_sgw_plmn();
@@ -898,6 +1319,30 @@ void mme_metrics_final(void)
         }
         ogs_hash_destroy(metrics_hash_by_sgw_plmn);
         metrics_hash_by_sgw_plmn = NULL;
+    }
+    if (metrics_hash_by_plmn_ho) {
+        for (hi = ogs_hash_first(metrics_hash_by_plmn_ho); hi;
+                hi = ogs_hash_next(hi)) {
+            mme_metric_key_by_plmn_ho_t *key =
+                (mme_metric_key_by_plmn_ho_t *)ogs_hash_this_key(hi);
+
+            ogs_hash_set(metrics_hash_by_plmn_ho, key, sizeof(*key), NULL);
+            ogs_free(key);
+        }
+        ogs_hash_destroy(metrics_hash_by_plmn_ho);
+        metrics_hash_by_plmn_ho = NULL;
+    }
+    if (metrics_hash_by_plmn_origin) {
+        for (hi = ogs_hash_first(metrics_hash_by_plmn_origin); hi;
+                hi = ogs_hash_next(hi)) {
+            mme_metric_key_by_plmn_origin_t *key =
+                (mme_metric_key_by_plmn_origin_t *)ogs_hash_this_key(hi);
+
+            ogs_hash_set(metrics_hash_by_plmn_origin, key, sizeof(*key), NULL);
+            ogs_free(key);
+        }
+        ogs_hash_destroy(metrics_hash_by_plmn_origin);
+        metrics_hash_by_plmn_origin = NULL;
     }
 
     ogs_metrics_context_final();

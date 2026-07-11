@@ -28,6 +28,7 @@
 #include "mme-path.h"    /* orphan-sweep heartbeat accessors */
 
 #include "admin-api.h"   /* pulls in ogs-metrics.h */
+#include "mme-li.h"
 #include "runtime-config.h"
 #include "mme-trace-sync.h"
 
@@ -459,4 +460,7 @@ void mme_admin_api_register(void)
     ogs_metrics_register_admin_ep(mme_admin_maintenance_status,
             "/admin/maintenance/status",
             OGS_METRICS_ADMIN_METHOD_GET);
+    ogs_metrics_register_admin_ep(mme_admin_li_target,
+            "/admin/li/target",
+            OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
 }

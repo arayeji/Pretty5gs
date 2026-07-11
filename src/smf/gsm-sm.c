@@ -42,6 +42,8 @@
 #include "local-path.h"
 #include "gx-handler.h"
 
+#include "metrics.h"
+
 static uint8_t gtp_cause_from_diameter(uint8_t gtp_version,
         const uint32_t dia_err, const uint32_t *dia_exp_err)
 {
@@ -114,6 +116,10 @@ static void smf_gsm_fail_create_session(ogs_fsm_t *s, smf_sess_t *sess,
         smf_ue_warn(smf_ue, sess, "create-session",
                 "Create Session rejected gtp_cause[%u]", gtp_cause);
     }
+
+    if (gtp_xact && gtp_xact->gtp_version == 2)
+        smf_metrics_inst_by_cause_add(gtp_cause,
+                SMF_METR_CTR_S5C_TX_CREATESESSIONFAIL, 1);
 
     send_gtp_create_err_msg(sess, gtp_xact, gtp_cause);
 

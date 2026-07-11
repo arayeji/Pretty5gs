@@ -312,6 +312,8 @@ static void mme_s11_create_session_fail(
 
     mme_ue_progress(mme_ue, "create_session_rsp_fail");
 
+    mme_metrics_s11_create_session_fail(mme_ue, fail_cause);
+
     if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST) {
         if (enb_ue) {
             mme_sess_t *sess = mme_sess_first(mme_ue);
@@ -700,6 +702,10 @@ void mme_s11_handle_create_session_response(
             "Create Session OK MME_S11_TEID=0x%x SGW_S11_TEID=0x%x",
             mme_ue->mme_s11_teid, target_ue->sgw_s11_teid);
     mme_ue_progress(mme_ue, "create_session_rsp_ok");
+
+    mme_metrics_s11_create_session_success(mme_ue);
+    if (create_action != OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST)
+        mme_metrics_pdn_connectivity_success(mme_ue);
 
     if (create_action != OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST)
         mme_metrics_sess_active_update(sess);

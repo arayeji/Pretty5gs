@@ -169,6 +169,11 @@ typedef struct ogs_metrics_query_s {
      */
     uint64_t    seid;      /* ?seid=0x... parsed value */
     int         has_seid;  /* seid was present and parsed */
+
+    /* Lawful interception admin (/admin/li/target) */
+    const char *action;    /* ?action=add|remove|list */
+    const char *liid;      /* ?liid=... */
+    const char *msisdn;    /* ?msisdn=... */
 } ogs_metrics_query_t;
 
 typedef size_t (*ogs_metrics_custom_ep_hdlr_t)(

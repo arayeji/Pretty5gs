@@ -24,8 +24,15 @@ typedef enum sgwc_metric_type_pfcp_peer_s {
 
 typedef enum sgwc_metric_type_by_plmn_s {
     SGWC_METR_BY_PLMN_GAUGE_UE_ACTIVE = 0,
+    SGWC_METR_BY_PLMN_CTR_CREATE_SESSION_ATTEMPT,
+    SGWC_METR_BY_PLMN_CTR_CREATE_SESSION_SUCCESS,
     _SGWC_METR_BY_PLMN_MAX,
 } sgwc_metric_type_by_plmn_t;
+
+typedef enum sgwc_metric_type_by_plmn_cause_s {
+    SGWC_METR_BY_PLMN_CAUSE_CTR_CREATE_SESSION_FAIL = 0,
+    _SGWC_METR_BY_PLMN_CAUSE_MAX,
+} sgwc_metric_type_by_plmn_cause_t;
 
 typedef enum sgwc_metric_type_by_plmn_pgw_s {
     SGWC_METR_BY_PLMN_PGW_GAUGE_SESSION_ACTIVE = 0,
@@ -64,6 +71,10 @@ static inline void sgwc_metrics_inst_global_dec(sgwc_metric_type_global_t t)
 }
 
 void sgwc_metrics_pfcp_peer_up(const char *addr, int up);
+
+void sgwc_metrics_create_session_attempt(sgwc_ue_t *sgwc_ue);
+void sgwc_metrics_create_session_success(sgwc_ue_t *sgwc_ue);
+void sgwc_metrics_create_session_fail(sgwc_ue_t *sgwc_ue, uint8_t gtp_cause);
 
 void sgwc_metrics_ue_active_inc(sgwc_ue_t *sgwc_ue);
 void sgwc_metrics_ue_active_dec(sgwc_ue_t *sgwc_ue);

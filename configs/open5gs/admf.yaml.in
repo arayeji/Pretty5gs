@@ -1,0 +1,26 @@
+# Open5GS ADMF — Lawful Interception HI1 + MDF2 (HI2)
+#
+# Separate administration service. POIs (MME/SMF) receive X1 tasking via
+# their :9090 /admin/li/target endpoint and emit X2 to /mdf/x2 here.
+
+logger:
+  file:
+    path: @localstatedir@/log/open5gs/admf.log
+
+global:
+  max:
+    ue: 1024
+
+admf:
+  hi1:
+    addr: 0.0.0.0
+    port: 9051
+  mdf2:
+    hi2_spool_dir: /var/spool/open5gs/hi2
+  x1:
+    mme:
+      addr: 127.0.0.1
+      port: 9090
+    smf:
+      addr: 127.0.0.1
+      port: 9090

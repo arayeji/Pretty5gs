@@ -20,6 +20,7 @@
 #include "gtp-path.h"
 #include "pfcp-path.h"
 #include "sgwc-trace.h"
+#include "metrics.h"
 
 #include "s11-handler.h"
 
@@ -552,6 +553,9 @@ cleanup:
     if (sess)
         sgwc_sess_abort_create(sess);
 
+    if (sgwc_ue)
+        sgwc_metrics_create_session_fail(sgwc_ue, cause_value);
+
     ogs_gtp_send_error_message(
             s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
             OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
@@ -690,8 +694,14 @@ void sgwc_s11_handle_create_session_request(
     req = &message->create_session_request;
     ogs_assert(req);
 
+    if (sgwc_ue)
+        sgwc_metrics_create_session_attempt(sgwc_ue);
+
     if (sgwc_self()->maintenance_mode) {
         ogs_warn("Create Session rejected: SGWC maintenance mode");
+        if (sgwc_ue)
+            sgwc_metrics_create_session_fail(sgwc_ue,
+                    OGS_GTP2_CAUSE_NO_RESOURCES_AVAILABLE);
         ogs_gtp_send_error_message(
                 s11_xact,
                 sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
@@ -818,6 +828,9 @@ cleanup:
     ogs_assert(cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
     ogs_error("[%s] Create Session failed before SGW-U/SMF [GTP cause:%u]",
             sgwc_ue ? sgwc_ue->imsi_bcd : "-", cause_value);
+
+    if (sgwc_ue)
+        sgwc_metrics_create_session_fail(sgwc_ue, cause_value);
 
     ogs_gtp_send_error_message(
             s11_xact, sgwc_ue ? sgwc_ue->mme_s11_teid : 0,

@@ -11,6 +11,7 @@
 #include "event.h"
 
 #include "admin-api.h"
+#include "smf-li.h"
 #include "runtime-config.h"
 
 #include <stdarg.h>
@@ -358,5 +359,8 @@ void smf_admin_api_register(void)
     /* Purge one stale UPF SEID: POST /admin/pfcp/purge-seid?seid=0x..[&ip=] */
     ogs_metrics_register_admin_ep(smf_admin_purge_seid,
             "/admin/pfcp/purge-seid",
+            OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
+    ogs_metrics_register_admin_ep(smf_admin_li_target,
+            "/admin/li/target",
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
 }

@@ -29,6 +29,7 @@
 
 #include "s1ap-build.h"
 #include "s1ap-path.h"
+#include "metrics.h"
 
 int s1ap_open(void)
 {
@@ -536,6 +537,8 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
         return OGS_NOTFOUND;
     }
 
+    mme_metrics_paging_attempt(mme_ue);
+
     /* Find enB with matched TAI */
     ogs_list_for_each(&mme_self()->enb_list, enb) {
         for (i = 0; i < enb->num_of_supported_ta_list; i++) {
@@ -669,6 +672,8 @@ int s1ap_send_path_switch_ack(
         return OGS_NOTFOUND;
     }
 
+    mme_metrics_ho_success(mme_ue, "path_switch");
+
     s1apbuf = s1ap_build_path_switch_ack(
                 mme_ue, e_rab_to_switched_in_uplink_list);
     if (!s1apbuf) {
@@ -716,6 +721,8 @@ int s1ap_send_handover_preparation_failure(
 {
     int rv;
     ogs_pkbuf_t *s1apbuf = NULL;
+    mme_ue_t *mme_ue = NULL;
+    uint16_t cause_key = 0;
 
     ogs_debug("HandoverPreparationFailure");
 
@@ -725,6 +732,13 @@ int s1ap_send_handover_preparation_failure(
     }
 
     ogs_assert(group);
+
+    mme_ue = mme_ue_find_by_id(source_ue->mme_ue_id);
+    if (mme_ue) {
+        cause_key = (uint16_t)(((unsigned)group << 8) |
+                ((unsigned)cause & 0xff));
+        mme_metrics_ho_fail(mme_ue, "intralte", cause_key);
+    }
 
     s1apbuf = s1ap_build_handover_preparation_failure(source_ue, group, cause);
     if (!s1apbuf) {
