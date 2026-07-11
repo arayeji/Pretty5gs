@@ -72,7 +72,7 @@ static bool mme_apn_in_list(const char *apn_ni,
 static int mme_inbound_roam_apn_yaml_list(ogs_yaml_iter_t *iter,
         char list[][OGS_MAX_APN_LEN + 1], int max_count, int *out_count)
 {
-    ogs_yaml_iter_t list_array, list_iter;
+    ogs_yaml_iter_t list_iter;
     int count = 0;
 
     ogs_assert(iter);
@@ -81,45 +81,46 @@ static int mme_inbound_roam_apn_yaml_list(ogs_yaml_iter_t *iter,
 
     *out_count = 0;
 
-    ogs_yaml_iter_recurse(iter, &list_array);
+    ogs_yaml_iter_recurse(iter, &list_iter);
+    if (ogs_yaml_iter_type(&list_iter) == YAML_MAPPING_NODE) {
+        ogs_warn("unexpected YAML mapping in inbound_roam APN list");
+        return OGS_ERROR;
+    }
+
+    if (ogs_yaml_iter_type(&list_iter) == YAML_SCALAR_NODE) {
+        const char *v = ogs_yaml_iter_value(&list_iter);
+
+        if (v && v[0]) {
+            ogs_cpystrn(list[0], v, OGS_MAX_APN_LEN + 1);
+            *out_count = 1;
+        }
+        return OGS_OK;
+    }
+
+    if (ogs_yaml_iter_type(&list_iter) != YAML_SEQUENCE_NODE) {
+        ogs_warn("unexpected YAML node in inbound_roam APN list");
+        return OGS_ERROR;
+    }
+
     do {
-        if (ogs_yaml_iter_type(&list_array) == YAML_MAPPING_NODE)
+        const char *v = NULL;
+
+        if (ogs_yaml_iter_type(&list_iter) == YAML_SEQUENCE_NODE) {
+            if (!ogs_yaml_iter_next(&list_iter))
+                break;
+        }
+
+        v = ogs_yaml_iter_value(&list_iter);
+        if (!v || !v[0])
+            continue;
+        if (count >= max_count) {
+            ogs_warn("inbound_roam APN list full (max %d)", max_count);
             break;
-        if (ogs_yaml_iter_type(&list_array) == YAML_SEQUENCE_NODE) {
-            if (!ogs_yaml_iter_next(&list_array))
-                break;
-            ogs_yaml_iter_recurse(&list_array, &list_iter);
-        } else if (ogs_yaml_iter_type(&list_array) == YAML_SCALAR_NODE) {
-            const char *v = ogs_yaml_iter_value(&list_array);
-            if (!v || !v[0])
-                return OGS_OK;
-            if (count >= max_count) {
-                ogs_warn("inbound_roam APN list full (max %d)", max_count);
-                return OGS_ERROR;
-            }
-            ogs_cpystrn(list[count], v, OGS_MAX_APN_LEN + 1);
-            count++;
-            *out_count = count;
-            return OGS_OK;
-        } else {
-            ogs_warn("unexpected YAML node in inbound_roam APN list");
-            return OGS_ERROR;
         }
-
-        while (ogs_yaml_iter_next(&list_iter)) {
-            const char *v = ogs_yaml_iter_value(&list_iter);
-
-            if (!v || !v[0])
-                continue;
-            if (count >= max_count) {
-                ogs_warn("inbound_roam APN list full (max %d)", max_count);
-                break;
-            }
-            ogs_cpystrn(list[count], v, OGS_MAX_APN_LEN + 1);
-            count++;
-        }
-    } while (ogs_yaml_iter_type(&list_array) == YAML_SEQUENCE_NODE &&
-            ogs_yaml_iter_next(&list_array));
+        ogs_cpystrn(list[count], v, OGS_MAX_APN_LEN + 1);
+        count++;
+    } while (ogs_yaml_iter_type(&list_iter) == YAML_SEQUENCE_NODE &&
+            ogs_yaml_iter_next(&list_iter));
 
     *out_count = count;
     return OGS_OK;
