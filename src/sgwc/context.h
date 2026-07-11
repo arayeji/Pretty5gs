@@ -220,6 +220,10 @@ typedef struct sgwc_ue_s {
     int             msisdn_len;
     char            msisdn_bcd[OGS_MAX_MSISDN_BCD_LEN+1];
 
+    char            imeisv_bcd[OGS_MAX_IMEISV_BCD_LEN+1];
+    uint8_t         ue_timezone[2];
+    uint8_t         ue_timezone_len;
+
     /*
      * sgwc_context_t.drain_generation under which this UE's sessions
      * were last handed to the batched maintenance drain. 0 = never.
@@ -313,6 +317,8 @@ typedef struct sgwc_sess_s {
     char            metrics_apn[OGS_MAX_APN_LEN+1];
     unsigned        gn : 1;         /* Session from GTPv1 Gn */
     uint8_t         gtp_rat_type;
+    unsigned        gtp_selection_mode_set : 1;
+    uint8_t         gtp_selection_mode;
     uint8_t         gn_nsapi;
     uint8_t         apn_fqdn[OGS_MAX_APN_LEN + 2];
     uint8_t         apn_fqdn_len;

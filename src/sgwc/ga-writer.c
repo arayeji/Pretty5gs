@@ -34,6 +34,10 @@
 /* CHOICE alternative tag for SGWRecord (PGW uses 79). */
 #define CDR_OUTER_TAG_SGW   78
 
+#define CDR_SNT_MME              5
+#define CDR_CAUSE_TIME_LIMIT     17
+#define CDR_CAUSE_NORMAL_RELEASE 0
+
 static struct {
     bool initialized;
     char *current_path;
@@ -213,6 +217,78 @@ static void plmn_encode(const ogs_plmn_id_t *plmn, uint8_t out[3])
     memcpy(out, plmn, 3);
 }
 
+static void ms_timezone_fallback(uint8_t out[2])
+{
+    long tz_sec = (long)ogs_timezone();
+    long qh;
+    uint8_t tens, units, tz_byte;
+    int negative = 0;
+
+    if (tz_sec < 0) {
+        negative = 1;
+        tz_sec = -tz_sec;
+    }
+    qh = tz_sec / (15L * 60L);
+    if (qh > 99) qh = 99;
+
+    tens = (uint8_t)(qh / 10);
+    units = (uint8_t)(qh % 10);
+    tz_byte = (uint8_t)((units << 4) | (tens & 0x07));
+    if (negative)
+        tz_byte |= 0x08;
+
+    out[0] = tz_byte;
+    out[1] = 0x00;
+}
+
+/* Duration as 2-byte big-endian INTEGER when >= 128 (Huawei CGF style). */
+static void ber_duration_ctx(ber_t *b, uint32_t tag, uint64_t secs)
+{
+    if (secs <= 0x7f)
+        ber_uint_ctx(b, tag, secs);
+    else if (secs <= 0xffff)
+        ber_uint_be_ctx(b, tag, secs, 2);
+    else
+        ber_uint_be_ctx(b, tag, secs, 4);
+}
+
+static void pgw_plmn_for_sgw_cdr(const sgwc_ue_t *sgwc_ue,
+        const sgwc_sess_t *sess, ogs_plmn_id_t *out)
+{
+    ogs_assert(out);
+    if (sgwc_ue && sgwc_ue->imsi_bcd[0])
+        sgwc_home_plmn_from_imsi_bcd(sgwc_ue->imsi_bcd, out);
+    else
+        memcpy(out, &sess->serving_plmn_id, sizeof(*out));
+
+    if (!out->mcc1 && !out->mcc2)
+        memcpy(out, &sess->serving_plmn_id, sizeof(*out));
+}
+
+static uint32_t gsn_ipv4_from_gnode(const ogs_gtp_node_t *gnode)
+{
+    if (!gnode || !gnode->ip.ipv4)
+        return 0;
+    return ntohl(gnode->ip.addr);
+}
+
+static void encode_epc_qos(ber_t *b, const ogs_qos_t *qos)
+{
+    size_t m;
+    uint8_t arp;
+
+    if (!qos || !qos->index)
+        return;
+
+    m = ber_begin_ctx(b, 9);
+    ber_uint_ctx(b, 1, qos->index);
+    arp = (uint8_t)((qos->arp.pre_emption_capability ? 0x40 : 0) |
+            ((qos->arp.priority_level & 0x0f) << 2) |
+            (qos->arp.pre_emption_vulnerability ? 0 : 0x01));
+    ber_prim_ctx(b, 2, &arp, 1);
+    ber_end(b, m);
+}
+
 static void encode_gsn_address_v4(ber_t *b, uint32_t outer_tag, uint32_t addr)
 {
     size_t m;
@@ -262,12 +338,8 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
     if (sess->charging_id)
         ber_uint_be_ctx(&b, 5, sess->charging_id, 4);
 
-    /* [6] servingNodeAddress — PGW S5-C if known */
-    if (sess->gnode && sess->gnode->ip.ipv4) {
-        encode_gsn_address_v4(&b, 6, ntohl(sess->gnode->ip.addr));
-    } else {
-        encode_gsn_address_v4(&b, 6, 0);
-    }
+    /* [6] servingNodeAddress — MME S11-C (not PGW). */
+    encode_gsn_address_v4(&b, 6, gsn_ipv4_from_gnode(sgwc_ue->gnode));
 
     if (sess->session.name)
         ber_prim_ctx(&b, 7, sess->session.name, strlen(sess->session.name));
@@ -281,6 +353,14 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
         size_t m1 = ber_begin_ctx(&b, 9);
         encode_gsn_address_v4(&b, 0, ntohl(sess->paa.addr));
         ber_end(&b, m1);
+    }
+
+    /* [11] dynamicAddressFlag */
+    if (sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
+            sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
+            sess->paa.session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
+        tmp[0] = 0xff;
+        ber_prim_ctx(&b, 11, tmp, 1);
     }
 
     {
@@ -301,6 +381,7 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
         ber_prim_ctx(&b, 5, tmp, 1);
         timestamp_encode(now, ts);
         ber_prim_ctx(&b, 6, ts, 9);
+        encode_epc_qos(&b, &sess->session.qos);
         ber_end(&b, row);
         ber_end(&b, list);
     }
@@ -312,11 +393,17 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
         ber_prim_ctx(&b, 13, ts, 9);
     }
 
-    ber_uint_ctx(&b, 14, interval_duration_s ? interval_duration_s :
+    ber_duration_ctx(&b, 14, interval_duration_s ? interval_duration_s :
             (sess->cdr.start_time && now > sess->cdr.start_time ?
              (uint64_t)((now - sess->cdr.start_time) / OGS_USEC_PER_SEC) : 0));
 
-    tmp[0] = is_stop ? sess->cdr.cause_for_rec_closing : 0;
+    if (is_stop)
+        tmp[0] = sess->cdr.cause_for_rec_closing ?
+                sess->cdr.cause_for_rec_closing : CDR_CAUSE_NORMAL_RELEASE;
+    else if (sess->cdr.record_seq > 0 || interval_duration_s)
+        tmp[0] = CDR_CAUSE_TIME_LIMIT;
+    else
+        tmp[0] = CDR_CAUSE_NORMAL_RELEASE;
     ber_prim_ctx(&b, 15, tmp, 1);
 
     if (!is_stop || sess->cdr.record_seq > 0)
@@ -328,11 +415,30 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
     sgwc_self()->cdr_local_seq++;
     ber_uint_be_ctx(&b, 20, sgwc_self()->cdr_local_seq, 4);
 
-    /* [22] servedMSISDN (TBCD) — same tag as PGWRecord (TS 32.298). */
+    if (sess->gtp_selection_mode_set) {
+        tmp[0] = sess->gtp_selection_mode;
+        ber_prim_ctx(&b, 21, tmp, 1);
+    } else {
+        tmp[0] = 0;
+        ber_prim_ctx(&b, 21, tmp, 1);
+    }
+
     if (sgwc_ue->msisdn_bcd[0]) {
         n = tbcd_encode(sgwc_ue->msisdn_bcd, tmp, sizeof(tmp));
         if (n) ber_prim_ctx(&b, 22, tmp, n);
     }
+
+    if (sess->session.charging_characteristics_presence) {
+        ber_prim_ctx(&b, 23, sess->session.charging_characteristics,
+                OGS_CHRGCHARS_LEN);
+    } else {
+        tmp[0] = 0x08;
+        tmp[1] = 0x00;
+        ber_prim_ctx(&b, 23, tmp, OGS_CHRGCHARS_LEN);
+    }
+
+    tmp[0] = 0;
+    ber_prim_ctx(&b, 24, tmp, 1);
 
     {
         uint8_t pl[3];
@@ -340,15 +446,50 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
         ber_prim_ctx(&b, 27, pl, 3);
     }
 
+    if (sgwc_ue->imeisv_bcd[0]) {
+        n = tbcd_encode(sgwc_ue->imeisv_bcd, tmp, sizeof(tmp));
+        if (n) ber_prim_ctx(&b, 29, tmp, n);
+    }
+
+    if (sess->gtp_rat_type) {
+        tmp[0] = sess->gtp_rat_type;
+        ber_prim_ctx(&b, 30, tmp, 1);
+    } else {
+        tmp[0] = OGS_GTP2_RAT_TYPE_EUTRAN;
+        ber_prim_ctx(&b, 30, tmp, 1);
+    }
+
+    if (sgwc_ue->ue_timezone_len >= 2) {
+        ber_prim_ctx(&b, 31, sgwc_ue->ue_timezone, 2);
+    } else {
+        ms_timezone_fallback(tmp);
+        ber_prim_ctx(&b, 31, tmp, 2);
+    }
+
     if (sgwc_ue->uli_pkbuf && sgwc_ue->uli_pkbuf->len) {
         ber_prim_ctx(&b, 32, sgwc_ue->uli_pkbuf->data, sgwc_ue->uli_pkbuf->len);
     }
 
-    /* SGW-CDR [36] p-GWAddressUsed */
+    {
+        size_t m = ber_begin_ctx(&b, 35);
+        ber_u8(&b, 0x0a);
+        ber_u8(&b, 0x01);
+        ber_u8(&b, CDR_SNT_MME);
+        ber_end(&b, m);
+    }
+
     if (sess->gnode && sess->gnode->ip.ipv4) {
         size_t m = ber_begin_ctx(&b, 36);
         encode_gsn_address_v4(&b, 0, ntohl(sess->gnode->ip.addr));
         ber_end(&b, m);
+    }
+
+    {
+        ogs_plmn_id_t pgw_plmn;
+        uint8_t pl[3];
+        pgw_plmn_for_sgw_cdr(sgwc_ue, sess, &pgw_plmn);
+        plmn_encode(&pgw_plmn, pl);
+        ber_prim_ctx(&b, 37, pl, 3);
     }
 
     {

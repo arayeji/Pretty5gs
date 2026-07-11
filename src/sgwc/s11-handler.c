@@ -317,6 +317,32 @@ static void sgwc_s11_create_session_proceed(
                 sgwc_ue->msisdn_len, sgwc_ue->msisdn_bcd);
     }
 
+    if (req->me_identity.presence && req->me_identity.data &&
+            req->me_identity.len) {
+        int imei_len = ogs_min(req->me_identity.len, OGS_MAX_IMEISV_LEN);
+        ogs_buffer_to_bcd(req->me_identity.data, imei_len,
+                sgwc_ue->imeisv_bcd);
+    }
+
+    if (req->ue_time_zone.presence && req->ue_time_zone.data &&
+            req->ue_time_zone.len >= 2) {
+        sgwc_ue->ue_timezone_len = 2;
+        memcpy(sgwc_ue->ue_timezone, req->ue_time_zone.data, 2);
+    }
+
+    if (req->selection_mode.presence) {
+        sess->gtp_selection_mode = req->selection_mode.u8 & 0x03;
+        sess->gtp_selection_mode_set = 1;
+    }
+
+    if (req->charging_characteristics.presence &&
+            req->charging_characteristics.data &&
+            req->charging_characteristics.len >= OGS_CHRGCHARS_LEN) {
+        memcpy(sess->session.charging_characteristics,
+                req->charging_characteristics.data, OGS_CHRGCHARS_LEN);
+        sess->session.charging_characteristics_presence = true;
+    }
+
     /* Set User Location Information */
     if (req->user_location_information.presence == 1) {
         decoded = ogs_gtp2_parse_uli(&uli, &req->user_location_information);

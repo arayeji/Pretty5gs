@@ -199,6 +199,48 @@ static void ber_uint_be_ctx(ber_t *b, uint32_t tag, uint64_t v, int bytes)
     ber_prim_ctx(b, tag, tmp, bytes);
 }
 
+static void ber_duration_ctx(ber_t *b, uint32_t tag, uint64_t secs)
+{
+    if (secs <= 0x7f)
+        ber_uint_ctx(b, tag, secs);
+    else if (secs <= 0xffff)
+        ber_uint_be_ctx(b, tag, secs, 2);
+    else
+        ber_uint_be_ctx(b, tag, secs, 4);
+}
+
+static void pgw_plmn_for_pgw_cdr(const smf_sess_t *sess, ogs_plmn_id_t *out)
+{
+    ogs_assert(sess && out);
+
+    if (ogs_local_conf()->num_of_serving_plmn_id > 0) {
+        memcpy(out, &ogs_local_conf()->serving_plmn_id[0], OGS_PLMN_ID_LEN);
+        return;
+    }
+    if (sess->home_plmn_id.mcc1 || sess->home_plmn_id.mcc2) {
+        memcpy(out, &sess->home_plmn_id, OGS_PLMN_ID_LEN);
+        return;
+    }
+    memcpy(out, &sess->serving_plmn_id, OGS_PLMN_ID_LEN);
+}
+
+static void encode_epc_qos(ber_t *b, const ogs_qos_t *qos)
+{
+    size_t m;
+    uint8_t arp;
+
+    if (!qos || !qos->index)
+        return;
+
+    m = ber_begin_ctx(b, 9);
+    ber_uint_ctx(b, 1, qos->index);
+    arp = (uint8_t)((qos->arp.pre_emption_capability ? 0x40 : 0) |
+            ((qos->arp.priority_level & 0x0f) << 2) |
+            (qos->arp.pre_emption_vulnerability ? 0 : 0x01));
+    ber_prim_ctx(b, 2, &arp, 1);
+    ber_end(b, m);
+}
+
 /* Reserve space for a constructed header and return a marker used by
  * ber_end() to patch the length once the children are encoded.
  *
@@ -410,6 +452,9 @@ static void ms_timezone_fallback(uint8_t out[2])
 #define CDR_SNT_GTP_SGW       2
 #define CDR_SNT_MME           5
 
+#define CDR_CAUSE_TIME_LIMIT     17
+#define CDR_CAUSE_NORMAL_RELEASE 0
+
 /*
  * Render a GSNAddress choice. GSNAddress ::= CHOICE {
  *   iPBinaryAddress  [0] IPBinaryAddress,
@@ -556,6 +601,7 @@ static size_t build_pgw_record(
         /* [6] changeTime */
         timestamp_encode(now, ts);
         ber_prim_ctx(&b, 6, ts, 9);
+        encode_epc_qos(&b, &sess->session.qos);
 
         ber_end(&b, row);
         ber_end(&b, list);
@@ -574,12 +620,19 @@ static size_t build_pgw_record(
     {
         ogs_time_t start = sess->cdr.start_time ? sess->cdr.start_time : now;
         uint64_t secs = (uint64_t)((now - start) / OGS_USEC_PER_SEC);
-        ber_uint_ctx(&b, 14, secs);
+        ber_duration_ctx(&b, 14, secs);
     }
 
     /* [15] causeForRecClosing */
     {
-        uint8_t c = is_stop ? sess->cdr.cause_for_rec_closing : 0;
+        uint8_t c;
+        if (is_stop)
+            c = sess->cdr.cause_for_rec_closing ?
+                    sess->cdr.cause_for_rec_closing : CDR_CAUSE_NORMAL_RELEASE;
+        else if (sess->cdr.record_seq > 0)
+            c = CDR_CAUSE_TIME_LIMIT;
+        else
+            c = CDR_CAUSE_NORMAL_RELEASE;
         ber_prim_ctx(&b, 15, &c, 1);
     }
 
@@ -611,6 +664,9 @@ static size_t build_pgw_record(
     if (sess->epc) {
         tmp[0] = sess->gtp.selection_mode;
         ber_prim_ctx(&b, 21, tmp, 1);
+    } else {
+        tmp[0] = 0;
+        ber_prim_ctx(&b, 21, tmp, 1);
     }
 
     /* [22] servedMSISDN (TBCD) */
@@ -626,16 +682,6 @@ static size_t build_pgw_record(
     /* [24] chChSelectionMode = 0 (served subscription) */
     tmp[0] = 0;
     ber_prim_ctx(&b, 24, tmp, 1);
-
-    /* [25] iMSsignalingContext ::= NULL.
-     *
-     * Always emitted as an empty primitive (`99 00`) — this is what real
-     * Ericsson/Nokia CGFs put in their PGW-CDR template even though the
-     * spec marks the field OPTIONAL. Some decoders (notably older Comptel
-     * / Ericsson BSCS) reject records whose SET layout differs from the
-     * reference template by more than the OPTIONAL tail, so we emit the
-     * slot unconditionally to stay maximally compatible. */
-    ber_prim_ctx(&b, 25, NULL, 0);
 
     /* [27] servingNodePLMNIdentifier */
     {
@@ -653,6 +699,9 @@ static size_t build_pgw_record(
     /* [30] rATType */
     if (sess->gtp_rat_type) {
         tmp[0] = sess->gtp_rat_type;
+        ber_prim_ctx(&b, 30, tmp, 1);
+    } else if (sess->epc) {
+        tmp[0] = OGS_GTP2_RAT_TYPE_EUTRAN;
         ber_prim_ctx(&b, 30, tmp, 1);
     }
 
@@ -712,12 +761,12 @@ static size_t build_pgw_record(
      * tag (0xbf 0x4f) would trip the CGF's strict schema check. The
      * field-name "pGWAddressUsed" belongs to the SGW-CDR record only. */
 
-    /* [37] p-GWPLMNIdentifier (same as serving PLMN for non-roaming).
-     * For roaming SMFs it should come from the local PLMN config; we
-     * fall back to the serving PLMN. */
+    /* [37] p-GWPLMNIdentifier — operator PLMN of this PGW node. */
     {
+        ogs_plmn_id_t pgw_plmn;
         uint8_t pl[3];
-        plmn_encode(&sess->serving_plmn_id, pl);
+        pgw_plmn_for_pgw_cdr(sess, &pgw_plmn);
+        plmn_encode(&pgw_plmn, pl);
         ber_prim_ctx(&b, 37, pl, 3);
     }
 
