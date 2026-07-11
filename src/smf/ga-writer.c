@@ -224,23 +224,6 @@ static void pgw_plmn_for_pgw_cdr(const smf_sess_t *sess, ogs_plmn_id_t *out)
     memcpy(out, &sess->serving_plmn_id, OGS_PLMN_ID_LEN);
 }
 
-static void encode_epc_qos(ber_t *b, const ogs_qos_t *qos)
-{
-    size_t m;
-    uint8_t arp;
-
-    if (!qos || !qos->index)
-        return;
-
-    m = ber_begin_ctx(b, 9);
-    ber_uint_ctx(b, 1, qos->index);
-    arp = (uint8_t)((qos->arp.pre_emption_capability ? 0x40 : 0) |
-            ((qos->arp.priority_level & 0x0f) << 2) |
-            (qos->arp.pre_emption_vulnerability ? 0 : 0x01));
-    ber_prim_ctx(b, 2, &arp, 1);
-    ber_end(b, m);
-}
-
 /* Reserve space for a constructed header and return a marker used by
  * ber_end() to patch the length once the children are encoded.
  *
@@ -327,6 +310,23 @@ static size_t ber_begin_seq(ber_t *b)
     ber_u8(b, 0x00);
     ber_u8(b, 0x00);
     return mark;
+}
+
+static void encode_epc_qos(ber_t *b, const ogs_qos_t *qos)
+{
+    size_t m;
+    uint8_t arp;
+
+    if (!qos || !qos->index)
+        return;
+
+    m = ber_begin_ctx(b, 9);
+    ber_uint_ctx(b, 1, qos->index);
+    arp = (uint8_t)((qos->arp.pre_emption_capability ? 0x40 : 0) |
+            ((qos->arp.priority_level & 0x0f) << 2) |
+            (qos->arp.pre_emption_vulnerability ? 0 : 0x01));
+    ber_prim_ctx(b, 2, &arp, 1);
+    ber_end(b, m);
 }
 
 /* ================================================================== */
