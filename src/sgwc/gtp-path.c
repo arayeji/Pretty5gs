@@ -20,6 +20,7 @@
 #include "gtp-path.h"
 #include "pfcp-path.h"
 #include "gn-build.h"
+#include "metrics.h"
 
 /*
  * PGW peers are normally learned from Create Session F-TEID. Home PGW may
@@ -1041,6 +1042,9 @@ int sgwc_gtp_send_create_session_response(
 
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
+
+    if (rv == OGS_OK)
+        sgwc_metrics_create_session_success(sgwc_ue);
 
     return rv;
 }

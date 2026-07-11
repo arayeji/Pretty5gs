@@ -707,6 +707,8 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                 break;
             }
 
+            mme_metrics_service_request_attempt(mme_ue);
+
             if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
                 mme_ue_error(mme_ue, enb_ue, "emm", NULL,
                         "No Security Context");
@@ -756,6 +758,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             mme_ue_service_info(mme_ue, enb_ue,
                     "InitialContextSetupRequest sent");
             mme_ue_service_progress(mme_ue, enb_ue, "ics_sent");
+            mme_metrics_service_request_success(mme_ue);
             OGS_FSM_TRAN(s, &emm_state_registered);
             break;
         }

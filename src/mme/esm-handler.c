@@ -24,6 +24,7 @@
 #include "mme-path.h"
 #include "mme-trace.h"
 #include "mme-inbound-roam-apn.h"
+#include "metrics.h"
 
 #include "esm-build.h"
 #include "esm-handler.h"
@@ -61,6 +62,8 @@ int esm_handle_pdn_connectivity_request(
     }
 
     ogs_assert(MME_UE_HAVE_IMSI(mme_ue));
+
+    mme_metrics_pdn_connectivity_attempt(mme_ue);
 
     if (mme_self()->maintenance_mode) {
         ogs_warn("[%s] PDN connectivity rejected: MME maintenance mode",

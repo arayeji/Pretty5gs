@@ -29,6 +29,7 @@
 #include "s1ap-path.h"
 #include "mme-s11-build.h"
 #include "mme-sm.h"
+#include "metrics.h"
 
 static const char *mme_gtp2_message_type_name(uint8_t type)
 {
@@ -546,6 +547,8 @@ int mme_gtp_send_create_session_request(
     }
 
     mme_ue_progress(mme_ue, "create_session_req");
+
+    mme_metrics_s11_create_session_attempt(mme_ue);
 
     return OGS_OK;
 }

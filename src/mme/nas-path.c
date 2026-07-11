@@ -210,6 +210,7 @@ int nas_eps_send_attach_accept(mme_ue_t *mme_ue)
     }
 
     mme_ue_progress(mme_ue, "attach_accept");
+    mme_li_report(mme_ue, OGS_LI_EVENT_EPS_ATTACH, "attach-accept-sent");
     return rv;
 }
 
@@ -495,6 +496,8 @@ int nas_eps_send_detach_request(mme_ue_t *mme_ue)
 
     ogs_debug("[%s] Detach request to UE", mme_ue->imsi_bcd);
 
+    mme_metrics_detach(mme_ue, "network");
+
     if (mme_ue->t3422.pkbuf) {
         emmbuf = mme_ue->t3422.pkbuf;
     } else {
@@ -538,6 +541,8 @@ int nas_eps_send_detach_accept(mme_ue_t *mme_ue)
     }
 
     ogs_debug("[%s] Detach accept", mme_ue->imsi_bcd);
+
+    mme_metrics_detach(mme_ue, "ue");
 
     /* reply with detach accept */
     if (mme_ue->nas_eps.detach.switch_off == 0) {
@@ -1079,6 +1084,8 @@ int nas_eps_send_tau_accept(
 
     ogs_debug("[%s] Tracking area update accept", mme_ue->imsi_bcd);
 
+    mme_metrics_tau_success(mme_ue);
+
     emmbuf = emm_build_tau_accept(mme_ue);
     if (!emmbuf) {
         ogs_error("emm_build_tau_accept() failed");
@@ -1141,6 +1148,8 @@ int nas_eps_send_tau_reject(
 
     ogs_debug("[%s] Tracking area update reject", mme_ue->imsi_bcd);
 
+    mme_metrics_tau_reject(mme_ue, emm_cause);
+
     /* Build TAU reject */
     emmbuf = emm_build_tau_reject(emm_cause, mme_ue);
     if (!emmbuf) {
@@ -1175,6 +1184,8 @@ int nas_eps_send_service_reject(
 
     mme_ue_warn(mme_ue, enb_ue, "emm", NULL,
             "Service reject EMM_CAUSE=%d", emm_cause);
+
+    mme_metrics_service_reject(mme_ue, emm_cause);
 
     /* Build Service Reject */
     emmbuf = emm_build_service_reject(emm_cause, mme_ue);

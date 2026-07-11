@@ -41,6 +41,7 @@
 #include "s5c-build.h"
 #include "gn-build.h"
 #include "smf-trace.h"
+#include "metrics.h"
 
 static bool check_if_router_solicit(ogs_pkbuf_t *pkbuf);
 static void send_router_advertisement(smf_sess_t *sess, uint8_t *ip6_dst);
@@ -465,6 +466,9 @@ int smf_gtp2_send_create_session_response(
 
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
+
+    if (rv == OGS_OK)
+        smf_metrics_inst_global_inc(SMF_METR_GLOB_CTR_S5C_TX_CREATESESSIONSUCC);
 
     ogs_info("S5 Create Session Response sent SGW_S5C_TEID=0x%x",
             sess->sgw_s5c_teid);

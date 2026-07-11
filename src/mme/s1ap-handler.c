@@ -34,6 +34,7 @@
 
 #include "mme-path.h"
 #include "mme-sm.h"
+#include "metrics.h"
 
 static enb_ue_t *s1ap_find_enb_ue_by_message_ue_ids(
         mme_enb_t *enb,
@@ -2928,10 +2929,15 @@ void s1ap_handle_path_switch_request(
         return;
     }
 
+    mme_metrics_ho_attempt(mme_ue, "path_switch");
+
     mme_ue->send_ue_security_capability_in_path_switch_ack = false;
 
     if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
         ogs_error("No Security Context");
+        mme_metrics_ho_fail(mme_ue, "path_switch",
+                (uint16_t)((S1AP_Cause_PR_nas << 8) |
+                S1AP_CauseNas_authentication_failure));
         s1apbuf = s1ap_build_path_switch_failure(
                 *ENB_UE_S1AP_ID, *MME_UE_S1AP_ID,
                 S1AP_Cause_PR_nas, S1AP_CauseNas_authentication_failure);
@@ -3431,6 +3437,8 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
 
     mme_ue->nhcc++;
     ogs_kdf_nh_enb(mme_ue->kasme, mme_ue->nh, mme_ue->nh);
+
+    mme_metrics_ho_attempt(mme_ue, "intralte");
 
     r = s1ap_send_handover_request(
             source_ue, target_enb, &source_ue->handover_type, Cause,
@@ -4380,6 +4388,8 @@ void s1ap_handle_handover_notification(
         ogs_error("No UE(mme-ue) context");
         return;
     }
+
+    mme_metrics_ho_success(mme_ue, "intralte");
 
     ogs_debug("    Source : ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
             source_ue->enb_ue_s1ap_id, source_ue->mme_ue_s1ap_id);

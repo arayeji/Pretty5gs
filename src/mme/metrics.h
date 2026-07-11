@@ -40,6 +40,16 @@ typedef enum mme_metric_type_by_plmn_s {
     MME_METR_BY_PLMN_CTR_AUTH_REQUEST,
     MME_METR_BY_PLMN_CTR_AUTH_SUCCESS,
     MME_METR_BY_PLMN_CTR_AUTH_FAIL,
+    MME_METR_BY_PLMN_CTR_TAU_ATTEMPT,
+    MME_METR_BY_PLMN_CTR_TAU_SUCCESS,
+    MME_METR_BY_PLMN_CTR_SERVICE_REQUEST_ATTEMPT,
+    MME_METR_BY_PLMN_CTR_SERVICE_REQUEST_SUCCESS,
+    MME_METR_BY_PLMN_CTR_PDN_CONNECTIVITY_ATTEMPT,
+    MME_METR_BY_PLMN_CTR_PDN_CONNECTIVITY_SUCCESS,
+    MME_METR_BY_PLMN_CTR_S11_CREATE_SESSION_ATTEMPT,
+    MME_METR_BY_PLMN_CTR_S11_CREATE_SESSION_SUCCESS,
+    MME_METR_BY_PLMN_CTR_PAGING_ATTEMPT,
+    MME_METR_BY_PLMN_CTR_PAGING_SUCCESS,
     MME_METR_BY_PLMN_GAUGE_UE_REGISTERED,
     _MME_METR_BY_PLMN_MAX,
 } mme_metric_type_by_plmn_t;
@@ -48,8 +58,25 @@ typedef enum mme_metric_type_by_plmn_s {
 typedef enum mme_metric_type_by_plmn_cause_s {
     MME_METR_BY_PLMN_CAUSE_CTR_ATTACH_REJECT = 0,
     MME_METR_BY_PLMN_CAUSE_CTR_ESM_REJECT,
+    MME_METR_BY_PLMN_CAUSE_CTR_TAU_REJECT,
+    MME_METR_BY_PLMN_CAUSE_CTR_SERVICE_REJECT,
+    MME_METR_BY_PLMN_CAUSE_CTR_S11_CREATE_SESSION_FAIL,
     _MME_METR_BY_PLMN_CAUSE_MAX,
 } mme_metric_type_by_plmn_cause_t;
+
+/* BY PLMN and HO type */
+typedef enum mme_metric_type_by_plmn_ho_s {
+    MME_METR_BY_PLMN_HO_CTR_ATTEMPT = 0,
+    MME_METR_BY_PLMN_HO_CTR_SUCCESS,
+    MME_METR_BY_PLMN_HO_CTR_FAIL,
+    _MME_METR_BY_PLMN_HO_MAX,
+} mme_metric_type_by_plmn_ho_t;
+
+/* BY PLMN and detach origin */
+typedef enum mme_metric_type_by_plmn_origin_s {
+    MME_METR_BY_PLMN_ORIGIN_CTR_DETACH = 0,
+    _MME_METR_BY_PLMN_ORIGIN_MAX,
+} mme_metric_type_by_plmn_origin_t;
 
 /* BY REASON */
 typedef enum mme_metric_type_by_reason_s {
@@ -73,6 +100,31 @@ void mme_metrics_attach_attempt(mme_ue_t *mme_ue);
 void mme_metrics_attach_success(mme_ue_t *mme_ue);
 void mme_metrics_attach_reject(mme_ue_t *mme_ue, uint8_t emm_cause);
 void mme_metrics_esm_reject(mme_ue_t *mme_ue, uint8_t esm_cause);
+
+void mme_metrics_tau_attempt(mme_ue_t *mme_ue);
+void mme_metrics_tau_success(mme_ue_t *mme_ue);
+void mme_metrics_tau_reject(mme_ue_t *mme_ue, uint8_t emm_cause);
+
+void mme_metrics_service_request_attempt(mme_ue_t *mme_ue);
+void mme_metrics_service_request_success(mme_ue_t *mme_ue);
+void mme_metrics_service_reject(mme_ue_t *mme_ue, uint8_t emm_cause);
+
+void mme_metrics_pdn_connectivity_attempt(mme_ue_t *mme_ue);
+void mme_metrics_pdn_connectivity_success(mme_ue_t *mme_ue);
+
+void mme_metrics_s11_create_session_attempt(mme_ue_t *mme_ue);
+void mme_metrics_s11_create_session_success(mme_ue_t *mme_ue);
+void mme_metrics_s11_create_session_fail(mme_ue_t *mme_ue, uint8_t gtp_cause);
+
+void mme_metrics_paging_attempt(mme_ue_t *mme_ue);
+void mme_metrics_paging_success(mme_ue_t *mme_ue);
+
+void mme_metrics_ho_attempt(mme_ue_t *mme_ue, const char *ho_type);
+void mme_metrics_ho_success(mme_ue_t *mme_ue, const char *ho_type);
+void mme_metrics_ho_fail(mme_ue_t *mme_ue, const char *ho_type, uint16_t cause);
+
+void mme_metrics_detach(mme_ue_t *mme_ue, const char *origin);
+
 void mme_metrics_auth_request(mme_ue_t *mme_ue);
 void mme_metrics_auth_success(mme_ue_t *mme_ue);
 void mme_metrics_auth_fail(mme_ue_t *mme_ue);
