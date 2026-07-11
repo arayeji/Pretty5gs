@@ -47,6 +47,7 @@ typedef enum mme_metric_type_by_plmn_s {
 /* BY PLMN and CAUSE */
 typedef enum mme_metric_type_by_plmn_cause_s {
     MME_METR_BY_PLMN_CAUSE_CTR_ATTACH_REJECT = 0,
+    MME_METR_BY_PLMN_CAUSE_CTR_ESM_REJECT,
     _MME_METR_BY_PLMN_CAUSE_MAX,
 } mme_metric_type_by_plmn_cause_t;
 
@@ -71,6 +72,7 @@ typedef enum mme_metric_type_by_sgw_plmn_s {
 void mme_metrics_attach_attempt(mme_ue_t *mme_ue);
 void mme_metrics_attach_success(mme_ue_t *mme_ue);
 void mme_metrics_attach_reject(mme_ue_t *mme_ue, uint8_t emm_cause);
+void mme_metrics_esm_reject(mme_ue_t *mme_ue, uint8_t esm_cause);
 void mme_metrics_auth_request(mme_ue_t *mme_ue);
 void mme_metrics_auth_success(mme_ue_t *mme_ue);
 void mme_metrics_auth_fail(mme_ue_t *mme_ue);

@@ -287,6 +287,8 @@ int nas_eps_send_attach_reject(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     mme_metrics_attach_reject(mme_ue, emm_cause);
 
     if (sess) {
+        mme_metrics_esm_reject(mme_ue, esm_cause);
+
         esmbuf = esm_build_pdn_connectivity_reject(
                     sess, esm_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
         if (!esmbuf) {
@@ -597,6 +599,8 @@ int nas_eps_send_pdn_connectivity_reject(
                 S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
         ogs_expect(rv == OGS_OK);
     } else {
+        mme_metrics_esm_reject(mme_ue, esm_cause);
+
         esmbuf = esm_build_pdn_connectivity_reject(
                     sess, esm_cause, create_action);
         if (!esmbuf) {

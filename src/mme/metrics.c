@@ -335,6 +335,20 @@ void mme_metrics_attach_reject(mme_ue_t *mme_ue, uint8_t emm_cause)
             MME_METR_BY_PLMN_CAUSE_CTR_ATTACH_REJECT, 1);
 }
 
+void mme_metrics_esm_reject(mme_ue_t *mme_ue, uint8_t esm_cause)
+{
+    ogs_plmn_id_t plmn_id;
+
+    if (!mme_ue)
+        return;
+
+    if (!mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+        return;
+
+    mme_metrics_inst_by_plmn_cause_add(&plmn_id, esm_cause,
+            MME_METR_BY_PLMN_CAUSE_CTR_ESM_REJECT, 1);
+}
+
 void mme_metrics_auth_request(mme_ue_t *mme_ue)
 {
     ogs_plmn_id_t plmn_id;
@@ -684,7 +698,11 @@ mme_metrics_spec_def_t mme_metrics_spec_def_by_plmn_cause[_MME_METR_BY_PLMN_CAUS
 MME_METR_BY_PLMN_CAUSE_CTR_ENTRY(
     MME_METR_BY_PLMN_CAUSE_CTR_ATTACH_REJECT,
     "mme_attach_reject_total",
-    "Attach rejections per IMSI PLMN and EMM cause")
+    "Attach rejections per IMSI PLMN and EMM cause"),
+MME_METR_BY_PLMN_CAUSE_CTR_ENTRY(
+    MME_METR_BY_PLMN_CAUSE_CTR_ESM_REJECT,
+    "mme_esm_reject_total",
+    "ESM rejections per IMSI PLMN and ESM cause")
 };
 
 static void mme_metrics_init_by_plmn_cause(void)
