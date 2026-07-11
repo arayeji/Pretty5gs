@@ -1648,8 +1648,15 @@ sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len)
 
     sgwc_metrics_ue_active_inc(sgwc_ue);
 
-    ogs_debug("[Added] Number of SGWC-UEs is now %d",
-            ogs_list_count(&self.sgw_ue_list));
+    /*
+     * ogs_debug() evaluates its arguments even when debug logging is off,
+     * so an unconditional ogs_list_count() here walks the whole UE list
+     * (O(N)) on EVERY add/remove - ruinous at 100k+ UEs and an infinite
+     * loop if the list ever gets corrupted. Only count when it will print.
+     */
+    if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+        ogs_debug("[Added] Number of SGWC-UEs is now %d",
+                ogs_list_count(&self.sgw_ue_list));
 
     return sgwc_ue;
 }
@@ -1687,8 +1694,10 @@ int sgwc_ue_remove(sgwc_ue_t *sgwc_ue)
     ogs_pool_free(&sgwc_s11_teid_pool, sgwc_ue->sgw_s11_teid_node);
     ogs_pool_id_free(&sgwc_ue_pool, sgwc_ue);
 
-    ogs_debug("[Removed] Number of SGWC-UEs is now %d",
-            ogs_list_count(&self.sgw_ue_list));
+    /* See sgwc_ue_add(): never walk the UE list unless debug will print. */
+    if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+        ogs_debug("[Removed] Number of SGWC-UEs is now %d",
+                ogs_list_count(&self.sgw_ue_list));
 
     return OGS_OK;
 }

@@ -1130,14 +1130,27 @@ void sgwc_sxa_handle_session_modification_response(
 
                 if (s11_xact) {
                     if (sess && sess->gn) {
+                        /* Gn reject frees only the session; release the UE
+                         * here if that was its last PDN connection. */
                         sgwc_gn_send_create_reject(sess, sgwc_ue, s11_xact,
                                 cause_value);
                         sgwc_ue_remove_if_empty(sgwc_ue);
                     } else {
+                        /*
+                         * reject_and_cleanup() already frees the session AND
+                         * the UE context when this was its last session.
+                         * Calling sgwc_ue_remove_if_empty() again on the
+                         * freed pointer double-removed the UE from
+                         * sgw_ue_list (stale prev/next splice -> list cycle)
+                         * and double-freed it into the pool. Under the SGW-U
+                         * "no such NWI" reject storm this corrupted the UE
+                         * list into a loop and wedged both threads at 100%
+                         * CPU walking it forever.
+                         */
                         sgwc_create_session_reject_and_cleanup(
                                 sess, sgwc_ue, s11_xact, cause_value);
-                        sgwc_ue_remove_if_empty(sgwc_ue);
                         sess = NULL;
+                        sgwc_ue = NULL;
                     }
                 } else {
                     ogs_error("GTP transaction(S11) has already been "

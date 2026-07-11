@@ -278,9 +278,15 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
                 sgwc_ue_remove_if_empty(sgwc_ue);
                 break;
             }
+            /*
+             * reject_and_cleanup() frees sess and, if that was the UE's last
+             * session, the UE itself. Do NOT touch sgwc_ue afterwards: a
+             * second sgwc_ue_remove_if_empty() on the freed pointer corrupts
+             * sgw_ue_list (stale-pointer unlink) and double-frees the pool
+             * node.
+             */
             sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
-            sgwc_ue_remove_if_empty(sgwc_ue);
         } else if (xact->assoc_xact_id == OGS_INVALID_POOL_ID) {
             /* PFCP restoration path — SGW-U slow to respond; keep the
              * session so the UE can continue after SGW-U recovers.
@@ -310,9 +316,10 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
         s11_xact = ogs_gtp_xact_find_by_id(xact->assoc_xact_id);
         if (sgwc_ue && s11_xact &&
                 (xact->modify_flags & OGS_PFCP_MODIFY_UL_ONLY)) {
+            /* reject_and_cleanup() frees sess and the UE if it was the last
+             * session; no further sgwc_ue access allowed (see above). */
             sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
                     OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
-            sgwc_ue_remove_if_empty(sgwc_ue);
         } else if (sgwc_ue &&
                 (xact->modify_flags & OGS_PFCP_MODIFY_UL_ONLY)) {
             /*

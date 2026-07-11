@@ -6619,8 +6619,15 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     ogs_list_add(&self.mme_ue_list, mme_ue);
     ogs_metrics_dump_unlock();
 
-    ogs_info("[Added] Number of MME-UEs is now %d",
-            ogs_list_count(&self.mme_ue_list));
+    /*
+     * ogs_list_count() walks the whole UE list: O(N) on EVERY attach. At
+     * a few hundred thousand UEs during an attach storm this alone can
+     * saturate the main thread (and it logged one line per attach at
+     * info level). Only pay for the walk when debug logging will print.
+     */
+    if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+        ogs_debug("[Added] Number of MME-UEs is now %d",
+                ogs_list_count(&self.mme_ue_list));
 
     return mme_ue;
 }
@@ -6703,8 +6710,10 @@ void mme_ue_remove(mme_ue_t *mme_ue)
     ogs_pool_id_free(&mme_ue_pool, mme_ue);
     ogs_metrics_dump_unlock();
 
-    ogs_info("[Removed] Number of MME-UEs is now %d",
-            ogs_list_count(&self.mme_ue_list));
+    /* See mme_ue_add(): never walk the UE list unless debug will print. */
+    if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+        ogs_debug("[Removed] Number of MME-UEs is now %d",
+                ogs_list_count(&self.mme_ue_list));
 }
 
 void mme_ue_remove_all(void)

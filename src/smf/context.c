@@ -1800,8 +1800,11 @@ static smf_ue_t *smf_ue_add(void)
     ogs_metrics_dump_unlock();
 
     smf_metrics_inst_global_inc(SMF_METR_GLOB_GAUGE_UES_ACTIVE);
-    ogs_debug("[Added] Number of SMF-UEs is now %d",
-            ogs_list_count(&self.smf_ue_list));
+    /* ogs_debug() evaluates args even when debug is off; don't walk the
+     * whole UE list (O(N) per attach) unless the line will print. */
+    if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+        ogs_debug("[Added] Number of SMF-UEs is now %d",
+                ogs_list_count(&self.smf_ue_list));
     return smf_ue;
 }
 
@@ -2113,8 +2116,10 @@ void smf_ue_remove(smf_ue_t *smf_ue)
     ogs_metrics_dump_unlock();
 
     smf_metrics_inst_global_dec(SMF_METR_GLOB_GAUGE_UES_ACTIVE);
-    ogs_debug("[Removed] Number of SMF-UEs is now %d",
-            ogs_list_count(&self.smf_ue_list));
+    /* See smf_ue_add(): never walk the UE list unless debug will print. */
+    if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+        ogs_debug("[Removed] Number of SMF-UEs is now %d",
+                ogs_list_count(&self.smf_ue_list));
 }
 
 void smf_ue_remove_all(void)
