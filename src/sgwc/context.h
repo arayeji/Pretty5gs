@@ -210,6 +210,8 @@ typedef struct sgwc_ue_s {
 
     uint32_t        sgw_s11_teid;   /* SGW-S11-TEID is derived from NODE */
     uint32_t        mme_s11_teid;   /* MME-S11-TEID is received from MME */
+    uint32_t        mme_s11_ipv4;   /* host order, from CSR sender F-TEID */
+    unsigned        mme_s11_ipv4_valid : 1;
 
     /* UE identity */
     uint8_t         imsi[OGS_MAX_IMSI_LEN];

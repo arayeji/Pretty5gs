@@ -267,9 +267,22 @@ static void pgw_plmn_for_sgw_cdr(const sgwc_ue_t *sgwc_ue,
 
 static uint32_t gsn_ipv4_from_gnode(const ogs_gtp_node_t *gnode)
 {
-    if (!gnode || !gnode->ip.ipv4)
+    if (!gnode)
         return 0;
-    return ntohl(gnode->ip.addr);
+    if (gnode->ip.ipv4)
+        return ntohl(gnode->ip.addr);
+    if (gnode->addr.ogs_sa_family == AF_INET)
+        return ntohl(gnode->addr.sin.sin_addr.s_addr);
+    return 0;
+}
+
+static uint32_t mme_serving_node_ipv4(const sgwc_ue_t *sgwc_ue)
+{
+    if (!sgwc_ue)
+        return 0;
+    if (sgwc_ue->mme_s11_ipv4_valid)
+        return sgwc_ue->mme_s11_ipv4;
+    return gsn_ipv4_from_gnode(sgwc_ue->gnode);
 }
 
 static void encode_epc_qos(ber_t *b, const ogs_qos_t *qos)
@@ -339,7 +352,7 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
         ber_uint_be_ctx(&b, 5, sess->charging_id, 4);
 
     /* [6] servingNodeAddress — MME S11-C (not PGW). */
-    encode_gsn_address_v4(&b, 6, gsn_ipv4_from_gnode(sgwc_ue->gnode));
+    encode_gsn_address_v4(&b, 6, mme_serving_node_ipv4(sgwc_ue));
 
     if (sess->session.name)
         ber_prim_ctx(&b, 7, sess->session.name, strlen(sess->session.name));
@@ -478,10 +491,14 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
         ber_end(&b, m);
     }
 
-    if (sess->gnode && sess->gnode->ip.ipv4) {
-        size_t m = ber_begin_ctx(&b, 36);
-        encode_gsn_address_v4(&b, 0, ntohl(sess->gnode->ip.addr));
-        ber_end(&b, m);
+    {
+        uint32_t pgw_addr = gsn_ipv4_from_gnode(sess->gnode);
+
+        if (pgw_addr) {
+            size_t m = ber_begin_ctx(&b, 36);
+            encode_gsn_address_v4(&b, 0, pgw_addr);
+            ber_end(&b, m);
+        }
     }
 
     {

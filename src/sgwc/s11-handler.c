@@ -234,6 +234,19 @@ static uint8_t pfcp_cause_from_gtp(uint8_t gtp_cause)
     return OGS_PFCP_CAUSE_SYSTEM_FAILURE;
 }
 
+static void sgwc_ue_store_mme_f_teid(
+        sgwc_ue_t *sgwc_ue, const ogs_gtp2_f_teid_t *f_teid)
+{
+    if (!sgwc_ue || !f_teid)
+        return;
+
+    sgwc_ue->mme_s11_teid = be32toh(f_teid->teid);
+    if (f_teid->ipv4) {
+        sgwc_ue->mme_s11_ipv4 = ntohl(f_teid->addr);
+        sgwc_ue->mme_s11_ipv4_valid = 1;
+    }
+}
+
 static void sgwc_s11_create_session_proceed(
         sgwc_ue_t *sgwc_ue, ogs_gtp_xact_t *s11_xact,
         ogs_pkbuf_t *gtpbuf, ogs_gtp2_message_t *message)
@@ -292,7 +305,7 @@ static void sgwc_s11_create_session_proceed(
     if (req->sender_f_teid_for_control_plane.presence &&
             req->sender_f_teid_for_control_plane.data) {
         mme_s11_teid = req->sender_f_teid_for_control_plane.data;
-        sgwc_ue->mme_s11_teid = be32toh(mme_s11_teid->teid);
+        sgwc_ue_store_mme_f_teid(sgwc_ue, mme_s11_teid);
     }
     if (req->pgw_s5_s8_address_for_control_plane_or_pmip.presence &&
             req->pgw_s5_s8_address_for_control_plane_or_pmip.data) {
@@ -525,7 +538,7 @@ static void sgwc_s11_create_session_proceed(
     /* Receive Control Plane(DL) : MME-S11 */
     mme_s11_teid = req->sender_f_teid_for_control_plane.data;
     ogs_assert(mme_s11_teid);
-    sgwc_ue->mme_s11_teid = be32toh(mme_s11_teid->teid);
+    sgwc_ue_store_mme_f_teid(sgwc_ue, mme_s11_teid);
 
     /* Receive Control Plane(UL) : PGW-S5C (TEID may be 0 before PGW answers) */
     if (req->pgw_s5_s8_address_for_control_plane_or_pmip.presence &&
@@ -712,9 +725,8 @@ void sgwc_s11_handle_create_session_request(
 
     if (sgwc_ue && req->sender_f_teid_for_control_plane.presence &&
             req->sender_f_teid_for_control_plane.data) {
-        ogs_gtp2_f_teid_t *ft =
-            req->sender_f_teid_for_control_plane.data;
-        sgwc_ue->mme_s11_teid = be32toh(ft->teid);
+        sgwc_ue_store_mme_f_teid(sgwc_ue,
+                req->sender_f_teid_for_control_plane.data);
     }
 
     /************************
