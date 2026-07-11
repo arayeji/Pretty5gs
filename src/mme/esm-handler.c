@@ -136,7 +136,7 @@ int esm_handle_pdn_connectivity_request(
             uint8_t roam_cause =
                     mme_inbound_roam_apn_esm_cause(mme_ue, apn);
 
-            if (roam_cause != OGS_NAS_ESM_CAUSE_REQUEST_ACCEPTED) {
+            if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
                 ogs_warn("[%s] inbound roam APN policy: reject PDN APN[%s] "
                         "esm_cause=%u",
                         mme_ue->imsi_bcd, apn, roam_cause);
@@ -305,7 +305,7 @@ int esm_handle_information_response(
         ogs_assert(sess->session->name);
         ogs_debug("    APN[%s]", sess->session->name);
 
-        if (roam_cause != OGS_NAS_ESM_CAUSE_REQUEST_ACCEPTED) {
+        if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
             ogs_warn("[%s] inbound roam APN policy: reject attach APN[%s] "
                     "esm_cause=%u",
                     mme_ue->imsi_bcd, sess->session->name, roam_cause);

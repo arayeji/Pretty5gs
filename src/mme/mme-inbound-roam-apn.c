@@ -54,7 +54,7 @@ static void mme_apn_normalize_ni(
 }
 
 static bool mme_apn_in_list(const char *apn_ni,
-        int count, char list[][OGS_MAX_APN_LEN + 1])
+        int count, const char list[][OGS_MAX_APN_LEN + 1])
 {
     int i;
 
@@ -365,8 +365,10 @@ static const mme_inbound_roam_apn_rule_t *mme_inbound_roam_apn_rule_for_ue(
 }
 
 static void mme_inbound_roam_apn_policy_for_ue(mme_ue_t *mme_ue,
-        int *num_allow, char (**allow)[OGS_MAX_APN_LEN + 1],
-        int *num_deny, char (**deny)[OGS_MAX_APN_LEN + 1])
+        int *num_allow,
+        const char (**allow)[OGS_MAX_APN_LEN + 1],
+        int *num_deny,
+        const char (**deny)[OGS_MAX_APN_LEN + 1])
 {
     mme_context_t *self = mme_self();
     const mme_inbound_roam_apn_rule_t *rule = NULL;
@@ -388,23 +390,15 @@ static void mme_inbound_roam_apn_policy_for_ue(mme_ue_t *mme_ue,
 
     *num_deny = self->num_of_inbound_roam_denied_apn;
     *deny = self->inbound_roam_denied_apn;
-
-    if (rule && rule->num_of_denied_apn > 0) {
-        /*
-         * Per-PLMN denied_apn extends the global deny list (union).
-         * Check global denies first, then rule-specific denies below.
-         */
-    }
 }
 
 bool mme_inbound_roam_apn_allowed(mme_ue_t *mme_ue, const char *apn)
 {
     char apn_ni[OGS_MAX_APN_LEN + 1];
     int num_allow = 0, num_deny = 0, num_rule_deny = 0;
-    char (*allow)[OGS_MAX_APN_LEN + 1] = NULL;
-    char (*deny)[OGS_MAX_APN_LEN + 1] = NULL;
+    const char (*allow)[OGS_MAX_APN_LEN + 1] = NULL;
+    const char (*deny)[OGS_MAX_APN_LEN + 1] = NULL;
     const mme_inbound_roam_apn_rule_t *rule = NULL;
-    mme_context_t *self = mme_self();
 
     if (!mme_ue || !apn || !apn[0])
         return true;
@@ -439,7 +433,7 @@ uint8_t mme_inbound_roam_apn_esm_cause(mme_ue_t *mme_ue, const char *apn)
     mme_context_t *self = mme_self();
 
     if (mme_inbound_roam_apn_allowed(mme_ue, apn))
-        return OGS_NAS_ESM_CAUSE_REQUEST_ACCEPTED;
+        return MME_INBOUND_ROAM_APN_ESM_ACCEPT;
 
     if (self->inbound_roam_apn_reject_cause)
         return self->inbound_roam_apn_reject_cause;

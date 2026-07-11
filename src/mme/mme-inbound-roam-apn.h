@@ -20,7 +20,8 @@
 #ifndef MME_INBOUND_ROAM_APN_H
 #define MME_INBOUND_ROAM_APN_H
 
-#include "ogs-proto.h"
+#include "ogs-app.h"
+#include "ogs-nas-eps.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,6 +31,9 @@ typedef struct mme_ue_s mme_ue_t;
 
 #define MME_MAX_INBOUND_ROAM_APN       32
 #define MME_MAX_INBOUND_ROAM_APN_RULE  16
+
+/* Sentinel: APN passed policy (not a NAS ESM reject cause). */
+#define MME_INBOUND_ROAM_APN_ESM_ACCEPT 0
 
 typedef struct mme_inbound_roam_apn_rule_s {
     ogs_plmn_id_t plmn_id;
