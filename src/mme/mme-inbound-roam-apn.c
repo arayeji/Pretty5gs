@@ -328,6 +328,22 @@ static void mme_inbound_roam_config_log(mme_context_t *self)
     for (i = 0; i < self->num_of_inbound_roam_denied_apn; i++)
         ogs_info("  inbound_roam denied_apn[%d]=%s",
                 i, self->inbound_roam_denied_apn[i]);
+    for (i = 0; i < self->num_of_inbound_roam_apn_rule; i++) {
+        mme_inbound_roam_apn_rule_t *rule = &self->inbound_roam_apn_rule[i];
+        char plmn[OGS_PLMNIDSTRLEN] = "";
+        int j;
+
+        if (rule->plmn_id_configured)
+            ogs_plmn_id_to_string(&rule->plmn_id, plmn);
+        ogs_info("  inbound_roam apn_rule[%d] plmn=%s allowed=%d denied=%d",
+                i, plmn, rule->num_of_allowed_apn, rule->num_of_denied_apn);
+        for (j = 0; j < rule->num_of_allowed_apn; j++)
+            ogs_info("    apn_rule[%d] allowed_apn[%d]=%s",
+                    i, j, rule->allowed_apn[j]);
+        for (j = 0; j < rule->num_of_denied_apn; j++)
+            ogs_info("    apn_rule[%d] denied_apn[%d]=%s",
+                    i, j, rule->denied_apn[j]);
+    }
 }
 
 void mme_inbound_roam_config_parse(ogs_yaml_iter_t *inbound_roam_iter)
@@ -351,16 +367,21 @@ static const mme_inbound_roam_apn_rule_t *mme_inbound_roam_apn_rule_for_ue(
         mme_ue_t *mme_ue)
 {
     mme_context_t *self = mme_self();
+    ogs_plmn_id_t home_plmn_id;
     int i;
 
     ogs_assert(mme_ue);
+
+    if (!MME_UE_HAVE_IMSI(mme_ue))
+        return NULL;
+
+    mme_home_plmn_from_imsi_bcd(mme_ue->imsi_bcd, &home_plmn_id);
 
     for (i = 0; i < self->num_of_inbound_roam_apn_rule; i++) {
         mme_inbound_roam_apn_rule_t *rule = &self->inbound_roam_apn_rule[i];
 
         if (rule->plmn_id_configured &&
-                ogs_plmn_id_imsi_prefix_match(
-                    mme_ue->imsi_bcd, &rule->plmn_id))
+                memcmp(&home_plmn_id, &rule->plmn_id, OGS_PLMN_ID_LEN) == 0)
             return rule;
     }
 

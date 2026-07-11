@@ -25,6 +25,7 @@
 #include "mme-gtp-path.h"
 #include "mme-trace.h"
 #include "mme-path.h"
+#include "mme-inbound-roam-apn.h"
 #include "s1ap-path.h"
 #include "mme-s11-build.h"
 #include "mme-sm.h"
@@ -438,6 +439,16 @@ int mme_gtp_send_create_session_request(
 
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     ogs_assert(mme_ue);
+
+    if (sess->session && sess->session->name &&
+            !mme_inbound_roam_apn_allowed(mme_ue, sess->session->name)) {
+        ogs_warn("[%s] inbound roam APN policy: block Create Session APN[%s] "
+                "esm_cause=%u create_action=%d",
+                mme_ue->imsi_bcd, sess->session->name,
+                mme_inbound_roam_apn_esm_cause(mme_ue, sess->session->name),
+                create_action);
+        return OGS_ERROR;
+    }
 
     if (mme_self()->maintenance_mode &&
             create_action != OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST) {

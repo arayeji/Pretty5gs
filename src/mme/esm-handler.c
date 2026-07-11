@@ -215,6 +215,23 @@ int esm_handle_pdn_connectivity_request(
     }
 
     if (sess->session) {
+        uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(
+                mme_ue, sess->session->name);
+
+        ogs_assert(sess->session->name);
+        ogs_debug("    APN[%s]", sess->session->name);
+
+        if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
+            ogs_warn("[%s] inbound roam APN policy: reject PDN APN[%s] "
+                    "esm_cause=%u",
+                    mme_ue->imsi_bcd, sess->session->name, roam_cause);
+            r = nas_eps_send_pdn_connectivity_reject(
+                    sess, roam_cause, create_action);
+            ogs_expect(r == OGS_OK);
+            ogs_assert(r != OGS_ERROR);
+            return OGS_ERROR;
+        }
+
         mme_bearer_t *default_bearer = NULL;
         mme_bearer_t *dedicated_bearer = NULL, *next_dedicated_bearer = NULL;
 
@@ -278,6 +295,20 @@ int esm_handle_information_response(
 
     if (rsp->presencemask &
             OGS_NAS_EPS_ESM_INFORMATION_RESPONSE_ACCESS_POINT_NAME_PRESENT) {
+        uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(
+                mme_ue, rsp->access_point_name.apn);
+
+        if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
+            ogs_warn("[%s] inbound roam APN policy: reject attach APN[%s] "
+                    "esm_cause=%u",
+                    mme_ue->imsi_bcd, rsp->access_point_name.apn, roam_cause);
+            r = nas_eps_send_pdn_connectivity_reject(
+                    sess, roam_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
+            ogs_expect(r == OGS_OK);
+            ogs_assert(r != OGS_ERROR);
+            return OGS_ERROR;
+        }
+
         sess->session = mme_session_find_by_apn(
                             mme_ue, rsp->access_point_name.apn);
     }
