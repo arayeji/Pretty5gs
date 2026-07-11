@@ -779,7 +779,8 @@ MME_METR_BY_SGW_PLMN_GAUGE_ENTRY(
     MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE,
     "mme_ue_active_by_sgw",
     "ECM-CONNECTED UEs (active S1, one per enb_ue context) per selected "
-    "SGW and IMSI home PLMN; sum equals global enb_ue")
+    "SGW and IMSI home PLMN; sum <= global enb_ue (contexts mid-attach, "
+    "before IMSI/SGW are known, are not yet labelled)")
 };
 
 static void mme_metrics_init_by_sgw_plmn(void)
