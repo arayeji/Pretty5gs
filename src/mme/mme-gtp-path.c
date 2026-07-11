@@ -442,7 +442,7 @@ int mme_gtp_send_create_session_request(
 
     if (sess->session && sess->session->name &&
             !mme_inbound_roam_apn_allowed(mme_ue, sess->session->name)) {
-        ogs_error("[%s] inbound roam APN policy: block Create Session APN[%s] "
+        ogs_warn("[%s] inbound roam APN policy: block Create Session APN[%s] "
                 "esm_cause=%u create_action=%d",
                 mme_ue->imsi_bcd, sess->session->name,
                 mme_inbound_roam_apn_esm_cause(mme_ue, sess->session->name),

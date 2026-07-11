@@ -322,13 +322,12 @@ static void mme_inbound_roam_config_log(mme_context_t *self)
             self->num_of_inbound_roam_apn_rule,
             self->inbound_roam_apn_reject_cause);
 
-    ogs_error("Inbound roam APN policy loaded: global_allowed=%d global_denied=%d "
-            "apn_rule=%d reject_cause=%u",
-            self->num_of_inbound_roam_allowed_apn,
-            self->num_of_inbound_roam_denied_apn,
-            self->num_of_inbound_roam_apn_rule,
-            self->inbound_roam_apn_reject_cause);
-
+    for (i = 0; i < self->num_of_inbound_roam_allowed_apn; i++)
+        ogs_info("  inbound_roam allowed_apn[%d]=%s",
+                i, self->inbound_roam_allowed_apn[i]);
+    for (i = 0; i < self->num_of_inbound_roam_denied_apn; i++)
+        ogs_info("  inbound_roam denied_apn[%d]=%s",
+                i, self->inbound_roam_denied_apn[i]);
     for (i = 0; i < self->num_of_inbound_roam_apn_rule; i++) {
         mme_inbound_roam_apn_rule_t *rule = &self->inbound_roam_apn_rule[i];
         char plmn[OGS_PLMNIDSTRLEN] = "";
@@ -336,13 +335,13 @@ static void mme_inbound_roam_config_log(mme_context_t *self)
 
         if (rule->plmn_id_configured)
             ogs_plmn_id_to_string(&rule->plmn_id, plmn);
-        ogs_error("  inbound_roam apn_rule[%d] plmn=%s allowed=%d denied=%d",
+        ogs_info("  inbound_roam apn_rule[%d] plmn=%s allowed=%d denied=%d",
                 i, plmn, rule->num_of_allowed_apn, rule->num_of_denied_apn);
         for (j = 0; j < rule->num_of_allowed_apn; j++)
-            ogs_error("    apn_rule[%d] allowed_apn[%d]=%s",
+            ogs_info("    apn_rule[%d] allowed_apn[%d]=%s",
                     i, j, rule->allowed_apn[j]);
         for (j = 0; j < rule->num_of_denied_apn; j++)
-            ogs_error("    apn_rule[%d] denied_apn[%d]=%s",
+            ogs_info("    apn_rule[%d] denied_apn[%d]=%s",
                     i, j, rule->denied_apn[j]);
     }
 }
