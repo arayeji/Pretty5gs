@@ -1501,7 +1501,8 @@ typedef enum {
     SGW_WITH_RELOCATION = 2,
     SGW_HAS_ALREADY_BEEN_RELOCATED = 3,
 } sgw_relocation_e;
-sgw_relocation_e sgw_ue_check_if_relocated(mme_ue_t *mme_ue);
+sgw_relocation_e sgw_ue_check_if_relocated(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue);
 void mme_sgw_reselect_for_ue_if_needed(mme_ue_t *mme_ue);
 
 void mme_ue_new_guti(mme_ue_t *mme_ue);

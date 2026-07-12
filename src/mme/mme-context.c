@@ -5904,14 +5904,13 @@ sgw_ue_t *sgw_ue_find_by_id(ogs_pool_id_t id)
     return ogs_pool_find_by_id(&sgw_ue_pool, id);
 }
 
-sgw_relocation_e sgw_ue_check_if_relocated(mme_ue_t *mme_ue)
+sgw_relocation_e sgw_ue_check_if_relocated(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue)
 {
-    enb_ue_t *enb_ue = NULL;
     sgw_ue_t *old_source_ue = NULL, *source_ue = NULL, *target_ue = NULL;
     mme_sgw_t *current = NULL, *changed = NULL;
 
     ogs_assert(mme_ue);
-    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     ogs_assert(enb_ue);
     source_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     ogs_assert(source_ue);

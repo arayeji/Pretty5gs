@@ -3103,6 +3103,13 @@ void s1ap_handle_path_switch_request(
     memcpy(&mme_ue->e_cgi, &enb_ue->saved.e_cgi, sizeof(ogs_e_cgi_t));
     mme_ue->ue_location_timestamp = ogs_time_now();
 
+    /*
+     * Path Switch Request (TS 23.401) puts the UE in ECM-CONNECTED at the
+     * target eNB. Re-associate the S1 context — mme_ue->enb_ue_id is often
+     * invalid after S1 release while the UE was idle before X2 HO.
+     */
+    enb_ue_associate_mme_ue(enb_ue, mme_ue);
+
     if (ue_security_capability_mismatch) {
         mme_ue->send_ue_security_capability_in_path_switch_ack = true;
 
@@ -3217,7 +3224,7 @@ void s1ap_handle_path_switch_request(
     mme_ue->nhcc++;
     ogs_kdf_nh_enb(mme_ue->kasme, mme_ue->nh, mme_ue->nh);
 
-    relocation = sgw_ue_check_if_relocated(mme_ue);
+    relocation = sgw_ue_check_if_relocated(mme_ue, enb_ue);
     if (relocation == SGW_WITHOUT_RELOCATION) {
         if (ogs_list_count(&mme_ue->bearer_to_modify_list)) {
             ogs_assert(OGS_OK == mme_gtp_send_modify_bearer_request(
