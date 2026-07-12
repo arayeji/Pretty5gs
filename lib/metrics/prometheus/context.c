@@ -381,6 +381,17 @@ static void fill_query_from_connection(struct MHD_Connection *connection,
             MHD_GET_ARGUMENT_KIND, "liid");
     q->msisdn = MHD_lookup_connection_value(connection,
             MHD_GET_ARGUMENT_KIND, "msisdn");
+
+    q->fqdn = MHD_lookup_connection_value(connection,
+            MHD_GET_ARGUMENT_KIND, "fqdn");
+
+    const char *cv = MHD_lookup_connection_value(connection,
+            MHD_GET_ARGUMENT_KIND, "clear");
+    if (cv && *cv) {
+        if (!strcasecmp(cv, "1") || !strcasecmp(cv, "true") ||
+                !strcasecmp(cv, "yes") || !strcasecmp(cv, "on"))
+            q->clear = 1;
+    }
 }
 
 /*

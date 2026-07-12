@@ -69,6 +69,13 @@
  *   GET /admin/trace/imsi?force=1                    clear all filters
  *   GET /admin/trace/imsi?imsi=<p>&sync=sgwc,smf     MME: push to peers
  *
+ *   POST /admin/pgw-host/cache?clear=1                 ; or GET
+ *   POST /admin/pgw-host/cache?fqdn=<host.realm>       ; or GET
+ *        Invalidate MIP-Home-Agent-Host DNS cache so the
+ *        next attach re-resolves via getaddrinfo(). Use
+ *        after a home PGW DNS change; clear=1 flushes all
+ *        entries, fqdn= drops one FQDN key.
+ *
  *   Same contract on SGWC/SMF metrics ports (without sync).
  *   JSON: {"ok":true,"detail":"...","trace_imsi":["..."]}
  *
@@ -121,6 +128,9 @@ int mme_admin_maintenance_disable(const ogs_metrics_query_t *q,
 int mme_admin_maintenance_drain(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len);
 int mme_admin_maintenance_status(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len);
+
+int mme_admin_pgw_host_cache(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len);
 
 #ifdef __cplusplus

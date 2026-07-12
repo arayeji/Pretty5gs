@@ -29,6 +29,9 @@ extern "C" {
 void mme_pgw_host_cache_init(void);
 void mme_pgw_host_cache_final(void);
 
+int mme_pgw_host_cache_clear_all(void);
+int mme_pgw_host_cache_remove_fqdn(const char *fqdn);
+
 int mme_pgw_host_lookup_cache(
         const char *destination_host, int destination_host_len,
         const char *destination_realm, int destination_realm_len,

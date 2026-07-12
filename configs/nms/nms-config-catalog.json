@@ -9,6 +9,7 @@
         { "path": "/admin/ue/detach", "method": "GET|POST", "params": ["imsi", "force"], "description": "Detach UE (S1 + S11 cascade)" },
         { "path": "/admin/enb/detach", "method": "GET|POST", "params": ["enb_id|ip", "force"], "description": "Detach all UEs on eNB" },
         { "path": "/admin/trace/imsi", "method": "GET|POST", "params": ["imsi", "replace", "remove", "sync", "match"], "description": "Runtime IMSI trace filter" },
+        { "path": "/admin/pgw-host/cache", "method": "GET|POST", "params": ["clear", "fqdn"], "description": "Invalidate MIP-Home-Agent-Host DNS cache" },
         { "path": "/admin/maintenance/drain", "method": "GET|POST", "params": ["force"], "description": "Graceful or force UE drain" },
         { "path": "/admin/config", "method": "GET", "description": "Effective runtime config snapshot" }
       ],

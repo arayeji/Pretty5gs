@@ -20,8 +20,10 @@
 #include "mme-pgw-host.h"
 
 #include "mme-context.h"
+#include "ogs-core.h"
 
 static ogs_hash_t *pgw_host_cache = NULL;
+static ogs_thread_mutex_t pgw_host_cache_mutex;
 
 /*
  * Negative-cache TTL. ogs_getaddrinfo() is a *blocking* call on the MME main
@@ -49,14 +51,7 @@ static void pgw_host_cache_free_entry(char *fqdn, pgw_host_cache_entry_t *entry)
         ogs_free(entry);
 }
 
-void mme_pgw_host_cache_init(void)
-{
-    ogs_assert(pgw_host_cache == NULL);
-    pgw_host_cache = ogs_hash_make();
-    ogs_assert(pgw_host_cache);
-}
-
-void mme_pgw_host_cache_final(void)
+static void pgw_host_cache_clear_unlocked(void)
 {
     ogs_hash_index_t *hi = NULL;
 
@@ -70,8 +65,81 @@ void mme_pgw_host_cache_final(void)
         pgw_host_cache_free_entry(fqdn, entry);
     }
 
+    ogs_hash_clear(pgw_host_cache);
+}
+
+void mme_pgw_host_cache_init(void)
+{
+    ogs_assert(pgw_host_cache == NULL);
+    ogs_thread_mutex_init(&pgw_host_cache_mutex);
+    pgw_host_cache = ogs_hash_make();
+    ogs_assert(pgw_host_cache);
+}
+
+void mme_pgw_host_cache_final(void)
+{
+    if (!pgw_host_cache)
+        return;
+
+    ogs_thread_mutex_lock(&pgw_host_cache_mutex);
+    pgw_host_cache_clear_unlocked();
     ogs_hash_destroy(pgw_host_cache);
     pgw_host_cache = NULL;
+    ogs_thread_mutex_unlock(&pgw_host_cache_mutex);
+    ogs_thread_mutex_destroy(&pgw_host_cache_mutex);
+}
+
+int mme_pgw_host_cache_clear_all(void)
+{
+    int removed = 0;
+    ogs_hash_index_t *hi = NULL;
+
+    ogs_thread_mutex_lock(&pgw_host_cache_mutex);
+    if (!pgw_host_cache) {
+        ogs_thread_mutex_unlock(&pgw_host_cache_mutex);
+        return 0;
+    }
+
+    for (hi = ogs_hash_first(pgw_host_cache); hi; hi = ogs_hash_next(hi))
+        removed++;
+
+    pgw_host_cache_clear_unlocked();
+    ogs_thread_mutex_unlock(&pgw_host_cache_mutex);
+    return removed;
+}
+
+int mme_pgw_host_cache_remove_fqdn(const char *fqdn)
+{
+    ogs_hash_index_t *hi = NULL;
+    size_t fqdn_len = 0;
+
+    if (!fqdn || !*fqdn)
+        return OGS_ERROR;
+
+    fqdn_len = strlen(fqdn);
+
+    ogs_thread_mutex_lock(&pgw_host_cache_mutex);
+    if (!pgw_host_cache) {
+        ogs_thread_mutex_unlock(&pgw_host_cache_mutex);
+        return OGS_ERROR;
+    }
+
+    for (hi = ogs_hash_first(pgw_host_cache); hi; hi = ogs_hash_next(hi)) {
+        char *key = (char *)ogs_hash_this_key(hi);
+        int klen = ogs_hash_this_key_len(hi);
+        pgw_host_cache_entry_t *entry =
+            (pgw_host_cache_entry_t *)ogs_hash_this_val(hi);
+
+        if ((size_t)klen == fqdn_len && memcmp(key, fqdn, fqdn_len) == 0) {
+            ogs_hash_set(pgw_host_cache, key, klen, NULL);
+            pgw_host_cache_free_entry(key, entry);
+            ogs_thread_mutex_unlock(&pgw_host_cache_mutex);
+            return OGS_OK;
+        }
+    }
+
+    ogs_thread_mutex_unlock(&pgw_host_cache_mutex);
+    return OGS_ERROR;
 }
 
 static void pgw_host_build_fqdn(char *fqdn, int buflen,
@@ -188,11 +256,15 @@ int mme_pgw_host_lookup_cache(
         return OGS_ERROR;
 
     ogs_assert(pgw_host_cache);
+    ogs_thread_mutex_lock(&pgw_host_cache_mutex);
     cached = ogs_hash_get(pgw_host_cache, fqdn, strlen(fqdn));
-    if (!cached || !cached->resolved)
+    if (!cached || !cached->resolved) {
+        ogs_thread_mutex_unlock(&pgw_host_cache_mutex);
         return OGS_ERROR;
+    }
 
     memcpy(smf_ip, &cached->ip, sizeof(*smf_ip));
+    ogs_thread_mutex_unlock(&pgw_host_cache_mutex);
     ogs_debug("PGW host cache hit [%s]", fqdn);
     return OGS_OK;
 }
@@ -235,15 +307,20 @@ int mme_pgw_host_resolve(
      * (lookup_cache() above only returns positive hits, so a non-NULL entry
      * here is a negative one; we reuse it in place to avoid key churn.)
      */
+    ogs_thread_mutex_lock(&pgw_host_cache_mutex);
     cached = ogs_hash_get(pgw_host_cache, fqdn, strlen(fqdn));
     if (cached && !cached->resolved && ogs_time_now() < cached->expire) {
+        ogs_thread_mutex_unlock(&pgw_host_cache_mutex);
         ogs_debug("PGW host negative-cache hit [%s], skipping DNS", fqdn);
         return OGS_ERROR;
     }
+    ogs_thread_mutex_unlock(&pgw_host_cache_mutex);
 
     memset(&resolved, 0, sizeof(resolved));
     if (pgw_host_dns_resolve(fqdn, &resolved) != OGS_OK) {
         /* Cache/refresh the failure so subsequent attaches don't each block. */
+        ogs_thread_mutex_lock(&pgw_host_cache_mutex);
+        cached = ogs_hash_get(pgw_host_cache, fqdn, strlen(fqdn));
         if (cached) {
             cached->resolved = false;
             cached->expire = ogs_time_now() + PGW_HOST_NEG_CACHE_TTL;
@@ -256,9 +333,12 @@ int mme_pgw_host_resolve(
             cached->expire = ogs_time_now() + PGW_HOST_NEG_CACHE_TTL;
             ogs_hash_set(pgw_host_cache, cache_key, strlen(cache_key), cached);
         }
+        ogs_thread_mutex_unlock(&pgw_host_cache_mutex);
         return OGS_ERROR;
     }
 
+    ogs_thread_mutex_lock(&pgw_host_cache_mutex);
+    cached = ogs_hash_get(pgw_host_cache, fqdn, strlen(fqdn));
     if (cached) {
         /* Promote the (expired-negative) entry to a positive one. */
         cached->resolved = true;
@@ -276,6 +356,7 @@ int mme_pgw_host_resolve(
     }
 
     memcpy(smf_ip, &cached->ip, sizeof(*smf_ip));
+    ogs_thread_mutex_unlock(&pgw_host_cache_mutex);
     return OGS_OK;
 }
 

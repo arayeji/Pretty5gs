@@ -29,6 +29,7 @@
 
 #include "admin-api.h"   /* pulls in ogs-metrics.h */
 #include "mme-li.h"
+#include "mme-pgw-host.h"
 #include "runtime-config.h"
 #include "mme-trace-sync.h"
 
@@ -426,6 +427,52 @@ int mme_admin_maintenance_status(const ogs_metrics_query_t *q,
     return 200;
 }
 
+int mme_admin_pgw_host_cache(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    int removed = 0;
+    int written;
+
+    if (!body || body_cap == 0 || !body_len)
+        return ADMIN_HTTP_BAD_REQUEST;
+
+    if (!q || (!q->clear && (!q->fqdn || !*q->fqdn))) {
+        *body_len = snprintf(body, body_cap,
+                "{\"ok\":false,\"detail\":\"use clear=1 or fqdn=<host.realm>\"}\n");
+        return ADMIN_HTTP_BAD_REQUEST;
+    }
+
+    if (q->clear) {
+        removed = mme_pgw_host_cache_clear_all();
+        written = snprintf(body, body_cap,
+                "{\"ok\":true,\"detail\":\"pgw-host cache cleared\","
+                "\"removed\":%d}\n", removed);
+    } else {
+        if (mme_pgw_host_cache_remove_fqdn(q->fqdn) != OGS_OK) {
+            *body_len = snprintf(body, body_cap,
+                    "{\"ok\":false,\"detail\":\"fqdn not in cache\","
+                    "\"fqdn\":\"%s\"}\n", q->fqdn);
+            return ADMIN_HTTP_NOT_FOUND;
+        }
+        written = snprintf(body, body_cap,
+                "{\"ok\":true,\"detail\":\"pgw-host cache entry removed\","
+                "\"removed\":1,\"fqdn\":\"%s\"}\n", q->fqdn);
+        removed = 1;
+    }
+
+    if (written < 0) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_INTERNAL_ERROR, "response encode failed");
+        return ADMIN_HTTP_INTERNAL_ERROR;
+    }
+
+    *body_len = (size_t)((size_t)written < body_cap ?
+            (size_t)written : body_cap - 1);
+    ogs_info("admin pgw-host cache invalidated (removed=%d fqdn=%s)",
+            removed, q->fqdn ? q->fqdn : "*");
+    return 200;
+}
+
 void mme_admin_api_register(void)
 {
     ogs_metrics_register_custom_ep(mme_dump_runtime_config,
@@ -444,6 +491,9 @@ void mme_admin_api_register(void)
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
     ogs_metrics_register_admin_ep(mme_admin_trace_imsi,
             "/admin/trace/imsi",
+            OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
+    ogs_metrics_register_admin_ep(mme_admin_pgw_host_cache,
+            "/admin/pgw-host/cache",
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
     ogs_metrics_register_admin_ep(mme_admin_maintenance_enable,
             "/admin/maintenance/enable",
