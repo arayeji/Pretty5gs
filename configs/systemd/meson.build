@@ -34,6 +34,7 @@ systemd_conf_in = '''
     open5gs-bsfd.service
     open5gs-udrd.service
     open5gs-cgfd.service
+    open5gs-admfd.service
     open5gs-admin-api.service
 '''.split()
 
@@ -52,6 +53,7 @@ foreach file : systemd_conf_in
     # avoid disturbing existing .deb-based installs.
     do_install = (
             file == 'open5gs-cgfd.service' or
+            file == 'open5gs-admfd.service' or
             file == 'open5gs-admin-api.service')
     if do_install
         configure_file(

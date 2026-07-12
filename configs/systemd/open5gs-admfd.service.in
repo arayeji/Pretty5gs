@@ -1,0 +1,20 @@
+[Unit]
+Description=Open5GS ADMF Daemon (Lawful Interception HI1 / MDF2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+User=open5gs
+Group=open5gs
+
+Restart=always
+ExecStart=@bindir@/open5gs-admfd -c @sysconfdir@/open5gs/admf.yaml
+RestartSec=2
+RestartPreventExitStatus=1
+
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
