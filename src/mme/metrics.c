@@ -77,9 +77,13 @@ typedef struct mme_metric_key_by_sgw_plmn_s {
 typedef struct mme_metric_key_by_plmn_ho_s {
     ogs_plmn_id_t                   plmn_id;
     char                            ho_type[16];
-    uint16_t                        cause;
+    char                            cause_group[16];
+    long                            cause_value;
     mme_metric_type_by_plmn_ho_t    t;
 } mme_metric_key_by_plmn_ho_t;
+
+#define MME_METRICS_HO_CAUSE_GROUP_NONE "none"
+#define MME_METRICS_HO_CAUSE_VALUE_NONE 0
 
 typedef struct mme_metric_key_by_plmn_origin_s {
     ogs_plmn_id_t                       plmn_id;
@@ -206,14 +210,16 @@ static void mme_metrics_inst_by_plmn_cause_add(ogs_plmn_id_t *plmn,
 }
 
 static void mme_metrics_inst_by_plmn_ho_add(ogs_plmn_id_t *plmn,
-        const char *ho_type, uint16_t cause,
+        const char *ho_type, const char *cause_group, long cause_value,
         mme_metric_type_by_plmn_ho_t t, int val)
 {
     ogs_metrics_inst_t *metrics = NULL;
     mme_metric_key_by_plmn_ho_t *key;
     char plmn_id[OGS_PLMNIDSTRLEN] = "";
-    char cause_str[8];
+    char cause_value_str[16];
     const char *type_label = ho_type ? ho_type : "unknown";
+    const char *group_label = cause_group ? cause_group :
+        MME_METRICS_HO_CAUSE_GROUP_NONE;
 
     ogs_assert(plmn);
     if (!metrics_hash_by_plmn_ho)
@@ -224,7 +230,8 @@ static void mme_metrics_inst_by_plmn_ho_add(ogs_plmn_id_t *plmn,
 
     key->plmn_id = *plmn;
     ogs_cpystrn(key->ho_type, type_label, sizeof(key->ho_type));
-    key->cause = cause;
+    ogs_cpystrn(key->cause_group, group_label, sizeof(key->cause_group));
+    key->cause_value = cause_value;
     key->t = t;
 
     metrics = ogs_hash_get(metrics_hash_by_plmn_ho,
@@ -232,11 +239,13 @@ static void mme_metrics_inst_by_plmn_ho_add(ogs_plmn_id_t *plmn,
 
     if (!metrics) {
         ogs_plmn_id_to_string(plmn, plmn_id);
-        ogs_snprintf(cause_str, sizeof(cause_str), "%u", (unsigned)cause);
+        ogs_snprintf(cause_value_str, sizeof(cause_value_str), "%ld",
+                cause_value);
 
         metrics = ogs_metrics_inst_new(mme_metrics_spec_by_plmn_ho[t],
                 mme_metrics_spec_def_by_plmn_ho[t].num_labels,
-                (const char *[]){ plmn_id, key->ho_type, cause_str });
+                (const char *[]){
+                    plmn_id, key->ho_type, key->cause_group, cause_value_str });
 
         ogs_assert(metrics);
         ogs_hash_set(metrics_hash_by_plmn_ho,
@@ -603,7 +612,8 @@ void mme_metrics_ho_attempt(mme_ue_t *mme_ue, const char *ho_type)
     if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
         return;
 
-    mme_metrics_inst_by_plmn_ho_add(&plmn_id, ho_type, 0,
+    mme_metrics_inst_by_plmn_ho_add(&plmn_id, ho_type,
+            MME_METRICS_HO_CAUSE_GROUP_NONE, MME_METRICS_HO_CAUSE_VALUE_NONE,
             MME_METR_BY_PLMN_HO_CTR_ATTEMPT, 1);
 }
 
@@ -614,18 +624,20 @@ void mme_metrics_ho_success(mme_ue_t *mme_ue, const char *ho_type)
     if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
         return;
 
-    mme_metrics_inst_by_plmn_ho_add(&plmn_id, ho_type, 0,
+    mme_metrics_inst_by_plmn_ho_add(&plmn_id, ho_type,
+            MME_METRICS_HO_CAUSE_GROUP_NONE, MME_METRICS_HO_CAUSE_VALUE_NONE,
             MME_METR_BY_PLMN_HO_CTR_SUCCESS, 1);
 }
 
-void mme_metrics_ho_fail(mme_ue_t *mme_ue, const char *ho_type, uint16_t cause)
+void mme_metrics_ho_fail(mme_ue_t *mme_ue, const char *ho_type,
+        const char *cause_group, long cause_value)
 {
     ogs_plmn_id_t plmn_id;
 
     if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
         return;
 
-    mme_metrics_inst_by_plmn_ho_add(&plmn_id, ho_type, cause,
+    mme_metrics_inst_by_plmn_ho_add(&plmn_id, ho_type, cause_group, cause_value,
             MME_METR_BY_PLMN_HO_CTR_FAIL, 1);
 }
 
@@ -1054,11 +1066,12 @@ static void mme_metrics_init_by_plmn_cause(void)
     ogs_assert(metrics_hash_by_plmn_cause);
 }
 
-/* BY PLMN and HO type */
+/* BY PLMN and HO type (S1AP Cause IE labels per TS 36.413) */
 const char *labels_plmn_ho[] = {
     "plmnid",
     "type",
-    "cause"
+    "cause_group",
+    "cause_value"
 };
 
 #define MME_METR_BY_PLMN_HO_CTR_ENTRY(_id, _name, _desc) \
@@ -1076,15 +1089,18 @@ mme_metrics_spec_def_t mme_metrics_spec_def_by_plmn_ho[_MME_METR_BY_PLMN_HO_MAX]
 MME_METR_BY_PLMN_HO_CTR_ENTRY(
     MME_METR_BY_PLMN_HO_CTR_ATTEMPT,
     "mme_ho_attempt_total",
-    "Handover attempts per IMSI PLMN and HO type")
+    "Handover preparation attempts per IMSI PLMN and HO type "
+    "(TS 32.410: counted on Handover Required / Path Switch Request)")
 MME_METR_BY_PLMN_HO_CTR_ENTRY(
     MME_METR_BY_PLMN_HO_CTR_SUCCESS,
     "mme_ho_success_total",
-    "Successful handovers per IMSI PLMN and HO type")
+    "Successful handovers per IMSI PLMN and HO type "
+    "(intralte: Handover Notify; path_switch: Path Switch Ack)")
 MME_METR_BY_PLMN_HO_CTR_ENTRY(
     MME_METR_BY_PLMN_HO_CTR_FAIL,
     "mme_ho_fail_total",
-    "Handover failures per IMSI PLMN, HO type and cause")
+    "Handover failures per IMSI PLMN, HO type and S1AP Cause IE "
+    "(cause_group + cause_value per TS 36.413)")
 };
 
 static void mme_metrics_init_by_plmn_ho(void)

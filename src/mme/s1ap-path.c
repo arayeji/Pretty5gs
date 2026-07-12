@@ -722,7 +722,6 @@ int s1ap_send_handover_preparation_failure(
     int rv;
     ogs_pkbuf_t *s1apbuf = NULL;
     mme_ue_t *mme_ue = NULL;
-    uint16_t cause_key = 0;
 
     ogs_debug("HandoverPreparationFailure");
 
@@ -735,9 +734,8 @@ int s1ap_send_handover_preparation_failure(
 
     mme_ue = mme_ue_find_by_id(source_ue->mme_ue_id);
     if (mme_ue) {
-        cause_key = (uint16_t)(((unsigned)group << 8) |
-                ((unsigned)cause & 0xff));
-        mme_metrics_ho_fail(mme_ue, "intralte", cause_key);
+        mme_metrics_ho_fail(mme_ue, "intralte",
+                s1ap_cause_group_name(group), cause);
     }
 
     s1apbuf = s1ap_build_handover_preparation_failure(source_ue, group, cause);
@@ -750,6 +748,38 @@ int s1ap_send_handover_preparation_failure(
     ogs_expect(rv == OGS_OK);
 
     return rv;
+}
+
+static long s1ap_cause_get_value(S1AP_Cause_t *cause)
+{
+    ogs_assert(cause);
+
+    switch (cause->present) {
+    case S1AP_Cause_PR_radioNetwork:
+        return cause->choice.radioNetwork;
+    case S1AP_Cause_PR_transport:
+        return cause->choice.transport;
+    case S1AP_Cause_PR_nas:
+        return cause->choice.nas;
+    case S1AP_Cause_PR_protocol:
+        return cause->choice.protocol;
+    case S1AP_Cause_PR_misc:
+        return cause->choice.misc;
+    default:
+        return 0;
+    }
+}
+
+int s1ap_send_handover_preparation_failure_from_cause(
+        enb_ue_t *source_ue, S1AP_Cause_t *Cause)
+{
+    ogs_assert(Cause);
+
+    if (Cause->present == S1AP_Cause_PR_NOTHING)
+        return OGS_ERROR;
+
+    return s1ap_send_handover_preparation_failure(source_ue,
+            Cause->present, s1ap_cause_get_value(Cause));
 }
 
 int s1ap_send_handover_cancel_ack(enb_ue_t *source_ue)
@@ -1034,7 +1064,7 @@ int s1ap_send_s1_reset(mme_enb_t *enb, S1AP_Cause_PR group, long cause)
     return rv;
 }
 
-static const char *s1ap_cause_group_name(S1AP_Cause_PR present)
+const char *s1ap_cause_group_name(S1AP_Cause_PR present)
 {
     switch (present) {
     case S1AP_Cause_PR_radioNetwork: return "radioNetwork";

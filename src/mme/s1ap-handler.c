@@ -2936,8 +2936,8 @@ void s1ap_handle_path_switch_request(
     if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
         ogs_error("No Security Context");
         mme_metrics_ho_fail(mme_ue, "path_switch",
-                (uint16_t)((S1AP_Cause_PR_nas << 8) |
-                S1AP_CauseNas_authentication_failure));
+                s1ap_cause_group_name(S1AP_Cause_PR_nas),
+                S1AP_CauseNas_authentication_failure);
         s1apbuf = s1ap_build_path_switch_failure(
                 *ENB_UE_S1AP_ID, *MME_UE_S1AP_ID,
                 S1AP_Cause_PR_nas, S1AP_CauseNas_authentication_failure);
@@ -3371,6 +3371,18 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
     ogs_assert(TargetID);
     ogs_assert(Source_ToTarget_TransparentContainer);
 
+    mme_ue = mme_ue_find_by_id(source_ue->mme_ue_id);
+    if (!mme_ue) {
+        ogs_error("No UE(mme-ue) context");
+        return;
+    }
+
+    /*
+     * TS 32.410 / 36.413: HO preparation attempt when Handover Required
+     * is accepted for a known UE (before any preparation failure).
+     */
+    mme_metrics_ho_attempt(mme_ue, "intralte");
+
     switch (TargetID->present) {
     case S1AP_TargetID_PR_targeteNB_ID:
         ogs_s1ap_ENB_ID_to_uint32(
@@ -3386,23 +3398,15 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
         return;
     }
 
-    mme_ue = mme_ue_find_by_id(source_ue->mme_ue_id);
-
     target_enb = mme_enb_find_by_enb_id(target_enb_id);
     if (target_enb == NULL) {
         ogs_warn("Handover required : cannot find target eNB-id[0x%x] IMSI[%s]",
-                    target_enb_id,
-                    mme_ue ? mme_ue->imsi_bcd : "-");
+                    target_enb_id, mme_ue->imsi_bcd);
         r = s1ap_send_handover_preparation_failure(source_ue,
                 S1AP_Cause_PR_radioNetwork,
                 S1AP_CauseRadioNetwork_unknown_targetID);
         ogs_expect(r == OGS_OK);
         ogs_assert(r != OGS_ERROR);
-        return;
-    }
-
-    if (!mme_ue) {
-        ogs_error("No UE(mme-ue) context");
         return;
     }
 
@@ -3437,8 +3441,6 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
 
     mme_ue->nhcc++;
     ogs_kdf_nh_enb(mme_ue->kasme, mme_ue->nh, mme_ue->nh);
-
-    mme_metrics_ho_attempt(mme_ue, "intralte");
 
     r = s1ap_send_handover_request(
             source_ue, target_enb, &source_ue->handover_type, Cause,
@@ -3998,8 +4000,7 @@ void s1ap_handle_handover_failure(mme_enb_t *enb, ogs_s1ap_message_t *message)
     ogs_debug("    Target : ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
             target_ue->enb_ue_s1ap_id, target_ue->mme_ue_s1ap_id);
 
-    r = s1ap_send_handover_preparation_failure(
-            source_ue, Cause->present, Cause->choice.radioNetwork);
+    r = s1ap_send_handover_preparation_failure_from_cause(source_ue, Cause);
     ogs_expect(r == OGS_OK);
     ogs_assert(r != OGS_ERROR);
 

@@ -121,7 +121,8 @@ void mme_metrics_paging_success(mme_ue_t *mme_ue);
 
 void mme_metrics_ho_attempt(mme_ue_t *mme_ue, const char *ho_type);
 void mme_metrics_ho_success(mme_ue_t *mme_ue, const char *ho_type);
-void mme_metrics_ho_fail(mme_ue_t *mme_ue, const char *ho_type, uint16_t cause);
+void mme_metrics_ho_fail(mme_ue_t *mme_ue, const char *ho_type,
+        const char *cause_group, long cause_value);
 
 void mme_metrics_detach(mme_ue_t *mme_ue, const char *origin);
 

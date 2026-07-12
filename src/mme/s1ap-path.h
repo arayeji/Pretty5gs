@@ -79,6 +79,11 @@ int s1ap_send_path_switch_ack(
 int s1ap_send_handover_command(enb_ue_t *source_ue);
 int s1ap_send_handover_preparation_failure(
         enb_ue_t *source_ue, S1AP_Cause_PR group, long cause);
+int s1ap_send_handover_preparation_failure_from_cause(
+        enb_ue_t *source_ue, S1AP_Cause_t *Cause);
+
+/* S1AP Cause group name per TS 36.413 (radioNetwork, nas, ...). */
+const char *s1ap_cause_group_name(S1AP_Cause_PR present);
 
 int s1ap_send_handover_request(
         enb_ue_t *source_ue, mme_enb_t *target_enb,
