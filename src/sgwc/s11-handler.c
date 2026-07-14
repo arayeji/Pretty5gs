@@ -99,6 +99,15 @@ static void gtp_sess_timeout(ogs_gtp_xact_t *xact, void *data)
         return;
     }
 
+    /* Pool ids are recycled; a stale S5C xact must not trigger PFCP
+     * deletion on a new session that happens to reuse this id. */
+    if (xact->local_teid && sess->sgw_s5c_teid != xact->local_teid) {
+        ogs_error("S5C timeout [%d]: sess_id[%d] was recycled "
+                "(xact TEID[0x%x] != sess TEID[0x%x]); ignoring",
+                type, sess_id, xact->local_teid, sess->sgw_s5c_teid);
+        return;
+    }
+
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
     ogs_assert(sgwc_ue);
 
@@ -161,6 +170,17 @@ static void pfcp_sess_timeout(ogs_pfcp_xact_t *xact, void *data)
     sess = sgwc_sess_find_by_id(sess_id);
     if (!sess) {
         ogs_error("Session has already been removed [%d]", type);
+        return;
+    }
+
+    /* Pool ids are recycled; a stale xact must not act on a new session
+     * that happens to reuse this id (see sess_timeout in pfcp-path.c). */
+    if (xact->local_seid && sess->sgwc_sxa_seid != xact->local_seid) {
+        ogs_error("PFCP timeout [%d]: sess_id[%d] was recycled "
+                "(xact SEID[0x%llx] != sess SEID[0x%llx]); ignoring",
+                type, sess_id,
+                (unsigned long long)xact->local_seid,
+                (unsigned long long)sess->sgwc_sxa_seid);
         return;
     }
 

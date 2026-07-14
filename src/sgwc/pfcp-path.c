@@ -244,6 +244,24 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
         return;
     }
 
+    /*
+     * Pool ids are recycled after sgwc_sess_remove(). If this session was
+     * torn down by another path (e.g. an S11 Delete racing a graceful
+     * maintenance drain) while our PFCP xact was still in flight, sess_id
+     * may now resolve to a brand-new, unrelated session. The CP SEID is
+     * unique per session and was captured in xact->local_seid at send
+     * time, so a mismatch proves the id was recycled — acting on this
+     * session would tear down the wrong PDN context (crash/UAF).
+     */
+    if (xact->local_seid && sess->sgwc_sxa_seid != xact->local_seid) {
+        ogs_error("PFCP timeout [%d]: sess_id[%d] was recycled "
+                "(xact SEID[0x%llx] != sess SEID[0x%llx]); ignoring",
+                type, sess_id,
+                (unsigned long long)xact->local_seid,
+                (unsigned long long)sess->sgwc_sxa_seid);
+        return;
+    }
+
     switch (type) {
     case OGS_PFCP_SESSION_ESTABLISHMENT_REQUEST_TYPE: {
         sgwc_ue_t *sgwc_ue = NULL;

@@ -120,6 +120,16 @@ static void sess_timeout(ogs_gtp_xact_t *xact, void *data)
         return;
     }
 
+    /* Pool ids are recycled after sgwc_sess_remove(); the S5C TEID stored
+     * in the xact at send time proves whether this is still the same
+     * session. A stale xact must never act on an unrelated session. */
+    if (xact->local_teid && sess->sgw_s5c_teid != xact->local_teid) {
+        ogs_error("S5/GTP timeout [%d]: sess_id[%d] was recycled "
+                "(xact TEID[0x%x] != sess TEID[0x%x]); ignoring",
+                type, sess_id, xact->local_teid, sess->sgw_s5c_teid);
+        return;
+    }
+
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
     ogs_assert(sgwc_ue);
 
