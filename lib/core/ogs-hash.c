@@ -61,7 +61,10 @@ struct ogs_hash_t {
 
 static ogs_hash_entry_t **alloc_array(ogs_hash_t *ht, unsigned int max)
 {
-    ogs_hash_entry_t **ptr = ogs_calloc(1, sizeof(*ht->array) * (max + 1));
+    /* System calloc: talloc caps single allocations at 256 MB, which a
+     * bucket array crosses once a hash grows past ~32M buckets (~16.7M
+     * entries). Freed with system free() in expand_array/destroy. */
+    ogs_hash_entry_t **ptr = calloc(max + 1, sizeof(*ht->array));
     ogs_assert(ptr);
     return ptr;
 }
@@ -116,7 +119,7 @@ void ogs_hash_destroy(ogs_hash_t *ht)
         he = next_he;
     }
 
-    ogs_free(ht->array);
+    free(ht->array);  /* allocated with system calloc, see alloc_array */
     ogs_free(ht);
 }
 
@@ -197,7 +200,7 @@ static void expand_array(ogs_hash_t *ht)
         hi->this->next = new_array[i];
         new_array[i] = hi->this;
     }
-    ogs_free(ht->array);
+    free(ht->array);  /* allocated with system calloc, see alloc_array */
     ht->array = new_array;
     ht->max = new_max;
 }

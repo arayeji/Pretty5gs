@@ -73,8 +73,11 @@ void ogs_pfcp_context_init(void)
     ogs_pool_init(&ogs_pfcp_pdr_teid_pool, ogs_pfcp_pdr_pool.size);
     ogs_pool_random_id_generate(&ogs_pfcp_pdr_teid_pool);
 
-    pdr_random_to_index = ogs_calloc(
-            sizeof(ogs_pool_id_t), ogs_pfcp_pdr_pool.size+1);
+    /* System calloc: talloc caps single allocations at 256 MB; this table
+     * is sizeof(ogs_pool_id_t) * (pool.sess * OGS_MAX_NUM_OF_PDR + 1),
+     * which large deployments exceed (see ogs_queue_create). */
+    pdr_random_to_index = calloc(
+            ogs_pfcp_pdr_pool.size+1, sizeof(ogs_pool_id_t));
     ogs_assert(pdr_random_to_index);
     for (i = 0; i < ogs_pfcp_pdr_pool.size; i++)
         pdr_random_to_index[ogs_pfcp_pdr_teid_pool.array[i]] = i;
@@ -116,7 +119,7 @@ void ogs_pfcp_context_final(void)
 
     ogs_pool_final(&ogs_pfcp_pdr_pool);
     ogs_pool_final(&ogs_pfcp_pdr_teid_pool);
-    ogs_free(pdr_random_to_index);
+    free(pdr_random_to_index);  /* allocated with system calloc, see init */
 
     ogs_pool_final(&ogs_pfcp_far_pool);
     ogs_pool_final(&ogs_pfcp_urr_pool);
