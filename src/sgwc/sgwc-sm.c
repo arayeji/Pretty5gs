@@ -114,16 +114,27 @@ static void sgwc_admin_drain_step(void)
             rv = sgwc_gtp_send_network_delete_session(ue, sess);
             ogs_expect(rv == OGS_OK);
 
-            if (sess->pfcp_node && sess->sgwu_sxa_seid) {
-                rv = sgwc_pfcp_send_session_deletion_request(
-                        sess, OGS_INVALID_POOL_ID, NULL);
-                ogs_expect(rv == OGS_OK);
-            }
             if (sess->gnode)
                 sgwc_gtp_send_s5c_delete_session_request(sess);
 
-            if (sgwc_self()->drain_force)
+            if (sgwc_self()->drain_force) {
+                /*
+                 * Force-local teardown: do not use
+                 * sgwc_pfcp_send_session_deletion_request() here.  Its PFCP
+                 * xact stores sess->id; freeing the session while that xact is
+                 * still in flight lets a recycled pool id make sess_timeout()
+                 * operate on the wrong PDN context (crash/UAF).  Orphan purge
+                 * uses a NULL xact callback instead.
+                 */
+                sgwc_sess_purge_upf(sess);
                 sgwc_sess_remove(sess);
+            } else {
+                if (sess->pfcp_node && sess->sgwu_sxa_seid) {
+                    rv = sgwc_pfcp_send_session_deletion_request(
+                            sess, OGS_INVALID_POOL_ID, NULL);
+                    ogs_expect(rv == OGS_OK);
+                }
+            }
             sessions++;
         }
         if (sgwc_self()->drain_force && ogs_list_empty(&ue->sess_list))
@@ -143,6 +154,9 @@ static void sgwc_admin_drain_step(void)
     }
 
     sgwc_self()->drain_active = false;
+    if (t_admin_drain) {
+        ogs_timer_stop(t_admin_drain);
+    }
     ogs_info("admin maintenance drain: %s %u session(s)",
             sgwc_self()->drain_force ? "removed" : "initiated teardown for",
             sgwc_self()->drain_processed);
@@ -172,16 +186,17 @@ static void sgwc_admin_detach_ue_sessions(sgwc_ue_t *ue, int admin_force)
                 ue, sess, OGS_INVALID_POOL_ID);
         ogs_expect(rv == OGS_OK);
 
-        if (sess->pfcp_node && sess->sgwu_sxa_seid) {
+        if (sess->gnode)
+            sgwc_gtp_send_s5c_delete_session_request(sess);
+
+        if (admin_force) {
+            sgwc_sess_purge_upf(sess);
+            sgwc_sess_remove(sess);
+        } else if (sess->pfcp_node && sess->sgwu_sxa_seid) {
             rv = sgwc_pfcp_send_session_deletion_request(
                     sess, OGS_INVALID_POOL_ID, NULL);
             ogs_expect(rv == OGS_OK);
         }
-        if (sess->gnode)
-            sgwc_gtp_send_s5c_delete_session_request(sess);
-
-        if (admin_force)
-            sgwc_sess_remove(sess);
         count++;
     }
     if (admin_force && ogs_list_empty(&ue->sess_list))
