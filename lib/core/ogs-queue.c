@@ -80,9 +80,17 @@ ogs_queue_t *ogs_queue_create(unsigned int capacity)
     ogs_thread_cond_init(&queue->not_empty);
     ogs_thread_cond_init(&queue->not_full);
 
-    queue->data = ogs_calloc(1, capacity * sizeof(void*));
+    /*
+     * System calloc, not ogs_calloc: the latter goes through talloc, which
+     * rejects any single allocation >= 256 MB (MAX_TALLOC_SIZE). The queue
+     * is sized max.ue * pool_per_ue, so large deployments (> ~2M UEs with
+     * the default multiplier of 16) exceed that cap and the daemon could
+     * never start. This is init-time, like ogs_pool_init(), so bypassing
+     * the talloc pool is also the right thing for fragmentation.
+     */
+    queue->data = calloc(capacity, sizeof(void*));
     if (!queue->data) {
-        ogs_error("ogs_calloc[capacity:%d, sizeof(void*):%d] failed",
+        ogs_error("calloc[capacity:%d, sizeof(void*):%d] failed",
                 (int)capacity, (int)sizeof(void*));
         return NULL;
     }
@@ -101,7 +109,7 @@ void ogs_queue_destroy(ogs_queue_t *queue)
 {
     ogs_assert(queue);
 
-    ogs_free(queue->data);
+    free(queue->data);  /* allocated with system calloc, see create */
 
     ogs_thread_cond_destroy(&queue->not_empty);
     ogs_thread_cond_destroy(&queue->not_full);
