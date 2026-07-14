@@ -66,12 +66,14 @@ static void kqueue_init(ogs_pollset_t *pollset)
     ogs_assert(context);
     pollset->context = context;
 
-    context->change_list = ogs_calloc(
+    /* System calloc: talloc caps single allocations at 256 MB, and these
+     * arrays are sized max.ue * pool_per_ue (see ogs_queue_create). */
+    context->change_list = calloc(
         pollset->capacity, sizeof(struct kevent));
     ogs_assert(context->change_list);
-    context->event_list = ogs_calloc(
+    context->event_list = calloc(
         pollset->capacity, sizeof(struct kevent));
-    ogs_assert(context->change_list);
+    ogs_assert(context->event_list);
     context->nchanges = 0;
     context->nevents = pollset->capacity;
 
@@ -89,8 +91,9 @@ static void kqueue_cleanup(ogs_pollset_t *pollset)
     context = pollset->context;
     ogs_assert(context);
 
-    ogs_free(context->change_list);
-    ogs_free(context->event_list);
+    /* allocated with system calloc, see init */
+    free(context->change_list);
+    free(context->event_list);
 
     close(context->kqueue);
 

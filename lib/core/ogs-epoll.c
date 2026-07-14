@@ -66,7 +66,9 @@ static void epoll_init(ogs_pollset_t *pollset)
     ogs_assert(context);
     pollset->context = context;
 
-    context->event_list = ogs_calloc(
+    /* System calloc: talloc caps single allocations at 256 MB, and this
+     * array is sized max.ue * pool_per_ue (see ogs_queue_create). */
+    context->event_list = calloc(
             pollset->capacity, sizeof(struct epoll_event));
     ogs_assert(context->event_list);
 
@@ -94,7 +96,7 @@ static void epoll_cleanup(ogs_pollset_t *pollset)
 
     ogs_notify_final(pollset);
     close(context->epfd);
-    ogs_free(context->event_list);
+    free(context->event_list);  /* allocated with system calloc, see init */
     ogs_hash_destroy(context->map_hash);
 
     ogs_free(context);
