@@ -8187,10 +8187,26 @@ mme_m_tmsi_t *mme_m_tmsi_alloc(void)
      * of 3GPP TS.33.401 [89] , as appropriate, for RAU/Attach procedures
      */
 
-    ogs_assert(*m_tmsi <= 0x003fffff);
+    /*
+     * Encode the pool index into the 30 usable M-TMSI bits:
+     *   index[15:0]  -> M-TMSI[15:0]   (P-TMSI low bits)
+     *   index[21:16] -> M-TMSI[29:24]  (P-TMSI bits 29..24)
+     *   index[29:22] -> M-TMSI[23:16]  (8 MSBs of P-TMSI signature)
+     *   M-TMSI[31:30] = 11             (mapped-GUTI marker)
+     *
+     * The historical scheme left bits 23..16 zero and could only encode
+     * 22 bits (0x003fffff = ~4.19M ids), which crashes any deployment
+     * with max.ue > ~2M (pool is max.ue * 2, shuffled, so any attach may
+     * draw a large index). Bits 23..16 are legitimate: TS 23.003
+     * 2.8.2.1.2 maps them into the 8 MSBs of the <P-TMSI signature> and
+     * they survive the GERAN/UTRAN round-trip.
+     */
+    ogs_assert(*m_tmsi <= 0x3fffffff);
 
-    *m_tmsi = ((*m_tmsi & 0xffff) | ((*m_tmsi & 0x003f0000) << 8));
-    *m_tmsi |= 0xc0000000;
+    *m_tmsi = 0xc0000000 |
+        ((*m_tmsi & 0x3fc00000) >> 6) |     /* index[29:22] -> [23:16] */
+        ((*m_tmsi & 0x003f0000) << 8) |     /* index[21:16] -> [29:24] */
+        (*m_tmsi & 0xffff);
 
     return m_tmsi;
 }
@@ -8199,9 +8215,11 @@ int mme_m_tmsi_free(mme_m_tmsi_t *m_tmsi)
 {
     ogs_assert(m_tmsi);
 
-    /* Restore M-TMSI by Issue #2307 */
+    /* Restore M-TMSI by Issue #2307 (inverse of mme_m_tmsi_alloc) */
     *m_tmsi &= 0x3fffffff;
-    *m_tmsi = ((*m_tmsi & 0xffff) | ((*m_tmsi & 0x3f000000) >> 8));
+    *m_tmsi = (*m_tmsi & 0xffff) |
+        ((*m_tmsi & 0x3f000000) >> 8) |     /* [29:24] -> index[21:16] */
+        ((*m_tmsi & 0x00ff0000) << 6);      /* [23:16] -> index[29:22] */
     ogs_pool_free(&m_tmsi_pool, m_tmsi);
 
     return OGS_OK;
