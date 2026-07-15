@@ -13,6 +13,12 @@ tools/smf_vpp_diff.sh
 
 # Local pcap / attach debug scripts and scratch output
 pfcp-out.txt
+tools/s1_setup_failures*.csv
+tools/s1_setup_failures*_mme_tai.yaml
+tools/compare_csr_hex_tmf.py
+tools/compare_roam_tac.py
+tools/fix_mme_roam_access.py
+tools/parse_cgf_pcap.py
 tools/analyze_kkkk_pcap.py
 tools/analyze_pcap_paa.py
 tools/analyze_s1ap_attach.py
