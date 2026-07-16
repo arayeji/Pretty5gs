@@ -20,6 +20,7 @@
 #include "ogs-core.h"
 
 static OGS_THREAD_LOCAL ogs_worker_t *worker_self = NULL;
+static int worker_count = 0;
 
 static void worker_main(void *data);
 
@@ -47,7 +48,14 @@ ogs_worker_t *ogs_worker_create(int id,
     worker->queue = ogs_queue_create(event_capacity);
     ogs_assert(worker->queue);
 
+    worker_count++;
+
     return worker;
+}
+
+bool ogs_worker_active(void)
+{
+    return worker_count > 0;
 }
 
 void ogs_worker_hooks(ogs_worker_t *worker,
@@ -83,6 +91,8 @@ void ogs_worker_destroy(ogs_worker_t *worker)
     ogs_queue_destroy(worker->queue);
     ogs_timer_mgr_destroy(worker->timer_mgr);
     ogs_pollset_destroy(worker->pollset);
+
+    worker_count--;
 
     ogs_free(worker);
 }

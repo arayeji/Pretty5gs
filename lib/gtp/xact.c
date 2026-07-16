@@ -28,10 +28,46 @@ typedef enum {
     GTP_XACT_FINAL_STAGE,
 } ogs_gtp_xact_stage_t;
 
-static int ogs_gtp_xact_initialized = 0;
-static uint32_t g_xact_id = 0;
+/*
+ * The whole transaction layer is per-thread: each SMP worker (and the
+ * main thread of a single-threaded NF) owns its own pool, xid counter
+ * and timers, and only ever touches its own shard's lists on the shared
+ * gnode. Cross-thread access to a transaction is a bug by construction.
+ */
+static OGS_THREAD_LOCAL int ogs_gtp_xact_initialized = 0;
+static OGS_THREAD_LOCAL uint32_t g_xact_id = 0;
 
-static OGS_POOL(pool, ogs_gtp_xact_t);
+static OGS_THREAD_LOCAL OGS_POOL(pool, ogs_gtp_xact_t);
+
+/* Shard xact lists on the shared gnode: index = owning worker id
+ * (0 on the main thread, so single-threaded NFs behave as before). */
+#define xact_local_list(gnode)  (&(gnode)->local_list[ogs_worker_self_id()])
+#define xact_remote_list(gnode) (&(gnode)->remote_list[ogs_worker_self_id()])
+
+/*
+ * Allocate the next xid. When SMP workers are active the space is
+ * partitioned: the top OGS_WORKER_ID_BITS of each version's xid range
+ * carry the owner's worker id, so the RX router can steer a response
+ * to the worker holding the transaction with a shift, and concurrent
+ * workers can never allocate colliding sequence numbers.
+ */
+static uint32_t xact_next_xid(uint32_t min, uint32_t max)
+{
+    if (ogs_worker_active()) {
+        /* max-min+1 is a power of two for both GTPv1 (0..0xffff) and
+         * GTPv2 (1..0x800000 => span below is exact) id spaces. */
+        uint32_t span = ((max - min + 1) >> OGS_WORKER_ID_BITS);
+        uint32_t base = (uint32_t)ogs_worker_self_id() * span;
+
+        g_xact_id = (g_xact_id + 1) % span;
+        if (base + g_xact_id < min)
+            g_xact_id = min - base;   /* only shard 0 can go below min */
+
+        return base + g_xact_id;
+    }
+
+    return OGS_NEXT_ID(g_xact_id, min, max);
+}
 
 static ogs_gtp_xact_t *ogs_gtp_xact_remote_create(ogs_gtp_node_t *gnode, uint8_t gtp_version, uint32_t sqn);
 static ogs_gtp_xact_stage_t ogs_gtp2_xact_get_stage(uint8_t type, uint32_t xid);
@@ -48,7 +84,7 @@ static bool ogs_gtp_xact_on_list(ogs_gtp_xact_t *xact)
         return false;
 
     list = xact->org == OGS_GTP_LOCAL_ORIGINATOR ?
-        &xact->gnode->local_list : &xact->gnode->remote_list;
+        xact_local_list(xact->gnode) : xact_remote_list(xact->gnode);
 
     ogs_list_for_each(list, iter) {
         if (iter == xact)
@@ -216,7 +252,7 @@ ogs_gtp_xact_t *ogs_gtp1_xact_local_create(ogs_gtp_node_t *gnode,
 
     xact->gtp_version = 1;
     xact->org = OGS_GTP_LOCAL_ORIGINATOR;
-    xact->xid = OGS_NEXT_ID(g_xact_id,
+    xact->xid = xact_next_xid(
             OGS_GTP1_MIN_XACT_ID, OGS_GTP1_MAX_XACT_ID);
     xact->gnode = gnode;
     xact->cb = cb;
@@ -226,7 +262,7 @@ ogs_gtp_xact_t *ogs_gtp1_xact_local_create(ogs_gtp_node_t *gnode,
      * message (for which a response has been defined) is sent." */
     if (hdesc->type != OGS_GTP1_RAN_INFORMATION_RELAY_TYPE) {
         xact->tm_response = ogs_timer_add(
-                ogs_app()->timer_mgr, response_timeout,
+                ogs_worker_timer_mgr(ogs_app()->timer_mgr), response_timeout,
                 OGS_UINT_TO_POINTER(xact->id));
         if (!xact->tm_response) {
             ogs_error("Maximum number of xact->tm_response[%lld] reached",
@@ -239,7 +275,7 @@ ogs_gtp_xact_t *ogs_gtp1_xact_local_create(ogs_gtp_node_t *gnode,
     }
 
     xact->tm_holding = ogs_timer_add(
-            ogs_app()->timer_mgr, holding_timeout,
+            ogs_worker_timer_mgr(ogs_app()->timer_mgr), holding_timeout,
             OGS_UINT_TO_POINTER(xact->id));
     if (!xact->tm_holding) {
         ogs_error("Maximum number of xact->tm_holding[%lld] reached",
@@ -249,7 +285,7 @@ ogs_gtp_xact_t *ogs_gtp1_xact_local_create(ogs_gtp_node_t *gnode,
     }
     xact->holding_rcount = ogs_local_conf()->time.message.gtp.n3_holding_rcount;
 
-    ogs_list_add(&xact->gnode->local_list, xact);
+    ogs_list_add(xact_local_list(xact->gnode), xact);
 
     rv = ogs_gtp1_xact_update_tx(xact, hdesc, pkbuf);
     if (rv != OGS_OK) {
@@ -287,7 +323,7 @@ ogs_gtp_xact_t *ogs_gtp_xact_local_create(ogs_gtp_node_t *gnode,
 
     xact->gtp_version = 2;
     xact->org = OGS_GTP_LOCAL_ORIGINATOR;
-    xact->xid = OGS_NEXT_ID(g_xact_id,
+    xact->xid = xact_next_xid(
             OGS_GTP_MIN_XACT_ID, OGS_GTP_CMD_XACT_ID);
     if (hdesc->type == OGS_GTP2_MODIFY_BEARER_COMMAND_TYPE ||
         hdesc->type == OGS_GTP2_DELETE_BEARER_COMMAND_TYPE ||
@@ -299,7 +335,7 @@ ogs_gtp_xact_t *ogs_gtp_xact_local_create(ogs_gtp_node_t *gnode,
     xact->data = data;
 
     xact->tm_response = ogs_timer_add(
-            ogs_app()->timer_mgr, response_timeout,
+            ogs_worker_timer_mgr(ogs_app()->timer_mgr), response_timeout,
             OGS_UINT_TO_POINTER(xact->id));
     if (!xact->tm_response) {
         ogs_error("Maximum number of xact->tm_response[%lld] reached",
@@ -311,7 +347,7 @@ ogs_gtp_xact_t *ogs_gtp_xact_local_create(ogs_gtp_node_t *gnode,
         ogs_local_conf()->time.message.gtp.n3_response_rcount,
 
     xact->tm_holding = ogs_timer_add(
-            ogs_app()->timer_mgr, holding_timeout,
+            ogs_worker_timer_mgr(ogs_app()->timer_mgr), holding_timeout,
             OGS_UINT_TO_POINTER(xact->id));
     if (!xact->tm_holding) {
         ogs_error("Maximum number of xact->tm_holding[%lld] reached",
@@ -321,7 +357,7 @@ ogs_gtp_xact_t *ogs_gtp_xact_local_create(ogs_gtp_node_t *gnode,
     }
     xact->holding_rcount = ogs_local_conf()->time.message.gtp.n3_holding_rcount,
 
-    xact->tm_peer = ogs_timer_add(ogs_app()->timer_mgr, peer_timeout,
+    xact->tm_peer = ogs_timer_add(ogs_worker_timer_mgr(ogs_app()->timer_mgr), peer_timeout,
             OGS_UINT_TO_POINTER(xact->id));
     if (!xact->tm_peer) {
         ogs_error("Maximum number of xact->tm_peer[%lld] reached",
@@ -330,7 +366,7 @@ ogs_gtp_xact_t *ogs_gtp_xact_local_create(ogs_gtp_node_t *gnode,
         return NULL;
     }
 
-    ogs_list_add(&xact->gnode->local_list, xact);
+    ogs_list_add(xact_local_list(xact->gnode), xact);
 
     rv = ogs_gtp_xact_update_tx(xact, hdesc, pkbuf);
     if (rv != OGS_OK) {
@@ -369,7 +405,7 @@ static ogs_gtp_xact_t *ogs_gtp_xact_remote_create(ogs_gtp_node_t *gnode, uint8_t
     xact->gnode = gnode;
 
     xact->tm_response = ogs_timer_add(
-            ogs_app()->timer_mgr, response_timeout,
+            ogs_worker_timer_mgr(ogs_app()->timer_mgr), response_timeout,
             OGS_UINT_TO_POINTER(xact->id));
     if (!xact->tm_response) {
         ogs_error("Maximum number of xact->tm_response[%lld] reached",
@@ -381,7 +417,7 @@ static ogs_gtp_xact_t *ogs_gtp_xact_remote_create(ogs_gtp_node_t *gnode, uint8_t
         ogs_local_conf()->time.message.gtp.n3_response_rcount,
 
     xact->tm_holding = ogs_timer_add(
-            ogs_app()->timer_mgr, holding_timeout,
+            ogs_worker_timer_mgr(ogs_app()->timer_mgr), holding_timeout,
             OGS_UINT_TO_POINTER(xact->id));
     if (!xact->tm_holding) {
         ogs_error("Maximum number of xact->tm_holding[%lld] reached",
@@ -391,7 +427,7 @@ static ogs_gtp_xact_t *ogs_gtp_xact_remote_create(ogs_gtp_node_t *gnode, uint8_t
     }
     xact->holding_rcount = ogs_local_conf()->time.message.gtp.n3_holding_rcount,
 
-    xact->tm_peer = ogs_timer_add(ogs_app()->timer_mgr, peer_timeout,
+    xact->tm_peer = ogs_timer_add(ogs_worker_timer_mgr(ogs_app()->timer_mgr), peer_timeout,
             OGS_UINT_TO_POINTER(xact->id));
     if (!xact->tm_peer) {
         ogs_error("Maximum number of xact->tm_peer[%lld] reached",
@@ -400,7 +436,7 @@ static ogs_gtp_xact_t *ogs_gtp_xact_remote_create(ogs_gtp_node_t *gnode, uint8_t
         return NULL;
     }
 
-    ogs_list_add(&xact->gnode->remote_list, xact);
+    ogs_list_add(xact_remote_list(xact->gnode), xact);
 
     ogs_debug("[%d] REMOTE Create  peer [%s]:%d",
             xact->xid,
@@ -419,9 +455,9 @@ void ogs_gtp_xact_delete_all(ogs_gtp_node_t *gnode)
 {
     ogs_gtp_xact_t *xact = NULL, *next_xact = NULL;
 
-    ogs_list_for_each_safe(&gnode->local_list, next_xact, xact)
+    ogs_list_for_each_safe(xact_local_list(gnode), next_xact, xact)
         ogs_gtp_xact_delete(xact);
-    ogs_list_for_each_safe(&gnode->remote_list, next_xact, xact)
+    ogs_list_for_each_safe(xact_remote_list(gnode), next_xact, xact)
         ogs_gtp_xact_delete(xact);
 }
 
@@ -1087,19 +1123,19 @@ int ogs_gtp1_xact_receive(
 
     switch (stage) {
     case GTP_XACT_INITIAL_STAGE:
-        list = &gnode->remote_list;
+        list = xact_remote_list(gnode);
         break;
     case GTP_XACT_INTERMEDIATE_STAGE:
-        list = &gnode->local_list;
+        list = xact_local_list(gnode);
         break;
     case GTP_XACT_FINAL_STAGE:
         /* For types which are replies to replies, the xact is never locally
          * created during transmit, but actually during rx of the initial req, hence
          * it is never placed in the local_list, but in the remote_list. */
         if (type == OGS_GTP1_SGSN_CONTEXT_ACKNOWLEDGE_TYPE)
-            list = &gnode->remote_list;
+            list = xact_remote_list(gnode);
         else
-            list = &gnode->local_list;
+            list = xact_local_list(gnode);
         break;
     default:
         ogs_error("[%d] Unexpected type %u from GTPv1 peer [%s]:%d",
@@ -1186,22 +1222,22 @@ int ogs_gtp_xact_receive(
 
     switch (stage) {
     case GTP_XACT_INITIAL_STAGE:
-        list = &gnode->remote_list;
+        list = xact_remote_list(gnode);
         break;
     case GTP_XACT_INTERMEDIATE_STAGE:
-        list = &gnode->local_list;
+        list = xact_local_list(gnode);
         break;
     case GTP_XACT_FINAL_STAGE:
         if (xid & OGS_GTP_CMD_XACT_ID) {
             if (type == OGS_GTP2_MODIFY_BEARER_FAILURE_INDICATION_TYPE ||
                 type == OGS_GTP2_DELETE_BEARER_FAILURE_INDICATION_TYPE ||
                 type == OGS_GTP2_BEARER_RESOURCE_FAILURE_INDICATION_TYPE) {
-                list = &gnode->local_list;
+                list = xact_local_list(gnode);
             } else {
-                list = &gnode->remote_list;
+                list = xact_remote_list(gnode);
             }
         } else {
-            list = &gnode->local_list;
+            list = xact_local_list(gnode);
         }
         break;
     default:
@@ -1212,7 +1248,7 @@ int ogs_gtp_xact_receive(
 
     ogs_assert(list);
 
-    if (list == &gnode->local_list && ogs_gtp2_xact_is_local_reply(stage, xid)) {
+    if (list == xact_local_list(gnode) && ogs_gtp2_xact_is_local_reply(stage, xid)) {
         /*
          * Reply to a request we sent (Create Session Response on S5, etc.).
          * Must match the exact sequence number and an outstanding step-1
@@ -1476,7 +1512,7 @@ static int ogs_gtp_xact_delete(ogs_gtp_xact_t *xact)
         ogs_gtp_xact_deassociate(xact, assoc_xact);
 
     ogs_list_remove(xact->org == OGS_GTP_LOCAL_ORIGINATOR ?
-            &xact->gnode->local_list : &xact->gnode->remote_list, xact);
+            xact_local_list(xact->gnode) : xact_remote_list(xact->gnode), xact);
     ogs_pool_id_free(&pool, xact);
 
     return OGS_OK;

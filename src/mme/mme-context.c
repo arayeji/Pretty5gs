@@ -3992,8 +3992,13 @@ mme_sgsn_t *mme_sgsn_add(ogs_sockaddr_t *addr)
 
     sgsn->gnode.sa_list = addr;
 
-    ogs_list_init(&sgsn->gnode.local_list);
-    ogs_list_init(&sgsn->gnode.remote_list);
+    {
+        int w;
+        for (w = 0; w < OGS_MAX_WORKERS; w++) {
+            ogs_list_init(&sgsn->gnode.local_list[w]);
+            ogs_list_init(&sgsn->gnode.remote_list[w]);
+        }
+    }
 
     ogs_list_init(&sgsn->route_list);
     //ogs_list_init(&sgsn->sgsn_ue_list);
@@ -4097,8 +4102,13 @@ mme_sgw_t *mme_sgw_add(ogs_sockaddr_t *addr)
 
     sgw->gnode.sa_list = addr;
 
-    ogs_list_init(&sgw->gnode.local_list);
-    ogs_list_init(&sgw->gnode.remote_list);
+    {
+        int w;
+        for (w = 0; w < OGS_MAX_WORKERS; w++) {
+            ogs_list_init(&sgw->gnode.local_list[w]);
+            ogs_list_init(&sgw->gnode.remote_list[w]);
+        }
+    }
 
     ogs_list_init(&sgw->sgw_ue_list);
 
@@ -7251,8 +7261,8 @@ int mme_ue_xact_count(mme_ue_t *mme_ue, uint8_t org)
     if (!gnode) return 0;
 
     return org == OGS_GTP_LOCAL_ORIGINATOR ?
-            ogs_list_count(&gnode->local_list) :
-                ogs_list_count(&gnode->remote_list);
+            ogs_list_count(&gnode->local_list[ogs_worker_self_id()]) :
+                ogs_list_count(&gnode->remote_list[ogs_worker_self_id()]);
 }
 
 void enb_ue_associate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)

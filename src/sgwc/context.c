@@ -2531,7 +2531,7 @@ int sgwc_sess_pfcp_xact_count(
 
         if (!pfcp_node)
             continue;
-        ogs_list_for_each(&pfcp_node->local_list, pfcp_xact) {
+        ogs_list_for_each(&pfcp_node->local_list[ogs_worker_self_id()], pfcp_xact) {
             ogs_pool_id_t sess_id = OGS_INVALID_POOL_ID;
 
             if (pfcp_type && pfcp_type != pfcp_xact->seq[0].type)
@@ -2563,7 +2563,7 @@ ogs_pfcp_xact_t *sgwc_pfcp_find_session_modify_xact(
     ogs_assert(sess);
     ogs_assert(sess->pfcp_node);
 
-    ogs_list_for_each(&sess->pfcp_node->local_list, pfcp_xact) {
+    ogs_list_for_each(&sess->pfcp_node->local_list[ogs_worker_self_id()], pfcp_xact) {
         if (pfcp_xact->seq[0].type !=
                 OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE)
             continue;

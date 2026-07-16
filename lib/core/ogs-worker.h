@@ -77,6 +77,10 @@ int ogs_worker_post(ogs_worker_t *worker, void *event);
 /* Worker the calling thread belongs to, or NULL on the main/IO thread. */
 ogs_worker_t *ogs_worker_self(void);
 
+/* True once any worker exists in this process. Workers must be created
+ * on the main thread before they are started, so this needs no locking. */
+bool ogs_worker_active(void);
+
 /* Shard id of the calling thread, or 0 when on the main thread
  * (single-threaded NFs therefore behave exactly as before). */
 int ogs_worker_self_id(void);

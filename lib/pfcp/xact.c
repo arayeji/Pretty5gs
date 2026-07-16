@@ -30,10 +30,38 @@ typedef enum {
     PFCP_XACT_FINAL_STAGE,
 } ogs_pfcp_xact_stage_t;
 
-static int ogs_pfcp_xact_initialized = 0;
-static uint32_t g_xact_id = 0;
+/*
+ * Per-thread transaction layer — same scheme as lib/gtp/xact.c: each SMP
+ * worker owns its own pool, xid counter and timers, and only touches its
+ * own shard's lists on the shared ogs_pfcp_node_t.
+ */
+static OGS_THREAD_LOCAL int ogs_pfcp_xact_initialized = 0;
+static OGS_THREAD_LOCAL uint32_t g_xact_id = 0;
 
-static OGS_POOL(pool, ogs_pfcp_xact_t);
+static OGS_THREAD_LOCAL OGS_POOL(pool, ogs_pfcp_xact_t);
+
+#define xact_local_list(node)  (&(node)->local_list[ogs_worker_self_id()])
+#define xact_remote_list(node) (&(node)->remote_list[ogs_worker_self_id()])
+
+/* Worker-partitioned xid allocation; see lib/gtp/xact.c for rationale.
+ * PFCP xid span (1..0x800000) is a power of two, so shard slices are
+ * exact and a response's owner is xid >> 20. */
+static uint32_t xact_next_xid(void)
+{
+    if (ogs_worker_active()) {
+        uint32_t span =
+            ((PFCP_MAX_XACT_ID - PFCP_MIN_XACT_ID + 1) >> OGS_WORKER_ID_BITS);
+        uint32_t base = (uint32_t)ogs_worker_self_id() * span;
+
+        g_xact_id = (g_xact_id + 1) % span;
+        if (base + g_xact_id < PFCP_MIN_XACT_ID)
+            g_xact_id = PFCP_MIN_XACT_ID - base;
+
+        return base + g_xact_id;
+    }
+
+    return OGS_NEXT_ID(g_xact_id, PFCP_MIN_XACT_ID, PFCP_MAX_XACT_ID);
+}
 
 static ogs_pfcp_xact_t *ogs_pfcp_xact_remote_create(
         ogs_pfcp_node_t *node, uint32_t sqn);
@@ -54,7 +82,7 @@ static bool ogs_pfcp_xact_on_list(ogs_pfcp_xact_t *xact)
         return false;
 
     list = xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
-        &xact->node->local_list : &xact->node->remote_list;
+        xact_local_list(xact->node) : xact_remote_list(xact->node);
 
     ogs_list_for_each(list, iter) {
         if (iter == xact)
@@ -134,13 +162,13 @@ ogs_pfcp_xact_t *ogs_pfcp_xact_local_create(ogs_pfcp_node_t *node,
     xact->index = ogs_pool_index(&pool, xact);
 
     xact->org = OGS_PFCP_LOCAL_ORIGINATOR;
-    xact->xid = OGS_NEXT_ID(g_xact_id, PFCP_MIN_XACT_ID, PFCP_MAX_XACT_ID);
+    xact->xid = xact_next_xid();
     xact->node = node;
     xact->cb = cb;
     xact->data = data;
 
     xact->tm_response = ogs_timer_add(
-            ogs_app()->timer_mgr, response_timeout,
+            ogs_worker_timer_mgr(ogs_app()->timer_mgr), response_timeout,
             OGS_UINT_TO_POINTER(xact->id));
     if (!xact->tm_response) {
         ogs_error("Maximum number of xact->tm_response[%lld] reached",
@@ -152,7 +180,7 @@ ogs_pfcp_xact_t *ogs_pfcp_xact_local_create(ogs_pfcp_node_t *node,
         ogs_local_conf()->time.message.pfcp.n1_response_rcount;
 
     xact->tm_holding = ogs_timer_add(
-            ogs_app()->timer_mgr, holding_timeout,
+            ogs_worker_timer_mgr(ogs_app()->timer_mgr), holding_timeout,
             OGS_UINT_TO_POINTER(xact->id));
     if (!xact->tm_holding) {
         ogs_error("Maximum number of xact->tm_holding[%lld] reached",
@@ -164,7 +192,7 @@ ogs_pfcp_xact_t *ogs_pfcp_xact_local_create(ogs_pfcp_node_t *node,
         ogs_local_conf()->time.message.pfcp.n1_holding_rcount;
 
     xact->tm_delayed_commit = ogs_timer_add(
-            ogs_app()->timer_mgr, delayed_commit_timeout,
+            ogs_worker_timer_mgr(ogs_app()->timer_mgr), delayed_commit_timeout,
             OGS_UINT_TO_POINTER(xact->id));
     if (!xact->tm_delayed_commit) {
         ogs_error("Maximum number of xact->tm_delayed_commit[%lld] reached",
@@ -174,7 +202,7 @@ ogs_pfcp_xact_t *ogs_pfcp_xact_local_create(ogs_pfcp_node_t *node,
     }
 
     ogs_list_add(xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
-            &xact->node->local_list : &xact->node->remote_list, xact);
+            xact_local_list(xact->node) : xact_remote_list(xact->node), xact);
 
     ogs_list_init(&xact->pdr_to_create_list);
 
@@ -206,7 +234,7 @@ static ogs_pfcp_xact_t *ogs_pfcp_xact_remote_create(
     xact->node = node;
 
     xact->tm_response = ogs_timer_add(
-            ogs_app()->timer_mgr, response_timeout,
+            ogs_worker_timer_mgr(ogs_app()->timer_mgr), response_timeout,
             OGS_UINT_TO_POINTER(xact->id));
     if (!xact->tm_response) {
         ogs_error("Maximum number of xact->tm_response[%lld] reached",
@@ -218,7 +246,7 @@ static ogs_pfcp_xact_t *ogs_pfcp_xact_remote_create(
         ogs_local_conf()->time.message.pfcp.n1_response_rcount;
 
     xact->tm_holding = ogs_timer_add(
-            ogs_app()->timer_mgr, holding_timeout,
+            ogs_worker_timer_mgr(ogs_app()->timer_mgr), holding_timeout,
             OGS_UINT_TO_POINTER(xact->id));
     if (!xact->tm_holding) {
         ogs_error("Maximum number of xact->tm_holding[%lld] reached",
@@ -230,7 +258,7 @@ static ogs_pfcp_xact_t *ogs_pfcp_xact_remote_create(
         ogs_local_conf()->time.message.pfcp.n1_holding_rcount;
 
     xact->tm_delayed_commit = ogs_timer_add(
-            ogs_app()->timer_mgr, delayed_commit_timeout,
+            ogs_worker_timer_mgr(ogs_app()->timer_mgr), delayed_commit_timeout,
             OGS_UINT_TO_POINTER(xact->id));
     if (!xact->tm_delayed_commit) {
         ogs_error("Maximum number of xact->tm_delayed_commit[%lld] reached",
@@ -240,7 +268,7 @@ static ogs_pfcp_xact_t *ogs_pfcp_xact_remote_create(
     }
 
     ogs_list_add(xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
-            &xact->node->local_list : &xact->node->remote_list, xact);
+            xact_local_list(xact->node) : xact_remote_list(xact->node), xact);
 
     ogs_debug("[%d] %s Create  peer %s",
             xact->xid,
@@ -254,9 +282,9 @@ void ogs_pfcp_xact_delete_all(ogs_pfcp_node_t *node)
 {
     ogs_pfcp_xact_t *xact = NULL, *next_xact = NULL;
 
-    ogs_list_for_each_safe(&node->local_list, next_xact, xact)
+    ogs_list_for_each_safe(xact_local_list(node), next_xact, xact)
         ogs_pfcp_xact_delete(xact);
-    ogs_list_for_each_safe(&node->remote_list, next_xact, xact)
+    ogs_list_for_each_safe(xact_remote_list(node), next_xact, xact)
         ogs_pfcp_xact_delete(xact);
 }
 
@@ -810,13 +838,13 @@ int ogs_pfcp_xact_receive(
 
     switch (stage) {
     case PFCP_XACT_INITIAL_STAGE:
-        list = &node->remote_list;
+        list = xact_remote_list(node);
         break;
     case PFCP_XACT_INTERMEDIATE_STAGE:
-        list = &node->local_list;
+        list = xact_local_list(node);
         break;
     case PFCP_XACT_FINAL_STAGE:
-        list = &node->local_list;
+        list = xact_local_list(node);
         break;
     default:
         ogs_error("[%d] Unexpected type %u from PFCP peer %s",
@@ -933,7 +961,7 @@ int ogs_pfcp_xact_delete(ogs_pfcp_xact_t *xact)
         ogs_pkbuf_free(xact->seq[2].pkbuf);
 
     ogs_list_remove(xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
-            &xact->node->local_list : &xact->node->remote_list, xact);
+            xact_local_list(xact->node) : xact_remote_list(xact->node), xact);
     ogs_pool_id_free(&pool, xact);
 
     return OGS_OK;
