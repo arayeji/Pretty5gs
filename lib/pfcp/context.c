@@ -1143,8 +1143,13 @@ ogs_pfcp_node_t *ogs_pfcp_node_new(ogs_sockaddr_t *config_addr)
     memset(&node->node_id, 0, sizeof(node->node_id));
     node->node_id.type = OGS_PFCP_NODE_ID_UNKNOWN;
 
-    ogs_list_init(&node->local_list);
-    ogs_list_init(&node->remote_list);
+    {
+        int w;
+        for (w = 0; w < OGS_MAX_WORKERS; w++) {
+            ogs_list_init(&node->local_list[w]);
+            ogs_list_init(&node->remote_list[w]);
+        }
+    }
 
     ogs_list_init(&node->gtpu_resource_list);
 

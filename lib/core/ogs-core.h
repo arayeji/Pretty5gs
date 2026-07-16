@@ -56,6 +56,7 @@
 #include "core/ogs-queue.h"
 #include "core/ogs-poll.h"
 #include "core/ogs-notify.h"
+#include "core/ogs-worker.h"
 #include "core/ogs-tlv.h"
 #include "core/ogs-tlv-msg.h"
 #include "core/ogs-env.h"

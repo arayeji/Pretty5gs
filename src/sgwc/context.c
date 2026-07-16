@@ -128,25 +128,59 @@ sgwc_save_recovery_counter(const char *path, uint8_t val)
     return true;
 }
 
-static sgwc_context_t self;
+/*
+ * SMP: the whole SGW-C context is per-thread. Each worker owns a full
+ * context instance (pools, hashes, config copy) initialized in its
+ * thread_init hook; UEs/sessions live on exactly one worker, found by
+ * the shard bits their TEID/SEID carry (see sgwc_shard_compose below).
+ * With workers disabled everything lives on the main thread, index 0,
+ * exactly as before.
+ */
+static OGS_THREAD_LOCAL sgwc_context_t self;
 
 int __sgwc_log_domain;
 
-static OGS_POOL(sgwc_bearer_pool, sgwc_bearer_t);
-static OGS_POOL(sgwc_tunnel_pool, sgwc_tunnel_t);
+static OGS_THREAD_LOCAL OGS_POOL(sgwc_bearer_pool, sgwc_bearer_t);
+static OGS_THREAD_LOCAL OGS_POOL(sgwc_tunnel_pool, sgwc_tunnel_t);
 
-static OGS_POOL(sgwc_ue_pool, sgwc_ue_t);
-static OGS_POOL(sgwc_s11_teid_pool, ogs_pool_id_t);
+static OGS_THREAD_LOCAL OGS_POOL(sgwc_ue_pool, sgwc_ue_t);
+static OGS_THREAD_LOCAL OGS_POOL(sgwc_s11_teid_pool, ogs_pool_id_t);
 
-static OGS_POOL(sgwc_sess_pool, sgwc_sess_t);
-static OGS_POOL(sgwc_sxa_seid_pool, ogs_pool_id_t);
+static OGS_THREAD_LOCAL OGS_POOL(sgwc_sess_pool, sgwc_sess_t);
+static OGS_THREAD_LOCAL OGS_POOL(sgwc_sxa_seid_pool, ogs_pool_id_t);
 
-static int context_initialized = 0;
+static OGS_THREAD_LOCAL int context_initialized = 0;
 
+/* Shared across workers; only ever changed with atomics. */
 static int num_of_sgwc_sess = 0;
 
 static void stats_add_sgwc_session(void);
 static void stats_remove_sgwc_session(void);
+
+/*
+ * Compose a locally-allocated raw TEID/SEID value with the calling
+ * worker's shard id in the top OGS_WORKER_ID_BITS of the 32-bit space.
+ * Every non-initial S11/S5 message and PFCP session message carries one
+ * of these values in its header, so the RX router can steer it to the
+ * owning worker with a shift and no shared lookup. Applied after any
+ * inbound-roam offset, so the shard bits always survive.
+ *
+ * With sharding off (single-threaded, or only helper workers running)
+ * this is a strict no-op: no assert, no bit games — large inbound-roam
+ * TEID offsets keep working exactly as before. The 2^29 raw-value limit
+ * only exists, and is only checked, when shard workers are enabled;
+ * validate the roam offset at config parse before turning sharding on.
+ */
+static uint32_t sgwc_shard_compose(uint32_t raw)
+{
+    if (!ogs_worker_shards_active())
+        return raw;
+
+    ogs_assert(raw < (1u << (32 - OGS_WORKER_ID_BITS)));
+
+    return ((uint32_t)ogs_worker_self_id() << (32 - OGS_WORKER_ID_BITS))
+        | raw;
+}
 
 static bool sgwc_wildcard_match_ci(const char *pattern, const char *s)
 {
@@ -1623,7 +1657,7 @@ sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len)
         return NULL;
     }
 
-    sgwc_ue->sgw_s11_teid = *(sgwc_ue->sgw_s11_teid_node);
+    sgwc_ue->sgw_s11_teid = sgwc_shard_compose(*(sgwc_ue->sgw_s11_teid_node));
 
     ogs_hash_set(self.sgw_s11_teid_hash,
             &sgwc_ue->sgw_s11_teid, sizeof(sgwc_ue->sgw_s11_teid), sgwc_ue);
@@ -1877,9 +1911,10 @@ static uint32_t sgwc_inbound_roam_teid(uint32_t raw)
 {
     uint32_t offset = sgwc_self()->inbound_roam_teid_offset;
 
+    /* shard bits go on top of the offset value so routing survives */
     if (!offset)
-        return raw;
-    return raw + offset;
+        return sgwc_shard_compose(raw);
+    return sgwc_shard_compose(raw + offset);
 }
 
 void sgwc_inbound_roam_teid_offset_apply(sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess)
@@ -2012,8 +2047,8 @@ sgwc_sess_t *sgwc_sess_add(sgwc_ue_t *sgwc_ue, char *apn)
         return NULL;
     }
 
-    sess->sgw_s5c_teid = *(sess->sgwc_sxa_seid_node);
-    sess->sgwc_sxa_seid = *(sess->sgwc_sxa_seid_node);
+    sess->sgw_s5c_teid = sgwc_shard_compose(*(sess->sgwc_sxa_seid_node));
+    sess->sgwc_sxa_seid = sess->sgw_s5c_teid;
 
     ogs_hash_set(self.sgwc_sxa_seid_hash,
             &sess->sgwc_sxa_seid, sizeof(sess->sgwc_sxa_seid), sess);
@@ -2531,7 +2566,7 @@ int sgwc_sess_pfcp_xact_count(
 
         if (!pfcp_node)
             continue;
-        ogs_list_for_each(&pfcp_node->local_list, pfcp_xact) {
+        ogs_list_for_each(&pfcp_node->local_list[ogs_worker_self_id()], pfcp_xact) {
             ogs_pool_id_t sess_id = OGS_INVALID_POOL_ID;
 
             if (pfcp_type && pfcp_type != pfcp_xact->seq[0].type)
@@ -2563,7 +2598,7 @@ ogs_pfcp_xact_t *sgwc_pfcp_find_session_modify_xact(
     ogs_assert(sess);
     ogs_assert(sess->pfcp_node);
 
-    ogs_list_for_each(&sess->pfcp_node->local_list, pfcp_xact) {
+    ogs_list_for_each(&sess->pfcp_node->local_list[ogs_worker_self_id()], pfcp_xact) {
         if (pfcp_xact->seq[0].type !=
                 OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE)
             continue;
@@ -3044,12 +3079,12 @@ sgwc_tunnel_t *sgwc_ul_tunnel_in_bearer(sgwc_bearer_t *bearer)
 
 static void stats_add_sgwc_session(void)
 {
-    num_of_sgwc_sess = num_of_sgwc_sess + 1;
-    ogs_info("[Added] Number of SGWC-Sessions is now %d", num_of_sgwc_sess);
+    int now = __atomic_add_fetch(&num_of_sgwc_sess, 1, __ATOMIC_RELAXED);
+    ogs_info("[Added] Number of SGWC-Sessions is now %d", now);
 }
 
 static void stats_remove_sgwc_session(void)
 {
-    num_of_sgwc_sess = num_of_sgwc_sess - 1;
-    ogs_debug("[Removed] Number of SGWC-Sessions is now %d", num_of_sgwc_sess);
+    int now = __atomic_sub_fetch(&num_of_sgwc_sess, 1, __ATOMIC_RELAXED);
+    ogs_debug("[Removed] Number of SGWC-Sessions is now %d", now);
 }

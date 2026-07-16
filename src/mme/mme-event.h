@@ -35,6 +35,8 @@ typedef enum {
     MME_EVENT_S1AP_LO_ACCEPT,
     MME_EVENT_S1AP_LO_SCTP_COMM_UP,
     MME_EVENT_S1AP_LO_CONNREFUSED,
+    /* RX worker confirmed poll removal: main may destroy e->sock */
+    MME_EVENT_S1AP_RX_SOCK_CLOSED,
 
     MME_EVENT_EMM_MESSAGE,
     MME_EVENT_EMM_TIMER,
@@ -103,6 +105,9 @@ typedef struct mme_event_s {
 
     S1AP_ProcedureCode_t s1ap_code;
     ogs_s1ap_message_t *s1ap_message;
+    /* s1ap_message was heap-decoded by an S1AP RX worker; the main
+     * loop skips its own decode and frees pdu+struct after dispatch */
+    bool s1ap_rx_decoded;
 
     ogs_gtp_node_t *gnode;
 
@@ -153,6 +158,11 @@ void mme_event_purge_mme_ue(ogs_pool_id_t mme_ue_id);
 void mme_event_timeout(void *data);
 
 const char *mme_event_get_name(mme_event_t *e);
+
+/* Push a pre-decoded S1AP message from an RX worker. Takes ownership
+ * of addr, pkbuf and pdu; main frees pdu after dispatch. */
+void s1ap_event_push_decoded(void *sock, ogs_sockaddr_t *addr,
+        ogs_pkbuf_t *pkbuf, ogs_s1ap_message_t *pdu);
 
 void mme_sctp_event_push(mme_event_e id,
         void *sock, ogs_sockaddr_t *addr, ogs_pkbuf_t *pkbuf,

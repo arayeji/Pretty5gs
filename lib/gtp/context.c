@@ -646,8 +646,13 @@ ogs_gtp_node_t *ogs_gtp_node_new(ogs_sockaddr_t *sa_list)
 
     node->sa_list = sa_list;
 
-    ogs_list_init(&node->local_list);
-    ogs_list_init(&node->remote_list);
+    {
+        int w;
+        for (w = 0; w < OGS_MAX_WORKERS; w++) {
+            ogs_list_init(&node->local_list[w]);
+            ogs_list_init(&node->remote_list[w]);
+        }
+    }
 
     return node;
 }

@@ -178,6 +178,12 @@ static ogs_inline ogs_uint24_t ogs_htobe24(ogs_uint24_t x)
 #define ogs_max(x , y)  (((x) > (y)) ? (x) : (y))
 #define ogs_min(x , y)  (((x) < (y)) ? (x) : (y))
 
+#if defined(_MSC_VER)
+#define OGS_THREAD_LOCAL __declspec(thread)
+#else
+#define OGS_THREAD_LOCAL __thread
+#endif
+
 #if defined(_WIN32)
 #define OGS_IS_DIR_SEPARATOR(c) ((c) == OGS_DIR_SEPARATOR || (c) == '/')
 #else

@@ -100,8 +100,10 @@ typedef struct ogs_pfcp_node_s {
     /* Timestamp of last DNS refresh for FQDN nodes. */
     ogs_time_t      last_dns_refresh;
 
-    ogs_list_t      local_list;
-    ogs_list_t      remote_list;
+    /* Transaction lists sharded by owning SMP worker (index 0 = main
+     * thread). Only the owner touches a slot; see lib/pfcp/xact.c. */
+    ogs_list_t      local_list[OGS_MAX_WORKERS];
+    ogs_list_t      remote_list[OGS_MAX_WORKERS];
 
     ogs_fsm_t       sm;             /* A state machine */
     ogs_timer_t     *t_association; /* timer to retry to associate peer node */

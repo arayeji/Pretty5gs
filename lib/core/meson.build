@@ -255,6 +255,7 @@ libcore_sources = files('''
     ogs-queue.h
     ogs-poll.h
     ogs-notify.h
+    ogs-worker.h
     ogs-tlv.h
     ogs-tlv-msg.h
     ogs-env.h
@@ -292,6 +293,7 @@ libcore_sources = files('''
     ogs-select.c
     ogs-poll.c
     ogs-notify.c
+    ogs-worker.c
     ogs-tlv.c
     ogs-tlv-msg.c
     ogs-env.c

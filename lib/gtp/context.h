@@ -75,8 +75,11 @@ typedef struct ogs_gtp_node_s {
 
     ogs_ip_t        ip;             /* F-TEID IP Address Duplicate Check */
 
-    ogs_list_t      local_list;
-    ogs_list_t      remote_list;
+    /* Transaction lists sharded by owning SMP worker (index 0 = main
+     * thread, i.e. single-threaded NFs). Only the owner touches a slot;
+     * see lib/gtp/xact.c. */
+    ogs_list_t      local_list[OGS_MAX_WORKERS];
+    ogs_list_t      remote_list[OGS_MAX_WORKERS];
 } ogs_gtp_node_t;
 
 typedef struct ogs_gtpu_resource_s {

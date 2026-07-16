@@ -305,14 +305,40 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                     addr ? addr->ogs_sa_family : 0);
             if (addr) ogs_free(addr);
             ogs_pkbuf_free(pkbuf);
+            if (e->s1ap_rx_decoded) {
+                ogs_s1ap_free(e->s1ap_message);
+                ogs_free(e->s1ap_message);
+            }
             break;
         }
 
         enb = mme_enb_find_by_addr(addr);
         ogs_free(addr);
 
-        ogs_assert(enb);
+        if (!enb) {
+            /* With S1AP RX workers a message can be in flight while the
+             * main thread removes the eNB context; without workers this
+             * cannot happen and used to be an assert. Drop it. */
+            ogs_warn("S1AP MESSAGE for removed eNB - dropped");
+            ogs_pkbuf_free(pkbuf);
+            if (e->s1ap_rx_decoded) {
+                ogs_s1ap_free(e->s1ap_message);
+                ogs_free(e->s1ap_message);
+            }
+            break;
+        }
         ogs_assert(OGS_FSM_STATE(&enb->sm));
+
+        if (e->s1ap_rx_decoded) {
+            /* APER decode already done on the RX worker */
+            e->enb_id = enb->id;
+            ogs_fsm_dispatch(&enb->sm, e);
+
+            ogs_s1ap_free(e->s1ap_message);
+            ogs_free(e->s1ap_message);
+            ogs_pkbuf_free(pkbuf);
+            break;
+        }
 
         rc = ogs_s1ap_decode(&s1ap_message, pkbuf);
         if (rc == OGS_OK) {
@@ -330,6 +356,13 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
         ogs_s1ap_free(&s1ap_message);
         ogs_pkbuf_free(pkbuf);
+        break;
+
+    case MME_EVENT_S1AP_RX_SOCK_CLOSED:
+        /* the owning RX worker confirmed poll removal (two-phase
+         * teardown started in mme_enb_remove) — destroy the socket */
+        ogs_assert(e->sock);
+        ogs_sctp_destroy(e->sock);
         break;
 
     case MME_EVENT_S1AP_TIMER:

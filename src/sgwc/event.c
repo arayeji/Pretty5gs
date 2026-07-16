@@ -20,11 +20,14 @@
 #include "event.h"
 #include "context.h"
 
-static OGS_POOL(pool, sgwc_event_t);
-
+/*
+ * Events cross threads in SMP mode (the RX router allocates, a worker
+ * frees), so they come from ogs_calloc — the talloc wrappers in
+ * lib/core/ogs-memory.c are serialized behind a mutex — instead of the
+ * single-thread ogs_pool allocator.
+ */
 void sgwc_event_init(void)
 {
-    ogs_pool_init(&pool, ogs_app()->pool.event);
 }
 
 void sgwc_event_term(void)
@@ -35,16 +38,14 @@ void sgwc_event_term(void)
 
 void sgwc_event_final(void)
 {
-    ogs_pool_final(&pool);
 }
 
 sgwc_event_t *sgwc_event_new(sgwc_event_e id)
 {
     sgwc_event_t *e = NULL;
 
-    ogs_pool_alloc(&pool, &e);
+    e = ogs_calloc(1, sizeof(*e));
     ogs_assert(e);
-    memset(e, 0, sizeof(*e));
 
     e->id = id;
 
@@ -56,7 +57,30 @@ void sgwc_event_free(sgwc_event_t *e)
     ogs_assert(e);
     if (e->admin_upf_addr)
         ogs_freeaddrinfo(e->admin_upf_addr);
-    ogs_pool_free(&pool, e);
+    ogs_free(e);
+}
+
+int sgwc_event_push_local(sgwc_event_t *e)
+{
+    int rv;
+    ogs_worker_t *worker = ogs_worker_self();
+
+    ogs_assert(e);
+
+    if (worker) {
+        rv = ogs_worker_post(worker, e);
+    } else {
+        rv = ogs_queue_push(ogs_app()->queue, e);
+        if (rv == OGS_OK)
+            ogs_pollset_notify(ogs_app()->pollset);
+    }
+
+    if (rv != OGS_OK) {
+        ogs_error("sgwc_event_push_local() failed [%d]", (int)rv);
+        sgwc_event_free(e);
+    }
+
+    return rv;
 }
 
 const char *sgwc_event_get_name(sgwc_event_t *e)

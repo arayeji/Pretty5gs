@@ -266,6 +266,9 @@ typedef struct mme_context_s {
     /* S1SetupResponse */
     uint8_t         relative_capacity;
 
+    /* S1AP RX decode offload worker threads (0 = single-threaded) */
+    int             s1ap_rx_workers;
+
     /* Generator for unique identification */
     uint32_t        mme_ue_s1ap_id;         /* mme_ue_s1ap_id generator */
 

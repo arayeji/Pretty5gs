@@ -96,6 +96,11 @@ void sgwc_event_final(void);
 sgwc_event_t *sgwc_event_new(sgwc_event_e id);
 void sgwc_event_free(sgwc_event_t *e);
 
+/* Deliver an event to the calling thread's own loop: the current SMP
+ * worker's queue, or the app queue on the main thread. Frees the event
+ * and returns the push result on failure. */
+int sgwc_event_push_local(sgwc_event_t *e);
+
 const char *sgwc_event_get_name(sgwc_event_t *e);
 
 #ifdef __cplusplus
