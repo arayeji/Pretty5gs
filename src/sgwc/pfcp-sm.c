@@ -513,6 +513,23 @@ static void pfcp_restoration(ogs_pfcp_node_t *node)
 {
     sgwc_ue_t *sgwc_ue = NULL;
 
+    ogs_assert(node);
+
+    /*
+     * Graceful drain deletes PFCP sessions on SGW-U while keeping the local
+     * SGWC context until the deletion response arrives. A PFCP association
+     * flap under that delete storm would otherwise re-establish every still-
+     * local session (VPP count: N -> 0 -> N/2 -> 0 ...). Skip restoration
+     * while maintenance/drain is active; new Create Session is already
+     * rejected in that mode.
+     */
+    if (sgwc_self()->maintenance_mode || sgwc_self()->drain_active) {
+        ogs_warn("PFCP restoration skipped: SGWC maintenance/drain active "
+                "(peer %s)",
+                ogs_sockaddr_to_string_static(node->addr_list));
+        return;
+    }
+
     ogs_list_for_each(&sgwc_self()->sgw_ue_list, sgwc_ue) {
         sgwc_sess_t *sess = NULL;
         ogs_assert(sgwc_ue);
