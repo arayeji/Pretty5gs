@@ -50,6 +50,13 @@ the single-threaded daemon.
   inbound-roam path); atomic session counter.
 - `src/sgwc/event.c` — events via mutexed talloc (cross-thread safe);
   `sgwc_event_push_local()`.
+- **MME S1AP RX decode offload** (`mme.s1ap_rx_workers: N`, default 0):
+  `src/mme/s1ap-rx.[ch]` — accepted eNB sockets assigned round-robin to
+  RX workers that poll + APER-decode and post pre-decoded
+  `MME_EVENT_S1AP_MESSAGE`s (`e->s1ap_rx_decoded`). Two-phase socket
+  teardown via `MME_EVENT_S1AP_RX_SOCK_CLOSED`; main loop drops (not
+  asserts) messages for removed eNBs; worker pushes wake the main
+  pollset; worker-side error paths skip main-thread hashes.
 
 ## Remaining (in order)
 
