@@ -776,12 +776,18 @@ void sgwc_context_reload_runtime(void)
     sgwc_reload_lists_changed = 0;
     sgwc_nwi_reload_cleared = false;
 
-    if (ogs_app_config_reload() != OGS_OK) {
-        ogs_warn("Configuration reload failed; keeping previous config");
-        ogs_reload_audit_warn("YAML parse failed; previous config kept");
-        ogs_reload_audit_finish("SGWC", false);
-        ogs_log_cycle();
-        return;
+    /*
+     * Main thread reloads the YAML document once; shard workers then
+     * re-apply from the already-refreshed ogs_app()->document.
+     */
+    if (!ogs_worker_self()) {
+        if (ogs_app_config_reload() != OGS_OK) {
+            ogs_warn("Configuration reload failed; keeping previous config");
+            ogs_reload_audit_warn("YAML parse failed; previous config kept");
+            ogs_reload_audit_finish("SGWC", false);
+            ogs_log_cycle();
+            return;
+        }
     }
 
     yaml_ok = true;
@@ -850,7 +856,9 @@ void sgwc_context_reload_runtime(void)
                 found = true;
             } else if (!strcmp(sgwc_key, "pfcp") ||
                     !strcmp(sgwc_key, "sgwu")) {
-                lists_added += sgwc_reload_pfcp_sgwu_sync(&sgwc_iter);
+                /* PFCP peer table is shared — only main mutates it. */
+                if (!ogs_worker_self())
+                    lists_added += sgwc_reload_pfcp_sgwu_sync(&sgwc_iter);
                 found = true;
             } else if (!strcmp(sgwc_key, "inbound_roam")) {
                 sgwc_reload_inbound_roam(&sgwc_iter);

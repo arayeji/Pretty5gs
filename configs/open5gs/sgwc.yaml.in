@@ -30,6 +30,7 @@ global:
 #    triggers: start,interim,stop
 #
 sgwc:
+#  workers: 0   # SMP session shards (0=off/default, max 8). Trial on staging first.
   metrics:
     server:
       - address: 127.0.0.3

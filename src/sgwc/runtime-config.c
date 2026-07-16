@@ -152,8 +152,8 @@ char *sgwc_runtime_config_dump(void)
         cJSON_AddItemToArray(rules, entry);
     }
 
-    json_append_gtp_peers(runtime, "mme_s11_list", &ctx->mme_s11_list);
-    json_append_gtp_peers(runtime, "pgw_s5c_list", &ctx->pgw_s5c_list);
+    json_append_gtp_peers(runtime, "mme_s11_list", sgwc_mme_s11_list());
+    json_append_gtp_peers(runtime, "pgw_s5c_list", sgwc_pgw_s5c_list());
     json_append_pfcp_peers(runtime, "sgwu_pfcp_peers");
 
     cJSON_AddItemToObject(runtime, "trace_imsi", json_append_trace_imsi());

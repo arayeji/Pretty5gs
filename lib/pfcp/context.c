@@ -25,6 +25,10 @@ int __ogs_pfcp_domain;
 static ogs_pfcp_context_t self;
 static int context_initialized = 0;
 
+/* Protects pfcp_peer_list mutations when SMP shard workers are active. */
+static ogs_thread_mutex_t pfcp_peer_mutex;
+static int pfcp_peer_mutex_ready = 0;
+
 static OGS_POOL(ogs_pfcp_node_pool, ogs_pfcp_node_t);
 
 static OGS_POOL(ogs_pfcp_far_pool, ogs_pfcp_far_t);
@@ -56,6 +60,11 @@ void ogs_pfcp_context_init(void)
     self.local_recovery = ogs_time_ntp32_now();
 
     ogs_log_install_domain(&__ogs_pfcp_domain, "pfcp", ogs_core()->log.level);
+
+    if (!pfcp_peer_mutex_ready) {
+        ogs_thread_mutex_init(&pfcp_peer_mutex);
+        pfcp_peer_mutex_ready = 1;
+    }
 
     ogs_pool_init(&ogs_pfcp_node_pool, ogs_app()->pool.nf);
 
@@ -1256,9 +1265,14 @@ ogs_pfcp_node_t *ogs_pfcp_node_add(ogs_list_t *list,
         return NULL;
     }
 
+    if (pfcp_peer_mutex_ready)
+        ogs_thread_mutex_lock(&pfcp_peer_mutex);
+
     /* Create node with no config_addr initially */
     node = ogs_pfcp_node_new(NULL);
     if (!node) {
+        if (pfcp_peer_mutex_ready)
+            ogs_thread_mutex_unlock(&pfcp_peer_mutex);
         ogs_error("No memory: ogs_pfcp_node_add() failed node_id:%s from:%s",
                 ogs_pfcp_node_id_to_string_static(node_id),
                 ogs_sockaddr_to_string_static(from));
@@ -1275,10 +1289,15 @@ ogs_pfcp_node_t *ogs_pfcp_node_add(ogs_list_t *list,
                 ogs_pfcp_node_id_to_string_static(node_id),
                 ogs_sockaddr_to_string_static(from));
         ogs_pool_free(&ogs_pfcp_node_pool, node);
+        if (pfcp_peer_mutex_ready)
+            ogs_thread_mutex_unlock(&pfcp_peer_mutex);
         return NULL;
     }
 
     ogs_list_add(list, node);
+
+    if (pfcp_peer_mutex_ready)
+        ogs_thread_mutex_unlock(&pfcp_peer_mutex);
 
     return node;
 }
@@ -1292,9 +1311,13 @@ ogs_pfcp_node_t *ogs_pfcp_node_find(ogs_list_t *list,
     ogs_pfcp_node_id_t *node_id, ogs_sockaddr_t *from)
 {
     ogs_pfcp_node_t *cur;
+    ogs_pfcp_node_t *found = NULL;
 
     ogs_assert(list);
     ogs_assert(node_id || from);
+
+    if (pfcp_peer_mutex_ready)
+        ogs_thread_mutex_lock(&pfcp_peer_mutex);
 
     ogs_list_for_each(list, cur) {
         /*
@@ -1308,18 +1331,23 @@ ogs_pfcp_node_t *ogs_pfcp_node_find(ogs_list_t *list,
             if (!ogs_pfcp_node_id_compare(&cur->node_id, node_id))
                 continue;
         }
-        if (!from)
-            return cur;
+        if (!from) {
+            found = cur;
+            break;
+        }
 
         /* Check if 'from' is in cur->addr_list. */
         if (ogs_sockaddr_check_any_match(cur->addr_list, NULL,
                                          from, /* compare_port= */ true)) {
-            return cur;
+            found = cur;
+            break;
         }
     }
 
-    /* No match found. */
-    return NULL;
+    if (pfcp_peer_mutex_ready)
+        ogs_thread_mutex_unlock(&pfcp_peer_mutex);
+
+    return found;
 }
 
 /******************************************************************************
@@ -1426,7 +1454,13 @@ void ogs_pfcp_node_remove(ogs_list_t *list, ogs_pfcp_node_t *node)
     ogs_assert(list);
     ogs_assert(node);
 
+    if (pfcp_peer_mutex_ready)
+        ogs_thread_mutex_lock(&pfcp_peer_mutex);
+
     ogs_list_remove(list, node);
+
+    if (pfcp_peer_mutex_ready)
+        ogs_thread_mutex_unlock(&pfcp_peer_mutex);
     ogs_pfcp_node_free(node);
 }
 

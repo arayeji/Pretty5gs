@@ -389,6 +389,16 @@ sgwc_context_t *sgwc_self(void);
 
 int sgwc_context_parse_config(void);
 
+/* Shared GTP peer lists (main + all shard workers). Lock around find/add. */
+void sgwc_peers_lock(void);
+void sgwc_peers_unlock(void);
+ogs_list_t *sgwc_mme_s11_list(void);
+ogs_list_t *sgwc_pgw_s5c_list(void);
+ogs_list_t *sgwc_sgsn_gn_list(void);
+
+/* Process-wide session counter (atomic). */
+int sgwc_session_count(void);
+
 sgwc_mme_peer_t *sgwc_mme_peer_get(ogs_gtp_node_t *gnode);
 void sgwc_mme_peer_attach(ogs_gtp_node_t *gnode);
 void sgwc_mme_peer_detach(ogs_gtp_node_t *gnode);

@@ -716,13 +716,15 @@ void sgwc_sxa_handle_session_establishment_response(
 
     /* Receive Control Plane(UL) : PGW-S5C */
     if (sgwc_resolve_pgw_s5c_teid(sess, create_session_request, &pgw_s5c_teid)) {
+        sgwc_peers_lock();
         pgw = ogs_gtp_node_find_by_f_teid(
-                &sgwc_self()->pgw_s5c_list, pgw_s5c_teid);
+                sgwc_pgw_s5c_list(), pgw_s5c_teid);
         if (!pgw) {
             pgw = ogs_gtp_node_add_by_f_teid(
-                    &sgwc_self()->pgw_s5c_list,
+                    sgwc_pgw_s5c_list(),
                     pgw_s5c_teid, ogs_gtp_self()->gtpc_port);
             if (!pgw) {
+                sgwc_peers_unlock();
                 ogs_error("ogs_gtp_node_add_by_f_teid() failed");
                 sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
                         OGS_GTP2_CAUSE_SYSTEM_FAILURE);
@@ -731,12 +733,14 @@ void sgwc_sxa_handle_session_establishment_response(
 
             rv = sgwc_gtp_connect_peer(sess, pgw);
             if (rv != OGS_OK) {
+                sgwc_peers_unlock();
                 ogs_error("sgwc_gtp_connect_peer() failed");
                 sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
                         OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING);
                 return;
             }
         }
+        sgwc_peers_unlock();
         /* Setup GTP Node */
         OGS_SETUP_GTP_NODE(sess, pgw);
     } else if (sess->gnode) {

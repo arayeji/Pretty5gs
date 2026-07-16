@@ -473,16 +473,18 @@ void sgwc_s5c_handle_create_session_response(
     ogs_assert(pgw_s5c_teid);
     sess->pgw_s5c_teid = be32toh(pgw_s5c_teid->teid);
 
-    pgw = ogs_gtp_node_find_by_f_teid(&sgwc_self()->pgw_s5c_list, pgw_s5c_teid);
+    sgwc_peers_lock();
+    pgw = ogs_gtp_node_find_by_f_teid(sgwc_pgw_s5c_list(), pgw_s5c_teid);
     if (!pgw) {
         pgw = ogs_gtp_node_add_by_f_teid(
-                &sgwc_self()->pgw_s5c_list,
+                sgwc_pgw_s5c_list(),
                 pgw_s5c_teid, ogs_gtp_self()->gtpc_port);
         ogs_assert(pgw);
 
         rv = sgwc_gtp_connect_peer(sess, pgw);
         ogs_assert(rv == OGS_OK);
     }
+    sgwc_peers_unlock();
     /* Setup GTP Node */
     OGS_SETUP_GTP_NODE(sess, pgw);
     sgwc_metrics_session_active_inc(sess);

@@ -154,8 +154,47 @@ static OGS_THREAD_LOCAL int context_initialized = 0;
 /* Shared across workers; only ever changed with atomics. */
 static int num_of_sgwc_sess = 0;
 
+/* Shared GTP peer tables — RX router and session handlers all use these. */
+static ogs_list_t shared_mme_s11_list;
+static ogs_list_t shared_pgw_s5c_list;
+static ogs_list_t shared_sgsn_gn_list;
+static ogs_thread_mutex_t shared_peers_mutex;
+static int shared_peers_ready = 0;
+
 static void stats_add_sgwc_session(void);
 static void stats_remove_sgwc_session(void);
+
+void sgwc_peers_lock(void)
+{
+    if (shared_peers_ready)
+        ogs_thread_mutex_lock(&shared_peers_mutex);
+}
+
+void sgwc_peers_unlock(void)
+{
+    if (shared_peers_ready)
+        ogs_thread_mutex_unlock(&shared_peers_mutex);
+}
+
+ogs_list_t *sgwc_mme_s11_list(void)
+{
+    return &shared_mme_s11_list;
+}
+
+ogs_list_t *sgwc_pgw_s5c_list(void)
+{
+    return &shared_pgw_s5c_list;
+}
+
+ogs_list_t *sgwc_sgsn_gn_list(void)
+{
+    return &shared_sgsn_gn_list;
+}
+
+int sgwc_session_count(void)
+{
+    return __atomic_load_n(&num_of_sgwc_sess, __ATOMIC_RELAXED);
+}
 
 /*
  * Compose a locally-allocated raw TEID/SEID value with the calling
@@ -519,10 +558,26 @@ void sgwc_context_init(void)
 
     ogs_list_init(&self.sgw_ue_list);
     ogs_list_init(&self.sgwu_nwi_rewrite_list);
-    ogs_list_init(&self.sgsn_gn_list);
     ogs_list_init(&self.gn_server_list);
     ogs_list_init(&self.gn_server_list6);
     ogs_list_init(&self.gn_pgw_list);
+
+    /*
+     * Peer lists are process-wide (shared by main + shard workers).
+     * Initialize once; TLS struct fields mme_s11_list/pgw_s5c_list/
+     * sgsn_gn_list are unused aliases kept for ABI stability.
+     */
+    if (!shared_peers_ready) {
+        ogs_list_init(&shared_mme_s11_list);
+        ogs_list_init(&shared_pgw_s5c_list);
+        ogs_list_init(&shared_sgsn_gn_list);
+        ogs_thread_mutex_init(&shared_peers_mutex);
+        shared_peers_ready = 1;
+    }
+    /* TLS peer-list fields are unused; shared accessors are the source of truth. */
+    ogs_list_init(&self.mme_s11_list);
+    ogs_list_init(&self.pgw_s5c_list);
+    ogs_list_init(&self.sgsn_gn_list);
 
     self.cdr.enabled = false;
     self.cdr.interim_interval_s = 300;
@@ -556,11 +611,24 @@ void sgwc_context_final(void)
 
     sgwc_ue_remove_all();
 
-    ogs_list_for_each_safe(&self.mme_s11_list, next_gnode, gnode)
-        sgwc_mme_peer_detach(gnode);
+    /*
+     * Shared peer tables are torn down only on the main thread after
+     * shard workers have stopped (workers must not free peers).
+     */
+    if (!ogs_worker_self() && shared_peers_ready) {
+        sgwc_peers_lock();
+        ogs_list_for_each_safe(&shared_mme_s11_list, next_gnode, gnode)
+            sgwc_mme_peer_detach(gnode);
+        ogs_list_for_each_safe(&shared_pgw_s5c_list, next_gnode, gnode)
+            sgwc_pgw_peer_detach(gnode);
+        ogs_gtp_node_remove_all(&shared_mme_s11_list);
+        ogs_gtp_node_remove_all(&shared_pgw_s5c_list);
+        ogs_gtp_node_remove_all(&shared_sgsn_gn_list);
+        sgwc_peers_unlock();
 
-    ogs_list_for_each_safe(&self.pgw_s5c_list, next_gnode, gnode)
-        sgwc_pgw_peer_detach(gnode);
+        ogs_thread_mutex_destroy(&shared_peers_mutex);
+        shared_peers_ready = 0;
+    }
 
     ogs_assert(self.imsi_ue_hash);
     ogs_hash_destroy(self.imsi_ue_hash);
@@ -577,9 +645,6 @@ void sgwc_context_final(void)
 
     ogs_pool_final(&sgwc_sess_pool);
     ogs_pool_final(&sgwc_sxa_seid_pool);
-
-    ogs_gtp_node_remove_all(&self.mme_s11_list);
-    ogs_gtp_node_remove_all(&self.pgw_s5c_list);
 
     sgwc_sgwu_nwi_rewrite_clear();
     sgwc_gn_pgw_clear();
@@ -739,7 +804,7 @@ void sgwc_mme_echo_reschedule_all(void)
     ogs_gtp_node_t *gnode = NULL;
     sgwc_mme_peer_t *peer = NULL;
 
-    ogs_list_for_each(&self.mme_s11_list, gnode) {
+    ogs_list_for_each(sgwc_mme_s11_list(), gnode) {
         peer = sgwc_mme_peer_get(gnode);
         if (peer && peer->t_echo)
             sgwc_mme_echo_schedule(peer);
@@ -895,7 +960,7 @@ void sgwc_pgw_echo_reschedule_all(void)
     ogs_gtp_node_t *gnode = NULL;
     sgwc_pgw_peer_t *peer = NULL;
 
-    ogs_list_for_each(&self.pgw_s5c_list, gnode) {
+    ogs_list_for_each(sgwc_pgw_s5c_list(), gnode) {
         peer = sgwc_pgw_peer_get(gnode);
         if (peer && peer->t_echo)
             sgwc_pgw_echo_schedule(peer);
@@ -949,14 +1014,16 @@ void sgwc_sgsn_peer_setup(ogs_gtp_node_t *gnode)
 
     ogs_assert(gnode);
 
+    sgwc_peers_lock();
     mme_gnode = ogs_gtp_node_find_by_addr(
-            &sgwc_self()->mme_s11_list, &gnode->addr);
+            sgwc_mme_s11_list(), &gnode->addr);
     if (mme_gnode) {
         ogs_info("Remove [%s]:%d from S11 (Gn SGSN peer)",
                 OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
         sgwc_mme_peer_detach(mme_gnode);
-        ogs_gtp_node_remove(&sgwc_self()->mme_s11_list, mme_gnode);
+        ogs_gtp_node_remove(sgwc_mme_s11_list(), mme_gnode);
     }
+    sgwc_peers_unlock();
 
     sgwc_sgsn_peer_attach(gnode);
     ogs_info("SGWC Gn SGSN peer: [%s]:%d",

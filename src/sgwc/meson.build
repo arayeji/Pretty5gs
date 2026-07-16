@@ -33,6 +33,7 @@ libsgwc_sources = files('''
     sgwc-trace.h
     sgwc-gtp-interop.h
     sgwc-reload-lists.h
+    sgwc-workers.h
     admin-api.h
     metrics.h
     pdn-info.h
@@ -42,6 +43,7 @@ libsgwc_sources = files('''
     timer.c
     context.c 
     sgwc-reload-lists.c
+    sgwc-workers.c
     gtp-path.c
     s11-build.c
     s11-handler.c

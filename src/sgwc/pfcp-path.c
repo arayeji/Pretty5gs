@@ -24,6 +24,7 @@
 #include "gn-handler.h"
 #include "sgwc-trace.h"
 #include "event.h"
+#include "sgwc-workers.h"
 
 static void pfcp_node_fsm_init(ogs_pfcp_node_t *node, bool try_to_associate)
 {
@@ -169,13 +170,60 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
     e->pkbuf = pkbuf;
     e->pfcp_message = message;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        goto cleanup;
+    if (!sgwc_workers_active()) {
+        rv = ogs_queue_push(ogs_app()->queue, e);
+        if (rv != OGS_OK) {
+            ogs_error("ogs_queue_push() failed:%d", (int)rv);
+            goto cleanup;
+        }
+        return;
     }
 
-    return;
+    /*
+     * Association / heartbeat / node report stay on main.
+     * Session messages with SEID route by shard bits; SEID-less
+     * session responses route by SQN xid partition.
+     */
+    {
+        int wid = -1;
+        uint8_t type = message->h.type;
+
+        if (type == OGS_PFCP_HEARTBEAT_REQUEST_TYPE ||
+                type == OGS_PFCP_HEARTBEAT_RESPONSE_TYPE ||
+                type == OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE ||
+                type == OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE ||
+                type == OGS_PFCP_ASSOCIATION_UPDATE_REQUEST_TYPE ||
+                type == OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE ||
+                type == OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE ||
+                type == OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE ||
+                type == OGS_PFCP_NODE_REPORT_REQUEST_TYPE ||
+                type == OGS_PFCP_NODE_REPORT_RESPONSE_TYPE ||
+                type == OGS_PFCP_PFD_MANAGEMENT_REQUEST_TYPE ||
+                type == OGS_PFCP_PFD_MANAGEMENT_RESPONSE_TYPE) {
+            wid = -1;
+        } else if (message->h.seid_presence && message->h.seid != 0) {
+            /* parse_msg converts SEID to host order */
+            wid = sgwc_shard_from_seid(message->h.seid);
+        } else {
+            /* SQN left in network order; OGS_PFCP_SQN_TO_XID expects that */
+            uint32_t sqn_be = message->h.seid_presence ?
+                    message->h.sqn : message->h.sqn_only;
+            wid = sgwc_shard_from_xid(OGS_PFCP_SQN_TO_XID(sqn_be));
+        }
+
+        if (wid < 0 || wid >= sgwc_workers_count()) {
+            rv = ogs_queue_push(ogs_app()->queue, e);
+            if (rv != OGS_OK) {
+                ogs_error("ogs_queue_push() failed:%d", (int)rv);
+                goto cleanup;
+            }
+            return;
+        }
+
+        if (sgwc_event_push_to_worker(wid, e) != OGS_OK)
+            return; /* push_to_worker already freed e + buffers */
+        return;
+    }
 
 cleanup:
     ogs_pkbuf_free(pkbuf);

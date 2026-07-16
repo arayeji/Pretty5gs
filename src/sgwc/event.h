@@ -80,6 +80,7 @@ typedef struct sgwc_event_s {
     int admin_force;
     ogs_pool_id_t sgwc_ue_id;
     ogs_pool_id_t admin_sess_id;  /* SGWC_EVT_ADMIN_DETACH_SESS_ONE: specific session */
+    char admin_imsi_bcd[OGS_MAX_IMSI_BCD_LEN + 1]; /* shard-routed detach */
 
     /* SGWC_EVT_ADMIN_PURGE_SEID: raw SGW-U F-SEID to delete + optional
      * SGW-U address filter (NULL -> the single associated SGW-U peer). */

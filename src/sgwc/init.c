@@ -28,6 +28,7 @@
 #include "metrics/prometheus/json_pager.h"
 #include "admin-api.h"
 #include "pdn-info.h"
+#include "sgwc-workers.h"
 
 #include "sgwc-reload-lists.h"
 
@@ -57,15 +58,39 @@ static int initialized = 0;
 int sgwc_initialize(void)
 {
     int rv;
+    int want_workers;
+    int saved_max_ue = 0;
+    int saved_sess = 0;
+    int saved_bearer = 0;
+    int saved_tunnel = 0;
 
 #define APP_NAME "sgwc"
     rv = ogs_app_parse_local_conf(APP_NAME);
     if (rv != OGS_OK) return rv;
 
+    rv = sgwc_workers_parse_config();
+    if (rv != OGS_OK) return rv;
+    want_workers = sgwc_workers_configured();
+
     sgwc_metrics_init();
 
     ogs_gtp_context_init(ogs_app()->pool.nf * OGS_MAX_NUM_OF_GTPU_RESOURCE);
     ogs_pfcp_context_init();
+
+    /*
+     * When shard workers are enabled, main only owns peer tables / sockets /
+     * association FSM. Shrink UE pools on main so memory goes to the shards.
+     */
+    if (want_workers > 0) {
+        saved_max_ue = ogs_global_conf()->max.ue;
+        saved_sess = ogs_app()->pool.sess;
+        saved_bearer = ogs_app()->pool.bearer;
+        saved_tunnel = ogs_app()->pool.tunnel;
+        ogs_global_conf()->max.ue = 1;
+        ogs_app()->pool.sess = 1;
+        ogs_app()->pool.bearer = 4;
+        ogs_app()->pool.tunnel = 4;
+    }
 
     sgwc_context_init();
     sgwc_event_init();
@@ -89,6 +114,16 @@ int sgwc_initialize(void)
     rv = sgwc_context_parse_config();
     if (rv != OGS_OK) return rv;
 
+    if (want_workers > 0 &&
+            sgwc_self()->inbound_roam_teid_offset >=
+                    (1u << (32 - OGS_WORKER_ID_BITS))) {
+        ogs_error("inbound_roam teid_offset 0x%x too large for "
+                "sgwc.workers (must be < 2^%d)",
+                sgwc_self()->inbound_roam_teid_offset,
+                32 - OGS_WORKER_ID_BITS);
+        return OGS_ERROR;
+    }
+
     rv = ogs_metrics_context_parse_config(APP_NAME);
     if (rv != OGS_OK) return rv;
 
@@ -109,6 +144,16 @@ int sgwc_initialize(void)
 
     ogs_app_sighup_handler_set(sgwc_sighup_handler);
 
+    if (want_workers > 0) {
+        ogs_global_conf()->max.ue = saved_max_ue;
+        ogs_app()->pool.sess = saved_sess;
+        ogs_app()->pool.bearer = saved_bearer;
+        ogs_app()->pool.tunnel = saved_tunnel;
+
+        rv = sgwc_workers_start();
+        if (rv != OGS_OK) return rv;
+    }
+
     thread = ogs_thread_create(sgwc_main, NULL);
     if (!thread) return OGS_ERROR;
 
@@ -121,6 +166,7 @@ void sgwc_terminate(void)
 {
     if (!initialized) return;
 
+    sgwc_workers_stop();
     sgwc_event_term();
 
     ogs_thread_destroy(thread);

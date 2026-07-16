@@ -21,6 +21,90 @@
 #include "pfcp-path.h"
 #include "gn-build.h"
 #include "metrics.h"
+#include "sgwc-workers.h"
+
+/*
+ * Deliver a GTP event to the owning shard (or the main queue when
+ * workers are off / message is node-local Echo).
+ */
+static int sgwc_gtp_deliver(sgwc_event_t *e, ogs_pkbuf_t *pkbuf)
+{
+    int rv;
+    int wid = -1;
+    ogs_gtp2_header_t *h2;
+    ogs_gtp1_header_t *h1;
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN + 1];
+
+    ogs_assert(e);
+    ogs_assert(pkbuf);
+
+    if (!sgwc_workers_active()) {
+        rv = ogs_queue_push(ogs_app()->queue, e);
+        if (rv != OGS_OK) {
+            ogs_error("ogs_queue_push() failed:%d", (int)rv);
+            ogs_pkbuf_free(pkbuf);
+            e->pkbuf = NULL;
+            sgwc_event_free(e);
+            return -1;
+        }
+        return 1;
+    }
+
+    if (e->id == SGWC_EVT_GN_MESSAGE) {
+        if (pkbuf->len < sizeof(ogs_gtp1_header_t)) {
+            ogs_pkbuf_free(pkbuf);
+            e->pkbuf = NULL;
+            sgwc_event_free(e);
+            return -1;
+        }
+        h1 = (ogs_gtp1_header_t *)pkbuf->data;
+        if (h1->type == OGS_GTP1_ECHO_REQUEST_TYPE ||
+                h1->type == OGS_GTP1_ECHO_RESPONSE_TYPE) {
+            wid = -1; /* main */
+        } else if (h1->teid) {
+            wid = sgwc_shard_from_teid(be32toh(h1->teid));
+        } else {
+            /* Create PDP etc. without TEID: fall back to worker 0 */
+            wid = 0;
+        }
+    } else {
+        if (pkbuf->len < 8) {
+            ogs_pkbuf_free(pkbuf);
+            e->pkbuf = NULL;
+            sgwc_event_free(e);
+            return -1;
+        }
+        h2 = (ogs_gtp2_header_t *)pkbuf->data;
+        if (h2->type == OGS_GTP2_ECHO_REQUEST_TYPE ||
+                h2->type == OGS_GTP2_ECHO_RESPONSE_TYPE) {
+            wid = -1; /* main */
+        } else if (h2->teid_presence && h2->teid != 0) {
+            wid = sgwc_shard_from_teid(be32toh(h2->teid));
+        } else if (h2->type == OGS_GTP2_CREATE_SESSION_REQUEST_TYPE &&
+                sgwc_gtpv2_peek_imsi_bcd(pkbuf, imsi_bcd,
+                    sizeof(imsi_bcd)) == OGS_OK) {
+            wid = sgwc_shard_from_imsi_bcd(imsi_bcd);
+        } else {
+            /* teid 0 / absent: route by SQN shard bits (xid partition) */
+            uint32_t sqn_be = h2->teid_presence ? h2->sqn : h2->sqn_only;
+            wid = sgwc_shard_from_xid(OGS_GTP2_SQN_TO_XID(sqn_be));
+        }
+    }
+
+    if (wid < 0 || wid >= sgwc_workers_count()) {
+        rv = ogs_queue_push(ogs_app()->queue, e);
+        if (rv != OGS_OK) {
+            ogs_error("ogs_queue_push() failed:%d", (int)rv);
+            ogs_pkbuf_free(pkbuf);
+            e->pkbuf = NULL;
+            sgwc_event_free(e);
+            return -1;
+        }
+        return 1;
+    }
+
+    return sgwc_event_push_to_worker(wid, e) == OGS_OK ? 1 : -1;
+}
 
 /*
  * PGW peers are normally learned from Create Session F-TEID. Home PGW may
@@ -56,10 +140,12 @@ static int sgwc_gn_queue_message(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
     ogs_assert(pkbuf);
     ogs_assert(from);
 
-    gnode = ogs_gtp_node_find_by_addr(&sgwc_self()->sgsn_gn_list, from);
+    sgwc_peers_lock();
+    gnode = ogs_gtp_node_find_by_addr(sgwc_sgsn_gn_list(), from);
     if (!gnode) {
-        gnode = ogs_gtp_node_add_by_addr(&sgwc_self()->sgsn_gn_list, from);
+        gnode = ogs_gtp_node_add_by_addr(sgwc_sgsn_gn_list(), from);
         if (!gnode) {
+            sgwc_peers_unlock();
             ogs_error("Failed to create SGSN gnode [%s]:%u",
                     OGS_ADDR(from, frombuf), OGS_PORT(from));
             ogs_pkbuf_free(pkbuf);
@@ -73,21 +159,14 @@ static int sgwc_gn_queue_message(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
                     OGS_ADDR(from, frombuf), OGS_PORT(from));
         sgwc_sgsn_peer_setup(gnode);
     }
+    sgwc_peers_unlock();
 
     e = sgwc_event_new(SGWC_EVT_GN_MESSAGE);
     ogs_assert(e);
     e->gnode = gnode;
     e->pkbuf = pkbuf;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        ogs_pkbuf_free(pkbuf);
-        sgwc_event_free(e);
-        return -1;
-    }
-
-    return 1;
+    return sgwc_gtp_deliver(e, pkbuf);
 }
 
 static int sgwc_gn_recv_one(ogs_sock_t *sock)
@@ -197,7 +276,8 @@ static int sgwc_gtpc_recv_one(ogs_sock_t *sock)
      *   However in this case, the cause code shall not be set to
      *   "Context not found".
      */
-    gnode = ogs_gtp_node_find_by_addr(&sgwc_self()->pgw_s5c_list, &from);
+    sgwc_peers_lock();
+    gnode = ogs_gtp_node_find_by_addr(sgwc_pgw_s5c_list(), &from);
     if (!gnode) {
         uint8_t msg_type = 0;
 
@@ -206,8 +286,9 @@ static int sgwc_gtpc_recv_one(ogs_sock_t *sock)
 
         if (sgwc_gtpc_is_s5_pgw_message(msg_type)) {
             gnode = ogs_gtp_node_add_by_addr(
-                    &sgwc_self()->pgw_s5c_list, &from);
+                    sgwc_pgw_s5c_list(), &from);
             if (!gnode) {
+                sgwc_peers_unlock();
                 ogs_error("Failed to create PGW gnode(%s:%u), mempool full, "
                         "ignoring msg!",
                         OGS_ADDR(&from, frombuf), OGS_PORT(&from));
@@ -237,22 +318,25 @@ static int sgwc_gtpc_recv_one(ogs_sock_t *sock)
         e = sgwc_event_new(SGWC_EVT_S5C_MESSAGE);
         ogs_assert(e);
         e->gnode = gnode;
+        sgwc_peers_unlock();
     } else {
         if (sgwc_self()->gn_enabled &&
                 ogs_gtp_node_find_by_addr(
-                    &sgwc_self()->sgsn_gn_list, &from)) {
+                    sgwc_sgsn_gn_list(), &from)) {
+            sgwc_peers_unlock();
             ogs_debug("Ignoring GTPv2 from known Gn SGSN [%s]:%u",
                     OGS_ADDR(&from, frombuf), OGS_PORT(&from));
             ogs_pkbuf_free(pkbuf);
             return 0;
         }
 
-        gnode = ogs_gtp_node_find_by_addr(&sgwc_self()->mme_s11_list, &from);
+        gnode = ogs_gtp_node_find_by_addr(sgwc_mme_s11_list(), &from);
         if (!gnode) {
-            gnode = ogs_gtp_node_add_by_addr(&sgwc_self()->mme_s11_list, &from);
+            gnode = ogs_gtp_node_add_by_addr(sgwc_mme_s11_list(), &from);
             if (!gnode) {
                 uint8_t msg_type = 0;
 
+                sgwc_peers_unlock();
                 if (pkbuf->len >= sizeof(ogs_gtp2_header_t))
                     msg_type = ((ogs_gtp2_header_t *)pkbuf->data)->type;
                 ogs_error("Failed to create MME gnode [%s]:%u mempool full "
@@ -264,6 +348,7 @@ static int sgwc_gtpc_recv_one(ogs_sock_t *sock)
             gnode->sock = sock;
         }
         sgwc_mme_peer_setup(gnode);
+        sgwc_peers_unlock();
         e = sgwc_event_new(SGWC_EVT_S11_MESSAGE);
         ogs_assert(e);
         e->gnode = gnode;
@@ -271,15 +356,7 @@ static int sgwc_gtpc_recv_one(ogs_sock_t *sock)
 
     e->pkbuf = pkbuf;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        ogs_pkbuf_free(e->pkbuf);
-        sgwc_event_free(e);
-        return -1;
-    }
-
-    return 1;
+    return sgwc_gtp_deliver(e, pkbuf);
 }
 
 static void _gtpv2_c_recv_cb(short when, ogs_socket_t fd, void *data)

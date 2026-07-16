@@ -70,48 +70,26 @@ the single-threaded daemon.
   asserts) messages for removed eNBs; worker pushes wake the main
   pollset; worker-side error paths skip main-thread hashes.
 
-## Remaining (in order)
+## Done (SGW-C shards)
 
-1. **`src/sgwc/init.c` — worker bring-up.** Parse `sgwc.workers`
-   (int, 0..8, default 0). If >0: after main context init, create
-   workers with `event_capacity = ogs_app()->pool.event`,
-   `timer_capacity = ogs_app()->pool.timer`, `poll_capacity = 64`.
-   `thread_init` hook: `sgwc_context_init(); sgwc_context_parse_config();
-   ogs_gtp_xact_init(); ogs_pfcp_xact_init(); ogs_fsm_init(worker FSM)`.
-   Worker FSM = `sgwc_state_operational` only (association FSM stays on
-   main). `dispatch` = `ogs_fsm_dispatch` + `sgwc_event_free`.
-   `thread_fini` mirrors. Divide per-worker pool sizes:
-   `max.ue / workers`, `pool.sess / workers` (override before
-   context_init via a setter, don't mutate shared conf).
-2. **`src/sgwc/gtp-path.c` — S11/S5/Gn RX router.** In the recv cbs,
-   when workers active: parse only the GTPv2 header
-   (`ogs_gtp2_header_t`): `teid_presence && teid != 0` →
-   `wid = teid >> 29`. `teid == 0`: Echo → handle on main;
-   Create Session Request → scan TLVs for IMSI IE (type 1, instance 0)
-   → `wid = imsi_bcd_hash % workers` (re-attach lands on the owner);
-   anything else teid-0 → main (log). Post the existing event types to
-   the worker. GTPv1 (Gn): same via 16-bit SQN top bits for responses,
-   TEID for the rest.
-3. **`src/sgwc/pfcp-path.c` — Sx RX router.** Header `SEID != 0` →
-   `wid = (seid >> 29) & 7`. `SEID == 0`: node-related
-   (assoc/heartbeat/report with SEID 0) → main; responses with SEID 0
-   → route by SQN top bits (xid partition). Association FSM, heartbeat
-   timers stay main-only.
-4. **`lib/gtp/context.c`, `lib/pfcp/context.c`** — mutex around node
-   add/remove/find (peers are few and long-lived; a plain mutex is
-   fine). Workers may look up nodes concurrently with a rare add.
-5. **Metrics** — `sgwc_metrics` gauges written from workers: make the
-   per-PLMN/per-PGW gauges per-worker-labeled or aggregate via
-   atomics; prom counters are already lock-protected internally.
-6. **Admin API / SIGHUP** — fan the event out: allocate one event per
-   worker and `ogs_worker_post` each; drain/maintenance must run on
-   every shard.
-7. **Tests** — `tests/` attach/volte flows with `workers: 2`; a TSAN
-   job: `meson setup tsan -Db_sanitize=thread -Dbuildtype=debugoptimized`.
-8. **MME (Stage C)** — first increment: S1AP RX decode offload (per
-   S6a pattern: decode in RX threads, post decoded events); then shard
-   by `MME_UE_S1AP_ID` top bits + `imsi→shard` map, per
-   `docs/` discussion. Do not start before SGW-C soaks.
+1. **`src/sgwc/sgwc-workers.c` + `init.c`** — parse `sgwc.workers`
+   (0..8, default 0); `ogs_worker_shards_enable()`; per-shard pools;
+   worker FSM = `sgwc_state_operational`.
+2. **GTP / PFCP RX routers** — TEID/SEID/IMSI/SQN shard steering;
+   Echo + PFCP association stay on main.
+3. **Shared GTP peer lists** (`sgwc_mme_s11_list` etc.) + mutex;
+   PFCP peer list mutex in `lib/pfcp/context.c`.
+4. **Admin / SIGHUP / drain / orphan purge** fan-out to every shard.
+
+## Remaining
+
+1. **Metrics** — per-PLMN/per-PGW gauges from workers: label by shard
+   or aggregate via atomics (prom counters already locked).
+2. **Tests** — attach/VoLTE with `workers: 2`; optional TSAN job.
+3. **Admin session list dump** — still walks the calling thread's UE
+   list; use IMSI-routed detach / atomic `sgwc_session_count()` for ops.
+4. **MME Stage C** — full UE sharding (S1AP RX offload already exists).
+   Do not enable MME UE shards before SGW-C soaks in production.
 
 ## Audit follow-ups (2026-07-16 review)
 
@@ -124,15 +102,12 @@ the single-threaded daemon.
 - **F4 picked**: `fix(sgwc): skip PFCP restoration during maintenance
   drain` cherry-picked onto this branch.
 - **F5**: allocation already keeps shard bits below the CMD bit;
-  routers MUST mask with `& 7` (documented above). Re-verify when the
-  SGW-C GTP router is written.
-- **F2/F6 open**: SGW-C workers remain unimplemented — do not add or
-  enable a `sgwc.workers` knob until routers, node-table mutexes and
-  drain/admin fan-out land. The TLS context means main-thread drain
-  cannot see worker-owned sessions yet.
-- **F7 open**: `ogs_worker_post()` is a blocking push; worker queues
-  currently carry only rare watch/unwatch commands, but switch to
-  trypush + drop metric before any high-rate use.
+  routers mask with `& 7` in `sgwc_shard_from_teid/xid`.
+- **F2/F6 closed**: SGW-C workers, RX routers, shared peer lists and
+  drain/admin fan-out are implemented. Keep `sgwc.workers: 0` in
+  production until staging soak.
+- **F7 open**: `ogs_worker_post()` is a blocking push; switch to
+  trypush + drop metric under sustained overload.
 - **F8 open**: RX offload is wired for the lksctp `SOCK_STREAM` path
   only; with usrsctp (`SOCK_SEQPACKET` upcalls) the knob is a no-op.
 
@@ -148,5 +123,13 @@ the single-threaded daemon.
 
   Watch main-thread CPU (`rate(process_cpu_seconds_total[5m])`), GTP
   xact timeout counters, and S1 setup churn during an eNB flap storm.
-- SGW-C `workers:` — not implemented; do not enable anything.
+- SGW-C staging trial:
+
+  ```yaml
+  sgwc:
+    workers: 2   # 0 = off (default); max 8
+  ```
+
+  Watch main vs worker CPU, GTP/PFCP xact timeouts, and drain/SIGHUP.
+  `inbound_roam.gtpc.teid_offset` must stay below 2^29 when workers > 0.
 - Then production during a night window with a rollback binary staged.

@@ -15,6 +15,7 @@
 
 #include "admin-api.h"
 #include "runtime-config.h"
+#include "sgwc-workers.h"
 
 #include <stdarg.h>
 #include <string.h>
@@ -47,13 +48,8 @@ static size_t fmt_json_status(char *body, size_t cap, int status,
 
 static int sgwc_count_sessions(void)
 {
-    sgwc_ue_t *ue = NULL;
-    int count = 0;
-
-    ogs_list_for_each(&sgwc_self()->sgw_ue_list, ue)
-        count += ogs_list_count(&ue->sess_list);
-
-    return count;
+    /* Atomic process-wide counter — correct with or without shard workers. */
+    return sgwc_session_count();
 }
 
 static void sgwc_admin_set_maintenance(bool maintenance)
@@ -77,6 +73,7 @@ static int sgwc_admin_maintenance_queue(sgwc_event_e id, int force,
     }
     e->admin_force = force;
 
+    /* Maintenance/drain always enter on main; sm fans out to shards. */
     rv = ogs_queue_push(ogs_app()->queue, e);
     if (rv != OGS_OK) {
         sgwc_event_free(e);
@@ -182,41 +179,53 @@ static int sgwc_admin_session_detach(const ogs_metrics_query_t *q,
         return ADMIN_HTTP_BAD_REQUEST;
     }
 
-    ogs_pool_id_t sgwc_ue_id = OGS_INVALID_POOL_ID;
-
-    ogs_metrics_dump_lock();
-    sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_imsi_bcd(q->imsi);
-    if (sgwc_ue) sgwc_ue_id = sgwc_ue->id;
-    ogs_metrics_dump_unlock();
-
-    if (sgwc_ue_id == OGS_INVALID_POOL_ID) {
-        *body_len = fmt_json_status(body, body_cap,
-                ADMIN_HTTP_NOT_FOUND, "session not found");
-        return ADMIN_HTTP_NOT_FOUND;
-    }
-
+    int force = q->force ? 1 : 0;
     sgwc_event_t *e = sgwc_event_new(SGWC_EVT_ADMIN_DETACH_SESSION);
     if (!e) {
         *body_len = fmt_json_status(body, body_cap,
                 ADMIN_HTTP_INTERNAL_ERROR, "event_new failed");
         return ADMIN_HTTP_INTERNAL_ERROR;
     }
-    e->sgwc_ue_id = sgwc_ue_id;
-    e->admin_force = q->force ? 1 : 0;
+    e->admin_force = force;
+    ogs_cpystrn(e->admin_imsi_bcd, q->imsi, sizeof(e->admin_imsi_bcd));
 
-    int rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        sgwc_event_free(e);
-        *body_len = fmt_json_status(body, body_cap,
-                ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
-        return ADMIN_HTTP_SERVICE_UNAVAIL;
+    if (sgwc_workers_active()) {
+        int wid = sgwc_shard_from_imsi_bcd(q->imsi);
+        int rv = sgwc_event_push_to_worker(wid, e);
+        if (rv != OGS_OK) {
+            *body_len = fmt_json_status(body, body_cap,
+                    ADMIN_HTTP_SERVICE_UNAVAIL, "worker queue full");
+            return ADMIN_HTTP_SERVICE_UNAVAIL;
+        }
+    } else {
+        ogs_pool_id_t sgwc_ue_id = OGS_INVALID_POOL_ID;
+        sgwc_ue_t *sgwc_ue;
+
+        ogs_metrics_dump_lock();
+        sgwc_ue = sgwc_ue_find_by_imsi_bcd(q->imsi);
+        if (sgwc_ue) sgwc_ue_id = sgwc_ue->id;
+        ogs_metrics_dump_unlock();
+
+        if (sgwc_ue_id == OGS_INVALID_POOL_ID) {
+            sgwc_event_free(e);
+            *body_len = fmt_json_status(body, body_cap,
+                    ADMIN_HTTP_NOT_FOUND, "session not found");
+            return ADMIN_HTTP_NOT_FOUND;
+        }
+        e->sgwc_ue_id = sgwc_ue_id;
+
+        if (ogs_queue_push(ogs_app()->queue, e) != OGS_OK) {
+            sgwc_event_free(e);
+            *body_len = fmt_json_status(body, body_cap,
+                    ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
+            return ADMIN_HTTP_SERVICE_UNAVAIL;
+        }
+        ogs_pollset_notify(ogs_app()->pollset);
     }
-
-    ogs_pollset_notify(ogs_app()->pollset);
 
     *body_len = fmt_json_status(body, body_cap, ADMIN_HTTP_ACCEPTED,
             "session detach queued for imsi=%s mode=%s",
-            q->imsi, e->admin_force ? "force" : "graceful");
+            q->imsi, force ? "force" : "graceful");
     return ADMIN_HTTP_ACCEPTED;
 }
 

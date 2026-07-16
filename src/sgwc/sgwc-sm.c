@@ -22,6 +22,7 @@
 #include "gn-handler.h"
 #include "context.h"
 #include "sgwc-reload-lists.h"
+#include "sgwc-workers.h"
 
 #include "gtp-path.h"
 #include "pfcp-path.h"
@@ -60,7 +61,7 @@ static void sgwc_handle_echo_response(
 #define SGWC_ADMIN_DRAIN_BATCH      256 /* UEs per batch */
 #define SGWC_ADMIN_DRAIN_INTERVAL   ogs_time_from_msec(100)
 
-static ogs_timer_t *t_admin_drain = NULL;
+static OGS_THREAD_LOCAL ogs_timer_t *t_admin_drain = NULL;
 
 static void sgwc_admin_drain_step(void);
 
@@ -146,7 +147,8 @@ static void sgwc_admin_drain_step(void)
     if (more) {
         if (!t_admin_drain) {
             t_admin_drain = ogs_timer_add(
-                    ogs_app()->timer_mgr, admin_drain_timer_cb, NULL);
+                    ogs_worker_timer_mgr(ogs_app()->timer_mgr),
+                    admin_drain_timer_cb, NULL);
             ogs_assert(t_admin_drain);
         }
         ogs_timer_start(t_admin_drain, SGWC_ADMIN_DRAIN_INTERVAL);
@@ -213,8 +215,12 @@ void sgwc_state_initial(ogs_fsm_t *s, sgwc_event_t *e)
 
     ogs_assert(s);
 
-    /* Start the periodic orphan sweep on the main thread (owns timer_mgr). */
-    sgwc_orphan_timer_start();
+    /*
+     * Orphan sweep owns the UE/session lists. With shard workers those live
+     * on the worker threads; main has none. Single-threaded: main only.
+     */
+    if (!ogs_worker_shards_active() || ogs_worker_self())
+        sgwc_orphan_timer_start();
 
     OGS_FSM_TRAN(s, &sgwc_state_operational);
 }
@@ -593,25 +599,41 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         break;
     case SGWC_EVT_CONFIG_RELOAD:
         sgwc_context_reload_runtime();
+        /* Main reloads YAML + PFCP peers; shards re-apply from the document. */
+        if (!ogs_worker_self() && sgwc_workers_active())
+            sgwc_event_fanout_workers(SGWC_EVT_CONFIG_RELOAD, 0);
         break;
 
     case SGWC_EVT_ADMIN_MAINTENANCE_ENABLE:
         sgwc_self()->maintenance_mode = true;
         ogs_info("admin maintenance: enabled");
+        if (!ogs_worker_self() && sgwc_workers_active())
+            sgwc_event_fanout_workers(SGWC_EVT_ADMIN_MAINTENANCE_ENABLE, 0);
         break;
 
     case SGWC_EVT_ADMIN_MAINTENANCE_DISABLE:
         sgwc_self()->maintenance_mode = false;
         ogs_info("admin maintenance: disabled");
+        if (!ogs_worker_self() && sgwc_workers_active())
+            sgwc_event_fanout_workers(SGWC_EVT_ADMIN_MAINTENANCE_DISABLE, 0);
         break;
 
     case SGWC_EVT_ADMIN_MAINTENANCE_DRAIN:
         sgwc_self()->maintenance_mode = true;
-        sgwc_admin_drain_begin(e->admin_force ? true : false);
+        if (!ogs_worker_self() && sgwc_workers_active()) {
+            /* Each shard drains its own UE list. */
+            sgwc_event_fanout_workers(SGWC_EVT_ADMIN_MAINTENANCE_DRAIN,
+                    e->admin_force);
+        } else {
+            sgwc_admin_drain_begin(e->admin_force ? true : false);
+        }
         break;
 
     case SGWC_EVT_ADMIN_DETACH_SESSION:
-        sgwc_ue = sgwc_ue_find_by_id(e->sgwc_ue_id);
+        if (e->admin_imsi_bcd[0])
+            sgwc_ue = sgwc_ue_find_by_imsi_bcd(e->admin_imsi_bcd);
+        else
+            sgwc_ue = sgwc_ue_find_by_id(e->sgwc_ue_id);
         if (sgwc_ue) {
             ogs_info("admin session detach: imsi=%s mode=%s",
                     sgwc_ue->imsi_bcd,
@@ -667,6 +689,11 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
 
     case SGWC_EVT_ADMIN_PURGE_ORPHANS: {
         int purged = 0, remaining;
+
+        if (!ogs_worker_self() && sgwc_workers_active()) {
+            sgwc_event_fanout_workers(SGWC_EVT_ADMIN_PURGE_ORPHANS, 0);
+            break;
+        }
         /*
          * Admin-triggered purge. Reuse the shared sweep with the same grace as
          * the periodic task so a manual purge never aborts an attach that is
