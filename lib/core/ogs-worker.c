@@ -48,6 +48,10 @@ ogs_worker_t *ogs_worker_create(int id,
     worker->queue = ogs_queue_create(event_capacity);
     ogs_assert(worker->queue);
 
+    ogs_thread_mutex_init(&worker->ready_mutex);
+    ogs_thread_cond_init(&worker->ready_cond);
+    worker->ready = false;
+
     worker_count++;
 
     return worker;
@@ -75,6 +79,13 @@ void ogs_worker_start(ogs_worker_t *worker)
 
     worker->thread = ogs_thread_create(worker_main, worker);
     ogs_assert(worker->thread);
+
+    /* Block until thread_init finished: workers come up one at a time,
+     * so per-worker context/config setup needs no locking. */
+    ogs_thread_mutex_lock(&worker->ready_mutex);
+    while (!worker->ready)
+        ogs_thread_cond_wait(&worker->ready_cond, &worker->ready_mutex);
+    ogs_thread_mutex_unlock(&worker->ready_mutex);
 }
 
 void ogs_worker_destroy(ogs_worker_t *worker)
@@ -91,6 +102,9 @@ void ogs_worker_destroy(ogs_worker_t *worker)
     ogs_queue_destroy(worker->queue);
     ogs_timer_mgr_destroy(worker->timer_mgr);
     ogs_pollset_destroy(worker->pollset);
+
+    ogs_thread_cond_destroy(&worker->ready_cond);
+    ogs_thread_mutex_destroy(&worker->ready_mutex);
 
     worker_count--;
 
@@ -137,6 +151,11 @@ static void worker_main(void *data)
 
     if (worker->thread_init)
         worker->thread_init(worker);
+
+    ogs_thread_mutex_lock(&worker->ready_mutex);
+    worker->ready = true;
+    ogs_thread_cond_signal(&worker->ready_cond);
+    ogs_thread_mutex_unlock(&worker->ready_mutex);
 
     for ( ;; ) {
         ogs_pollset_poll(worker->pollset,

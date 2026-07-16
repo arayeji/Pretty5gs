@@ -59,6 +59,13 @@ typedef struct ogs_worker_s {
     ogs_worker_hook_f thread_init;  /* runs on worker thread before loop */
     ogs_worker_hook_f thread_fini;  /* runs on worker thread after loop */
 
+    /* startup barrier: ogs_worker_start() returns only after thread_init
+     * has completed, so workers can safely take turns parsing the shared
+     * app config without extra locking. */
+    ogs_thread_mutex_t ready_mutex;
+    ogs_thread_cond_t ready_cond;
+    bool ready;
+
     void *data;                     /* NF-private shard state */
 } ogs_worker_t;
 
