@@ -23,6 +23,7 @@
 #include "mme-context.h"
 #include "mme-trace.h"
 #include "s1ap-path.h"
+#include "s1ap-rx.h"
 
 #if HAVE_USRSCTP
 static void usrsctp_recv_handler(struct socket *socket, void *data, int flags);
@@ -208,7 +209,7 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
         ogs_pkbuf_free(pkbuf);
         if (ogs_sctp_recv_would_block(size))
             return 0;
-        mme_ran_error(mme_enb_find_by_addr(&from), NULL, NULL, "s1ap", NULL,
+        mme_ran_error(s1ap_rx_safe_enb_lookup(&from), NULL, NULL, "s1ap", NULL,
                 "ogs_sctp_recvmsg(%d) failed(%d:%s)",
                 size, errno, strerror(errno));
         return -1;
@@ -282,13 +283,13 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
 
         case SCTP_SEND_FAILED :
 #if HAVE_USRSCTP
-            mme_ran_error(mme_enb_find_by_addr(&from), NULL, NULL, "s1ap", NULL,
+            mme_ran_error(s1ap_rx_safe_enb_lookup(&from), NULL, NULL, "s1ap", NULL,
                     "SCTP_SEND_FAILED:[T:%d, F:0x%x, S:%d]",
                     not->sn_send_failed_event.ssfe_type,
                     not->sn_send_failed_event.ssfe_flags,
                     not->sn_send_failed_event.ssfe_error);
 #else
-            mme_ran_error(mme_enb_find_by_addr(&from), NULL, NULL, "s1ap", NULL,
+            mme_ran_error(s1ap_rx_safe_enb_lookup(&from), NULL, NULL, "s1ap", NULL,
                     "SCTP_SEND_FAILED:[T:%d, F:0x%x, S:%d]",
                     not->sn_send_failed.ssf_type,
                     not->sn_send_failed.ssf_flags,
@@ -322,6 +323,24 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
         addr = ogs_calloc(1, sizeof(ogs_sockaddr_t));
         ogs_assert(addr);
         s1ap_copy_peer_addr(addr, &from, sock);
+
+        if (ogs_worker_self()) {
+            /* S1AP RX worker: do the APER decode here, off the main
+             * thread, and hand the main loop a finished PDU. On decode
+             * failure fall through with the raw pkbuf — the main loop
+             * re-decodes, fails identically and sends the S1AP error
+             * indication from its own context. */
+            ogs_s1ap_message_t *pdu = ogs_calloc(1, sizeof(*pdu));
+            ogs_assert(pdu);
+
+            if (ogs_s1ap_decode(pdu, pkbuf) == OGS_OK) {
+                s1ap_event_push_decoded(sock, addr, pkbuf, pdu);
+                return 1;
+            }
+
+            ogs_s1ap_free(pdu);
+            ogs_free(pdu);
+        }
 
         s1ap_event_push(MME_EVENT_S1AP_MESSAGE, sock, addr, pkbuf, 0, 0);
         return 1;

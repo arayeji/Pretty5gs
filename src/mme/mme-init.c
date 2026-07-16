@@ -27,6 +27,7 @@
 
 #include "mme-fd-path.h"
 #include "s1ap-path.h"
+#include "s1ap-rx.h"
 #include "sgsap-path.h"
 #include "mme-gtp-path.h"
 #include "metrics.h"
@@ -118,6 +119,12 @@ int mme_initialize(void)
     rv = sgsap_open();
     if (rv != OGS_OK) return OGS_ERROR;
 
+    /* before s1ap_open(): eNB sockets are assigned at accept time */
+    if (mme_self()->s1ap_rx_workers > 0) {
+        rv = s1ap_rx_workers_start(mme_self()->s1ap_rx_workers);
+        if (rv != OGS_OK) return OGS_ERROR;
+    }
+
     rv = s1ap_open();
     if (rv != OGS_OK) return OGS_ERROR;
 
@@ -148,6 +155,7 @@ void mme_terminate(void)
     mme_gtp_close();
     sgsap_close();
     s1ap_close();
+    s1ap_rx_workers_stop();
 
     ogs_metrics_context_close(ogs_metrics_self());
 

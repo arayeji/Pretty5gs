@@ -251,6 +251,39 @@ const char *mme_event_get_name(mme_event_t *e)
     return "UNKNOWN_EVENT";
 }
 
+void s1ap_event_push_decoded(void *sock, ogs_sockaddr_t *addr,
+        ogs_pkbuf_t *pkbuf, ogs_s1ap_message_t *pdu)
+{
+    mme_event_t *e = NULL;
+    int rv;
+
+    ogs_assert(sock);
+    ogs_assert(pkbuf);
+    ogs_assert(pdu);
+
+    e = mme_event_new(MME_EVENT_S1AP_MESSAGE);
+    ogs_assert(e);
+    e->sock = sock;
+    e->addr = addr;
+    e->pkbuf = pkbuf;
+    e->s1ap_message = pdu;
+    e->s1ap_rx_decoded = true;
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        if (e->addr)
+            ogs_free(e->addr);
+        ogs_pkbuf_free(e->pkbuf);
+        ogs_s1ap_free(pdu);
+        ogs_free(pdu);
+        mme_event_free(e);
+        return;
+    }
+
+    ogs_pollset_notify(ogs_app()->pollset);
+}
+
 void mme_sctp_event_push(mme_event_e id,
         void *sock, ogs_sockaddr_t *addr, ogs_pkbuf_t *pkbuf,
         uint16_t max_num_of_istreams, uint16_t max_num_of_ostreams)
@@ -276,10 +309,16 @@ void mme_sctp_event_push(mme_event_e id,
         if (e->pkbuf)
             ogs_pkbuf_free(e->pkbuf);
         mme_event_free(e);
+        return;
+    }
+
+    if (ogs_worker_self()) {
+        /* pushed from an S1AP RX worker: the main loop no longer polls
+         * these sockets, so it may be asleep — wake it */
+        ogs_pollset_notify(ogs_app()->pollset);
+        return;
     }
 #if HAVE_USRSCTP
-    else {
-        ogs_pollset_notify(ogs_app()->pollset);
-    }
+    ogs_pollset_notify(ogs_app()->pollset);
 #endif
 }

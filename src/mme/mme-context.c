@@ -33,6 +33,7 @@
 #include "mme-reload-lists.h"
 #include "mme-inbound-roam-apn.h"
 #include "s1ap-path.h"
+#include "s1ap-rx.h"
 #include "s1ap-handler.h"
 #include "mme-sm.h"
 #include "mme-gtp-path.h"
@@ -1186,6 +1187,18 @@ int mme_context_parse_config(void)
                 } else if (!strcmp(mme_key, "relative_capacity")) {
                     const char *v = ogs_yaml_iter_value(&mme_iter);
                     if (v) self.relative_capacity = atoi(v);
+                } else if (!strcmp(mme_key, "s1ap_rx_workers")) {
+                    /* S1AP RX decode offload threads (0 = off) */
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+                    if (v) {
+                        self.s1ap_rx_workers = atoi(v);
+                        if (self.s1ap_rx_workers < 0 ||
+                            self.s1ap_rx_workers > OGS_MAX_WORKERS) {
+                            ogs_error("mme.s1ap_rx_workers must be 0..%d",
+                                    OGS_MAX_WORKERS);
+                            self.s1ap_rx_workers = 0;
+                        }
+                    }
                 } else if (!strcmp(mme_key, "s1ap")) {
                     ogs_yaml_iter_t s1ap_iter;
                     ogs_yaml_iter_recurse(&mme_iter, &s1ap_iter);
@@ -5467,9 +5480,16 @@ mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
     enb->sctp.type = mme_enb_sock_type(enb->sctp.sock);
 
     if (enb->sctp.type == SOCK_STREAM) {
-        enb->sctp.poll.read = ogs_pollset_add(ogs_app()->pollset,
-            OGS_POLLIN, sock->fd, s1ap_recv_upcall, sock);
-        ogs_assert(enb->sctp.poll.read);
+        if (s1ap_rx_active()) {
+            /* the owning RX worker polls this socket; poll.read stays
+             * NULL on the main thread (see s1ap-rx.c) */
+            s1ap_rx_watch_sock(sock);
+            enb->sctp.poll.read = NULL;
+        } else {
+            enb->sctp.poll.read = ogs_pollset_add(ogs_app()->pollset,
+                OGS_POLLIN, sock->fd, s1ap_recv_upcall, sock);
+            ogs_assert(enb->sctp.poll.read);
+        }
 
         ogs_list_init(&enb->sctp.write_queue);
     }
@@ -5540,7 +5560,45 @@ int mme_enb_remove(mme_enb_t *enb)
      * ogs_sctp_flush_and_destroy will clear this buffer
      */
 
-    ogs_sctp_flush_and_destroy(&enb->sctp);
+    if (enb->sctp.type == SOCK_STREAM &&
+            s1ap_rx_unwatch_sock(enb->sctp.sock)) {
+        /*
+         * Two-phase teardown: the RX worker owns the read poll. Flush
+         * the main-thread half here (address, write side); the socket
+         * itself is destroyed on MME_EVENT_S1AP_RX_SOCK_CLOSED after
+         * the worker confirms it removed its poll entry.
+         */
+        ogs_pkbuf_t *wq_pkbuf = NULL, *wq_next = NULL;
+
+        ogs_free(enb->sctp.addr);
+
+        if (enb->sctp.poll.write)
+            ogs_pollset_remove(enb->sctp.poll.write);
+
+        ogs_list_for_each_safe(&enb->sctp.write_queue, wq_next, wq_pkbuf) {
+            ogs_list_remove(&enb->sctp.write_queue, wq_pkbuf);
+            ogs_pkbuf_free(wq_pkbuf);
+        }
+    } else if (enb->sctp.type == SOCK_STREAM && !enb->sctp.poll.read) {
+        /* RX workers already stopped (shutdown path): the worker's poll
+         * entry died with its pollset; destroy the socket directly —
+         * ogs_sctp_flush_and_destroy() would assert on poll.read */
+        ogs_pkbuf_t *wq_pkbuf = NULL, *wq_next = NULL;
+
+        ogs_free(enb->sctp.addr);
+
+        if (enb->sctp.poll.write)
+            ogs_pollset_remove(enb->sctp.poll.write);
+
+        ogs_sctp_destroy(enb->sctp.sock);
+
+        ogs_list_for_each_safe(&enb->sctp.write_queue, wq_next, wq_pkbuf) {
+            ogs_list_remove(&enb->sctp.write_queue, wq_pkbuf);
+            ogs_pkbuf_free(wq_pkbuf);
+        }
+    } else {
+        ogs_sctp_flush_and_destroy(&enb->sctp);
+    }
 
     if (enb->enb_ue_hash) {
         ogs_hash_destroy(enb->enb_ue_hash);
