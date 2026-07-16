@@ -53,7 +53,7 @@ static OGS_THREAD_LOCAL OGS_POOL(pool, ogs_gtp_xact_t);
  */
 static uint32_t xact_next_xid(uint32_t min, uint32_t max)
 {
-    if (ogs_worker_active()) {
+    if (ogs_worker_shards_active()) {
         /* max-min+1 is a power of two for both GTPv1 (0..0xffff) and
          * GTPv2 (1..0x800000 => span below is exact) id spaces. */
         uint32_t span = ((max - min + 1) >> OGS_WORKER_ID_BITS);

@@ -88,6 +88,17 @@ ogs_worker_t *ogs_worker_self(void);
  * on the main thread before they are started, so this needs no locking. */
 bool ogs_worker_active(void);
 
+/*
+ * Protocol sharding is OPT-IN, separate from worker existence: helper
+ * workers (e.g. the MME S1AP RX decode offload) must not change GTP/
+ * PFCP xid allocation or TEID/SEID composition. An NF that runs real
+ * protocol shard workers calls ogs_worker_shards_enable() once on the
+ * main thread BEFORE creating them; only then do the xact layers
+ * partition their id spaces and shard composition kicks in.
+ */
+void ogs_worker_shards_enable(void);
+bool ogs_worker_shards_active(void);
+
 /* Shard id of the calling thread, or 0 when on the main thread
  * (single-threaded NFs therefore behave exactly as before). */
 int ogs_worker_self_id(void);

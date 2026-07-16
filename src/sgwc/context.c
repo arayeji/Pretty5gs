@@ -163,15 +163,20 @@ static void stats_remove_sgwc_session(void);
  * Every non-initial S11/S5 message and PFCP session message carries one
  * of these values in its header, so the RX router can steer it to the
  * owning worker with a shift and no shared lookup. Applied after any
- * inbound-roam offset, so the shard bits always survive. Raw values
- * (pool index or index+offset) must stay below 2^29.
+ * inbound-roam offset, so the shard bits always survive.
+ *
+ * With sharding off (single-threaded, or only helper workers running)
+ * this is a strict no-op: no assert, no bit games — large inbound-roam
+ * TEID offsets keep working exactly as before. The 2^29 raw-value limit
+ * only exists, and is only checked, when shard workers are enabled;
+ * validate the roam offset at config parse before turning sharding on.
  */
 static uint32_t sgwc_shard_compose(uint32_t raw)
 {
-    ogs_assert(raw < (1u << (32 - OGS_WORKER_ID_BITS)));
-
-    if (!ogs_worker_active())
+    if (!ogs_worker_shards_active())
         return raw;
+
+    ogs_assert(raw < (1u << (32 - OGS_WORKER_ID_BITS)));
 
     return ((uint32_t)ogs_worker_self_id() << (32 - OGS_WORKER_ID_BITS))
         | raw;

@@ -25,8 +25,20 @@ the single-threaded daemon.
    | PFCP xid/SQN | 23 | 22..20 | `xact_next_xid()` lib/pfcp/xact.c |
    | S11/S5C TEID | 32 | 31..29 | `sgwc_shard_compose()` src/sgwc/context.c |
    | Sx SEID | 64 (values < 2^32) | 31..29 | same (equals S5C TEID) |
-   Raw values must stay below 2^29 (asserted); the inbound-roam TEID
-   offset is applied *before* shard composition.
+   Raw values must stay below 2^29 (asserted only when sharding is
+   enabled); the inbound-roam TEID offset is applied *before* shard
+   composition — validate `offset + pool size < 2^29` at config parse
+   before enabling shard workers.
+
+   **Router mask rule (GTPv2/PFCP):** shard bits sit at 22..20, BELOW
+   the CMD bit (23). Owner extraction is `(xid >> 20) & 7` — the `& 7`
+   is mandatory or Command-triggered transactions route to the wrong
+   worker (audit F5).
+
+   **Sharding is opt-in (audit F1):** id-space partitioning activates
+   only after `ogs_worker_shards_enable()`, which only an NF running
+   real protocol shard workers calls. Helper workers (MME S1AP RX
+   decode offload) never shrink the GTP/PFCP xid spaces.
 4. **The main thread is the router + housekeeper.** It owns all
    sockets' RX, the PFCP association/heartbeat FSM, metrics HTTP,
    admin API, and config reload fan-out. It holds no UE/session state
@@ -101,9 +113,40 @@ the single-threaded daemon.
    by `MME_UE_S1AP_ID` top bits + `imsi→shard` map, per
    `docs/` discussion. Do not start before SGW-C soaks.
 
+## Audit follow-ups (2026-07-16 review)
+
+- **F1 fixed**: `ogs_worker_shards_active()` (opt-in) now gates xid
+  partitioning and `sgwc_shard_compose`; RX helper workers no longer
+  affect protocol id spaces.
+- **F3 fixed**: `sgwc_shard_compose` is a strict no-op (no assert)
+  when sharding is off; roam-offset validation moves to config parse
+  when SGW-C workers land.
+- **F4 picked**: `fix(sgwc): skip PFCP restoration during maintenance
+  drain` cherry-picked onto this branch.
+- **F5**: allocation already keeps shard bits below the CMD bit;
+  routers MUST mask with `& 7` (documented above). Re-verify when the
+  SGW-C GTP router is written.
+- **F2/F6 open**: SGW-C workers remain unimplemented — do not add or
+  enable a `sgwc.workers` knob until routers, node-table mutexes and
+  drain/admin fan-out land. The TLS context means main-thread drain
+  cannot see worker-owned sessions yet.
+- **F7 open**: `ogs_worker_post()` is a blocking push; worker queues
+  currently carry only rare watch/unwatch commands, but switch to
+  trypush + drop metric before any high-rate use.
+- **F8 open**: RX offload is wired for the lksctp `SOCK_STREAM` path
+  only; with usrsctp (`SOCK_SEQPACKET` upcalls) the knob is a no-op.
+
 ## Deployment
 
-- Ship with `workers: 0` everywhere first (bit-identical behavior).
-- Enable `workers: 2` on a staging SGW-C; watch
-  `sgwc_pfcp_peers_active`, xact timeout counters, and TEID hash
-  misses; then production during a night window.
+- Ship with all knobs 0/off first (bit-identical behavior).
+- MME: after F1 fix verification, trial on staging:
+
+  ```yaml
+  mme:
+    s1ap_rx_workers: 2   # 0 = off (default); max 8
+  ```
+
+  Watch main-thread CPU (`rate(process_cpu_seconds_total[5m])`), GTP
+  xact timeout counters, and S1 setup churn during an eNB flap storm.
+- SGW-C `workers:` — not implemented; do not enable anything.
+- Then production during a night window with a rollback binary staged.

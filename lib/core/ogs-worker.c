@@ -21,6 +21,7 @@
 
 static OGS_THREAD_LOCAL ogs_worker_t *worker_self = NULL;
 static int worker_count = 0;
+static bool worker_shards = false;
 
 static void worker_main(void *data);
 
@@ -60,6 +61,18 @@ ogs_worker_t *ogs_worker_create(int id,
 bool ogs_worker_active(void)
 {
     return worker_count > 0;
+}
+
+void ogs_worker_shards_enable(void)
+{
+    /* must be decided before any worker exists (main thread, startup) */
+    ogs_assert(worker_count == 0);
+    worker_shards = true;
+}
+
+bool ogs_worker_shards_active(void)
+{
+    return worker_shards;
 }
 
 void ogs_worker_hooks(ogs_worker_t *worker,

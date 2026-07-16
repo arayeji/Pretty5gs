@@ -48,7 +48,7 @@ static OGS_THREAD_LOCAL OGS_POOL(pool, ogs_pfcp_xact_t);
  * exact and a response's owner is xid >> 20. */
 static uint32_t xact_next_xid(void)
 {
-    if (ogs_worker_active()) {
+    if (ogs_worker_shards_active()) {
         uint32_t span =
             ((PFCP_MAX_XACT_ID - PFCP_MIN_XACT_ID + 1) >> OGS_WORKER_ID_BITS);
         uint32_t base = (uint32_t)ogs_worker_self_id() * span;
