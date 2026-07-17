@@ -4658,10 +4658,6 @@ void s1ap_handle_s1_reset(
                 continue;
             }
 
-            ogs_warn("    MME_UE_S1AP_ID[%d] ENB_UE_S1AP_ID[%d]",
-                    item->mME_UE_S1AP_ID ? (int)*item->mME_UE_S1AP_ID : -1,
-                    item->eNB_UE_S1AP_ID ? (int)*item->eNB_UE_S1AP_ID : -1);
-
             if (item->mME_UE_S1AP_ID)
                 enb_ue = enb_ue_find_by_mme_ue_s1ap_id( *item->mME_UE_S1AP_ID);
             else if (item->eNB_UE_S1AP_ID)
@@ -4678,6 +4674,10 @@ void s1ap_handle_s1_reset(
                     item->eNB_UE_S1AP_ID ? (int)*item->eNB_UE_S1AP_ID : -1);
                 continue;
             }
+
+            ogs_warn("    MME_UE_S1AP_ID[%d] ENB_UE_S1AP_ID[%d]",
+                    item->mME_UE_S1AP_ID ? (int)*item->mME_UE_S1AP_ID : -1,
+                    item->eNB_UE_S1AP_ID ? (int)*item->eNB_UE_S1AP_ID : -1);
 
             /* ENB_UE Context where PartOfS1_interface was requested */
             enb_ue->part_of_s1_reset_requested = true;
