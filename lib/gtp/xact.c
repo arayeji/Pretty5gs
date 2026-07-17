@@ -29,15 +29,26 @@ typedef enum {
 } ogs_gtp_xact_stage_t;
 
 /*
- * The whole transaction layer is per-thread: each SMP worker (and the
- * main thread of a single-threaded NF) owns its own pool, xid counter
- * and timers, and only ever touches its own shard's lists on the shared
- * gnode. Cross-thread access to a transaction is a bug by construction.
+ * Transaction layer storage:
+ *   - Main / IO thread (ogs_worker_self() == NULL): process-global pool.
+ *     NF initialize() and nf_main() share it — Open5GS runs those on
+ *     different threads, so a TLS-only pool left nf_main with a NULL
+ *     id_hash and crashed on the first GTP timer (MME/SMF/SGWC).
+ *   - SMP shard workers: per-thread TLS pool. Cross-thread access to a
+ *     worker xact is still a bug by construction.
  */
-static OGS_THREAD_LOCAL int ogs_gtp_xact_initialized = 0;
-static OGS_THREAD_LOCAL uint32_t g_xact_id = 0;
+static int global_xact_initialized = 0;
+static uint32_t global_xact_id = 0;
+static OGS_POOL(global_pool, ogs_gtp_xact_t);
 
-static OGS_THREAD_LOCAL OGS_POOL(pool, ogs_gtp_xact_t);
+static OGS_THREAD_LOCAL int tls_xact_initialized = 0;
+static OGS_THREAD_LOCAL uint32_t tls_xact_id = 0;
+static OGS_THREAD_LOCAL OGS_POOL(tls_pool, ogs_gtp_xact_t);
+
+#define xact_pool() (ogs_worker_self() ? &tls_pool : &global_pool)
+#define xact_id_var() (ogs_worker_self() ? &tls_xact_id : &global_xact_id)
+#define xact_initialized_var() \
+    (ogs_worker_self() ? &tls_xact_initialized : &global_xact_initialized)
 
 /* Shard xact lists on the shared gnode: index = owning worker id
  * (0 on the main thread, so single-threaded NFs behave as before). */
@@ -53,20 +64,22 @@ static OGS_THREAD_LOCAL OGS_POOL(pool, ogs_gtp_xact_t);
  */
 static uint32_t xact_next_xid(uint32_t min, uint32_t max)
 {
+    uint32_t *xid = xact_id_var();
+
     if (ogs_worker_shards_active()) {
         /* max-min+1 is a power of two for both GTPv1 (0..0xffff) and
          * GTPv2 (1..0x800000 => span below is exact) id spaces. */
         uint32_t span = ((max - min + 1) >> OGS_WORKER_ID_BITS);
         uint32_t base = (uint32_t)ogs_worker_self_id() * span;
 
-        g_xact_id = (g_xact_id + 1) % span;
-        if (base + g_xact_id < min)
-            g_xact_id = min - base;   /* only shard 0 can go below min */
+        *xid = (*xid + 1) % span;
+        if (base + *xid < min)
+            *xid = min - base;   /* only shard 0 can go below min */
 
-        return base + g_xact_id;
+        return base + *xid;
     }
 
-    return OGS_NEXT_ID(g_xact_id, min, max);
+    return OGS_NEXT_ID(*xid, min, max);
 }
 
 static ogs_gtp_xact_t *ogs_gtp_xact_remote_create(ogs_gtp_node_t *gnode, uint8_t gtp_version, uint32_t sqn);
@@ -284,9 +297,12 @@ static void ogs_gtp_xact_log_state(
 
 int ogs_gtp_xact_init(void)
 {
-    ogs_assert(ogs_gtp_xact_initialized == 0);
+    int *ready = xact_initialized_var();
+    uint32_t *xid = xact_id_var();
 
-    ogs_pool_init(&pool, ogs_app()->pool.xact);
+    ogs_assert(*ready == 0);
+
+    ogs_pool_init(xact_pool(), ogs_app()->pool.xact);
 
     /*
      * Start the sequence number space at a random point instead of 0 so a
@@ -296,20 +312,22 @@ int ogs_gtp_xact_init(void)
      * Bounded by the GTPv1 range (the counter is shared with GTPv2 and wraps
      * within each version's own range on allocation).
      */
-    g_xact_id = ogs_random32() % (OGS_GTP1_MAX_XACT_ID + 1);
+    *xid = ogs_random32() % (OGS_GTP1_MAX_XACT_ID + 1);
 
-    ogs_gtp_xact_initialized = 1;
+    *ready = 1;
 
     return OGS_OK;
 }
 
 void ogs_gtp_xact_final(void)
 {
-    ogs_assert(ogs_gtp_xact_initialized == 1);
+    int *ready = xact_initialized_var();
 
-    ogs_pool_final(&pool);
+    ogs_assert(*ready == 1);
 
-    ogs_gtp_xact_initialized = 0;
+    ogs_pool_final(xact_pool());
+
+    *ready = 0;
 }
 
 ogs_gtp_xact_t *ogs_gtp1_xact_local_create(ogs_gtp_node_t *gnode,
@@ -323,13 +341,13 @@ ogs_gtp_xact_t *ogs_gtp1_xact_local_create(ogs_gtp_node_t *gnode,
     ogs_assert(gnode);
     ogs_assert(hdesc);
 
-    ogs_pool_id_calloc(&pool, &xact);
+    ogs_pool_id_calloc(xact_pool(), &xact);
     if (!xact) {
         ogs_error("Maximum number of xact[%lld] reached",
                     (long long)ogs_app()->pool.xact);
         return NULL;
     }
-    xact->index = ogs_pool_index(&pool, xact);
+    xact->index = ogs_pool_index(xact_pool(), xact);
 
     xact->gtp_version = 1;
     xact->org = OGS_GTP_LOCAL_ORIGINATOR;
@@ -395,13 +413,13 @@ ogs_gtp_xact_t *ogs_gtp_xact_local_create(ogs_gtp_node_t *gnode,
     ogs_assert(gnode);
     ogs_assert(hdesc);
 
-    ogs_pool_id_calloc(&pool, &xact);
+    ogs_pool_id_calloc(xact_pool(), &xact);
     if (!xact) {
         ogs_error("Maximum number of xact[%lld] reached",
                     (long long)ogs_app()->pool.xact);
         return NULL;
     }
-    xact->index = ogs_pool_index(&pool, xact);
+    xact->index = ogs_pool_index(xact_pool(), xact);
 
     xact->gtp_version = 2;
     xact->org = OGS_GTP_LOCAL_ORIGINATOR;
@@ -473,13 +491,13 @@ static ogs_gtp_xact_t *ogs_gtp_xact_remote_create(ogs_gtp_node_t *gnode, uint8_t
 
     ogs_assert(gnode);
 
-    ogs_pool_id_calloc(&pool, &xact);
+    ogs_pool_id_calloc(xact_pool(), &xact);
     if (!xact) {
         ogs_error("Maximum number of xact[%lld] reached",
                     (long long)ogs_app()->pool.xact);
         return NULL;
     }
-    xact->index = ogs_pool_index(&pool, xact);
+    xact->index = ogs_pool_index(xact_pool(), xact);
 
     xact->gtp_version = gtp_version;
     xact->org = OGS_GTP_REMOTE_ORIGINATOR;
@@ -532,7 +550,7 @@ static ogs_gtp_xact_t *ogs_gtp_xact_remote_create(ogs_gtp_node_t *gnode, uint8_t
 
 ogs_gtp_xact_t *ogs_gtp_xact_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&pool, id);
+    return ogs_pool_find_by_id(xact_pool(), id);
 }
 
 void ogs_gtp_xact_delete_all(ogs_gtp_node_t *gnode)
@@ -1616,7 +1634,7 @@ static int ogs_gtp_xact_delete(ogs_gtp_xact_t *xact)
     xact_index_del(xact);
     ogs_list_remove(xact->org == OGS_GTP_LOCAL_ORIGINATOR ?
             xact_local_list(xact->gnode) : xact_remote_list(xact->gnode), xact);
-    ogs_pool_id_free(&pool, xact);
+    ogs_pool_id_free(xact_pool(), xact);
 
     return OGS_OK;
 }

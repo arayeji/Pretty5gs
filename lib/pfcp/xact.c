@@ -31,14 +31,21 @@ typedef enum {
 } ogs_pfcp_xact_stage_t;
 
 /*
- * Per-thread transaction layer — same scheme as lib/gtp/xact.c: each SMP
- * worker owns its own pool, xid counter and timers, and only touches its
- * own shard's lists on the shared ogs_pfcp_node_t.
+ * Same storage model as lib/gtp/xact.c: process-global pool on the main
+ * / IO thread (shared by initialize + nf_main), TLS pool on SMP workers.
  */
-static OGS_THREAD_LOCAL int ogs_pfcp_xact_initialized = 0;
-static OGS_THREAD_LOCAL uint32_t g_xact_id = 0;
+static int global_xact_initialized = 0;
+static uint32_t global_xact_id = 0;
+static OGS_POOL(global_pool, ogs_pfcp_xact_t);
 
-static OGS_THREAD_LOCAL OGS_POOL(pool, ogs_pfcp_xact_t);
+static OGS_THREAD_LOCAL int tls_xact_initialized = 0;
+static OGS_THREAD_LOCAL uint32_t tls_xact_id = 0;
+static OGS_THREAD_LOCAL OGS_POOL(tls_pool, ogs_pfcp_xact_t);
+
+#define xact_pool() (ogs_worker_self() ? &tls_pool : &global_pool)
+#define xact_id_var() (ogs_worker_self() ? &tls_xact_id : &global_xact_id)
+#define xact_initialized_var() \
+    (ogs_worker_self() ? &tls_xact_initialized : &global_xact_initialized)
 
 #define xact_local_list(node)  (&(node)->local_list[ogs_worker_self_id()])
 #define xact_remote_list(node) (&(node)->remote_list[ogs_worker_self_id()])
@@ -83,19 +90,21 @@ static ogs_pfcp_xact_t *xact_index_get(
 
 static uint32_t xact_next_xid(void)
 {
+    uint32_t *xid = xact_id_var();
+
     if (ogs_worker_shards_active()) {
         uint32_t span =
             ((PFCP_MAX_XACT_ID - PFCP_MIN_XACT_ID + 1) >> OGS_WORKER_ID_BITS);
         uint32_t base = (uint32_t)ogs_worker_self_id() * span;
 
-        g_xact_id = (g_xact_id + 1) % span;
-        if (base + g_xact_id < PFCP_MIN_XACT_ID)
-            g_xact_id = PFCP_MIN_XACT_ID - base;
+        *xid = (*xid + 1) % span;
+        if (base + *xid < PFCP_MIN_XACT_ID)
+            *xid = PFCP_MIN_XACT_ID - base;
 
-        return base + g_xact_id;
+        return base + *xid;
     }
 
-    return OGS_NEXT_ID(g_xact_id, PFCP_MIN_XACT_ID, PFCP_MAX_XACT_ID);
+    return OGS_NEXT_ID(*xid, PFCP_MIN_XACT_ID, PFCP_MAX_XACT_ID);
 }
 
 static ogs_pfcp_xact_t *ogs_pfcp_xact_remote_create(
@@ -153,9 +162,12 @@ static ogs_pfcp_xact_t *ogs_pfcp_xact_find_by_id_for_timer(ogs_pool_id_t id)
 
 int ogs_pfcp_xact_init(void)
 {
-    ogs_assert(ogs_pfcp_xact_initialized == 0);
+    int *ready = xact_initialized_var();
+    uint32_t *xid = xact_id_var();
 
-    ogs_pool_init(&pool, ogs_app()->pool.xact);
+    ogs_assert(*ready == 0);
+
+    ogs_pool_init(xact_pool(), ogs_app()->pool.xact);
 
     /*
      * Start the SQN space at a random point instead of 0. UDP peers (e.g.
@@ -164,21 +176,23 @@ int ogs_pfcp_xact_init(void)
      * same low sequence numbers, those stale responses are matched to new,
      * unrelated transactions (wrong session, wrong buffered message).
      */
-    g_xact_id = ogs_random32() %
+    *xid = ogs_random32() %
             (PFCP_MAX_XACT_ID - PFCP_MIN_XACT_ID) + PFCP_MIN_XACT_ID;
 
-    ogs_pfcp_xact_initialized = 1;
+    *ready = 1;
 
     return OGS_OK;
 }
 
 void ogs_pfcp_xact_final(void)
 {
-    ogs_assert(ogs_pfcp_xact_initialized == 1);
+    int *ready = xact_initialized_var();
 
-    ogs_pool_final(&pool);
+    ogs_assert(*ready == 1);
 
-    ogs_pfcp_xact_initialized = 0;
+    ogs_pool_final(xact_pool());
+
+    *ready = 0;
 }
 
 ogs_pfcp_xact_t *ogs_pfcp_xact_local_create(ogs_pfcp_node_t *node,
@@ -188,13 +202,13 @@ ogs_pfcp_xact_t *ogs_pfcp_xact_local_create(ogs_pfcp_node_t *node,
 
     ogs_assert(node);
 
-    ogs_pool_id_calloc(&pool, &xact);
+    ogs_pool_id_calloc(xact_pool(), &xact);
     if (!xact) {
         ogs_error("Maximum number of xact[%lld] reached",
                     (long long)ogs_app()->pool.xact);
         return NULL;
     }
-    xact->index = ogs_pool_index(&pool, xact);
+    xact->index = ogs_pool_index(xact_pool(), xact);
 
     xact->org = OGS_PFCP_LOCAL_ORIGINATOR;
     xact->xid = xact_next_xid();
@@ -257,13 +271,13 @@ static ogs_pfcp_xact_t *ogs_pfcp_xact_remote_create(
 
     ogs_assert(node);
 
-    ogs_pool_id_calloc(&pool, &xact);
+    ogs_pool_id_calloc(xact_pool(), &xact);
     if (!xact) {
         ogs_error("Maximum number of xact[%lld] reached",
                     (long long)ogs_app()->pool.xact);
         return NULL;
     }
-    xact->index = ogs_pool_index(&pool, xact);
+    xact->index = ogs_pool_index(xact_pool(), xact);
 
     xact->org = OGS_PFCP_REMOTE_ORIGINATOR;
     xact->xid = OGS_PFCP_SQN_TO_XID(sqn);
@@ -327,7 +341,7 @@ void ogs_pfcp_xact_delete_all(ogs_pfcp_node_t *node)
 
 ogs_pfcp_xact_t *ogs_pfcp_xact_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&pool, id);
+    return ogs_pool_find_by_id(xact_pool(), id);
 }
 
 int ogs_pfcp_xact_update_tx(ogs_pfcp_xact_t *xact,
@@ -1009,7 +1023,7 @@ int ogs_pfcp_xact_delete(ogs_pfcp_xact_t *xact)
     xact_index_del(xact);
     ogs_list_remove(xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
             xact_local_list(xact->node) : xact_remote_list(xact->node), xact);
-    ogs_pool_id_free(&pool, xact);
+    ogs_pool_id_free(xact_pool(), xact);
 
     return OGS_OK;
 }
