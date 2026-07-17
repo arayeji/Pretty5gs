@@ -2395,9 +2395,12 @@ static void orphan_sweep_timer_cb(void *data)
     ogs_assert(e);
     e->timer_id = SGWC_TIMER_ORPHAN_SWEEP;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed [%d] for orphan sweep", (int)rv);
+    /* Non-blocking: may run from timer_mgr_expire on the draining thread. */
+    rv = ogs_queue_trypush(ogs_app()->queue, e);
+    if (rv == OGS_OK) {
+        ogs_pollset_notify(ogs_app()->pollset);
+    } else {
+        ogs_error("ogs_queue_trypush() failed [%d] for orphan sweep", (int)rv);
         sgwc_event_free(e);
     }
 }

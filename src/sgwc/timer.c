@@ -57,9 +57,16 @@ static void timer_send_event(int timer_id, void *data)
         break;
     }
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed [%d] in %s",
+    /*
+     * Must not block: this runs from ogs_timer_mgr_expire() on the same
+     * thread that drains the queue. A full queue + blocking push deadlocks
+     * main — poll never runs again, PFCP Recv-Q grows, association dies.
+     */
+    rv = ogs_queue_trypush(ogs_app()->queue, e);
+    if (rv == OGS_OK) {
+        ogs_pollset_notify(ogs_app()->pollset);
+    } else {
+        ogs_error("ogs_queue_trypush() failed [%d] in %s",
                 (int)rv, sgwc_timer_get_name(e->timer_id));
         sgwc_event_free(e);
     }

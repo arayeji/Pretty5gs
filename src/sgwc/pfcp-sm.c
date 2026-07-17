@@ -567,9 +567,12 @@ static void node_timeout(ogs_pfcp_xact_t *xact, void *data)
         e = sgwc_event_new(SGWC_EVT_SXA_NO_HEARTBEAT);
         e->pfcp_node = data;
 
-        rv = ogs_queue_push(ogs_app()->queue, e);
-        if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        /* Non-blocking: xact timeout runs under timer_mgr_expire on main. */
+        rv = ogs_queue_trypush(ogs_app()->queue, e);
+        if (rv == OGS_OK) {
+            ogs_pollset_notify(ogs_app()->pollset);
+        } else {
+            ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
             sgwc_event_free(e);
         }
         break;

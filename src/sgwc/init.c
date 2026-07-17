@@ -180,10 +180,14 @@ void sgwc_terminate(void)
 {
     if (!initialized) return;
 
-    sgwc_workers_stop();
+    /* Wake main first so it can exit; then tear down workers. Doing
+     * workers_stop() first left main posting into dying queues and, under
+     * load, ogs_thread_destroy() FATAL'd ("thread still running"). */
     sgwc_event_term();
-
     ogs_thread_destroy(thread);
+    thread = NULL;
+
+    sgwc_workers_stop();
 
     ogs_metrics_context_close(ogs_metrics_self());
 
