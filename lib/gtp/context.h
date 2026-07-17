@@ -101,6 +101,10 @@ void ogs_gtp_context_final(void);
 ogs_gtp_context_t *ogs_gtp_self(void);
 int ogs_gtp_context_parse_config(const char *local, const char *remote);
 
+/* SMP: process-global node pool + peer list mutations. */
+void ogs_gtp_node_lock(void);
+void ogs_gtp_node_unlock(void);
+
 ogs_gtp_node_t *ogs_gtp_node_new(ogs_sockaddr_t *sa_list);
 void ogs_gtp_node_free(ogs_gtp_node_t *node);
 

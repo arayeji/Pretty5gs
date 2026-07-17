@@ -1612,11 +1612,14 @@ int ogs_pfcp_setup_far_gtpu_node(ogs_pfcp_far_t *far)
     /* No Outer Header Creation */
     if (ip.len == 0) return OGS_DONE;
 
+    /* Find-or-add must be atomic: workers share gtpu_peer_list + node pool. */
+    ogs_gtp_node_lock();
     gnode = ogs_gtp_node_find_by_ip(&ogs_gtp_self()->gtpu_peer_list, &ip);
     if (!gnode) {
         gnode = ogs_gtp_node_add_by_ip(
             &ogs_gtp_self()->gtpu_peer_list, &ip, ogs_gtp_self()->gtpu_port);
         if (!gnode) {
+            ogs_gtp_node_unlock();
             ogs_error("ogs_gtp_node_add_by_ip() failed");
             return OGS_ERROR;
         }
@@ -1624,10 +1627,12 @@ int ogs_pfcp_setup_far_gtpu_node(ogs_pfcp_far_t *far)
         rv = ogs_gtp_connect(
                 ogs_gtp_self()->gtpu_sock, ogs_gtp_self()->gtpu_sock6, gnode);
         if (rv != OGS_OK) {
+            ogs_gtp_node_unlock();
             ogs_error("ogs_gtp_connect() failed");
             return rv;
         }
     }
+    ogs_gtp_node_unlock();
 
     OGS_SETUP_GTP_NODE(far, gnode);
 
@@ -1651,11 +1656,14 @@ int ogs_pfcp_setup_pdr_gtpu_node(ogs_pfcp_pdr_t *pdr)
         return rv;
     }
 
+    /* Find-or-add must be atomic: workers share gtpu_peer_list + node pool. */
+    ogs_gtp_node_lock();
     gnode = ogs_gtp_node_find_by_ip(&ogs_gtp_self()->gtpu_peer_list, &ip);
     if (!gnode) {
         gnode = ogs_gtp_node_add_by_ip(
             &ogs_gtp_self()->gtpu_peer_list, &ip, ogs_gtp_self()->gtpu_port);
         if (!gnode) {
+            ogs_gtp_node_unlock();
             ogs_error("ogs_gtp_node_add_by_ip() failed");
             return OGS_ERROR;
         }
@@ -1663,10 +1671,12 @@ int ogs_pfcp_setup_pdr_gtpu_node(ogs_pfcp_pdr_t *pdr)
         rv = ogs_gtp_connect(
                 ogs_gtp_self()->gtpu_sock, ogs_gtp_self()->gtpu_sock6, gnode);
         if (rv != OGS_OK) {
+            ogs_gtp_node_unlock();
             ogs_error("ogs_gtp_connect() failed");
             return rv;
         }
     }
+    ogs_gtp_node_unlock();
 
     OGS_SETUP_GTP_NODE(pdr, gnode);
 
@@ -1915,6 +1925,7 @@ uint8_t ogs_pfcp_object_teid_hash_set(
         }
     }
 
+    obj_lock();
     if (pdr->hash.teid.len)
         ogs_hash_set(self.object_teid_hash,
                 &pdr->hash.teid.key, pdr->hash.teid.len, NULL);
@@ -1933,17 +1944,24 @@ uint8_t ogs_pfcp_object_teid_hash_set(
                 &pdr->hash.teid.key, pdr->hash.teid.len, pdr->sess);
         break;
     default:
+        obj_unlock();
         ogs_fatal("Unknown type [%d]", type);
         ogs_assert_if_reached();
     }
+    obj_unlock();
 
     return OGS_PFCP_CAUSE_REQUEST_ACCEPTED;
 }
 
 ogs_pfcp_object_t *ogs_pfcp_object_find_by_teid(uint32_t teid)
 {
-    return (ogs_pfcp_object_t *)ogs_hash_get(
+    ogs_pfcp_object_t *obj;
+
+    obj_lock();
+    obj = (ogs_pfcp_object_t *)ogs_hash_get(
             self.object_teid_hash, &teid, sizeof(teid));
+    obj_unlock();
+    return obj;
 }
 
 int ogs_pfcp_object_count_by_teid(ogs_pfcp_sess_t *sess, uint32_t teid)
@@ -2169,6 +2187,7 @@ void ogs_pfcp_far_f_teid_hash_set(ogs_pfcp_far_t *far)
     addr = &gnode->addr;
     ogs_assert(addr);
 
+    obj_lock();
     if (far->hash.f_teid.len)
         ogs_hash_set(self.far_f_teid_hash,
                 &far->hash.f_teid.key, far->hash.f_teid.len, NULL);
@@ -2187,6 +2206,7 @@ void ogs_pfcp_far_f_teid_hash_set(ogs_pfcp_far_t *far)
         far->hash.f_teid.len += OGS_IPV6_LEN;
         break;
     default:
+        obj_unlock();
         ogs_fatal("Unknown family(%d)", family);
         ogs_abort();
         return;
@@ -2194,6 +2214,7 @@ void ogs_pfcp_far_f_teid_hash_set(ogs_pfcp_far_t *far)
 
     ogs_hash_set(self.far_f_teid_hash,
             &far->hash.f_teid.key, far->hash.f_teid.len, far);
+    obj_unlock();
 }
 
 ogs_pfcp_far_t *ogs_pfcp_far_find_by_gtpu_error_indication(ogs_pkbuf_t *pkbuf)
@@ -2254,8 +2275,15 @@ ogs_pfcp_far_t *ogs_pfcp_far_find_by_gtpu_error_indication(ogs_pkbuf_t *pkbuf)
     memcpy(hashkey.addr, p, len);
     hashkey_len = 4 + len;
 
-    return (ogs_pfcp_far_t *)ogs_hash_get(
-            self.far_f_teid_hash, &hashkey, hashkey_len);
+    {
+        ogs_pfcp_far_t *far;
+
+        obj_lock();
+        far = (ogs_pfcp_far_t *)ogs_hash_get(
+                self.far_f_teid_hash, &hashkey, hashkey_len);
+        obj_unlock();
+        return far;
+    }
 }
 
 ogs_pfcp_far_t *ogs_pfcp_far_find_by_pfcp_session_report(
@@ -2317,6 +2345,7 @@ void ogs_pfcp_far_teid_hash_set(ogs_pfcp_far_t *far)
 {
     ogs_assert(far);
 
+    obj_lock();
     if (far->hash.teid.len)
         ogs_hash_set(self.far_teid_hash,
                 &far->hash.teid.key, far->hash.teid.len, NULL);
@@ -2326,12 +2355,18 @@ void ogs_pfcp_far_teid_hash_set(ogs_pfcp_far_t *far)
 
     ogs_hash_set(self.far_teid_hash,
             &far->hash.teid.key, far->hash.teid.len, far);
+    obj_unlock();
 }
 
 ogs_pfcp_far_t *ogs_pfcp_far_find_by_teid(uint32_t teid)
 {
-    return (ogs_pfcp_far_t *)ogs_hash_get(
+    ogs_pfcp_far_t *far;
+
+    obj_lock();
+    far = (ogs_pfcp_far_t *)ogs_hash_get(
             self.far_teid_hash, &teid, sizeof(teid));
+    obj_unlock();
+    return far;
 }
 
 void ogs_pfcp_far_remove(ogs_pfcp_far_t *far)

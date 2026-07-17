@@ -18,6 +18,9 @@
  */
 
 #include "ogs-gtp.h"
+#if !defined(_WIN32)
+#include <pthread.h>
+#endif
 
 int __ogs_gtp_domain;
 static ogs_gtp_context_t self;
@@ -25,6 +28,59 @@ static int context_initialized = 0;
 
 static OGS_POOL(pool, ogs_gtp_node_t);
 static OGS_POOL(ogs_gtpu_resource_pool, ogs_gtpu_resource_t);
+
+/*
+ * Protects the process-global ogs_gtp_node pool and list mutations.
+ * SMP workers (e.g. SGW-C Sx response) race on gtpu_peer_list find/add
+ * and on ogs_pool_alloc/free. Recursive so find-or-add wrappers can nest
+ * with new/free.
+ */
+#if defined(_WIN32)
+static ogs_thread_mutex_t gtp_node_mutex;
+#else
+static pthread_mutex_t gtp_node_mutex;
+#endif
+static int gtp_node_mutex_ready = 0;
+
+static void gtp_node_mutex_setup(void)
+{
+    if (gtp_node_mutex_ready)
+        return;
+#if defined(_WIN32)
+    ogs_thread_mutex_init(&gtp_node_mutex);
+#else
+    {
+        pthread_mutexattr_t attr;
+        pthread_mutexattr_init(&attr);
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+        pthread_mutex_init(&gtp_node_mutex, &attr);
+        pthread_mutexattr_destroy(&attr);
+    }
+#endif
+    gtp_node_mutex_ready = 1;
+}
+
+void ogs_gtp_node_lock(void)
+{
+    if (!gtp_node_mutex_ready)
+        return;
+#if defined(_WIN32)
+    ogs_thread_mutex_lock(&gtp_node_mutex);
+#else
+    pthread_mutex_lock(&gtp_node_mutex);
+#endif
+}
+
+void ogs_gtp_node_unlock(void)
+{
+    if (!gtp_node_mutex_ready)
+        return;
+#if defined(_WIN32)
+    ogs_thread_mutex_unlock(&gtp_node_mutex);
+#else
+    pthread_mutex_unlock(&gtp_node_mutex);
+#endif
+}
 
 void ogs_gtp_context_init(int num_of_gtpu_resource)
 {
@@ -34,6 +90,8 @@ void ogs_gtp_context_init(int num_of_gtpu_resource)
     memset(&self, 0, sizeof(ogs_gtp_context_t));
 
     ogs_log_install_domain(&__ogs_gtp_domain, "gtp", ogs_core()->log.level);
+
+    gtp_node_mutex_setup();
 
     ogs_pool_init(&pool, ogs_app()->pool.gtp_node);
     ogs_pool_init(&ogs_gtpu_resource_pool, num_of_gtpu_resource);
@@ -50,6 +108,15 @@ void ogs_gtp_context_final(void)
 
     ogs_gtp_node_remove_all(&self.gtpu_peer_list);
     ogs_pool_final(&pool);
+
+#if defined(_WIN32)
+    if (gtp_node_mutex_ready)
+        ogs_thread_mutex_destroy(&gtp_node_mutex);
+#else
+    if (gtp_node_mutex_ready)
+        pthread_mutex_destroy(&gtp_node_mutex);
+#endif
+    gtp_node_mutex_ready = 0;
 
     context_initialized = 0;
 }
@@ -637,8 +704,10 @@ ogs_gtp_node_t *ogs_gtp_node_new(ogs_sockaddr_t *sa_list)
 
     ogs_assert(sa_list);
 
+    ogs_gtp_node_lock();
     ogs_pool_alloc(&pool, &node);
     if (!node) {
+        ogs_gtp_node_unlock();
         ogs_error("ogs_pool_alloc() failed");
         return NULL;
     }
@@ -657,6 +726,7 @@ ogs_gtp_node_t *ogs_gtp_node_new(ogs_sockaddr_t *sa_list)
             node->xact_remote_count[w] = 0;
         }
     }
+    ogs_gtp_node_unlock();
 
     return node;
 }
@@ -673,7 +743,9 @@ void ogs_gtp_node_free(ogs_gtp_node_t *node)
         ogs_hash_destroy(node->xact_hash[w]);
 
     ogs_freeaddrinfo(node->sa_list);
+    ogs_gtp_node_lock();
     ogs_pool_free(&pool, node);
+    ogs_gtp_node_unlock();
 }
 
 ogs_gtp_node_t *ogs_gtp_node_add_by_f_teid(
