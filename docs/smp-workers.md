@@ -57,9 +57,11 @@ the single-threaded daemon.
   local/remote xact lists on the shared node
   (`local_list[OGS_MAX_WORKERS]`); shard-partitioned xid allocation
   (only when `ogs_worker_active()`).
-- `src/sgwc/context.c` — context + pools thread-local;
-  `sgwc_shard_compose()` on S11 TEID / S5C TEID / Sx SEID (incl. the
-  inbound-roam path); atomic session counter.
+- `src/sgwc/context.c` — **process-global** `sgwc_context_t` + shared
+  pools/hashes (never thread-local — TLS `self` caused init vs
+  event-loop split-brain). Container mutation under `sgwc_ctx_lock`;
+  `sgwc_shard_compose()` on S11/S5C TEID / Sx SEID; atomic session
+  counter. Per-UE state is owner-thread only.
 - `src/sgwc/event.c` — events via mutexed talloc (cross-thread safe);
   `sgwc_event_push_local()`.
 - **MME S1AP RX decode offload** (`mme.s1ap_rx_workers: N`, default 0):
