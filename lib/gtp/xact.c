@@ -39,6 +39,61 @@ static ogs_gtp_xact_stage_t ogs_gtp1_xact_get_stage(uint8_t type, uint32_t xid);
 static int ogs_gtp_xact_delete(ogs_gtp_xact_t *xact);
 static int ogs_gtp_xact_update_rx(ogs_gtp_xact_t *xact, uint8_t type);
 
+/*
+ * O(1) transaction index on the gnode (perf: the linear list scans in
+ * the receive paths were the top CPU consumers on MME and SGW-C).
+ * Key = (org, version, xid). The index keeps the FIRST transaction per
+ * key, so a hit matches what the legacy list scan would have found;
+ * on a miss (or a rare duplicate key) callers fall back to the scan.
+ * Removal only clears the slot when it still points at the transaction
+ * being deleted. Counters give O(1) list lengths.
+ */
+static uint64_t xact_index_key(uint8_t org, uint8_t version, uint32_t xid)
+{
+    return ((uint64_t)org << 40) | ((uint64_t)version << 32) | xid;
+}
+
+static void xact_index_add(ogs_gtp_xact_t *xact)
+{
+    ogs_hash_t *h = xact->gnode->xact_hash;
+
+    xact->hash_key = xact_index_key(xact->org, xact->gtp_version, xact->xid);
+    if (!ogs_hash_get(h, &xact->hash_key, sizeof(xact->hash_key)))
+        ogs_hash_set(h, &xact->hash_key, sizeof(xact->hash_key), xact);
+
+    if (xact->org == OGS_GTP_LOCAL_ORIGINATOR)
+        xact->gnode->xact_local_count++;
+    else
+        xact->gnode->xact_remote_count++;
+}
+
+static void xact_index_del(ogs_gtp_xact_t *xact)
+{
+    ogs_hash_t *h = xact->gnode->xact_hash;
+
+    if (ogs_hash_get(h, &xact->hash_key, sizeof(xact->hash_key)) == xact)
+        ogs_hash_set(h, &xact->hash_key, sizeof(xact->hash_key), NULL);
+
+    if (xact->org == OGS_GTP_LOCAL_ORIGINATOR)
+        xact->gnode->xact_local_count--;
+    else
+        xact->gnode->xact_remote_count--;
+}
+
+static ogs_gtp_xact_t *xact_index_get(
+        ogs_gtp_node_t *gnode, uint8_t org, uint8_t version, uint32_t xid)
+{
+    uint64_t key = xact_index_key(org, version, xid);
+    return ogs_hash_get(gnode->xact_hash, &key, sizeof(key));
+}
+
+int ogs_gtp_xact_count(ogs_gtp_node_t *gnode, uint8_t org)
+{
+    ogs_assert(gnode);
+    return org == OGS_GTP_LOCAL_ORIGINATOR ?
+        gnode->xact_local_count : gnode->xact_remote_count;
+}
+
 static bool ogs_gtp_xact_on_list(ogs_gtp_xact_t *xact)
 {
     ogs_gtp_xact_t *iter = NULL;
@@ -98,6 +153,22 @@ static uint32_t ogs_gtp2_sqn_key(uint32_t sqn)
  * while the low sequence octet differs. Also skip completed transactions
  * (step != expect_step) so a late response does not attach to the wrong sess.
  */
+static bool ogs_gtp2_xact_local_match(
+        ogs_gtp_xact_t *xact, uint32_t xid, uint32_t rx_key, int expect_step)
+{
+    if (!xact)
+        return false;
+    if (xact->gtp_version != 2 || xact->xid != xid)
+        return false;
+    if (xact->org != OGS_GTP_LOCAL_ORIGINATOR)
+        return false;
+    if (!xact->sqn || ogs_gtp2_sqn_key(xact->sqn) != rx_key)
+        return false;
+    if (expect_step >= 0 && xact->step != expect_step)
+        return false;
+    return true;
+}
+
 static ogs_gtp_xact_t *ogs_gtp2_xact_find_local(
         ogs_list_t *list, uint32_t xid, uint32_t sqn, int expect_step)
 {
@@ -105,13 +176,7 @@ static ogs_gtp_xact_t *ogs_gtp2_xact_find_local(
     uint32_t rx_key = ogs_gtp2_sqn_key(sqn);
 
     ogs_list_for_each(list, xact) {
-        if (xact->gtp_version != 2 || xact->xid != xid)
-            continue;
-        if (xact->org != OGS_GTP_LOCAL_ORIGINATOR)
-            continue;
-        if (!xact->sqn || ogs_gtp2_sqn_key(xact->sqn) != rx_key)
-            continue;
-        if (expect_step >= 0 && xact->step != expect_step)
+        if (!ogs_gtp2_xact_local_match(xact, xid, rx_key, expect_step))
             continue;
         return xact;
     }
@@ -250,6 +315,7 @@ ogs_gtp_xact_t *ogs_gtp1_xact_local_create(ogs_gtp_node_t *gnode,
     xact->holding_rcount = ogs_local_conf()->time.message.gtp.n3_holding_rcount;
 
     ogs_list_add(&xact->gnode->local_list, xact);
+    xact_index_add(xact);
 
     rv = ogs_gtp1_xact_update_tx(xact, hdesc, pkbuf);
     if (rv != OGS_OK) {
@@ -331,6 +397,7 @@ ogs_gtp_xact_t *ogs_gtp_xact_local_create(ogs_gtp_node_t *gnode,
     }
 
     ogs_list_add(&xact->gnode->local_list, xact);
+    xact_index_add(xact);
 
     rv = ogs_gtp_xact_update_tx(xact, hdesc, pkbuf);
     if (rv != OGS_OK) {
@@ -401,6 +468,7 @@ static ogs_gtp_xact_t *ogs_gtp_xact_remote_create(ogs_gtp_node_t *gnode, uint8_t
     }
 
     ogs_list_add(&xact->gnode->remote_list, xact);
+    xact_index_add(xact);
 
     ogs_debug("[%d] REMOTE Create  peer [%s]:%d",
             xact->xid,
@@ -1108,6 +1176,15 @@ int ogs_gtp1_xact_receive(
     }
 
     ogs_assert(list);
+
+    new = xact_index_get(gnode,
+            list == &gnode->local_list ?
+                OGS_GTP_LOCAL_ORIGINATOR : OGS_GTP_REMOTE_ORIGINATOR,
+            1, xid);
+    if (new && (new->gtp_version != 1 || new->xid != xid))
+        new = NULL;
+
+    if (!new)
     ogs_list_for_each(list, new) {
         if (new->gtp_version == 1 && new->xid == xid) {
             ogs_debug("[%d] %s Find GTPv%u peer [%s]:%d",
@@ -1219,7 +1296,9 @@ int ogs_gtp_xact_receive(
          * local transaction. Do not fall back to remote_create: that always
          * fails update_rx() and drops the response under load.
          */
-        new = ogs_gtp2_xact_find_local(list, xid, sqn, 1);
+        new = xact_index_get(gnode, OGS_GTP_LOCAL_ORIGINATOR, 2, xid);
+        if (!ogs_gtp2_xact_local_match(new, xid, ogs_gtp2_sqn_key(sqn), 1))
+            new = ogs_gtp2_xact_find_local(list, xid, sqn, 1);
         if (!new) {
             ogs_warn("[sqn:0x%x] No local GTPv2 xact for type %u "
                     "from peer [%s]:%d (late or orphan response?)",
@@ -1230,7 +1309,14 @@ int ogs_gtp_xact_receive(
     } else {
         ogs_gtp_xact_t *iter = NULL;
 
-        new = NULL;
+        new = xact_index_get(gnode,
+                list == &gnode->local_list ?
+                    OGS_GTP_LOCAL_ORIGINATOR : OGS_GTP_REMOTE_ORIGINATOR,
+                2, xid);
+        if (new && (new->gtp_version != 2 || new->xid != xid))
+            new = NULL;
+
+        if (!new)
         ogs_list_for_each(list, iter) {
             if (iter->gtp_version == 2 && iter->xid == xid) {
                 new = iter;
@@ -1475,6 +1561,7 @@ static int ogs_gtp_xact_delete(ogs_gtp_xact_t *xact)
     if (assoc_xact)
         ogs_gtp_xact_deassociate(xact, assoc_xact);
 
+    xact_index_del(xact);
     ogs_list_remove(xact->org == OGS_GTP_LOCAL_ORIGINATOR ?
             &xact->gnode->local_list : &xact->gnode->remote_list, xact);
     ogs_pool_id_free(&pool, xact);

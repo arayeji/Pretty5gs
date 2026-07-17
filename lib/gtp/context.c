@@ -648,6 +648,10 @@ ogs_gtp_node_t *ogs_gtp_node_new(ogs_sockaddr_t *sa_list)
 
     ogs_list_init(&node->local_list);
     ogs_list_init(&node->remote_list);
+    node->xact_hash = ogs_hash_make();
+    ogs_assert(node->xact_hash);
+    node->xact_local_count = 0;
+    node->xact_remote_count = 0;
 
     return node;
 }
@@ -657,6 +661,8 @@ void ogs_gtp_node_free(ogs_gtp_node_t *node)
     ogs_assert(node);
 
     ogs_gtp_xact_delete_all(node);
+
+    ogs_hash_destroy(node->xact_hash);
 
     ogs_freeaddrinfo(node->sa_list);
     ogs_pool_free(&pool, node);

@@ -41,6 +41,41 @@ static ogs_pfcp_xact_stage_t ogs_pfcp_xact_get_stage(
         uint8_t type, uint32_t xid);
 static int ogs_pfcp_xact_update_rx(ogs_pfcp_xact_t *xact, uint8_t type);
 
+/*
+ * O(1) transaction index on the PFCP node — same scheme as
+ * lib/gtp/xact.c: key (org,xid), keep the FIRST xact per key, fall back
+ * to the linear scan on a miss, and clear the slot on delete only when
+ * it still points at the dying xact.
+ */
+static uint64_t xact_index_key(uint8_t org, uint32_t xid)
+{
+    return ((uint64_t)org << 40) | xid;
+}
+
+static void xact_index_add(ogs_pfcp_xact_t *xact)
+{
+    ogs_hash_t *h = xact->node->xact_hash;
+
+    xact->hash_key = xact_index_key(xact->org, xact->xid);
+    if (!ogs_hash_get(h, &xact->hash_key, sizeof(xact->hash_key)))
+        ogs_hash_set(h, &xact->hash_key, sizeof(xact->hash_key), xact);
+}
+
+static void xact_index_del(ogs_pfcp_xact_t *xact)
+{
+    ogs_hash_t *h = xact->node->xact_hash;
+
+    if (ogs_hash_get(h, &xact->hash_key, sizeof(xact->hash_key)) == xact)
+        ogs_hash_set(h, &xact->hash_key, sizeof(xact->hash_key), NULL);
+}
+
+static ogs_pfcp_xact_t *xact_index_get(
+        ogs_pfcp_node_t *node, uint8_t org, uint32_t xid)
+{
+    uint64_t key = xact_index_key(org, xid);
+    return ogs_hash_get(node->xact_hash, &key, sizeof(key));
+}
+
 static void response_timeout(void *data);
 static void holding_timeout(void *data);
 static void delayed_commit_timeout(void *data);
@@ -175,6 +210,7 @@ ogs_pfcp_xact_t *ogs_pfcp_xact_local_create(ogs_pfcp_node_t *node,
 
     ogs_list_add(xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
             &xact->node->local_list : &xact->node->remote_list, xact);
+    xact_index_add(xact);
 
     ogs_list_init(&xact->pdr_to_create_list);
 
@@ -241,6 +277,7 @@ static ogs_pfcp_xact_t *ogs_pfcp_xact_remote_create(
 
     ogs_list_add(xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
             &xact->node->local_list : &xact->node->remote_list, xact);
+    xact_index_add(xact);
 
     ogs_debug("[%d] %s Create  peer %s",
             xact->xid,
@@ -825,6 +862,15 @@ int ogs_pfcp_xact_receive(
     }
 
     ogs_assert(list);
+
+    new = xact_index_get(node,
+            list == &node->local_list ?
+                OGS_PFCP_LOCAL_ORIGINATOR : OGS_PFCP_REMOTE_ORIGINATOR,
+            xid);
+    if (new && new->xid != xid)
+        new = NULL;
+
+    if (!new)
     ogs_list_for_each(list, new) {
         if (new->xid == xid) {
             ogs_debug("[%d] %s Find    peer %s",
@@ -932,6 +978,7 @@ int ogs_pfcp_xact_delete(ogs_pfcp_xact_t *xact)
     if (xact->seq[2].pkbuf)
         ogs_pkbuf_free(xact->seq[2].pkbuf);
 
+    xact_index_del(xact);
     ogs_list_remove(xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
             &xact->node->local_list : &xact->node->remote_list, xact);
     ogs_pool_id_free(&pool, xact);

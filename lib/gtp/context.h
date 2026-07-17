@@ -77,6 +77,13 @@ typedef struct ogs_gtp_node_s {
 
     ogs_list_t      local_list;
     ogs_list_t      remote_list;
+
+    /* O(1) transaction index: (org,version,xid) -> first matching xact,
+     * plus list-length counters. Maintained by lib/gtp/xact.c. Replaces
+     * the linear list scans that dominated MME/SGW-C CPU. */
+    ogs_hash_t     *xact_hash;
+    int             xact_local_count;
+    int             xact_remote_count;
 } ogs_gtp_node_t;
 
 typedef struct ogs_gtpu_resource_s {

@@ -103,6 +103,10 @@ typedef struct ogs_pfcp_node_s {
     ogs_list_t      local_list;
     ogs_list_t      remote_list;
 
+    /* O(1) transaction index: (org,xid) -> first matching xact.
+     * Maintained by lib/pfcp/xact.c; replaces the linear receive scan. */
+    ogs_hash_t     *xact_hash;
+
     ogs_fsm_t       sm;             /* A state machine */
     ogs_timer_t     *t_association; /* timer to retry to associate peer node */
     ogs_timer_t     *t_no_heartbeat; /* heartbeat timer to check aliveness */

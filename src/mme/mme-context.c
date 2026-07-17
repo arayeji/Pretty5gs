@@ -3994,6 +3994,8 @@ mme_sgsn_t *mme_sgsn_add(ogs_sockaddr_t *addr)
 
     ogs_list_init(&sgsn->gnode.local_list);
     ogs_list_init(&sgsn->gnode.remote_list);
+    sgsn->gnode.xact_hash = ogs_hash_make();
+    ogs_assert(sgsn->gnode.xact_hash);
 
     ogs_list_init(&sgsn->route_list);
     //ogs_list_init(&sgsn->sgsn_ue_list);
@@ -4011,6 +4013,7 @@ void mme_sgsn_remove(mme_sgsn_t *sgsn)
     ogs_list_remove(&self.sgsn_list, sgsn);
 
     ogs_gtp_xact_delete_all(&sgsn->gnode);
+    ogs_hash_destroy(sgsn->gnode.xact_hash);
     ogs_freeaddrinfo(sgsn->gnode.sa_list);
 
      /* Free routes in list */
@@ -4099,6 +4102,8 @@ mme_sgw_t *mme_sgw_add(ogs_sockaddr_t *addr)
 
     ogs_list_init(&sgw->gnode.local_list);
     ogs_list_init(&sgw->gnode.remote_list);
+    sgw->gnode.xact_hash = ogs_hash_make();
+    ogs_assert(sgw->gnode.xact_hash);
 
     ogs_list_init(&sgw->sgw_ue_list);
 
@@ -4128,6 +4133,7 @@ void mme_sgw_remove(mme_sgw_t *sgw)
     }
 
     ogs_gtp_xact_delete_all(&sgw->gnode);
+    ogs_hash_destroy(sgw->gnode.xact_hash);
     ogs_freeaddrinfo(sgw->gnode.sa_list);
 
     ogs_free(sgw->tac);
@@ -4218,6 +4224,7 @@ static void mme_sgw_purge_sessions(mme_sgw_t *sgw)
      * them time out against a context that no longer exists.
      */
     ogs_gtp_xact_delete_all(&sgw->gnode);
+    ogs_hash_destroy(sgw->gnode.xact_hash);
 
     ogs_list_for_each_safe(&sgw->sgw_ue_list, next, sgw_ue) {
         mme_ue = mme_ue_find_by_id(sgw_ue->mme_ue_id);
@@ -7251,8 +7258,8 @@ int mme_ue_xact_count(mme_ue_t *mme_ue, uint8_t org)
     if (!gnode) return 0;
 
     return org == OGS_GTP_LOCAL_ORIGINATOR ?
-            ogs_list_count(&gnode->local_list) :
-                ogs_list_count(&gnode->remote_list);
+            ogs_gtp_xact_count(gnode, OGS_GTP_LOCAL_ORIGINATOR) :
+                ogs_gtp_xact_count(gnode, OGS_GTP_REMOTE_ORIGINATOR);
 }
 
 void enb_ue_associate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)

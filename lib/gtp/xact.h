@@ -90,6 +90,7 @@ typedef struct ogs_gtp_xact_s {
                                          local or remote */
 
     uint32_t        xid;            /**< Transaction ID */
+    uint64_t        hash_key;       /**< key in gnode->xact_hash */
     uint32_t        sqn;            /**< GTPv2 sequence (network byte order) */
     ogs_gtp_node_t  *gnode;         /**< Relevant GTP node context */
 
@@ -160,6 +161,9 @@ typedef struct ogs_gtp_xact_s {
 } ogs_gtp_xact_t;
 
 int ogs_gtp_xact_init(void);
+
+/* O(1) length of this node's local/remote transaction list. */
+int ogs_gtp_xact_count(ogs_gtp_node_t *gnode, uint8_t org);
 void ogs_gtp_xact_final(void);
 
 ogs_gtp_xact_t *ogs_gtp1_xact_local_create(ogs_gtp_node_t *gnode,
