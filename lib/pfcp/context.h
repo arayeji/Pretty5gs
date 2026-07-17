@@ -423,6 +423,10 @@ ED6(uint8_t     spare1:3;,
 
 void ogs_pfcp_context_init(void);
 void ogs_pfcp_context_final(void);
+
+/* SMP: pfcp_peer_list walk/mutate (select, admin add, resort, assoc). */
+void ogs_pfcp_peer_lock(void);
+void ogs_pfcp_peer_unlock(void);
 ogs_pfcp_context_t *ogs_pfcp_self(void);
 int ogs_pfcp_context_parse_config(const char *local, const char *remote);
 

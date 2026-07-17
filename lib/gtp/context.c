@@ -790,11 +790,13 @@ ogs_gtp_node_t *ogs_gtp_node_add_by_f_teid(
     rv = ogs_gtp2_f_teid_to_ip(f_teid, &node->ip);
     if (rv != OGS_OK) {
         ogs_error("ogs_gtp2_f_teid_to_ip() failed");
-        ogs_freeaddrinfo(addr);
+        ogs_gtp_node_free(node);
         return NULL;
     }
 
+    ogs_gtp_node_lock();
     ogs_list_add(list, node);
+    ogs_gtp_node_unlock();
 
     return node;
 }
@@ -817,7 +819,9 @@ ogs_gtp_node_t *ogs_gtp_node_add_by_addr(ogs_list_t *list, ogs_sockaddr_t *addr)
 
     memcpy(&gnode->addr, new, sizeof gnode->addr);
 
+    ogs_gtp_node_lock();
     ogs_list_add(list, gnode);
+    ogs_gtp_node_unlock();
 
     return gnode;
 }
@@ -826,7 +830,9 @@ void ogs_gtp_node_remove(ogs_list_t *list, ogs_gtp_node_t *node)
 {
     ogs_assert(node);
 
+    ogs_gtp_node_lock();
     ogs_list_remove(list, node);
+    ogs_gtp_node_unlock();
 
     ogs_gtp_node_free(node);
 }
@@ -835,8 +841,14 @@ void ogs_gtp_node_remove_all(ogs_list_t *list)
 {
     ogs_gtp_node_t *node = NULL, *next_node = NULL;
 
-    ogs_list_for_each_safe(list, next_node, node)
-        ogs_gtp_node_remove(list, node);
+    ogs_gtp_node_lock();
+    ogs_list_for_each_safe(list, next_node, node) {
+        ogs_list_remove(list, node);
+        ogs_gtp_node_unlock();
+        ogs_gtp_node_free(node);
+        ogs_gtp_node_lock();
+    }
+    ogs_gtp_node_unlock();
 }
 
 ogs_gtp_node_t *ogs_gtp_node_find_by_addr(
@@ -847,10 +859,12 @@ ogs_gtp_node_t *ogs_gtp_node_find_by_addr(
     ogs_assert(list);
     ogs_assert(addr);
 
+    ogs_gtp_node_lock();
     ogs_list_for_each(list, node) {
         if (ogs_sockaddr_is_equal(&node->addr, addr) == true)
             break;
     }
+    ogs_gtp_node_unlock();
 
     return node;
 }
@@ -868,10 +882,12 @@ ogs_gtp_node_t *ogs_gtp_node_find_by_f_teid(
     rv = ogs_gtp2_f_teid_to_ip(f_teid, &ip);
     ogs_assert(rv == OGS_OK);
 
+    ogs_gtp_node_lock();
     ogs_list_for_each(list, node) {
         if (memcmp(&node->ip, &ip, sizeof(ip)) == 0)
             break;
     }
+    ogs_gtp_node_unlock();
 
     return node;
 }
@@ -917,7 +933,9 @@ ogs_gtp_node_t *ogs_gtp_node_add_by_ip(
 
     memcpy(&node->ip, ip, sizeof(*ip));
 
+    ogs_gtp_node_lock();
     ogs_list_add(list, node);
+    ogs_gtp_node_unlock();
 
     return node;
 }
@@ -929,10 +947,12 @@ ogs_gtp_node_t *ogs_gtp_node_find_by_ip(ogs_list_t *list, ogs_ip_t *ip)
     ogs_assert(list);
     ogs_assert(ip);
 
+    ogs_gtp_node_lock();
     ogs_list_for_each(list, node) {
         if (memcmp(&node->ip, ip, sizeof(*ip)) == 0)
             break;
     }
+    ogs_gtp_node_unlock();
 
     return node;
 }

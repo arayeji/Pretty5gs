@@ -58,11 +58,13 @@ typedef struct sgwc_mme_peer_s {
     uint8_t peer_recovery;
     bool peer_recovery_valid;
     ogs_timer_t *t_echo;
+    bool echo_pending; /* worker deferred start onto main timer_mgr */
 } sgwc_mme_peer_t;
 
 typedef struct sgwc_sgsn_peer_s {
     ogs_gtp_node_t *gnode;
     ogs_timer_t *t_echo;
+    bool echo_pending;
 } sgwc_sgsn_peer_t;
 
 typedef struct sgwc_pgw_peer_s {
@@ -70,6 +72,7 @@ typedef struct sgwc_pgw_peer_s {
     uint8_t peer_recovery;
     bool peer_recovery_valid;
     ogs_timer_t *t_echo;
+    bool echo_pending;
 } sgwc_pgw_peer_t;
 
 /*

@@ -597,6 +597,19 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         }
         ogs_pkbuf_free(recvbuf);
         break;
+    case SGWC_EVT_PEER_ECHO_SETUP:
+        /* Workers must not touch main timer_mgr; finish echo setup here. */
+        if (ogs_worker_self()) {
+            ogs_error("SGWC_EVT_PEER_ECHO_SETUP delivered to worker");
+            break;
+        }
+        if (!e->gnode) {
+            ogs_error("SGWC_EVT_PEER_ECHO_SETUP: no gnode");
+            break;
+        }
+        sgwc_peer_echo_setup_on_main(e->gnode, e->timer_id);
+        break;
+
     case SGWC_EVT_CONFIG_RELOAD:
         sgwc_context_reload_runtime();
         /* Main reloads YAML + PFCP peers; shards re-apply from the document. */

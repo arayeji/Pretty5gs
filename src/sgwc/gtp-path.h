@@ -40,6 +40,7 @@ void sgwc_sgsn_peer_start_echo(ogs_gtp_node_t *gnode);
 void sgwc_gtp_send_pgw_echo(ogs_gtp_node_t *gnode);
 void sgwc_timer_pgw_echo(void *data);
 void sgwc_pgw_peer_setup(ogs_gtp_node_t *gnode);
+void sgwc_peer_echo_setup_on_main(ogs_gtp_node_t *gnode, int kind);
 int sgwc_gtp_send_network_delete_session(
         sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess);
 /*

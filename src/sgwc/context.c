@@ -2216,6 +2216,13 @@ void sgwc_sess_select_sgwu(sgwc_sess_t *sess)
     ogs_assert(sess);
 
     /*
+     * Workers race with PFCP association add/remove on pfcp_peer_list
+     * and the shared RR cursor (pfcp_node). Hold the peer lock for the
+     * whole select.
+     */
+    ogs_pfcp_peer_lock();
+
+    /*
      * When used for the first time, if last node is set,
      * the search is performed from the first SGW-U in a round-robin manner.
      */
@@ -2252,6 +2259,8 @@ void sgwc_sess_select_sgwu(sgwc_sess_t *sess)
                 sess->session.name ? sess->session.name : "-");
         sess->pfcp_node = NULL;
     }
+
+    ogs_pfcp_peer_unlock();
 }
 
 void sgwc_sess_abort_create(sgwc_sess_t *sess)

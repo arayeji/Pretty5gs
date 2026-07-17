@@ -58,6 +58,9 @@ typedef enum {
 
     SGWC_EVT_ORPHAN_SWEEP,            /* periodic orphan metric + optional purge    */
 
+    /* Worker deferred: create GTP peer echo timer on main timer_mgr (e->gnode). */
+    SGWC_EVT_PEER_ECHO_SETUP,
+
     SGWC_EVT_TOP,
 
 } sgwc_event_e;

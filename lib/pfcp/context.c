@@ -29,6 +29,18 @@ static int context_initialized = 0;
 static ogs_thread_mutex_t pfcp_peer_mutex;
 static int pfcp_peer_mutex_ready = 0;
 
+void ogs_pfcp_peer_lock(void)
+{
+    if (pfcp_peer_mutex_ready)
+        ogs_thread_mutex_lock(&pfcp_peer_mutex);
+}
+
+void ogs_pfcp_peer_unlock(void)
+{
+    if (pfcp_peer_mutex_ready)
+        ogs_thread_mutex_unlock(&pfcp_peer_mutex);
+}
+
 /*
  * Protects the process-global PDR/FAR/URR/QER/BAR/rule pools, the PDR
  * TEID pool, and the object/FAR TEID hashes. With SMP shard workers
@@ -3186,13 +3198,17 @@ void ogs_pfcp_peer_list_resort_by_order(ogs_list_t *peer_list)
 
     ogs_assert(peer_list);
 
+    ogs_pfcp_peer_lock();
+
     ogs_list_for_each(peer_list, node) {
         if (n < (int)(sizeof(nodes) / sizeof(nodes[0])))
             nodes[n++] = node;
     }
 
-    if (n <= 1)
+    if (n <= 1) {
+        ogs_pfcp_peer_unlock();
         return;
+    }
 
     qsort(nodes, n, sizeof(nodes[0]), ogs_pfcp_node_order_cmp);
 
@@ -3201,6 +3217,8 @@ void ogs_pfcp_peer_list_resort_by_order(ogs_list_t *peer_list)
 
     for (i = 0; i < n; i++)
         ogs_list_add(peer_list, nodes[i]);
+
+    ogs_pfcp_peer_unlock();
 }
 
 void ogs_pfcp_subnet_list_resort_by_order(ogs_list_t *subnet_list)

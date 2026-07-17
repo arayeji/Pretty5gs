@@ -22,6 +22,7 @@
 #include "gn-build.h"
 #include "metrics.h"
 #include "sgwc-workers.h"
+#include "event.h"
 
 /*
  * Deliver a GTP event to the owning shard (or the main queue when
@@ -609,6 +610,34 @@ void sgwc_timer_sgsn_echo(void *data)
     sgwc_sgsn_echo_schedule(peer);
 }
 
+/* Stored in sgwc_event_t.timer_id for SGWC_EVT_PEER_ECHO_SETUP */
+enum {
+    SGWC_PEER_ECHO_KIND_PGW = 1,
+    SGWC_PEER_ECHO_KIND_MME = 2,
+    SGWC_PEER_ECHO_KIND_SGSN = 3,
+};
+
+static int sgwc_peer_echo_defer_to_main(ogs_gtp_node_t *gnode, int kind)
+{
+    sgwc_event_t *e;
+    int rv;
+
+    ogs_assert(gnode);
+
+    e = sgwc_event_new(SGWC_EVT_PEER_ECHO_SETUP);
+    ogs_assert(e);
+    e->gnode = gnode;
+    e->timer_id = kind;
+
+    rv = ogs_queue_trypush(ogs_app()->queue, e);
+    if (rv == OGS_OK)
+        ogs_pollset_notify(ogs_app()->pollset);
+    else
+        sgwc_event_free(e);
+
+    return rv;
+}
+
 void sgwc_sgsn_peer_start_echo(ogs_gtp_node_t *gnode)
 {
     sgwc_sgsn_peer_t *peer = NULL;
@@ -618,14 +647,27 @@ void sgwc_sgsn_peer_start_echo(ogs_gtp_node_t *gnode)
     peer = sgwc_sgsn_peer_get(gnode);
     ogs_assert(peer);
 
-    if (!peer->t_echo) {
-        peer->t_echo = ogs_timer_add(
-                ogs_app()->timer_mgr, sgwc_timer_sgsn_echo, peer);
-        ogs_assert(peer->t_echo);
+    if (peer->t_echo)
+        return;
 
-        sgwc_gtp_send_sgsn_echo(gnode);
-        sgwc_sgsn_echo_schedule(peer);
+    /* Main timer_mgr is not SMP-safe — never mutate it from a worker. */
+    if (ogs_worker_self()) {
+        if (!peer->echo_pending) {
+            peer->echo_pending = true;
+            if (sgwc_peer_echo_defer_to_main(
+                        gnode, SGWC_PEER_ECHO_KIND_SGSN) != OGS_OK)
+                peer->echo_pending = false;
+        }
+        return;
     }
+
+    peer->echo_pending = false;
+    peer->t_echo = ogs_timer_add(
+            ogs_app()->timer_mgr, sgwc_timer_sgsn_echo, peer);
+    ogs_assert(peer->t_echo);
+
+    sgwc_gtp_send_sgsn_echo(gnode);
+    sgwc_sgsn_echo_schedule(peer);
 }
 
 void sgwc_timer_mme_echo(void *data)
@@ -646,21 +688,45 @@ void sgwc_mme_peer_setup(ogs_gtp_node_t *gnode)
 
     ogs_assert(gnode);
 
+    sgwc_peers_lock();
     sgwc_mme_peer_attach(gnode);
     peer = sgwc_mme_peer_get(gnode);
     ogs_assert(peer);
 
-    if (!peer->t_echo) {
-        peer->t_echo = ogs_timer_add(
-                ogs_app()->timer_mgr, sgwc_timer_mme_echo, peer);
-        ogs_assert(peer->t_echo);
-
-        ogs_info("SGWC S11 MME peer: [%s]:%d",
-                OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
-
-        sgwc_gtp_send_mme_echo(gnode);
-        sgwc_mme_echo_schedule(peer);
+    if (peer->t_echo) {
+        sgwc_peers_unlock();
+        return;
     }
+
+    if (ogs_worker_self()) {
+        if (!peer->echo_pending) {
+            peer->echo_pending = true;
+            sgwc_peers_unlock();
+            if (sgwc_peer_echo_defer_to_main(
+                        gnode, SGWC_PEER_ECHO_KIND_MME) != OGS_OK) {
+                sgwc_peers_lock();
+                peer = sgwc_mme_peer_get(gnode);
+                if (peer)
+                    peer->echo_pending = false;
+                sgwc_peers_unlock();
+            }
+        } else {
+            sgwc_peers_unlock();
+        }
+        return;
+    }
+
+    peer->echo_pending = false;
+    peer->t_echo = ogs_timer_add(
+            ogs_app()->timer_mgr, sgwc_timer_mme_echo, peer);
+    ogs_assert(peer->t_echo);
+
+    ogs_info("SGWC S11 MME peer: [%s]:%d",
+            OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
+
+    sgwc_gtp_send_mme_echo(gnode);
+    sgwc_mme_echo_schedule(peer);
+    sgwc_peers_unlock();
 }
 
 void sgwc_gtp_send_pgw_echo(ogs_gtp_node_t *gnode)
@@ -688,21 +754,125 @@ void sgwc_pgw_peer_setup(ogs_gtp_node_t *gnode)
 
     ogs_assert(gnode);
 
+    sgwc_peers_lock();
     sgwc_pgw_peer_attach(gnode);
     peer = sgwc_pgw_peer_get(gnode);
     ogs_assert(peer);
 
-    if (!peer->t_echo) {
+    if (peer->t_echo) {
+        sgwc_peers_unlock();
+        return;
+    }
+
+    if (ogs_worker_self()) {
+        if (!peer->echo_pending) {
+            peer->echo_pending = true;
+            sgwc_peers_unlock();
+            if (sgwc_peer_echo_defer_to_main(
+                        gnode, SGWC_PEER_ECHO_KIND_PGW) != OGS_OK) {
+                sgwc_peers_lock();
+                peer = sgwc_pgw_peer_get(gnode);
+                if (peer)
+                    peer->echo_pending = false;
+                sgwc_peers_unlock();
+            }
+        } else {
+            sgwc_peers_unlock();
+        }
+        return;
+    }
+
+    peer->echo_pending = false;
+    peer->t_echo = ogs_timer_add(
+            ogs_app()->timer_mgr, sgwc_timer_pgw_echo, peer);
+    ogs_assert(peer->t_echo);
+
+    ogs_info("SGWC S5 PGW peer: [%s]:%d",
+            OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
+
+    sgwc_gtp_send_pgw_echo(gnode);
+    sgwc_pgw_echo_schedule(peer);
+    sgwc_peers_unlock();
+}
+
+/* Main-thread only: finish deferred echo timer setup for a GTP peer. */
+void sgwc_peer_echo_setup_on_main(ogs_gtp_node_t *gnode, int kind)
+{
+    char buf[OGS_ADDRSTRLEN];
+
+    ogs_assert(gnode);
+    ogs_assert(!ogs_worker_self());
+
+    sgwc_peers_lock();
+
+    switch (kind) {
+    case SGWC_PEER_ECHO_KIND_PGW: {
+        sgwc_pgw_peer_t *peer = sgwc_pgw_peer_get(gnode);
+
+        if (!peer) {
+            sgwc_peers_unlock();
+            return;
+        }
+        peer->echo_pending = false;
+        if (peer->t_echo) {
+            sgwc_peers_unlock();
+            return;
+        }
         peer->t_echo = ogs_timer_add(
                 ogs_app()->timer_mgr, sgwc_timer_pgw_echo, peer);
         ogs_assert(peer->t_echo);
-
         ogs_info("SGWC S5 PGW peer: [%s]:%d",
                 OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
-
         sgwc_gtp_send_pgw_echo(gnode);
         sgwc_pgw_echo_schedule(peer);
+        break;
     }
+    case SGWC_PEER_ECHO_KIND_MME: {
+        sgwc_mme_peer_t *peer = sgwc_mme_peer_get(gnode);
+
+        if (!peer) {
+            sgwc_peers_unlock();
+            return;
+        }
+        peer->echo_pending = false;
+        if (peer->t_echo) {
+            sgwc_peers_unlock();
+            return;
+        }
+        peer->t_echo = ogs_timer_add(
+                ogs_app()->timer_mgr, sgwc_timer_mme_echo, peer);
+        ogs_assert(peer->t_echo);
+        ogs_info("SGWC S11 MME peer: [%s]:%d",
+                OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
+        sgwc_gtp_send_mme_echo(gnode);
+        sgwc_mme_echo_schedule(peer);
+        break;
+    }
+    case SGWC_PEER_ECHO_KIND_SGSN: {
+        sgwc_sgsn_peer_t *peer = sgwc_sgsn_peer_get(gnode);
+
+        if (!peer) {
+            sgwc_peers_unlock();
+            return;
+        }
+        peer->echo_pending = false;
+        if (peer->t_echo) {
+            sgwc_peers_unlock();
+            return;
+        }
+        peer->t_echo = ogs_timer_add(
+                ogs_app()->timer_mgr, sgwc_timer_sgsn_echo, peer);
+        ogs_assert(peer->t_echo);
+        sgwc_gtp_send_sgsn_echo(gnode);
+        sgwc_sgsn_echo_schedule(peer);
+        break;
+    }
+    default:
+        ogs_error("SGWC_EVT_PEER_ECHO_SETUP: unknown kind %d", kind);
+        break;
+    }
+
+    sgwc_peers_unlock();
 }
 
 int sgwc_gtp_send_s5c_delete_session_request(sgwc_sess_t *sess)

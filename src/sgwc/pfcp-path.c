@@ -999,13 +999,16 @@ ogs_pfcp_node_t *sgwc_pfcp_admin_add_sgwu_peer(
 
     ogs_assert(addr);
 
+    ogs_pfcp_peer_lock();
     node = ogs_pfcp_node_new(addr);
     if (!node) {
+        ogs_pfcp_peer_unlock();
         ogs_error("sgwc_pfcp_admin_add_sgwu_peer: node_new failed");
         return NULL;
     }
 
     ogs_list_add(&ogs_pfcp_self()->pfcp_peer_list, node);
+    ogs_pfcp_peer_unlock();
 
     if (dnns && num_of_dnns > 0) {
         if (num_of_dnns > OGS_MAX_NUM_OF_DNN)
