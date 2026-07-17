@@ -20,25 +20,43 @@
 #include "app/ogs-app.h"
 #include "ogs-pfcp.h"
 #include <limits.h>
+#if !defined(_WIN32)
+#include <pthread.h>
+#endif
 
 int __ogs_pfcp_domain;
 static ogs_pfcp_context_t self;
 static int context_initialized = 0;
 
-/* Protects pfcp_peer_list mutations when SMP shard workers are active. */
+/* Protects pfcp_peer_list mutations when SMP shard workers are active.
+ * Recursive: select/find/add may nest on the same thread. */
+#if defined(_WIN32)
 static ogs_thread_mutex_t pfcp_peer_mutex;
+#else
+static pthread_mutex_t pfcp_peer_mutex;
+#endif
 static int pfcp_peer_mutex_ready = 0;
 
 void ogs_pfcp_peer_lock(void)
 {
-    if (pfcp_peer_mutex_ready)
-        ogs_thread_mutex_lock(&pfcp_peer_mutex);
+    if (!pfcp_peer_mutex_ready)
+        return;
+#if defined(_WIN32)
+    ogs_thread_mutex_lock(&pfcp_peer_mutex);
+#else
+    pthread_mutex_lock(&pfcp_peer_mutex);
+#endif
 }
 
 void ogs_pfcp_peer_unlock(void)
 {
-    if (pfcp_peer_mutex_ready)
-        ogs_thread_mutex_unlock(&pfcp_peer_mutex);
+    if (!pfcp_peer_mutex_ready)
+        return;
+#if defined(_WIN32)
+    ogs_thread_mutex_unlock(&pfcp_peer_mutex);
+#else
+    pthread_mutex_unlock(&pfcp_peer_mutex);
+#endif
 }
 
 /*
@@ -129,7 +147,17 @@ void ogs_pfcp_context_init(void)
     ogs_log_install_domain(&__ogs_pfcp_domain, "pfcp", ogs_core()->log.level);
 
     if (!pfcp_peer_mutex_ready) {
+#if defined(_WIN32)
         ogs_thread_mutex_init(&pfcp_peer_mutex);
+#else
+        {
+            pthread_mutexattr_t attr;
+            pthread_mutexattr_init(&attr);
+            pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+            pthread_mutex_init(&pfcp_peer_mutex, &attr);
+            pthread_mutexattr_destroy(&attr);
+        }
+#endif
         pfcp_peer_mutex_ready = 1;
     }
     pfcp_object_mutex_setup();
@@ -1341,14 +1369,12 @@ ogs_pfcp_node_t *ogs_pfcp_node_add(ogs_list_t *list,
         return NULL;
     }
 
-    if (pfcp_peer_mutex_ready)
-        ogs_thread_mutex_lock(&pfcp_peer_mutex);
+    ogs_pfcp_peer_lock();
 
     /* Create node with no config_addr initially */
     node = ogs_pfcp_node_new(NULL);
     if (!node) {
-        if (pfcp_peer_mutex_ready)
-            ogs_thread_mutex_unlock(&pfcp_peer_mutex);
+        ogs_pfcp_peer_unlock();
         ogs_error("No memory: ogs_pfcp_node_add() failed node_id:%s from:%s",
                 ogs_pfcp_node_id_to_string_static(node_id),
                 ogs_sockaddr_to_string_static(from));
@@ -1365,15 +1391,13 @@ ogs_pfcp_node_t *ogs_pfcp_node_add(ogs_list_t *list,
                 ogs_pfcp_node_id_to_string_static(node_id),
                 ogs_sockaddr_to_string_static(from));
         ogs_pool_free(&ogs_pfcp_node_pool, node);
-        if (pfcp_peer_mutex_ready)
-            ogs_thread_mutex_unlock(&pfcp_peer_mutex);
+        ogs_pfcp_peer_unlock();
         return NULL;
     }
 
     ogs_list_add(list, node);
 
-    if (pfcp_peer_mutex_ready)
-        ogs_thread_mutex_unlock(&pfcp_peer_mutex);
+    ogs_pfcp_peer_unlock();
 
     return node;
 }
@@ -1392,8 +1416,7 @@ ogs_pfcp_node_t *ogs_pfcp_node_find(ogs_list_t *list,
     ogs_assert(list);
     ogs_assert(node_id || from);
 
-    if (pfcp_peer_mutex_ready)
-        ogs_thread_mutex_lock(&pfcp_peer_mutex);
+    ogs_pfcp_peer_lock();
 
     ogs_list_for_each(list, cur) {
         /*
@@ -1420,8 +1443,7 @@ ogs_pfcp_node_t *ogs_pfcp_node_find(ogs_list_t *list,
         }
     }
 
-    if (pfcp_peer_mutex_ready)
-        ogs_thread_mutex_unlock(&pfcp_peer_mutex);
+    ogs_pfcp_peer_unlock();
 
     return found;
 }
@@ -1530,13 +1552,11 @@ void ogs_pfcp_node_remove(ogs_list_t *list, ogs_pfcp_node_t *node)
     ogs_assert(list);
     ogs_assert(node);
 
-    if (pfcp_peer_mutex_ready)
-        ogs_thread_mutex_lock(&pfcp_peer_mutex);
+    ogs_pfcp_peer_lock();
 
     ogs_list_remove(list, node);
 
-    if (pfcp_peer_mutex_ready)
-        ogs_thread_mutex_unlock(&pfcp_peer_mutex);
+    ogs_pfcp_peer_unlock();
     ogs_pfcp_node_free(node);
 }
 

@@ -59,6 +59,16 @@ int sgwc_workers_parse_config(void)
                             OGS_MAX_WORKERS - 1, n);
                     return OGS_ERROR;
                 }
+                /*
+                 * SMP is not production-stable yet: workers:4 wedged main
+                 * (PFCP Recv-Q stuck, peers_active=0). Refuse to start
+                 * shards unless explicitly opted in via the environment.
+                 */
+                if (n > 0 && !ogs_env_get("SGWC_SMP")) {
+                    ogs_error("sgwc.workers=%d ignored — SMP disabled "
+                            "(export SGWC_SMP=1 to override)", n);
+                    n = 0;
+                }
                 sgwc_worker_configured = n;
             }
         }

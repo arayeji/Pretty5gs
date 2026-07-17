@@ -2169,10 +2169,12 @@ static ogs_pfcp_node_t *selected_sgwu_node(
     ogs_pfcp_node_t *next, *node;
     ogs_pfcp_node_t *best = NULL;
     int best_order = INT_MAX;
+    int guard;
 
     ogs_assert(current);
     ogs_assert(sess);
 
+    /* Caller must hold ogs_pfcp_peer_lock(). */
     ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, node) {
         if (!OGS_FSM_CHECK(&node->sm, sgwc_pfcp_state_associated))
             continue;
@@ -2189,36 +2191,39 @@ static ogs_pfcp_node_t *selected_sgwu_node(
     if (ogs_global_conf()->parameter.no_pfcp_rr_select == 0) {
         /* continue search from current position */
         next = ogs_list_next(current);
-        for (node = next; node; node = ogs_list_next(node)) {
+        for (node = next, guard = 0; node && guard < 256;
+                node = ogs_list_next(node), guard++) {
             if (OGS_FSM_CHECK(&node->sm, sgwc_pfcp_state_associated))
                 return node;
         }
-        /* cyclic search from top to current position */
-        for (node = ogs_list_first(&ogs_pfcp_self()->pfcp_peer_list);
-                node != next; node = ogs_list_next(node)) {
+        /* cyclic search from top to current position.
+         * Bound iterations: a corrupted circular list with next==NULL
+         * would otherwise spin forever while holding pfcp_peer_lock and
+         * starve PFCP RX on main (Recv-Q stuck, peers_active=0). */
+        for (node = ogs_list_first(&ogs_pfcp_self()->pfcp_peer_list),
+                    guard = 0;
+                node && node != next && guard < 256;
+                node = ogs_list_next(node), guard++) {
             if (OGS_FSM_CHECK(&node->sm, sgwc_pfcp_state_associated))
                 return node;
         }
     }
 
-    ogs_error("No SGWUs are PFCP associated that are suited to RR "
-            "[PLMN:%d/%d APN:%s]",
-            ogs_plmn_id_mcc(&sess->serving_plmn_id),
-            ogs_plmn_id_mnc(&sess->serving_plmn_id),
-            sess->session.name ? sess->session.name : "-");
     return NULL;
 }
 
 void sgwc_sess_select_sgwu(sgwc_sess_t *sess)
 {
     ogs_pfcp_node_t *node = NULL;
+    bool no_peer_list = false;
+    bool no_associated = false;
 
     ogs_assert(sess);
 
     /*
-     * Workers race with PFCP association add/remove on pfcp_peer_list
-     * and the shared RR cursor (pfcp_node). Hold the peer lock for the
-     * whole select.
+     * Hold the peer lock only for the list walk / RR cursor update.
+     * Never log or do UE lookups under the lock — that blocked PFCP RX
+     * on main (ogs_pfcp_node_find) when workers flooded Create Session.
      */
     ogs_pfcp_peer_lock();
 
@@ -2231,25 +2236,34 @@ void sgwc_sess_select_sgwu(sgwc_sess_t *sess)
             ogs_list_last(&ogs_pfcp_self()->pfcp_peer_list);
 
     if (ogs_pfcp_self()->pfcp_node) {
-        /* setup GTP session with selected SGW-U */
         node = selected_sgwu_node(ogs_pfcp_self()->pfcp_node, sess);
         if (node) {
             ogs_pfcp_self()->pfcp_node = node;
             OGS_SETUP_PFCP_NODE(sess, node);
-            ogs_debug("UE using SGW-U on IP %s",
-                    ogs_sockaddr_to_string_static(node->addr_list));
         } else {
-            sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-            ogs_error("No PFCP-associated SGW-U for session "
-                    "[IMSI:%s PLMN:%d/%d TAC:%d APN:%s]",
-                    sgwc_ue ? sgwc_ue->imsi_bcd : "-",
-                    ogs_plmn_id_mcc(&sess->serving_plmn_id),
-                    ogs_plmn_id_mnc(&sess->serving_plmn_id),
-                    (sgwc_ue && sgwc_ue->uli_presence) ? sgwc_ue->e_tai.tac : 0,
-                    sess->session.name ? sess->session.name : "-");
+            no_associated = true;
             sess->pfcp_node = NULL;
         }
     } else {
+        no_peer_list = true;
+        sess->pfcp_node = NULL;
+    }
+
+    ogs_pfcp_peer_unlock();
+
+    if (node) {
+        ogs_debug("UE using SGW-U on IP %s",
+                ogs_sockaddr_to_string_static(node->addr_list));
+    } else if (no_associated) {
+        sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        ogs_error("No PFCP-associated SGW-U for session "
+                "[IMSI:%s PLMN:%d/%d TAC:%d APN:%s]",
+                sgwc_ue ? sgwc_ue->imsi_bcd : "-",
+                ogs_plmn_id_mcc(&sess->serving_plmn_id),
+                ogs_plmn_id_mnc(&sess->serving_plmn_id),
+                (sgwc_ue && sgwc_ue->uli_presence) ? sgwc_ue->e_tai.tac : 0,
+                sess->session.name ? sess->session.name : "-");
+    } else if (no_peer_list) {
         sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         ogs_error("No SGW-U configured in sgwc.pfcp "
                 "[IMSI:%s PLMN:%d/%d APN:%s]",
@@ -2257,10 +2271,7 @@ void sgwc_sess_select_sgwu(sgwc_sess_t *sess)
                 ogs_plmn_id_mcc(&sess->serving_plmn_id),
                 ogs_plmn_id_mnc(&sess->serving_plmn_id),
                 sess->session.name ? sess->session.name : "-");
-        sess->pfcp_node = NULL;
     }
-
-    ogs_pfcp_peer_unlock();
 }
 
 void sgwc_sess_abort_create(sgwc_sess_t *sess)
