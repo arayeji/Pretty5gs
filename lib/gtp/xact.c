@@ -39,11 +39,15 @@ typedef enum {
  */
 static int global_xact_initialized = 0;
 static uint32_t global_xact_id = 0;
-static OGS_POOL(global_pool, ogs_gtp_xact_t);
+/* one named type so xact_pool()'s ternary yields a real pointer type
+ * (OGS_POOL declares an anonymous struct per instance otherwise) */
+typedef OGS_POOL(xact_pool_t, ogs_gtp_xact_t);
+
+static xact_pool_t global_pool;
 
 static OGS_THREAD_LOCAL int tls_xact_initialized = 0;
 static OGS_THREAD_LOCAL uint32_t tls_xact_id = 0;
-static OGS_THREAD_LOCAL OGS_POOL(tls_pool, ogs_gtp_xact_t);
+static OGS_THREAD_LOCAL xact_pool_t tls_pool;
 
 #define xact_pool() (ogs_worker_self() ? &tls_pool : &global_pool)
 #define xact_id_var() (ogs_worker_self() ? &tls_xact_id : &global_xact_id)
