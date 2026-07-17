@@ -1017,7 +1017,8 @@ void mme_s11_handle_delete_session_response(
 
         cause_value = cause->value;
         if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-            mme_ue_error(mme_ue, enb_ue, "s11", NULL,
+            /* Peer already gone (common after restart) — teardown continues. */
+            mme_ue_warn(mme_ue, enb_ue, "s11", NULL,
                     "GTP Cause [VALUE:%d] - Ignored", cause_value);
         }
     }

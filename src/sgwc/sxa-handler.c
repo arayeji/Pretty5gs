@@ -2043,7 +2043,11 @@ void sgwc_sxa_handle_session_deletion_response(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sess) {
-        ogs_error("No Context");
+        /* Late PFCP Session Deletion Response after local sess already
+         * freed — expected under delete storms / shard routing of stale
+         * SEIDs. */
+        ogs_warn("PFCP Session Deletion Response: no local session "
+                "(already torn down)");
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     }
 
