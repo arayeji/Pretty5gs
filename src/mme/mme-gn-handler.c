@@ -359,7 +359,7 @@ int mme_gn_handle_sgsn_context_response(
     }
 
     if (resp->cause.u8 != OGS_GTP1_CAUSE_REQUEST_ACCEPTED) {
-        ogs_error("[Gn] Rx SGSN Context Response cause:%u", resp->cause.u8);
+        ogs_warn("[Gn] Rx SGSN Context Response cause:%u", resp->cause.u8);
         rv = nas_eps_send_tau_reject(enb_ue, mme_ue, emm_cause);
         return OGS_GTP1_CAUSE_SYSTEM_FAILURE;
     }
