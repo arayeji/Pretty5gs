@@ -164,6 +164,11 @@ void mme_ue_log(
             !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
         return;
 
+    /* storm guard: skip formatting entirely when over budget;
+     * filter-matched DEBUG capture is never suppressed */
+    if (level != OGS_LOG_DEBUG && !ogs_log_guard())
+        return;
+
     enb_ue = mme_ue_resolve_enb(mme_ue, enb_ue);
     ogs_mme_trace_set(enb_ue, mme_ue, apn, proc);
     ogs_trace_format_prefix(prefix, sizeof(prefix));
@@ -272,6 +277,9 @@ void mme_ran_error(
         mme_ue_error(mme_ue, enb_ue, proc, apn, "%s", msg);
         return;
     }
+
+    if (!ogs_log_guard())
+        return;
 
     {
         ogs_trace_ctx_t ctx;

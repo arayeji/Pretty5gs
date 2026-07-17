@@ -93,6 +93,11 @@ void sgwc_ue_log(
             !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
         return;
 
+    /* storm guard: skip formatting entirely when over budget;
+     * filter-matched DEBUG capture is never suppressed */
+    if (level != OGS_LOG_DEBUG && !ogs_log_guard())
+        return;
+
     ogs_sgwc_trace_set(sgwc_ue, sess, apn, proc);
     ogs_trace_format_prefix(prefix, sizeof(prefix));
 
@@ -115,6 +120,9 @@ void sgwc_ue_warn_no_ctx(
 
     ogs_assert(proc);
     ogs_assert(fmt);
+
+    if (!ogs_log_guard())
+        return;
 
     memset(&ctx, 0, sizeof(ctx));
     ogs_cpystrn(ctx.proc, proc, sizeof(ctx.proc));
