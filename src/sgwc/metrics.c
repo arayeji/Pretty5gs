@@ -127,6 +127,8 @@ void sgwc_metrics_pfcp_peer_up(const char *addr, int up)
     ogs_cpystrn(key->addr, addr, sizeof(key->addr));
     key->t = SGWC_METR_PFCP_PEER_GAUGE_UP;
 
+    /* SMP workers share these hashes / inst lists. */
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_pfcp_peer,
             key, sizeof(*key));
 
@@ -143,6 +145,7 @@ void sgwc_metrics_pfcp_peer_up(const char *addr, int up)
     }
 
     ogs_metrics_inst_set(metrics, up ? 1 : 0);
+    ogs_metrics_dump_unlock();
 }
 
 void sgwc_metrics_global_set(sgwc_metric_type_global_t t, int val)
@@ -213,6 +216,7 @@ static void sgwc_metrics_inst_by_plmn_add(ogs_plmn_id_t *plmn,
     plmn_key->plmn_id = *plmn;
     plmn_key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_plmn,
             plmn_key, sizeof(*plmn_key));
 
@@ -231,6 +235,7 @@ static void sgwc_metrics_inst_by_plmn_add(ogs_plmn_id_t *plmn,
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 static void sgwc_metrics_inst_by_plmn_cause_add(ogs_plmn_id_t *plmn,
@@ -252,6 +257,7 @@ static void sgwc_metrics_inst_by_plmn_cause_add(ogs_plmn_id_t *plmn,
     key->cause = cause;
     key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_plmn_cause,
             key, sizeof(*key));
 
@@ -271,6 +277,7 @@ static void sgwc_metrics_inst_by_plmn_cause_add(ogs_plmn_id_t *plmn,
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 void sgwc_metrics_create_session_attempt(sgwc_ue_t *sgwc_ue)
@@ -334,6 +341,7 @@ static void sgwc_metrics_inst_by_plmn_pgw_add(ogs_plmn_id_t *plmn,
     ogs_cpystrn(key->pgw_addr, pgw_addr, sizeof(key->pgw_addr));
     key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_plmn_pgw,
             key, sizeof(*key));
 
@@ -352,6 +360,7 @@ static void sgwc_metrics_inst_by_plmn_pgw_add(ogs_plmn_id_t *plmn,
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 static void sgwc_metrics_inst_by_plmn_apn_add(ogs_plmn_id_t *plmn,
@@ -373,6 +382,7 @@ static void sgwc_metrics_inst_by_plmn_apn_add(ogs_plmn_id_t *plmn,
     ogs_cpystrn(key->apn, apn, sizeof(key->apn));
     key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_plmn_apn,
             key, sizeof(*key));
 
@@ -391,6 +401,7 @@ static void sgwc_metrics_inst_by_plmn_apn_add(ogs_plmn_id_t *plmn,
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 void sgwc_metrics_ue_active_inc(sgwc_ue_t *sgwc_ue)
@@ -711,6 +722,7 @@ void sgwc_metrics_inst_by_rat_add(
             sizeof(rat_key->gtp_if));
     rat_key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_rat,
             rat_key, sizeof(*rat_key));
 
@@ -727,6 +739,7 @@ void sgwc_metrics_inst_by_rat_add(
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 void sgwc_metrics_init(void)
