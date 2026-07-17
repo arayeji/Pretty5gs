@@ -4669,8 +4669,11 @@ void s1ap_handle_s1_reset(
                         *item->eNB_UE_S1AP_ID);
 
             if (enb_ue == NULL) {
-                ogs_error("Cannot find S1 Context "
-                    "(MME_UE_S1AP_ID[%d] ENB_UE_S1AP_ID[%d])",
+                /* Already released on the MME side before the eNB's
+                 * partial S1 Reset arrived - benign race, TS 36.413
+                 * just wants the connection listed in the RESET ACK. */
+                ogs_warn("S1 Reset for unknown S1 context, already "
+                    "released (MME_UE_S1AP_ID[%d] ENB_UE_S1AP_ID[%d])",
                     item->mME_UE_S1AP_ID ? (int)*item->mME_UE_S1AP_ID : -1,
                     item->eNB_UE_S1AP_ID ? (int)*item->eNB_UE_S1AP_ID : -1);
                 continue;
