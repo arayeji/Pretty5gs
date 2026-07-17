@@ -120,14 +120,22 @@ void mme_event_purge_mme_ue(ogs_pool_id_t mme_ue_id)
     pending = ogs_queue_create(n + 16);
     ogs_assert(pending);
 
-    while ((rv = ogs_queue_trypop(queue, (void **)&e)) == OGS_OK) {
+    /*
+     * S1AP RX workers keep pushing to the app queue while we drain it,
+     * so the queue is NOT frozen at the size we snapshotted. Pop at most
+     * n events (guaranteeing `pending` cannot overflow) and treat a
+     * failed re-push as a drop, never as fatal: the RX workers may have
+     * refilled the queue to capacity while events were parked here.
+     */
+    while (n > 0 && (rv = ogs_queue_trypop(queue, (void **)&e)) == OGS_OK) {
+        n--;
         ogs_assert(e);
         if (mme_event_belongs_to_mme_ue(e, mme_ue_id)) {
             mme_event_discard(e);
             purged++;
         } else {
             rv = ogs_queue_trypush(pending, e);
-            ogs_assert(rv == OGS_OK);
+            ogs_assert(rv == OGS_OK); /* sized n+16, bounded by n pops */
         }
     }
     ogs_assert(rv != OGS_ERROR);
@@ -135,7 +143,11 @@ void mme_event_purge_mme_ue(ogs_pool_id_t mme_ue_id)
     while ((rv = ogs_queue_trypop(pending, (void **)&e)) == OGS_OK) {
         ogs_assert(e);
         rv = ogs_queue_trypush(queue, e);
-        ogs_assert(rv == OGS_OK);
+        if (rv != OGS_OK) {
+            ogs_error("event purge: re-push failed (%d), dropping event "
+                    "id [%d]", (int)rv, e->id);
+            mme_event_discard(e);
+        }
     }
     ogs_assert(rv != OGS_ERROR);
 

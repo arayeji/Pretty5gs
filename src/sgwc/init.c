@@ -78,19 +78,21 @@ int sgwc_initialize(void)
     ogs_pfcp_context_init();
 
     /*
-     * When shard workers are enabled, main only owns peer tables / sockets /
-     * association FSM. Shrink UE pools on main so memory goes to the shards.
+     * The SGW-C context is per-thread (SMP). THIS thread only performs
+     * initialization — config parse, socket setup, peer resolution — and
+     * never owns UEs/sessions: those live on the event-loop thread
+     * (sgwc_main, see below) or on shard workers. Always shrink the UE
+     * pools for this thread's context instance so the real memory goes
+     * to the threads that use it.
      */
-    if (want_workers > 0) {
-        saved_max_ue = ogs_global_conf()->max.ue;
-        saved_sess = ogs_app()->pool.sess;
-        saved_bearer = ogs_app()->pool.bearer;
-        saved_tunnel = ogs_app()->pool.tunnel;
-        ogs_global_conf()->max.ue = 1;
-        ogs_app()->pool.sess = 1;
-        ogs_app()->pool.bearer = 4;
-        ogs_app()->pool.tunnel = 4;
-    }
+    saved_max_ue = ogs_global_conf()->max.ue;
+    saved_sess = ogs_app()->pool.sess;
+    saved_bearer = ogs_app()->pool.bearer;
+    saved_tunnel = ogs_app()->pool.tunnel;
+    ogs_global_conf()->max.ue = 1;
+    ogs_app()->pool.sess = 1;
+    ogs_app()->pool.bearer = 4;
+    ogs_app()->pool.tunnel = 4;
 
     sgwc_context_init();
     sgwc_event_init();
@@ -144,14 +146,26 @@ int sgwc_initialize(void)
 
     ogs_app_sighup_handler_set(sgwc_sighup_handler);
 
-    if (want_workers > 0) {
-        ogs_global_conf()->max.ue = saved_max_ue;
-        ogs_app()->pool.sess = saved_sess;
-        ogs_app()->pool.bearer = saved_bearer;
-        ogs_app()->pool.tunnel = saved_tunnel;
+    /* Restore real pool sizes for the threads that own UEs/sessions. */
+    ogs_global_conf()->max.ue = saved_max_ue;
+    ogs_app()->pool.sess = saved_sess;
+    ogs_app()->pool.bearer = saved_bearer;
+    ogs_app()->pool.tunnel = saved_tunnel;
 
+    if (want_workers > 0) {
         rv = sgwc_workers_start();
         if (rv != OGS_OK) return rv;
+
+        /*
+         * Workers have taken their per-shard pool sizes (workers_start
+         * divides the globals). The event-loop thread owns no UEs in SMP
+         * mode, so shrink the globals again before creating it; nothing
+         * after this point reads the original values.
+         */
+        ogs_global_conf()->max.ue = 1;
+        ogs_app()->pool.sess = 1;
+        ogs_app()->pool.bearer = 4;
+        ogs_app()->pool.tunnel = 4;
     }
 
     thread = ogs_thread_create(sgwc_main, NULL);
@@ -195,6 +209,25 @@ static void sgwc_main(void *data)
 {
     ogs_fsm_t sgwc_sm;
     int rv;
+
+    /*
+     * This is NOT the thread that ran sgwc_initialize(): the SGW-C
+     * context (pools, hashes, parsed config) is thread-local, so this
+     * thread must build its own instance — same sequence as the shard
+     * worker thread_init hook. Without it every self.* access here reads
+     * a zeroed TLS struct: NULL hash asserts on the first S11 lookup
+     * (workers: 0), echo answering with recovery counter 0, Gn disabled
+     * in RX, etc. GTP/PFCP xacts are NOT re-initialized: on non-worker
+     * threads they use the process-global pool shared with initialize().
+     */
+    sgwc_context_init();
+
+    rv = ogs_log_config_domain(
+            ogs_app()->logger.domain, ogs_app()->logger.level);
+    ogs_assert(rv == OGS_OK);
+
+    rv = sgwc_context_parse_config();
+    ogs_assert(rv == OGS_OK);
 
     ogs_fsm_init(&sgwc_sm, sgwc_state_initial, sgwc_state_final, 0);
 

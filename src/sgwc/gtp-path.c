@@ -31,6 +31,8 @@ static int sgwc_gtp_deliver(sgwc_event_t *e, ogs_pkbuf_t *pkbuf)
 {
     int rv;
     int wid = -1;
+    bool to_main = false;
+    uint32_t fallback_key = 0;
     ogs_gtp2_header_t *h2;
     ogs_gtp1_header_t *h1;
     char imsi_bcd[OGS_MAX_IMSI_BCD_LEN + 1];
@@ -61,9 +63,10 @@ static int sgwc_gtp_deliver(sgwc_event_t *e, ogs_pkbuf_t *pkbuf)
         h1 = (ogs_gtp1_header_t *)pkbuf->data;
         if (h1->type == OGS_GTP1_ECHO_REQUEST_TYPE ||
                 h1->type == OGS_GTP1_ECHO_RESPONSE_TYPE) {
-            wid = -1; /* main */
+            to_main = true; /* node-level, main owns the peer FSMs */
         } else if (h1->teid) {
-            wid = sgwc_shard_from_teid(be32toh(h1->teid));
+            fallback_key = be32toh(h1->teid);
+            wid = sgwc_shard_from_teid(fallback_key);
         } else {
             /* Create PDP etc. without TEID: fall back to worker 0 */
             wid = 0;
@@ -78,9 +81,10 @@ static int sgwc_gtp_deliver(sgwc_event_t *e, ogs_pkbuf_t *pkbuf)
         h2 = (ogs_gtp2_header_t *)pkbuf->data;
         if (h2->type == OGS_GTP2_ECHO_REQUEST_TYPE ||
                 h2->type == OGS_GTP2_ECHO_RESPONSE_TYPE) {
-            wid = -1; /* main */
+            to_main = true; /* node-level, main owns the peer FSMs */
         } else if (h2->teid_presence && h2->teid != 0) {
-            wid = sgwc_shard_from_teid(be32toh(h2->teid));
+            fallback_key = be32toh(h2->teid);
+            wid = sgwc_shard_from_teid(fallback_key);
         } else if (h2->type == OGS_GTP2_CREATE_SESSION_REQUEST_TYPE &&
                 sgwc_gtpv2_peek_imsi_bcd(pkbuf, imsi_bcd,
                     sizeof(imsi_bcd)) == OGS_OK) {
@@ -88,11 +92,12 @@ static int sgwc_gtp_deliver(sgwc_event_t *e, ogs_pkbuf_t *pkbuf)
         } else {
             /* teid 0 / absent: route by SQN shard bits (xid partition) */
             uint32_t sqn_be = h2->teid_presence ? h2->sqn : h2->sqn_only;
-            wid = sgwc_shard_from_xid(OGS_GTP2_SQN_TO_XID(sqn_be));
+            fallback_key = OGS_GTP2_SQN_TO_XID(sqn_be);
+            wid = sgwc_shard_from_xid(fallback_key);
         }
     }
 
-    if (wid < 0 || wid >= sgwc_workers_count()) {
+    if (to_main) {
         rv = ogs_queue_trypush(ogs_app()->queue, e);
         if (rv != OGS_OK) {
             ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
@@ -103,6 +108,17 @@ static int sgwc_gtp_deliver(sgwc_event_t *e, ogs_pkbuf_t *pkbuf)
         }
         return 1;
     }
+
+    /*
+     * Session messages must NEVER go to main: with workers active main
+     * owns no UEs and its event-loop thread never ran sgwc_context_init
+     * (TLS hashes are NULL there — observed as ogs_hash_get assert).
+     * Shard bits that don't name a live worker (stale TEID from a
+     * previous run, main-encoded id 0, garbage) go to a deterministic
+     * worker instead, which replies "Context not found" normally.
+     */
+    if (wid < 0 || wid >= sgwc_workers_count())
+        wid = (int)(fallback_key % (uint32_t)sgwc_workers_count());
 
     return sgwc_event_push_to_worker(wid, e) == OGS_OK ? 1 : -1;
 }

@@ -191,13 +191,27 @@ typedef int32_t ogs_pool_id_t;
         (pool)->array[i] = i+1; \
 } while (0)
 
+/*
+ * Fisher-Yates shuffle seeded once from the system RNG, then driven by
+ * xorshift64. ogs_random32() is a getrandom() SYSCALL per call: shuffling
+ * a large pool (e.g. PDR TEIDs = pool.sess * OGS_MAX_NUM_OF_PDR, ~96M
+ * entries at max.ue=2M) took 100+ seconds of 100% CPU at NF startup.
+ * These ids only need to be unpredictable-ish (TEID/SEID obfuscation),
+ * not cryptographic.
+ */
 #define ogs_pool_random_id_generate(pool) do { \
     int i, j; \
     ogs_pool_id_t temp; \
+    uint64_t seed_ = 0; \
+    ogs_random(&seed_, sizeof(seed_)); \
+    seed_ |= 1; \
     for (i = 0; i < (pool)->size; i++) \
         (pool)->array[i] = i+1; \
     for (i = (pool)->size - 1; i > 0; i--) { \
-       j = ogs_random32() % (i + 1); \
+       seed_ ^= seed_ << 13; \
+       seed_ ^= seed_ >> 7; \
+       seed_ ^= seed_ << 17; \
+       j = (int)(seed_ % (uint64_t)(i + 1)); \
        temp = (pool)->array[i]; \
        (pool)->array[i] = (pool)->array[j]; \
        (pool)->array[j] = temp; \

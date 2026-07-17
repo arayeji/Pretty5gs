@@ -187,6 +187,8 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
      */
     {
         int wid = -1;
+        bool to_main = false;
+        uint32_t fallback_key = 0;
         uint8_t type = message->h.type;
 
         if (type == OGS_PFCP_HEARTBEAT_REQUEST_TYPE ||
@@ -201,18 +203,20 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
                 type == OGS_PFCP_NODE_REPORT_RESPONSE_TYPE ||
                 type == OGS_PFCP_PFD_MANAGEMENT_REQUEST_TYPE ||
                 type == OGS_PFCP_PFD_MANAGEMENT_RESPONSE_TYPE) {
-            wid = -1;
+            to_main = true;
         } else if (message->h.seid_presence && message->h.seid != 0) {
             /* parse_msg converts SEID to host order */
+            fallback_key = (uint32_t)message->h.seid;
             wid = sgwc_shard_from_seid(message->h.seid);
         } else {
             /* SQN left in network order; OGS_PFCP_SQN_TO_XID expects that */
             uint32_t sqn_be = message->h.seid_presence ?
                     message->h.sqn : message->h.sqn_only;
-            wid = sgwc_shard_from_xid(OGS_PFCP_SQN_TO_XID(sqn_be));
+            fallback_key = OGS_PFCP_SQN_TO_XID(sqn_be);
+            wid = sgwc_shard_from_xid(fallback_key);
         }
 
-        if (wid < 0 || wid >= sgwc_workers_count()) {
+        if (to_main) {
             /* Association/heartbeat must never block the PFCP RX path. */
             rv = ogs_queue_trypush(ogs_app()->queue, e);
             if (rv != OGS_OK) {
@@ -221,6 +225,16 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
             }
             return;
         }
+
+        /*
+         * Session messages never go to main (its event-loop thread has
+         * no sgwc context; see sgwc_gtp_deliver). Unknown shard bits
+         * (stale SEID from a previous run, shard 0 = main) route to a
+         * deterministic worker, which answers "Session context not
+         * found" through its own initialized context.
+         */
+        if (wid < 0 || wid >= sgwc_workers_count())
+            wid = (int)(fallback_key % (uint32_t)sgwc_workers_count());
 
         if (sgwc_event_push_to_worker(wid, e) != OGS_OK)
             return; /* push_to_worker already freed e + buffers */
