@@ -4705,11 +4705,18 @@ ogs_pfcp_message_t *ogs_pfcp_parse_msg(ogs_pkbuf_t *pkbuf)
     h = (ogs_pfcp_header_t *)pkbuf->data;
     ogs_assert(h);
 
-    pfcp_message = ogs_calloc(1, sizeof(*pfcp_message));
+    /*
+     * Perf: the message is a union of every message type; ogs_calloc zeroed
+     * the largest message's size on every packet. Allocate without zeroing
+     * and zero only the header here; each switch case below zeroes exactly
+     * the union member it parses into. The empty-body path zeroes the union.
+     */
+    pfcp_message = ogs_malloc(sizeof(*pfcp_message));
     if (!pfcp_message) {
         ogs_error("No memory");
         return NULL;
     }
+    memset(&pfcp_message->h, 0, sizeof(pfcp_message->h));
 
     if (h->seid_presence)
         size = OGS_PFCP_HEADER_LEN;
@@ -4729,57 +4736,73 @@ ogs_pfcp_message_t *ogs_pfcp_parse_msg(ogs_pkbuf_t *pkbuf)
         pfcp_message->h.sqn = pfcp_message->h.sqn_only;
     }
 
-    if (pkbuf->len == 0)
+    if (pkbuf->len == 0) {
+        /* No body: no case zeroes a member, so zero the union now
+         * (preserving the parsed header). */
+        ogs_pfcp_header_t saved_h = pfcp_message->h;
+        memset(pfcp_message, 0, sizeof(*pfcp_message));
+        pfcp_message->h = saved_h;
         return pfcp_message;
+    }
 
     switch(pfcp_message->h.type)
     {
         case OGS_PFCP_HEARTBEAT_REQUEST_TYPE:
+            memset(&pfcp_message->pfcp_heartbeat_request, 0, sizeof(pfcp_message->pfcp_heartbeat_request));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_heartbeat_request,
                     &ogs_pfcp_msg_desc_pfcp_heartbeat_request, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_HEARTBEAT_RESPONSE_TYPE:
+            memset(&pfcp_message->pfcp_heartbeat_response, 0, sizeof(pfcp_message->pfcp_heartbeat_response));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_heartbeat_response,
                     &ogs_pfcp_msg_desc_pfcp_heartbeat_response, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_PFD_MANAGEMENT_REQUEST_TYPE:
+            memset(&pfcp_message->pfcp_pfd_management_request, 0, sizeof(pfcp_message->pfcp_pfd_management_request));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_pfd_management_request,
                     &ogs_pfcp_msg_desc_pfcp_pfd_management_request, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_PFD_MANAGEMENT_RESPONSE_TYPE:
+            memset(&pfcp_message->pfcp_pfd_management_response, 0, sizeof(pfcp_message->pfcp_pfd_management_response));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_pfd_management_response,
                     &ogs_pfcp_msg_desc_pfcp_pfd_management_response, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE:
+            memset(&pfcp_message->pfcp_association_setup_request, 0, sizeof(pfcp_message->pfcp_association_setup_request));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_association_setup_request,
                     &ogs_pfcp_msg_desc_pfcp_association_setup_request, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE:
+            memset(&pfcp_message->pfcp_association_setup_response, 0, sizeof(pfcp_message->pfcp_association_setup_response));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_association_setup_response,
                     &ogs_pfcp_msg_desc_pfcp_association_setup_response, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_ASSOCIATION_UPDATE_REQUEST_TYPE:
+            memset(&pfcp_message->pfcp_association_update_request, 0, sizeof(pfcp_message->pfcp_association_update_request));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_association_update_request,
                     &ogs_pfcp_msg_desc_pfcp_association_update_request, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE:
+            memset(&pfcp_message->pfcp_association_update_response, 0, sizeof(pfcp_message->pfcp_association_update_response));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_association_update_response,
                     &ogs_pfcp_msg_desc_pfcp_association_update_response, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE:
+            memset(&pfcp_message->pfcp_association_release_request, 0, sizeof(pfcp_message->pfcp_association_release_request));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_association_release_request,
                     &ogs_pfcp_msg_desc_pfcp_association_release_request, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE:
+            memset(&pfcp_message->pfcp_association_release_response, 0, sizeof(pfcp_message->pfcp_association_release_response));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_association_release_response,
                     &ogs_pfcp_msg_desc_pfcp_association_release_response, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
@@ -4787,51 +4810,61 @@ ogs_pfcp_message_t *ogs_pfcp_parse_msg(ogs_pkbuf_t *pkbuf)
         case OGS_PFCP_VERSION_NOT_SUPPORTED_RESPONSE_TYPE:
             break;
         case OGS_PFCP_NODE_REPORT_REQUEST_TYPE:
+            memset(&pfcp_message->pfcp_node_report_request, 0, sizeof(pfcp_message->pfcp_node_report_request));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_node_report_request,
                     &ogs_pfcp_msg_desc_pfcp_node_report_request, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_NODE_REPORT_RESPONSE_TYPE:
+            memset(&pfcp_message->pfcp_node_report_response, 0, sizeof(pfcp_message->pfcp_node_report_response));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_node_report_response,
                     &ogs_pfcp_msg_desc_pfcp_node_report_response, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_SESSION_SET_DELETION_REQUEST_TYPE:
+            memset(&pfcp_message->pfcp_session_set_deletion_request, 0, sizeof(pfcp_message->pfcp_session_set_deletion_request));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_session_set_deletion_request,
                     &ogs_pfcp_msg_desc_pfcp_session_set_deletion_request, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_SESSION_SET_DELETION_RESPONSE_TYPE:
+            memset(&pfcp_message->pfcp_session_set_deletion_response, 0, sizeof(pfcp_message->pfcp_session_set_deletion_response));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_session_set_deletion_response,
                     &ogs_pfcp_msg_desc_pfcp_session_set_deletion_response, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_SESSION_SET_MODIFICATION_REQUEST_TYPE:
+            memset(&pfcp_message->pfcp_session_set_modification_request, 0, sizeof(pfcp_message->pfcp_session_set_modification_request));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_session_set_modification_request,
                     &ogs_pfcp_msg_desc_pfcp_session_set_modification_request, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_SESSION_SET_MODIFICATION_RESPONSE_TYPE:
+            memset(&pfcp_message->pfcp_session_set_modification_response, 0, sizeof(pfcp_message->pfcp_session_set_modification_response));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_session_set_modification_response,
                     &ogs_pfcp_msg_desc_pfcp_session_set_modification_response, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_SESSION_ESTABLISHMENT_REQUEST_TYPE:
+            memset(&pfcp_message->pfcp_session_establishment_request, 0, sizeof(pfcp_message->pfcp_session_establishment_request));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_session_establishment_request,
                     &ogs_pfcp_msg_desc_pfcp_session_establishment_request, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_SESSION_ESTABLISHMENT_RESPONSE_TYPE:
+            memset(&pfcp_message->pfcp_session_establishment_response, 0, sizeof(pfcp_message->pfcp_session_establishment_response));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_session_establishment_response,
                     &ogs_pfcp_msg_desc_pfcp_session_establishment_response, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE:
+            memset(&pfcp_message->pfcp_session_modification_request, 0, sizeof(pfcp_message->pfcp_session_modification_request));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_session_modification_request,
                     &ogs_pfcp_msg_desc_pfcp_session_modification_request, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_SESSION_MODIFICATION_RESPONSE_TYPE:
+            memset(&pfcp_message->pfcp_session_modification_response, 0, sizeof(pfcp_message->pfcp_session_modification_response));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_session_modification_response,
                     &ogs_pfcp_msg_desc_pfcp_session_modification_response, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
@@ -4839,16 +4872,19 @@ ogs_pfcp_message_t *ogs_pfcp_parse_msg(ogs_pkbuf_t *pkbuf)
         case OGS_PFCP_SESSION_DELETION_REQUEST_TYPE:
             break;
         case OGS_PFCP_SESSION_DELETION_RESPONSE_TYPE:
+            memset(&pfcp_message->pfcp_session_deletion_response, 0, sizeof(pfcp_message->pfcp_session_deletion_response));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_session_deletion_response,
                     &ogs_pfcp_msg_desc_pfcp_session_deletion_response, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_SESSION_REPORT_REQUEST_TYPE:
+            memset(&pfcp_message->pfcp_session_report_request, 0, sizeof(pfcp_message->pfcp_session_report_request));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_session_report_request,
                     &ogs_pfcp_msg_desc_pfcp_session_report_request, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
             break;
         case OGS_PFCP_SESSION_REPORT_RESPONSE_TYPE:
+            memset(&pfcp_message->pfcp_session_report_response, 0, sizeof(pfcp_message->pfcp_session_report_response));
             rv = ogs_tlv_parse_msg(&pfcp_message->pfcp_session_report_response,
                     &ogs_pfcp_msg_desc_pfcp_session_report_response, pkbuf, OGS_TLV_MODE_T2_L2);
             ogs_expect(rv == OGS_OK);
