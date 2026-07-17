@@ -161,7 +161,10 @@ uint8_t mme_s6a_handle_ula(
 
     num_of_session = mme_ue_session_from_slice_data(mme_ue, slice_data);
     if (num_of_session == 0) {
-        ogs_error("No Session");
+        ogs_warn("[%s] No usable session from HSS subscription "
+                "(APN configs:%d, all filtered or invalid) - "
+                "rejecting with severe network failure",
+                mme_ue->imsi_bcd, slice_data->num_of_session);
         return OGS_NAS_EMM_CAUSE_SEVERE_NETWORK_FAILURE;
     }
     mme_ue->num_of_session = num_of_session;
@@ -283,7 +286,9 @@ uint8_t mme_s6a_handle_idr(
             mme_session_remove_all(mme_ue);
             num_of_session = mme_ue_session_from_slice_data(mme_ue, slice_data);
             if (num_of_session == 0) {
-                ogs_error("No Session");
+                ogs_warn("[%s] IDR: no usable session from HSS "
+                        "subscription (APN configs:%d)",
+                        mme_ue->imsi_bcd, slice_data->num_of_session);
                 return OGS_ERROR;
             }
             mme_ue->num_of_session = num_of_session;
