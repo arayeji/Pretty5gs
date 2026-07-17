@@ -105,6 +105,11 @@ typedef struct ogs_pfcp_node_s {
     ogs_list_t      local_list[OGS_MAX_WORKERS];
     ogs_list_t      remote_list[OGS_MAX_WORKERS];
 
+    /* O(1) per-shard transaction index (owner-only, like the lists):
+     * (org,xid) -> first matching xact. Kept by lib/pfcp/xact.c;
+     * the linear receive scan was 12.7% of SGW-C CPU. */
+    ogs_hash_t     *xact_hash[OGS_MAX_WORKERS];
+
     ogs_fsm_t       sm;             /* A state machine */
     ogs_timer_t     *t_association; /* timer to retry to associate peer node */
     ogs_timer_t     *t_no_heartbeat; /* heartbeat timer to check aliveness */

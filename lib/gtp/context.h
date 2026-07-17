@@ -80,6 +80,14 @@ typedef struct ogs_gtp_node_s {
      * see lib/gtp/xact.c. */
     ogs_list_t      local_list[OGS_MAX_WORKERS];
     ogs_list_t      remote_list[OGS_MAX_WORKERS];
+
+    /* O(1) transaction index per shard (owner-only access, same rule
+     * as the lists): (org,version,xid) -> first matching xact, plus
+     * list-length counters. Kept by lib/gtp/xact.c; perf: the linear
+     * list scans in xact receive/count dominated MME and SGW-C CPU. */
+    ogs_hash_t     *xact_hash[OGS_MAX_WORKERS];
+    int             xact_local_count[OGS_MAX_WORKERS];
+    int             xact_remote_count[OGS_MAX_WORKERS];
 } ogs_gtp_node_t;
 
 typedef struct ogs_gtpu_resource_s {

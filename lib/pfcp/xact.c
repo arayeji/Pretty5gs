@@ -46,6 +46,41 @@ static OGS_THREAD_LOCAL OGS_POOL(pool, ogs_pfcp_xact_t);
 /* Worker-partitioned xid allocation; see lib/gtp/xact.c for rationale.
  * PFCP xid span (1..0x800000) is a power of two, so shard slices are
  * exact and a response's owner is xid >> 20. */
+/* O(1) transaction index on the PFCP node — same scheme and same
+ * duplicate-key semantics as lib/gtp/xact.c: keep the FIRST xact per
+ * (org,xid), remove only if the slot points at the dying xact, and
+ * fall back to the linear scan on miss. */
+static uint64_t xact_index_key(uint8_t org, uint32_t xid)
+{
+    return ((uint64_t)org << 40) | xid;
+}
+
+#define xact_index_hash(node) ((node)->xact_hash[ogs_worker_self_id()])
+
+static void xact_index_add(ogs_pfcp_xact_t *xact)
+{
+    ogs_hash_t *h = xact_index_hash(xact->node);
+
+    xact->hash_key = xact_index_key(xact->org, xact->xid);
+    if (!ogs_hash_get(h, &xact->hash_key, sizeof(xact->hash_key)))
+        ogs_hash_set(h, &xact->hash_key, sizeof(xact->hash_key), xact);
+}
+
+static void xact_index_del(ogs_pfcp_xact_t *xact)
+{
+    ogs_hash_t *h = xact_index_hash(xact->node);
+
+    if (ogs_hash_get(h, &xact->hash_key, sizeof(xact->hash_key)) == xact)
+        ogs_hash_set(h, &xact->hash_key, sizeof(xact->hash_key), NULL);
+}
+
+static ogs_pfcp_xact_t *xact_index_get(
+        ogs_pfcp_node_t *node, uint8_t org, uint32_t xid)
+{
+    uint64_t key = xact_index_key(org, xid);
+    return ogs_hash_get(xact_index_hash(node), &key, sizeof(key));
+}
+
 static uint32_t xact_next_xid(void)
 {
     if (ogs_worker_shards_active()) {
@@ -203,6 +238,7 @@ ogs_pfcp_xact_t *ogs_pfcp_xact_local_create(ogs_pfcp_node_t *node,
 
     ogs_list_add(xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
             xact_local_list(xact->node) : xact_remote_list(xact->node), xact);
+    xact_index_add(xact);
 
     ogs_list_init(&xact->pdr_to_create_list);
 
@@ -269,6 +305,7 @@ static ogs_pfcp_xact_t *ogs_pfcp_xact_remote_create(
 
     ogs_list_add(xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
             xact_local_list(xact->node) : xact_remote_list(xact->node), xact);
+    xact_index_add(xact);
 
     ogs_debug("[%d] %s Create  peer %s",
             xact->xid,
@@ -853,6 +890,15 @@ int ogs_pfcp_xact_receive(
     }
 
     ogs_assert(list);
+
+    new = xact_index_get(node,
+            list == xact_local_list(node) ?
+                OGS_PFCP_LOCAL_ORIGINATOR : OGS_PFCP_REMOTE_ORIGINATOR,
+            xid);
+    if (new && new->xid != xid)
+        new = NULL;
+
+    if (!new)
     ogs_list_for_each(list, new) {
         if (new->xid == xid) {
             ogs_debug("[%d] %s Find    peer %s",
@@ -960,6 +1006,7 @@ int ogs_pfcp_xact_delete(ogs_pfcp_xact_t *xact)
     if (xact->seq[2].pkbuf)
         ogs_pkbuf_free(xact->seq[2].pkbuf);
 
+    xact_index_del(xact);
     ogs_list_remove(xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
             xact_local_list(xact->node) : xact_remote_list(xact->node), xact);
     ogs_pool_id_free(&pool, xact);

@@ -1157,6 +1157,8 @@ ogs_pfcp_node_t *ogs_pfcp_node_new(ogs_sockaddr_t *config_addr)
         for (w = 0; w < OGS_MAX_WORKERS; w++) {
             ogs_list_init(&node->local_list[w]);
             ogs_list_init(&node->remote_list[w]);
+            node->xact_hash[w] = ogs_hash_make();
+            ogs_assert(node->xact_hash[w]);
         }
     }
 
@@ -1172,6 +1174,12 @@ void ogs_pfcp_node_free(ogs_pfcp_node_t *node)
     ogs_gtpu_resource_remove_all(&node->gtpu_resource_list);
 
     ogs_pfcp_xact_delete_all(node);
+
+    {
+        int w;
+        for (w = 0; w < OGS_MAX_WORKERS; w++)
+            ogs_hash_destroy(node->xact_hash[w]);
+    }
 
     ogs_freeaddrinfo(node->config_addr);
     ogs_freeaddrinfo(node->service_addr);

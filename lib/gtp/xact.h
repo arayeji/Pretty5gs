@@ -91,6 +91,9 @@ typedef struct ogs_gtp_xact_s {
 
     uint32_t        xid;            /**< Transaction ID */
     uint32_t        sqn;            /**< GTPv2 sequence (network byte order) */
+    uint64_t        hash_key;       /**< (org,version,xid) key in the
+                                         gnode's per-shard xact index;
+                                         stable storage for ogs_hash */
     ogs_gtp_node_t  *gnode;         /**< Relevant GTP node context */
 
     void (*cb)(ogs_gtp_xact_t *, void *); /**< Local timer expiration handler */
@@ -160,6 +163,10 @@ typedef struct ogs_gtp_xact_s {
 } ogs_gtp_xact_t;
 
 int ogs_gtp_xact_init(void);
+
+/* O(1) length of this shard's local/remote transaction list on gnode
+ * (maintained by the xact index; replaces linear ogs_list_count) */
+int ogs_gtp_xact_count(ogs_gtp_node_t *gnode, uint8_t org);
 void ogs_gtp_xact_final(void);
 
 ogs_gtp_xact_t *ogs_gtp1_xact_local_create(ogs_gtp_node_t *gnode,

@@ -651,6 +651,10 @@ ogs_gtp_node_t *ogs_gtp_node_new(ogs_sockaddr_t *sa_list)
         for (w = 0; w < OGS_MAX_WORKERS; w++) {
             ogs_list_init(&node->local_list[w]);
             ogs_list_init(&node->remote_list[w]);
+            node->xact_hash[w] = ogs_hash_make();
+            ogs_assert(node->xact_hash[w]);
+            node->xact_local_count[w] = 0;
+            node->xact_remote_count[w] = 0;
         }
     }
 
@@ -659,9 +663,14 @@ ogs_gtp_node_t *ogs_gtp_node_new(ogs_sockaddr_t *sa_list)
 
 void ogs_gtp_node_free(ogs_gtp_node_t *node)
 {
+    int w;
+
     ogs_assert(node);
 
     ogs_gtp_xact_delete_all(node);
+
+    for (w = 0; w < OGS_MAX_WORKERS; w++)
+        ogs_hash_destroy(node->xact_hash[w]);
 
     ogs_freeaddrinfo(node->sa_list);
     ogs_pool_free(&pool, node);
