@@ -305,7 +305,14 @@ ogs_pkbuf_t *ogs_pfcp_up_build_association_setup_response(uint8_t type,
     return pkbuf;
 }
 
-static struct {
+/*
+ * Message-build scratch buffers. OGS_THREAD_LOCAL: with SMP shard
+ * workers several threads build PFCP session messages concurrently;
+ * a shared buffer lets one worker free another's live sdf_filter
+ * allocation (heap corruption) or scribble its F-TEID/DNN bytes.
+ * Each buffer only lives for one build call, so TLS needs no locking.
+ */
+static OGS_THREAD_LOCAL struct {
     ogs_pfcp_f_teid_t f_teid;
     char dnn[OGS_MAX_DNN_LEN+1];
     char *sdf_filter[OGS_MAX_NUM_OF_FLOW_IN_PDR];
@@ -577,7 +584,7 @@ void ogs_pfcp_build_update_pdr(
     }
 }
 
-static struct {
+static OGS_THREAD_LOCAL struct {
     ogs_pfcp_outer_header_creation_t outer_header_creation;
     char dnn[OGS_MAX_DNN_LEN+1];
 } farbuf[OGS_MAX_NUM_OF_FAR];
@@ -723,7 +730,7 @@ void ogs_pfcp_build_update_far_activate(
     }
 }
 
-static struct {
+static OGS_THREAD_LOCAL struct {
     ogs_pfcp_volume_threshold_t vol_threshold;
     ogs_pfcp_volume_quota_t vol_quota;
     ogs_pfcp_dropped_dl_traffic_threshold_t dropped_dl_traffic_threshold;
@@ -882,7 +889,7 @@ void ogs_pfcp_build_update_urr(
     }
 }
 
-static struct {
+static OGS_THREAD_LOCAL struct {
     char mbr[OGS_PFCP_BITRATE_LEN];
     char gbr[OGS_PFCP_BITRATE_LEN];
 } create_qer_buf[OGS_MAX_NUM_OF_QER], update_qer_buf[OGS_MAX_NUM_OF_QER];
@@ -963,7 +970,7 @@ void ogs_pfcp_build_create_bar(
     message->bar_id.u8 = bar->id;
 }
 
-static struct {
+static OGS_THREAD_LOCAL struct {
     ogs_pfcp_volume_measurement_t vol_meas;
 } usage_report_buf;
 

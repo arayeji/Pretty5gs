@@ -818,7 +818,7 @@ char *ogs_ipstrdup(ogs_sockaddr_t *addr)
 
 char *ogs_sockaddr_to_string_static(ogs_sockaddr_t *sa_list)
 {
-    static char dumpstr[OGS_HUGE_LEN] = { 0, };
+    static OGS_THREAD_LOCAL char dumpstr[OGS_HUGE_LEN] = { 0, };
     char *p, *last;
     ogs_sockaddr_t *addr = NULL;
 

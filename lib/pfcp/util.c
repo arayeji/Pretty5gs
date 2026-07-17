@@ -298,7 +298,7 @@ ogs_sockaddr_t *ogs_pfcp_node_id_to_addrinfo(const ogs_pfcp_node_id_t *node_id)
 const char *ogs_pfcp_node_id_to_string_static(
         const ogs_pfcp_node_id_t *node_id)
 {
-    static char buffer[OGS_MAX_FQDN_LEN+1] = { 0, };
+    static OGS_THREAD_LOCAL char buffer[OGS_MAX_FQDN_LEN+1] = { 0, };
 
     if (node_id) {
         switch (node_id->type) {

@@ -1282,7 +1282,7 @@ const char *ogs_pfcp_node_pfcp_endpoint(ogs_pfcp_node_t *node)
 
 const char *ogs_pfcp_node_service_host(ogs_pfcp_node_t *node)
 {
-    static char host[OGS_ADDRSTRLEN];
+    static OGS_THREAD_LOCAL char host[OGS_ADDRSTRLEN];
     ogs_sockaddr_t *service = NULL;
 
     if (!node)
