@@ -199,7 +199,10 @@ static int sgwc_reload_nwi_append(ogs_yaml_iter_t *parent_iter)
         rule->selection_order = ogs_pfcp_entry_selection_order(
                 rule_entry_idx, order_v);
         rule_entry_idx++;
+        /* Workers read this list under the same lock (nwi_rewrite_apply). */
+        sgwc_ctx_lock();
         ogs_list_add(&sgwc_self()->sgwu_nwi_rewrite_list, rule);
+        sgwc_ctx_unlock();
         added++;
         sgwc_reload_lists_changed++;
     } while (ogs_yaml_iter_type(&rule_array) == YAML_SEQUENCE_NODE);
@@ -752,12 +755,19 @@ static void sgwc_reload_gn(ogs_yaml_iter_t *sgwc_iter)
         return;
     }
 
-    /* Swap: drop the old list, move the freshly built entries in order. */
+    /*
+     * Swap: drop the old list, move the freshly built entries in order.
+     * Under the container lock — workers walk gn_pgw_list (PGW selection,
+     * home-PLMN lookup) under the same lock, so they never observe the
+     * half-swapped list or freed entries.
+     */
+    sgwc_ctx_lock();
     sgwc_gn_pgw_clear_list(&sgwc_self()->gn_pgw_list);
     ogs_list_for_each_safe(&tmp_list, next_pgw, pgw) {
         ogs_list_remove(&tmp_list, pgw);
         ogs_list_add(&sgwc_self()->gn_pgw_list, pgw);
     }
+    sgwc_ctx_unlock();
 
     sgwc_reload_lists_changed++;
     ogs_reload_audit_note("sgwc.gn.pgw reloaded (%d entries)", count);
@@ -777,17 +787,18 @@ void sgwc_context_reload_runtime(void)
     sgwc_nwi_reload_cleared = false;
 
     /*
-     * Main thread reloads the YAML document once; shard workers then
-     * re-apply from the already-refreshed ogs_app()->document.
+     * Main thread only: the SGW-C context is process-global, so one
+     * pass updates what every shard sees (list swaps happen under
+     * sgwc_ctx_lock). Workers never run this.
      */
-    if (!ogs_worker_self()) {
-        if (ogs_app_config_reload() != OGS_OK) {
-            ogs_warn("Configuration reload failed; keeping previous config");
-            ogs_reload_audit_warn("YAML parse failed; previous config kept");
-            ogs_reload_audit_finish("SGWC", false);
-            ogs_log_cycle();
-            return;
-        }
+    ogs_assert(!ogs_worker_self());
+
+    if (ogs_app_config_reload() != OGS_OK) {
+        ogs_warn("Configuration reload failed; keeping previous config");
+        ogs_reload_audit_warn("YAML parse failed; previous config kept");
+        ogs_reload_audit_finish("SGWC", false);
+        ogs_log_cycle();
+        return;
     }
 
     yaml_ok = true;

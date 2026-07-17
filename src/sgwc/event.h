@@ -61,6 +61,14 @@ typedef enum {
     /* Worker deferred: create GTP peer echo timer on main timer_mgr (e->gnode). */
     SGWC_EVT_PEER_ECHO_SETUP,
 
+    /* Peer restart (recovery counter advanced): each thread purges the
+     * sessions IT OWNS toward that peer (e->gnode, e->timer_id = kind). */
+    SGWC_EVT_PEER_RESTART_PURGE,
+
+    /* PFCP association re-established with restoration_required: each
+     * thread re-establishes ITS OWN sessions on that SGW-U (e->pfcp_node). */
+    SGWC_EVT_SXA_RESTORE,
+
     SGWC_EVT_TOP,
 
 } sgwc_event_e;

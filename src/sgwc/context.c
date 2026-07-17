@@ -39,6 +39,7 @@
 #include "ga-writer.h"
 #include "metrics.h"
 #include "ogs-metrics.h"
+#include "sgwc-workers.h"
 
 #define SGWC_RECOVERY_COUNTER_FILE "/var/lib/open5gs/sgwc_recovery_counter"
 
@@ -129,27 +130,68 @@ sgwc_save_recovery_counter(const char *path, uint8_t val)
 }
 
 /*
- * SMP: the whole SGW-C context is per-thread. Each worker owns a full
- * context instance (pools, hashes, config copy) initialized in its
- * thread_init hook; UEs/sessions live on exactly one worker, found by
- * the shard bits their TEID/SEID carry (see sgwc_shard_compose below).
- * With workers disabled everything lives on the main thread, index 0,
- * exactly as before.
+ * SMP model (post-mortem of the thread-local design):
+ *
+ * The SGW-C context is PROCESS-GLOBAL. One config, one UE list, one set
+ * of hashes and pools, initialized exactly once (init thread) and freed
+ * exactly once (terminate). A thread-local context split the state
+ * between the init thread, the event-loop thread and every worker —
+ * sockets/peers configured on one thread were invisible to the others.
+ *
+ * Concurrency rules:
+ *  - Every UE/session is OWNED by exactly one thread: the shard bits in
+ *    its S11 TEID / SXA SEID name the owner and the RX router delivers
+ *    all of its traffic there. Owner-only field access needs no lock.
+ *  - The shared containers (pools, hashes, sgw_ue_list, reloadable
+ *    config lists) are only mutated inside this file, under
+ *    sgwc_ctx_lock() — a recursive mutex shared with the metrics/admin
+ *    HTTP dumpers (ogs_metrics_dump_lock) so readers never interleave
+ *    with mutators.
+ *  - Cross-owner sweeps (recovery purge, PFCP restoration, orphan
+ *    sweep, drain) fan out as events; each thread processes only the
+ *    UEs it owns (sgwc_ue_owned_by_self).
+ *
+ * With workers disabled everything runs on the main thread and the
+ * lock recursion cost is all that remains of this machinery.
  */
-static OGS_THREAD_LOCAL sgwc_context_t self;
+static sgwc_context_t self;
 
 int __sgwc_log_domain;
 
-static OGS_THREAD_LOCAL OGS_POOL(sgwc_bearer_pool, sgwc_bearer_t);
-static OGS_THREAD_LOCAL OGS_POOL(sgwc_tunnel_pool, sgwc_tunnel_t);
+static OGS_POOL(sgwc_bearer_pool, sgwc_bearer_t);
+static OGS_POOL(sgwc_tunnel_pool, sgwc_tunnel_t);
 
-static OGS_THREAD_LOCAL OGS_POOL(sgwc_ue_pool, sgwc_ue_t);
-static OGS_THREAD_LOCAL OGS_POOL(sgwc_s11_teid_pool, ogs_pool_id_t);
+static OGS_POOL(sgwc_ue_pool, sgwc_ue_t);
+static OGS_POOL(sgwc_s11_teid_pool, ogs_pool_id_t);
 
-static OGS_THREAD_LOCAL OGS_POOL(sgwc_sess_pool, sgwc_sess_t);
-static OGS_THREAD_LOCAL OGS_POOL(sgwc_sxa_seid_pool, ogs_pool_id_t);
+static OGS_POOL(sgwc_sess_pool, sgwc_sess_t);
+static OGS_POOL(sgwc_sxa_seid_pool, ogs_pool_id_t);
 
-static OGS_THREAD_LOCAL int context_initialized = 0;
+static int context_initialized = 0;
+
+void sgwc_ctx_lock(void)
+{
+    ogs_metrics_dump_lock();
+}
+
+void sgwc_ctx_unlock(void)
+{
+    ogs_metrics_dump_unlock();
+}
+
+bool sgwc_ue_owned_by_self(sgwc_ue_t *sgwc_ue)
+{
+    int shard;
+
+    ogs_assert(sgwc_ue);
+
+    if (!ogs_worker_shards_active())
+        return true;
+
+    shard = (int)((sgwc_ue->sgw_s11_teid >> (32 - OGS_WORKER_ID_BITS)) &
+            ((1u << OGS_WORKER_ID_BITS) - 1));
+    return shard == ogs_worker_self_id();
+}
 
 /* Shared across workers; only ever changed with atomics. */
 static int num_of_sgwc_sess = 0;
@@ -158,22 +200,65 @@ static int num_of_sgwc_sess = 0;
 static ogs_list_t shared_mme_s11_list;
 static ogs_list_t shared_pgw_s5c_list;
 static ogs_list_t shared_sgsn_gn_list;
+/*
+ * RECURSIVE mutex: sgwc_gn_queue_message() holds it while calling
+ * sgwc_sgsn_peer_setup(), which locks it again to move the peer off the
+ * S11 list. On Windows CRITICAL_SECTION is recursive by default.
+ */
+#if defined(_WIN32)
 static ogs_thread_mutex_t shared_peers_mutex;
+#else
+static pthread_mutex_t shared_peers_mutex;
+#endif
 static int shared_peers_ready = 0;
+
+static void shared_peers_mutex_setup(void)
+{
+#if defined(_WIN32)
+    ogs_thread_mutex_init(&shared_peers_mutex);
+#else
+    {
+        pthread_mutexattr_t attr;
+        pthread_mutexattr_init(&attr);
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+        pthread_mutex_init(&shared_peers_mutex, &attr);
+        pthread_mutexattr_destroy(&attr);
+    }
+#endif
+}
+
+static void shared_peers_mutex_teardown(void)
+{
+#if defined(_WIN32)
+    ogs_thread_mutex_destroy(&shared_peers_mutex);
+#else
+    pthread_mutex_destroy(&shared_peers_mutex);
+#endif
+}
 
 static void stats_add_sgwc_session(void);
 static void stats_remove_sgwc_session(void);
 
 void sgwc_peers_lock(void)
 {
-    if (shared_peers_ready)
-        ogs_thread_mutex_lock(&shared_peers_mutex);
+    if (!shared_peers_ready)
+        return;
+#if defined(_WIN32)
+    ogs_thread_mutex_lock(&shared_peers_mutex);
+#else
+    pthread_mutex_lock(&shared_peers_mutex);
+#endif
 }
 
 void sgwc_peers_unlock(void)
 {
-    if (shared_peers_ready)
-        ogs_thread_mutex_unlock(&shared_peers_mutex);
+    if (!shared_peers_ready)
+        return;
+#if defined(_WIN32)
+    ogs_thread_mutex_unlock(&shared_peers_mutex);
+#else
+    pthread_mutex_unlock(&shared_peers_mutex);
+#endif
 }
 
 ogs_list_t *sgwc_mme_s11_list(void)
@@ -265,6 +350,7 @@ void sgwc_sgwu_nwi_rewrite_clear(void)
 {
     sgwc_sgwu_nwi_rewrite_rule_t *rule = NULL, *next_rule = NULL;
 
+    sgwc_ctx_lock();
     ogs_list_for_each_safe(&self.sgwu_nwi_rewrite_list, next_rule, rule) {
         ogs_list_remove(&self.sgwu_nwi_rewrite_list, rule);
         if (rule->match)
@@ -273,6 +359,7 @@ void sgwc_sgwu_nwi_rewrite_clear(void)
             ogs_free(rule->replace);
         ogs_free(rule);
     }
+    sgwc_ctx_unlock();
 }
 
 void sgwc_gn_pgw_clear_list(ogs_list_t *list)
@@ -312,7 +399,9 @@ static void sgwc_sgwu_nwi_rewrite_add(
     rule->replace = ogs_strdup(replace);
     ogs_assert(rule->replace);
     rule->selection_order = selection_order;
+    sgwc_ctx_lock();
     ogs_list_add(&self.sgwu_nwi_rewrite_list, rule);
+    sgwc_ctx_unlock();
 
     ogs_info("SGW-U NWI rewrite: [%s] -> [%s] order:%d "
             "(case-insensitive, * wildcard)",
@@ -333,13 +422,17 @@ void sgwc_sgwu_nwi_rewrite_resort(void)
     sgwc_sgwu_nwi_rewrite_rule_t *rules[256];
     int i, n = 0;
 
+    sgwc_ctx_lock();
+
     ogs_list_for_each(&self.sgwu_nwi_rewrite_list, rule) {
         if (n < (int)(sizeof(rules) / sizeof(rules[0])))
             rules[n++] = rule;
     }
 
-    if (n <= 1)
+    if (n <= 1) {
+        sgwc_ctx_unlock();
         return;
+    }
 
     qsort(rules, n, sizeof(rules[0]), sgwc_sgwu_nwi_rewrite_order_cmp);
 
@@ -348,6 +441,8 @@ void sgwc_sgwu_nwi_rewrite_resort(void)
 
     for (i = 0; i < n; i++)
         ogs_list_add(&self.sgwu_nwi_rewrite_list, rules[i]);
+
+    sgwc_ctx_unlock();
 }
 
 static void sgwc_sgwu_nwi_rewrite_parse(ogs_yaml_iter_t *parent_iter)
@@ -416,8 +511,12 @@ static bool sgwc_sgwu_nwi_rewrite_apply(
     ogs_assert(nwi);
     ogs_assert(buflen > OGS_MAX_APN_LEN);
 
-    if (ogs_list_empty(&self.sgwu_nwi_rewrite_list))
+    sgwc_ctx_lock();
+
+    if (ogs_list_empty(&self.sgwu_nwi_rewrite_list)) {
+        sgwc_ctx_unlock();
         return false;
+    }
 
     candidates[0] = nwi;
     candidates[1] = sess->session.name;
@@ -433,11 +532,13 @@ static bool sgwc_sgwu_nwi_rewrite_apply(
                 ogs_debug("SGW-U NWI rewrite: %s -> %s (pattern %s)",
                         candidate, rule->replace, rule->match);
                 ogs_cpystrn(nwi, rule->replace, buflen);
+                sgwc_ctx_unlock();
                 return true;
             }
         }
     }
 
+    sgwc_ctx_unlock();
     return false;
 }
 
@@ -563,18 +664,17 @@ void sgwc_context_init(void)
     ogs_list_init(&self.gn_pgw_list);
 
     /*
-     * Peer lists are process-wide (shared by main + shard workers).
-     * Initialize once; TLS struct fields mme_s11_list/pgw_s5c_list/
-     * sgsn_gn_list are unused aliases kept for ABI stability.
+     * Peer lists are process-wide. The struct fields mme_s11_list/
+     * pgw_s5c_list/sgsn_gn_list are unused aliases kept for ABI
+     * stability; the shared accessors are the source of truth.
      */
     if (!shared_peers_ready) {
         ogs_list_init(&shared_mme_s11_list);
         ogs_list_init(&shared_pgw_s5c_list);
         ogs_list_init(&shared_sgsn_gn_list);
-        ogs_thread_mutex_init(&shared_peers_mutex);
+        shared_peers_mutex_setup();
         shared_peers_ready = 1;
     }
-    /* TLS peer-list fields are unused; shared accessors are the source of truth. */
     ogs_list_init(&self.mme_s11_list);
     ogs_list_init(&self.pgw_s5c_list);
     ogs_list_init(&self.sgsn_gn_list);
@@ -612,10 +712,10 @@ void sgwc_context_final(void)
     sgwc_ue_remove_all();
 
     /*
-     * Shared peer tables are torn down only on the main thread after
-     * shard workers have stopped (workers must not free peers).
+     * Runs once, on the terminating thread, after the event loop and
+     * all shard workers have stopped — no concurrent access remains.
      */
-    if (!ogs_worker_self() && shared_peers_ready) {
+    if (shared_peers_ready) {
         sgwc_peers_lock();
         ogs_list_for_each_safe(&shared_mme_s11_list, next_gnode, gnode)
             sgwc_mme_peer_detach(gnode);
@@ -626,7 +726,7 @@ void sgwc_context_final(void)
         ogs_gtp_node_remove_all(&shared_sgsn_gn_list);
         sgwc_peers_unlock();
 
-        ogs_thread_mutex_destroy(&shared_peers_mutex);
+        shared_peers_mutex_teardown();
         shared_peers_ready = 0;
     }
 
@@ -671,40 +771,150 @@ static bool sgwc_mme_recovery_is_restart(uint8_t stored, uint8_t received)
     return (uint8_t)(received - stored) < 128;
 }
 
-static void sgwc_mme_purge_sessions(ogs_gtp_node_t *gnode)
+/*
+ * Collect the pool ids of every UE the CALLING thread owns, under the
+ * container lock. Returns an ogs_malloc'd array the caller frees, or
+ * NULL when it owns none. Ids (not pointers) are collected so each one
+ * is re-validated when processed — another path may free the UE while
+ * we are still working through the list.
+ */
+ogs_pool_id_t *sgwc_ue_ids_collect_owned(int *out_count)
 {
-    sgwc_ue_t *sgwc_ue = NULL, *next_ue = NULL;
-    sgwc_sess_t *sess = NULL, *next_sess = NULL;
+    sgwc_ue_t *sgwc_ue = NULL;
+    ogs_pool_id_t *ids = NULL;
+    int count = 0, capacity = 0;
+
+    ogs_assert(out_count);
+    *out_count = 0;
+
+    sgwc_ctx_lock();
+    ogs_list_for_each(&self.sgw_ue_list, sgwc_ue) {
+        if (!sgwc_ue_owned_by_self(sgwc_ue))
+            continue;
+        if (count == capacity) {
+            capacity = capacity ? capacity * 2 : 256;
+            ids = ids ? ogs_realloc(ids, sizeof(*ids) * capacity) :
+                    ogs_malloc(sizeof(*ids) * capacity);
+            ogs_assert(ids);
+        }
+        ids[count++] = sgwc_ue->id;
+    }
+    sgwc_ctx_unlock();
+
+    *out_count = count;
+    return ids;
+}
+
+/*
+ * Purge the calling thread's OWN sessions toward a restarted peer.
+ * MME kind: every session of UEs attached via that S11 gnode.
+ * PGW kind: every session whose S5-C gnode is that peer.
+ */
+void sgwc_peer_restart_purge_owned(ogs_gtp_node_t *gnode, int kind)
+{
+    ogs_pool_id_t *ids = NULL;
+    int count = 0, i;
     char buf[OGS_ADDRSTRLEN];
 
     ogs_assert(gnode);
 
-    ogs_warn("MME [%s]:%d recovery restart: purging SGWC sessions",
+    ids = sgwc_ue_ids_collect_owned(&count);
+    if (!ids)
+        return;
+
+    ogs_warn("%s [%s]:%d recovery restart: purging owned SGWC sessions",
+            kind == SGWC_PEER_RESTART_KIND_MME ? "MME" : "PGW",
             OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
 
-    ogs_list_for_each_safe(&self.sgw_ue_list, next_ue, sgwc_ue) {
-        if (sgwc_ue->gnode != gnode)
+    for (i = 0; i < count; i++) {
+        sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_id(ids[i]);
+        sgwc_sess_t *sess = NULL, *next_sess = NULL;
+
+        if (!sgwc_ue || !sgwc_ue_owned_by_self(sgwc_ue))
             continue;
 
-        ogs_list_for_each_safe(&sgwc_ue->sess_list, next_sess, sess) {
-            ogs_warn("[%s] MME recovery restart: delete session toward PGW/SMF",
-                    sgwc_ue->imsi_bcd);
+        if (kind == SGWC_PEER_RESTART_KIND_MME) {
+            if (sgwc_ue->gnode != gnode)
+                continue;
 
-            /* Remove data-plane bearer on SGW-U */
-            if (sess->pfcp_node && sess->sgwu_sxa_seid)
-                sgwc_pfcp_send_session_deletion_request(
-                        sess, OGS_INVALID_POOL_ID, NULL);
+            ogs_list_for_each_safe(&sgwc_ue->sess_list, next_sess, sess) {
+                ogs_warn("[%s] MME recovery restart: "
+                        "delete session toward PGW/SMF", sgwc_ue->imsi_bcd);
 
-            /* Delete PDN connection on PGW/SMF (S5C) */
-            if (sess->gnode)
-                sgwc_gtp_send_s5c_delete_session_request(sess);
+                /* Remove data-plane bearer on SGW-U */
+                if (sess->pfcp_node && sess->sgwu_sxa_seid)
+                    sgwc_pfcp_send_session_deletion_request(
+                            sess, OGS_INVALID_POOL_ID, NULL);
 
-            sgwc_sess_remove(sess);
+                /* Delete PDN connection on PGW/SMF (S5C) */
+                if (sess->gnode)
+                    sgwc_gtp_send_s5c_delete_session_request(sess);
+
+                sgwc_sess_remove(sess);
+            }
+        } else {
+            ogs_list_for_each_safe(&sgwc_ue->sess_list, next_sess, sess) {
+                if (sess->gnode != gnode)
+                    continue;
+
+                ogs_warn("[%s] PGW recovery restart: delete session",
+                        sgwc_ue->imsi_bcd);
+                /*
+                 * Notify the MME with a Delete Bearer Request
+                 * (network-initiated, default-bearer EBI): the MME has no
+                 * handler for a received Delete Session Request and would
+                 * silently keep its stale UE context.
+                 */
+                sgwc_gtp_send_delete_bearer_request_to_mme(
+                        sgwc_ue, sess, OGS_INVALID_POOL_ID);
+                sgwc_sess_remove(sess);
+            }
         }
 
         if (ogs_list_empty(&sgwc_ue->sess_list))
             sgwc_ue_remove(sgwc_ue);
     }
+
+    ogs_free(ids);
+}
+
+/*
+ * Re-establish the calling thread's OWN sessions on a re-associated
+ * SGW-U (TS 23.007 restoration with RESTI). Runs on every shard via
+ * SGWC_EVT_SXA_RESTORE fan-out; single-threaded it is a direct call.
+ */
+void sgwc_pfcp_restoration_owned(ogs_pfcp_node_t *node)
+{
+    ogs_pool_id_t *ids = NULL;
+    int count = 0, i;
+
+    ogs_assert(node);
+
+    ids = sgwc_ue_ids_collect_owned(&count);
+
+    for (i = 0; i < count; i++) {
+        sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_id(ids[i]);
+        sgwc_sess_t *sess = NULL;
+
+        if (!sgwc_ue || !sgwc_ue_owned_by_self(sgwc_ue))
+            continue;
+
+        ogs_list_for_each(&sgwc_ue->sess_list, sess) {
+            if (node != sess->pfcp_node)
+                continue;
+
+            ogs_info("PFCP restoration UE IMSI[%s] APN[%s]",
+                    sgwc_ue->imsi_bcd, sess->session.name);
+            if (sgwc_pfcp_send_session_establishment_request(
+                    sess, OGS_INVALID_POOL_ID, NULL,
+                    OGS_PFCP_CREATE_RESTORATION_INDICATION) != OGS_OK)
+                ogs_warn("PFCP restoration send failed for sess_id[%d]",
+                        sess->id);
+        }
+    }
+
+    if (ids)
+        ogs_free(ids);
 }
 
 sgwc_mme_peer_t *sgwc_mme_peer_get(ogs_gtp_node_t *gnode)
@@ -781,7 +991,15 @@ bool sgwc_mme_recovery_update(sgwc_mme_peer_t *peer, uint8_t recovery)
             OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr),
             peer->peer_recovery, recovery);
     peer->peer_recovery = recovery;
-    sgwc_mme_purge_sessions(gnode);
+    /*
+     * The restart may be detected on any thread; every thread purges
+     * only the sessions it owns. Fan out so all shards act (including
+     * the detecting one, via its own queue, to preserve event order).
+     */
+    if (sgwc_workers_active())
+        sgwc_event_fanout_restart_purge(gnode, SGWC_PEER_RESTART_KIND_MME);
+    else
+        sgwc_peer_restart_purge_owned(gnode, SGWC_PEER_RESTART_KIND_MME);
     return true;
 }
 
@@ -823,44 +1041,6 @@ static bool sgwc_pgw_recovery_is_restart(uint8_t stored, uint8_t received)
     if (received == stored)
         return false;
     return (uint8_t)(received - stored) < 128;
-}
-
-static void sgwc_pgw_purge_sessions(ogs_gtp_node_t *gnode)
-{
-    sgwc_ue_t *sgwc_ue = NULL, *next_ue = NULL;
-    sgwc_sess_t *sess = NULL, *next_sess = NULL;
-    char buf[OGS_ADDRSTRLEN];
-
-    ogs_assert(gnode);
-
-    ogs_warn("PGW [%s]:%d recovery restart: purging SGWC sessions",
-            OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
-
-    ogs_list_for_each_safe(&self.sgw_ue_list, next_ue, sgwc_ue) {
-        ogs_list_for_each_safe(&sgwc_ue->sess_list, next_sess, sess) {
-            if (sess->gnode != gnode)
-                continue;
-
-            ogs_warn("[%s] PGW recovery restart: delete session",
-                    sgwc_ue->imsi_bcd);
-            /*
-             * Notify the MME so it releases the UE/bearer contexts. This MUST
-             * be a Delete Bearer Request (network-initiated, carrying the
-             * default-bearer EBI): the MME has no handler for a received Delete
-             * Session Request and silently drops it ("Not implemented"), which
-             * left stale UE contexts on the MME after a PGW/SMF restart.
-             * Fire-and-forget with the same per-bearer timeout fallback used by
-             * the admin detach path; sgwc_sess_remove() below frees the local
-             * context (and the SGW-U PFCP session) immediately afterward.
-             */
-            sgwc_gtp_send_delete_bearer_request_to_mme(
-                    sgwc_ue, sess, OGS_INVALID_POOL_ID);
-            sgwc_sess_remove(sess);
-        }
-
-        if (ogs_list_empty(&sgwc_ue->sess_list))
-            sgwc_ue_remove(sgwc_ue);
-    }
 }
 
 sgwc_pgw_peer_t *sgwc_pgw_peer_get(ogs_gtp_node_t *gnode)
@@ -937,7 +1117,11 @@ bool sgwc_pgw_recovery_update(sgwc_pgw_peer_t *peer, uint8_t recovery)
             OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr),
             peer->peer_recovery, recovery);
     peer->peer_recovery = recovery;
-    sgwc_pgw_purge_sessions(gnode);
+    /* See sgwc_mme_recovery_update(): every thread purges what it owns. */
+    if (sgwc_workers_active())
+        sgwc_event_fanout_restart_purge(gnode, SGWC_PEER_RESTART_KIND_PGW);
+    else
+        sgwc_peer_restart_purge_owned(gnode, SGWC_PEER_RESTART_KIND_PGW);
     return true;
 }
 
@@ -1260,6 +1444,14 @@ sgwc_gn_pgw_t *sgwc_gn_pgw_find_for_ue(sgwc_ue_t *sgwc_ue)
     int best_prefix_len = -1;
     int best_order = INT_MAX;
 
+    /*
+     * SIGHUP swaps this list on the main thread while Gn handlers read
+     * it on workers. Entries themselves are never freed while returned
+     * (reload builds a new list and frees the old one under the same
+     * lock; the returned pointer is used immediately by the caller —
+     * keep it that way).
+     */
+    sgwc_ctx_lock();
     ogs_list_for_each(&self.gn_pgw_list, pgw) {
         if (!pgw->imsi_prefix[0]) {
             if (!default_pgw ||
@@ -1288,6 +1480,7 @@ sgwc_gn_pgw_t *sgwc_gn_pgw_find_for_ue(sgwc_ue_t *sgwc_ue)
     if (best) {
         ogs_debug("Gn PGW selected imsi_prefix:%s IMSI:%s order:%d",
                 best->imsi_prefix, sgwc_ue->imsi_bcd, best->selection_order);
+        sgwc_ctx_unlock();
         return best;
     }
 
@@ -1297,6 +1490,7 @@ sgwc_gn_pgw_t *sgwc_gn_pgw_find_for_ue(sgwc_ue_t *sgwc_ue)
                 default_pgw->selection_order);
     }
 
+    sgwc_ctx_unlock();
     return default_pgw;
 }
 
@@ -1709,8 +1903,11 @@ sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len)
     ogs_assert(imsi);
     ogs_assert(imsi_len);
 
+    sgwc_ctx_lock();
+
     ogs_pool_id_calloc(&sgwc_ue_pool, &sgwc_ue);
     if (!sgwc_ue) {
+        sgwc_ctx_unlock();
         ogs_error("Maximum number of sgwc_ue[%lld] reached",
                     (long long)ogs_global_conf()->max.ue);
         return NULL;
@@ -1721,6 +1918,7 @@ sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len)
     if (!sgwc_ue->sgw_s11_teid_node) {
         ogs_error("SGW-S11-TEID pool exhausted");
         ogs_pool_id_free(&sgwc_ue_pool, sgwc_ue);
+        sgwc_ctx_unlock();
         return NULL;
     }
 
@@ -1743,9 +1941,9 @@ sgwc_ue_t *sgwc_ue_add(uint8_t *imsi, int imsi_len)
 
     ogs_hash_set(self.imsi_ue_hash, sgwc_ue->imsi, sgwc_ue->imsi_len, sgwc_ue);
 
-    ogs_metrics_dump_lock();
     ogs_list_add(&self.sgw_ue_list, sgwc_ue);
-    ogs_metrics_dump_unlock();
+
+    sgwc_ctx_unlock();
 
     sgwc_metrics_ue_active_inc(sgwc_ue);
 
@@ -1768,9 +1966,9 @@ int sgwc_ue_remove(sgwc_ue_t *sgwc_ue)
 
     sgwc_metrics_ue_active_dec(sgwc_ue);
 
-    ogs_metrics_dump_lock();
+    sgwc_ctx_lock();
+
     ogs_list_remove(&self.sgw_ue_list, sgwc_ue);
-    ogs_metrics_dump_unlock();
 
     ogs_hash_set(self.sgw_s11_teid_hash,
             &sgwc_ue->sgw_s11_teid, sizeof(sgwc_ue->sgw_s11_teid), NULL);
@@ -1794,6 +1992,8 @@ int sgwc_ue_remove(sgwc_ue_t *sgwc_ue)
 
     ogs_pool_free(&sgwc_s11_teid_pool, sgwc_ue->sgw_s11_teid_node);
     ogs_pool_id_free(&sgwc_ue_pool, sgwc_ue);
+
+    sgwc_ctx_unlock();
 
     /* See sgwc_ue_add(): never walk the UE list unless debug will print. */
     if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
@@ -1852,20 +2052,35 @@ sgwc_ue_t *sgwc_ue_find_by_imsi_bcd(const char *imsi_bcd)
 
 sgwc_ue_t *sgwc_ue_find_by_imsi(uint8_t *imsi, int imsi_len)
 {
+    sgwc_ue_t *sgwc_ue = NULL;
+
     if (!imsi || imsi_len <= 0)
         return NULL;
 
-    return ogs_hash_get(self.imsi_ue_hash, imsi, imsi_len);
+    sgwc_ctx_lock();
+    sgwc_ue = ogs_hash_get(self.imsi_ue_hash, imsi, imsi_len);
+    sgwc_ctx_unlock();
+    return sgwc_ue;
 }
 
 sgwc_ue_t *sgwc_ue_find_by_teid(uint32_t teid)
 {
-    return ogs_hash_get(self.sgw_s11_teid_hash, &teid, sizeof(teid));
+    sgwc_ue_t *sgwc_ue = NULL;
+
+    sgwc_ctx_lock();
+    sgwc_ue = ogs_hash_get(self.sgw_s11_teid_hash, &teid, sizeof(teid));
+    sgwc_ctx_unlock();
+    return sgwc_ue;
 }
 
 sgwc_ue_t *sgwc_ue_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&sgwc_ue_pool, id);
+    sgwc_ue_t *sgwc_ue = NULL;
+
+    sgwc_ctx_lock();
+    sgwc_ue = ogs_pool_find_by_id(&sgwc_ue_pool, id);
+    sgwc_ctx_unlock();
+    return sgwc_ue;
 }
 
 /*
@@ -1892,7 +2107,7 @@ static bool sgwc_imsi_is_operator_home(const char *imsi_bcd)
 void sgwc_home_plmn_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id)
 {
     sgwc_gn_pgw_t *pgw = NULL;
-    sgwc_gn_pgw_t *best = NULL;
+    char best_prefix[OGS_MAX_IMSI_BCD_LEN+1] = { 0, };
     int best_len = 0;
 
     ogs_assert(imsi_bcd);
@@ -1907,7 +2122,10 @@ void sgwc_home_plmn_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id)
     /*
      * For inbound roamers whose home PLMN is not in serving_plmn_id, use the
      * longest matching gn.pgw imsi_prefix (operator-configured PLMN digits).
+     * The prefix is copied out under the lock: SIGHUP may swap the list
+     * (and free its entries) on another thread.
      */
+    sgwc_ctx_lock();
     ogs_list_for_each(&self.gn_pgw_list, pgw) {
         int plen;
 
@@ -1919,14 +2137,15 @@ void sgwc_home_plmn_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id)
             continue;
 
         if (strncmp(imsi_bcd, pgw->imsi_prefix, plen) == 0 && plen > best_len) {
-            best = pgw;
+            ogs_cpystrn(best_prefix, pgw->imsi_prefix, sizeof(best_prefix));
             best_len = plen;
         }
     }
+    sgwc_ctx_unlock();
 
-    if (best) {
+    if (best_len) {
         char mcc_buf[4];
-        const char *pfx = best->imsi_prefix;
+        const char *pfx = best_prefix;
         int mnc_len;
         uint16_t mcc, mnc;
 
@@ -1997,6 +2216,8 @@ void sgwc_inbound_roam_teid_offset_apply(sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess)
     if (!sgwc_sess_is_inbound_roam(sess))
         return;
 
+    sgwc_ctx_lock();
+
     raw_teid = *(sess->sgwc_sxa_seid_node);
     ogs_hash_set(self.sgwc_sxa_seid_hash, &sess->sgwc_sxa_seid,
             sizeof(sess->sgwc_sxa_seid), NULL);
@@ -2013,6 +2234,8 @@ void sgwc_inbound_roam_teid_offset_apply(sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess)
     sgwc_ue->sgw_s11_teid = sgwc_inbound_roam_teid(raw_teid);
     ogs_hash_set(self.sgw_s11_teid_hash, &sgwc_ue->sgw_s11_teid,
             sizeof(sgwc_ue->sgw_s11_teid), sgwc_ue);
+
+    sgwc_ctx_unlock();
 
     ogs_debug("Inbound roam TEID offset 0x%x: SGW-S11=0x%x SGW-S5C=0x%x",
             sgwc_self()->inbound_roam_teid_offset,
@@ -2096,8 +2319,11 @@ sgwc_sess_t *sgwc_sess_add(sgwc_ue_t *sgwc_ue, char *apn)
 
     ogs_assert(sgwc_ue);
 
+    sgwc_ctx_lock();
+
     ogs_pool_id_calloc(&sgwc_sess_pool, &sess);
     if (!sess) {
+        sgwc_ctx_unlock();
         ogs_error("Maximum number of session[%lld] reached",
                     (long long)ogs_app()->pool.sess);
         return NULL;
@@ -2111,6 +2337,7 @@ sgwc_sess_t *sgwc_sess_add(sgwc_ue_t *sgwc_ue, char *apn)
         ogs_error("SGW-SXA-SEID pool exhausted");
         ogs_pfcp_pool_final(&sess->pfcp);
         ogs_pool_id_free(&sgwc_sess_pool, sess);
+        sgwc_ctx_unlock();
         return NULL;
     }
 
@@ -2129,9 +2356,9 @@ sgwc_sess_t *sgwc_sess_add(sgwc_ue_t *sgwc_ue, char *apn)
 
     sess->sgwc_ue_id = sgwc_ue->id;
 
-    ogs_metrics_dump_lock();
     ogs_list_add(&sgwc_ue->sess_list, sess);
-    ogs_metrics_dump_unlock();
+
+    sgwc_ctx_unlock();
 
     stats_add_sgwc_session();
 
@@ -2294,23 +2521,51 @@ void sgwc_sess_abort_create(sgwc_sess_t *sess)
     sgwc_sess_remove(sess);
 }
 
+/*
+ * Per-shard sweep results: each thread sweeps only the UEs it owns, so
+ * the process-wide orphan gauges are the sum over all shard slots.
+ */
+static int orphan_sess_remaining_by_shard[OGS_MAX_WORKERS];
+static int orphan_ue_lingering_by_shard[OGS_MAX_WORKERS];
+
+static void sgwc_orphan_publish_gauges(void)
+{
+    int i, sess_total = 0, ue_total = 0;
+
+    for (i = 0; i < OGS_MAX_WORKERS; i++) {
+        sess_total += __atomic_load_n(
+                &orphan_sess_remaining_by_shard[i], __ATOMIC_RELAXED);
+        ue_total += __atomic_load_n(
+                &orphan_ue_lingering_by_shard[i], __ATOMIC_RELAXED);
+    }
+
+    sgwc_metrics_global_set(SGWC_METR_GLOB_GAUGE_SESSIONS_ORPHAN, sess_total);
+    sgwc_metrics_global_set(SGWC_METR_GLOB_GAUGE_UE_ORPHAN, ue_total);
+}
+
 int sgwc_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
 {
-    sgwc_ue_t *ue = NULL, *next_ue = NULL;
     sgwc_sess_t *sess = NULL, *next_sess = NULL;
     ogs_time_t now = ogs_time_now();
     int remaining = 0, purged = 0, empty_ue_lingering = 0;
+    ogs_pool_id_t *ids = NULL;
+    int count = 0, i;
 
     /*
-     * Main-thread only: this walks and mutates sgw_ue_list / sess_list and may
-     * send S5/PFCP teardown messages. sgwc_sess_remove() takes the metrics dump
-     * lock internally for the list removal, which is what the admin HTTP reader
-     * (sgwc_admin_list_sessions) also holds while iterating, so the two never
-     * corrupt the list. The _safe iterators tolerate removal of the current
-     * node; the outer iterator pre-captures next_ue so removing an emptied UE
-     * is safe too.
+     * Every thread sweeps only the UEs it owns. The owned ids are
+     * collected under the container lock, then processed lock-free —
+     * teardown sends S5/PFCP messages, which must not run under the
+     * lock. Each id is re-validated on processing because a UE can
+     * disappear (detach) between collection and processing.
      */
-    ogs_list_for_each_safe(&self.sgw_ue_list, next_ue, ue) {
+    ids = sgwc_ue_ids_collect_owned(&count);
+
+    for (i = 0; i < count; i++) {
+        sgwc_ue_t *ue = sgwc_ue_find_by_id(ids[i]);
+
+        if (!ue || !sgwc_ue_owned_by_self(ue))
+            continue;
+
         ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
             /*
              * Three ways a session is dead weight:
@@ -2388,8 +2643,14 @@ int sgwc_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
         sgwc_ue_remove_if_empty(ue);
     }
 
-    sgwc_metrics_global_set(
-            SGWC_METR_GLOB_GAUGE_UE_ORPHAN, empty_ue_lingering);
+    if (ids)
+        ogs_free(ids);
+
+    __atomic_store_n(&orphan_sess_remaining_by_shard[ogs_worker_self_id()],
+            remaining, __ATOMIC_RELAXED);
+    __atomic_store_n(&orphan_ue_lingering_by_shard[ogs_worker_self_id()],
+            empty_ue_lingering, __ATOMIC_RELAXED);
+    sgwc_orphan_publish_gauges();
 
     if (out_purged)
         *out_purged = purged;
@@ -2470,9 +2731,9 @@ int sgwc_sess_remove(sgwc_sess_t *sess)
     sgwc_ga_cdr_session_stop(sess);
     sgwc_ga_sess_clear(sess);
 
-    ogs_metrics_dump_lock();
+    sgwc_ctx_lock();
+
     ogs_list_remove(&sgwc_ue->sess_list, sess);
-    ogs_metrics_dump_unlock();
 
     ogs_hash_set(self.sgwc_sxa_seid_hash, &sess->sgwc_sxa_seid,
             sizeof(sess->sgwc_sxa_seid), NULL);
@@ -2488,6 +2749,8 @@ int sgwc_sess_remove(sgwc_sess_t *sess)
 
     ogs_pool_free(&sgwc_sxa_seid_pool, sess->sgwc_sxa_seid_node);
     ogs_pool_id_free(&sgwc_sess_pool, sess);
+
+    sgwc_ctx_unlock();
 
     stats_remove_sgwc_session();
 
@@ -2577,7 +2840,12 @@ sgwc_sess_t* sgwc_sess_find_by_teid(uint32_t teid)
 
 sgwc_sess_t *sgwc_sess_find_by_seid(uint64_t seid)
 {
-    return ogs_hash_get(self.sgwc_sxa_seid_hash, &seid, sizeof(seid));
+    sgwc_sess_t *sess = NULL;
+
+    sgwc_ctx_lock();
+    sess = ogs_hash_get(self.sgwc_sxa_seid_hash, &seid, sizeof(seid));
+    sgwc_ctx_unlock();
+    return sess;
 }
 
 sgwc_sess_t* sgwc_sess_find_by_apn(sgwc_ue_t *sgwc_ue, char *apn)
@@ -2623,23 +2891,33 @@ sgwc_sess_t *sgwc_sess_find_by_nsapi(sgwc_ue_t *sgwc_ue, uint8_t nsapi)
 
 sgwc_sess_t *sgwc_sess_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&sgwc_sess_pool, id);
+    sgwc_sess_t *sess = NULL;
+
+    sgwc_ctx_lock();
+    sess = ogs_pool_find_by_id(&sgwc_sess_pool, id);
+    sgwc_ctx_unlock();
+    return sess;
 }
 
 bool sgwc_pfcp_peer_in_use(const ogs_pfcp_node_t *node)
 {
     int i;
     sgwc_sess_t *sess = NULL;
+    bool in_use = false;
 
     ogs_assert(node);
 
+    sgwc_ctx_lock();
     for (i = 0; i < sgwc_sess_pool.size; i++) {
         sess = sgwc_sess_pool.index[i];
-        if (sess && sess->pfcp_node == node)
-            return true;
+        if (sess && sess->pfcp_node == node) {
+            in_use = true;
+            break;
+        }
     }
+    sgwc_ctx_unlock();
 
-    return false;
+    return in_use;
 }
 
 int sgwc_sess_pfcp_xact_count(
@@ -2718,8 +2996,10 @@ sgwc_bearer_t *sgwc_bearer_add(sgwc_sess_t *sess)
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
     ogs_assert(sgwc_ue);
 
+    sgwc_ctx_lock();
     ogs_pool_id_calloc(&sgwc_bearer_pool, &bearer);
     if (!bearer) {
+        sgwc_ctx_unlock();
         ogs_error("ogs_pool_id_calloc() failed");
         return NULL;
     }
@@ -2728,6 +3008,7 @@ sgwc_bearer_t *sgwc_bearer_add(sgwc_sess_t *sess)
 
     bearer->sgwc_ue_id = sgwc_ue->id;
     bearer->sess_id = sess->id;
+    sgwc_ctx_unlock();
 
     /* Downlink */
     tunnel = sgwc_tunnel_add(bearer, OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U);
@@ -2808,11 +3089,13 @@ int sgwc_bearer_remove(sgwc_bearer_t *bearer)
     sess = sgwc_sess_find_by_id(bearer->sess_id);
     ogs_assert(sess);
 
+    sgwc_ctx_lock();
     ogs_list_remove(&sess->bearer_list, bearer);
 
     sgwc_tunnel_remove_all(bearer);
 
     ogs_pool_id_free(&sgwc_bearer_pool, bearer);
+    sgwc_ctx_unlock();
 
     return OGS_OK;
 }
@@ -2860,7 +3143,12 @@ sgwc_bearer_t *sgwc_default_bearer_in_sess(sgwc_sess_t *sess)
 
 sgwc_bearer_t *sgwc_bearer_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&sgwc_bearer_pool, id);
+    sgwc_bearer_t *bearer = NULL;
+
+    sgwc_ctx_lock();
+    bearer = ogs_pool_find_by_id(&sgwc_bearer_pool, id);
+    sgwc_ctx_unlock();
+    return bearer;
 }
 
 sgwc_tunnel_t *sgwc_tunnel_add(
@@ -2916,8 +3204,10 @@ sgwc_tunnel_t *sgwc_tunnel_add(
         ogs_assert_if_reached();
     }
 
+    sgwc_ctx_lock();
     ogs_pool_id_calloc(&sgwc_tunnel_pool, &tunnel);
     if (!tunnel) {
+        sgwc_ctx_unlock();
         ogs_error("ogs_pool_id_calloc() failed");
         return NULL;
     }
@@ -2926,6 +3216,7 @@ sgwc_tunnel_t *sgwc_tunnel_add(
 
     tunnel->interface_type = interface_type;
     tunnel->bearer_id = bearer->id;
+    sgwc_ctx_unlock();
 
     pdr = ogs_pfcp_pdr_add(&sess->pfcp);
     if (!pdr) {
@@ -3047,6 +3338,7 @@ int sgwc_tunnel_remove(sgwc_tunnel_t *tunnel)
     bearer = sgwc_bearer_find_by_id(tunnel->bearer_id);
     ogs_assert(bearer);
 
+    sgwc_ctx_lock();
     ogs_list_remove(&bearer->tunnel_list, tunnel);
 
     if (tunnel->pdr)
@@ -3060,6 +3352,7 @@ int sgwc_tunnel_remove(sgwc_tunnel_t *tunnel)
         ogs_freeaddrinfo(tunnel->local_addr6);
 
     ogs_pool_id_free(&sgwc_tunnel_pool, tunnel);
+    sgwc_ctx_unlock();
 
     return OGS_OK;
 }
@@ -3151,7 +3444,12 @@ sgwc_tunnel_t *sgwc_tunnel_find_by_far_id(
 
 sgwc_tunnel_t *sgwc_tunnel_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&sgwc_tunnel_pool, id);
+    sgwc_tunnel_t *tunnel = NULL;
+
+    sgwc_ctx_lock();
+    tunnel = ogs_pool_find_by_id(&sgwc_tunnel_pool, id);
+    sgwc_ctx_unlock();
+    return tunnel;
 }
 
 sgwc_tunnel_t *sgwc_dl_tunnel_in_bearer(sgwc_bearer_t *bearer)

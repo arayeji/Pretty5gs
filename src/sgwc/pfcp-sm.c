@@ -21,6 +21,7 @@
 #include "sxa-handler.h"
 #include "gn-handler.h"
 #include "metrics.h"
+#include "sgwc-workers.h"
 
 static void pfcp_restoration(ogs_pfcp_node_t *node);
 static void node_timeout(ogs_pfcp_xact_t *xact, void *data);
@@ -511,8 +512,6 @@ void sgwc_pfcp_state_exception(ogs_fsm_t *s, sgwc_event_t *e)
 
 static void pfcp_restoration(ogs_pfcp_node_t *node)
 {
-    sgwc_ue_t *sgwc_ue = NULL;
-
     ogs_assert(node);
 
     /*
@@ -530,24 +529,15 @@ static void pfcp_restoration(ogs_pfcp_node_t *node)
         return;
     }
 
-    ogs_list_for_each(&sgwc_self()->sgw_ue_list, sgwc_ue) {
-        sgwc_sess_t *sess = NULL;
-        ogs_assert(sgwc_ue);
-
-        ogs_list_for_each(&sgwc_ue->sess_list, sess) {
-            ogs_assert(sess);
-
-            if (node == sess->pfcp_node) {
-                ogs_info("UE IMSI[%s] APN[%s]",
-                    sgwc_ue->imsi_bcd, sess->session.name);
-                if (sgwc_pfcp_send_session_establishment_request(
-                        sess, OGS_INVALID_POOL_ID, NULL,
-                        OGS_PFCP_CREATE_RESTORATION_INDICATION) != OGS_OK)
-                    ogs_warn("PFCP restoration send failed for sess_id[%d]",
-                            sess->id);
-            }
-        }
-    }
+    /*
+     * Every shard re-establishes the sessions IT OWNS on this SGW-U.
+     * With workers the sweep fans out (each thread gets its copy through
+     * its own queue); single-threaded it is a direct call.
+     */
+    if (sgwc_workers_active())
+        sgwc_event_fanout_sxa_restore(node);
+    else
+        sgwc_pfcp_restoration_owned(node);
 }
 
 static void node_timeout(ogs_pfcp_xact_t *xact, void *data)

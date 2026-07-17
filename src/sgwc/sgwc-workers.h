@@ -47,6 +47,11 @@ int sgwc_event_push_to_worker(int wid, sgwc_event_t *e);
  * Does not deliver to the main thread. */
 int sgwc_event_fanout_workers(sgwc_event_e id, int admin_force);
 
+/* Cross-owner sweeps: one event copy to every worker AND the main queue,
+ * so each thread acts on the UEs it owns. */
+int sgwc_event_fanout_restart_purge(ogs_gtp_node_t *gnode, int kind);
+int sgwc_event_fanout_sxa_restore(ogs_pfcp_node_t *pfcp_node);
+
 /* Shard selection helpers used by the RX router. */
 int sgwc_shard_from_teid(uint32_t teid);
 int sgwc_shard_from_seid(uint64_t seid);

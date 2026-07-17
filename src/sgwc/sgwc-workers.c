@@ -59,16 +59,6 @@ int sgwc_workers_parse_config(void)
                             OGS_MAX_WORKERS - 1, n);
                     return OGS_ERROR;
                 }
-                /*
-                 * SMP is not production-stable yet: workers:4 wedged main
-                 * (PFCP Recv-Q stuck, peers_active=0). Refuse to start
-                 * shards unless explicitly opted in via the environment.
-                 */
-                if (n > 0 && !ogs_env_get("SGWC_SMP")) {
-                    ogs_error("sgwc.workers=%d ignored — SMP disabled "
-                            "(export SGWC_SMP=1 to override)", n);
-                    n = 0;
-                }
                 sgwc_worker_configured = n;
             }
         }
@@ -227,31 +217,86 @@ int sgwc_event_fanout_workers(sgwc_event_e id, int admin_force)
     return fails ? OGS_ERROR : OGS_OK;
 }
 
+/*
+ * Deliver one event copy to EVERY shard: each worker queue plus the main
+ * app queue (main owns shard 0). Used for cross-owner sweeps — peer
+ * restart purge, PFCP restoration — where every thread must act on the
+ * UEs it owns. The detecting thread also gets its copy through its own
+ * queue, so it processes the purge in arrival order with its traffic.
+ */
+static int sgwc_event_fanout_all_shards(const sgwc_event_t *tmpl)
+{
+    int i, rv, fails = 0;
+    sgwc_event_t *e = NULL;
+
+    for (i = 0; i < sgwc_worker_count; i++) {
+        e = sgwc_event_new(tmpl->id);
+        ogs_assert(e);
+        e->timer_id = tmpl->timer_id;
+        e->gnode = tmpl->gnode;
+        e->pfcp_node = tmpl->pfcp_node;
+        rv = sgwc_event_push_to_worker(i, e);
+        if (rv != OGS_OK)
+            fails++;
+    }
+
+    /* Main thread's copy (shard 0). */
+    e = sgwc_event_new(tmpl->id);
+    ogs_assert(e);
+    e->timer_id = tmpl->timer_id;
+    e->gnode = tmpl->gnode;
+    e->pfcp_node = tmpl->pfcp_node;
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("fanout to main queue failed [%d]", rv);
+        sgwc_event_free(e);
+        fails++;
+    } else {
+        ogs_pollset_notify(ogs_app()->pollset);
+    }
+
+    return fails ? OGS_ERROR : OGS_OK;
+}
+
+int sgwc_event_fanout_restart_purge(ogs_gtp_node_t *gnode, int kind)
+{
+    sgwc_event_t tmpl;
+
+    memset(&tmpl, 0, sizeof(tmpl));
+    tmpl.id = SGWC_EVT_PEER_RESTART_PURGE;
+    tmpl.timer_id = kind;
+    tmpl.gnode = gnode;
+
+    return sgwc_event_fanout_all_shards(&tmpl);
+}
+
+int sgwc_event_fanout_sxa_restore(ogs_pfcp_node_t *pfcp_node)
+{
+    sgwc_event_t tmpl;
+
+    memset(&tmpl, 0, sizeof(tmpl));
+    tmpl.id = SGWC_EVT_SXA_RESTORE;
+    tmpl.pfcp_node = pfcp_node;
+
+    return sgwc_event_fanout_all_shards(&tmpl);
+}
+
 static void sgwc_worker_thread_init(ogs_worker_t *worker)
 {
     int rv;
 
     ogs_assert(worker);
 
-    sgwc_context_init();
-
     /*
-     * sgwc_context_init() re-installs the "sgwc" log domain at the core
-     * default level (INFO), clobbering the configured level that main
-     * applied via ogs_log_config_domain(). Re-apply it here or every
-     * worker's re-init drops the whole process back to INFO, ignoring
-     * logger.level in sgwc.yaml.
+     * The SGW-C context (config, pools, hashes, UE list) is
+     * PROCESS-GLOBAL — initialized exactly once by sgwc_initialize().
+     * Workers only bring up their per-thread state: the GTP/PFCP
+     * transaction pools (each xact is owned by the thread that created
+     * it) and this shard's FSM.
      */
-    rv = ogs_log_config_domain(
-            ogs_app()->logger.domain, ogs_app()->logger.level);
-    ogs_assert(rv == OGS_OK);
-
     rv = ogs_gtp_xact_init();
     ogs_assert(rv == OGS_OK);
     rv = ogs_pfcp_xact_init();
-    ogs_assert(rv == OGS_OK);
-
-    rv = sgwc_context_parse_config();
     ogs_assert(rv == OGS_OK);
 
     ogs_fsm_init(&worker_fsm, sgwc_state_initial, sgwc_state_final, 0);
@@ -264,8 +309,6 @@ static void sgwc_worker_thread_fini(ogs_worker_t *worker)
     ogs_assert(worker);
 
     ogs_fsm_fini(&worker_fsm, 0);
-
-    sgwc_context_final();
 
     ogs_pfcp_xact_final();
     ogs_gtp_xact_final();
@@ -288,8 +331,6 @@ static void sgwc_worker_dispatch(ogs_worker_t *worker, void *data)
 int sgwc_workers_start(void)
 {
     int i;
-    int max_ue, max_sess;
-    int per_ue, per_sess;
 
     if (sgwc_worker_configured <= 0)
         return OGS_OK;
@@ -300,29 +341,11 @@ int sgwc_workers_start(void)
     /* Opt-in protocol id sharding BEFORE any worker exists. */
     ogs_worker_shards_enable();
 
-    max_ue = ogs_global_conf()->max.ue;
-    max_sess = ogs_app()->pool.sess;
-    if (max_ue < sgwc_worker_configured)
-        max_ue = sgwc_worker_configured;
-    if (max_sess < sgwc_worker_configured)
-        max_sess = sgwc_worker_configured;
-
-    per_ue = max_ue / sgwc_worker_configured;
-    per_sess = max_sess / sgwc_worker_configured;
-    if (per_ue < 1) per_ue = 1;
-    if (per_sess < 1) per_sess = 1;
-
     /*
-     * Shrink the global pools so each worker's context_init takes a fair
-     * share. Main already initialized with tiny pools (see init.c).
+     * The UE/session pools are process-global and already sized from
+     * config by sgwc_context_init(); workers allocate from them under
+     * sgwc_ctx_lock(). Nothing to split here.
      */
-    ogs_global_conf()->max.ue = per_ue;
-    ogs_app()->pool.sess = per_sess;
-    ogs_app()->pool.bearer = ogs_max(ogs_app()->pool.bearer /
-            sgwc_worker_configured, 4);
-    ogs_app()->pool.tunnel = ogs_max(ogs_app()->pool.tunnel /
-            sgwc_worker_configured, 4);
-
     for (i = 0; i < sgwc_worker_configured; i++) {
         sgwc_workers[i] = ogs_worker_create(i,
                 ogs_app()->pool.event,
@@ -337,8 +360,10 @@ int sgwc_workers_start(void)
 
     sgwc_worker_count = sgwc_worker_configured;
 
-    ogs_info("SGWC SMP workers: %d shard(s), per-shard max.ue=%d sess=%d",
-            sgwc_worker_count, per_ue, per_sess);
+    ogs_info("SGWC SMP workers: %d shard(s), shared UE/session pools "
+            "(max.ue=%d sess=%d)",
+            sgwc_worker_count,
+            ogs_global_conf()->max.ue, ogs_app()->pool.sess);
 
     return OGS_OK;
 }

@@ -144,6 +144,8 @@ char *sgwc_runtime_config_dump(void)
     rules = cJSON_CreateArray();
     ogs_assert(rules);
     cJSON_AddItemToObject(runtime, "sgwu_nwi_rewrite_list", rules);
+    /* MHD thread: SIGHUP reload may swap this list concurrently. */
+    sgwc_ctx_lock();
     ogs_list_for_each(&ctx->sgwu_nwi_rewrite_list, rule) {
         cJSON *entry = cJSON_CreateObject();
         cJSON_AddStringToObject(entry, "match", rule->match ? rule->match : "");
@@ -151,9 +153,12 @@ char *sgwc_runtime_config_dump(void)
                 rule->replace ? rule->replace : "");
         cJSON_AddItemToArray(rules, entry);
     }
+    sgwc_ctx_unlock();
 
+    sgwc_peers_lock();
     json_append_gtp_peers(runtime, "mme_s11_list", sgwc_mme_s11_list());
     json_append_gtp_peers(runtime, "pgw_s5c_list", sgwc_pgw_s5c_list());
+    sgwc_peers_unlock();
     json_append_pfcp_peers(runtime, "sgwu_pfcp_peers");
 
     cJSON_AddItemToObject(runtime, "trace_imsi", json_append_trace_imsi());

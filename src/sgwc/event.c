@@ -132,6 +132,10 @@ const char *sgwc_event_get_name(sgwc_event_t *e)
         return "SGWC_EVT_ORPHAN_SWEEP";
     case SGWC_EVT_PEER_ECHO_SETUP:
         return "SGWC_EVT_PEER_ECHO_SETUP";
+    case SGWC_EVT_PEER_RESTART_PURGE:
+        return "SGWC_EVT_PEER_RESTART_PURGE";
+    case SGWC_EVT_SXA_RESTORE:
+        return "SGWC_EVT_SXA_RESTORE";
 
     default:
        break;

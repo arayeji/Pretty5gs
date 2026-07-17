@@ -57,11 +57,21 @@ static void sgwc_handle_echo_response(
  * burst-flooded all three peers. Instead, process fixed-size UE batches
  * paced by a timer so other traffic keeps flowing in between (same
  * pattern as the MME drain).
+ *
+ * SMP: the drain ROUND (generation, force flag, active flag) is set up
+ * once by the main thread; each shard — main included — then steps
+ * through only the UEs it owns, on its own pacing timer. The round ends
+ * when the last shard finishes.
  */
 #define SGWC_ADMIN_DRAIN_BATCH      256 /* UEs per batch */
 #define SGWC_ADMIN_DRAIN_INTERVAL   ogs_time_from_msec(100)
 
+/* Per-thread stepper state; the timer lives on this thread's timer_mgr. */
 static OGS_THREAD_LOCAL ogs_timer_t *t_admin_drain = NULL;
+static OGS_THREAD_LOCAL bool drain_self_active = false;
+
+/* Number of shards still stepping the current round (atomic). */
+static int drain_shards_running = 0;
 
 static void sgwc_admin_drain_step(void);
 
@@ -71,37 +81,61 @@ static void admin_drain_timer_cb(void *data)
     sgwc_admin_drain_step();
 }
 
-static void sgwc_admin_drain_begin(bool force)
+/* Main thread only: open a new process-wide drain round. */
+static void sgwc_admin_drain_round_start(bool force)
 {
+    int ue_count;
+
     sgwc_self()->drain_generation++;
     if (sgwc_self()->drain_generation == 0)
         sgwc_self()->drain_generation = 1;
     sgwc_self()->drain_force = force;
     sgwc_self()->drain_active = true;
-    sgwc_self()->drain_processed = 0;
+    __atomic_store_n(&sgwc_self()->drain_processed, 0, __ATOMIC_RELAXED);
+
+    sgwc_ctx_lock();
+    ue_count = ogs_list_count(&sgwc_self()->sgw_ue_list);
+    sgwc_ctx_unlock();
 
     ogs_info("admin maintenance drain: start mode=%s ue_count=%d "
             "batch=%d interval=%dms",
-            force ? "force" : "graceful",
-            ogs_list_count(&sgwc_self()->sgw_ue_list),
+            force ? "force" : "graceful", ue_count,
             SGWC_ADMIN_DRAIN_BATCH,
             (int)ogs_time_to_msec(SGWC_ADMIN_DRAIN_INTERVAL));
+}
+
+/* Start (or keep running) this shard's stepper for the current round. */
+static void sgwc_admin_drain_begin(void)
+{
+    if (drain_self_active) {
+        /* Already stepping; the new generation is picked up as we go. */
+        return;
+    }
+    drain_self_active = true;
+    __atomic_add_fetch(&drain_shards_running, 1, __ATOMIC_RELAXED);
 
     sgwc_admin_drain_step();
 }
 
 static void sgwc_admin_drain_step(void)
 {
-    sgwc_ue_t *ue = NULL, *next_ue = NULL;
     sgwc_sess_t *sess = NULL, *next_sess = NULL;
     int ues = 0, sessions = 0;
     bool more = false;
     int rv;
+    ogs_pool_id_t *ids = NULL;
+    int count = 0, i;
 
-    if (!sgwc_self()->drain_active)
+    if (!drain_self_active)
         return;
 
-    ogs_list_for_each_safe(&sgwc_self()->sgw_ue_list, next_ue, ue) {
+    ids = sgwc_ue_ids_collect_owned(&count);
+
+    for (i = 0; i < count; i++) {
+        sgwc_ue_t *ue = sgwc_ue_find_by_id(ids[i]);
+
+        if (!ue || !sgwc_ue_owned_by_self(ue))
+            continue;
         if (ue->drain_generation == sgwc_self()->drain_generation)
             continue;
         if (ues >= SGWC_ADMIN_DRAIN_BATCH) {
@@ -142,7 +176,11 @@ static void sgwc_admin_drain_step(void)
             sgwc_ue_remove(ue);
     }
 
-    sgwc_self()->drain_processed += sessions;
+    if (ids)
+        ogs_free(ids);
+
+    __atomic_add_fetch(&sgwc_self()->drain_processed, sessions,
+            __ATOMIC_RELAXED);
 
     if (more) {
         if (!t_admin_drain) {
@@ -155,18 +193,29 @@ static void sgwc_admin_drain_step(void)
         return;
     }
 
-    sgwc_self()->drain_active = false;
-    if (t_admin_drain) {
+    /* This shard is done; the last one out closes the round. */
+    drain_self_active = false;
+    if (t_admin_drain)
         ogs_timer_stop(t_admin_drain);
+
+    if (__atomic_sub_fetch(&drain_shards_running, 1, __ATOMIC_RELAXED) == 0) {
+        sgwc_self()->drain_active = false;
+        ogs_info("admin maintenance drain: %s %u session(s)",
+                sgwc_self()->drain_force ?
+                    "removed" : "initiated teardown for",
+                __atomic_load_n(&sgwc_self()->drain_processed,
+                        __ATOMIC_RELAXED));
     }
-    ogs_info("admin maintenance drain: %s %u session(s)",
-            sgwc_self()->drain_force ? "removed" : "initiated teardown for",
-            sgwc_self()->drain_processed);
 }
 
 static void sgwc_admin_drain_timer_stop(void)
 {
-    sgwc_self()->drain_active = false;
+    if (drain_self_active) {
+        drain_self_active = false;
+        if (__atomic_sub_fetch(&drain_shards_running, 1,
+                __ATOMIC_RELAXED) == 0)
+            sgwc_self()->drain_active = false;
+    }
 
     if (!t_admin_drain)
         return;
@@ -216,10 +265,11 @@ void sgwc_state_initial(ogs_fsm_t *s, sgwc_event_t *e)
     ogs_assert(s);
 
     /*
-     * Orphan sweep owns the UE/session lists. With shard workers those live
-     * on the worker threads; main has none. Single-threaded: main only.
+     * The periodic orphan sweep is driven by ONE timer on the main
+     * thread; when it fires, main fans the sweep event to every worker
+     * and each shard (main included) sweeps only the UEs it owns.
      */
-    if (!ogs_worker_shards_active() || ogs_worker_self())
+    if (!ogs_worker_self())
         sgwc_orphan_timer_start();
 
     OGS_FSM_TRAN(s, &sgwc_state_operational);
@@ -611,35 +661,37 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         break;
 
     case SGWC_EVT_CONFIG_RELOAD:
+        /* Context is process-global: main applies the reload once for
+         * every shard (list swaps happen under sgwc_ctx_lock). */
+        if (ogs_worker_self()) {
+            ogs_error("SGWC_EVT_CONFIG_RELOAD delivered to worker");
+            break;
+        }
         sgwc_context_reload_runtime();
-        /* Main reloads YAML + PFCP peers; shards re-apply from the document. */
-        if (!ogs_worker_self() && sgwc_workers_active())
-            sgwc_event_fanout_workers(SGWC_EVT_CONFIG_RELOAD, 0);
         break;
 
     case SGWC_EVT_ADMIN_MAINTENANCE_ENABLE:
+        /* Context is shared: one write is visible to every shard. */
         sgwc_self()->maintenance_mode = true;
         ogs_info("admin maintenance: enabled");
-        if (!ogs_worker_self() && sgwc_workers_active())
-            sgwc_event_fanout_workers(SGWC_EVT_ADMIN_MAINTENANCE_ENABLE, 0);
         break;
 
     case SGWC_EVT_ADMIN_MAINTENANCE_DISABLE:
         sgwc_self()->maintenance_mode = false;
         ogs_info("admin maintenance: disabled");
-        if (!ogs_worker_self() && sgwc_workers_active())
-            sgwc_event_fanout_workers(SGWC_EVT_ADMIN_MAINTENANCE_DISABLE, 0);
         break;
 
     case SGWC_EVT_ADMIN_MAINTENANCE_DRAIN:
         sgwc_self()->maintenance_mode = true;
-        if (!ogs_worker_self() && sgwc_workers_active()) {
-            /* Each shard drains its own UE list. */
-            sgwc_event_fanout_workers(SGWC_EVT_ADMIN_MAINTENANCE_DRAIN,
-                    e->admin_force);
-        } else {
-            sgwc_admin_drain_begin(e->admin_force ? true : false);
+        if (!ogs_worker_self()) {
+            /* Main opens the round, then every shard (main included)
+             * steps through the UEs it owns. */
+            sgwc_admin_drain_round_start(e->admin_force ? true : false);
+            if (sgwc_workers_active())
+                sgwc_event_fanout_workers(SGWC_EVT_ADMIN_MAINTENANCE_DRAIN,
+                        e->admin_force);
         }
+        sgwc_admin_drain_begin();
         break;
 
     case SGWC_EVT_ADMIN_DETACH_SESSION:
@@ -703,10 +755,9 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
     case SGWC_EVT_ADMIN_PURGE_ORPHANS: {
         int purged = 0, remaining;
 
-        if (!ogs_worker_self() && sgwc_workers_active()) {
+        /* Every shard purges its own orphans; main also sweeps below. */
+        if (!ogs_worker_self() && sgwc_workers_active())
             sgwc_event_fanout_workers(SGWC_EVT_ADMIN_PURGE_ORPHANS, 0);
-            break;
-        }
         /*
          * Admin-triggered purge. Reuse the shared sweep with the same grace as
          * the periodic task so a manual purge never aborts an attach that is
@@ -715,10 +766,8 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
          */
         remaining = sgwc_orphan_sweep(true,
                 ogs_time_from_sec(sgwc_self()->orphan.grace_s), &purged);
-        sgwc_metrics_global_set(
-                SGWC_METR_GLOB_GAUGE_SESSIONS_ORPHAN, remaining);
         ogs_info("admin purge-orphans: removed %d session(s), "
-                 "%d orphan(s) remaining", purged, remaining);
+                 "%d orphan(s) remaining on this shard", purged, remaining);
         break;
     }
 
@@ -733,11 +782,13 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
     case SGWC_EVT_ORPHAN_SWEEP: {
         int purged = 0, remaining;
 
+        /* Main's timer drives the round: fan a copy to every worker,
+         * then sweep the main-owned shard below. */
+        if (!ogs_worker_self() && sgwc_workers_active())
+            sgwc_event_fanout_workers(SGWC_EVT_ORPHAN_SWEEP, 0);
+
         remaining = sgwc_orphan_sweep(sgwc_self()->orphan.purge,
                 ogs_time_from_sec(sgwc_self()->orphan.grace_s), &purged);
-
-        sgwc_metrics_global_set(
-                SGWC_METR_GLOB_GAUGE_SESSIONS_ORPHAN, remaining);
 
         if (purged)
             ogs_warn("orphan sweep: purged %d session(s), %d remaining",
@@ -745,12 +796,29 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         else
             ogs_debug("orphan sweep: %d orphan(s)", remaining);
 
-        /* Re-arm for the next interval (timer is one-shot). */
-        if (sgwc_self()->orphan.enabled && sgwc_self()->orphan.t_sweep)
+        /* Re-arm for the next interval (timer is one-shot, main only). */
+        if (!ogs_worker_self() &&
+                sgwc_self()->orphan.enabled && sgwc_self()->orphan.t_sweep)
             ogs_timer_start(sgwc_self()->orphan.t_sweep,
                     ogs_time_from_sec(sgwc_self()->orphan.interval_s));
         break;
     }
+
+    case SGWC_EVT_PEER_RESTART_PURGE:
+        if (!e->gnode) {
+            ogs_error("SGWC_EVT_PEER_RESTART_PURGE: no gnode");
+            break;
+        }
+        sgwc_peer_restart_purge_owned(e->gnode, e->timer_id);
+        break;
+
+    case SGWC_EVT_SXA_RESTORE:
+        if (!e->pfcp_node) {
+            ogs_error("SGWC_EVT_SXA_RESTORE: no pfcp_node");
+            break;
+        }
+        sgwc_pfcp_restoration_owned(e->pfcp_node);
+        break;
 
     default:
         ogs_error("No handler for event %s", sgwc_event_get_name(e));

@@ -98,7 +98,17 @@ static int sgwc_gtp_deliver(sgwc_event_t *e, ogs_pkbuf_t *pkbuf)
         }
     }
 
-    if (to_main) {
+    /*
+     * wid == -1 means shard 0 = the MAIN thread. The context is
+     * process-global, so main handles those normally (it owns any UE
+     * whose ids it allocated, and answers "context not found" for stale
+     * TEIDs from a previous run). Shard bits beyond the live worker
+     * count (garbage / stale ids) go to a deterministic worker.
+     */
+    if (wid >= sgwc_workers_count())
+        wid = (int)(fallback_key % (uint32_t)sgwc_workers_count());
+
+    if (to_main || wid < 0) {
         rv = ogs_queue_trypush(ogs_app()->queue, e);
         if (rv != OGS_OK) {
             ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
@@ -109,17 +119,6 @@ static int sgwc_gtp_deliver(sgwc_event_t *e, ogs_pkbuf_t *pkbuf)
         }
         return 1;
     }
-
-    /*
-     * Session messages must NEVER go to main: with workers active main
-     * owns no UEs and its event-loop thread never ran sgwc_context_init
-     * (TLS hashes are NULL there — observed as ogs_hash_get assert).
-     * Shard bits that don't name a live worker (stale TEID from a
-     * previous run, main-encoded id 0, garbage) go to a deterministic
-     * worker instead, which replies "Context not found" normally.
-     */
-    if (wid < 0 || wid >= sgwc_workers_count())
-        wid = (int)(fallback_key % (uint32_t)sgwc_workers_count());
 
     return sgwc_event_push_to_worker(wid, e) == OGS_OK ? 1 : -1;
 }

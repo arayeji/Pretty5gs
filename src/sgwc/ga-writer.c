@@ -50,6 +50,27 @@ static struct {
     ogs_time_t cur_opened;
 } g;
 
+/*
+ * SMP: CDR triggers fire on whichever shard owns the session, so record
+ * building (cdr_local_seq++), the shared file handle, and rotation are
+ * serialized behind one mutex. Initialized once with the process (the
+ * writer itself may be re-opened by reload while the mutex lives on).
+ */
+static ogs_thread_mutex_t cdr_mutex;
+static int cdr_mutex_ready = 0;
+
+static void cdr_lock(void)
+{
+    if (cdr_mutex_ready)
+        ogs_thread_mutex_lock(&cdr_mutex);
+}
+
+static void cdr_unlock(void)
+{
+    if (cdr_mutex_ready)
+        ogs_thread_mutex_unlock(&cdr_mutex);
+}
+
 typedef struct {
     uint8_t *buf;
     size_t cap;
@@ -697,13 +718,17 @@ static void emit(sgwc_sess_t *sess, bool is_stop, uint32_t interval_duration_s)
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
     if (!sgwc_ue) return;
 
+    /* Build under the lock too: build_sgw_record bumps cdr_local_seq. */
+    cdr_lock();
     n = build_sgw_record(sess, sgwc_ue, rec, sizeof(rec), is_stop,
             interval_duration_s);
     if (!n) {
+        cdr_unlock();
         ogs_warn("sgwc_ga_writer: encode failed sess_id=%d", (int)sess->id);
         return;
     }
     write_record(rec, n);
+    cdr_unlock();
 
     sess->cdr.last_ul_octets = sess->usage_ul_octets;
     sess->cdr.last_dl_octets = sess->usage_dl_octets;
@@ -725,6 +750,11 @@ int sgwc_ga_writer_open(void)
 {
     sgwc_cdr_config_t *cfg = &sgwc_self()->cdr;
     char path[512];
+
+    if (!cdr_mutex_ready) {
+        ogs_thread_mutex_init(&cdr_mutex);
+        cdr_mutex_ready = 1;
+    }
 
     if (!cfg->enabled) {
         ogs_info("sgwc_ga_writer: disabled");
@@ -759,6 +789,7 @@ int sgwc_ga_writer_open(void)
 
 void sgwc_ga_writer_close(void)
 {
+    cdr_lock();
     if (g.fp) rotate_locked();
     persist_local_seq();
     if (g.current_dir) { ogs_free(g.current_dir); g.current_dir = NULL; }
@@ -766,6 +797,7 @@ void sgwc_ga_writer_close(void)
     if (g.seq_path) { ogs_free(g.seq_path); g.seq_path = NULL; }
     if (g.current_path) { ogs_free(g.current_path); g.current_path = NULL; }
     g.initialized = false;
+    cdr_unlock();
 }
 
 static char *g_owned_spool_dir;

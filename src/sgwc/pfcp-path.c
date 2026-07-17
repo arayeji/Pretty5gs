@@ -216,7 +216,17 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
             wid = sgwc_shard_from_xid(fallback_key);
         }
 
-        if (to_main) {
+        /*
+         * wid == -1 means shard 0 = the MAIN thread, which shares the
+         * process-global context and handles its own sessions (or
+         * answers "Session context not found" for stale SEIDs). Shard
+         * bits beyond the live worker count route to a deterministic
+         * worker.
+         */
+        if (wid >= sgwc_workers_count())
+            wid = (int)(fallback_key % (uint32_t)sgwc_workers_count());
+
+        if (to_main || wid < 0) {
             /* Association/heartbeat must never block the PFCP RX path. */
             rv = ogs_queue_trypush(ogs_app()->queue, e);
             if (rv != OGS_OK) {
@@ -225,16 +235,6 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
             }
             return;
         }
-
-        /*
-         * Session messages never go to main (its event-loop thread has
-         * no sgwc context; see sgwc_gtp_deliver). Unknown shard bits
-         * (stale SEID from a previous run, shard 0 = main) route to a
-         * deterministic worker, which answers "Session context not
-         * found" through its own initialized context.
-         */
-        if (wid < 0 || wid >= sgwc_workers_count())
-            wid = (int)(fallback_key % (uint32_t)sgwc_workers_count());
 
         if (sgwc_event_push_to_worker(wid, e) != OGS_OK)
             return; /* push_to_worker already freed e + buffers */

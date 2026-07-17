@@ -392,6 +392,38 @@ sgwc_context_t *sgwc_self(void);
 
 int sgwc_context_parse_config(void);
 
+/*
+ * SMP container lock (recursive).
+ *
+ * The SGW-C context is PROCESS-GLOBAL: one config, one UE list, one set
+ * of hashes and pools, initialized exactly once on the init thread.
+ * UEs/sessions are OWNED by exactly one thread (the shard bits in their
+ * S11 TEID / SXA SEID name the owner) and their fields are only touched
+ * there, lock-free. The shared containers — pools, hashes, sgw_ue_list,
+ * reloadable config lists — are mutated under this lock. It is the same
+ * recursive mutex the metrics/admin HTTP dumpers hold while walking the
+ * lists, so readers and mutators can never interleave.
+ *
+ * Lock order: sgwc_ctx_lock -> (pfcp obj/peer locks, gtp node lock).
+ * Never take sgwc_ctx_lock while holding a lib-level lock.
+ */
+void sgwc_ctx_lock(void);
+void sgwc_ctx_unlock(void);
+
+/*
+ * Ownership test for global walks: true when the calling thread owns
+ * this UE (shard bits of the S11 TEID == our shard id). With sharding
+ * off this is always true.
+ */
+bool sgwc_ue_owned_by_self(sgwc_ue_t *sgwc_ue);
+
+/*
+ * Snapshot the pool ids of every UE the calling thread owns (taken under
+ * the container lock). Caller frees with ogs_free(); each id must be
+ * re-validated with sgwc_ue_find_by_id() when processed.
+ */
+ogs_pool_id_t *sgwc_ue_ids_collect_owned(int *out_count);
+
 /* Shared GTP peer lists (main + all shard workers). Lock around find/add. */
 void sgwc_peers_lock(void);
 void sgwc_peers_unlock(void);
@@ -406,6 +438,18 @@ sgwc_mme_peer_t *sgwc_mme_peer_get(ogs_gtp_node_t *gnode);
 void sgwc_mme_peer_attach(ogs_gtp_node_t *gnode);
 void sgwc_mme_peer_detach(ogs_gtp_node_t *gnode);
 bool sgwc_mme_recovery_update(sgwc_mme_peer_t *peer, uint8_t recovery);
+
+/* SGWC_EVT_PEER_RESTART_PURGE kinds (event->timer_id). */
+enum {
+    SGWC_PEER_RESTART_KIND_MME = 1,
+    SGWC_PEER_RESTART_KIND_PGW = 2,
+};
+
+/* Purge the calling thread's OWN sessions toward a restarted peer. */
+void sgwc_peer_restart_purge_owned(ogs_gtp_node_t *gnode, int kind);
+
+/* Re-establish the calling thread's OWN sessions on a re-associated SGW-U. */
+void sgwc_pfcp_restoration_owned(ogs_pfcp_node_t *node);
 void sgwc_mme_echo_schedule(sgwc_mme_peer_t *peer);
 void sgwc_mme_echo_reschedule_all(void);
 
@@ -451,10 +495,12 @@ void sgwc_sess_purge_upf(sgwc_sess_t *sess);
 void sgwc_sess_remove_all(sgwc_ue_t *sgwc_ue);
 
 /*
- * Walk every session and account orphans. When do_purge is true, tear down
- * orphans whose age exceeds 'grace' (use 0 to ignore age). Returns the number
- * of orphan sessions still present after the sweep (the live backlog); if
- * out_purged is non-NULL it receives how many were torn down. Main thread only.
+ * Walk the calling thread's OWN sessions and account orphans. When do_purge is
+ * true, tear down orphans whose age exceeds 'grace' (use 0 to ignore age).
+ * Returns the number of orphan sessions still present after the sweep (this
+ * shard's live backlog); if out_purged is non-NULL it receives how many were
+ * torn down. The process-wide orphan gauges are published internally as the
+ * sum over all shards.
  */
 int sgwc_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
 
