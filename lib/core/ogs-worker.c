@@ -131,7 +131,14 @@ int ogs_worker_post(ogs_worker_t *worker, void *event)
     ogs_assert(worker);
     ogs_assert(event);
 
-    rv = ogs_queue_push(worker->queue, event);
+    /*
+     * Non-blocking: RX callbacks (GTP/PFCP/S1AP) run on the main poll
+     * thread. A blocking push when a shard queue is full freezes that
+     * pollset — association replies sit unread in the socket Recv-Q,
+     * peers never associate, and the reject storm feeds the same full
+     * queues. Callers already treat != OGS_OK as drop/free.
+     */
+    rv = ogs_queue_trypush(worker->queue, event);
     if (rv != OGS_OK)
         return rv;
 

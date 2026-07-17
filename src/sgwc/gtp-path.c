@@ -39,9 +39,10 @@ static int sgwc_gtp_deliver(sgwc_event_t *e, ogs_pkbuf_t *pkbuf)
     ogs_assert(pkbuf);
 
     if (!sgwc_workers_active()) {
-        rv = ogs_queue_push(ogs_app()->queue, e);
+        /* trypush: RX runs on the same thread that drains this queue */
+        rv = ogs_queue_trypush(ogs_app()->queue, e);
         if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
+            ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
             ogs_pkbuf_free(pkbuf);
             e->pkbuf = NULL;
             sgwc_event_free(e);
@@ -92,9 +93,9 @@ static int sgwc_gtp_deliver(sgwc_event_t *e, ogs_pkbuf_t *pkbuf)
     }
 
     if (wid < 0 || wid >= sgwc_workers_count()) {
-        rv = ogs_queue_push(ogs_app()->queue, e);
+        rv = ogs_queue_trypush(ogs_app()->queue, e);
         if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
+            ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
             ogs_pkbuf_free(pkbuf);
             e->pkbuf = NULL;
             sgwc_event_free(e);

@@ -171,9 +171,10 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
     e->pfcp_message = message;
 
     if (!sgwc_workers_active()) {
-        rv = ogs_queue_push(ogs_app()->queue, e);
+        /* trypush: RX runs on the same thread that drains this queue */
+        rv = ogs_queue_trypush(ogs_app()->queue, e);
         if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
+            ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
             goto cleanup;
         }
         return;
@@ -212,9 +213,10 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
         }
 
         if (wid < 0 || wid >= sgwc_workers_count()) {
-            rv = ogs_queue_push(ogs_app()->queue, e);
+            /* Association/heartbeat must never block the PFCP RX path. */
+            rv = ogs_queue_trypush(ogs_app()->queue, e);
             if (rv != OGS_OK) {
-                ogs_error("ogs_queue_push() failed:%d", (int)rv);
+                ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
                 goto cleanup;
             }
             return;

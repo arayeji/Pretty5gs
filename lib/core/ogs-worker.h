@@ -78,7 +78,7 @@ void ogs_worker_hooks(ogs_worker_t *worker,
 void ogs_worker_start(ogs_worker_t *worker);
 void ogs_worker_destroy(ogs_worker_t *worker);
 
-/* Push an event to a worker and wake its pollset. OGS_OK on success. */
+/* Non-blocking push + wake. Returns OGS_RETRY if the worker queue is full. */
 int ogs_worker_post(ogs_worker_t *worker, void *event);
 
 /* Worker the calling thread belongs to, or NULL on the main/IO thread. */

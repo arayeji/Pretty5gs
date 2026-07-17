@@ -29,6 +29,61 @@ static int context_initialized = 0;
 static ogs_thread_mutex_t pfcp_peer_mutex;
 static int pfcp_peer_mutex_ready = 0;
 
+/*
+ * Protects the process-global PDR/FAR/URR/QER/BAR/rule pools, the PDR
+ * TEID pool, and the object/FAR TEID hashes. With SMP shard workers
+ * every session establishment/teardown allocates and frees from these
+ * pools concurrently; ogs_pool is not thread-safe, and ogs_hash_set can
+ * rehash under a concurrent reader. Recursive so remove-all paths can
+ * nest (pdr_remove -> rule_remove_all -> rule_remove).
+ */
+#if defined(_WIN32)
+static ogs_thread_mutex_t pfcp_object_mutex; /* CRITICAL_SECTION: recursive */
+#else
+static pthread_mutex_t pfcp_object_mutex;
+#endif
+static int pfcp_object_mutex_ready = 0;
+
+static void pfcp_object_mutex_setup(void)
+{
+    if (pfcp_object_mutex_ready)
+        return;
+#if defined(_WIN32)
+    ogs_thread_mutex_init(&pfcp_object_mutex);
+#else
+    {
+        pthread_mutexattr_t attr;
+        pthread_mutexattr_init(&attr);
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+        pthread_mutex_init(&pfcp_object_mutex, &attr);
+        pthread_mutexattr_destroy(&attr);
+    }
+#endif
+    pfcp_object_mutex_ready = 1;
+}
+
+static void obj_lock(void)
+{
+    if (!pfcp_object_mutex_ready)
+        return;
+#if defined(_WIN32)
+    ogs_thread_mutex_lock(&pfcp_object_mutex);
+#else
+    pthread_mutex_lock(&pfcp_object_mutex);
+#endif
+}
+
+static void obj_unlock(void)
+{
+    if (!pfcp_object_mutex_ready)
+        return;
+#if defined(_WIN32)
+    ogs_thread_mutex_unlock(&pfcp_object_mutex);
+#else
+    pthread_mutex_unlock(&pfcp_object_mutex);
+#endif
+}
+
 static OGS_POOL(ogs_pfcp_node_pool, ogs_pfcp_node_t);
 
 static OGS_POOL(ogs_pfcp_far_pool, ogs_pfcp_far_t);
@@ -65,6 +120,7 @@ void ogs_pfcp_context_init(void)
         ogs_thread_mutex_init(&pfcp_peer_mutex);
         pfcp_peer_mutex_ready = 1;
     }
+    pfcp_object_mutex_setup();
 
     ogs_pool_init(&ogs_pfcp_node_pool, ogs_app()->pool.nf);
 
@@ -1663,9 +1719,12 @@ ogs_pfcp_pdr_t *ogs_pfcp_pdr_add(ogs_pfcp_sess_t *sess)
 
     ogs_assert(sess);
 
+    obj_lock();
+
     ogs_pool_alloc(&ogs_pfcp_pdr_pool, &pdr);
     if (pdr == NULL) {
         pdr_log_state(sess, "PDR pool exhausted");
+        obj_unlock();
         return NULL;
     }
     memset(pdr, 0, sizeof *pdr);
@@ -1678,6 +1737,7 @@ ogs_pfcp_pdr_t *ogs_pfcp_pdr_add(ogs_pfcp_sess_t *sess)
     if (pdr->teid_node == NULL) {
         ogs_pool_free(&ogs_pfcp_pdr_pool, pdr);
         pdr_log_state(sess, "PDR TEID pool exhausted");
+        obj_unlock();
         return NULL;
     }
 
@@ -1689,6 +1749,7 @@ ogs_pfcp_pdr_t *ogs_pfcp_pdr_add(ogs_pfcp_sess_t *sess)
         ogs_pool_free(&ogs_pfcp_pdr_teid_pool, pdr->teid_node);
         ogs_pool_free(&ogs_pfcp_pdr_pool, pdr);
         pdr_log_state(sess, "PDR ID pool exhausted");
+        obj_unlock();
         return NULL;
     }
 
@@ -1698,6 +1759,7 @@ ogs_pfcp_pdr_t *ogs_pfcp_pdr_add(ogs_pfcp_sess_t *sess)
     pdr->sess = sess;
     ogs_list_add(&sess->pdr_list, pdr);
 
+    obj_unlock();
     return pdr;
 }
 
@@ -1964,6 +2026,8 @@ void ogs_pfcp_pdr_remove(ogs_pfcp_pdr_t *pdr)
     ogs_assert(pdr);
     ogs_assert(pdr->sess);
 
+    obj_lock();
+
     ogs_list_remove(&pdr->sess->pdr_list, pdr);
 
     ogs_pfcp_rule_remove_all(pdr);
@@ -2010,6 +2074,8 @@ void ogs_pfcp_pdr_remove(ogs_pfcp_pdr_t *pdr)
 
     ogs_pool_free(&ogs_pfcp_pdr_teid_pool, pdr->teid_node);
     ogs_pool_free(&ogs_pfcp_pdr_pool, pdr);
+
+    obj_unlock();
 }
 
 void ogs_pfcp_pdr_remove_all(ogs_pfcp_sess_t *sess)
@@ -2027,9 +2093,12 @@ ogs_pfcp_far_t *ogs_pfcp_far_add(ogs_pfcp_sess_t *sess)
 
     ogs_assert(sess);
 
+    obj_lock();
+
     ogs_pool_alloc(&ogs_pfcp_far_pool, &far);
     if (far == NULL) {
         ogs_error("far_pool() failed");
+        obj_unlock();
         return NULL;
     }
     memset(far, 0, sizeof *far);
@@ -2038,6 +2107,7 @@ ogs_pfcp_far_t *ogs_pfcp_far_add(ogs_pfcp_sess_t *sess)
     if (far->id_node == NULL) {
         ogs_error("far_id_pool() failed");
         ogs_pool_free(&ogs_pfcp_far_pool, far);
+        obj_unlock();
         return NULL;
     }
 
@@ -2049,6 +2119,7 @@ ogs_pfcp_far_t *ogs_pfcp_far_add(ogs_pfcp_sess_t *sess)
     far->sess = sess;
     ogs_list_add(&sess->far_list, far);
 
+    obj_unlock();
     return far;
 }
 
@@ -2272,6 +2343,8 @@ void ogs_pfcp_far_remove(ogs_pfcp_far_t *far)
     sess = far->sess;
     ogs_assert(sess);
 
+    obj_lock();
+
     ogs_list_remove(&sess->far_list, far);
 
     if (far->hash.teid.len)
@@ -2292,6 +2365,8 @@ void ogs_pfcp_far_remove(ogs_pfcp_far_t *far)
         ogs_pool_free(&far->sess->far_id_pool, far->id_node);
 
     ogs_pool_free(&ogs_pfcp_far_pool, far);
+
+    obj_unlock();
 }
 
 void ogs_pfcp_far_remove_all(ogs_pfcp_sess_t *sess)
@@ -2310,9 +2385,12 @@ ogs_pfcp_urr_t *ogs_pfcp_urr_add(ogs_pfcp_sess_t *sess)
 
     ogs_assert(sess);
 
+    obj_lock();
+
     ogs_pool_alloc(&ogs_pfcp_urr_pool, &urr);
     if (urr == NULL) {
         ogs_error("urr_pool() failed");
+        obj_unlock();
         return NULL;
     }
     memset(urr, 0, sizeof *urr);
@@ -2321,6 +2399,7 @@ ogs_pfcp_urr_t *ogs_pfcp_urr_add(ogs_pfcp_sess_t *sess)
     if (urr->id_node == NULL) {
         ogs_error("urr_id_pool() failed");
         ogs_pool_free(&ogs_pfcp_urr_pool, urr);
+        obj_unlock();
         return NULL;
     }
 
@@ -2330,6 +2409,7 @@ ogs_pfcp_urr_t *ogs_pfcp_urr_add(ogs_pfcp_sess_t *sess)
     urr->sess = sess;
     ogs_list_add(&sess->urr_list, urr);
 
+    obj_unlock();
     return urr;
 }
 
@@ -2374,12 +2454,16 @@ void ogs_pfcp_urr_remove(ogs_pfcp_urr_t *urr)
     sess = urr->sess;
     ogs_assert(sess);
 
+    obj_lock();
+
     ogs_list_remove(&sess->urr_list, urr);
 
     if (urr->id_node)
         ogs_pool_free(&urr->sess->urr_id_pool, urr->id_node);
 
     ogs_pool_free(&ogs_pfcp_urr_pool, urr);
+
+    obj_unlock();
 }
 
 void ogs_pfcp_urr_remove_all(ogs_pfcp_sess_t *sess)
@@ -2398,9 +2482,12 @@ ogs_pfcp_qer_t *ogs_pfcp_qer_add(ogs_pfcp_sess_t *sess)
 
     ogs_assert(sess);
 
+    obj_lock();
+
     ogs_pool_alloc(&ogs_pfcp_qer_pool, &qer);
     if (qer == NULL) {
         ogs_error("qer_pool() failed");
+        obj_unlock();
         return NULL;
     }
     memset(qer, 0, sizeof *qer);
@@ -2409,6 +2496,7 @@ ogs_pfcp_qer_t *ogs_pfcp_qer_add(ogs_pfcp_sess_t *sess)
     if (qer->id_node == NULL) {
         ogs_error("qer_id_pool() failed");
         ogs_pool_free(&ogs_pfcp_qer_pool, qer);
+        obj_unlock();
         return NULL;
     }
 
@@ -2418,6 +2506,7 @@ ogs_pfcp_qer_t *ogs_pfcp_qer_add(ogs_pfcp_sess_t *sess)
     qer->sess = sess;
     ogs_list_add(&sess->qer_list, qer);
 
+    obj_unlock();
     return qer;
 }
 
@@ -2462,12 +2551,16 @@ void ogs_pfcp_qer_remove(ogs_pfcp_qer_t *qer)
     sess = qer->sess;
     ogs_assert(sess);
 
+    obj_lock();
+
     ogs_list_remove(&sess->qer_list, qer);
 
     if (qer->id_node)
         ogs_pool_free(&qer->sess->qer_id_pool, qer->id_node);
 
     ogs_pool_free(&ogs_pfcp_qer_pool, qer);
+
+    obj_unlock();
 }
 
 void ogs_pfcp_qer_remove_all(ogs_pfcp_sess_t *sess)
@@ -2487,6 +2580,8 @@ ogs_pfcp_bar_t *ogs_pfcp_bar_new(ogs_pfcp_sess_t *sess)
     ogs_assert(sess);
     ogs_assert(sess->bar == NULL); /* Only One BAR is supported */
 
+    obj_lock();
+
     ogs_pool_alloc(&ogs_pfcp_bar_pool, &bar);
     ogs_assert(bar);
     memset(bar, 0, sizeof *bar);
@@ -2500,6 +2595,7 @@ ogs_pfcp_bar_t *ogs_pfcp_bar_new(ogs_pfcp_sess_t *sess)
     bar->sess = sess;
     sess->bar = bar;
 
+    obj_unlock();
     return bar;
 }
 
@@ -2511,6 +2607,8 @@ void ogs_pfcp_bar_delete(ogs_pfcp_bar_t *bar)
     sess = bar->sess;
     ogs_assert(sess);
 
+    obj_lock();
+
     if (bar->id_node)
         ogs_pool_free(&bar->sess->bar_id_pool, bar->id_node);
 
@@ -2518,6 +2616,8 @@ void ogs_pfcp_bar_delete(ogs_pfcp_bar_t *bar)
     sess->bar = NULL;
 
     ogs_pool_free(&ogs_pfcp_bar_pool, bar);
+
+    obj_unlock();
 }
 
 ogs_pfcp_rule_t *ogs_pfcp_rule_add(ogs_pfcp_pdr_t *pdr)
@@ -2526,6 +2626,8 @@ ogs_pfcp_rule_t *ogs_pfcp_rule_add(ogs_pfcp_pdr_t *pdr)
 
     ogs_assert(pdr);
 
+    obj_lock();
+
     ogs_pool_alloc(&ogs_pfcp_rule_pool, &rule);
     ogs_assert(rule);
     memset(rule, 0, sizeof *rule);
@@ -2533,6 +2635,7 @@ ogs_pfcp_rule_t *ogs_pfcp_rule_add(ogs_pfcp_pdr_t *pdr)
     rule->pdr = pdr;
     ogs_list_add(&pdr->rule_list, rule);
 
+    obj_unlock();
     return rule;
 }
 
@@ -2562,8 +2665,12 @@ void ogs_pfcp_rule_remove(ogs_pfcp_rule_t *rule)
     pdr = rule->pdr;
     ogs_assert(pdr);
 
+    obj_lock();
+
     ogs_list_remove(&pdr->rule_list, rule);
     ogs_pool_free(&ogs_pfcp_rule_pool, rule);
+
+    obj_unlock();
 }
 
 void ogs_pfcp_rule_remove_all(ogs_pfcp_pdr_t *pdr)
