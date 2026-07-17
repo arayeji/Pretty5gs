@@ -104,6 +104,17 @@ bool ogs_log_domain_prints(int domain_id, ogs_log_level_e level);
 void ogs_log_vprintf(ogs_log_level_e level, int id,
     ogs_err_t err, const char *file, int line, const char *func,
     int content_only, const char *format, va_list ap);
+/*
+ * Log storm guard: returns false when the calling thread has already
+ * emitted its per-second budget of guarded lines (chronic NF trace
+ * chatter). Formatting cost was 13%% of MME / 6%% of SGW-C CPU in the
+ * 2026-07-17 perf profiles, and it peaks exactly when the main loop
+ * is overloaded. Budget: OGS_LOG_RATE_LIMIT env var, lines/sec per
+ * thread; 0 = unlimited; default 200. A one-line notice reports the
+ * number of suppressed lines when the next second begins.
+ */
+bool ogs_log_guard(void);
+
 void ogs_log_printf(ogs_log_level_e level, int domain_id,
     ogs_err_t err, const char *file, int line, const char *func,
     int content_only, const char *format, ...)

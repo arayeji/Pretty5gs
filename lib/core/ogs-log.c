@@ -544,6 +544,51 @@ void ogs_log_vprintf(ogs_log_level_e level, int id,
     }
 }
 
+#define OGS_LOG_GUARD_DEFAULT_PER_SEC 200
+
+static OGS_THREAD_LOCAL struct {
+    time_t sec;
+    int count;
+    int suppressed;
+} log_guard;
+
+/* first-use init; concurrent first calls write the same value */
+static int log_guard_limit = -1;
+
+bool ogs_log_guard(void)
+{
+    time_t now;
+
+    if (log_guard_limit < 0) {
+        const char *env = getenv("OGS_LOG_RATE_LIMIT");
+        log_guard_limit = env ? atoi(env) : OGS_LOG_GUARD_DEFAULT_PER_SEC;
+        if (log_guard_limit < 0)
+            log_guard_limit = 0;
+    }
+
+    if (log_guard_limit == 0)
+        return true;
+
+    now = time(NULL);
+    if (log_guard.sec != now) {
+        if (log_guard.suppressed)
+            ogs_warn("log rate-limit: %d line(s) suppressed "
+                    "(OGS_LOG_RATE_LIMIT=%d/s)",
+                    log_guard.suppressed, log_guard_limit);
+        log_guard.sec = now;
+        log_guard.count = 0;
+        log_guard.suppressed = 0;
+    }
+
+    if (log_guard.count < log_guard_limit) {
+        log_guard.count++;
+        return true;
+    }
+
+    log_guard.suppressed++;
+    return false;
+}
+
 void ogs_log_printf(ogs_log_level_e level, int id,
     ogs_err_t err, const char *file, int line, const char *func,
     int content_only, const char *format, ...)
