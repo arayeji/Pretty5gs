@@ -361,9 +361,10 @@ int sgwc_workers_start(void)
     sgwc_worker_count = sgwc_worker_configured;
 
     ogs_info("SGWC SMP workers: %d shard(s), shared UE/session pools "
-            "(max.ue=%d sess=%d)",
+            "(max.ue=%" PRIu64 " sess=%" PRIu64 ")",
             sgwc_worker_count,
-            ogs_global_conf()->max.ue, ogs_app()->pool.sess);
+            (uint64_t)ogs_global_conf()->max.ue,
+            (uint64_t)ogs_app()->pool.sess);
 
     return OGS_OK;
 }
