@@ -1481,6 +1481,7 @@ int mme_enb_remove(mme_enb_t *enb);
 int mme_enb_remove_all(void);
 mme_enb_t *mme_enb_find_by_addr(const ogs_sockaddr_t *addr);
 mme_enb_t *mme_enb_find_by_enb_id(uint32_t enb_id);
+mme_enb_t *mme_enb_find_by_sock(const void *sock);
 int mme_enb_set_enb_id(mme_enb_t *enb, uint32_t enb_id);
 int mme_enb_sock_type(ogs_sock_t *sock);
 mme_enb_t *mme_enb_find_by_id(ogs_pool_id_t id);

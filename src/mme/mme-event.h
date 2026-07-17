@@ -37,6 +37,9 @@ typedef enum {
     MME_EVENT_S1AP_LO_CONNREFUSED,
     /* RX worker confirmed poll removal: main may destroy e->sock */
     MME_EVENT_S1AP_RX_SOCK_CLOSED,
+    /* RX worker could not watch e->sock (fd died in the accept->watch
+     * race); main tears down the half-created eNB */
+    MME_EVENT_S1AP_RX_WATCH_FAILED,
 
     MME_EVENT_EMM_MESSAGE,
     MME_EVENT_EMM_TIMER,

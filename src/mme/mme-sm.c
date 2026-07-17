@@ -365,6 +365,19 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         ogs_sctp_destroy(e->sock);
         break;
 
+    case MME_EVENT_S1AP_RX_WATCH_FAILED:
+        /* an RX worker could not watch this eNB socket (fd died in the
+         * accept->watch race). Remove the half-created eNB; that runs
+         * the two-phase unwatch/SOCK_CLOSED teardown which destroys the
+         * socket. If the eNB is already gone, just destroy the socket. */
+        ogs_assert(e->sock);
+        enb = mme_enb_find_by_sock(e->sock);
+        if (enb)
+            mme_enb_remove(enb);
+        else
+            ogs_sctp_destroy(e->sock);
+        break;
+
     case MME_EVENT_S1AP_TIMER:
         enb_ue = enb_ue_find_by_id(e->enb_ue_id);
         if (!enb_ue) {

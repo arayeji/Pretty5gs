@@ -5651,6 +5651,18 @@ mme_enb_t *mme_enb_find_by_enb_id(uint32_t enb_id)
     return (mme_enb_t *)ogs_hash_get(self.enb_id_hash, &enb_id, sizeof(enb_id));
 }
 
+mme_enb_t *mme_enb_find_by_sock(const void *sock)
+{
+    mme_enb_t *enb = NULL;
+
+    ogs_assert(sock);
+    ogs_list_for_each(&self.enb_list, enb) {
+        if (enb->sctp.sock == sock)
+            return enb;
+    }
+    return NULL;
+}
+
 int mme_enb_set_enb_id(mme_enb_t *enb, uint32_t enb_id)
 {
     ogs_assert(enb);

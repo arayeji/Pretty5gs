@@ -62,7 +62,21 @@ static void rx_dispatch(ogs_worker_t *worker, void *data)
     case RX_CMD_WATCH:
         poll = ogs_pollset_add(worker->pollset,
                 OGS_POLLIN, cmd->sock->fd, s1ap_recv_upcall, cmd->sock);
-        ogs_assert(poll);
+        if (!poll) {
+            /*
+             * epoll_ctl failed: the eNB fd was already closed between
+             * accept and this WATCH (reconnect-storm race). This is NOT
+             * fatal — never abort the whole MME for one dead socket.
+             * Ask main to tear down the half-created eNB; its normal
+             * two-phase path (unwatch -> SOCK_CLOSED) then runs, and the
+             * UNWATCH for an un-hashed socket is handled gracefully.
+             */
+            ogs_error("s1ap-rx: WATCH failed (fd %d gone); dropping eNB",
+                    cmd->sock->fd);
+            mme_sctp_event_push(MME_EVENT_S1AP_RX_WATCH_FAILED,
+                    cmd->sock, NULL, NULL, 0, 0);
+            break;
+        }
         ogs_hash_set(rx_poll_hash, &cmd->sock, sizeof(cmd->sock), poll);
         break;
 

@@ -193,6 +193,10 @@ const char *mme_event_get_name(mme_event_t *e)
         return "MME_EVENT_S1AP_LO_SCTP_COMM_UP";
     case MME_EVENT_S1AP_LO_CONNREFUSED:
         return "MME_EVENT_S1AP_LO_CONNREFUSED";
+    case MME_EVENT_S1AP_RX_SOCK_CLOSED:
+        return "MME_EVENT_S1AP_RX_SOCK_CLOSED";
+    case MME_EVENT_S1AP_RX_WATCH_FAILED:
+        return "MME_EVENT_S1AP_RX_WATCH_FAILED";
 
     case MME_EVENT_EMM_MESSAGE:
         return "MME_EVENT_EMM_MESSAGE";
