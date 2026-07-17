@@ -217,6 +217,17 @@ static void sgwc_worker_thread_init(ogs_worker_t *worker)
 
     sgwc_context_init();
 
+    /*
+     * sgwc_context_init() re-installs the "sgwc" log domain at the core
+     * default level (INFO), clobbering the configured level that main
+     * applied via ogs_log_config_domain(). Re-apply it here or every
+     * worker's re-init drops the whole process back to INFO, ignoring
+     * logger.level in sgwc.yaml.
+     */
+    rv = ogs_log_config_domain(
+            ogs_app()->logger.domain, ogs_app()->logger.level);
+    ogs_assert(rv == OGS_OK);
+
     rv = ogs_gtp_xact_init();
     ogs_assert(rv == OGS_OK);
     rv = ogs_pfcp_xact_init();
