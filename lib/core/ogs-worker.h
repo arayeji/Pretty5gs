@@ -39,6 +39,12 @@ extern "C" {
  * the top OGS_WORKER_ID_BITS so arriving messages route without lookups.
  */
 
+/*
+ * Shard-id scheme: shard 0 is RESERVED for the main thread; workers get
+ * shard id worker->id + 1 (see ogs_worker_self_id()). Per-shard arrays
+ * (xact local/remote lists, xact hashes) are sized OGS_MAX_WORKERS and
+ * indexed by shard id, so at most OGS_MAX_WORKERS - 1 workers may exist.
+ */
 #define OGS_MAX_WORKERS      8
 #define OGS_WORKER_ID_BITS   3
 
@@ -99,8 +105,9 @@ bool ogs_worker_active(void);
 void ogs_worker_shards_enable(void);
 bool ogs_worker_shards_active(void);
 
-/* Shard id of the calling thread, or 0 when on the main thread
- * (single-threaded NFs therefore behave exactly as before). */
+/* Shard id of the calling thread: 0 on the main thread (single-threaded
+ * NFs therefore behave exactly as before), worker->id + 1 on workers so
+ * worker 0 never shares shard slot 0 with the main thread. */
 int ogs_worker_self_id(void);
 
 /* Timer manager of the calling worker, or `fallback` on the main thread.

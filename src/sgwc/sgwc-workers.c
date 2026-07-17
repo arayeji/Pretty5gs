@@ -53,9 +53,10 @@ int sgwc_workers_parse_config(void)
             if (!strcmp(sgwc_key, "workers")) {
                 const char *v = ogs_yaml_iter_value(&sgwc_iter);
                 int n = v ? atoi(v) : 0;
-                if (n < 0 || n > OGS_MAX_WORKERS) {
+                /* shard 0 is the main thread, so at most MAX-1 workers */
+                if (n < 0 || n > OGS_MAX_WORKERS - 1) {
                     ogs_error("sgwc.workers must be 0..%d (got %d)",
-                            OGS_MAX_WORKERS, n);
+                            OGS_MAX_WORKERS - 1, n);
                     return OGS_ERROR;
                 }
                 sgwc_worker_configured = n;
@@ -88,10 +89,17 @@ ogs_worker_t *sgwc_worker_by_id(int wid)
     return sgwc_workers[wid];
 }
 
+/*
+ * Shard bits carry ogs_worker_self_id() of the owner: 0 = main thread,
+ * 1..N = worker. These helpers return the WORKER INDEX (shard - 1);
+ * -1 means main-owned, and callers already route wid < 0 to the main
+ * queue.
+ */
 int sgwc_shard_from_teid(uint32_t teid)
 {
-    return (int)((teid >> (32 - OGS_WORKER_ID_BITS)) &
+    int shard = (int)((teid >> (32 - OGS_WORKER_ID_BITS)) &
             ((1u << OGS_WORKER_ID_BITS) - 1));
+    return shard - 1;
 }
 
 int sgwc_shard_from_seid(uint64_t seid)
@@ -103,7 +111,7 @@ int sgwc_shard_from_seid(uint64_t seid)
 int sgwc_shard_from_xid(uint32_t xid)
 {
     /* GTPv2/PFCP: shard bits at 22..20, below CMD bit 23. */
-    return (int)((xid >> 20) & 7);
+    return (int)((xid >> 20) & 7) - 1;
 }
 
 int sgwc_shard_from_imsi_bcd(const char *imsi_bcd)

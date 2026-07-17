@@ -54,8 +54,9 @@ static OGS_THREAD_LOCAL xact_pool_t tls_pool;
 #define xact_initialized_var() \
     (ogs_worker_self() ? &tls_xact_initialized : &global_xact_initialized)
 
-/* Shard xact lists on the shared gnode: index = owning worker id
- * (0 on the main thread, so single-threaded NFs behave as before). */
+/* Shard xact lists on the shared gnode: index = owning shard id
+ * (0 = main thread, workers = worker->id + 1; single-threaded NFs
+ * therefore behave as before, and worker 0 never aliases main). */
 #define xact_local_list(gnode)  (&(gnode)->local_list[ogs_worker_self_id()])
 #define xact_remote_list(gnode) (&(gnode)->remote_list[ogs_worker_self_id()])
 

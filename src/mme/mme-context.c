@@ -1192,10 +1192,11 @@ int mme_context_parse_config(void)
                     const char *v = ogs_yaml_iter_value(&mme_iter);
                     if (v) {
                         self.s1ap_rx_workers = atoi(v);
+                        /* shard 0 is the main thread: MAX-1 workers */
                         if (self.s1ap_rx_workers < 0 ||
-                            self.s1ap_rx_workers > OGS_MAX_WORKERS) {
+                            self.s1ap_rx_workers > OGS_MAX_WORKERS - 1) {
                             ogs_error("mme.s1ap_rx_workers must be 0..%d",
-                                    OGS_MAX_WORKERS);
+                                    OGS_MAX_WORKERS - 1);
                             self.s1ap_rx_workers = 0;
                         }
                     }

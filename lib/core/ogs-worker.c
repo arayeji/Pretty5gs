@@ -32,7 +32,9 @@ ogs_worker_t *ogs_worker_create(int id,
 {
     ogs_worker_t *worker = NULL;
 
-    ogs_assert(id >= 0 && id < OGS_MAX_WORKERS);
+    /* shard id = worker->id + 1 must fit the per-shard arrays
+     * (sized OGS_MAX_WORKERS) and OGS_WORKER_ID_BITS */
+    ogs_assert(id >= 0 && id < OGS_MAX_WORKERS - 1);
     ogs_assert(dispatch);
 
     worker = ogs_calloc(1, sizeof(*worker));
@@ -153,7 +155,15 @@ ogs_worker_t *ogs_worker_self(void)
 
 int ogs_worker_self_id(void)
 {
-    return worker_self ? worker_self->id : 0;
+    /*
+     * Shard id, NOT worker->id: 0 is reserved for the main thread, so
+     * workers map to 1..N. Returning worker->id here made worker 0 and
+     * the main thread share shard slot 0 — both mutated the same
+     * unlocked xact local_list[0]/remote_list[0]/xact_hash[0] on shared
+     * gtp/pfcp nodes and allocated from the same xid partition
+     * (observed as SGW-C SEGV/double-free every ~2 min under load).
+     */
+    return worker_self ? worker_self->id + 1 : 0;
 }
 
 ogs_timer_mgr_t *ogs_worker_timer_mgr(ogs_timer_mgr_t *fallback)

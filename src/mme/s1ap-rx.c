@@ -105,7 +105,7 @@ int s1ap_rx_workers_start(int count)
 {
     int i;
 
-    ogs_assert(count > 0 && count <= OGS_MAX_WORKERS);
+    ogs_assert(count > 0 && count <= OGS_MAX_WORKERS - 1);
     ogs_assert(rx_worker_count == 0);
 
     rx_owner_hash = ogs_hash_make();
