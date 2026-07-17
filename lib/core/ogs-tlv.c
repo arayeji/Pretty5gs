@@ -23,7 +23,35 @@
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __ogs_tlv_domain
 
-static OGS_POOL(pool, ogs_tlv_t);
+/*
+ * TLV node storage (same model as lib/gtp/xact.c):
+ *   - Main / IO thread (ogs_worker_self() == NULL): process-global pool,
+ *     set up by ogs_tlv_init() from ogs_core_initialize().
+ *   - SMP shard workers: per-thread pool, lazily initialized on first use.
+ *     Every GTPv2/PFCP message build and parse allocates TLV nodes, so a
+ *     single unlocked global pool corrupts under concurrent workers
+ *     (observed as ogs_tlv_render() FATAL / SEGV on SGW-C with workers>0).
+ *     TLV trees never cross threads — they live only for the duration of
+ *     one build/parse call — so TLS needs no locking.
+ */
+typedef OGS_POOL(tlv_pool_t, ogs_tlv_t);
+
+static tlv_pool_t global_pool;
+
+static OGS_THREAD_LOCAL tlv_pool_t tls_pool;
+static OGS_THREAD_LOCAL int tls_pool_initialized = 0;
+
+static tlv_pool_t *tlv_pool(void)
+{
+    if (ogs_worker_self()) {
+        if (!tls_pool_initialized) {
+            ogs_pool_init(&tls_pool, ogs_core()->tlv.pool);
+            tls_pool_initialized = 1;
+        }
+        return &tls_pool;
+    }
+    return &global_pool;
+}
 
 /* ogs_tlv_t common functions */
 ogs_tlv_t *ogs_tlv_get(void)
@@ -31,7 +59,7 @@ ogs_tlv_t *ogs_tlv_get(void)
     ogs_tlv_t *tlv = NULL;
 
     /* get tlv node from node pool */
-    ogs_pool_alloc(&pool, &tlv);
+    ogs_pool_alloc(tlv_pool(), &tlv);
 
     /* check for error */
     if (!tlv) {
@@ -47,22 +75,32 @@ ogs_tlv_t *ogs_tlv_get(void)
 void ogs_tlv_free(ogs_tlv_t *tlv)
 {
     /* free tlv node to the node pool */
-    ogs_pool_free(&pool, tlv);
+    ogs_pool_free(tlv_pool(), tlv);
 }
 
 void ogs_tlv_init(void)
 {
-    ogs_pool_init(&pool, ogs_core()->tlv.pool);
+    ogs_pool_init(&global_pool, ogs_core()->tlv.pool);
 }
 
 void ogs_tlv_final(void)
 {
-    ogs_pool_final(&pool);
+    ogs_pool_final(&global_pool);
+}
+
+/* Worker threads that used TLV nodes may call this from their
+ * thread_fini hook; the pool otherwise persists until process exit. */
+void ogs_tlv_thread_final(void)
+{
+    if (tls_pool_initialized) {
+        ogs_pool_final(&tls_pool);
+        tls_pool_initialized = 0;
+    }
 }
 
 uint32_t ogs_tlv_pool_avail(void)
 {
-    return ogs_pool_avail(&pool);
+    return ogs_pool_avail(tlv_pool());
 }
 
 void ogs_tlv_free_all(ogs_tlv_t *root)

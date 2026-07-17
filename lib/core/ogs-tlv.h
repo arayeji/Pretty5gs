@@ -75,6 +75,7 @@ void ogs_tlv_free_all(ogs_tlv_t *root);
 
 void ogs_tlv_init(void);
 void ogs_tlv_final(void);
+void ogs_tlv_thread_final(void);
 
 uint32_t ogs_tlv_pool_avail(void);
 

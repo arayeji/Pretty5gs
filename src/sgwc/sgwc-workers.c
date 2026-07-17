@@ -251,6 +251,7 @@ static void sgwc_worker_thread_fini(ogs_worker_t *worker)
 
     ogs_pfcp_xact_final();
     ogs_gtp_xact_final();
+    ogs_tlv_thread_final();
 
     ogs_info("SGWC shard worker %d stopped", worker->id);
 }
