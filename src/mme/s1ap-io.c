@@ -148,8 +148,6 @@ static bool io_errno_assoc_dead(ogs_err_t err)
 static void io_report_assoc_dead(io_sock_t *ctx)
 {
     ogs_sockaddr_t *addr = NULL;
-    static ogs_time_t rate_window_start;
-    static int rate_count;
 
     ogs_assert(ctx);
 
@@ -171,24 +169,10 @@ static void io_report_assoc_dead(io_sock_t *ctx)
     }
 
     /*
-     * Cap CONNREFUSED flood: a mass EPIPE storm must not fill the main
-     * queue and freeze RX. Further reports in the same second are
-     * dropped; SCTP COMM_LOST / reconnect will still clean up.
+     * One-shot per sock (dead_reported). CONNREFUSED goes to a dedicated
+     * side-queue (see mme-event.c) so an EPIPE storm cannot fill the
+     * S1AP message queue or freeze RX.
      */
-    {
-        ogs_time_t now = ogs_time_now();
-        if (now - rate_window_start > ogs_time_from_sec(1)) {
-            rate_window_start = now;
-            rate_count = 0;
-        }
-        if (++rate_count > 64) {
-            ogs_error("s1ap-io: CONNREFUSED rate-limited (sock:%p)",
-                    (void *)ctx->sock);
-            ogs_free(addr);
-            return;
-        }
-    }
-
     ogs_warn("s1ap-io: hard send error — raising CONNREFUSED");
     mme_sctp_event_push(MME_EVENT_S1AP_LO_CONNREFUSED,
             ctx->sock, addr, NULL, 0, 0);

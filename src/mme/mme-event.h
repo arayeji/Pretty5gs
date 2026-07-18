@@ -160,6 +160,15 @@ OGS_STATIC_ASSERT(OGS_EVENT_SIZE >= sizeof(mme_event_t));
 
 void mme_event_term(void);
 
+/*
+ * S1AP CONNREFUSED side-channel: teardowns must not compete with a
+ * full S1AP message queue. Init before RX/IO workers start; main
+ * drains via mme_event_s1ap_connrefused_trypop() before the app queue.
+ */
+void mme_event_s1ap_connrefused_init(void);
+void mme_event_s1ap_connrefused_final(void);
+int mme_event_s1ap_connrefused_trypop(mme_event_t **e);
+
 mme_event_t *mme_event_new(mme_event_e id);
 void mme_event_free(mme_event_t *e);
 

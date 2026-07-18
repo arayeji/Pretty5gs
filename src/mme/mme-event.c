@@ -29,6 +29,17 @@
 #include "s1ap-io.h"
 #include "s1ap-io.h"
 
+/*
+ * CONNREFUSED side-channel (see mme_sctp_connrefused_enqueue). Declared
+ * early so mme_event_term() can terminate the queue on shutdown.
+ */
+#define MME_S1AP_CONNREFUSED_QUEUE  8192
+
+static ogs_queue_t *s1ap_cr_queue = NULL;
+static ogs_hash_t *s1ap_cr_pending = NULL; /* key: &e->sock while queued */
+static ogs_thread_mutex_t s1ap_cr_lock;
+static bool s1ap_cr_ready = false;
+
 static bool mme_event_belongs_to_mme_ue(
         mme_event_t *e, ogs_pool_id_t mme_ue_id)
 {
@@ -177,6 +188,8 @@ void mme_event_purge_mme_ue(ogs_pool_id_t mme_ue_id)
 void mme_event_term(void)
 {
     ogs_queue_term(ogs_app()->queue);
+    if (s1ap_cr_ready)
+        ogs_queue_term(s1ap_cr_queue);
     ogs_pollset_notify(ogs_app()->pollset);
 }
 
@@ -299,6 +312,124 @@ static void mme_event_discard_s1ap_push(mme_event_t *e)
     mme_event_free(e);
 }
 
+/*
+ * CONNREFUSED must not share the app queue with S1AP_MESSAGE floods.
+ * A dedicated bounded queue is drained first by the main loop; duplicates
+ * for the same sock are coalesced so a mass EPIPE/shutdown storm cannot
+ * fill either queue or spam the log.
+ */
+static ogs_thread_mutex_t drop_log_lock;
+static ogs_time_t drop_log_window_start;
+static int drop_log_count;
+static int drop_log_last_id;
+static int drop_log_last_rv;
+
+static void mme_event_drop_log(const char *what, int id, int rv)
+{
+    ogs_time_t now = ogs_time_now();
+
+    ogs_thread_mutex_lock(&drop_log_lock);
+    if (!drop_log_window_start)
+        drop_log_window_start = now;
+    drop_log_count++;
+    drop_log_last_id = id;
+    drop_log_last_rv = rv;
+    if (now - drop_log_window_start >= ogs_time_from_sec(1)) {
+        ogs_warn("%s: %d drop(s) in last window (last id=%d rv=%d)",
+                what, drop_log_count, drop_log_last_id, drop_log_last_rv);
+        drop_log_count = 0;
+        drop_log_window_start = now;
+    }
+    ogs_thread_mutex_unlock(&drop_log_lock);
+}
+
+void mme_event_s1ap_connrefused_init(void)
+{
+    if (s1ap_cr_ready)
+        return;
+
+    ogs_thread_mutex_init(&s1ap_cr_lock);
+    ogs_thread_mutex_init(&drop_log_lock);
+    s1ap_cr_queue = ogs_queue_create(MME_S1AP_CONNREFUSED_QUEUE);
+    ogs_assert(s1ap_cr_queue);
+    s1ap_cr_pending = ogs_hash_make();
+    ogs_assert(s1ap_cr_pending);
+    s1ap_cr_ready = true;
+}
+
+void mme_event_s1ap_connrefused_final(void)
+{
+    if (!s1ap_cr_ready)
+        return;
+
+    /* Queue was already ogs_queue_term()'d in mme_event_term(); trypop
+     * cannot drain after that. Remaining events are abandoned on
+     * process shutdown (same as the app queue). */
+    ogs_queue_destroy(s1ap_cr_queue);
+    s1ap_cr_queue = NULL;
+    ogs_hash_destroy(s1ap_cr_pending);
+    s1ap_cr_pending = NULL;
+    ogs_thread_mutex_destroy(&s1ap_cr_lock);
+    ogs_thread_mutex_destroy(&drop_log_lock);
+    s1ap_cr_ready = false;
+}
+
+int mme_event_s1ap_connrefused_trypop(mme_event_t **e)
+{
+    int rv;
+
+    ogs_assert(e);
+    *e = NULL;
+
+    if (!s1ap_cr_ready)
+        return OGS_RETRY;
+
+    ogs_thread_mutex_lock(&s1ap_cr_lock);
+    rv = ogs_queue_trypop(s1ap_cr_queue, (void **)e);
+    if (rv == OGS_OK && *e) {
+        ogs_hash_set(s1ap_cr_pending, &(*e)->sock, sizeof((*e)->sock), NULL);
+    }
+    ogs_thread_mutex_unlock(&s1ap_cr_lock);
+    return rv;
+}
+
+static void mme_sctp_connrefused_enqueue(mme_event_t *e)
+{
+    void *sock;
+    int rv;
+
+    ogs_assert(e);
+    ogs_assert(e->id == MME_EVENT_S1AP_LO_CONNREFUSED);
+
+    if (!s1ap_cr_ready) {
+        mme_event_discard_s1ap_push(e);
+        return;
+    }
+
+    sock = e->sock;
+
+    ogs_thread_mutex_lock(&s1ap_cr_lock);
+    if (ogs_hash_get(s1ap_cr_pending, &sock, sizeof(sock))) {
+        ogs_thread_mutex_unlock(&s1ap_cr_lock);
+        /* Already queued for this assoc — coalesce. */
+        mme_event_discard_s1ap_push(e);
+        return;
+    }
+
+    rv = ogs_queue_trypush(s1ap_cr_queue, e);
+    if (rv == OGS_OK) {
+        ogs_hash_set(s1ap_cr_pending, &e->sock, sizeof(e->sock), e);
+        ogs_thread_mutex_unlock(&s1ap_cr_lock);
+        ogs_pollset_notify(ogs_app()->pollset);
+        return;
+    }
+    ogs_thread_mutex_unlock(&s1ap_cr_lock);
+
+    mme_event_drop_log("s1ap CONNREFUSED side-queue", e->id, (int)rv);
+    mme_event_discard_s1ap_push(e);
+    ogs_pollset_notify(ogs_app()->pollset);
+}
+
 void s1ap_event_push_decoded(void *sock, ogs_sockaddr_t *addr,
         ogs_pkbuf_t *pkbuf, ogs_s1ap_message_t *pdu)
 {
@@ -324,8 +455,7 @@ void s1ap_event_push_decoded(void *sock, ogs_sockaddr_t *addr,
      */
     rv = ogs_queue_trypush(ogs_app()->queue, e);
     if (rv != OGS_OK) {
-        ogs_error("s1ap decoded push dropped (queue full/busy rv=%d)",
-                (int)rv);
+        mme_event_drop_log("s1ap decoded push", e->id, (int)rv);
         mme_event_discard_s1ap_push(e);
         ogs_pollset_notify(ogs_app()->pollset);
         return;
@@ -353,13 +483,18 @@ void mme_sctp_event_push(mme_event_e id,
     e->max_num_of_istreams = max_num_of_istreams;
     e->max_num_of_ostreams = max_num_of_ostreams;
 
+    /* Lifecycle teardowns: dedicated queue, never the S1AP flood path. */
+    if (id == MME_EVENT_S1AP_LO_CONNREFUSED) {
+        mme_sctp_connrefused_enqueue(e);
+        return;
+    }
+
     /*
      * From a worker thread: never block on ogs_queue_push.
      *
      * Close confirms (IO_DRAINED / RX_SOCK_CLOSED / WATCH_FAILED) get a
-     * short trypush burst. CONNREFUSED and S1AP_MESSAGE drop on full —
-     * losing one CONNREFUSED is better than freezing RX (which caused
-     * multi‑MB SCTP Recv-Q and a frozen UE count).
+     * short trypush burst. S1AP_MESSAGE drops on full — better than
+     * freezing RX (multi‑MB SCTP Recv-Q / frozen UE count).
      */
     if (ogs_worker_self()) {
         must_deliver = (id == MME_EVENT_S1AP_IO_DRAINED ||
@@ -391,8 +526,7 @@ void mme_sctp_event_push(mme_event_e id,
         } else {
             rv = ogs_queue_trypush(ogs_app()->queue, e);
             if (rv != OGS_OK) {
-                ogs_error("mme_sctp_event_push: id=%d dropped (rv=%d)",
-                        id, (int)rv);
+                mme_event_drop_log("mme_sctp_event_push", id, (int)rv);
                 mme_event_discard_s1ap_push(e);
                 ogs_pollset_notify(ogs_app()->pollset);
                 return;

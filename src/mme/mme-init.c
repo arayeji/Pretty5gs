@@ -122,6 +122,9 @@ int mme_initialize(void)
     rv = sgsap_open();
     if (rv != OGS_OK) return OGS_ERROR;
 
+    /* CONNREFUSED side-queue before any S1AP worker can post teardowns */
+    mme_event_s1ap_connrefused_init();
+
     /*
      * UE-shard workers first: ogs_worker_shards_enable() must run
      * before ANY ogs_worker_create (including S1AP RX/TX/IO helpers).
@@ -194,6 +197,9 @@ void mme_terminate(void)
     /* UE shards after helpers: no more S11/EMM posts from sockets */
     mme_workers_stop();
 
+    /* No more producers of CONNREFUSED */
+    mme_event_s1ap_connrefused_final();
+
     /* every thread that could confirm is joined: reap sockets still
      * waiting in the close registry */
     s1ap_sock_close_final();
@@ -238,14 +244,23 @@ static void mme_main(void *data)
         for ( ;; ) {
             mme_event_t *e = NULL;
 
-            rv = ogs_queue_trypop(ogs_app()->queue, (void**)&e);
-            ogs_assert(rv != OGS_ERROR);
+            /* Prefer CONNREFUSED: eNB teardown must not wait behind a
+             * saturated S1AP message queue. */
+            rv = mme_event_s1ap_connrefused_trypop(&e);
+            if (rv == OGS_RETRY) {
+                rv = ogs_queue_trypop(ogs_app()->queue, (void**)&e);
+                ogs_assert(rv != OGS_ERROR);
 
-            if (rv == OGS_DONE)
-                goto done;
+                if (rv == OGS_DONE)
+                    goto done;
 
-            if (rv == OGS_RETRY)
-                break;
+                if (rv == OGS_RETRY)
+                    break;
+            } else {
+                ogs_assert(rv != OGS_ERROR);
+                if (rv == OGS_DONE)
+                    goto done;
+            }
 
             ogs_assert(e);
             ogs_fsm_dispatch(&mme_sm, e);
