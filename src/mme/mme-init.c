@@ -28,6 +28,7 @@
 #include "mme-fd-path.h"
 #include "s1ap-path.h"
 #include "s1ap-rx.h"
+#include "s1ap-tx.h"
 #include "sgsap-path.h"
 #include "mme-gtp-path.h"
 #include "metrics.h"
@@ -125,6 +126,13 @@ int mme_initialize(void)
         if (rv != OGS_OK) return OGS_ERROR;
     }
 
+    /* TX encode workers do not own sockets; start before accept so the
+     * first DownlinkNASTransport can already post (default 0 = off). */
+    if (mme_self()->s1ap_tx_workers > 0) {
+        rv = s1ap_tx_workers_start(mme_self()->s1ap_tx_workers);
+        if (rv != OGS_OK) return OGS_ERROR;
+    }
+
     rv = s1ap_open();
     if (rv != OGS_OK) return OGS_ERROR;
 
@@ -150,6 +158,9 @@ void mme_terminate(void)
 
     mme_event_term();
 
+    /* Drain TX workers while main can still handle TX_READY (decrements
+     * pending / frees pkbufs). Then join main and tear sockets down. */
+    s1ap_tx_workers_stop();
     ogs_thread_destroy(thread);
 
     mme_gtp_close();

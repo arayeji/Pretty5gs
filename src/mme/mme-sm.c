@@ -24,6 +24,7 @@
 
 #include "s1ap-handler.h"
 #include "s1ap-path.h"
+#include "s1ap-tx.h"
 #include "sgsap-path.h"
 #include "nas-security.h"
 #include "nas-path.h"
@@ -376,6 +377,13 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             mme_enb_remove(enb);
         else
             ogs_sctp_destroy(e->sock);
+        break;
+
+    case MME_EVENT_S1AP_TX_READY:
+        /* TX worker finished DownlinkNASTransport APER encode (or
+         * failed with e->pkbuf NULL). Main decrements pending, sends,
+         * and flushes any sync messages held for association order. */
+        s1ap_tx_ready_handle(e);
         break;
 
     case MME_EVENT_S1AP_TIMER:

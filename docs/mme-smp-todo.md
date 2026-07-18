@@ -18,50 +18,42 @@ Invariants (same as `docs/smp-workers.md`):
 - [x] S1AP RX + APER decode offload (`mme.s1ap_rx_workers`)
 - [x] Epoll fd-map self-heal (`lib/core/ogs-epoll.c`) — stops WATCH-failed storm
 - [x] SGW-C session shard workers (`sgwc.workers`) — soak before MME Stage C
+- [x] `mme_find_served_tai` PLMN+TAC hash (lazy rebuild; list1 ranges stay linear)
+- [x] S1AP TX encode offload — **DownlinkNASTransport wedge** (`mme.s1ap_tx_workers`, default 0)
 
 ---
 
-## 1. `mme_find_served_tai` — hash / index
+## 1. `mme_find_served_tai` — hash / index — DONE
 
-| | |
-|---|---|
-| **Goal** | Replace nested linear scan with PLMN+TAC lookup |
-| **Why** | ~3% of MME cycles (~6% of `mme_main`) on attach / TAU / uplink NAS |
-| **Effort** | Small |
-| **Risk** | Low — read-mostly table; rebuild on config / SIGHUP list replace |
-| **Knob** | None (always on once landed) |
-
-### Tasks
-
-- [ ] Profile list sizes on production config (num served TAI0/1/2 entries)
-- [ ] Add hash or TAC→served-index map built in `mme_context_parse` / reload
-- [ ] Keep list0 range (TAI1) semantics correct (interval match, not only exact TAC)
-- [ ] Invalidate / rebuild on `mme-reload-lists` / SIGHUP
-- [ ] Unit or attach/TAU test with large served-TAI set
-- [ ] Re-perf: expect most of the ~3% self on `mme_find_served_tai` gone
+Landed: process-global PLMN+TAC hash; writers invalidate; list1 ranges
+still scanned with lowest-entry-index-wins. Re-perf after install to
+confirm ~2.6% self is gone.
 
 ---
 
-## 2. S1AP encode + TX queue
+## 2. S1AP encode + TX queue — DONE (DLNAS wedge)
 
 | | |
 |---|---|
-| **Goal** | Worker (or encode pool) builds S1AP PDU; main/IO only `sctp_send` |
-| **Benefit** | Cuts ASN.1 encode + build on `mme_main` |
+| **Goal** | Worker builds+encodes DLNAS; main only `sctp_send` |
+| **Benefit** | Moves high-volume DownlinkNASTransport APER off `mme_main` |
 | **Effort** | Medium |
-| **Risk** | Medium — **ordered TX per SCTP association** required |
-| **Knob** | e.g. `mme.s1ap_tx_workers` (default `0`) |
+| **Risk** | Medium — per-assoc order via `s1ap_tx_pending` + hold list |
+| **Knob** | `mme.s1ap_tx_workers` (default `0`) |
 
-### Tasks
+### Done
 
-- [ ] Inventory TX paths (`s1ap_send_*`, write_queue, delayed send timers)
-- [ ] Design per-association serial queue (eNB sock → single ordered pipeline)
-- [ ] Encode off main: build pkbuf on helper, post `{sock, pkbuf, stream_id}` to IO
-- [ ] Main/IO thread: only `ogs_sctp_senddata` / existing write_queue drain
-- [ ] Preserve stream-id and procedure ordering (HO, UE context, NAS delivery)
-- [ ] Failure paths: encode fail, send fail, eNB gone mid-queue
-- [ ] Default-off; soak with `s1ap_rx_workers` already on
-- [ ] Perf: confirm encode/`ogs_asn_encode` moves off `mme_main`
+- [x] Inventory / funnel through `s1ap_send_to_enb`
+- [x] Sticky worker per eNB (`enb->id % N`); FIFO jobs
+- [x] `s1ap_tx_post_dlnas` from `nas_eps_send_to_downlink_nas_transport`
+- [x] Hold sync sends while `s1ap_tx_pending > 0`; flush on TX_READY
+- [x] Wire meson + `mme-init` start/stop + `MME_EVENT_S1AP_TX_READY` in `mme-sm`
+
+### Still open (Stage 2b)
+
+- [ ] Offload ICSR / E-RAB / HO / paging builders (need larger snapshots)
+- [ ] Soak with `s1ap_rx_workers` + `s1ap_tx_workers` both > 0
+- [ ] Perf: confirm DLNAS `ogs_asn_encode` leaves `mme_main`
 
 ---
 
