@@ -104,10 +104,12 @@ static void epoll_cleanup(ogs_pollset_t *pollset)
 
 static int epoll_add(ogs_poll_t *poll)
 {
-    int rv, op;
+    int rv, op, err;
+    bool new_map = false;
     ogs_pollset_t *pollset = NULL;
     struct epoll_context_s *context = NULL;
     struct epoll_map_s *map = NULL;
+    ogs_poll_t *old_read = NULL, *old_write = NULL;
     struct epoll_event ee;
 
     ogs_assert(poll);
@@ -131,11 +133,15 @@ static int epoll_add(ogs_poll_t *poll)
             return OGS_ERROR;
         }
 
+        new_map = true;
         op = EPOLL_CTL_ADD;
         ogs_hash_set(context->map_hash, &poll->fd, sizeof(poll->fd), map);
     } else {
         op = EPOLL_CTL_MOD;
     }
+
+    old_read = map->read;
+    old_write = map->write;
 
     if (poll->when & OGS_POLLIN)
         map->read = poll;
@@ -153,9 +159,41 @@ static int epoll_add(ogs_poll_t *poll)
 
     rv = epoll_ctl(context->epfd, op, poll->fd, &ee);
     if (rv < 0) {
-        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
-                "epoll_ctl[%d] failed(%d)", op, rv);
-        return OGS_ERROR;
+        err = ogs_socket_errno;
+
+        /*
+         * Self-heal a kernel/bookkeeping desync. A closed fd is removed
+         * from the kernel epoll set automatically, but our map entry can
+         * outlive it (see the failure rollback below - older builds
+         * leaked the entry). A recycled fd number then selects MOD and
+         * the kernel answers ENOENT forever, so every new socket on that
+         * fd number fails to register (S1AP RX workers dropped each
+         * reconnecting eNB that reused the fd). Retry with the
+         * complementary op before giving up.
+         */
+        if (op == EPOLL_CTL_MOD && err == ENOENT)
+            rv = epoll_ctl(context->epfd, EPOLL_CTL_ADD, poll->fd, &ee);
+        else if (op == EPOLL_CTL_ADD && err == EEXIST)
+            rv = epoll_ctl(context->epfd, EPOLL_CTL_MOD, poll->fd, &ee);
+
+        if (rv < 0) {
+            ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
+                    "epoll_ctl[%d] failed(%d) fd=%d", op, rv, (int)poll->fd);
+
+            /*
+             * Roll the map back so a permanently-failed add cannot
+             * poison this fd number for the rest of the process
+             * lifetime (the bug behind the WATCH-failed storm).
+             */
+            map->read = old_read;
+            map->write = old_write;
+            if (new_map || (!map->read && !map->write)) {
+                ogs_hash_set(context->map_hash,
+                        &poll->fd, sizeof(poll->fd), NULL);
+                ogs_free(map);
+            }
+            return OGS_ERROR;
+        }
     }
 
     return OGS_OK;
@@ -204,12 +242,32 @@ static int epoll_remove(ogs_poll_t *poll)
 
         ogs_hash_set(context->map_hash, &poll->fd, sizeof(poll->fd), NULL);
         ogs_free(map);
+        map = NULL;
     }
 
     rv = epoll_ctl(context->epfd, op, poll->fd, &ee);
     if (rv < 0) {
-        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
-                "epoll_remove[%d] failed", op);
+        int err = ogs_socket_errno;
+
+        /*
+         * ENOENT/EBADF: the kernel already dropped this fd (closed
+         * elsewhere, or auto-removed on close). Our bookkeeping is
+         * complete either way, so treat it as success - but if a MOD
+         * was requested, the fd is not registered anymore, so drop the
+         * stale map entry too or the next epoll_add() picks MOD again
+         * against a kernel that has never heard of this fd.
+         */
+        if (err == ENOENT || err == EBADF) {
+            if (map) {
+                ogs_hash_set(context->map_hash,
+                        &poll->fd, sizeof(poll->fd), NULL);
+                ogs_free(map);
+            }
+            return OGS_OK;
+        }
+
+        ogs_log_message(OGS_LOG_ERROR, err,
+                "epoll_remove[%d] failed fd=%d", op, (int)poll->fd);
         return OGS_ERROR;
     }
 
