@@ -186,6 +186,16 @@ mme_enb_t *s1ap_rx_safe_enb_lookup(const ogs_sockaddr_t *addr)
     return mme_enb_find_by_addr(addr);
 }
 
+bool s1ap_rx_owned(ogs_sock_t *sock)
+{
+    ogs_assert(sock);
+
+    if (!rx_owner_hash)
+        return false;
+
+    return ogs_hash_get(rx_owner_hash, &sock, sizeof(sock)) != NULL;
+}
+
 bool s1ap_rx_unwatch_sock(ogs_sock_t *sock)
 {
     uintptr_t owner;

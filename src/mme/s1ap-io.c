@@ -336,6 +336,8 @@ static ogs_hash_t *close_wait_hash = NULL;
 
 void s1ap_sock_close_register(ogs_sock_t *sock, int wait_mask)
 {
+    uintptr_t existing;
+
     ogs_assert(sock);
     ogs_assert(wait_mask);
 
@@ -344,9 +346,44 @@ void s1ap_sock_close_register(ogs_sock_t *sock, int wait_mask)
         ogs_assert(close_wait_hash);
     }
 
-    ogs_assert(!ogs_hash_get(close_wait_hash, &sock, sizeof(sock)));
+    /*
+     * Duplicate register is a tear-down race (e.g. CONNREFUSED overlapping
+     * WATCH_FAILED, or a recycled sock pointer while a prior close is still
+     * in flight). Merge outstanding confirms; never abort the MME.
+     */
+    existing = (uintptr_t)ogs_hash_get(close_wait_hash, &sock, sizeof(sock));
+    if (existing) {
+        ogs_warn("s1ap-io: close already registered sock:%p "
+                "(pending=0x%x, add=0x%x)",
+                (void *)sock, (unsigned)existing, (unsigned)wait_mask);
+        ogs_hash_set(close_wait_hash, &sock, sizeof(sock),
+                (void *)(uintptr_t)(existing | (uintptr_t)wait_mask));
+        return;
+    }
+
     ogs_hash_set(close_wait_hash, &sock, sizeof(sock),
             (void *)(uintptr_t)wait_mask);
+}
+
+bool s1ap_sock_close_pending(ogs_sock_t *sock)
+{
+    ogs_assert(sock);
+
+    if (!close_wait_hash)
+        return false;
+
+    return ogs_hash_get(close_wait_hash, &sock, sizeof(sock)) != NULL;
+}
+
+void s1ap_sock_close_orphan(ogs_sock_t *sock)
+{
+    ogs_assert(sock);
+
+    /* Teardown already in flight via mme_enb_remove — leave it alone. */
+    if (s1ap_sock_close_pending(sock))
+        return;
+
+    ogs_sctp_destroy(sock);
 }
 
 void s1ap_sock_close_confirm(ogs_sock_t *sock, int which)
@@ -359,8 +396,13 @@ void s1ap_sock_close_confirm(ogs_sock_t *sock, int which)
         (uintptr_t)ogs_hash_get(close_wait_hash, &sock, sizeof(sock)) : 0;
 
     if (!mask) {
-        /* not registered: single-confirm teardown (RX-only compat) */
-        ogs_sctp_destroy(sock);
+        /*
+         * Spurious / late confirm after destroy (or for a sock that was
+         * never registered). MUST NOT destroy here: the pointer may
+         * already have been reused by a new accept().
+         */
+        ogs_warn("s1ap-io: close confirm 0x%x for unregistered sock:%p",
+                which, (void *)sock);
         return;
     }
 

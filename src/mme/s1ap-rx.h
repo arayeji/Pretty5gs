@@ -49,6 +49,9 @@ bool s1ap_rx_active(void);
 /* Assign an accepted eNB socket to a worker (round-robin). Main only. */
 void s1ap_rx_watch_sock(ogs_sock_t *sock);
 
+/* True if sock is currently assigned to an RX worker (main only). */
+bool s1ap_rx_owned(ogs_sock_t *sock);
+
 /* Detach a socket from its worker. Returns false if the socket is not
  * worker-owned (single-threaded mode: caller keeps the legacy path).
  * When true, the caller must NOT destroy the socket — it is destroyed

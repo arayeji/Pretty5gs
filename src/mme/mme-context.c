@@ -5622,11 +5622,32 @@ int mme_enb_remove(mme_enb_t *enb)
          */
         ogs_pkbuf_t *wq_pkbuf = NULL, *wq_next = NULL;
         int wait_mask = 0;
+        ogs_sock_t *sock = enb->sctp.sock;
 
-        if (s1ap_rx_unwatch_sock(enb->sctp.sock))
+        /*
+         * Register BEFORE posting unwatch/drain so a fast IO/RX worker
+         * cannot deliver confirm events that see an unregistered sock
+         * (those used to destroy the fd and let accept() recycle it).
+         * Compute the mask from what we are about to wait on; post next.
+         */
+        if (s1ap_rx_active() && s1ap_rx_owned(sock))
             wait_mask |= S1AP_SOCK_CONFIRM_RX;
-        if (s1ap_io_active() && s1ap_io_drain_sock(enb->sctp.sock))
+        if (s1ap_io_active())
             wait_mask |= S1AP_SOCK_CONFIRM_IO;
+
+        if (wait_mask)
+            s1ap_sock_close_register(sock, wait_mask);
+
+        if (wait_mask & S1AP_SOCK_CONFIRM_RX)
+            (void)s1ap_rx_unwatch_sock(sock);
+        if (wait_mask & S1AP_SOCK_CONFIRM_IO) {
+            if (!s1ap_io_drain_sock(sock)) {
+                /* drain post failed after retries: do not wedge forever */
+                ogs_error("s1ap-io: DRAIN failed for sock:%p; "
+                        "forcing IO confirm", (void *)sock);
+                s1ap_sock_close_confirm(sock, S1AP_SOCK_CONFIRM_IO);
+            }
+        }
 
         ogs_free(enb->sctp.addr);
 
@@ -5641,11 +5662,9 @@ int mme_enb_remove(mme_enb_t *enb)
             ogs_pkbuf_free(wq_pkbuf);
         }
 
-        if (wait_mask)
-            s1ap_sock_close_register(enb->sctp.sock, wait_mask);
-        else
+        if (!wait_mask)
             /* both offloads raced to off (shutdown): destroy directly */
-            ogs_sctp_destroy(enb->sctp.sock);
+            ogs_sctp_destroy(sock);
     } else if (enb->sctp.type == SOCK_STREAM && !enb->sctp.poll.read) {
         /* RX workers already stopped (shutdown path): the worker's poll
          * entry died with its pollset; destroy the socket directly —

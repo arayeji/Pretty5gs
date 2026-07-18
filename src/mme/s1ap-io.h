@@ -71,6 +71,9 @@ int s1ap_io_post_send(
 
 void s1ap_sock_close_register(ogs_sock_t *sock, int wait_mask);
 void s1ap_sock_close_confirm(ogs_sock_t *sock, int which);
+bool s1ap_sock_close_pending(ogs_sock_t *sock);
+/* Destroy only if no close is already registered (WATCH_FAILED orphan). */
+void s1ap_sock_close_orphan(ogs_sock_t *sock);
 /* shutdown: reap sockets whose confirmations never arrived (call after
  * ALL worker threads are joined) */
 void s1ap_sock_close_final(void);
