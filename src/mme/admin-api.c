@@ -24,6 +24,7 @@
 
 #include "mme-context.h"
 #include "mme-event.h"
+#include "mme-workers.h"
 #include "mme-sm.h"      /* emm_state_ue_context_will_remove (FSM check) */
 #include "mme-path.h"    /* orphan-sweep heartbeat accessors */
 
@@ -185,9 +186,8 @@ int mme_admin_ue_detach(const ogs_metrics_query_t *q,
     e->mme_ue_id = mme_ue_pool_id;
     e->admin_force = q->force ? 1 : 0;
 
-    int rv = ogs_queue_push(ogs_app()->queue, e);
+    int rv = mme_event_push_to_ue_owner(e);
     if (rv != OGS_OK) {
-        mme_event_free(e);
         *body_len = fmt_json_status(body, body_cap,
                 ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
         return ADMIN_HTTP_SERVICE_UNAVAIL;
@@ -247,15 +247,12 @@ int mme_admin_ue_page(const ogs_metrics_query_t *q,
     /* force=1 -> re-page even if a paging procedure is already in flight. */
     e->admin_force = q->force ? 1 : 0;
 
-    int rv = ogs_queue_push(ogs_app()->queue, e);
+    int rv = mme_event_push_to_ue_owner(e);
     if (rv != OGS_OK) {
-        mme_event_free(e);
         *body_len = fmt_json_status(body, body_cap,
                 ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
         return ADMIN_HTTP_SERVICE_UNAVAIL;
     }
-
-    ogs_pollset_notify(ogs_app()->pollset);
 
     *body_len = fmt_json_status(body, body_cap,
             ADMIN_HTTP_ACCEPTED,

@@ -30,6 +30,7 @@
 #include "s1ap-rx.h"
 #include "s1ap-tx.h"
 #include "s1ap-io.h"
+#include "mme-workers.h"
 #include "sgsap-path.h"
 #include "mme-gtp-path.h"
 #include "metrics.h"
@@ -121,6 +122,15 @@ int mme_initialize(void)
     rv = sgsap_open();
     if (rv != OGS_OK) return OGS_ERROR;
 
+    /*
+     * UE-shard workers first: ogs_worker_shards_enable() must run
+     * before ANY ogs_worker_create (including S1AP RX/TX/IO helpers).
+     */
+    if (mme_self()->workers > 0) {
+        rv = mme_workers_start(mme_self()->workers);
+        if (rv != OGS_OK) return OGS_ERROR;
+    }
+
     /* before s1ap_open(): eNB sockets are assigned at accept time */
     if (mme_self()->s1ap_rx_workers > 0) {
         rv = s1ap_rx_workers_start(mme_self()->s1ap_rx_workers);
@@ -180,6 +190,9 @@ void mme_terminate(void)
     sgsap_close();
     s1ap_close();
     s1ap_rx_workers_stop();
+
+    /* UE shards after helpers: no more S11/EMM posts from sockets */
+    mme_workers_stop();
 
     /* every thread that could confirm is joined: reap sockets still
      * waiting in the close registry */

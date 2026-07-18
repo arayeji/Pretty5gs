@@ -23,6 +23,7 @@
 
 #include "mme-event.h"
 #include "mme-context.h"
+#include "mme-workers.h"
 
 #include "s1ap-path.h"
 
@@ -92,40 +93,32 @@ static void mme_event_discard(mme_event_t *e)
  */
 #define MME_EVENT_PURGE_MAX_QUEUE 2048
 
-void mme_event_purge_mme_ue(ogs_pool_id_t mme_ue_id)
+static int mme_event_purge_queue(ogs_queue_t *queue, ogs_pool_id_t mme_ue_id)
 {
-    ogs_queue_t *queue = NULL;
     ogs_queue_t *pending = NULL;
     mme_event_t *e = NULL;
     int rv, purged = 0;
     unsigned int n;
 
-    if (mme_ue_id < OGS_MIN_POOL_ID || mme_ue_id > OGS_MAX_POOL_ID)
-        return;
-
-    queue = ogs_app()->queue;
     ogs_assert(queue);
 
     n = ogs_queue_size(queue);
     if (n == 0)
-        return;
+        return 0;
 
     if (n > MME_EVENT_PURGE_MAX_QUEUE) {
         ogs_debug("Skipping event purge for MME-UE [id:%d]: "
                 "queue too deep (%u); stale events are dropped at "
                 "dispatch time", mme_ue_id, n);
-        return;
+        return 0;
     }
 
     pending = ogs_queue_create(n + 16);
     ogs_assert(pending);
 
     /*
-     * S1AP RX workers keep pushing to the app queue while we drain it,
-     * so the queue is NOT frozen at the size we snapshotted. Pop at most
-     * n events (guaranteeing `pending` cannot overflow) and treat a
-     * failed re-push as a drop, never as fatal: the RX workers may have
-     * refilled the queue to capacity while events were parked here.
+     * Producers may keep pushing while we drain, so the queue is NOT
+     * frozen at the size we snapshotted. Pop at most n events.
      */
     while (n > 0 && (rv = ogs_queue_trypop(queue, (void **)&e)) == OGS_OK) {
         n--;
@@ -152,6 +145,26 @@ void mme_event_purge_mme_ue(ogs_pool_id_t mme_ue_id)
     ogs_assert(rv != OGS_ERROR);
 
     ogs_queue_destroy(pending);
+    return purged;
+}
+
+void mme_event_purge_mme_ue(ogs_pool_id_t mme_ue_id)
+{
+    int purged = 0;
+    int wid;
+
+    if (mme_ue_id < OGS_MIN_POOL_ID || mme_ue_id > OGS_MAX_POOL_ID)
+        return;
+
+    purged += mme_event_purge_queue(ogs_app()->queue, mme_ue_id);
+
+    /* Stage A: UE-scoped work may already sit on the owner shard queue. */
+    wid = mme_shard_from_mme_ue_id(mme_ue_id);
+    if (wid >= 0) {
+        ogs_worker_t *w = mme_worker_by_id(wid);
+        if (w && w->queue)
+            purged += mme_event_purge_queue(w->queue, mme_ue_id);
+    }
 
     if (purged > 0) {
         ogs_debug("Purged %d queued event(s) for removed MME-UE [id:%d]",

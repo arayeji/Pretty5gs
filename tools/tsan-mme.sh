@@ -1,7 +1,8 @@
 #!/bin/sh
 # TSAN soak rig for the MME SMP offloads (s1ap_rx_workers / s1ap_tx_workers /
-# s1ap_io_thread). Builds a separate ThreadSanitizer tree, injects the worker
-# knobs into the test config, and runs the EPC test suites under TSAN.
+# s1ap_io_thread / mme.workers). Builds a separate ThreadSanitizer tree,
+# injects the worker knobs into the test config, and runs the EPC test
+# suites under TSAN.
 #
 # Usage:
 #   ./tools/tsan-mme.sh                # build + run default suites
@@ -39,10 +40,21 @@ do_build() {
                 print "  s1ap_rx_workers: 2"
                 print "  s1ap_tx_workers: 2"
                 print "  s1ap_io_thread: 1"
+                print "  workers: 2"
                 done = 1
             }
         ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
         echo "injected SMP knobs -> $f"
+    elif [ -f "$f" ] && ! grep -q 'workers:' "$f"; then
+        # Older TSAN trees already had rx/tx/io; add Stage A UE shards.
+        awk '
+            { print }
+            /^mme:/ && !done {
+                print "  workers: 2"
+                done = 1
+            }
+        ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+        echo "injected mme.workers:2 -> $f"
     fi
 }
 

@@ -18,6 +18,7 @@
  */
 
 #include "mme-event.h"
+#include "mme-workers.h"
 #include "mme-fd-path.h"
 #include "mme-timer.h"
 #include "mme-pgw-host.h"
@@ -124,9 +125,9 @@ static void mme_s6a_post_failure(
 
     /*
      * Do not call mme_s6a_timer_stop() here. ogs_timer_* is owned by the
-     * MME main thread; stopping from a freeDiameter worker races the timer
-     * rbtree and can SIGSEGV (see mme_s6a_aia_cb backtrace). The main
-     * thread stops the timer when it handles MME_EVENT_S6A_MESSAGE.
+     * UE owner thread (main, or an mme.workers shard); stopping from a
+     * freeDiameter worker races the timer rbtree and can SIGSEGV. The
+     * owner stops the timer when it handles MME_EVENT_S6A_MESSAGE.
      */
 
     s6a_message = ogs_calloc(1, sizeof(*s6a_message));
@@ -151,15 +152,11 @@ static void mme_s6a_post_failure(
     e->gtp_xact_id = gtp_xact_id;
     e->s6a_message = s6a_message;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = mme_event_push_to_ue_owner(e);
     if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        ogs_free(s6a_message);
-        mme_event_free(e);
+        ogs_error("S6a event push failed:%d", (int)rv);
         return;
     }
-
-    ogs_pollset_notify(ogs_app()->pollset);
 }
 
 void mme_s6a_timer_start(mme_ue_t *mme_ue, uint16_t cmd_code)
@@ -175,7 +172,7 @@ void mme_s6a_timer_start(mme_ue_t *mme_ue, uint16_t cmd_code)
 void mme_s6a_timer_stop(mme_ue_t *mme_ue)
 {
     /*
-     * Must run on the MME main thread only (ogs_timer_mgr is not locked).
+     * Must run on the UE owner thread only (ogs_timer_mgr is not locked).
      */
     if (!mme_ue)
         return;
@@ -1586,16 +1583,13 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
         e->enb_ue_id = enb_ue->id;
         e->gtp_xact_id = sess_data->gtp_xact_id;
         e->s6a_message = s6a_message;
-        rv = ogs_queue_push(ogs_app()->queue, e);
+        /* push owns s6a_message (frees on failure) */
+        s6a_message = NULL;
+        rv = mme_event_push_to_ue_owner(e);
         if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
-            mme_event_free(e);
+            ogs_error("S6a event push failed:%d", (int)rv);
             error++;
             goto cleanup;
-        } else {
-            ogs_pollset_notify(ogs_app()->pollset);
-            /* Transfer ownership of s6a_message to event */
-            s6a_message = NULL;
         }
     }
 
@@ -2117,16 +2111,13 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
         e->mme_ue_id = mme_ue->id;
         e->enb_ue_id = enb_ue->id;
         e->s6a_message = s6a_message;
-        rv = ogs_queue_push(ogs_app()->queue, e);
+        /* push owns s6a_message (frees on failure) */
+        s6a_message = NULL;
+        rv = mme_event_push_to_ue_owner(e);
         if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
-            mme_event_free(e);
+            ogs_error("S6a event push failed:%d", (int)rv);
             error++;
             goto cleanup;
-        } else {
-            ogs_pollset_notify(ogs_app()->pollset);
-            /* Transfer ownership of s6a_message to event */
-            s6a_message = NULL;
         }
     }
 
@@ -2716,16 +2707,13 @@ static void mme_s6a_pua_cb(void *data, struct msg **msg)
         e->mme_ue_id = mme_ue->id;
         e->enb_ue_id = enb_ue->id;
         e->s6a_message = s6a_message;
-        rv = ogs_queue_push(ogs_app()->queue, e);
+        /* push owns s6a_message (frees on failure) */
+        s6a_message = NULL;
+        rv = mme_event_push_to_ue_owner(e);
         if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
-            mme_event_free(e);
+            ogs_error("S6a event push failed:%d", (int)rv);
             error++;
             goto cleanup;
-        } else {
-            ogs_pollset_notify(ogs_app()->pollset);
-            /* Transfer ownership of s6a_message to event */
-            s6a_message = NULL;
         }
     }
 
@@ -2971,16 +2959,11 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
     }
     e->mme_ue_id = mme_ue->id;
     e->s6a_message = s6a_message;
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        ogs_free(s6a_message);
-        mme_event_free(e);
-    } else {
-        ogs_pollset_notify(ogs_app()->pollset);
-        /* Transfer ownership of s6a_message to event */
-        s6a_message = NULL;
-    }
+    /* push owns s6a_message (frees on failure) */
+    s6a_message = NULL;
+    rv = mme_event_push_to_ue_owner(e);
+    if (rv != OGS_OK)
+        ogs_error("S6a event push failed:%d", (int)rv);
 
     return 0;
 
@@ -3452,17 +3435,12 @@ static int mme_s6a_idr_cb(struct msg **msg, struct avp *avp,
     }
     e->mme_ue_id = mme_ue->id;
     e->s6a_message = s6a_message;
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        ogs_subscription_data_free(subscription_data);
-        ogs_free(s6a_message);
-        mme_event_free(e);
-    } else {
-        ogs_pollset_notify(ogs_app()->pollset);
-        /* Transfer ownership of s6a_message to event */
-        s6a_message = NULL;
-    }
+    /* push owns s6a_message + embedded subscription_data (frees on failure) */
+    s6a_message = NULL;
+    subscription_data = NULL;
+    rv = mme_event_push_to_ue_owner(e);
+    if (rv != OGS_OK)
+        ogs_error("S6a event push failed:%d", (int)rv);
 
     return 0;
 

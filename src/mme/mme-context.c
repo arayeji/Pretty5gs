@@ -36,6 +36,7 @@
 #include "s1ap-rx.h"
 #include "s1ap-io.h"
 #include "s1ap-handler.h"
+#include "mme-workers.h"
 #include "mme-sm.h"
 #include "mme-gtp-path.h"
 #include "metrics.h"
@@ -145,6 +146,20 @@ mme_save_recovery_counter(const char *path, uint8_t val)
 
 static mme_context_t self;
 static ogs_diam_config_t g_diam_conf;
+static ogs_thread_mutex_t mme_ctx_mutex;
+static bool mme_ctx_mutex_ready = false;
+
+void mme_ctx_lock(void)
+{
+    if (mme_ctx_mutex_ready)
+        ogs_thread_mutex_lock(&mme_ctx_mutex);
+}
+
+void mme_ctx_unlock(void)
+{
+    if (mme_ctx_mutex_ready)
+        ogs_thread_mutex_unlock(&mme_ctx_mutex);
+}
 
 /* PLMN-indexed csmap buckets (see mme_csmap_plmn_attach). */
 static ogs_hash_t *mme_csmap_plmn_hash;
@@ -334,6 +349,9 @@ void mme_context_init(void)
 {
     ogs_assert(context_initialized == 0);
 
+    ogs_thread_mutex_init(&mme_ctx_mutex);
+    mme_ctx_mutex_ready = true;
+
     /* Initial FreeDiameter Config */
     memset(&g_diam_conf, 0, sizeof(ogs_diam_config_t));
 
@@ -507,6 +525,11 @@ void mme_context_final(void)
     ogs_pool_final(&mme_csmap_pool);
     ogs_pool_final(&mme_vlr_pool);
     ogs_pool_final(&mme_hssmap_pool);
+
+    if (mme_ctx_mutex_ready) {
+        ogs_thread_mutex_destroy(&mme_ctx_mutex);
+        mme_ctx_mutex_ready = false;
+    }
 
     context_initialized = 0;
 }
@@ -1219,6 +1242,18 @@ int mme_context_parse_config(void)
                     const char *v = ogs_yaml_iter_value(&mme_iter);
                     if (v) {
                         self.s1ap_io_thread = atoi(v) ? 1 : 0;
+                    }
+                } else if (!strcmp(mme_key, "workers")) {
+                    /* UE-shard bounce workers (0 = off, Stage A) */
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+                    if (v) {
+                        self.workers = atoi(v);
+                        if (self.workers < 0 ||
+                            self.workers > OGS_MAX_WORKERS - 1) {
+                            ogs_error("mme.workers must be 0..%d",
+                                    OGS_MAX_WORKERS - 1);
+                            self.workers = 0;
+                        }
                     }
                 } else if (!strcmp(mme_key, "s1ap")) {
                     ogs_yaml_iter_t s1ap_iter;
@@ -5812,7 +5847,18 @@ enb_ue_t *enb_ue_add(mme_enb_t *enb, uint32_t enb_ue_s1ap_id)
     ogs_assert(enb_ue->index > 0 && enb_ue->index <= ogs_global_conf()->max.ue);
 
     enb_ue->enb_ue_s1ap_id = enb_ue_s1ap_id;
-    enb_ue->mme_ue_s1ap_id = enb_ue->index;
+    /*
+     * When UE shards are on, embed a sticky worker id in MME_UE_S1AP_ID
+     * so UplinkNAS / first EMM can bounce before IMSI is known. Shard
+     * id is 1..N (ogs_worker_self_id style); pick by pool index % N.
+     */
+    if (mme_workers_active()) {
+        int wid = (int)((enb_ue->index - 1) % (unsigned)mme_workers_count());
+        enb_ue->mme_ue_s1ap_id = mme_shard_compose(
+                enb_ue->index, wid + 1);
+    } else {
+        enb_ue->mme_ue_s1ap_id = enb_ue->index;
+    }
     enb_ue->context_created = ogs_time_now();
 
     /*
@@ -6146,8 +6192,10 @@ void mme_ue_confirm_guti(mme_ue_t *mme_ue)
     if (MME_CURRENT_GUTI_IS_AVAILABLE(mme_ue)) {
         /* MME has a VALID GUTI
          * As such, we need to remove previous GUTI in hash table */
+        mme_ctx_lock();
         ogs_hash_unset_if_owner(self.guti_ue_hash,
                 &mme_ue->current.guti, sizeof(ogs_nas_eps_guti_t), mme_ue);
+        mme_ctx_unlock();
         ogs_assert(mme_m_tmsi_free(mme_ue->current.m_tmsi) == OGS_OK);
     }
 
@@ -6157,8 +6205,10 @@ void mme_ue_confirm_guti(mme_ue_t *mme_ue)
             &mme_ue->next.guti, sizeof(ogs_nas_eps_guti_t));
 
     /* Hashing Current GUTI */
+    mme_ctx_lock();
     ogs_hash_set(self.guti_ue_hash,
             &mme_ue->current.guti, sizeof(ogs_nas_eps_guti_t), mme_ue);
+    mme_ctx_unlock();
 
     /* Clear Next GUTI */
     mme_ue->next.m_tmsi = NULL;
@@ -6496,6 +6546,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
         return NULL;
     }
 
+    mme_ctx_lock();
     ogs_pool_id_calloc(&mme_ue_pool, &mme_ue);
     if (mme_ue == NULL) {
         /*
@@ -6503,12 +6554,15 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
          * evictor on every attach — under load that is O(N) per Initial UE
          * and can stall the main loop (looks like a hang, log stops).
          */
+        mme_ctx_unlock();
         mme_context_evict_idle_ues(0);
+        mme_ctx_lock();
         ogs_pool_id_calloc(&mme_ue_pool, &mme_ue);
     }
     if (mme_ue == NULL) {
         static ogs_time_t last_pool_err = 0;
         ogs_time_t now = ogs_time_now();
+        mme_ctx_unlock();
         if (last_pool_err == 0 ||
                 now - last_pool_err > ogs_time_from_sec(1)) {
             last_pool_err = now;
@@ -6525,10 +6579,20 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
         }
         return NULL;
     }
+    mme_ctx_unlock();
+
+    /*
+     * Sticky shard from the enb_ue S1AP id (set at enb_ue_add). UE
+     * timers live on that worker's timer_mgr so start/stop/expire are
+     * single-threaded with the UE FSM.
+     */
+    {
+        int wid = mme_shard_from_ue_s1ap_id(enb_ue->mme_ue_s1ap_id);
+        ogs_timer_mgr_t *tm = mme_ue_timer_mgr_for_wid(wid);
 
     /* Add All Timers */
     mme_ue->t3413.timer = ogs_timer_add(
-            ogs_app()->timer_mgr, mme_timer_t3413_expire,
+            tm, mme_timer_t3413_expire,
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t3413.timer) {
         ogs_error("ogs_timer_add() failed");
@@ -6537,7 +6601,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     }
     mme_ue->t3413.pkbuf = NULL;
     mme_ue->t3422.timer = ogs_timer_add(
-            ogs_app()->timer_mgr, mme_timer_t3422_expire,
+            tm, mme_timer_t3422_expire,
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t3422.timer) {
         ogs_error("ogs_timer_add() failed");
@@ -6546,7 +6610,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     }
     mme_ue->t3422.pkbuf = NULL;
     mme_ue->t3450.timer = ogs_timer_add(
-            ogs_app()->timer_mgr, mme_timer_t3450_expire,
+            tm, mme_timer_t3450_expire,
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t3450.timer) {
         ogs_error("ogs_timer_add() failed");
@@ -6555,7 +6619,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     }
     mme_ue->t3450.pkbuf = NULL;
     mme_ue->t3460.timer = ogs_timer_add(
-            ogs_app()->timer_mgr, mme_timer_t3460_expire,
+            tm, mme_timer_t3460_expire,
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t3460.timer) {
         ogs_error("ogs_timer_add() failed");
@@ -6564,7 +6628,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     }
     mme_ue->t3460.pkbuf = NULL;
     mme_ue->t3470.timer = ogs_timer_add(
-            ogs_app()->timer_mgr, mme_timer_t3470_expire,
+            tm, mme_timer_t3470_expire,
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t3470.timer) {
         ogs_error("ogs_timer_add() failed");
@@ -6573,7 +6637,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     }
     mme_ue->t3470.pkbuf = NULL;
     mme_ue->t_mobile_reachable.timer = ogs_timer_add(
-            ogs_app()->timer_mgr, mme_timer_mobile_reachable_expire,
+            tm, mme_timer_mobile_reachable_expire,
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t_mobile_reachable.timer) {
         ogs_error("ogs_timer_add() failed");
@@ -6582,7 +6646,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     }
     mme_ue->t_mobile_reachable.pkbuf = NULL;
     mme_ue->t_implicit_detach.timer = ogs_timer_add(
-            ogs_app()->timer_mgr, mme_timer_implicit_detach_expire,
+            tm, mme_timer_implicit_detach_expire,
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t_implicit_detach.timer) {
         ogs_error("ogs_timer_add() failed");
@@ -6592,7 +6656,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     mme_ue->t_implicit_detach.pkbuf = NULL;
 
     mme_ue->gn.t_gn_holding = ogs_timer_add(
-            ogs_app()->timer_mgr, mme_timer_gn_holding_timer_expire,
+            tm, mme_timer_gn_holding_timer_expire,
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (! mme_ue->gn.t_gn_holding) {
         ogs_error("ogs_timer_add() failed");
@@ -6602,7 +6666,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     mme_ue->gn.gtp_xact_id = OGS_INVALID_POOL_ID;
 
     mme_ue->t_sgs_ts6_1 = ogs_timer_add(
-            ogs_app()->timer_mgr, mme_timer_sgs_ts6_1_expire,
+            tm, mme_timer_sgs_ts6_1_expire,
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t_sgs_ts6_1) {
         ogs_error("ogs_timer_add() failed");
@@ -6611,13 +6675,14 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     }
 
     mme_ue->t_s6a = ogs_timer_add(
-            ogs_app()->timer_mgr, mme_timer_s6a_expire,
+            tm, mme_timer_s6a_expire,
             OGS_UINT_TO_POINTER(mme_ue->id));
     if (!mme_ue->t_s6a) {
         ogs_error("ogs_timer_add() failed");
         mme_ue_add_abort(mme_ue);
         return NULL;
     }
+    } /* wid/tm scope */
 
     ogs_list_init(&mme_ue->sess_list);
 
@@ -6633,20 +6698,35 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
             mme_ue->ebi_to_bearer_id[i] = OGS_INVALID_POOL_ID;
     }
 
-    /* Set MME-S11-TEID */
+    /* Set MME-S11-TEID (embed owner shard when mme.workers > 0) */
+    mme_ctx_lock();
     ogs_pool_alloc(&mme_s11_teid_pool, &mme_ue->mme_s11_teid_node);
     if (!mme_ue->mme_s11_teid_node) {
+        mme_ctx_unlock();
         ogs_error("Could not allocate MME-S11-TEID");
         mme_ue_add_abort(mme_ue);
         return NULL;
     }
-    mme_ue->mme_s11_teid = *(mme_ue->mme_s11_teid_node);
+    {
+        uint32_t raw = *(mme_ue->mme_s11_teid_node);
+        int wid = mme_shard_from_ue_s1ap_id(enb_ue->mme_ue_s1ap_id);
+        int shard_id;
+
+        raw &= (1u << (32 - OGS_WORKER_ID_BITS)) - 1;
+        if (raw == 0)
+            raw = 1;
+        shard_id = (wid >= 0) ? (wid + 1) : ogs_worker_self_id();
+        mme_ue->mme_s11_teid = mme_shard_compose(raw, shard_id);
+    }
     ogs_hash_set(self.mme_s11_teid_hash,
             &mme_ue->mme_s11_teid, sizeof(mme_ue->mme_s11_teid), mme_ue);
+    mme_ctx_unlock();
 
     /* Set MME-Gn-TEID */
+    mme_ctx_lock();
     ogs_pool_alloc(&mme_gn_teid_pool, &mme_ue->gn.mme_gn_teid_node);
     if (!mme_ue->gn.mme_gn_teid_node) {
+        mme_ctx_unlock();
         ogs_error("Could not allocate MME-Gn-TEID");
         mme_ue_add_abort(mme_ue);
         return NULL;
@@ -6654,6 +6734,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     mme_ue->gn.mme_gn_teid = *(mme_ue->gn.mme_gn_teid_node);
     ogs_hash_set(self.mme_gn_teid_hash,
             &mme_ue->gn.mme_gn_teid, sizeof(mme_ue->gn.mme_gn_teid), mme_ue);
+    mme_ctx_unlock();
 
     /*
      * When used for the first time, if last node is set,
@@ -6760,21 +6841,23 @@ void mme_ue_remove(mme_ue_t *mme_ue)
     CLEAR_MME_UE_ALL_TIMERS(mme_ue);
     mme_event_purge_mme_ue(mme_ue->id);
 
+    mme_ctx_lock();
     ogs_hash_set(self.mme_s11_teid_hash,
             &mme_ue->mme_s11_teid, sizeof(mme_ue->mme_s11_teid), NULL);
     ogs_hash_set(self.mme_gn_teid_hash,
             &mme_ue->gn.mme_gn_teid, sizeof(mme_ue->gn.mme_gn_teid), NULL);
+    if (mme_ue->imsi_len != 0)
+        ogs_hash_unset_if_owner(self.imsi_ue_hash,
+                mme_ue->imsi, mme_ue->imsi_len, mme_ue);
+    if (MME_CURRENT_GUTI_IS_AVAILABLE(mme_ue))
+        ogs_hash_unset_if_owner(self.guti_ue_hash,
+                &mme_ue->current.guti, sizeof(ogs_nas_eps_guti_t), mme_ue);
+    mme_ctx_unlock();
 
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     if (sgw_ue) sgw_ue_remove(sgw_ue);
 
-    if (mme_ue->imsi_len != 0)
-        ogs_hash_unset_if_owner(mme_self()->imsi_ue_hash,
-                mme_ue->imsi, mme_ue->imsi_len, mme_ue);
-
     if (MME_CURRENT_GUTI_IS_AVAILABLE(mme_ue)) {
-        ogs_hash_unset_if_owner(self.guti_ue_hash,
-                &mme_ue->current.guti, sizeof(ogs_nas_eps_guti_t), mme_ue);
         ogs_assert(mme_m_tmsi_free(mme_ue->current.m_tmsi) == OGS_OK);
     }
 
@@ -7148,9 +7231,12 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
      * a context with an invalid FSM state, leading to ogs_assert_if_reached()
      * in mme_state_operational().
      */
-    if (mme_ue->imsi_len != 0)
-        ogs_hash_unset_if_owner(mme_self()->imsi_ue_hash,
+    if (mme_ue->imsi_len != 0) {
+        mme_ctx_lock();
+        ogs_hash_unset_if_owner(self.imsi_ue_hash,
                 mme_ue->imsi, mme_ue->imsi_len, mme_ue);
+        mme_ctx_unlock();
+    }
 
     ogs_cpystrn(mme_ue->imsi_bcd, imsi_bcd, OGS_MAX_IMSI_BCD_LEN+1);
     ogs_bcd_to_buffer(mme_ue->imsi_bcd, mme_ue->imsi, &mme_ue->imsi_len);
@@ -7293,7 +7379,9 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
 
     /* Register new IMSI in hash.
      * Old IMSI hash entry was already removed at the top of this function. */
+    mme_ctx_lock();
     ogs_hash_set(self.imsi_ue_hash, mme_ue->imsi, mme_ue->imsi_len, mme_ue);
+    mme_ctx_unlock();
 
     mme_ue->hssmap = mme_hssmap_find_by_imsi_bcd(mme_ue->imsi_bcd);
     if (mme_ue->hssmap) {
@@ -7782,20 +7870,25 @@ mme_bearer_t *mme_bearer_add(mme_sess_t *sess)
     if (bearer->ebi >= MIN_EPS_BEARER_ID && bearer->ebi <= MAX_EPS_BEARER_ID)
         mme_ue->ebi_to_bearer_id[bearer->ebi] = bearer->id;
 
-    bearer->t3489.timer = ogs_timer_add(
-            ogs_app()->timer_mgr, mme_timer_t3489_expire,
-            OGS_UINT_TO_POINTER(bearer->id));
-    bearer->t3489.pkbuf = NULL;
+    {
+        int wid = mme_shard_from_teid(mme_ue->mme_s11_teid);
+        ogs_timer_mgr_t *tm = mme_ue_timer_mgr_for_wid(wid);
 
-    bearer->t_bearer_setup.timer = ogs_timer_add(
-            ogs_app()->timer_mgr, mme_timer_bearer_setup_expire,
-            OGS_UINT_TO_POINTER(bearer->id));
-    bearer->t_bearer_setup.pkbuf = NULL;
+        bearer->t3489.timer = ogs_timer_add(
+                tm, mme_timer_t3489_expire,
+                OGS_UINT_TO_POINTER(bearer->id));
+        bearer->t3489.pkbuf = NULL;
 
-    bearer->t_nas_deactivate.timer = ogs_timer_add(
-            ogs_app()->timer_mgr, mme_timer_nas_deactivate_bearer_expire,
-            OGS_UINT_TO_POINTER(bearer->id));
-    bearer->t_nas_deactivate.pkbuf = NULL;
+        bearer->t_bearer_setup.timer = ogs_timer_add(
+                tm, mme_timer_bearer_setup_expire,
+                OGS_UINT_TO_POINTER(bearer->id));
+        bearer->t_bearer_setup.pkbuf = NULL;
+
+        bearer->t_nas_deactivate.timer = ogs_timer_add(
+                tm, mme_timer_nas_deactivate_bearer_expire,
+                OGS_UINT_TO_POINTER(bearer->id));
+        bearer->t_nas_deactivate.pkbuf = NULL;
+    }
 
     memset(&e, 0, sizeof(e));
     e.bearer_id = bearer->id;

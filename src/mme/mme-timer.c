@@ -20,6 +20,7 @@
 #include "mme-timer.h"
 #include "mme-event.h"
 #include "mme-context.h"
+#include "mme-workers.h"
 
 static mme_timer_cfg_t g_mme_timer_cfg[MAX_NUM_OF_MME_TIMER] = {
     /* Paging procedure for EPS services initiated */
@@ -181,11 +182,9 @@ static void emm_timer_event_send(mme_timer_e timer_id, void *data)
     e->timer_id = timer_id;
     e->mme_ue_id = mme_ue_id;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        mme_event_free(e);
-    }
+    rv = mme_event_push_to_ue_owner(e);
+    if (rv != OGS_OK)
+        ogs_error("EMM timer push failed:%d", (int)rv);
 }
 
 void mme_timer_t3413_expire(void *data)
@@ -233,12 +232,11 @@ static void esm_timer_event_send(mme_timer_e timer_id, void *data)
     e = mme_event_new(MME_EVENT_ESM_TIMER);
     e->timer_id = timer_id;
     e->bearer_id = bearer_id;
+    e->mme_ue_id = bearer->mme_ue_id;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        mme_event_free(e);
-    }
+    rv = mme_event_push_to_ue_owner(e);
+    if (rv != OGS_OK)
+        ogs_error("ESM timer push failed:%d", (int)rv);
 }
 
 void mme_timer_t3489_expire(void *data)
@@ -314,11 +312,9 @@ void mme_timer_s11_holding_timer_expire(void *data)
     e->timer_id = MME_TIMER_S11_HOLDING;
     e->sgw_ue_id = OGS_POINTER_TO_UINT(data);
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        mme_event_free(e);
-    }
+    rv = mme_event_push_to_ue_owner(e);
+    if (rv != OGS_OK)
+        ogs_error("S11 holding timer push failed:%d", (int)rv);
 }
 
 void mme_timer_gn_holding_timer_expire(void *data)

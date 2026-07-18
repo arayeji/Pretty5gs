@@ -29,6 +29,7 @@
 #include "s1ap-path.h"
 #include "mme-s11-build.h"
 #include "mme-sm.h"
+#include "mme-workers.h"
 #include "metrics.h"
 
 static const char *mme_gtp2_message_type_name(uint8_t type)
@@ -143,12 +144,29 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
 
     e->pkbuf = pkbuf;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        ogs_pkbuf_free(e->pkbuf);
-        mme_event_free(e);
+    /*
+     * Echo stays on main (peer housekeeping). Other S11 messages bounce
+     * to the UE shard when mme.workers > 0.
+     */
+    if (gtp_ver == 2 && pkbuf->len >= 1) {
+        uint8_t type = ((ogs_gtp2_header_t *)pkbuf->data)->type;
+        if (type == OGS_GTP2_ECHO_REQUEST_TYPE ||
+                type == OGS_GTP2_ECHO_RESPONSE_TYPE) {
+            rv = ogs_queue_push(ogs_app()->queue, e);
+            if (rv != OGS_OK) {
+                ogs_error("ogs_queue_push() failed:%d", (int)rv);
+                ogs_pkbuf_free(e->pkbuf);
+                mme_event_free(e);
+            } else {
+                ogs_pollset_notify(ogs_app()->pollset);
+            }
+            return;
+        }
     }
+
+    rv = mme_event_push_to_ue_owner(e);
+    if (rv != OGS_OK)
+        ogs_error("S11 event push failed:%d", (int)rv);
 }
 
 static void timeout(ogs_gtp_xact_t *xact, void *data)

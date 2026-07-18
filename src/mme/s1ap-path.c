@@ -31,6 +31,7 @@
 #include "s1ap-path.h"
 #include "s1ap-tx.h"
 #include "s1ap-io.h"
+#include "mme-workers.h"
 #include "metrics.h"
 
 int s1ap_open(void)
@@ -167,12 +168,9 @@ int s1ap_send_to_esm(
     e->pkbuf = esmbuf;
     e->nas_type = nas_type;
     e->create_action = create_action;
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        ogs_pkbuf_free(e->pkbuf);
-        mme_event_free(e);
-    }
+    rv = mme_event_push_to_ue_owner(e);
+    if (rv != OGS_OK)
+        ogs_error("s1ap_send_to_esm() push failed:%d", (int)rv);
 
     return rv;
 }
@@ -325,15 +323,14 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
             return OGS_ERROR;
         }
         e->enb_ue_id = enb_ue->id;
+        if (mme_ue)
+            e->mme_ue_id = mme_ue->id;
         e->s1ap_code = procedureCode;
         e->nas_type = security_header_type.type;
         e->pkbuf = nasbuf;
-        rv = ogs_queue_push(ogs_app()->queue, e);
-        if (rv != OGS_OK) {
+        rv = mme_event_push_to_ue_owner(e);
+        if (rv != OGS_OK)
             ogs_error("s1ap_send_to_nas() failed:%d", (int)rv);
-            ogs_pkbuf_free(e->pkbuf);
-            mme_event_free(e);
-        }
         return rv;
     } else if (h->protocol_discriminator ==
             OGS_NAS_PROTOCOL_DISCRIMINATOR_ESM) {

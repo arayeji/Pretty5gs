@@ -271,6 +271,8 @@ typedef struct mme_context_s {
     int             s1ap_tx_workers;
     /* dedicated S1AP SCTP send thread (0/1, default 0) — s1ap-io.c */
     int             s1ap_io_thread;
+    /* UE-shard workers (Stage A bounce router, 0 = off) — mme-workers.c */
+    int             workers;
 
     /* Generator for unique identification */
     uint32_t        mme_ue_s1ap_id;         /* mme_ue_s1ap_id generator */
@@ -1420,6 +1422,10 @@ typedef struct mme_bearer_s {
 void mme_context_init(void);
 void mme_context_final(void);
 mme_context_t *mme_self(void);
+
+/* Narrow lock for shared pool/hash mutations when mme.workers > 0 */
+void mme_ctx_lock(void);
+void mme_ctx_unlock(void);
 
 int mme_context_parse_config(void);
 void mme_context_reload_runtime(void);

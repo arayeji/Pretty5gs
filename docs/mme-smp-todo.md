@@ -107,32 +107,41 @@ Confirmed in prod perf: self overhead gone. list1 ranges still linear.
 | **Benefit** | Biggest multi-core win for MME (`mme_main` FSM ~40% still) |
 | **Effort** | Large |
 | **Risk** | Large — same rules as SGW-C; **do not rush** |
-| **Knob** | e.g. `mme.workers` (default `0`); requires `ogs_worker_shards_enable()` |
+| **Knob** | `mme.workers` (default `0`); requires `ogs_worker_shards_enable()` |
 
-### Prerequisites
+### Stage A — bounce router — LANDED (default off)
+
+- [x] Knob `mme.workers` (0..7); `ogs_worker_shards_enable()` before any helper worker
+- [x] Sticky shard bits in MME S11 TEID + `MME_UE_S1AP_ID`
+- [x] Bounce EMM/ESM/S11/S6a/timers/admin-UE to owner; eNB/SCTP/Echo stay on main
+- [x] Worker dispatch = UE cases of `mme_state_operational`; narrow `mme_ctx_lock` on hash add/remove
+- [x] `tools/tsan-mme.sh` injects `mme.workers: 2`
+- [ ] TSAN soak: attach / volte / handover / transfer green, no data races
+- [ ] Production YAML stays `workers: 0` until soak
+
+### Prerequisites (Stage C-full)
 
 - [ ] SGW-C `workers: N` soaked in production (stable PFCP, no split-brain)
 - [ ] Items 1–2 (and ideally 3) done or explicitly deferred with reason
-- [ ] Test rig: `tests/` green with `mme.workers: 2` under **TSAN** (and ASAN)
-      — rig exists: `tools/tsan-mme.sh` (TSAN build + knob injection into
-      `configs/sample.yaml` + EPC suites); extend when `mme.workers` lands
+- [ ] Stage A TSAN soak green
 
-### Design checklist
+### Design checklist (remaining for Stage C-full)
 
-- [ ] Process-global context; **never** TLS `mme_self()`
+- [x] Process-global context; **never** TLS `mme_self()`
 - [ ] Shared: eNB table, config, served-TAI, IMSI→worker map (rwlock/RCU)
 - [ ] Sharded: `mme_ue`, `enb_ue`, sessions, bearers, timers, S11/S6a xacts
-- [ ] Route after Initial UE: `hash(IMSI)` / M-TMSI worker bits / `MME_UE_S1AP_ID` bits
-- [ ] Embed worker id in MME_UE_S1AP_ID, S11 TEID, Diameter session id (bit plan vs 3GPP reserved bits)
+- [x] Route after Initial UE: S1AP-id / S11 TEID bits (+ IMSI peek for TEID=0)
+- [x] Embed worker id in MME_UE_S1AP_ID, S11 TEID (Diameter session id later)
 - [ ] Stable `N` across restart or map + `% N` fallback for old GUTIs
 - [ ] eNB-scoped events (S1 Setup, Reset, Paging): main or fan-out
-- [ ] All SCTP TX serialized on main/IO
-- [ ] Stage landing: (A) bounce router only → (B) NAS crypto → (C) full UE ownership
+- [x] All SCTP TX serialized on main/IO (`s1ap_io` / `s1ap_send_to_enb`)
+- [x] Stage landing: (A) bounce router only → (B) NAS crypto → (C) full UE ownership
 
 ### Explicit non-goals until ready
 
 - [ ] No production enable before TSAN soak
 - [ ] No deploy of Stage C as a big-bang with SGWC SMP unproven
+- [ ] Stage A does **not** claim “main holds no UE state” (create path still on main)
 
 ---
 

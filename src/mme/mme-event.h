@@ -164,8 +164,8 @@ mme_event_t *mme_event_new(mme_event_e id);
 void mme_event_free(mme_event_t *e);
 
 /*
- * Drop queued main-thread events targeting a MME-UE that is being removed.
- * Prevents timer/NAS/S6a events from firing after mme_ue_remove().
+ * Drop queued events targeting a MME-UE that is being removed (main app
+ * queue and, when mme.workers > 0, the owner shard queue).
  */
 void mme_event_purge_mme_ue(ogs_pool_id_t mme_ue_id);
 
