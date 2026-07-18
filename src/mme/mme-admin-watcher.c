@@ -105,6 +105,8 @@ void mme_admin_tac_add_apply(const char *mcc, const char *mnc, int tac)
     if (entry == mme->num_of_served_tai)
         mme->num_of_served_tai++;
 
+    mme_served_tai_map_invalidate();
+
     ogs_info("admin-watcher: added TAC mcc=%s mnc=%s tac=%d",
              mcc, mnc, tac);
 }

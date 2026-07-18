@@ -467,6 +467,7 @@ void mme_context_final(void)
     mme_emerg_remove_all();
 
     mme_served_tai_list0_free_all();
+    mme_served_tai_map_final();
 
     mme_pgw_host_cache_final();
 
@@ -2728,6 +2729,7 @@ int mme_context_parse_config(void)
 
                     if (list2->num || num_of_list1 || num_of_list0) {
                         self.num_of_served_tai++;
+                        mme_served_tai_map_invalidate();
                     }
                 } else if (!strcmp(mme_key, "access_control")) {
                     ogs_yaml_iter_t access_control_array, access_control_iter;
@@ -8163,15 +8165,117 @@ ogs_session_t *mme_default_session(mme_ue_t *mme_ue)
     return NULL;
 }
 
-int mme_find_served_tai(ogs_eps_tai_t *tai)
-{
-    int i = 0, j = 0, k = 0;
+/*
+ * Served-TAI lookup index.
+ *
+ * mme_find_served_tai() runs on every Attach / TAU / uplink NAS transport
+ * and the nested list scan showed up as ~3% of MME cycles under load. The
+ * exact TACs (list0 / list2) live in a PLMN+TAC hash; TAC ranges (list1)
+ * are few and stay as a linear check. "Lowest served_tai entry index wins"
+ * is preserved by inserting hash keys first-come and taking the minimum of
+ * the hash hit and the range hit.
+ *
+ * All writers (config parse, SIGHUP reload, admin TAC hot-add) and all
+ * readers run on the MME main thread, so a dirty flag with lazy rebuild
+ * needs no locking.
+ */
+typedef struct served_tai_key_s {
+    uint8_t     plmn_id[OGS_PLMN_ID_LEN];
+    uint16_t    tac;
+} served_tai_key_t;
 
-    ogs_assert(tai);
+static ogs_hash_t *served_tai_hash = NULL;
+static bool served_tai_hash_dirty = true;
+
+/* ogs_hash stores the key POINTER (no copy), so entries point into this
+ * arena, which lives until the next rebuild. */
+static served_tai_key_t *served_tai_keys = NULL;
+static int served_tai_num_keys = 0;
+static int served_tai_max_keys = 0;
+
+void mme_served_tai_map_invalidate(void)
+{
+    served_tai_hash_dirty = true;
+}
+
+void mme_served_tai_map_final(void)
+{
+    if (served_tai_hash) {
+        ogs_hash_destroy(served_tai_hash);
+        served_tai_hash = NULL;
+    }
+    if (served_tai_keys) {
+        ogs_free(served_tai_keys);
+        served_tai_keys = NULL;
+    }
+    served_tai_num_keys = served_tai_max_keys = 0;
+    served_tai_hash_dirty = true;
+}
+
+static void served_tai_key_build(
+        served_tai_key_t *key, const void *plmn_id, uint16_t tac)
+{
+    memset(key, 0, sizeof(*key));
+    memcpy(key->plmn_id, plmn_id, OGS_PLMN_ID_LEN);
+    key->tac = tac;
+}
+
+static void served_tai_hash_insert(
+        const void *plmn_id, uint16_t tac, int index)
+{
+    served_tai_key_t *key = NULL;
+
+    ogs_assert(served_tai_num_keys < served_tai_max_keys);
+    key = &served_tai_keys[served_tai_num_keys];
+    served_tai_key_build(key, plmn_id, tac);
+
+    /* first writer (lowest entry index) wins, like the old scan order */
+    if (ogs_hash_get(served_tai_hash, key, sizeof(*key)))
+        return;
+
+    served_tai_num_keys++;
+    ogs_hash_set(served_tai_hash, key, sizeof(*key),
+            (void *)(uintptr_t)(index + 1));
+}
+
+static void served_tai_hash_rebuild(void)
+{
+    int i, j, k;
+    int capacity = 0;
+
+    if (served_tai_hash) {
+        ogs_hash_destroy(served_tai_hash);
+        served_tai_hash = NULL;
+    }
+    if (served_tai_keys) {
+        ogs_free(served_tai_keys);
+        served_tai_keys = NULL;
+    }
+    served_tai_num_keys = 0;
+
+    /* worst-case number of exact TACs across all entries */
+    for (i = 0; i < self.num_of_served_tai; i++) {
+        ogs_eps_tai0_list_t *list0 = self.served_tai[i].list0;
+        ogs_eps_tai2_list_t *list2 = &self.served_tai[i].list2;
+
+        if (!list0)
+            continue;
+        for (j = 0; j < (int)ogs_app_max_eps_tai0_partial_list() &&
+                list0->tai[j].num; j++)
+            capacity += list0->tai[j].num;
+        capacity += list2->num;
+    }
+    served_tai_max_keys = capacity;
+    if (capacity) {
+        served_tai_keys = ogs_malloc(capacity * sizeof(served_tai_key_t));
+        ogs_assert(served_tai_keys);
+    }
+
+    served_tai_hash = ogs_hash_make();
+    ogs_assert(served_tai_hash);
 
     for (i = 0; i < self.num_of_served_tai; i++) {
         ogs_eps_tai0_list_t *list0 = self.served_tai[i].list0;
-        ogs_eps_tai1_list_t *list1 = &self.served_tai[i].list1;
         ogs_eps_tai2_list_t *list2 = &self.served_tai[i].list2;
 
         if (!list0)
@@ -8182,14 +8286,52 @@ int mme_find_served_tai(ogs_eps_tai_t *tai)
             ogs_assert(list0->tai[j].type == OGS_TAI0_TYPE);
             ogs_assert(list0->tai[j].num <= OGS_MAX_NUM_OF_TAI);
 
-            for (k = 0; k < list0->tai[j].num; k++) {
-                if (memcmp(&list0->tai[j].plmn_id,
-                            &tai->plmn_id, OGS_PLMN_ID_LEN) == 0 &&
-                    list0->tai[j].tac[k] == tai->tac) {
-                    return i;
-                }
-            }
+            for (k = 0; k < list0->tai[j].num; k++)
+                served_tai_hash_insert(
+                        &list0->tai[j].plmn_id, list0->tai[j].tac[k], i);
         }
+
+        if (list2->num) {
+            ogs_assert(list2->type == OGS_TAI2_TYPE);
+            ogs_assert(list2->num <= OGS_MAX_NUM_OF_TAI);
+
+            for (j = 0; j < list2->num; j++)
+                served_tai_hash_insert(
+                        &list2->tai[j].plmn_id, list2->tai[j].tac, i);
+        }
+    }
+
+    served_tai_hash_dirty = false;
+}
+
+int mme_find_served_tai(ogs_eps_tai_t *tai)
+{
+    int i = 0, j = 0;
+    int best = -1;
+    served_tai_key_t key;
+    uintptr_t hit;
+
+    ogs_assert(tai);
+
+    if (served_tai_hash_dirty || !served_tai_hash)
+        served_tai_hash_rebuild();
+
+    served_tai_key_build(&key, &tai->plmn_id, tai->tac);
+    hit = (uintptr_t)ogs_hash_get(served_tai_hash, &key, sizeof(key));
+    if (hit)
+        best = (int)hit - 1;
+
+    /* TAC ranges (list1) are not enumerated into the hash; entries are
+     * few, so scan them and keep whichever match has the lowest entry
+     * index (original scan order semantics). */
+    for (i = 0; i < self.num_of_served_tai; i++) {
+        ogs_eps_tai1_list_t *list1 = &self.served_tai[i].list1;
+
+        if (best >= 0 && i >= best)
+            break;
+
+        if (!self.served_tai[i].list0)
+            continue;
 
         for (j = 0; list1->tai[j].num; j++) {
             ogs_assert(list1->tai[j].type == OGS_TAI1_TYPE);
@@ -8198,25 +8340,14 @@ int mme_find_served_tai(ogs_eps_tai_t *tai)
             if (memcmp(&list1->tai[j].plmn_id,
                         &tai->plmn_id, OGS_PLMN_ID_LEN) == 0 &&
                     list1->tai[j].tac <= tai->tac &&
-                    tai->tac < (list1->tai[j].tac+list1->tai[j].num))
-                return i;
-        }
-
-        if (list2->num) {
-            ogs_assert(list2->type == OGS_TAI2_TYPE);
-            ogs_assert(list2->num <= OGS_MAX_NUM_OF_TAI);
-
-            for (j = 0; j < list2->num; j++) {
-                if (memcmp(&list2->tai[j].plmn_id,
-                            &tai->plmn_id, OGS_PLMN_ID_LEN) == 0 &&
-                    list2->tai[j].tac == tai->tac) {
-                    return i;
-                }
+                    tai->tac < (list1->tai[j].tac+list1->tai[j].num)) {
+                best = i;
+                break;
             }
         }
     }
 
-    return -1;
+    return best;
 }
 
 #if 0 /* DEPRECATED */

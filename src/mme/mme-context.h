@@ -1660,6 +1660,12 @@ ogs_session_t *mme_default_session(mme_ue_t *mme_ue);
 
 int mme_find_served_tai(ogs_eps_tai_t *tai);
 
+/* Served-TAI lookup index: writers (config parse, SIGHUP reload, admin
+ * TAC hot-add) must invalidate; rebuild is lazy on next lookup (main
+ * thread only). */
+void mme_served_tai_map_invalidate(void);
+void mme_served_tai_map_final(void);
+
 mme_m_tmsi_t *mme_m_tmsi_alloc(void);
 int mme_m_tmsi_free(mme_m_tmsi_t *tmsi);
 

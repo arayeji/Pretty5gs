@@ -211,6 +211,7 @@ static void reload_served_tai_clear_all(void)
 
     memset(self->served_tai, 0, sizeof(self->served_tai));
     self->num_of_served_tai = 0;
+    mme_served_tai_map_invalidate();
 }
 
 static int reload_served_tai_add_one(
@@ -239,6 +240,9 @@ static int reload_served_tai_add_one(
         list2->tai[list2->num].plmn_id = *plmn_id;
         list2->tai[list2->num].tac = tac;
         list2->num++;
+        /* the dedup lookup above rebuilds the map lazily, so every
+         * mutation must dirty it again */
+        mme_served_tai_map_invalidate();
         mme_reload_lists_changed++;
         ogs_reload_audit_note(" served TAI added PLMN=%06x TAC=0x%04x",
                 ogs_plmn_id_hexdump(plmn_id), tac);
@@ -259,6 +263,7 @@ static int reload_served_tai_add_one(
     list2->tai[0].tac = tac;
     list2->num = 1;
     self->num_of_served_tai++;
+    mme_served_tai_map_invalidate();
     mme_reload_lists_changed++;
     ogs_reload_audit_note(" served TAI added PLMN=%06x TAC=0x%04x",
             ogs_plmn_id_hexdump(plmn_id), tac);
@@ -1033,6 +1038,7 @@ static int reload_served_tai_replace(ogs_yaml_iter_t *mme_iter)
         reload_served_tai_clear_all();
         memcpy(self->served_tai, backup, sizeof(self->served_tai));
         self->num_of_served_tai = backup_num;
+        mme_served_tai_map_invalidate();
         ogs_free(backup);
         ogs_reload_audit_warn(
                 "tai yielded no entries; previous served TAI list kept");
@@ -1045,6 +1051,7 @@ static int reload_served_tai_replace(ogs_yaml_iter_t *mme_iter)
     }
     ogs_free(backup);
 
+    mme_served_tai_map_invalidate();
     mme_reload_lists_changed++;
     ogs_reload_audit_note(" served TAI replaced (%d TAC entries)", added);
 
