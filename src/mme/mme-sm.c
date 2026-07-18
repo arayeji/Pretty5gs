@@ -25,6 +25,7 @@
 #include "s1ap-handler.h"
 #include "s1ap-path.h"
 #include "s1ap-tx.h"
+#include "s1ap-io.h"
 #include "sgsap-path.h"
 #include "nas-security.h"
 #include "nas-path.h"
@@ -361,9 +362,17 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
     case MME_EVENT_S1AP_RX_SOCK_CLOSED:
         /* the owning RX worker confirmed poll removal (two-phase
-         * teardown started in mme_enb_remove) — destroy the socket */
+         * teardown started in mme_enb_remove). The close registry
+         * destroys the socket once ALL confirmations (RX and, when
+         * the IO thread also referenced it, IO) have arrived. */
         ogs_assert(e->sock);
-        ogs_sctp_destroy(e->sock);
+        s1ap_sock_close_confirm(e->sock, S1AP_SOCK_CONFIRM_RX);
+        break;
+
+    case MME_EVENT_S1AP_IO_DRAINED:
+        /* the IO thread dropped its write queue / POLLOUT for e->sock */
+        ogs_assert(e->sock);
+        s1ap_sock_close_confirm(e->sock, S1AP_SOCK_CONFIRM_IO);
         break;
 
     case MME_EVENT_S1AP_RX_WATCH_FAILED:

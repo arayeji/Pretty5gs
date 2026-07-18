@@ -29,6 +29,7 @@
 #include "s1ap-path.h"
 #include "s1ap-rx.h"
 #include "s1ap-tx.h"
+#include "s1ap-io.h"
 #include "sgsap-path.h"
 #include "mme-gtp-path.h"
 #include "metrics.h"
@@ -133,6 +134,13 @@ int mme_initialize(void)
         if (rv != OGS_OK) return OGS_ERROR;
     }
 
+    /* dedicated SCTP send thread: must exist before the first eNB
+     * accept so every send since association start goes through it */
+    if (mme_self()->s1ap_io_thread) {
+        rv = s1ap_io_start();
+        if (rv != OGS_OK) return OGS_ERROR;
+    }
+
     rv = s1ap_open();
     if (rv != OGS_OK) return OGS_ERROR;
 
@@ -163,10 +171,19 @@ void mme_terminate(void)
     s1ap_tx_workers_stop();
     ogs_thread_destroy(thread);
 
+    /* After main joined nothing can post SEND/DRAIN jobs; stop the IO
+     * thread BEFORE any socket teardown so no send races a destroy.
+     * thread_fini frees everything still queued. */
+    s1ap_io_stop();
+
     mme_gtp_close();
     sgsap_close();
     s1ap_close();
     s1ap_rx_workers_stop();
+
+    /* every thread that could confirm is joined: reap sockets still
+     * waiting in the close registry */
+    s1ap_sock_close_final();
 
     ogs_metrics_context_close(ogs_metrics_self());
 

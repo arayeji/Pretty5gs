@@ -269,6 +269,8 @@ typedef struct mme_context_s {
     /* S1AP RX decode offload worker threads (0 = single-threaded) */
     int             s1ap_rx_workers;
     int             s1ap_tx_workers;
+    /* dedicated S1AP SCTP send thread (0/1, default 0) — s1ap-io.c */
+    int             s1ap_io_thread;
 
     /* Generator for unique identification */
     uint32_t        mme_ue_s1ap_id;         /* mme_ue_s1ap_id generator */

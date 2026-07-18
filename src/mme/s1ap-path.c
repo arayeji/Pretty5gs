@@ -30,6 +30,7 @@
 #include "s1ap-build.h"
 #include "s1ap-path.h"
 #include "s1ap-tx.h"
+#include "s1ap-io.h"
 #include "metrics.h"
 
 int s1ap_open(void)
@@ -82,6 +83,11 @@ int s1ap_send_to_enb(mme_enb_t *enb, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
         ogs_list_add(&enb->s1ap_tx_hold, pkbuf);
         return OGS_OK;
     }
+
+    /* dedicated IO thread owns the write side (mme.s1ap_io_thread) */
+    if (s1ap_io_active())
+        return s1ap_io_post_send(enb->sctp.sock, pkbuf,
+                enb->sctp.type == SOCK_STREAM ? NULL : enb->sctp.addr);
 
     if (enb->sctp.type == SOCK_STREAM) {
         ogs_sctp_write_to_buffer(&enb->sctp, pkbuf);

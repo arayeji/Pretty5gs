@@ -24,6 +24,7 @@
 #include "mme-event.h"
 #include "s1ap-path.h"
 #include "s1ap-tx.h"
+#include "s1ap-io.h"
 
 static ogs_worker_t *tx_workers[OGS_MAX_WORKERS];
 static int tx_worker_count = 0;
@@ -245,6 +246,13 @@ static void tx_send_raw(mme_enb_t *enb, ogs_pkbuf_t *pkbuf)
     if (enb->sctp.sock->fd == INVALID_SOCKET) {
         ogs_error("s1ap-tx: eNB socket already destroyed");
         ogs_pkbuf_free(pkbuf);
+        return;
+    }
+
+    /* dedicated IO thread owns the write side (mme.s1ap_io_thread) */
+    if (s1ap_io_active()) {
+        s1ap_io_post_send(enb->sctp.sock, pkbuf,
+                enb->sctp.type == SOCK_STREAM ? NULL : enb->sctp.addr);
         return;
     }
 

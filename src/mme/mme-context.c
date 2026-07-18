@@ -34,6 +34,7 @@
 #include "mme-inbound-roam-apn.h"
 #include "s1ap-path.h"
 #include "s1ap-rx.h"
+#include "s1ap-io.h"
 #include "s1ap-handler.h"
 #include "mme-sm.h"
 #include "mme-gtp-path.h"
@@ -1212,6 +1213,12 @@ int mme_context_parse_config(void)
                                     OGS_MAX_WORKERS - 1);
                             self.s1ap_tx_workers = 0;
                         }
+                    }
+                } else if (!strcmp(mme_key, "s1ap_io_thread")) {
+                    /* dedicated S1AP SCTP send thread (0/1, default 0) */
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+                    if (v) {
+                        self.s1ap_io_thread = atoi(v) ? 1 : 0;
                     }
                 } else if (!strcmp(mme_key, "s1ap")) {
                     ogs_yaml_iter_t s1ap_iter;
@@ -5604,17 +5611,28 @@ int mme_enb_remove(mme_enb_t *enb)
      */
 
     if (enb->sctp.type == SOCK_STREAM &&
-            s1ap_rx_unwatch_sock(enb->sctp.sock)) {
+            (s1ap_rx_active() || s1ap_io_active())) {
         /*
-         * Two-phase teardown: the RX worker owns the read poll. Flush
-         * the main-thread half here (address, write side); the socket
-         * itself is destroyed on MME_EVENT_S1AP_RX_SOCK_CLOSED after
-         * the worker confirms it removed its poll entry.
+         * Multi-phase teardown: the RX worker owns the read poll and/or
+         * the IO thread owns the write queue. Flush the main-thread half
+         * here (address, any legacy main-side write state); the socket
+         * itself is destroyed only after EVERY owner confirms
+         * (MME_EVENT_S1AP_RX_SOCK_CLOSED / MME_EVENT_S1AP_IO_DRAINED
+         * via the close registry in s1ap-io.c).
          */
         ogs_pkbuf_t *wq_pkbuf = NULL, *wq_next = NULL;
+        int wait_mask = 0;
+
+        if (s1ap_rx_unwatch_sock(enb->sctp.sock))
+            wait_mask |= S1AP_SOCK_CONFIRM_RX;
+        if (s1ap_io_active() && s1ap_io_drain_sock(enb->sctp.sock))
+            wait_mask |= S1AP_SOCK_CONFIRM_IO;
 
         ogs_free(enb->sctp.addr);
 
+        /* main-side read poll exists only when RX workers are off */
+        if (enb->sctp.poll.read)
+            ogs_pollset_remove(enb->sctp.poll.read);
         if (enb->sctp.poll.write)
             ogs_pollset_remove(enb->sctp.poll.write);
 
@@ -5622,6 +5640,12 @@ int mme_enb_remove(mme_enb_t *enb)
             ogs_list_remove(&enb->sctp.write_queue, wq_pkbuf);
             ogs_pkbuf_free(wq_pkbuf);
         }
+
+        if (wait_mask)
+            s1ap_sock_close_register(enb->sctp.sock, wait_mask);
+        else
+            /* both offloads raced to off (shutdown): destroy directly */
+            ogs_sctp_destroy(enb->sctp.sock);
     } else if (enb->sctp.type == SOCK_STREAM && !enb->sctp.poll.read) {
         /* RX workers already stopped (shutdown path): the worker's poll
          * entry died with its pollset; destroy the socket directly —

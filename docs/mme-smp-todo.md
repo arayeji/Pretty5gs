@@ -67,10 +67,12 @@ Confirmed in prod perf: self overhead gone. list1 ranges still linear.
 ### Still open (Stage 2b)
 
 - [ ] Offload ICSR / E-RAB / HO / paging builders (need larger snapshots)
-- [ ] Reduce **main-thread SCTP send** cost (`sctp_write_callback` ~6.5%) — TX path
-      posts encoded pkbuf; send still drains on main pollset. Options: dedicated
-      SCTP IO thread, or TX worker `ogs_sctp_senddata` with strict per-assoc order
-      (must not break invariant without design review)
+- [x] **Dedicated S1AP SCTP send thread** (`mme.s1ap_io_thread: 1`, default 0) —
+      `s1ap-io.c`: single IO thread owns every eNB socket's write side
+      (per-sock FIFO, non-blocking sendmsg, POLLOUT on its own pollset).
+      Socket destroy now waits for BOTH RX-unwatch and IO-drain confirms
+      (close registry). Removes `sctp_write_callback` (~6.5%) from `mme_main`.
+- [ ] Soak `s1ap_io_thread: 1` in prod; re-perf (expect `mme_main` ~40%→~34%)
 - [ ] Longer soak: no S1 flaps / order bugs under attach churn
 
 ---
@@ -112,6 +114,8 @@ Confirmed in prod perf: self overhead gone. list1 ranges still linear.
 - [ ] SGW-C `workers: N` soaked in production (stable PFCP, no split-brain)
 - [ ] Items 1–2 (and ideally 3) done or explicitly deferred with reason
 - [ ] Test rig: `tests/` green with `mme.workers: 2` under **TSAN** (and ASAN)
+      — rig exists: `tools/tsan-mme.sh` (TSAN build + knob injection into
+      `configs/sample.yaml` + EPC suites); extend when `mme.workers` lands
 
 ### Design checklist
 

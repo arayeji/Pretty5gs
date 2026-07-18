@@ -44,6 +44,10 @@ typedef enum {
      * NULL on encode failure); main sends it and flushes the eNB's
      * hold list (see s1ap-tx.c) */
     MME_EVENT_S1AP_TX_READY,
+    /* IO thread confirmed it dropped every reference to e->sock
+     * (write queue + POLLOUT). Main may destroy the socket once all
+     * registered confirmations arrive (see s1ap-io.c close registry) */
+    MME_EVENT_S1AP_IO_DRAINED,
 
     MME_EVENT_EMM_MESSAGE,
     MME_EVENT_EMM_TIMER,
