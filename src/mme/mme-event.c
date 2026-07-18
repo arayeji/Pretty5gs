@@ -209,6 +209,8 @@ const char *mme_event_get_name(mme_event_t *e)
         return "MME_EVENT_S1AP_RX_SOCK_CLOSED";
     case MME_EVENT_S1AP_RX_WATCH_FAILED:
         return "MME_EVENT_S1AP_RX_WATCH_FAILED";
+    case MME_EVENT_S1AP_TX_READY:
+        return "MME_EVENT_S1AP_TX_READY";
 
     case MME_EVENT_EMM_MESSAGE:
         return "MME_EVENT_EMM_MESSAGE";

@@ -29,6 +29,7 @@
 
 #include "s1ap-build.h"
 #include "s1ap-path.h"
+#include "s1ap-tx.h"
 #include "metrics.h"
 
 int s1ap_open(void)
@@ -70,6 +71,17 @@ int s1ap_send_to_enb(mme_enb_t *enb, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
 
     ogs_sctp_ppid_in_pkbuf(pkbuf) = OGS_SCTP_S1AP_PPID;
     ogs_sctp_stream_no_in_pkbuf(pkbuf) = stream_no;
+
+    /*
+     * TX encode offload ordering: while this eNB has encode jobs in
+     * flight on its TX worker, a synchronously-encoded message must
+     * not overtake them on the wire. Park it; the TX_READY handler
+     * flushes the hold list once pending drops to zero (s1ap-tx.c).
+     */
+    if (s1ap_tx_active() && enb->s1ap_tx_pending > 0) {
+        ogs_list_add(&enb->s1ap_tx_hold, pkbuf);
+        return OGS_OK;
+    }
 
     if (enb->sctp.type == SOCK_STREAM) {
         ogs_sctp_write_to_buffer(&enb->sctp, pkbuf);

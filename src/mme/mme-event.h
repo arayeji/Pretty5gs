@@ -40,6 +40,10 @@ typedef enum {
     /* RX worker could not watch e->sock (fd died in the accept->watch
      * race); main tears down the half-created eNB */
     MME_EVENT_S1AP_RX_WATCH_FAILED,
+    /* TX worker finished encoding a downlink PDU (e->pkbuf, may be
+     * NULL on encode failure); main sends it and flushes the eNB's
+     * hold list (see s1ap-tx.c) */
+    MME_EVENT_S1AP_TX_READY,
 
     MME_EVENT_EMM_MESSAGE,
     MME_EVENT_EMM_TIMER,
@@ -113,6 +117,9 @@ typedef struct mme_event_s {
     bool s1ap_rx_decoded;
 
     ogs_gtp_node_t *gnode;
+
+    /* MME_EVENT_S1AP_TX_READY: SCTP stream for the encoded pkbuf */
+    uint16_t tx_stream_no;
 
     uint8_t nas_type;
     int create_action;

@@ -268,6 +268,7 @@ typedef struct mme_context_s {
 
     /* S1AP RX decode offload worker threads (0 = single-threaded) */
     int             s1ap_rx_workers;
+    int             s1ap_tx_workers;
 
     /* Generator for unique identification */
     uint32_t        mme_ue_s1ap_id;         /* mme_ue_s1ap_id generator */
@@ -475,6 +476,16 @@ typedef struct mme_enb_s {
      * extra allocation per entry. NULL until first enb_ue_add().
      */
     ogs_hash_t      *enb_ue_hash;
+
+    /*
+     * S1AP TX encode offload (s1ap-tx.c). s1ap_tx_pending counts
+     * DownlinkNASTransport encode jobs in flight on this eNB's TX
+     * worker; while > 0, s1ap_send_to_enb() parks synchronous pkbufs
+     * on s1ap_tx_hold so per-association order is preserved, and the
+     * TX_READY handler flushes them. Main thread only.
+     */
+    int             s1ap_tx_pending;
+    ogs_list_t      s1ap_tx_hold;
 
 } mme_enb_t;
 

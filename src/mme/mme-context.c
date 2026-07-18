@@ -1201,6 +1201,18 @@ int mme_context_parse_config(void)
                             self.s1ap_rx_workers = 0;
                         }
                     }
+                } else if (!strcmp(mme_key, "s1ap_tx_workers")) {
+                    /* S1AP TX (DL-NAS) encode offload threads (0 = off) */
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+                    if (v) {
+                        self.s1ap_tx_workers = atoi(v);
+                        if (self.s1ap_tx_workers < 0 ||
+                            self.s1ap_tx_workers > OGS_MAX_WORKERS - 1) {
+                            ogs_error("mme.s1ap_tx_workers must be 0..%d",
+                                    OGS_MAX_WORKERS - 1);
+                            self.s1ap_tx_workers = 0;
+                        }
+                    }
                 } else if (!strcmp(mme_key, "s1ap")) {
                     ogs_yaml_iter_t s1ap_iter;
                     ogs_yaml_iter_recurse(&mme_iter, &s1ap_iter);
@@ -5515,6 +5527,8 @@ mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
     enb->ostream_id = 0;
 
     ogs_list_init(&enb->enb_ue_list);
+    enb->s1ap_tx_pending = 0;
+    ogs_list_init(&enb->s1ap_tx_hold);
     enb->context_created = ogs_time_now();
     enb->enb_ue_hash = ogs_hash_make();
     ogs_assert(enb->enb_ue_hash);
@@ -5564,6 +5578,18 @@ int mme_enb_remove(mme_enb_t *enb)
     memset(&e, 0, sizeof(e));
     e.enb_id = enb->id;
     ogs_fsm_fini(&enb->sm, &e);
+
+    /* messages parked behind in-flight TX encode jobs (s1ap-tx.c);
+     * any still-in-flight job's TX_READY will fail the enb lookup and
+     * just free its pkbuf */
+    {
+        ogs_pkbuf_t *held = NULL, *held_next = NULL;
+        ogs_list_for_each_safe(&enb->s1ap_tx_hold, held_next, held) {
+            ogs_list_remove(&enb->s1ap_tx_hold, held);
+            ogs_pkbuf_free(held);
+        }
+        enb->s1ap_tx_pending = 0;
+    }
 
     ogs_hash_set(self.enb_addr_hash,
             enb->sctp.addr, sizeof(ogs_sockaddr_t), NULL);

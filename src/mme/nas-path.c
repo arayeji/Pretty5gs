@@ -19,6 +19,7 @@
 
 #include "s1ap-path.h"
 #include "s1ap-build.h"
+#include "s1ap-tx.h"
 #include "esm-build.h"
 #include "emm-build.h"
 #include "nas-path.h"
@@ -101,6 +102,12 @@ int nas_eps_send_to_downlink_nas_transport(
         ogs_pkbuf_free(pkbuf);
         return OGS_NOTFOUND;
     }
+
+    /* TX offload: build+APER on a worker from an ID snapshot; worker
+     * queue full or eNB gone falls through to the sync path */
+    if (s1ap_tx_active() &&
+            s1ap_tx_post_dlnas(enb_ue, pkbuf) == OGS_OK)
+        return OGS_OK;
 
     s1apbuf = s1ap_build_downlink_nas_transport(enb_ue, pkbuf);
     if (!s1apbuf) {
