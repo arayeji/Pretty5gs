@@ -332,7 +332,7 @@ int mme_gn_handle_sgsn_context_response(
     }
 
     if (!mme_ue) {
-        ogs_error("MME-UE Context has already been removed");
+        ogs_warn("MME-UE Context has already been removed");
         return OGS_GTP1_CAUSE_IMSI_IMEI_NOT_KNOWN;
     }
 
@@ -472,7 +472,7 @@ void mme_gn_handle_sgsn_context_acknowledge(
     }
 
     if (!mme_ue) {
-        ogs_error("MME-UE Context has already been removed");
+        ogs_warn("MME-UE Context has already been removed");
         return;
     }
 

@@ -161,7 +161,7 @@ static void gtp_remote_peer_timeout(ogs_gtp_xact_t *xact, void *data)
             mme_log_imsi(mme_ue), bearer ? bearer->ebi : 0);
 
     if (!bearer) {
-        ogs_error("Bearer has already been removed type[%d] peer [%s]:%d",
+        ogs_warn("Bearer has already been removed type[%d] peer [%s]:%d",
                 type, OGS_ADDR(&xact->gnode->addr, buf),
                 OGS_PORT(&xact->gnode->addr));
         return;
@@ -394,19 +394,19 @@ void mme_s11_handle_create_session_response(
     }
 
     if (!sess) {
-        mme_ue_error(mme_ue, enb_ue, "s11", NULL,
+        mme_ue_warn(mme_ue, enb_ue, "s11", NULL,
                 "Session Context has already been removed");
         return;
     }
 
     if (!enb_ue) {
-        mme_ran_error(NULL, NULL, mme_ue ? mme_ue : mme_ue_from_teid,
+        mme_ran_warn(NULL, NULL, mme_ue ? mme_ue : mme_ue_from_teid,
                 "s11", NULL, "ENB-S1 Context has already been removed");
         return;
     }
 
     if (!mme_ue) {
-        mme_ran_error(NULL, enb_ue, NULL, "s11", NULL,
+        mme_ran_warn(NULL, enb_ue, NULL, "s11", NULL,
                 "MME-UE Context has already been removed");
         return;
     }
@@ -813,7 +813,7 @@ void mme_s11_handle_modify_bearer_response(
     }
 
     if (!mme_ue) {
-        mme_ran_error(NULL, enb_ue, NULL, "s11", NULL,
+        mme_ran_warn(NULL, enb_ue, NULL, "s11", NULL,
                 "MME-UE Context has already been removed");
         return;
     }
@@ -848,7 +848,7 @@ void mme_s11_handle_modify_bearer_response(
         if (enb_ue)
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
         else
-            mme_ue_error(mme_ue, NULL, "s11", NULL,
+            mme_ue_warn(mme_ue, NULL, "s11", NULL,
                     "ENB-S1 Context has already been removed");
         return;
     }
@@ -869,7 +869,7 @@ void mme_s11_handle_modify_bearer_response(
         if (enb_ue)
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
         else
-            mme_ue_error(mme_ue, NULL, "s11", NULL,
+            mme_ue_warn(mme_ue, NULL, "s11", NULL,
                     "ENB-S1 Context has already been removed");
         return;
     }
@@ -896,7 +896,7 @@ void mme_s11_handle_modify_bearer_response(
         if (enb_ue)
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
         else
-            mme_ue_error(mme_ue, NULL, "s11", NULL,
+            mme_ue_warn(mme_ue, NULL, "s11", NULL,
                     "ENB-S1 Context has already been removed");
         return;
     }
@@ -965,13 +965,13 @@ void mme_s11_handle_delete_session_response(
     }
 
     if (!sess) {
-        mme_ue_error(mme_ue, enb_ue, "s11", NULL,
+        mme_ue_warn(mme_ue, enb_ue, "s11", NULL,
                 "Session Context has already been removed");
         return;
     }
 
     if (!mme_ue) {
-        mme_ran_error(NULL, enb_ue, NULL, "s11", NULL,
+        mme_ran_warn(NULL, enb_ue, NULL, "s11", NULL,
                 "MME-UE Context has already been removed");
         return;
     }
@@ -1126,7 +1126,7 @@ void mme_s11_handle_delete_session_response(
         MME_SESS_CLEAR(sess);
 
         if (!enb_ue) {
-            mme_ue_error(mme_ue, NULL, "s11", NULL,
+            mme_ue_warn(mme_ue, NULL, "s11", NULL,
                     "ENB-S1 Context has already been removed");
             return;
         }
@@ -1732,7 +1732,7 @@ void mme_s11_handle_release_access_bearers_response(
     }
 
     if (!mme_ue) {
-        mme_ran_error(NULL, enb_ue, NULL, "s11", NULL,
+        mme_ran_warn(NULL, enb_ue, NULL, "s11", NULL,
                 "MME-UE Context has already been removed");
         return;
     }
@@ -1788,7 +1788,7 @@ void mme_s11_handle_release_access_bearers_response(
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
         } else {
-            ogs_error("ENB-S1 Context has already been removed");
+            ogs_warn("ENB-S1 Context has already been removed");
         }
     } else if (action == OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_LO_CONNREFUSED) {
         mme_mobile_reachable_start(mme_ue);
@@ -1822,7 +1822,7 @@ void mme_s11_handle_release_access_bearers_response(
                 ogs_assert(r != OGS_ERROR);
             }
         } else {
-            ogs_error("ENB-S1 Context has already been removed");
+            ogs_warn("ENB-S1 Context has already been removed");
         }
 
     } else if (action == OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_RESET_PARTIAL) {
@@ -1866,7 +1866,7 @@ void mme_s11_handle_release_access_bearers_response(
                 enb->s1_reset_ack = NULL;
             }
         } else {
-            ogs_error("ENB-S1 Context has already been removed");
+            ogs_warn("ENB-S1 Context has already been removed");
         }
 
     } else {
@@ -1903,14 +1903,15 @@ void mme_s11_handle_downlink_data_notification(
         ogs_assert(sgw_ue);
 
         if (noti->eps_bearer_id.presence == 0) {
-            mme_ue_error(mme_ue, NULL, "s11", NULL, "No Bearer ID");
+            mme_ue_warn(mme_ue, NULL, "s11", NULL, "No Bearer ID");
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
         }
 
         if (cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
             bearer = mme_bearer_find_by_ue_ebi(mme_ue, noti->eps_bearer_id.u8);
             if (!bearer) {
-                ogs_error("No Context for EPS Bearer ID[%d]",
+                mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                        "No Context for EPS Bearer ID[%d]",
                         noti->eps_bearer_id.u8);
                 cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
             }
@@ -2060,12 +2061,12 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
     }
 
     if (!mme_ue) {
-        mme_ran_error(NULL, source_ue, NULL, "s11", NULL,
+        mme_ran_warn(NULL, source_ue, NULL, "s11", NULL,
                 "MME-UE Context has already been removed");
         return;
     }
     if (!source_ue) {
-        mme_ue_error(mme_ue, NULL, "s11", NULL,
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
                 "ENB(Source)-S1 Context has already been removed");
         return;
     }
@@ -2096,7 +2097,7 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
         if (source_ue)
             mme_send_delete_session_or_mme_ue_context_release(source_ue, mme_ue);
         else
-            mme_ue_error(mme_ue, NULL, "s11", NULL,
+            mme_ue_warn(mme_ue, NULL, "s11", NULL,
                     "ENB-S1 Context has already been removed");
         return;
     }
@@ -2115,7 +2116,7 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
         if (source_ue)
             mme_send_delete_session_or_mme_ue_context_release(source_ue, mme_ue);
         else
-            mme_ue_error(mme_ue, NULL, "s11", NULL,
+            mme_ue_warn(mme_ue, NULL, "s11", NULL,
                     "ENB-S1 Context has already been removed");
         return;
     }
@@ -2131,7 +2132,7 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
             mme_send_delete_session_or_mme_ue_context_release(
                     source_ue, mme_ue);
         else
-            mme_ue_error(mme_ue, NULL, "s11", NULL,
+            mme_ue_warn(mme_ue, NULL, "s11", NULL,
                     "ENB-S1 Context has already been removed");
         return;
     }
@@ -2220,7 +2221,7 @@ void mme_s11_handle_delete_indirect_data_forwarding_tunnel_response(
     }
 
     if (!mme_ue) {
-        mme_ran_error(NULL, enb_ue, NULL, "s11", NULL,
+        mme_ran_warn(NULL, enb_ue, NULL, "s11", NULL,
                 "MME-UE Context has already been removed");
         return;
     }
@@ -2251,7 +2252,7 @@ void mme_s11_handle_delete_indirect_data_forwarding_tunnel_response(
         if (enb_ue)
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
         else
-            mme_ue_error(mme_ue, NULL, "s11", NULL,
+            mme_ue_warn(mme_ue, NULL, "s11", NULL,
                     "ENB-S1 Context has already been removed");
         return;
     }
@@ -2270,7 +2271,7 @@ void mme_s11_handle_delete_indirect_data_forwarding_tunnel_response(
         if (enb_ue)
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
         else
-            mme_ue_error(mme_ue, NULL, "s11", NULL,
+            mme_ue_warn(mme_ue, NULL, "s11", NULL,
                     "ENB-S1 Context has already been removed");
         return;
     }
@@ -2285,7 +2286,7 @@ void mme_s11_handle_delete_indirect_data_forwarding_tunnel_response(
         if (enb_ue)
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
         else
-            mme_ue_error(mme_ue, NULL, "s11", NULL,
+            mme_ue_warn(mme_ue, NULL, "s11", NULL,
                     "ENB-S1 Context has already been removed");
         return;
     }
@@ -2350,18 +2351,18 @@ void mme_s11_handle_bearer_resource_failure_indication(
     }
 
     if (!bearer) {
-        ogs_error("Bearer Context has already been removed");
+        ogs_warn("Bearer Context has already been removed");
         return;
     }
 
     if (!sess) {
-        mme_ue_error(mme_ue ? mme_ue : mme_ue_from_teid, NULL, "s11", NULL,
+        mme_ue_warn(mme_ue ? mme_ue : mme_ue_from_teid, NULL, "s11", NULL,
                 "Session Context has already been removed");
         return;
     }
 
     if (!mme_ue) {
-        mme_ran_error(NULL, NULL, mme_ue_from_teid, "s11", NULL,
+        mme_ran_warn(NULL, NULL, mme_ue_from_teid, "s11", NULL,
                 "MME-UE Context has already been removed");
         return;
     }

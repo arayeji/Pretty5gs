@@ -260,21 +260,19 @@ void mme_ue_service_progress(
         mme_ue_service_info(mme_ue, enb_ue, "SERVICE step: %s", step);
 }
 
-void mme_ran_error(
+static void mme_ran_log(
+        int level,
         mme_enb_t *enb, enb_ue_t *enb_ue, mme_ue_t *mme_ue,
-        const char *proc, const char *apn, const char *fmt, ...)
+        const char *proc, const char *apn, const char *fmt, va_list ap)
 {
-    va_list ap;
     char prefix[OGS_TRACE_PREFIX_BUFSIZE];
     char msg[OGS_HUGE_LEN];
 
     ogs_assert(fmt);
 
     if (mme_ue || enb_ue) {
-        va_start(ap, fmt);
         ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
-        va_end(ap);
-        mme_ue_error(mme_ue, enb_ue, proc, apn, "%s", msg);
+        mme_ue_log(mme_ue, enb_ue, proc, apn, level, "%s", msg);
         return;
     }
 
@@ -295,12 +293,34 @@ void mme_ran_error(
         ogs_trace_format_prefix(prefix, sizeof(prefix));
     }
 
-    va_start(ap, fmt);
     ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
-    va_end(ap);
 
-    ogs_log_printf(OGS_LOG_ERROR, OGS_LOG_DOMAIN,
+    ogs_log_printf(level, OGS_LOG_DOMAIN,
             0, __FILE__, __LINE__, OGS_FUNC, 0, "%s %s", prefix, msg);
+}
+
+void mme_ran_error(
+        mme_enb_t *enb, enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        const char *proc, const char *apn, const char *fmt, ...)
+{
+    va_list ap;
+
+    ogs_assert(fmt);
+    va_start(ap, fmt);
+    mme_ran_log(OGS_LOG_ERROR, enb, enb_ue, mme_ue, proc, apn, fmt, ap);
+    va_end(ap);
+}
+
+void mme_ran_warn(
+        mme_enb_t *enb, enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        const char *proc, const char *apn, const char *fmt, ...)
+{
+    va_list ap;
+
+    ogs_assert(fmt);
+    va_start(ap, fmt);
+    mme_ran_log(OGS_LOG_WARN, enb, enb_ue, mme_ue, proc, apn, fmt, ap);
+    va_end(ap);
 }
 
 const char *mme_log_imsi(mme_ue_t *mme_ue)

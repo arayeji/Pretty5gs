@@ -486,8 +486,19 @@ int ogs_sctp_recvmsg(ogs_sock_t *sock, void *msg, size_t len,
                 &sndrcvinfo, &flags);
     if (size < 0) {
         if (!ogs_sctp_recv_would_block(size)) {
-            ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
-                    "sctp_recvmsg(%d) failed", size);
+            int err = ogs_socket_errno;
+            /*
+             * Teardown races (eNB drop / fd close) are logged once by the
+             * S1AP/NGAP recv path. Avoid a duplicate ERROR from lib/sctp.
+             */
+            if (err != EBADF && err != ECONNRESET && err != ENOTCONN
+#if defined(ENOTSOCK)
+                    && err != ENOTSOCK
+#endif
+                    ) {
+                ogs_log_message(OGS_LOG_ERROR, err,
+                        "sctp_recvmsg(%d) failed", size);
+            }
         }
         return size;
     }

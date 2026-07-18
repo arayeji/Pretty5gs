@@ -39,14 +39,14 @@ int nas_eps_send_to_enb(mme_ue_t *mme_ue, ogs_pkbuf_t *pkbuf)
     ogs_assert(pkbuf);
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         ogs_pkbuf_free(pkbuf);
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         ogs_pkbuf_free(pkbuf);
         return OGS_NOTFOUND;
     }
@@ -70,7 +70,7 @@ int nas_eps_send_emm_to_esm(mme_ue_t *mme_ue,
     }
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -98,7 +98,7 @@ int nas_eps_send_to_downlink_nas_transport(
     ogs_assert(pkbuf);
 
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         ogs_pkbuf_free(pkbuf);
         return OGS_NOTFOUND;
     }
@@ -130,13 +130,13 @@ int nas_eps_send_attach_accept(mme_ue_t *mme_ue)
     ogs_pkbuf_t *esmbuf = NULL, *emmbuf = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("[%s] S1 context has already been removed",
+        ogs_warn("[%s] S1 context has already been removed",
                 mme_ue->imsi_bcd);
         mme_ue_progress(mme_ue, "attach_accept_no_s1");
         return OGS_NOTFOUND;
@@ -277,12 +277,12 @@ int nas_eps_send_attach_reject(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     ogs_pkbuf_t *esmbuf = NULL, *emmbuf = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -324,13 +324,13 @@ int nas_eps_send_identity_request(mme_ue_t *mme_ue)
     ogs_pkbuf_t *emmbuf = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -368,13 +368,13 @@ int nas_eps_send_authentication_request(mme_ue_t *mme_ue)
     ogs_pkbuf_t *emmbuf = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -415,13 +415,13 @@ int nas_eps_send_security_mode_command(mme_ue_t *mme_ue)
     ogs_pkbuf_t *emmbuf = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -459,13 +459,13 @@ int nas_eps_send_authentication_reject(mme_ue_t *mme_ue)
     ogs_pkbuf_t *emmbuf = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -492,13 +492,13 @@ int nas_eps_send_detach_request(mme_ue_t *mme_ue)
     ogs_pkbuf_t *emmbuf = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -538,13 +538,13 @@ int nas_eps_send_detach_accept(mme_ue_t *mme_ue)
     ogs_pkbuf_t *emmbuf = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -587,13 +587,13 @@ int nas_eps_send_pdn_connectivity_reject(
 
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -639,13 +639,13 @@ int nas_eps_send_esm_information_request(mme_bearer_t *bearer)
 
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -708,13 +708,13 @@ int nas_eps_resend_bearer_setup_request(mme_bearer_t *bearer)
 
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -749,13 +749,13 @@ int nas_eps_send_activate_default_bearer_context_request(
 
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -794,13 +794,13 @@ int nas_eps_send_activate_dedicated_bearer_context_request(
 
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -854,13 +854,13 @@ int nas_eps_send_modify_bearer_context_request(
 
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -901,13 +901,13 @@ int nas_eps_send_deactivate_bearer_context_request(
 
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -979,13 +979,13 @@ int nas_eps_resend_deactivate_bearer_context_request(mme_bearer_t *bearer)
 
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -1014,13 +1014,13 @@ int nas_eps_send_bearer_resource_allocation_reject(
     ogs_pkbuf_t *esmbuf = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -1047,13 +1047,13 @@ int nas_eps_send_bearer_resource_modification_reject(
     ogs_pkbuf_t *esmbuf = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -1080,13 +1080,13 @@ int nas_eps_send_tau_accept(
     ogs_pkbuf_t *emmbuf = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -1145,12 +1145,12 @@ int nas_eps_send_tau_reject(
     ogs_pkbuf_t *emmbuf = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -1181,12 +1181,12 @@ int nas_eps_send_service_reject(
     ogs_pkbuf_t *emmbuf = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -1218,13 +1218,13 @@ int nas_eps_send_cs_service_notification(mme_ue_t *mme_ue)
     ogs_pkbuf_t *emmbuf = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 
@@ -1250,13 +1250,13 @@ int nas_eps_send_downlink_nas_transport(
     ogs_pkbuf_t *emmbuf = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return OGS_NOTFOUND;
     }
 

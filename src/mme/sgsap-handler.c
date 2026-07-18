@@ -184,7 +184,7 @@ error:
     }
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("ENB-S1 Context has already been removed");
+        ogs_warn("ENB-S1 Context has already been removed");
         return;
     }
 
@@ -534,7 +534,7 @@ void sgsap_handle_detach_ack(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     if (enb_ue)
         mme_send_delete_session_or_detach(enb_ue, mme_ue);
     else
-        ogs_error("ENB-S1 Context has already been removed");
+        ogs_warn("ENB-S1 Context has already been removed");
 }
 
 void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)

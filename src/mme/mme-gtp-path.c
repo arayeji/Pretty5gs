@@ -705,7 +705,7 @@ int mme_gtp_send_create_bearer_response(
             bearer->create.xact_id <= OGS_MAX_POOL_ID);
     xact = ogs_gtp_xact_find_by_id(bearer->create.xact_id);
     if (!xact) {
-        ogs_error("GTP transaction(CREATE) has already been removed");
+        ogs_warn("GTP transaction(CREATE) has already been removed");
         return OGS_OK;
     }
 
@@ -828,7 +828,7 @@ int mme_gtp_send_delete_bearer_response(
 
     xact = ogs_gtp_xact_find_by_id(bearer->delete.xact_id);
     if (!xact) {
-        mme_ue_error(mme_ue, NULL, "s11", NULL,
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
                 "GTP transaction(DELETE) has already been removed");
         return OGS_OK;
     }
@@ -1112,7 +1112,7 @@ int mme_gtp_send_downlink_data_notification_ack(
 
     xact = ogs_gtp_xact_find_by_id(bearer->notify.xact_id);
     if (!xact) {
-        mme_ue_error(mme_ue, NULL, "s11", NULL,
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
                 "GTP transaction(NOTIFY) has already been removed");
         return OGS_OK;
     }

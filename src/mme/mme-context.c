@@ -6449,7 +6449,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
 
     enb = mme_enb_find_by_id(enb_ue->enb_id);
     if (!enb) {
-        ogs_error("[%d] eNB has already been removed", enb_ue->enb_id);
+        ogs_warn("[%d] eNB has already been removed", enb_ue->enb_id);
         return NULL;
     }
 
@@ -7175,7 +7175,7 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
                     mme_ue->enb_ue_holding_id = old_mme_ue->enb_ue_id;
                     old_mme_ue->enb_ue_id = OGS_INVALID_POOL_ID;
                 } else {
-                    ogs_error("[%s] S1 Context has already been removed",
+                    ogs_warn("[%s] S1 Context has already been removed",
                                 old_mme_ue->imsi_bcd);
                 }
             }
@@ -7412,7 +7412,7 @@ void enb_ue_deassociate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     if (mme_ue->enb_ue_id == enb_ue->id)
         mme_ue->enb_ue_id = OGS_INVALID_POOL_ID;
     else
-        ogs_error("Cannot deassociate mme_ue->enb_ue_id[%d] != enb_ue->id[%d]",
+        ogs_warn("Cannot deassociate mme_ue->enb_ue_id[%d] != enb_ue->id[%d]",
                 mme_ue->enb_ue_id, enb_ue->id);
 }
 
@@ -7426,10 +7426,12 @@ void enb_ue_source_associate_target(enb_ue_t *source_ue, enb_ue_t *target_ue)
     source_ue->target_ue_id = target_ue->id;
 }
 
-void enb_ue_source_deassociate_target(enb_ue_t *enb_ue)
+bool enb_ue_source_deassociate_target(enb_ue_t *enb_ue)
 {
     enb_ue_t *source_ue = NULL;
     enb_ue_t *target_ue = NULL;
+    bool peer_gone = false;
+
     ogs_assert(enb_ue);
 
     if (enb_ue->target_ue_id >= OGS_MIN_POOL_ID &&
@@ -7446,13 +7448,7 @@ void enb_ue_source_deassociate_target(enb_ue_t *enb_ue)
                     target_ue->source_ue_id <= OGS_MAX_POOL_ID);
             target_ue->source_ue_id = OGS_INVALID_POOL_ID;
         } else
-            mme_ran_error(
-                    mme_enb_find_by_id(source_ue->enb_id),
-                    source_ue,
-                    mme_ue_find_by_id(source_ue->mme_ue_id),
-                    "s1ap", NULL,
-                    "Target-UE-ID has already been removed");
-
+            peer_gone = true;
 
     } else if (enb_ue->source_ue_id >= OGS_MIN_POOL_ID &&
                 enb_ue->source_ue_id <= OGS_MAX_POOL_ID) {
@@ -7464,15 +7460,14 @@ void enb_ue_source_deassociate_target(enb_ue_t *enb_ue)
                     source_ue->target_ue_id <= OGS_MAX_POOL_ID);
             source_ue->target_ue_id = OGS_INVALID_POOL_ID;
         } else
-            ogs_error("Source-UE-ID [%d] has already been removed "
-                    "(ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d])",
-                    target_ue->source_ue_id,
-                    target_ue->enb_ue_s1ap_id, target_ue->mme_ue_s1ap_id);
+            peer_gone = true;
 
         ogs_assert(target_ue->source_ue_id >= OGS_MIN_POOL_ID &&
                 target_ue->source_ue_id <= OGS_MAX_POOL_ID);
         target_ue->source_ue_id = OGS_INVALID_POOL_ID;
     }
+
+    return peer_gone;
 }
 
 void sgw_ue_associate_mme_ue(sgw_ue_t *sgw_ue, mme_ue_t *mme_ue)
@@ -7492,7 +7487,7 @@ void sgw_ue_deassociate_mme_ue(sgw_ue_t *sgw_ue, mme_ue_t *mme_ue)
     if (mme_ue->sgw_ue_id == sgw_ue->id)
         mme_ue->sgw_ue_id = OGS_INVALID_POOL_ID;
     else
-        ogs_error("Cannot deassociate mme_ue->sgw_ue_id[%d] != sgw_ue->id[%d]",
+        ogs_warn("Cannot deassociate mme_ue->sgw_ue_id[%d] != sgw_ue->id[%d]",
                 mme_ue->sgw_ue_id, sgw_ue->id);
 }
 
@@ -7527,7 +7522,7 @@ void sgw_ue_source_deassociate_target(sgw_ue_t *sgw_ue)
                     target_ue->source_ue_id <= OGS_MAX_POOL_ID);
             target_ue->source_ue_id = OGS_INVALID_POOL_ID;
         } else
-            ogs_error("Target-UE-ID [%d] has already been removed "
+            ogs_warn("Target-UE-ID [%d] has already been removed "
                     "(SGW-S11-TEID[%d])",
                     source_ue->target_ue_id, source_ue->sgw_s11_teid);
 
@@ -7541,7 +7536,7 @@ void sgw_ue_source_deassociate_target(sgw_ue_t *sgw_ue)
                     source_ue->target_ue_id <= OGS_MAX_POOL_ID);
             source_ue->target_ue_id = OGS_INVALID_POOL_ID;
         } else
-            ogs_error("Source-UE-ID [%d] has already been removed "
+            ogs_warn("Source-UE-ID [%d] has already been removed "
                     "(SGW-S11-TEID[%d])",
                     target_ue->source_ue_id, target_ue->sgw_s11_teid);
 

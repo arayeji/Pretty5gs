@@ -389,7 +389,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
     case MME_EVENT_S1AP_TIMER:
         enb_ue = enb_ue_find_by_id(e->enb_ue_id);
         if (!enb_ue) {
-            ogs_error("S1 Context has already been removed");
+            ogs_warn("S1 Context has already been removed");
             /*
              * A delayed-send event owns its pkbuf and one-shot timer;
              * free both or they leak every time the S1 context vanishes
@@ -433,7 +433,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
         enb_ue = enb_ue_find_by_id(e->enb_ue_id);
         if (!enb_ue) {
-            ogs_error("S1 Context has already been removed");
+            ogs_warn("S1 Context has already been removed");
             ogs_pkbuf_free(pkbuf);
             break;
         }
@@ -804,7 +804,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
          */
         mme_ue = mme_ue_find_by_id(e->mme_ue_id);
         if (!mme_ue) {
-            ogs_error("UE(mme-ue) context has already been removed");
+            ogs_warn("UE(mme-ue) context has already been removed");
             goto cleanup;
         }
 
@@ -972,7 +972,7 @@ cleanup:
                 ue_hint = mme_ue_find_by_s11_local_teid(gtp_message.h.teid);
 
             if (ue_hint) {
-                mme_ue_error(ue_hint, NULL, "s11", NULL,
+                mme_ue_warn(ue_hint, NULL, "s11", NULL,
                         "S11 GTP receive dropped [%s]:%d type[%u] "
                         "teid[0x%x] sqn[0x%x] rv=%d (late response or "
                         "invalid GTP transaction step)",
@@ -986,7 +986,7 @@ cleanup:
                         OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE)
                     mme_ue_progress(ue_hint, "create_session_rsp_late");
             } else {
-                ogs_error("S11 GTP receive dropped [%s]:%d type[%u] "
+                ogs_warn("S11 GTP receive dropped [%s]:%d type[%u] "
                         "teid[0x%x] sqn[0x%x] rv=%d IMSI[-]",
                         OGS_ADDR(&gnode->addr, peer),
                         OGS_PORT(&gnode->addr),
@@ -1142,12 +1142,12 @@ cleanup:
     case MME_EVENT_S11_TIMER:
         sgw_ue = sgw_ue_find_by_id(e->sgw_ue_id);
         if (!sgw_ue) {
-            ogs_error("SGW-UE Context has already been removed");
+            ogs_warn("SGW-UE Context has already been removed");
             break;
         }
         mme_ue = mme_ue_find_by_id(sgw_ue->mme_ue_id);
         if (!mme_ue) {
-            ogs_error("MME-UE Context has already been removed");
+            ogs_warn("MME-UE Context has already been removed");
             break;
         }
 
@@ -1169,7 +1169,7 @@ cleanup:
                             enb_ue, sgw_ue, sess,
                             OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST));
                 } else
-                    ogs_error("ENB-S1 Context has already been removed");
+                    ogs_warn("ENB-S1 Context has already been removed");
 
             }
             break;
@@ -1271,7 +1271,7 @@ cleanup:
             enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
             if (!enb_ue) {
                 mme_ue->gn.sgsn_context_pending = false;
-                ogs_error("ENB-S1 Context has already been removed");
+                ogs_warn("ENB-S1 Context has already been removed");
                 if (OGS_FSM_STATE(&mme_ue->sm))
                     OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
                 break;
@@ -1376,7 +1376,7 @@ cleanup:
                             enb_ue, sgw_ue, sess,
                             OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST));
                 } else
-                    ogs_error("ENB-S1 Context has already been removed");
+                    ogs_warn("ENB-S1 Context has already been removed");
             }
             break;
 

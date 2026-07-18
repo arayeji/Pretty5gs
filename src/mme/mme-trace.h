@@ -74,6 +74,10 @@ void mme_ran_error(
         mme_enb_t *enb, enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         const char *proc, const char *apn, const char *fmt, ...)
     OGS_GNUC_PRINTF(6, 7);
+void mme_ran_warn(
+        mme_enb_t *enb, enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        const char *proc, const char *apn, const char *fmt, ...)
+    OGS_GNUC_PRINTF(6, 7);
 
 void mme_sess_removed_log(mme_ue_t *mme_ue, const char *apn);
 void mme_bearer_added_log(mme_ue_t *mme_ue, mme_bearer_t *bearer);

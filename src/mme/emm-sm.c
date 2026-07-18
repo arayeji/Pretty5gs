@@ -1397,7 +1397,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                     ogs_expect(r == OGS_OK);
                     ogs_assert(r != OGS_ERROR);
                 } else
-                    ogs_error("eNB has already been removed");
+                    ogs_warn("eNB has already been removed");
             }
             break;
 

@@ -1034,12 +1034,12 @@ static void _mme_s6a_send_air(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     uint8_t resync[OGS_AUTS_LEN + OGS_RAND_LEN];
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return;
     }
 
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return;
     }
 
@@ -1253,13 +1253,13 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
 
     mme_ue = mme_ue_find_by_id(sess_data->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("MME-UE Context has already been removed [%d]",
+        ogs_warn("MME-UE Context has already been removed [%d]",
                 sess_data->mme_ue_id);
         goto cleanup;
     }
     enb_ue = enb_ue_find_by_id(sess_data->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("[%s] ENB-S1 Context has already been removed [%d]",
+        ogs_warn("[%s] ENB-S1 Context has already been removed [%d]",
                 mme_ue->imsi_bcd, sess_data->enb_ue_id);
         goto cleanup;
     }
@@ -1678,12 +1678,12 @@ void mme_s6a_send_ulr(enb_ue_t *enb_ue, mme_ue_t *mme_ue, uint32_t extra_ulr_fla
     ogs_nas_plmn_id_t nas_plmn_id;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return;
     }
 
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return;
     }
 
@@ -1897,13 +1897,13 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
 
     mme_ue = mme_ue_find_by_id(sess_data->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("MME-UE Context has already been removed [%d]",
+        ogs_warn("MME-UE Context has already been removed [%d]",
                 sess_data->mme_ue_id);
         goto cleanup;
     }
     enb_ue = enb_ue_find_by_id(sess_data->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("[%s] ENB-S1 Context has already been removed [%d]",
+        ogs_warn("[%s] ENB-S1 Context has already been removed [%d]",
                 mme_ue->imsi_bcd, sess_data->enb_ue_id);
         goto cleanup;
     }
@@ -2213,12 +2213,12 @@ void mme_s6a_send_pur(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     struct session *session = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return;
     }
 
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return;
     }
 
@@ -2326,7 +2326,7 @@ void mme_s6a_send_nor(mme_ue_t *mme_ue, uint32_t nor_flags)
     struct session *session = NULL;
 
     if (!mme_ue) {
-        ogs_error("UE(mme-ue) context has already been removed");
+        ogs_warn("UE(mme-ue) context has already been removed");
         return;
     }
 
@@ -2552,13 +2552,13 @@ static void mme_s6a_pua_cb(void *data, struct msg **msg)
 
     mme_ue = mme_ue_find_by_id(sess_data->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("MME-UE Context has already been removed [%d]",
+        ogs_warn("MME-UE Context has already been removed [%d]",
                 sess_data->mme_ue_id);
         goto cleanup;
     }
     enb_ue = enb_ue_find_by_id(sess_data->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("[%s] ENB-S1 Context has already been removed [%d]",
+        ogs_warn("[%s] ENB-S1 Context has already been removed [%d]",
                 mme_ue->imsi_bcd, sess_data->enb_ue_id);
         goto cleanup;
     }

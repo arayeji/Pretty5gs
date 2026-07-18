@@ -992,7 +992,7 @@ struct mme_ue_s {
             \
             (__mME)->enb_ue_holding_id = (__mME)->enb_ue_id; \
         } else \
-            ogs_error("[%s] S1 Context has already been removed", \
+            ogs_warn("[%s] S1 Context has already been removed", \
                     (__mME)->imsi_bcd); \
     } while(0)
 #define CLEAR_S1_CONTEXT(__mME) \
@@ -1633,7 +1633,8 @@ int mme_ue_xact_count(mme_ue_t *mme_ue, uint8_t org);
 void enb_ue_associate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 void enb_ue_deassociate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 void enb_ue_source_associate_target(enb_ue_t *source_ue, enb_ue_t *target_ue);
-void enb_ue_source_deassociate_target(enb_ue_t *enb_ue);
+/* Returns true if the linked HO peer S1 context was already gone. */
+bool enb_ue_source_deassociate_target(enb_ue_t *enb_ue);
 
 void sgw_ue_associate_mme_ue(sgw_ue_t *sgw_ue, mme_ue_t *mme_ue);
 void sgw_ue_deassociate_mme_ue(sgw_ue_t *sgw_ue, mme_ue_t *mme_ue);

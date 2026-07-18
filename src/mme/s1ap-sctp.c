@@ -209,7 +209,8 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
         ogs_pkbuf_free(pkbuf);
         if (ogs_sctp_recv_would_block(size))
             return 0;
-        mme_ran_error(s1ap_rx_safe_enb_lookup(&from), NULL, NULL, "s1ap", NULL,
+        /* Single warn: lib/sctp stays quiet for EBADF/ECONNRESET/ENOTCONN */
+        mme_ran_warn(s1ap_rx_safe_enb_lookup(&from), NULL, NULL, "s1ap", NULL,
                 "ogs_sctp_recvmsg(%d) failed(%d:%s)",
                 size, errno, strerror(errno));
         return -1;
@@ -283,13 +284,13 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
 
         case SCTP_SEND_FAILED :
 #if HAVE_USRSCTP
-            mme_ran_error(s1ap_rx_safe_enb_lookup(&from), NULL, NULL, "s1ap", NULL,
+            mme_ran_warn(s1ap_rx_safe_enb_lookup(&from), NULL, NULL, "s1ap", NULL,
                     "SCTP_SEND_FAILED:[T:%d, F:0x%x, S:%d]",
                     not->sn_send_failed_event.ssfe_type,
                     not->sn_send_failed_event.ssfe_flags,
                     not->sn_send_failed_event.ssfe_error);
 #else
-            mme_ran_error(s1ap_rx_safe_enb_lookup(&from), NULL, NULL, "s1ap", NULL,
+            mme_ran_warn(s1ap_rx_safe_enb_lookup(&from), NULL, NULL, "s1ap", NULL,
                     "SCTP_SEND_FAILED:[T:%d, F:0x%x, S:%d]",
                     not->sn_send_failed.ssf_type,
                     not->sn_send_failed.ssf_flags,

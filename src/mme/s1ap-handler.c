@@ -959,7 +959,7 @@ void s1ap_handle_uplink_nas_transport(
     enb_ue = s1ap_find_enb_ue_by_message_ue_ids(
             enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID);
     if (!enb_ue) {
-        ogs_error("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
+        ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
         return;
     }
 
@@ -989,7 +989,7 @@ void s1ap_handle_uplink_nas_transport(
      */
     mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("UplinkNASTransport on stale S1 context "
+        ogs_warn("UplinkNASTransport on stale S1 context "
                 "[MME_UE_S1AP_ID:%d] - sending UEContextReleaseCommand",
                 enb_ue->mme_ue_s1ap_id);
         r = s1ap_send_ue_context_release_command(
@@ -1186,7 +1186,7 @@ void s1ap_handle_ue_capability_info_indication(
     enb_ue = s1ap_find_enb_ue_by_message_ue_ids(
             enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID);
     if (!enb_ue) {
-        ogs_error("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
+        ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
         return;
     }
 
@@ -1253,7 +1253,7 @@ void s1ap_handle_initial_context_setup_response(
     enb_ue = s1ap_find_enb_ue_by_message_ue_ids(
             enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID);
     if (!enb_ue) {
-        ogs_error("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
+        ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
         return;
     }
 
@@ -1267,7 +1267,7 @@ void s1ap_handle_initial_context_setup_response(
          * for the rationale. Send UEContextReleaseCommand so the eNB
          * cleans up its end of the stale RAN context.
          */
-        ogs_error("InitialContextSetupResponse on stale S1 context "
+        ogs_warn("InitialContextSetupResponse on stale S1 context "
                 "[MME_UE_S1AP_ID:%d] - sending UEContextReleaseCommand",
                 enb_ue->mme_ue_s1ap_id);
         r = s1ap_send_ue_context_release_command(
@@ -1451,7 +1451,7 @@ void s1ap_handle_initial_context_setup_failure(
     enb_ue = s1ap_find_enb_ue_by_message_ue_ids(
             enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID);
     if (!enb_ue) {
-        ogs_error("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
+        ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
         return;
     }
 
@@ -1553,7 +1553,7 @@ void s1ap_handle_ue_context_modification_response(
     enb_ue = s1ap_find_enb_ue_by_message_ue_ids(
             enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID);
     if (!enb_ue) {
-        ogs_error("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
+        ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
         return;
     }
 
@@ -1567,7 +1567,7 @@ void s1ap_handle_ue_context_modification_response(
          * for the rationale. Send UEContextReleaseCommand so the eNB
          * cleans up its end of the stale RAN context.
          */
-        ogs_error("UEContextModificationResponse on stale S1 context "
+        ogs_warn("UEContextModificationResponse on stale S1 context "
                 "[MME_UE_S1AP_ID:%d] - sending UEContextReleaseCommand",
                 enb_ue->mme_ue_s1ap_id);
         r = s1ap_send_ue_context_release_command(
@@ -1634,7 +1634,7 @@ void s1ap_handle_ue_context_modification_failure(
     enb_ue = s1ap_find_enb_ue_by_message_ue_ids(
             enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID);
     if (!enb_ue) {
-        ogs_error("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
+        ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
         return;
     }
 
@@ -1660,7 +1660,7 @@ void s1ap_handle_ue_context_modification_failure(
          * for the rationale. Send UEContextReleaseCommand so the eNB
          * cleans up its end of the stale RAN context.
          */
-        ogs_error("UEContextModificationFailure on stale S1 context "
+        ogs_warn("UEContextModificationFailure on stale S1 context "
                 "[MME_UE_S1AP_ID:%d] - sending UEContextReleaseCommand",
                 enb_ue->mme_ue_s1ap_id);
         r = s1ap_send_ue_context_release_command(
@@ -1742,7 +1742,7 @@ void s1ap_handle_e_rab_setup_response(
     enb_ue = s1ap_find_enb_ue_by_message_ue_ids(
             enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID);
     if (!enb_ue) {
-        ogs_error("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
+        ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
         return;
     }
 
@@ -1756,7 +1756,7 @@ void s1ap_handle_e_rab_setup_response(
          * for the rationale. Send UEContextReleaseCommand so the eNB
          * cleans up its end of the stale RAN context.
          */
-        ogs_error("E-RABSetupResponse on stale S1 context "
+        ogs_warn("E-RABSetupResponse on stale S1 context "
                 "[MME_UE_S1AP_ID:%d] - sending UEContextReleaseCommand",
                 enb_ue->mme_ue_s1ap_id);
         r = s1ap_send_ue_context_release_command(
@@ -2227,7 +2227,7 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
     mme_ue_t *mme_ue = NULL;
 
     if (!enb_ue) {
-        ogs_error("S1 context has already been removed");
+        ogs_warn("S1 context has already been removed");
         return;
     }
 
@@ -2287,18 +2287,26 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
     case S1AP_UE_CTX_REL_S1_HANDOVER_COMPLETE:
         ogs_debug("    Action: S1 handover complete");
 
-        enb_ue_source_deassociate_target(enb_ue);
-        enb_ue_remove(enb_ue);
+        {
+            bool ho_peer_gone = enb_ue_source_deassociate_target(enb_ue);
 
-        if (!mme_ue) {
-            ogs_error("No UE(mme-ue) context");
-            return;
-        }
-        enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-        if (!enb_ue) {
-            mme_ue_error(mme_ue, NULL, "s1ap", NULL,
-                    "No UE(target-enb-ue) context");
-            return;
+            enb_ue_remove(enb_ue);
+
+            if (!mme_ue) {
+                ogs_error("No UE(mme-ue) context");
+                return;
+            }
+            enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+            if (!enb_ue) {
+                mme_ue_warn(mme_ue, NULL, "s1ap", NULL,
+                        "No UE(target-enb-ue) context%s",
+                        ho_peer_gone ?
+                            " (HO peer already released)" : "");
+                return;
+            }
+            if (ho_peer_gone)
+                mme_ue_warn(mme_ue, enb_ue, "s1ap", NULL,
+                        "HO peer S1 context already released");
         }
         if (mme_ue_have_indirect_tunnel(mme_ue) == true) {
             ogs_assert(OGS_OK ==
@@ -2314,18 +2322,26 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
     case S1AP_UE_CTX_REL_S1_HANDOVER_CANCEL:
         ogs_warn("    Action: S1 handover cancel");
 
-        enb_ue_source_deassociate_target(enb_ue);
-        enb_ue_remove(enb_ue);
+        {
+            bool ho_peer_gone = enb_ue_source_deassociate_target(enb_ue);
 
-        if (!mme_ue) {
-            ogs_error("No UE(mme-ue) context");
-            return;
-        }
-        enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-        if (!enb_ue) {
-            mme_ue_error(mme_ue, NULL, "s1ap", NULL,
-                    "No UE(target-enb-ue) context");
-            return;
+            enb_ue_remove(enb_ue);
+
+            if (!mme_ue) {
+                ogs_error("No UE(mme-ue) context");
+                return;
+            }
+            enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+            if (!enb_ue) {
+                mme_ue_warn(mme_ue, NULL, "s1ap", NULL,
+                        "No UE(target-enb-ue) context%s",
+                        ho_peer_gone ?
+                            " (HO peer already released)" : "");
+                return;
+            }
+            if (ho_peer_gone)
+                mme_ue_warn(mme_ue, enb_ue, "s1ap", NULL,
+                        "HO peer S1 context already released");
         }
         if (mme_ue_have_indirect_tunnel(mme_ue) == true) {
             ogs_assert(OGS_OK ==
@@ -2339,7 +2355,7 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
 
             enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
             if (!enb_ue) {
-                ogs_error("No S1 context");
+                ogs_warn("No S1 context");
                 return;
             }
             r = s1ap_send_handover_cancel_ack(enb_ue);
@@ -2350,7 +2366,9 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
     case S1AP_UE_CTX_REL_S1_HANDOVER_FAILURE:
         ogs_warn("    Action: S1 handover failure");
 
-        enb_ue_source_deassociate_target(enb_ue);
+        if (enb_ue_source_deassociate_target(enb_ue))
+            ogs_warn("HO peer S1 context already released "
+                    "during failure cleanup");
         enb_ue_remove(enb_ue);
 
         if (!mme_ue) {
@@ -2450,7 +2468,7 @@ void s1ap_handle_e_rab_modification_indication(
     enb_ue = s1ap_find_enb_ue_by_message_ue_ids(
             enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID);
     if (!enb_ue) {
-        ogs_error("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
+        ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
         return;
     }
 
@@ -2473,7 +2491,7 @@ void s1ap_handle_e_rab_modification_indication(
          * for the rationale. Send UEContextReleaseCommand so the eNB
          * cleans up its end of the stale RAN context.
          */
-        ogs_error("E-RABModificationIndication on stale S1 context "
+        ogs_warn("E-RABModificationIndication on stale S1 context "
                 "[MME_UE_S1AP_ID:%d] - sending UEContextReleaseCommand",
                 enb_ue->mme_ue_s1ap_id);
         r = s1ap_send_ue_context_release_command(

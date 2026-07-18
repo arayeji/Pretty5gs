@@ -443,7 +443,7 @@ void mme_s6a_handle_clr(mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
                 if (enb_ue)
                     mme_send_delete_session_or_detach(enb_ue, mme_ue);
                 else
-                    ogs_error("ENB-S1 Context has already been removed");
+                    ogs_warn("ENB-S1 Context has already been removed");
             }
         }
         break;
@@ -473,7 +473,7 @@ void mme_s6a_handle_clr(mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
             if (enb_ue)
                 mme_send_delete_session_or_detach(enb_ue, mme_ue);
             else
-                ogs_error("ENB-S1 Context has already been removed");
+                ogs_warn("ENB-S1 Context has already been removed");
         }
         break;
     default:

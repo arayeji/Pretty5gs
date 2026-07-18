@@ -786,7 +786,7 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         bearer = mme_bearer_find_by_id(
                 OGS_POINTER_TO_UINT(mme_ue->paging.data));
         if (!bearer) {
-            mme_ue_error(mme_ue, NULL, "paging", NULL,
+            mme_ue_warn(mme_ue, NULL, "paging", NULL,
                     "No Bearer [type=%d]", mme_ue->paging.type);
             goto cleanup;
         }
@@ -805,7 +805,7 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         bearer = mme_bearer_find_by_id(
                 OGS_POINTER_TO_UINT(mme_ue->paging.data));
         if (!bearer) {
-            mme_ue_error(mme_ue, NULL, "paging", NULL,
+            mme_ue_warn(mme_ue, NULL, "paging", NULL,
                     "No Bearer [type=%d]", mme_ue->paging.type);
             goto cleanup;
         }
@@ -832,7 +832,7 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         bearer = mme_bearer_find_by_id(
                 OGS_POINTER_TO_UINT(mme_ue->paging.data));
         if (!bearer) {
-            mme_ue_error(mme_ue, NULL, "paging", NULL,
+            mme_ue_warn(mme_ue, NULL, "paging", NULL,
                     "No Bearer [type=%d]", mme_ue->paging.type);
             goto cleanup;
         }
@@ -875,7 +875,7 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         bearer = mme_bearer_find_by_id(
                 OGS_POINTER_TO_UINT(mme_ue->paging.data));
         if (!bearer) {
-            mme_ue_error(mme_ue, NULL, "paging", NULL,
+            mme_ue_warn(mme_ue, NULL, "paging", NULL,
                     "No Bearer [type=%d]", mme_ue->paging.type);
             goto cleanup;
         }
@@ -930,7 +930,7 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
                 if (enb_ue)
                     mme_send_delete_session_or_detach(enb_ue, mme_ue);
                 else
-                    ogs_error("ENB-S1 Context has already been removed");
+                    ogs_warn("ENB-S1 Context has already been removed");
             }
         }
         break;
