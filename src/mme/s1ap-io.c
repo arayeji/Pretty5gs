@@ -148,6 +148,8 @@ static bool io_errno_assoc_dead(ogs_err_t err)
 static void io_report_assoc_dead(io_sock_t *ctx)
 {
     ogs_sockaddr_t *addr = NULL;
+    static ogs_time_t rate_window_start;
+    static int rate_count;
 
     ogs_assert(ctx);
 
@@ -166,6 +168,25 @@ static void io_report_assoc_dead(io_sock_t *ctx)
         ogs_error("s1ap-io: assoc dead but no peer addr (sock:%p); "
                 "main will not see CONNREFUSED", (void *)ctx->sock);
         return;
+    }
+
+    /*
+     * Cap CONNREFUSED flood: a mass EPIPE storm must not fill the main
+     * queue and freeze RX. Further reports in the same second are
+     * dropped; SCTP COMM_LOST / reconnect will still clean up.
+     */
+    {
+        ogs_time_t now = ogs_time_now();
+        if (now - rate_window_start > ogs_time_from_sec(1)) {
+            rate_window_start = now;
+            rate_count = 0;
+        }
+        if (++rate_count > 64) {
+            ogs_error("s1ap-io: CONNREFUSED rate-limited (sock:%p)",
+                    (void *)ctx->sock);
+            ogs_free(addr);
+            return;
+        }
     }
 
     ogs_warn("s1ap-io: hard send error — raising CONNREFUSED");
@@ -433,6 +454,16 @@ bool s1ap_io_drain_sock(ogs_sock_t *sock)
  * sock -> bitmask of confirmations still outstanding.
  */
 static ogs_hash_t *close_wait_hash = NULL;
+static ogs_thread_mutex_t close_wait_lock;
+static bool close_wait_lock_ready = false;
+
+static void close_wait_lock_init_once(void)
+{
+    if (!close_wait_lock_ready) {
+        ogs_thread_mutex_init(&close_wait_lock);
+        close_wait_lock_ready = true;
+    }
+}
 
 void s1ap_sock_close_register(ogs_sock_t *sock, int wait_mask)
 {
@@ -440,6 +471,9 @@ void s1ap_sock_close_register(ogs_sock_t *sock, int wait_mask)
 
     ogs_assert(sock);
     ogs_assert(wait_mask);
+
+    close_wait_lock_init_once();
+    ogs_thread_mutex_lock(&close_wait_lock);
 
     if (!close_wait_hash) {
         close_wait_hash = ogs_hash_make();
@@ -458,21 +492,27 @@ void s1ap_sock_close_register(ogs_sock_t *sock, int wait_mask)
                 (void *)sock, (unsigned)existing, (unsigned)wait_mask);
         ogs_hash_set(close_wait_hash, &sock, sizeof(sock),
                 (void *)(uintptr_t)(existing | (uintptr_t)wait_mask));
+        ogs_thread_mutex_unlock(&close_wait_lock);
         return;
     }
 
     ogs_hash_set(close_wait_hash, &sock, sizeof(sock),
             (void *)(uintptr_t)wait_mask);
+    ogs_thread_mutex_unlock(&close_wait_lock);
 }
 
 bool s1ap_sock_close_pending(ogs_sock_t *sock)
 {
+    bool pending;
+
     ogs_assert(sock);
 
-    if (!close_wait_hash)
-        return false;
-
-    return ogs_hash_get(close_wait_hash, &sock, sizeof(sock)) != NULL;
+    close_wait_lock_init_once();
+    ogs_thread_mutex_lock(&close_wait_lock);
+    pending = close_wait_hash &&
+        ogs_hash_get(close_wait_hash, &sock, sizeof(sock)) != NULL;
+    ogs_thread_mutex_unlock(&close_wait_lock);
+    return pending;
 }
 
 void s1ap_sock_close_orphan(ogs_sock_t *sock)
@@ -492,6 +532,9 @@ void s1ap_sock_close_confirm(ogs_sock_t *sock, int which)
 
     ogs_assert(sock);
 
+    close_wait_lock_init_once();
+    ogs_thread_mutex_lock(&close_wait_lock);
+
     mask = close_wait_hash ?
         (uintptr_t)ogs_hash_get(close_wait_hash, &sock, sizeof(sock)) : 0;
 
@@ -501,6 +544,7 @@ void s1ap_sock_close_confirm(ogs_sock_t *sock, int which)
          * never registered). MUST NOT destroy here: the pointer may
          * already have been reused by a new accept().
          */
+        ogs_thread_mutex_unlock(&close_wait_lock);
         ogs_warn("s1ap-io: close confirm 0x%x for unregistered sock:%p",
                 which, (void *)sock);
         return;
@@ -510,10 +554,12 @@ void s1ap_sock_close_confirm(ogs_sock_t *sock, int which)
     if (mask) {
         ogs_hash_set(close_wait_hash, &sock, sizeof(sock),
                 (void *)mask);
+        ogs_thread_mutex_unlock(&close_wait_lock);
         return;
     }
 
     ogs_hash_set(close_wait_hash, &sock, sizeof(sock), NULL);
+    ogs_thread_mutex_unlock(&close_wait_lock);
     ogs_sctp_destroy(sock);
 }
 
@@ -521,8 +567,13 @@ void s1ap_sock_close_final(void)
 {
     ogs_hash_index_t *hi = NULL;
 
-    if (!close_wait_hash)
+    close_wait_lock_init_once();
+    ogs_thread_mutex_lock(&close_wait_lock);
+
+    if (!close_wait_hash) {
+        ogs_thread_mutex_unlock(&close_wait_lock);
         return;
+    }
 
     /* all worker threads are joined: confirmations that never arrived
      * can no longer race a destroy — reap the leftovers */
@@ -534,4 +585,5 @@ void s1ap_sock_close_final(void)
     }
     ogs_hash_destroy(close_wait_hash);
     close_wait_hash = NULL;
+    ogs_thread_mutex_unlock(&close_wait_lock);
 }

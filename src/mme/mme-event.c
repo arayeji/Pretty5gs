@@ -26,6 +26,8 @@
 #include "mme-workers.h"
 
 #include "s1ap-path.h"
+#include "s1ap-io.h"
+#include "s1ap-io.h"
 
 static bool mme_event_belongs_to_mme_ue(
         mme_event_t *e, ogs_pool_id_t mme_ue_id)
@@ -282,6 +284,21 @@ const char *mme_event_get_name(mme_event_t *e)
     return "UNKNOWN_EVENT";
 }
 
+static void mme_event_discard_s1ap_push(mme_event_t *e)
+{
+    ogs_assert(e);
+    if (e->addr)
+        ogs_free(e->addr);
+    if (e->pkbuf)
+        ogs_pkbuf_free(e->pkbuf);
+    if (e->s1ap_message) {
+        ogs_s1ap_free(e->s1ap_message);
+        ogs_free(e->s1ap_message);
+        e->s1ap_message = NULL;
+    }
+    mme_event_free(e);
+}
+
 void s1ap_event_push_decoded(void *sock, ogs_sockaddr_t *addr,
         ogs_pkbuf_t *pkbuf, ogs_s1ap_message_t *pdu)
 {
@@ -300,15 +317,17 @@ void s1ap_event_push_decoded(void *sock, ogs_sockaddr_t *addr,
     e->s1ap_message = pdu;
     e->s1ap_rx_decoded = true;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    /*
+     * NEVER block an RX worker on the main queue. A full queue + blocking
+     * push stops epoll on that worker → SCTP Recv-Q grows on every eNB
+     * it owns → UE signalling freezes while gauges look "stable".
+     */
+    rv = ogs_queue_trypush(ogs_app()->queue, e);
     if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        if (e->addr)
-            ogs_free(e->addr);
-        ogs_pkbuf_free(e->pkbuf);
-        ogs_s1ap_free(pdu);
-        ogs_free(pdu);
-        mme_event_free(e);
+        ogs_error("s1ap decoded push dropped (queue full/busy rv=%d)",
+                (int)rv);
+        mme_event_discard_s1ap_push(e);
+        ogs_pollset_notify(ogs_app()->pollset);
         return;
     }
 
@@ -321,7 +340,7 @@ void mme_sctp_event_push(mme_event_e id,
 {
     mme_event_t *e = NULL;
     int rv;
-    bool critical;
+    bool must_deliver;
 
     ogs_assert(id);
     ogs_assert(sock);
@@ -335,32 +354,49 @@ void mme_sctp_event_push(mme_event_e id,
     e->max_num_of_ostreams = max_num_of_ostreams;
 
     /*
-     * Lifecycle confirms must not be dropped when the main queue is full
-     * (RX flood). Blocking ogs_queue_push from the IO thread would also
-     * stall ALL S1 TX — use trypush + notify + short retry instead.
+     * From a worker thread: never block on ogs_queue_push.
+     *
+     * Close confirms (IO_DRAINED / RX_SOCK_CLOSED / WATCH_FAILED) get a
+     * short trypush burst. CONNREFUSED and S1AP_MESSAGE drop on full —
+     * losing one CONNREFUSED is better than freezing RX (which caused
+     * multi‑MB SCTP Recv-Q and a frozen UE count).
      */
-    critical = (id == MME_EVENT_S1AP_IO_DRAINED ||
-            id == MME_EVENT_S1AP_RX_SOCK_CLOSED ||
-            id == MME_EVENT_S1AP_LO_CONNREFUSED ||
-            id == MME_EVENT_S1AP_RX_WATCH_FAILED);
+    if (ogs_worker_self()) {
+        must_deliver = (id == MME_EVENT_S1AP_IO_DRAINED ||
+                id == MME_EVENT_S1AP_RX_SOCK_CLOSED ||
+                id == MME_EVENT_S1AP_RX_WATCH_FAILED);
 
-    if (critical && ogs_worker_self()) {
-        int tries = 0;
-        for (;;) {
+        if (must_deliver) {
+            int tries = 0;
+            for (;;) {
+                rv = ogs_queue_trypush(ogs_app()->queue, e);
+                if (rv == OGS_OK)
+                    break;
+                ogs_pollset_notify(ogs_app()->pollset);
+                if (++tries > 200) { /* ~20ms at 100us */
+                    ogs_error("mme_sctp_event_push: must-deliver id=%d "
+                            "dropped after short retry (%d)",
+                            id, (int)rv);
+                    /* IO_DRAINED: force confirm so close registry
+                     * cannot wedge forever without the event. */
+                    if (id == MME_EVENT_S1AP_IO_DRAINED)
+                        s1ap_sock_close_confirm(sock, S1AP_SOCK_CONFIRM_IO);
+                    else if (id == MME_EVENT_S1AP_RX_SOCK_CLOSED)
+                        s1ap_sock_close_confirm(sock, S1AP_SOCK_CONFIRM_RX);
+                    mme_event_discard_s1ap_push(e);
+                    return;
+                }
+                ogs_usleep(100);
+            }
+        } else {
             rv = ogs_queue_trypush(ogs_app()->queue, e);
-            if (rv == OGS_OK)
-                break;
-            ogs_pollset_notify(ogs_app()->pollset);
-            if (++tries > 10000) {
-                ogs_error("mme_sctp_event_push: critical id=%d "
-                        "trypush failed after retries (%d)", id, (int)rv);
-                ogs_free(e->addr);
-                if (e->pkbuf)
-                    ogs_pkbuf_free(e->pkbuf);
-                mme_event_free(e);
+            if (rv != OGS_OK) {
+                ogs_error("mme_sctp_event_push: id=%d dropped (rv=%d)",
+                        id, (int)rv);
+                mme_event_discard_s1ap_push(e);
+                ogs_pollset_notify(ogs_app()->pollset);
                 return;
             }
-            ogs_usleep(1000);
         }
         ogs_pollset_notify(ogs_app()->pollset);
         return;
@@ -369,19 +405,10 @@ void mme_sctp_event_push(mme_event_e id,
     rv = ogs_queue_push(ogs_app()->queue, e);
     if (rv != OGS_OK) {
         ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        ogs_free(e->addr);
-        if (e->pkbuf)
-            ogs_pkbuf_free(e->pkbuf);
-        mme_event_free(e);
+        mme_event_discard_s1ap_push(e);
         return;
     }
 
-    if (ogs_worker_self()) {
-        /* pushed from an S1AP RX worker: the main loop no longer polls
-         * these sockets, so it may be asleep — wake it */
-        ogs_pollset_notify(ogs_app()->pollset);
-        return;
-    }
 #if HAVE_USRSCTP
     ogs_pollset_notify(ogs_app()->pollset);
 #endif

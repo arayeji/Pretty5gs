@@ -60,7 +60,9 @@ int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
         const ogs_sockaddr_t *peer_addr, bool send_with_addr);
 
 /*
- * Socket close registry (main thread only).
+ * Socket close registry (mutex-protected; main registers, workers may
+ * force-confirm if the event queue cannot deliver IO_DRAINED /
+ * RX_SOCK_CLOSED).
  *
  * mme_enb_remove() may have both the RX worker (read poll) and the IO
  * thread (write queue) still referencing the socket. It registers the
