@@ -2251,6 +2251,9 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
     switch (enb_ue->ue_ctx_rel_action) {
     case S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE:
         ogs_debug("    Action: S1 context remove");
+        /* Drop reverse holding link before free (HOLDING_S1_CONTEXT). */
+        if (mme_ue && mme_ue->enb_ue_holding_id == enb_ue->id)
+            mme_ue->enb_ue_holding_id = OGS_INVALID_POOL_ID;
         enb_ue_remove(enb_ue);
         /*
          * Normal S1 release keeps a REGISTERED UE with live session(s)

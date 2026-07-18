@@ -290,13 +290,14 @@ int mme_orphan_enb_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
  * Criteria (conservative):
  *   - older than the grace period (creation-time anchored),
  *   - t_s1_holding not running (otherwise removal is already scheduled),
- *   - no release action recorded, and
- *   - not the active or holding S1 context of a live mme_ue.
+ *   - not the *active* S1 context of a live mme_ue,
+ *   - either no release action, OR a stuck held context (action set but
+ *     timer dead — RX queue flood used to drop the holding-timer event
+ *     and leave immortal enb_ue corpses).
  *
  * Contexts that never had an mme_ue (or whose mme_ue is gone) are freed
- * directly. Contexts still referenced by a live mme_ue are left alone.
- * Work is capped per sweep so a large backlog cannot stall the main
- * thread; successive sweeps drain the rest.
+ * directly. Work is capped per sweep so a large backlog cannot stall the
+ * main thread; successive sweeps drain the rest.
  */
 #define MME_ORPHAN_ENB_UE_BATCH     20000
 
@@ -310,17 +311,27 @@ int mme_orphan_enb_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
     ogs_list_for_each(&mme_self()->enb_list, enb) {
         ogs_list_for_each_safe(&enb->enb_ue_list, next, enb_ue) {
             mme_ue_t *mme_ue = NULL;
+            bool stuck_held;
 
-            if (enb_ue->ue_ctx_rel_action != S1AP_UE_CTX_REL_INVALID_ACTION)
-                continue;
             if (enb_ue->t_s1_holding && enb_ue->t_s1_holding->running)
                 continue;
 
+            stuck_held =
+                (enb_ue->ue_ctx_rel_action != S1AP_UE_CTX_REL_INVALID_ACTION);
+
             mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
-            if (mme_ue &&
-                    (mme_ue->enb_ue_id == enb_ue->id ||
-                     mme_ue->enb_ue_holding_id == enb_ue->id))
-                continue;   /* live S1 of a live UE - not an orphan */
+            /* Never touch the UE's current live S1 association. */
+            if (mme_ue && mme_ue->enb_ue_id == enb_ue->id)
+                continue;
+            /*
+             * Holding link is reclaimable only when stuck (timer dead).
+             * While the holding timer still runs we already continued
+             * above; if the mme_ue still points here as holding and the
+             * timer is gone, reclaim and clear the reverse link.
+             */
+            if (!stuck_held && mme_ue &&
+                    mme_ue->enb_ue_holding_id == enb_ue->id)
+                continue;
 
             remaining++;
 
@@ -331,10 +342,14 @@ int mme_orphan_enb_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
                     (now - enb_ue->context_created) < grace)
                 continue;
 
-            /*
-             * No deassociation needed: the owning mme_ue (if any) does
-             * not reference this enb_ue as active or holding context.
-             */
+            if (stuck_held) {
+                if (mme_ue && mme_ue->enb_ue_holding_id == enb_ue->id)
+                    mme_ue->enb_ue_holding_id = OGS_INVALID_POOL_ID;
+                ogs_warn("orphan sweep: stuck held S1 "
+                        "ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
+                        enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
+            }
+
             enb_ue_remove(enb_ue);
             purged++;
         }

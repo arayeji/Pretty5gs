@@ -21,6 +21,7 @@
 #include "mme-event.h"
 #include "mme-context.h"
 #include "mme-workers.h"
+#include "s1ap-handler.h"
 
 static mme_timer_cfg_t g_mme_timer_cfg[MAX_NUM_OF_MME_TIMER] = {
     /* Paging procedure for EPS services initiated */
@@ -283,21 +284,33 @@ void mme_timer_s6a_expire(void *data)
 
 void mme_timer_s1_holding_timer_expire(void *data)
 {
-    int rv;
-    mme_event_t *e = NULL;
+    enb_ue_t *enb_ue;
+    ogs_pool_id_t enb_ue_id;
 
     ogs_assert(data);
 
-    e = mme_event_new(MME_EVENT_S1AP_TIMER);
-
-    e->timer_id = MME_TIMER_S1_HOLDING;
-    e->enb_ue_id = OGS_POINTER_TO_UINT(data);
-
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        mme_event_free(e);
+    /*
+     * Run cleanup on the main timer thread directly.
+     *
+     * Previously this re-queued MME_EVENT_S1AP_TIMER onto ogs_app()->queue.
+     * With s1ap_rx_workers the RX path floods that queue; when push fails
+     * the one-shot holding timer is dead, ue_ctx_rel_action stays set, and
+     * mme_orphan_enb_ue_sweep skips the context forever — enb_ue balloons
+     * while sessions stay flat. Timer mgr already runs on main, so the
+     * event hop was never required for correctness.
+     */
+    enb_ue_id = OGS_POINTER_TO_UINT(data);
+    enb_ue = enb_ue_find_by_id(enb_ue_id);
+    if (!enb_ue) {
+        ogs_warn("S1 holding timer: context already removed [id:%d]",
+                (int)enb_ue_id);
+        return;
     }
+
+    ogs_warn("Implicit S1 release");
+    ogs_warn("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
+            enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
+    s1ap_handle_ue_context_release_action(enb_ue);
 }
 
 void mme_timer_s11_holding_timer_expire(void *data)

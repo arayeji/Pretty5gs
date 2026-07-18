@@ -377,16 +377,17 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
     case MME_EVENT_S1AP_RX_WATCH_FAILED:
         /* an RX worker could not watch this eNB socket (fd died in the
-         * accept->watch race). Remove the half-created eNB; that runs
-         * the multi-phase unwatch/drain teardown which destroys the
-         * socket. If the eNB is already gone, destroy only when no
-         * close is already registered — a raw destroy here raced the
-         * registry and recycled the sock pointer (FATAL on re-register). */
+         * accept->watch race). Release S1/UE state first (same as
+         * CONNREFUSED), then remove the eNB — mme_enb_remove() alone
+         * does not walk enb_ue_list, which left orphan S1 contexts
+         * unreachable to the per-eNB orphan sweep. */
         ogs_assert(e->sock);
         enb = mme_enb_find_by_sock(e->sock);
-        if (enb)
+        if (enb) {
+            mme_gtp_send_release_all_ue_in_enb(
+                    enb, OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_LO_CONNREFUSED);
             mme_enb_remove(enb);
-        else
+        } else
             s1ap_sock_close_orphan(e->sock);
         break;
 

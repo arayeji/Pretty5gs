@@ -981,8 +981,9 @@ struct mme_ue_s {
         \
         enb_ue_holding = enb_ue_find_by_id((__mME)->enb_ue_id); \
         if (enb_ue_holding) { \
-            enb_ue_holding->mme_ue_id = OGS_INVALID_POOL_ID; \
-            \
+            /* Keep mme_ue_id so Implicit S1 release can clear \
+             * enb_ue_holding_id on the owner (do not orphan the reverse \
+             * link). Active S1 is the new association after associate. */ \
             ogs_warn("[%s] Holding S1 Context", (__mME)->imsi_bcd); \
             ogs_warn("[%s]    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]", \
                     (__mME)->imsi_bcd, \
