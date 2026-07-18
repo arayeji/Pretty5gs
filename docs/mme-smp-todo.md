@@ -20,18 +20,31 @@ Invariants (same as `docs/smp-workers.md`):
 - [x] SGW-C session shard workers (`sgwc.workers`) — soak before MME Stage C
 - [x] `mme_find_served_tai` PLMN+TAC hash (lazy rebuild; list1 ranges stay linear)
 - [x] S1AP TX encode offload — **DownlinkNASTransport wedge** (`mme.s1ap_tx_workers`, default 0)
+- [x] Demote race/late teardown logs to WARN + merge SCTP/HO double logs
+
+---
+
+## Perf snapshot (post TAI + TX workers=4)
+
+60s @ 199Hz, ~3.8k samples; config `s1ap_rx_workers: 4`, `s1ap_tx_workers: 4`.
+
+| Item | Result |
+|---|---|
+| `mme_main` (children) | ~40% (was ~51% → ~45% after TAI alone) |
+| `mme_find_served_tai` | gone (~0 samples) |
+| TX offload | live (`s1ap_tx_*` in profile) |
+| Remaining wedge | FSM on `mme_main` + **main-thread SCTP send** (~6.5% `sctp_write_callback`) |
+| Other | Diameter `search_avp` ~4%, pkbuf/`memset` ~3.5%, `__vfprintf` ~3.3% |
 
 ---
 
 ## 1. `mme_find_served_tai` — hash / index — DONE
 
-Landed: process-global PLMN+TAC hash; writers invalidate; list1 ranges
-still scanned with lowest-entry-index-wins. Re-perf after install to
-confirm ~2.6% self is gone.
+Confirmed in prod perf: self overhead gone. list1 ranges still linear.
 
 ---
 
-## 2. S1AP encode + TX queue — DONE (DLNAS wedge)
+## 2. S1AP encode + TX queue — DONE (DLNAS wedge); soak / Stage 2b open
 
 | | |
 |---|---|
@@ -48,12 +61,17 @@ confirm ~2.6% self is gone.
 - [x] `s1ap_tx_post_dlnas` from `nas_eps_send_to_downlink_nas_transport`
 - [x] Hold sync sends while `s1ap_tx_pending > 0`; flush on TX_READY
 - [x] Wire meson + `mme-init` start/stop + `MME_EVENT_S1AP_TX_READY` in `mme-sm`
+- [x] Prod soak with `s1ap_rx_workers: 4` + `s1ap_tx_workers: 4` (ongoing)
+- [x] Perf: DLNAS encode partly off `mme_main`; `s1ap_tx_ready_handle` ~1%
 
 ### Still open (Stage 2b)
 
 - [ ] Offload ICSR / E-RAB / HO / paging builders (need larger snapshots)
-- [ ] Soak with `s1ap_rx_workers` + `s1ap_tx_workers` both > 0
-- [ ] Perf: confirm DLNAS `ogs_asn_encode` leaves `mme_main`
+- [ ] Reduce **main-thread SCTP send** cost (`sctp_write_callback` ~6.5%) — TX path
+      posts encoded pkbuf; send still drains on main pollset. Options: dedicated
+      SCTP IO thread, or TX worker `ogs_sctp_senddata` with strict per-assoc order
+      (must not break invariant without design review)
+- [ ] Longer soak: no S1 flaps / order bugs under attach churn
 
 ---
 
@@ -62,7 +80,7 @@ confirm ~2.6% self is gone.
 | | |
 |---|---|
 | **Goal** | Run NAS security encode/decode off `mme_main` using a frozen key+count snapshot |
-| **Benefit** | Moderate on attach / TAU / service request |
+| **Benefit** | Moderate on attach / TAU / service request (next after Stage 2b send path) |
 | **Effort** | Medium |
 | **Risk** | Medium — **DL/UL count and key lifetime must stay correct** |
 | **Knob** | e.g. `mme.nas_sec_workers` (default `0`) or fold into TX/RX workers |
@@ -84,7 +102,7 @@ confirm ~2.6% self is gone.
 | | |
 |---|---|
 | **Goal** | Per-UE ownership on workers (EMM/ESM/S11/S6a xacts for that UE) |
-| **Benefit** | Biggest multi-core win for MME |
+| **Benefit** | Biggest multi-core win for MME (`mme_main` FSM ~40% still) |
 | **Effort** | Large |
 | **Risk** | Large — same rules as SGW-C; **do not rush** |
 | **Knob** | e.g. `mme.workers` (default `0`); requires `ogs_worker_shards_enable()` |
@@ -114,12 +132,12 @@ confirm ~2.6% self is gone.
 
 ---
 
-## Suggested order
+## Suggested order (current)
 
-1. **`mme_find_served_tai`** — small, measurable, no new threads  
-2. **S1AP encode + TX queue** — pairs with existing RX offload  
-3. **NAS sec snapshot** — optional; can merge with (2) if TX path already queues NAS  
-4. **Stage C UE shards** — only after SGWC soak + test rig  
+1. ~~`mme_find_served_tai`~~ — done / confirmed in perf  
+2. ~~S1AP TX DLNAS wedge~~ — landed; **finish Stage 2b** (more builders + SCTP send placement)  
+3. **NAS sec snapshot** — optional; pairs with TX if already queuing NAS  
+4. **Stage C UE shards** — only after SGWC soak + test rig (attacks remaining `mme_main` FSM)
 
 ## Deployment reminder
 
