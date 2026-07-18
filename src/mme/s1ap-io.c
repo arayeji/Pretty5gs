@@ -23,6 +23,16 @@
 #include "s1ap-path.h"
 #include "s1ap-io.h"
 
+#ifndef EPIPE
+#define EPIPE 32
+#endif
+#ifndef ENOTCONN
+#define ENOTCONN 107
+#endif
+#ifndef ECONNABORTED
+#define ECONNABORTED 103
+#endif
+
 static ogs_worker_t *io_worker = NULL;
 
 typedef struct io_job_s {
@@ -31,7 +41,8 @@ typedef struct io_job_s {
     int             op;
     ogs_sock_t      *sock;
     ogs_pkbuf_t     *pkbuf;         /* IO_CMD_SEND (ownership: job) */
-    bool            has_addr;       /* SEQPACKET destination present */
+    bool            send_addr;      /* SEQPACKET: pass addr to sendmsg */
+    bool            has_peer;       /* peer addr for EPIPE → CONNREFUSED */
     ogs_sockaddr_t  addr;           /* copied: enb->sctp.addr dies with enb */
 } io_job_t;
 
@@ -43,9 +54,14 @@ typedef struct io_sock_s {
     ogs_sock_t      *sock;
     ogs_list_t      write_queue;    /* ogs_pkbuf_t FIFO */
     ogs_poll_t      *poll_write;    /* POLLOUT on io_worker->pollset */
-    bool            has_addr;
+    bool            send_addr;      /* pass addr to sendmsg (SEQPACKET) */
+    bool            has_peer;
     ogs_sockaddr_t  addr;
+    bool            dead;           /* hard send error; drop further SEND */
+    bool            dead_reported;  /* CONNREFUSED posted once */
 } io_sock_t;
+
+#define IO_WRITE_QUEUE_MAX  256
 
 static OGS_THREAD_LOCAL ogs_hash_t *io_sock_hash = NULL;
 
@@ -115,20 +131,74 @@ static void io_sock_free(io_sock_t *ctx)
 
 static void io_write_cb(short when, ogs_socket_t fd, void *data);
 
+static bool io_errno_assoc_dead(ogs_err_t err)
+{
+    return err == EPIPE ||
+           err == OGS_ECONNRESET ||
+           err == ENOTCONN ||
+           err == ECONNABORTED ||
+           err == OGS_EBADF;
+}
+
+/*
+ * One-shot: tell main this association is dead so CONNREFUSED tears
+ * down eNB + UEs. Without this, EPIPE only drops PDUs and the half-dead
+ * assoc keeps producing Broken-pipe storms until SCTP heartbeat times out.
+ */
+static void io_report_assoc_dead(io_sock_t *ctx)
+{
+    ogs_sockaddr_t *addr = NULL;
+
+    ogs_assert(ctx);
+
+    if (ctx->dead_reported)
+        return;
+    ctx->dead_reported = true;
+    ctx->dead = true;
+
+    if (ctx->has_peer) {
+        addr = ogs_calloc(1, sizeof(*addr));
+        if (addr)
+            memcpy(addr, &ctx->addr, sizeof(*addr));
+    }
+
+    if (!addr) {
+        ogs_error("s1ap-io: assoc dead but no peer addr (sock:%p); "
+                "main will not see CONNREFUSED", (void *)ctx->sock);
+        return;
+    }
+
+    ogs_warn("s1ap-io: hard send error — raising CONNREFUSED");
+    mme_sctp_event_push(MME_EVENT_S1AP_LO_CONNREFUSED,
+            ctx->sock, addr, NULL, 0, 0);
+}
+
 /*
  * Drain ctx->write_queue with non-blocking sendmsg. On would-block,
  * arm POLLOUT on the IO thread's pollset and return; io_write_cb
- * re-enters here. Any other send error drops that pkbuf and continues
- * (matches ogs_sctp_senddata semantics).
+ * re-enters here. Hard errors mark the assoc dead and notify main.
  */
 static void io_sock_flush(io_sock_t *ctx)
 {
     ogs_pkbuf_t *pkbuf = NULL;
     int sent;
 
+    if (ctx->dead) {
+        ogs_pkbuf_t *next = NULL;
+        ogs_list_for_each_safe(&ctx->write_queue, next, pkbuf) {
+            ogs_list_remove(&ctx->write_queue, pkbuf);
+            ogs_pkbuf_free(pkbuf);
+        }
+        if (ctx->poll_write) {
+            ogs_pollset_remove(ctx->poll_write);
+            ctx->poll_write = NULL;
+        }
+        return;
+    }
+
     while ((pkbuf = ogs_list_first(&ctx->write_queue)) != NULL) {
         sent = ogs_sctp_sendmsg(ctx->sock, pkbuf->data, pkbuf->len,
-                ctx->has_addr ? &ctx->addr : NULL,
+                ctx->send_addr ? &ctx->addr : NULL,
                 ogs_sctp_ppid_in_pkbuf(pkbuf),
                 ogs_sctp_stream_no_in_pkbuf(pkbuf));
 
@@ -150,17 +220,31 @@ static void io_sock_flush(io_sock_t *ctx)
                             ctx->sock->fd);
                     ogs_list_remove(&ctx->write_queue, pkbuf);
                     ogs_pkbuf_free(pkbuf);
+                    io_report_assoc_dead(ctx);
                     continue;
                 }
             }
             return;
         }
 
-        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
-                "s1ap-io: sendmsg(len:%d,ssn:%d) failed",
-                pkbuf->len, (int)ogs_sctp_stream_no_in_pkbuf(pkbuf));
-        ogs_list_remove(&ctx->write_queue, pkbuf);
-        ogs_pkbuf_free(pkbuf);
+        {
+            ogs_err_t err = ogs_socket_errno;
+            ogs_log_message(OGS_LOG_ERROR, err,
+                    "s1ap-io: sendmsg(len:%d,ssn:%d) failed",
+                    pkbuf->len, (int)ogs_sctp_stream_no_in_pkbuf(pkbuf));
+            ogs_list_remove(&ctx->write_queue, pkbuf);
+            ogs_pkbuf_free(pkbuf);
+
+            if (io_errno_assoc_dead(err)) {
+                io_report_assoc_dead(ctx);
+                /* drop the rest — further sendmsg will only spam */
+                while ((pkbuf = ogs_list_first(&ctx->write_queue)) != NULL) {
+                    ogs_list_remove(&ctx->write_queue, pkbuf);
+                    ogs_pkbuf_free(pkbuf);
+                }
+                break;
+            }
+        }
     }
 
     if (ctx->poll_write) {
@@ -189,10 +273,25 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
     case IO_CMD_SEND:
         ogs_assert(job->pkbuf);
         ctx = io_sock_get(job->sock);
-        if (job->has_addr) {
-            ctx->has_addr = true;
+        if (job->has_peer) {
+            ctx->has_peer = true;
             memcpy(&ctx->addr, &job->addr, sizeof(ctx->addr));
         }
+        ctx->send_addr = job->send_addr;
+
+        if (ctx->dead) {
+            ogs_pkbuf_free(job->pkbuf);
+            break;
+        }
+
+        if (ogs_list_count(&ctx->write_queue) >= IO_WRITE_QUEUE_MAX) {
+            ogs_error("s1ap-io: per-sock write queue full (sock:%p); "
+                    "dropping PDU and marking dead", (void *)job->sock);
+            ogs_pkbuf_free(job->pkbuf);
+            io_report_assoc_dead(ctx);
+            break;
+        }
+
         ogs_list_add(&ctx->write_queue, job->pkbuf);
         io_sock_flush(ctx);
         break;
@@ -248,8 +347,8 @@ bool s1ap_io_active(void)
     return io_worker != NULL;
 }
 
-int s1ap_io_post_send(
-        ogs_sock_t *sock, ogs_pkbuf_t *pkbuf, const ogs_sockaddr_t *addr)
+int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
+        const ogs_sockaddr_t *peer_addr, bool send_with_addr)
 {
     io_job_t *job = NULL;
     int rv;
@@ -268,9 +367,10 @@ int s1ap_io_post_send(
     job->op = IO_CMD_SEND;
     job->sock = sock;
     job->pkbuf = pkbuf;
-    if (addr) {
-        job->has_addr = true;
-        memcpy(&job->addr, addr, sizeof(job->addr));
+    job->send_addr = send_with_addr;
+    if (peer_addr) {
+        job->has_peer = true;
+        memcpy(&job->addr, peer_addr, sizeof(job->addr));
     }
 
     rv = ogs_worker_post(io_worker, job);

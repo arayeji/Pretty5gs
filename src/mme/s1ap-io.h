@@ -49,13 +49,15 @@ bool s1ap_io_active(void);
 
 /*
  * Queue one encoded S1AP PDU for transmission. ppid/stream_no must
- * already be set in the pkbuf metadata. `addr` is only for
- * SOCK_SEQPACKET (copied into the job); pass NULL for SOCK_STREAM.
+ * already be set in the pkbuf metadata.
+ *   peer_addr     — always preferred (EPIPE → CONNREFUSED needs it)
+ *   send_with_addr — true for SEQPACKET (pass addr to sendmsg);
+ *                    false for connected STREAM
  * Takes ownership of pkbuf (freed on any failure). Returns OGS_OK
  * or OGS_ERROR (job alloc/queue-full drop).
  */
-int s1ap_io_post_send(
-        ogs_sock_t *sock, ogs_pkbuf_t *pkbuf, const ogs_sockaddr_t *addr);
+int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
+        const ogs_sockaddr_t *peer_addr, bool send_with_addr);
 
 /*
  * Socket close registry (main thread only).
@@ -63,8 +65,8 @@ int s1ap_io_post_send(
  * mme_enb_remove() may have both the RX worker (read poll) and the IO
  * thread (write queue) still referencing the socket. It registers the
  * sock with the set of confirmations required; the socket is destroyed
- * on the LAST confirm. A confirm for an unregistered sock destroys it
- * immediately (compat with the RX-only two-phase teardown).
+ * on the LAST confirm. A confirm for an unregistered sock is ignored
+ * (pointer may already have been reused by accept).
  */
 #define S1AP_SOCK_CONFIRM_RX  0x1
 #define S1AP_SOCK_CONFIRM_IO  0x2

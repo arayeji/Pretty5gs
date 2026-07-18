@@ -321,6 +321,7 @@ void mme_sctp_event_push(mme_event_e id,
 {
     mme_event_t *e = NULL;
     int rv;
+    bool critical;
 
     ogs_assert(id);
     ogs_assert(sock);
@@ -332,6 +333,38 @@ void mme_sctp_event_push(mme_event_e id,
     e->pkbuf = pkbuf;
     e->max_num_of_istreams = max_num_of_istreams;
     e->max_num_of_ostreams = max_num_of_ostreams;
+
+    /*
+     * Lifecycle confirms must not be dropped when the main queue is full
+     * (RX flood). Blocking ogs_queue_push from the IO thread would also
+     * stall ALL S1 TX — use trypush + notify + short retry instead.
+     */
+    critical = (id == MME_EVENT_S1AP_IO_DRAINED ||
+            id == MME_EVENT_S1AP_RX_SOCK_CLOSED ||
+            id == MME_EVENT_S1AP_LO_CONNREFUSED ||
+            id == MME_EVENT_S1AP_RX_WATCH_FAILED);
+
+    if (critical && ogs_worker_self()) {
+        int tries = 0;
+        for (;;) {
+            rv = ogs_queue_trypush(ogs_app()->queue, e);
+            if (rv == OGS_OK)
+                break;
+            ogs_pollset_notify(ogs_app()->pollset);
+            if (++tries > 10000) {
+                ogs_error("mme_sctp_event_push: critical id=%d "
+                        "trypush failed after retries (%d)", id, (int)rv);
+                ogs_free(e->addr);
+                if (e->pkbuf)
+                    ogs_pkbuf_free(e->pkbuf);
+                mme_event_free(e);
+                return;
+            }
+            ogs_usleep(1000);
+        }
+        ogs_pollset_notify(ogs_app()->pollset);
+        return;
+    }
 
     rv = ogs_queue_push(ogs_app()->queue, e);
     if (rv != OGS_OK) {

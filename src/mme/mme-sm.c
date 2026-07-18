@@ -260,39 +260,44 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         sock = e->sock;
         ogs_assert(sock);
         addr = e->addr;
-        if (!mme_sockaddr_valid(addr)) {
-            ogs_error("S1AP CONNREFUSED: invalid peer address (family=%u)",
-                    addr ? addr->ogs_sa_family : 0);
+        /*
+         * Prefer addr lookup; fall back to sock (IO-thread EPIPE path
+         * always supplies both, but sock is authoritative if the peer
+         * reconnected and addr collides).
+         */
+        enb = NULL;
+        if (mme_sockaddr_valid(addr))
+            enb = mme_enb_find_by_addr(addr);
+        if (!enb)
+            enb = mme_enb_find_by_sock(sock);
+        if (!enb) {
+            ogs_warn("S1AP CONNREFUSED: eNB already removed "
+                    "(family=%u sock:%p)",
+                    addr ? addr->ogs_sa_family : 0, sock);
             if (addr) ogs_free(addr);
             break;
         }
 
-        enb = mme_enb_find_by_addr(addr);
-        if (enb) {
-            if (enb->sctp.sock != sock) {
-                /*
-                 * Late SCTP_COMM_LOST / SCTP_SHUTDOWN for a socket
-                 * that was already superseded by a fast reconnect
-                 * (see MME_EVENT_S1AP_LO_ACCEPT). The current eNB
-                 * context owns a different fd and is healthy; do not
-                 * tear it down on behalf of the dead one.
-                 */
-                ogs_warn("Stale CONNREFUSED for [%s] ignored "
-                        "(socket already replaced by reconnect)",
-                        OGS_ADDR(addr, buf));
-            } else {
-                ogs_info("eNB-S1[%s] connection refused!!!",
-                        OGS_ADDR(addr, buf));
-                mme_gtp_send_release_all_ue_in_enb(
-                        enb,
-                        OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_LO_CONNREFUSED);
-                mme_enb_remove(enb);
-            }
+        if (enb->sctp.sock != sock) {
+            /*
+             * Late SCTP_COMM_LOST / SCTP_SHUTDOWN for a socket
+             * that was already superseded by a fast reconnect
+             * (see MME_EVENT_S1AP_LO_ACCEPT). The current eNB
+             * context owns a different fd and is healthy; do not
+             * tear it down on behalf of the dead one.
+             */
+            ogs_warn("Stale CONNREFUSED for [%s] ignored "
+                    "(socket already replaced by reconnect)",
+                    OGS_ADDR(enb->sctp.addr, buf));
         } else {
-            ogs_warn("eNB-S1[%s] connection refused, Already Removed!",
-                    OGS_ADDR(addr, buf));
+            ogs_info("eNB-S1[%s] connection refused!!!",
+                    OGS_ADDR(enb->sctp.addr, buf));
+            mme_gtp_send_release_all_ue_in_enb(
+                    enb,
+                    OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_LO_CONNREFUSED);
+            mme_enb_remove(enb);
         }
-        ogs_free(addr);
+        if (addr) ogs_free(addr);
 
         break;
     case MME_EVENT_S1AP_MESSAGE:
