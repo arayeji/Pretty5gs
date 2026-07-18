@@ -967,13 +967,10 @@ void s1ap_handle_uplink_nas_transport(
             enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
 
     /*
-     * Stale S1 context. Dominant trigger: HOLDING_S1_CONTEXT clears
-     * enb_ue->mme_ue_id when a newer S1-connection arrives for the same
-     * NAS UE (mme_ue); the held enb_ue stays in the pool until
-     * CLEAR_S1_CONTEXT sends UEContextReleaseCommand after authentication
-     * completes on the new connection (per TS 23.401 §5.3.4.4 / mirrors
-     * TS 23.502 §4.2.6 for 5G: "after successfully authenticating the
-     * UE, the [MME/AMF] releases the old NAS signalling connection").
+     * Stale S1 context. Dominant trigger: HOLDING_S1_CONTEXT parks the
+     * old enb_ue (ue_ctx_rel_action + t_s1_holding) when a newer S1
+     * arrives for the same NAS UE; the held enb_ue stays until Implicit
+     * S1 release / CLEAR_S1_CONTEXT (per TS 23.401 §5.3.4.4).
      *
      * If the eNB sends a stale UplinkNASTransport on the held IDs during
      * that window, send UEContextReleaseCommand here so the eNB can
