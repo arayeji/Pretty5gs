@@ -103,6 +103,18 @@ typedef enum {
 #define MME_HO_TAIL_PATH_SWITCH     1
 #define MME_HO_TAIL_HANDOVER_NOTIFY 2
 #define MME_HO_TAIL_ICS_RSP         3
+/*
+ * UE Context Release Complete tail: the eNB-side bookkeeping
+ * (enb_ue_remove, HO peer unlink) ran on main; the mme_ue-side
+ * (mobile-reachable timer, will-remove, mme_ue_remove, indirect-tunnel
+ * teardown, paging) runs here on the owner. e->enb_ue_id carries the
+ * id of the ALREADY-REMOVED enb_ue (for stale-link comparison only —
+ * never resolve it), e->rel_action the S1AP_UE_CTX_REL_* action and
+ * e->rel_flags the MME_UE_REL_F_* bits.
+ */
+#define MME_HO_TAIL_UE_REL          4
+
+#define MME_UE_REL_F_HO_PEER_GONE   0x1
 
 /*
  * MME_HO_TAIL_ICS_RSP payload, carried in e->pkbuf (freed with the
@@ -200,6 +212,9 @@ typedef struct mme_event_s {
 
     /* MME_EVENT_S1AP_HO_TAIL: MME_HO_TAIL_* discriminator */
     int ho_kind;
+    /* MME_HO_TAIL_UE_REL: S1AP_UE_CTX_REL_* action + MME_UE_REL_F_* */
+    int rel_action;
+    int rel_flags;
 
 } mme_event_t;
 

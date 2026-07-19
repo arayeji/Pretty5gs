@@ -393,6 +393,36 @@ int mme_worker_post_ho_tail(int kind, ogs_pool_id_t enb_ue_id,
     return mme_event_push_to_worker(owner, e);
 }
 
+int mme_worker_post_ue_rel_tail(int rel_action, ogs_pool_id_t old_enb_ue_id,
+        mme_ue_t *mme_ue, int rel_flags)
+{
+    int owner;
+    mme_event_t *e;
+
+    ogs_assert(mme_ue);
+    ogs_assert(mme_workers_active());
+
+    owner = mme_shard_from_teid(mme_ue->mme_s11_teid);
+    if (owner < 0) {
+        /* Main IS the owner (shard 0): caller runs the tail inline. */
+        return OGS_ERROR;
+    }
+
+    e = mme_event_new(MME_EVENT_S1AP_HO_TAIL);
+    if (!e) {
+        ogs_error("mme_worker_post_ue_rel_tail: mme_event_new() failed");
+        return OGS_ERROR;
+    }
+    e->ho_kind = MME_HO_TAIL_UE_REL;
+    e->enb_ue_id = old_enb_ue_id;   /* already removed; comparison only */
+    e->mme_ue_id = mme_ue->id;
+    e->rel_action = rel_action;
+    e->rel_flags = rel_flags;
+
+    /* frees e on failure */
+    return mme_event_push_to_worker(owner, e);
+}
+
 bool mme_worker_rehome_emm(mme_event_t *e, mme_ue_t *mme_ue)
 {
     int owner, self;

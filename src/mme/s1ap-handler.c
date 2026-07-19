@@ -2292,8 +2292,10 @@ void s1ap_handle_ue_context_release_complete(
 
 void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
 {
-    int r;
     mme_ue_t *mme_ue = NULL;
+    int rel_action;
+    int rel_flags = 0;
+    ogs_pool_id_t old_enb_ue_id;
 
     if (!enb_ue) {
         ogs_warn("S1 context has already been removed");
@@ -2303,175 +2305,60 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
     mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
     ogs_mme_trace_set(enb_ue, mme_ue, NULL, "s1-release");
     OGS_TLOG_INFO("UE Context Release [Action:%d]", enb_ue->ue_ctx_rel_action);
-    if (mme_ue) {
+    if (mme_ue)
         ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
 
-        /*
-         * An assert occurs when a NAS message retransmission occurs.
-         *
-         * Because there is no `enb_ue` context.
-         *
-         * Before removing enb_ue, all Timers must be stopped
-         * to prevent retransmission of NAS messages.
-         */
-        mme_mobile_reachable_start(mme_ue);
-    }
+    rel_action = enb_ue->ue_ctx_rel_action;
+    old_enb_ue_id = enb_ue->id;
 
-    switch (enb_ue->ue_ctx_rel_action) {
+    /*
+     * Split: the eNB-side bookkeeping (HO peer unlink, enb_ue_remove)
+     * runs here on main — enb_ue and the per-eNB list/hash are
+     * main-owned. Everything that touches shard-owned mme_ue state
+     * (mobile-reachable timer, will-remove, mme_ue_remove, indirect
+     * tunnel teardown, paging) is the tail, which runs on the UE owner
+     * shard when mme.workers is active. Running mme_ue_remove here on
+     * main while the owner shard was mid-event was the "Assertion
+     * 'sess'/'sgw_ue' failed" production crash loop.
+     */
+    switch (rel_action) {
     case S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE:
         ogs_debug("    Action: S1 context remove");
-        /* Drop reverse holding link before free (HOLDING_S1_CONTEXT). */
-        if (mme_ue && mme_ue->enb_ue_holding_id == enb_ue->id)
-            mme_ue->enb_ue_holding_id = OGS_INVALID_POOL_ID;
         enb_ue_remove(enb_ue);
-        /*
-         * Normal S1 release keeps a REGISTERED UE with live session(s)
-         * on mme_ue_list (ECM-IDLE). Any context with no ESM session
-         * after S1 is gone is a stale stub and must not linger.
-         *
-         * BUT only when this was the UE's last S1 context. On an
-         * immediate re-attach the UE is already mid-attach on a NEW
-         * enb_ue (no ESM session yet, AIR in flight) while the OLD
-         * held context is being released here; reclaiming the mme_ue
-         * at that point kills the ongoing attach (auth-test: the
-         * Authentication Request is never sent and the UE wedges).
-         */
-        if (mme_ue &&
-                ogs_list_empty(&mme_ue->sess_list) &&
-                !MME_SESSION_RELEASE_PENDING(mme_ue) &&
-                !mme_ue->ue_context_will_remove &&
-                enb_ue_find_by_id(mme_ue->enb_ue_id) == NULL)
-            mme_ue_enter_ue_context_will_remove(mme_ue);
         break;
     case S1AP_UE_CTX_REL_S1_REMOVE_AND_UNLINK:
         ogs_debug("    Action: S1 normal release");
-
-        if (mme_ue)
-            enb_ue_deassociate_mme_ue(enb_ue, mme_ue);
-        else
+        if (!mme_ue)
             mme_ran_error(mme_enb_find_by_id(enb_ue->enb_id), enb_ue, NULL,
                     "s1ap", NULL, "No UE(mme-ue) context");
-
         enb_ue_remove(enb_ue);
         break;
     case S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE:
         ogs_debug("    Action: UE context remove");
         enb_ue_remove(enb_ue);
-        if (!mme_ue) {
+        if (!mme_ue)
             ogs_error("No UE(mme-ue) context");
-            return;
-        }
-
-        mme_ue_remove(mme_ue);
         break;
     case S1AP_UE_CTX_REL_S1_HANDOVER_COMPLETE:
-        ogs_debug("    Action: S1 handover complete");
-
-        {
-            bool ho_peer_gone = enb_ue_source_deassociate_target(enb_ue);
-
-            enb_ue_remove(enb_ue);
-
-            if (!mme_ue) {
-                ogs_error("No UE(mme-ue) context");
-                return;
-            }
-            enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-            if (!enb_ue) {
-                mme_ue_warn(mme_ue, NULL, "s1ap", NULL,
-                        "No UE(target-enb-ue) context%s",
-                        ho_peer_gone ?
-                            " (HO peer already released)" : "");
-                return;
-            }
-            if (ho_peer_gone)
-                mme_ue_warn(mme_ue, enb_ue, "s1ap", NULL,
-                        "HO peer S1 context already released");
-        }
-        if (mme_ue_have_indirect_tunnel(mme_ue) == true) {
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_delete_indirect_data_forwarding_tunnel_request(
-                    enb_ue, mme_ue, OGS_GTP_DELETE_INDIRECT_HANDOVER_COMPLETE));
-        } else {
-            ogs_warn("Check your eNodeB");
-            ogs_warn("  No INDIRECT TUNNEL");
-            ogs_warn("  Packet could be dropped during S1-Handover");
-            mme_ue_clear_indirect_tunnel(mme_ue);
-        }
-        break;
     case S1AP_UE_CTX_REL_S1_HANDOVER_CANCEL:
-        ogs_warn("    Action: S1 handover cancel");
-
-        {
-            bool ho_peer_gone = enb_ue_source_deassociate_target(enb_ue);
-
-            enb_ue_remove(enb_ue);
-
-            if (!mme_ue) {
-                ogs_error("No UE(mme-ue) context");
-                return;
-            }
-            enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-            if (!enb_ue) {
-                mme_ue_warn(mme_ue, NULL, "s1ap", NULL,
-                        "No UE(target-enb-ue) context%s",
-                        ho_peer_gone ?
-                            " (HO peer already released)" : "");
-                return;
-            }
-            if (ho_peer_gone)
-                mme_ue_warn(mme_ue, enb_ue, "s1ap", NULL,
-                        "HO peer S1 context already released");
-        }
-        if (mme_ue_have_indirect_tunnel(mme_ue) == true) {
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_delete_indirect_data_forwarding_tunnel_request(
-                    enb_ue, mme_ue, OGS_GTP_DELETE_INDIRECT_HANDOVER_CANCEL));
-        } else {
-            ogs_warn("Check your eNodeB");
-            ogs_warn("  No INDIRECT TUNNEL");
-            ogs_warn("  Packet could be dropped during S1-Handover");
-            mme_ue_clear_indirect_tunnel(mme_ue);
-
-            enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-            if (!enb_ue) {
-                ogs_warn("No S1 context");
-                return;
-            }
-            r = s1ap_send_handover_cancel_ack(enb_ue);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
-        }
-        break;
     case S1AP_UE_CTX_REL_S1_HANDOVER_FAILURE:
-        ogs_warn("    Action: S1 handover failure");
+        if (rel_action == S1AP_UE_CTX_REL_S1_HANDOVER_COMPLETE)
+            ogs_debug("    Action: S1 handover complete");
+        else if (rel_action == S1AP_UE_CTX_REL_S1_HANDOVER_CANCEL)
+            ogs_warn("    Action: S1 handover cancel");
+        else
+            ogs_warn("    Action: S1 handover failure");
 
         if (enb_ue_source_deassociate_target(enb_ue))
-            ogs_warn("HO peer S1 context already released "
-                    "during failure cleanup");
+            rel_flags |= MME_UE_REL_F_HO_PEER_GONE;
         enb_ue_remove(enb_ue);
-
-        if (!mme_ue) {
+        if (!mme_ue)
             ogs_error("No UE(mme-ue) context");
-            return;
-        }
-        if (mme_ue_have_indirect_tunnel(mme_ue) == true) {
-            ogs_error("Check your eNodeB");
-            ogs_error("  We found INDIRECT TUNNEL in HandoverFailure");
-            mme_ue_clear_indirect_tunnel(mme_ue);
-        }
         break;
     case S1AP_UE_CTX_REL_S1_PAGING:
         ogs_debug("    Action: S1 paging");
-        if (mme_ue) {
-            enb_ue_deassociate_mme_ue(enb_ue, mme_ue);
-
-            r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
-        } else
+        if (!mme_ue)
             ogs_error("No UE(mme-ue) context");
-
         enb_ue_remove(enb_ue);
         break;
     default:
@@ -2486,11 +2373,135 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
          */
         ogs_error("Invalid Action[%d] - removing orphaned S1 context "
                 "ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
-                enb_ue->ue_ctx_rel_action,
+                rel_action,
                 enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
-        if (mme_ue && mme_ue->enb_ue_id == enb_ue->id)
-            enb_ue_deassociate_mme_ue(enb_ue, mme_ue);
         enb_ue_remove(enb_ue);
+        break;
+    }
+
+    if (!mme_ue)
+        return;
+
+    if (mme_workers_active() &&
+            mme_worker_post_ue_rel_tail(
+                rel_action, old_enb_ue_id, mme_ue, rel_flags) == OGS_OK)
+        return;
+
+    /* workers off, main owns the UE, or the post failed: run inline */
+    s1ap_ue_context_release_tail(mme_ue, rel_action, old_enb_ue_id, rel_flags);
+}
+
+/*
+ * mme_ue-side of UE Context Release Complete. Runs on the UE owner
+ * shard when mme.workers is active (MME_HO_TAIL_UE_REL), inline on
+ * main otherwise. old_enb_ue_id names the enb_ue main already removed:
+ * use it only to detect stale links, never resolve it.
+ */
+void s1ap_ue_context_release_tail(mme_ue_t *mme_ue, int rel_action,
+        ogs_pool_id_t old_enb_ue_id, int rel_flags)
+{
+    int r;
+    enb_ue_t *target_ue = NULL;
+    bool ho_peer_gone = (rel_flags & MME_UE_REL_F_HO_PEER_GONE);
+
+    ogs_assert(mme_ue);
+
+    /* Drop the reverse links to the removed S1 context. */
+    if (mme_ue->enb_ue_holding_id == old_enb_ue_id)
+        mme_ue->enb_ue_holding_id = OGS_INVALID_POOL_ID;
+    if (mme_ue->enb_ue_id == old_enb_ue_id)
+        mme_ue->enb_ue_id = OGS_INVALID_POOL_ID;
+
+    /*
+     * An assert occurs when a NAS message retransmission occurs.
+     *
+     * Because there is no `enb_ue` context.
+     *
+     * All timers must be stopped to prevent retransmission of
+     * NAS messages towards the removed S1 context.
+     */
+    mme_mobile_reachable_start(mme_ue);
+
+    switch (rel_action) {
+    case S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE:
+        /*
+         * Normal S1 release keeps a REGISTERED UE with live session(s)
+         * on mme_ue_list (ECM-IDLE). Any context with no ESM session
+         * after S1 is gone is a stale stub and must not linger.
+         *
+         * BUT only when this was the UE's last S1 context. On an
+         * immediate re-attach the UE is already mid-attach on a NEW
+         * enb_ue (no ESM session yet, AIR in flight) while the OLD
+         * held context is being released here; reclaiming the mme_ue
+         * at that point kills the ongoing attach (auth-test: the
+         * Authentication Request is never sent and the UE wedges).
+         */
+        if (ogs_list_empty(&mme_ue->sess_list) &&
+                !MME_SESSION_RELEASE_PENDING(mme_ue) &&
+                !mme_ue->ue_context_will_remove &&
+                enb_ue_find_by_id(mme_ue->enb_ue_id) == NULL)
+            mme_ue_enter_ue_context_will_remove(mme_ue);
+        break;
+    case S1AP_UE_CTX_REL_S1_REMOVE_AND_UNLINK:
+        break;
+    case S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE:
+        mme_ue_remove(mme_ue);
+        break;
+    case S1AP_UE_CTX_REL_S1_HANDOVER_COMPLETE:
+    case S1AP_UE_CTX_REL_S1_HANDOVER_CANCEL:
+        target_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+        if (!target_ue) {
+            mme_ue_warn(mme_ue, NULL, "s1ap", NULL,
+                    "No UE(target-enb-ue) context%s",
+                    ho_peer_gone ?
+                        " (HO peer already released)" : "");
+            return;
+        }
+        if (ho_peer_gone)
+            mme_ue_warn(mme_ue, target_ue, "s1ap", NULL,
+                    "HO peer S1 context already released");
+
+        if (mme_ue_have_indirect_tunnel(mme_ue) == true) {
+            ogs_assert(OGS_OK ==
+                mme_gtp_send_delete_indirect_data_forwarding_tunnel_request(
+                    target_ue, mme_ue,
+                    rel_action == S1AP_UE_CTX_REL_S1_HANDOVER_COMPLETE ?
+                        OGS_GTP_DELETE_INDIRECT_HANDOVER_COMPLETE :
+                        OGS_GTP_DELETE_INDIRECT_HANDOVER_CANCEL));
+        } else {
+            ogs_warn("Check your eNodeB");
+            ogs_warn("  No INDIRECT TUNNEL");
+            ogs_warn("  Packet could be dropped during S1-Handover");
+            mme_ue_clear_indirect_tunnel(mme_ue);
+
+            if (rel_action == S1AP_UE_CTX_REL_S1_HANDOVER_CANCEL) {
+                target_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+                if (!target_ue) {
+                    ogs_warn("No S1 context");
+                    return;
+                }
+                r = s1ap_send_handover_cancel_ack(target_ue);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+            }
+        }
+        break;
+    case S1AP_UE_CTX_REL_S1_HANDOVER_FAILURE:
+        if (ho_peer_gone)
+            ogs_warn("HO peer S1 context already released "
+                    "during failure cleanup");
+        if (mme_ue_have_indirect_tunnel(mme_ue) == true) {
+            ogs_error("Check your eNodeB");
+            ogs_error("  We found INDIRECT TUNNEL in HandoverFailure");
+            mme_ue_clear_indirect_tunnel(mme_ue);
+        }
+        break;
+    case S1AP_UE_CTX_REL_S1_PAGING:
+        r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        break;
+    default:
         break;
     }
 }

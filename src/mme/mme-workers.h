@@ -78,6 +78,15 @@ bool mme_worker_rehome_emm(mme_event_t *e, mme_ue_t *mme_ue);
 int mme_worker_post_ho_tail(int kind, ogs_pool_id_t enb_ue_id,
         mme_ue_t *mme_ue, ogs_pkbuf_t *pkbuf);
 
+/*
+ * Defer the mme_ue-side of UE Context Release Complete to the owner
+ * shard (MME_HO_TAIL_UE_REL). old_enb_ue_id names the enb_ue that main
+ * ALREADY removed (stale-link comparison only). Returns OGS_ERROR when
+ * the owner is main or the post failed — run the tail inline then.
+ */
+int mme_worker_post_ue_rel_tail(int rel_action, ogs_pool_id_t old_enb_ue_id,
+        mme_ue_t *mme_ue, int rel_flags);
+
 /* Peek IMSI from a GTPv2-C pkbuf (Create Session Request TEID=0). */
 int mme_gtpv2_peek_imsi_bcd(ogs_pkbuf_t *pkbuf, char *bcd, size_t bcd_size);
 

@@ -1591,9 +1591,18 @@ cleanup:
         /* Deferred Path Switch / Handover Notify tail on the UE owner
          * shard (posted by the main-thread S1AP handlers). Contexts may
          * have died between post and dispatch — re-validate both. */
-        enb_ue = enb_ue_find_by_id(e->enb_ue_id);
-        mme_ue = mme_ue_find_by_id(e->mme_ue_id);
-        if (!enb_ue || !mme_ue) {
+        if (e->ho_kind == MME_HO_TAIL_UE_REL) {
+            /* e->enb_ue_id is the ALREADY-REMOVED enb_ue here: only the
+             * mme_ue must still exist. */
+            mme_ue = mme_ue_find_by_id(e->mme_ue_id);
+            if (!mme_ue)
+                ogs_warn("UE-release tail: mme_ue gone [id:%d]",
+                        e->mme_ue_id);
+            else
+                s1ap_ue_context_release_tail(mme_ue,
+                        e->rel_action, e->enb_ue_id, e->rel_flags);
+        } else if (!(enb_ue = enb_ue_find_by_id(e->enb_ue_id)) ||
+                   !(mme_ue = mme_ue_find_by_id(e->mme_ue_id))) {
             ogs_warn("HO tail (kind=%d): context gone "
                     "[enb_ue:%s mme_ue:%s]", e->ho_kind,
                     enb_ue ? "ok" : "gone", mme_ue ? "ok" : "gone");

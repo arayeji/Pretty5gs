@@ -79,6 +79,15 @@ void s1ap_handover_notify_complete(enb_ue_t *target_ue, mme_ue_t *mme_ue);
 void s1ap_initial_context_setup_response_complete(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue, mme_ics_rsp_tail_t *tail);
 
+/*
+ * UE Context Release Complete tail (mobile-reachable, will-remove,
+ * mme_ue_remove, indirect-tunnel teardown, paging). Same owner shard
+ * rule (MME_HO_TAIL_UE_REL); old_enb_ue_id names the enb_ue main
+ * already removed — stale-link comparison only.
+ */
+void s1ap_ue_context_release_tail(mme_ue_t *mme_ue, int rel_action,
+        ogs_pool_id_t old_enb_ue_id, int rel_flags);
+
 void s1ap_handle_enb_direct_information_transfer(
         mme_enb_t *enb, ogs_s1ap_message_t *message);
 
