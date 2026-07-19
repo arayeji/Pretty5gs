@@ -649,40 +649,54 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
                     ogs_plmn_id_hexdump(&lai->nas_plmn_id), lai->lac);
     }
 
-    if (ECM_IDLE(mme_ue)) {
-        if (CS_CALL_SERVICE_INDICATOR(mme_ue)) {
-            /* UE will respond Extended Service Request in CS CNDomain*/
-            MME_STORE_PAGING_INFO(mme_ue,
-                MME_PAGING_TYPE_CS_CALL_SERVICE, NULL);
-            r = s1ap_send_paging(mme_ue, S1AP_CNDomain_cs);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
-        } else if (SMS_SERVICE_INDICATOR(mme_ue)) {
-            /* UE will respond Service Request in PS CNDomain*/
-            MME_STORE_PAGING_INFO(mme_ue,
-                MME_PAGING_TYPE_SMS_SERVICE, NULL);
-            r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
+    /*
+     * Treat as idle when ECM-IDLE, when there is no S1, or when an S1
+     * release is already in flight. SGsAP Paging can race
+     * UEContextReleaseComplete on the main queue (common with
+     * mme.workers / separate S1AP vs SGs sockets): treating that UE as
+     * CONNECTED skipped S1AP Paging and wedged MT-SMS/CSFB tests.
+     */
+    {
+        enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+        bool release_pending = enb_ue &&
+            enb_ue->ue_ctx_rel_action != S1AP_UE_CTX_REL_INVALID_ACTION;
+        bool page_as_idle = ECM_IDLE(mme_ue) || !enb_ue || release_pending;
+
+        if (page_as_idle) {
+            if (CS_CALL_SERVICE_INDICATOR(mme_ue)) {
+                /* UE will respond Extended Service Request in CS CNDomain*/
+                MME_STORE_PAGING_INFO(mme_ue,
+                    MME_PAGING_TYPE_CS_CALL_SERVICE, NULL);
+                r = s1ap_send_paging(mme_ue, S1AP_CNDomain_cs);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+            } else if (SMS_SERVICE_INDICATOR(mme_ue)) {
+                /* UE will respond Service Request in PS CNDomain*/
+                MME_STORE_PAGING_INFO(mme_ue,
+                    MME_PAGING_TYPE_SMS_SERVICE, NULL);
+                r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+            } else {
+                sgs_cause = SGSAP_SGS_CAUSE_MT_CS_FALLBACK_REJECT_BY_USER;
+                goto paging_reject;
+            }
         } else {
-            sgs_cause = SGSAP_SGS_CAUSE_MT_CS_FALLBACK_REJECT_BY_USER;
-            goto paging_reject;
-        }
-    } else {
-        MME_CLEAR_PAGING_INFO(mme_ue);
-        if (CS_CALL_SERVICE_INDICATOR(mme_ue)) {
-            r = nas_eps_send_cs_service_notification(mme_ue);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
-        } else if (SMS_SERVICE_INDICATOR(mme_ue)) {
-            /* Was ogs_assert() - SGs/VLR down must not abort MME */
-            if (sgsap_send_service_request(
-                    mme_ue, SGSAP_EMM_CONNECTED_MODE) != OGS_OK)
-                ogs_error("[%s] SGsAP Service-Request not sent "
-                        "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
-        } else {
-            sgs_cause = SGSAP_SGS_CAUSE_MT_CS_FALLBACK_REJECT_BY_USER;
-            goto paging_reject;
+            MME_CLEAR_PAGING_INFO(mme_ue);
+            if (CS_CALL_SERVICE_INDICATOR(mme_ue)) {
+                r = nas_eps_send_cs_service_notification(mme_ue);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+            } else if (SMS_SERVICE_INDICATOR(mme_ue)) {
+                /* Was ogs_assert() - SGs/VLR down must not abort MME */
+                if (sgsap_send_service_request(
+                        mme_ue, SGSAP_EMM_CONNECTED_MODE) != OGS_OK)
+                    ogs_error("[%s] SGsAP Service-Request not sent "
+                            "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
+            } else {
+                sgs_cause = SGSAP_SGS_CAUSE_MT_CS_FALLBACK_REJECT_BY_USER;
+                goto paging_reject;
+            }
         }
     }
 
