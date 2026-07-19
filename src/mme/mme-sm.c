@@ -1541,6 +1541,19 @@ cleanup:
         break;
     }
 
+    case MME_EVENT_ADMIN_PURGE_UE:
+    {
+        mme_ue = mme_ue_find_by_id(e->mme_ue_id);
+        if (!mme_ue) {
+            ogs_debug("purge ue: mme_ue pool-id %d already gone",
+                    (int)e->mme_ue_id);
+            break;
+        }
+
+        mme_ue_enter_ue_context_will_remove(mme_ue);
+        break;
+    }
+
     case MME_EVENT_ADMIN_PAGE_UE:
     {
         mme_ue = mme_ue_find_by_id(e->mme_ue_id);
@@ -1591,16 +1604,21 @@ cleanup:
         /* Deferred Path Switch / Handover Notify tail on the UE owner
          * shard (posted by the main-thread S1AP handlers). Contexts may
          * have died between post and dispatch — re-validate both. */
-        if (e->ho_kind == MME_HO_TAIL_UE_REL) {
-            /* e->enb_ue_id is the ALREADY-REMOVED enb_ue here: only the
-             * mme_ue must still exist. */
+        if (e->ho_kind == MME_HO_TAIL_UE_REL ||
+                e->ho_kind == MME_HO_TAIL_REL_AB) {
+            /* e->enb_ue_id may name an ALREADY-REMOVED enb_ue here:
+             * only the mme_ue must still exist. */
             mme_ue = mme_ue_find_by_id(e->mme_ue_id);
             if (!mme_ue)
-                ogs_warn("UE-release tail: mme_ue gone [id:%d]",
-                        e->mme_ue_id);
-            else
+                ogs_warn("UE tail (kind=%d): mme_ue gone [id:%d]",
+                        e->ho_kind, e->mme_ue_id);
+            else if (e->ho_kind == MME_HO_TAIL_UE_REL)
                 s1ap_ue_context_release_tail(mme_ue,
                         e->rel_action, e->enb_ue_id, e->rel_flags);
+            else if (mme_gtp_send_release_access_bearers_request(
+                        e->enb_ue_id, mme_ue, e->rel_action) != OGS_OK)
+                ogs_error("deferred Release Access Bearers failed "
+                        "(action=%d)", e->rel_action);
         } else if (!(enb_ue = enb_ue_find_by_id(e->enb_ue_id)) ||
                    !(mme_ue = mme_ue_find_by_id(e->mme_ue_id))) {
             ogs_warn("HO tail (kind=%d): context gone "

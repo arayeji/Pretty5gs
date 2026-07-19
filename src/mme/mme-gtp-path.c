@@ -354,11 +354,10 @@ static void gn_sgsn_context_timeout(ogs_gtp_xact_t *xact, void *data)
     e->timer_id = MME_TIMER_GN_SGSN_CONTEXT;
     e->mme_ue_id = mme_ue_id;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        mme_event_free(e);
-    }
+    /* The timeout path can remove the UE: run it on the owner shard. */
+    rv = mme_event_push_to_ue_owner(e);
+    if (rv != OGS_OK)
+        ogs_error("Gn SGSN-context timer push failed:%d", (int)rv);
 }
 
 int mme_gtp_open(void)
@@ -894,8 +893,23 @@ int mme_gtp_send_release_access_bearers_request(
 
     ogs_assert(action);
     ogs_assert(mme_ue);
+
+    /*
+     * Create the xact on the UE owner shard: the response handler
+     * clears bearer S1-U state and restarts UE timers, which must not
+     * run on main while the owner is live (S1AP release request / S1
+     * reset paths call us from the main thread).
+     */
+    if (mme_workers_active() &&
+            mme_worker_post_rel_ab(action, enb_ue_id, mme_ue) == OGS_OK)
+        return OGS_OK;
+
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        ogs_error("[%s] Release Access Bearers: SGW-UE gone (action=%d)",
+                mme_ue->imsi_bcd, action);
+        return OGS_ERROR;
+    }
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
     h.type = OGS_GTP2_RELEASE_ACCESS_BEARERS_REQUEST_TYPE;
@@ -1090,9 +1104,10 @@ void mme_gtp_send_release_all_ue_in_enb(mme_enb_t *enb, int action)
                 continue;
             }
 
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_release_access_bearers_request(
-                    enb_ue_id, mme_ue, action));
+            if (mme_gtp_send_release_access_bearers_request(
+                    enb_ue_id, mme_ue, action) != OGS_OK)
+                ogs_error("[%s] Release Access Bearers failed "
+                        "(action=%d)", mme_ue->imsi_bcd, action);
         } else {
             ogs_warn("mme_gtp_send_release_all_ue_in_enb()");
             ogs_warn("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d] Action[%d]",

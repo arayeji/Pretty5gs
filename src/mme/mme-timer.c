@@ -346,9 +346,8 @@ void mme_timer_gn_holding_timer_expire(void *data)
     e->timer_id = MME_TIMER_GN_HOLDING;
     e->mme_ue_id = mme_ue_id;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        mme_event_free(e);
-    }
+    /* Gn holding drives UE teardown: run it on the owner shard. */
+    rv = mme_event_push_to_ue_owner(e);
+    if (rv != OGS_OK)
+        ogs_error("Gn holding timer push failed:%d", (int)rv);
 }

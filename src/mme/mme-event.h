@@ -78,6 +78,13 @@ typedef enum {
     MME_EVENT_ADMIN_DETACH_ENB,
     MME_EVENT_ADMIN_DETACH_UE,
     MME_EVENT_ADMIN_PAGE_UE,
+    /*
+     * Silent local UE reclaim on the OWNER shard
+     * (mme_ue_enter_ue_context_will_remove): posted by the orphan
+     * sweep and the SGW-recovery purge, which run on other threads
+     * and must not drive the UE FSM / mme_ue_remove themselves.
+     */
+    MME_EVENT_ADMIN_PURGE_UE,
     MME_EVENT_ADMIN_TAC_ADD,
     MME_EVENT_ADMIN_MAINTENANCE_ENABLE,
     MME_EVENT_ADMIN_MAINTENANCE_DISABLE,
@@ -113,6 +120,14 @@ typedef enum {
  * e->rel_flags the MME_UE_REL_F_* bits.
  */
 #define MME_HO_TAIL_UE_REL          4
+/*
+ * Release Access Bearers send bounced to the UE owner shard so the
+ * xact — and therefore the S11 response with its CLEAR_ENB_S1U_PATH /
+ * mobile-reachable tail — lives on the owner. e->enb_ue_id may name an
+ * already-removed enb_ue (mass eNB release paths); e->rel_action is
+ * the OGS_GTP_RELEASE_* action.
+ */
+#define MME_HO_TAIL_REL_AB          5
 
 #define MME_UE_REL_F_HO_PEER_GONE   0x1
 

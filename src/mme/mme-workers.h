@@ -87,6 +87,15 @@ int mme_worker_post_ho_tail(int kind, ogs_pool_id_t enb_ue_id,
 int mme_worker_post_ue_rel_tail(int rel_action, ogs_pool_id_t old_enb_ue_id,
         mme_ue_t *mme_ue, int rel_flags);
 
+/*
+ * Bounce a Release Access Bearers send (MME_HO_TAIL_REL_AB) to the UE
+ * owner shard so the S11 xact and its response tail live there.
+ * Returns OGS_ERROR when the calling thread already owns the UE (or
+ * the post failed) — send inline then.
+ */
+int mme_worker_post_rel_ab(int action, ogs_pool_id_t enb_ue_id,
+        mme_ue_t *mme_ue);
+
 /* Peek IMSI from a GTPv2-C pkbuf (Create Session Request TEID=0). */
 int mme_gtpv2_peek_imsi_bcd(ogs_pkbuf_t *pkbuf, char *bcd, size_t bcd_size);
 

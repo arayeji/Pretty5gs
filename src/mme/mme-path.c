@@ -27,6 +27,7 @@
 #include "mme-sm.h"
 #include "mme-trace.h"
 #include "mme-timer.h"
+#include "mme-workers.h"
 
 void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue)
 {
@@ -43,6 +44,37 @@ void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue)
     e.id = OGS_FSM_USER_SIG;
     e.mme_ue_id = mme_ue->id;
     ogs_fsm_tran(&mme_ue->sm, &emm_state_ue_context_will_remove, &e);
+}
+
+/*
+ * Reclaim a UE on its OWNER shard. mme_ue_enter_ue_context_will_remove
+ * drives the UE FSM and frees the mme_ue synchronously, so sweeps that
+ * run on other threads (orphan sweep on main, SGW-recovery purge on
+ * whichever thread saw the new restart counter) must bounce it through
+ * MME_EVENT_ADMIN_PURGE_UE instead of calling it in place: the owner
+ * could be mid-dispatch on the same UE (emm-sm.c:375 'Assertion
+ * mme_ue failed' after the ENTRY of a state transition).
+ */
+void mme_ue_purge_on_owner(mme_ue_t *mme_ue)
+{
+    mme_event_t *e = NULL;
+
+    ogs_assert(mme_ue);
+
+    if (!mme_workers_active()) {
+        mme_ue_enter_ue_context_will_remove(mme_ue);
+        return;
+    }
+
+    e = mme_event_new(MME_EVENT_ADMIN_PURGE_UE);
+    if (!e) {
+        ogs_error("mme_ue_purge_on_owner: mme_event_new() failed");
+        return;
+    }
+    e->mme_ue_id = mme_ue->id;
+
+    /* Frees e on failure; owner unknown falls back to the main queue. */
+    mme_event_push_to_ue_owner(e);
 }
 
 int mme_maintenance_reject_without_ue(
@@ -149,6 +181,11 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
     ogs_time_t now = ogs_time_now();
     int remaining = 0, purged = 0;
 
+    /* Shard workers add/remove list nodes under the ctx lock; walking
+     * bare from main read freed nodes. Purging inside the lock is fine:
+     * with workers on we only post events, with workers off the lock is
+     * recursive. */
+    mme_ctx_lock();
     ogs_list_for_each_safe(&mme_self()->mme_ue_list, next, mme_ue) {
         enb_ue_t *enb_ue = NULL;
         ogs_time_t anchor;
@@ -227,9 +264,10 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
         ogs_warn("orphan sweep: purge imsi=%s (no session, S1=%s)",
                 mme_ue->imsi_bcd[0] ? mme_ue->imsi_bcd : "-",
                 enb_ue ? "present" : "gone");
-        mme_ue_enter_ue_context_will_remove(mme_ue);
+        mme_ue_purge_on_owner(mme_ue);
         purged++;
     }
+    mme_ctx_unlock();
 
     if (out_purged)
         *out_purged = purged;
@@ -774,10 +812,11 @@ void mme_send_release_access_bearer_or_ue_context_release(enb_ue_t *enb_ue)
     mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
     if (mme_ue) {
         ogs_debug("[%s] Release access bearer request", mme_ue->imsi_bcd);
-        ogs_assert(OGS_OK ==
-            mme_gtp_send_release_access_bearers_request(
+        if (mme_gtp_send_release_access_bearers_request(
                 enb_ue->id, mme_ue,
-                OGS_GTP_RELEASE_SEND_UE_CONTEXT_RELEASE_COMMAND));
+                OGS_GTP_RELEASE_SEND_UE_CONTEXT_RELEASE_COMMAND) != OGS_OK)
+            ogs_error("[%s] Release Access Bearers failed",
+                    mme_ue->imsi_bcd);
     } else {
         ogs_debug("No UE Context");
         ogs_assert(enb_ue->relcause.group);

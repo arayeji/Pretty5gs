@@ -1826,7 +1826,12 @@ void mme_s11_handle_release_access_bearers_response(
             enb_ue_remove(enb_ue);
             mme_mobile_reachable_start(mme_ue);
 
-            if (enb && ogs_list_count(&enb->enb_ue_list) == 0) {
+            /* With mme.workers this response runs on the UE owner
+             * shard; main mutates enb_ue_list under the ctx lock. */
+            mme_ctx_lock();
+            r = (enb && ogs_list_count(&enb->enb_ue_list) == 0);
+            mme_ctx_unlock();
+            if (r) {
                 r = s1ap_send_s1_reset_ack(enb, NULL);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
@@ -1848,14 +1853,22 @@ void mme_s11_handle_release_access_bearers_response(
             mme_mobile_reachable_start(mme_ue);
 
             if (enb) {
+                bool reset_remains = false;
+
+                /* Same shard/main split as above: walk under the lock. */
+                mme_ctx_lock();
                 ogs_list_for_each(&enb->enb_ue_list, iter) {
                     if (iter->part_of_s1_reset_requested == true) {
                         /* The ENB_UE context
                          * where PartOfS1_interface was requested
                          * still remains */
-                        return;
+                        reset_remains = true;
+                        break;
                     }
                 }
+                mme_ctx_unlock();
+                if (reset_remains)
+                    return;
 
                 /* All ENB_UE context
                  * where PartOfS1_interface was requested

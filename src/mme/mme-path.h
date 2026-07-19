@@ -27,6 +27,8 @@ extern "C" {
 #endif
 
 void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue);
+/* Same reclaim, but bounced to the UE owner shard when workers are on. */
+void mme_ue_purge_on_owner(mme_ue_t *mme_ue);
 
 /*
  * Maintenance window: reject a brand-new S1/NAS procedure without

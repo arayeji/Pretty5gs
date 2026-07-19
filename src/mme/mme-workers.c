@@ -309,8 +309,30 @@ static int mme_event_resolve_wid(mme_event_t *e)
 
     case MME_EVENT_ADMIN_DETACH_UE:
     case MME_EVENT_ADMIN_PAGE_UE:
+    case MME_EVENT_ADMIN_PURGE_UE:
     case MME_EVENT_S1AP_HO_TAIL:
+    case MME_EVENT_GN_TIMER:
         wid = mme_shard_from_mme_ue_id(e->mme_ue_id);
+        break;
+
+    case MME_EVENT_GN_MESSAGE:
+        /*
+         * GTPv1-C header: TEID at octets 4-7. The Gn handlers mutate
+         * mme_ue (context transfer, gn xact ids), so TEID-addressed
+         * messages must reach the owner. TEID 0 (SGSN Context Request
+         * addressed by RAI+P-TMSI) stays on main: the target UE is in
+         * its SGSN-resident phase with no concurrent shard activity.
+         */
+        if (e->pkbuf && e->pkbuf->len >= 8) {
+            uint32_t gn_teid;
+            memcpy(&gn_teid, (uint8_t *)e->pkbuf->data + 4, 4);
+            gn_teid = be32toh(gn_teid);
+            if (gn_teid) {
+                mme_ue_t *gn_ue = mme_ue_find_by_gn_local_teid(gn_teid);
+                if (gn_ue)
+                    wid = mme_shard_from_teid(gn_ue->mme_s11_teid);
+            }
+        }
         break;
 
     default:
@@ -423,6 +445,35 @@ int mme_worker_post_ue_rel_tail(int rel_action, ogs_pool_id_t old_enb_ue_id,
     return mme_event_push_to_worker(owner, e);
 }
 
+int mme_worker_post_rel_ab(int action, ogs_pool_id_t enb_ue_id,
+        mme_ue_t *mme_ue)
+{
+    int owner, self;
+    mme_event_t *e;
+
+    ogs_assert(mme_ue);
+    ogs_assert(mme_workers_active());
+
+    owner = mme_shard_from_teid(mme_ue->mme_s11_teid);
+    /* ogs_worker_self_id(): 0=main, 1..N=shard workers */
+    self = ogs_worker_self_id() - 1;
+    if (owner < 0 || owner == self)
+        return OGS_ERROR;   /* calling thread owns the UE: send inline */
+
+    e = mme_event_new(MME_EVENT_S1AP_HO_TAIL);
+    if (!e) {
+        ogs_error("mme_worker_post_rel_ab: mme_event_new() failed");
+        return OGS_ERROR;
+    }
+    e->ho_kind = MME_HO_TAIL_REL_AB;
+    e->enb_ue_id = enb_ue_id;   /* may already be removed; passthrough */
+    e->mme_ue_id = mme_ue->id;
+    e->rel_action = action;
+
+    /* frees e on failure */
+    return mme_event_push_to_worker(owner, e);
+}
+
 bool mme_worker_rehome_emm(mme_event_t *e, mme_ue_t *mme_ue)
 {
     int owner, self;
@@ -511,7 +562,10 @@ static bool mme_event_is_ue_scoped(int id)
     case MME_EVENT_S6A_TIMER:
     case MME_EVENT_ADMIN_DETACH_UE:
     case MME_EVENT_ADMIN_PAGE_UE:
+    case MME_EVENT_ADMIN_PURGE_UE:
     case MME_EVENT_S1AP_HO_TAIL:
+    case MME_EVENT_GN_MESSAGE:
+    case MME_EVENT_GN_TIMER:
     case OGS_FSM_ENTRY_SIG:
     case OGS_FSM_EXIT_SIG:
         return true;

@@ -280,6 +280,8 @@ const char *mme_event_get_name(mme_event_t *e)
         return "MME_EVENT_ADMIN_DETACH_UE";
     case MME_EVENT_ADMIN_PAGE_UE:
         return "MME_EVENT_ADMIN_PAGE_UE";
+    case MME_EVENT_ADMIN_PURGE_UE:
+        return "MME_EVENT_ADMIN_PURGE_UE";
     case MME_EVENT_ADMIN_TAC_ADD:
         return "MME_EVENT_ADMIN_TAC_ADD";
     case MME_EVENT_ADMIN_MAINTENANCE_ENABLE:

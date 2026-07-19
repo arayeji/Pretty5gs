@@ -639,6 +639,11 @@ int mme_context_evict_idle_ues(int want)
      * goal is to free *some* slots, not the absolute LRU set.
      */
 #define MIN_IDLE_AGE_SEC 60
+    /* Callers include shard workers (mme_ue_add on pool exhaustion);
+     * the list is mutated under the ctx lock by other threads. The
+     * expire helper only posts an owner-routed event, so holding the
+     * lock across the walk is safe. */
+    mme_ctx_lock();
     ogs_list_for_each_safe(&self.mme_ue_list, next, mme_ue) {
         if (evicted >= want) break;
         if (mme_ue->idle_since == 0) continue;
@@ -655,6 +660,7 @@ int mme_context_evict_idle_ues(int want)
         mme_timer_implicit_detach_expire(OGS_UINT_TO_POINTER(mme_ue->id));
         evicted++;
     }
+    mme_ctx_unlock();
 #undef MIN_IDLE_AGE_SEC
 
     if (evicted > 0)
@@ -4330,6 +4336,10 @@ static void mme_sgw_purge_sessions(mme_sgw_t *sgw)
      */
     ogs_gtp_xact_delete_all(&sgw->gnode);
 
+    /* This can run on whichever thread saw the new restart counter;
+     * sgw_ue_list and the UE teardown belong to other threads. Walk
+     * under the ctx lock and bounce each reclaim to the UE owner. */
+    mme_ctx_lock();
     ogs_list_for_each_safe(&sgw->sgw_ue_list, next, sgw_ue) {
         mme_ue = mme_ue_find_by_id(sgw_ue->mme_ue_id);
         if (!mme_ue) {
@@ -4353,8 +4363,9 @@ static void mme_sgw_purge_sessions(mme_sgw_t *sgw)
          */
         ogs_warn("[%s] SGW recovery restart: local UE context release",
                 mme_ue->imsi_bcd);
-        mme_ue_enter_ue_context_will_remove(mme_ue);
+        mme_ue_purge_on_owner(mme_ue);
     }
+    mme_ctx_unlock();
 }
 
 bool mme_sgw_recovery_update(mme_sgw_t *sgw, uint8_t recovery)
