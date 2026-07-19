@@ -1562,6 +1562,34 @@ cleanup:
         break;
     }
 
+    case MME_EVENT_S1AP_HO_TAIL:
+    {
+        /* Deferred Path Switch / Handover Notify tail on the UE owner
+         * shard (posted by the main-thread S1AP handlers). Contexts may
+         * have died between post and dispatch — re-validate both. */
+        enb_ue = enb_ue_find_by_id(e->enb_ue_id);
+        mme_ue = mme_ue_find_by_id(e->mme_ue_id);
+        if (!enb_ue || !mme_ue) {
+            ogs_warn("HO tail (kind=%d): context gone "
+                    "[enb_ue:%s mme_ue:%s]", e->ho_kind,
+                    enb_ue ? "ok" : "gone", mme_ue ? "ok" : "gone");
+            break;
+        }
+
+        switch (e->ho_kind) {
+        case MME_HO_TAIL_PATH_SWITCH:
+            s1ap_path_switch_request_complete(enb_ue, mme_ue);
+            break;
+        case MME_HO_TAIL_HANDOVER_NOTIFY:
+            s1ap_handover_notify_complete(enb_ue, mme_ue);
+            break;
+        default:
+            ogs_error("Unknown HO tail kind %d", e->ho_kind);
+            break;
+        }
+        break;
+    }
+
     case MME_EVENT_ADMIN_MAINTENANCE_ENABLE:
         mme_self()->maintenance_mode = true;
         ogs_info("admin maintenance: enabled");

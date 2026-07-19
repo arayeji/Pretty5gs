@@ -389,6 +389,11 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         gnode = e->gnode;
         ogs_assert(gnode);
 
+        /* Foreign-shard UE: bounce BEFORE creating the per-shard xact.
+         * rehome takes the pkbuf; do not free it here. */
+        if (sgwc_worker_rehome_gtp2(e, &gtp_message))
+            break;
+
         rv = ogs_gtp_xact_receive(gnode, &gtp_message.h, &gtp_xact);
         if (rv == OGS_RETRY) {
             ogs_debug("S11 GTP duplicate request ignored (type=%u)",
@@ -512,6 +517,11 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
             break;
         }
 
+        /* Foreign-shard session: bounce BEFORE creating the per-shard
+         * xact. rehome takes the pkbuf; do not free it here. */
+        if (sgwc_worker_rehome_gtp1(e, &gtp1_message))
+            break;
+
         if (gtp1_message.h.teid != 0)
             sess = sgwc_sess_find_by_teid(gtp1_message.h.teid);
 
@@ -582,6 +592,11 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
 
         gnode = e->gnode;
         ogs_assert(gnode);
+
+        /* Foreign-shard session (e.g. truncated S5 TEID routed to
+         * main): bounce BEFORE creating the per-shard xact. */
+        if (sgwc_worker_rehome_gtp2(e, &gtp_message))
+            break;
 
         rv = ogs_gtp_xact_receive(gnode, &gtp_message.h, &gtp_xact);
         if (rv != OGS_OK) {

@@ -158,9 +158,12 @@ Known remaining (accepted / TODO):
 - [ ] Main thread still *reads* shard-owned `mme_ue` state in S1AP
       handlers (e.g. S-TMSI lookup + `mme_ue_is_valid_for_s1` in
       InitialUEMessage). Read-mostly; needs Stage B/C ownership handoff.
-- [ ] Handover paths (`path switch request`, `handover notify`) still
-      write `mme_ue->tai/e_cgi` on main (s1ap-handler.c ~3125/~4513);
-      needs the same snapshot treatment before HO works with workers.
+- [x] Handover paths (`path switch request`, `handover notify`):
+      the tail (location write, NH chain, S11 Modify Bearer / Create
+      Session) is now deferred to the UE owner shard via
+      `MME_EVENT_S1AP_HO_TAIL` (`s1ap_*_complete()` split). This also
+      puts the S11 GTP xact in the shard the response routes to, and
+      the MBR ULI carries the new location.
 - [ ] Test-harness noise: `tests/common/application.c` `test_child_create`
       races (harness, not MME) and FreeDiameter internals.
 

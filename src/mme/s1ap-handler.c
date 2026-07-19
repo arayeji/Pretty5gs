@@ -2787,8 +2787,6 @@ void s1ap_handle_path_switch_request(
     ogs_eps_tai_t tai;
     int served_tai_index = 0;
 
-    sgw_relocation_e relocation;
-
     ogs_assert(enb);
     ogs_assert(enb->sctp.sock);
 
@@ -3120,11 +3118,12 @@ void s1ap_handle_path_switch_request(
             ogs_plmn_id_hexdump(&enb_ue->saved.e_cgi.plmn_id),
             enb_ue->saved.e_cgi.cell_id);
 
-    /* Copy Stream-No/TAI/ECGI from enb_ue */
-    mme_ue->enb_ostream_id = enb_ue->enb_ostream_id;
-    memcpy(&mme_ue->tai, &enb_ue->saved.tai, sizeof(ogs_eps_tai_t));
-    memcpy(&mme_ue->e_cgi, &enb_ue->saved.e_cgi, sizeof(ogs_e_cgi_t));
-    mme_ue->ue_location_timestamp = ogs_time_now();
+    /*
+     * Stream-No/TAI/ECGI are applied to mme_ue in
+     * s1ap_path_switch_request_complete(): on the owner shard when
+     * mme.workers is active (main must not write shard-owned fields),
+     * directly at the end of this handler otherwise.
+     */
 
     /*
      * Path Switch Request (TS 23.401) puts the UE in ECM-CONNECTED at the
@@ -3236,6 +3235,43 @@ void s1ap_handle_path_switch_request(
     }
 
     /*
+     * With mme.workers the tail (location, NH chain, S11 sends) runs
+     * on the UE's owner shard: main must not write shard-owned mme_ue
+     * fields, the Modify Bearer ULI must carry the NEW location, and
+     * the GTP xact must live in the shard the S11 response routes to.
+     * Everything written above (enb_ue, bearer TEIDs, to_modify list)
+     * happens-before the tail via the worker queue.
+     */
+    if (mme_workers_active()) {
+        if (mme_worker_post_ho_tail(
+                    MME_HO_TAIL_PATH_SWITCH, enb_ue->id, mme_ue) != OGS_OK)
+            ogs_error("[%s] PathSwitchRequest tail post failed",
+                    mme_ue->imsi_bcd);
+        return;
+    }
+
+    s1ap_path_switch_request_complete(enb_ue, mme_ue);
+}
+
+/*
+ * Path Switch Request tail. Runs on the UE owner thread: the main
+ * thread when workers are off, the owner shard (MME_EVENT_S1AP_HO_TAIL)
+ * when mme.workers is active.
+ */
+void s1ap_path_switch_request_complete(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
+{
+    sgw_relocation_e relocation;
+
+    ogs_assert(enb_ue);
+    ogs_assert(mme_ue);
+
+    /* Copy Stream-No/TAI/ECGI from enb_ue */
+    mme_ue->enb_ostream_id = enb_ue->enb_ostream_id;
+    memcpy(&mme_ue->tai, &enb_ue->saved.tai, sizeof(ogs_eps_tai_t));
+    memcpy(&mme_ue->e_cgi, &enb_ue->saved.e_cgi, sizeof(ogs_e_cgi_t));
+    mme_ue->ue_location_timestamp = ogs_time_now();
+
+    /*
      * Update Security Context (NextHop)
      *
      * Defer NH/NCC derivation until every E-RAB in the PathSwitchRequest
@@ -3267,7 +3303,6 @@ void s1ap_handle_path_switch_request(
     } else if (relocation == SGW_HAS_ALREADY_BEEN_RELOCATED) {
         ogs_error("SGW has already been relocated");
     }
-
 }
 
 void s1ap_handle_enb_configuration_transfer(
@@ -4312,8 +4347,6 @@ void s1ap_handle_handover_notification(
     enb_ue_t *source_ue = NULL;
     enb_ue_t *target_ue = NULL;
     mme_ue_t *mme_ue = NULL;
-    mme_sess_t *sess = NULL;
-    mme_bearer_t *bearer = NULL;
 
     ogs_assert(enb);
     ogs_assert(enb->sctp.sock);
@@ -4508,19 +4541,59 @@ void s1ap_handle_handover_notification(
             ogs_plmn_id_hexdump(&target_ue->saved.e_cgi.plmn_id),
             target_ue->saved.e_cgi.cell_id);
 
+    /*
+     * With mme.workers the tail (location, source release, S11 Modify
+     * Bearer) runs on the UE's owner shard — see
+     * s1ap_handle_path_switch_request for the rationale.
+     */
+    if (mme_workers_active()) {
+        if (mme_worker_post_ho_tail(
+                    MME_HO_TAIL_HANDOVER_NOTIFY, target_ue->id,
+                    mme_ue) != OGS_OK)
+            ogs_error("[%s] HandoverNotify tail post failed",
+                    mme_ue->imsi_bcd);
+        return;
+    }
+
+    s1ap_handover_notify_complete(target_ue, mme_ue);
+}
+
+/*
+ * Handover Notify tail. Runs on the UE owner thread: the main thread
+ * when workers are off, the owner shard (MME_EVENT_S1AP_HO_TAIL) when
+ * mme.workers is active.
+ */
+void s1ap_handover_notify_complete(enb_ue_t *target_ue, mme_ue_t *mme_ue)
+{
+    int r;
+    enb_ue_t *source_ue = NULL;
+    mme_sess_t *sess = NULL;
+    mme_bearer_t *bearer = NULL;
+
+    ogs_assert(target_ue);
+    ogs_assert(mme_ue);
+
     /* Copy Stream-No/TAI/ECGI from enb_ue */
     mme_ue->enb_ostream_id = target_ue->enb_ostream_id;
     memcpy(&mme_ue->tai, &target_ue->saved.tai, sizeof(ogs_eps_tai_t));
     memcpy(&mme_ue->e_cgi, &target_ue->saved.e_cgi, sizeof(ogs_e_cgi_t));
     mme_ue->ue_location_timestamp = ogs_time_now();
 
-    r = s1ap_send_ue_context_release_command(source_ue,
-            S1AP_Cause_PR_radioNetwork,
-            S1AP_CauseRadioNetwork_successful_handover,
-            S1AP_UE_CTX_REL_S1_HANDOVER_COMPLETE,
-            ogs_local_conf()->time.handover.duration);
-    ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
+    /* Source may already be gone if the deferred tail lost a race with
+     * source-side release; the handover itself proceeds regardless. */
+    source_ue = enb_ue_find_by_id(target_ue->source_ue_id);
+    if (source_ue) {
+        r = s1ap_send_ue_context_release_command(source_ue,
+                S1AP_Cause_PR_radioNetwork,
+                S1AP_CauseRadioNetwork_successful_handover,
+                S1AP_UE_CTX_REL_S1_HANDOVER_COMPLETE,
+                ogs_local_conf()->time.handover.duration);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+    } else {
+        ogs_warn("[%s] HandoverNotify tail: source UE already released",
+                mme_ue->imsi_bcd);
+    }
 
     ogs_list_init(&mme_ue->bearer_to_modify_list);
 

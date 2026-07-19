@@ -64,6 +64,16 @@ int sgwc_shard_from_imsi_bcd(const char *imsi_bcd);
 /* Peek IMSI BCD from a raw GTPv2 Create Session Request (teid==0 path). */
 int sgwc_gtpv2_peek_imsi_bcd(ogs_pkbuf_t *pkbuf, char *bcd, size_t bcd_size);
 
+/*
+ * Foreign-shard guard for GTP RX events: if the UE/session resolved
+ * from the parsed message is owned by another shard (router misroute:
+ * failed IMSI peek, truncated S5 TEID, stale bits), re-post the event
+ * to the owner and return true. MUST run after parse and BEFORE
+ * ogs_gtp_xact_receive() — xacts are per-shard. Takes the pkbuf.
+ */
+bool sgwc_worker_rehome_gtp2(sgwc_event_t *e, ogs_gtp2_message_t *message);
+bool sgwc_worker_rehome_gtp1(sgwc_event_t *e, ogs_gtp1_message_t *message);
+
 #ifdef __cplusplus
 }
 #endif

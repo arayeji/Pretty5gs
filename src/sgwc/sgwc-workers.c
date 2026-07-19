@@ -173,6 +173,161 @@ int sgwc_gtpv2_peek_imsi_bcd(ogs_pkbuf_t *pkbuf, char *bcd, size_t bcd_size)
     return OGS_ERROR;
 }
 
+/*
+ * Re-post a GTP RX event to the shard that owns the UE/session.
+ *
+ * The socket-level router (sgwc_gtp_deliver) can misroute:
+ *  - Create Session TEID=0 when the IMSI peek fails (falls back to the
+ *    MME's SQN/xid bits, often landing on main),
+ *  - S5 messages whose PGW echoes a truncated TEID (shard bits 0 ->
+ *    main; sgwc_sess_find_by_teid() still recovers the session via the
+ *    inbound-roam offset variants),
+ *  - stale shard bits remapped with % N.
+ * A foreign thread must not create the per-shard GTP xact or mutate the
+ * UE, so this check runs after parse and BEFORE ogs_gtp_xact_receive().
+ * Returns true when the event was bounced (pkbuf ownership moved).
+ */
+static bool rehome_to_owner(sgwc_event_t *e, int owner)
+{
+    int self;
+    int rv;
+    sgwc_event_t *ne = NULL;
+
+    self = ogs_worker_self_id() - 1;    /* -1 = main thread */
+    if (owner == self)
+        return false;
+
+    ne = sgwc_event_new(e->id);
+    if (!ne) {
+        ogs_error("rehome_to_owner: sgwc_event_new() failed");
+        return false;
+    }
+    ne->gnode = e->gnode;
+    ne->pkbuf = e->pkbuf;
+    e->pkbuf = NULL;
+
+    ogs_debug("GTP event %d rehomed: shard %d -> owner %d",
+            e->id, self, owner);
+
+    if (owner < 0) {
+        rv = ogs_queue_push(ogs_app()->queue, ne);
+        if (rv != OGS_OK) {
+            ogs_error("rehome_to_owner: main queue push failed [%d]", rv);
+            ogs_pkbuf_free(ne->pkbuf);
+            ne->pkbuf = NULL;
+            sgwc_event_free(ne);
+        } else {
+            ogs_pollset_notify(ogs_app()->pollset);
+        }
+    } else {
+        /* frees ne (and pkbuf) on failure */
+        sgwc_event_push_to_worker(owner, ne);
+    }
+    return true;
+}
+
+bool sgwc_worker_rehome_gtp2(sgwc_event_t *e, ogs_gtp2_message_t *message)
+{
+    int owner;
+    sgwc_ue_t *sgwc_ue = NULL;
+    sgwc_sess_t *sess = NULL;
+
+    ogs_assert(e);
+    ogs_assert(message);
+
+    if (!sgwc_workers_active())
+        return false;
+
+    /* node-level, main owns the peer FSMs; router already sent these
+     * to main */
+    if (message->h.type == OGS_GTP2_ECHO_REQUEST_TYPE ||
+            message->h.type == OGS_GTP2_ECHO_RESPONSE_TYPE)
+        return false;
+
+    if (e->id == SGWC_EVT_S11_MESSAGE) {
+        if (message->h.teid_presence && message->h.teid)
+            sgwc_ue = sgwc_ue_find_by_teid(message->h.teid);
+        if (!sgwc_ue &&
+                message->h.type == OGS_GTP2_CREATE_SESSION_REQUEST_TYPE &&
+                message->create_session_request.imsi.presence &&
+                message->create_session_request.imsi.data &&
+                message->create_session_request.imsi.len > 0) {
+            sgwc_ue = sgwc_ue_find_by_imsi(
+                    message->create_session_request.imsi.data,
+                    message->create_session_request.imsi.len);
+            if (!sgwc_ue) {
+                /* Brand-new UE: create it on the sticky IMSI shard so
+                 * the composed TEIDs get worker bits, never main's. */
+                char imsi_bcd[OGS_MAX_IMSI_BCD_LEN + 1];
+                ogs_buffer_to_bcd(
+                        (uint8_t *)message->create_session_request.imsi.data,
+                        message->create_session_request.imsi.len, imsi_bcd);
+                return rehome_to_owner(
+                        e, sgwc_shard_from_imsi_bcd(imsi_bcd));
+            }
+        }
+        if (!sgwc_ue)
+            return false;
+        owner = sgwc_shard_from_teid(sgwc_ue->sgw_s11_teid);
+    } else if (e->id == SGWC_EVT_S5C_MESSAGE) {
+        if (message->h.teid_presence && message->h.teid)
+            sess = sgwc_sess_find_by_teid(message->h.teid);
+        if (!sess)
+            return false;
+        owner = sgwc_shard_from_teid(sess->sgw_s5c_teid);
+    } else {
+        return false;
+    }
+
+    return rehome_to_owner(e, owner);
+}
+
+bool sgwc_worker_rehome_gtp1(sgwc_event_t *e, ogs_gtp1_message_t *message)
+{
+    sgwc_ue_t *sgwc_ue = NULL;
+    sgwc_sess_t *sess = NULL;
+
+    ogs_assert(e);
+    ogs_assert(message);
+
+    if (!sgwc_workers_active())
+        return false;
+
+    if (message->h.type == OGS_GTP1_ECHO_REQUEST_TYPE ||
+            message->h.type == OGS_GTP1_ECHO_RESPONSE_TYPE)
+        return false;
+
+    if (message->h.teid) {
+        sess = sgwc_sess_find_by_teid(message->h.teid);
+        if (sess)
+            return rehome_to_owner(
+                    e, sgwc_shard_from_teid(sess->sgw_s5c_teid));
+        return false;
+    }
+
+    if (message->h.type == OGS_GTP1_CREATE_PDP_CONTEXT_REQUEST_TYPE &&
+            message->create_pdp_context_request.imsi.presence &&
+            message->create_pdp_context_request.imsi.data &&
+            message->create_pdp_context_request.imsi.len > 0) {
+        sgwc_ue = sgwc_ue_find_by_imsi(
+                message->create_pdp_context_request.imsi.data,
+                message->create_pdp_context_request.imsi.len);
+        if (sgwc_ue)
+            return rehome_to_owner(
+                    e, sgwc_shard_from_teid(sgwc_ue->sgw_s11_teid));
+        {
+            /* New Gn UE: stick to the same IMSI shard S11 would pick */
+            char imsi_bcd[OGS_MAX_IMSI_BCD_LEN + 1];
+            ogs_buffer_to_bcd(
+                    (uint8_t *)message->create_pdp_context_request.imsi.data,
+                    message->create_pdp_context_request.imsi.len, imsi_bcd);
+            return rehome_to_owner(e, sgwc_shard_from_imsi_bcd(imsi_bcd));
+        }
+    }
+
+    return false;
+}
+
 int sgwc_event_push_to_worker(int wid, sgwc_event_t *e)
 {
     ogs_worker_t *worker;

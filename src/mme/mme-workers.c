@@ -295,6 +295,7 @@ static int mme_event_resolve_wid(mme_event_t *e)
 
     case MME_EVENT_ADMIN_DETACH_UE:
     case MME_EVENT_ADMIN_PAGE_UE:
+    case MME_EVENT_S1AP_HO_TAIL:
         wid = mme_shard_from_mme_ue_id(e->mme_ue_id);
         break;
 
@@ -342,6 +343,35 @@ int mme_event_push_to_ue_owner(mme_event_t *e)
     }
 
     return mme_event_push_to_worker(wid, e);
+}
+
+int mme_worker_post_ho_tail(int kind, ogs_pool_id_t enb_ue_id,
+        mme_ue_t *mme_ue)
+{
+    int owner;
+    mme_event_t *e;
+
+    ogs_assert(mme_ue);
+    ogs_assert(mme_workers_active());
+
+    owner = mme_shard_from_teid(mme_ue->mme_s11_teid);
+    if (owner < 0) {
+        ogs_error("mme_worker_post_ho_tail: no owner for mme_ue [%s]",
+                mme_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
+
+    e = mme_event_new(MME_EVENT_S1AP_HO_TAIL);
+    if (!e) {
+        ogs_error("mme_worker_post_ho_tail: mme_event_new() failed");
+        return OGS_ERROR;
+    }
+    e->ho_kind = kind;
+    e->enb_ue_id = enb_ue_id;
+    e->mme_ue_id = mme_ue->id;
+
+    /* frees e on failure */
+    return mme_event_push_to_worker(owner, e);
 }
 
 bool mme_worker_rehome_emm(mme_event_t *e, mme_ue_t *mme_ue)
@@ -419,6 +449,7 @@ static bool mme_event_is_ue_scoped(int id)
     case MME_EVENT_S6A_TIMER:
     case MME_EVENT_ADMIN_DETACH_UE:
     case MME_EVENT_ADMIN_PAGE_UE:
+    case MME_EVENT_S1AP_HO_TAIL:
     case OGS_FSM_ENTRY_SIG:
     case OGS_FSM_EXIT_SIG:
         return true;

@@ -68,6 +68,14 @@ int mme_shard_from_enb_ue_id(ogs_pool_id_t enb_ue_id);
  */
 bool mme_worker_rehome_emm(mme_event_t *e, mme_ue_t *mme_ue);
 
+/*
+ * Defer the Path Switch Request / Handover Notify tail (UE location,
+ * NH chain, S11 sends) to the UE's owner shard. kind is one of
+ * MME_HO_TAIL_*. Returns OGS_OK when the event was queued.
+ */
+int mme_worker_post_ho_tail(int kind, ogs_pool_id_t enb_ue_id,
+        mme_ue_t *mme_ue);
+
 /* Peek IMSI from a GTPv2-C pkbuf (Create Session Request TEID=0). */
 int mme_gtpv2_peek_imsi_bcd(ogs_pkbuf_t *pkbuf, char *bcd, size_t bcd_size);
 

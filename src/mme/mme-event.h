@@ -85,9 +85,23 @@ typedef enum {
 
     MME_EVENT_ORPHAN_SWEEP,
 
+    /*
+     * Path Switch Request / Handover Notify tail deferred to the UE
+     * owner shard (mme.workers): location update, NH chain and the
+     * S11 Modify Bearer / Create Session sends must run on the owner
+     * thread — both to avoid the main-vs-shard mme_ue write race and
+     * so the GTP xact lives in the shard whose TEID the response
+     * carries. e->ho_kind selects the tail.
+     */
+    MME_EVENT_S1AP_HO_TAIL,
+
     MAX_NUM_OF_MME_EVENT,
 
 } mme_event_e;
+
+/* MME_EVENT_S1AP_HO_TAIL discriminators (mme_event_t.ho_kind) */
+#define MME_HO_TAIL_PATH_SWITCH     1
+#define MME_HO_TAIL_HANDOVER_NOTIFY 2
 
 typedef long S1AP_ProcedureCode_t;
 typedef struct S1AP_S1AP_PDU ogs_s1ap_message_t;
@@ -163,6 +177,9 @@ typedef struct mme_event_s {
     char admin_mcc[4];
     char admin_mnc[4];
     int admin_tac;
+
+    /* MME_EVENT_S1AP_HO_TAIL: MME_HO_TAIL_* discriminator */
+    int ho_kind;
 
 } mme_event_t;
 

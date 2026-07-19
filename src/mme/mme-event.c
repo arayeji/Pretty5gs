@@ -290,6 +290,8 @@ const char *mme_event_get_name(mme_event_t *e)
         return "MME_EVENT_ADMIN_MAINTENANCE_DRAIN";
     case MME_EVENT_ORPHAN_SWEEP:
         return "MME_EVENT_ORPHAN_SWEEP";
+    case MME_EVENT_S1AP_HO_TAIL:
+        return "MME_EVENT_S1AP_HO_TAIL";
     default:
        break;
     }

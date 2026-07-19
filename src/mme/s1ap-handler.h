@@ -61,6 +61,14 @@ void s1ap_handle_e_rab_modification_indication(
 void s1ap_handle_path_switch_request(
         mme_enb_t *enb, ogs_s1ap_message_t *message);
 
+/*
+ * Handover tails (location update, NH chain, S11 sends). Run on the
+ * UE owner thread: called directly when mme.workers is off, or from
+ * the MME_EVENT_S1AP_HO_TAIL handler on the owner shard when active.
+ */
+void s1ap_path_switch_request_complete(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
+void s1ap_handover_notify_complete(enb_ue_t *target_ue, mme_ue_t *mme_ue);
+
 void s1ap_handle_enb_direct_information_transfer(
         mme_enb_t *enb, ogs_s1ap_message_t *message);
 
