@@ -559,7 +559,17 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
 
     mme_metrics_paging_attempt(mme_ue);
 
-    /* Find enB with matched TAI */
+    /*
+     * Find eNB with matched TAI.
+     *
+     * Paging runs on the UE owner shard (T3413 expiry, DDN, S1
+     * release) while main adds/removes eNBs on SCTP churn: walk
+     * enb_list only under the ctx lock — enb add/remove mutate it
+     * under the same (recursive) mutex. The sends inside just queue
+     * to the S1AP IO/TX path, so holding the lock across the walk is
+     * cheap.
+     */
+    mme_ctx_lock();
     ogs_list_for_each(&mme_self()->enb_list, enb) {
         for (i = 0; i < enb->num_of_supported_ta_list; i++) {
 
@@ -572,6 +582,7 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
                     s1apbuf = s1ap_build_paging(mme_ue, cn_domain);
                     if (!s1apbuf) {
                         ogs_error("s1ap_build_paging() failed");
+                        mme_ctx_unlock();
                         return OGS_ERROR;
                     }
                 }
@@ -580,17 +591,20 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
                 if (!mme_ue->t3413.pkbuf) {
                     ogs_error("ogs_pkbuf_copy() failed");
                     ogs_pkbuf_free(s1apbuf);
+                    mme_ctx_unlock();
                     return OGS_ERROR;
                 }
 
                 rv = s1ap_send_to_enb(enb, s1apbuf, S1AP_NON_UE_SIGNALLING);
                 if (rv != OGS_OK) {
                     ogs_error("s1ap_send_to_enb() failed");
+                    mme_ctx_unlock();
                     return rv;
                 }
             }
         }
     }
+    mme_ctx_unlock();
 
     /* Start T3413 */
     ogs_timer_start(mme_ue->t3413.timer,

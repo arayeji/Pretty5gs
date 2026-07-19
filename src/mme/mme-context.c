@@ -146,19 +146,29 @@ mme_save_recovery_counter(const char *path, uint8_t val)
 
 static mme_context_t self;
 static ogs_diam_config_t g_diam_conf;
-static ogs_thread_mutex_t mme_ctx_mutex;
-static bool mme_ctx_mutex_ready = false;
 
+/*
+ * Concurrency rules with mme.workers > 0 (same model as SGW-C):
+ *  - Every mme_ue/sess/bearer is OWNED by one thread (shard bits in
+ *    MME_UE_S1AP_ID / S11 TEID). Owner-only field access needs no lock.
+ *  - The shared containers — every OGS_POOL below (free list + id_hash),
+ *    the imsi/guti/teid hashes, mme_ue_list, per-eNB enb_ue lists/hashes
+ *    and sgw->sgw_ue_list — are only mutated in this file under
+ *    mme_ctx_lock(), which is the RECURSIVE metrics dump mutex shared
+ *    with the /ue-info dumpers, so readers never interleave with
+ *    mutators and nested lock takes (mme_ue_remove -> sess_remove_all)
+ *    are safe. Lookups (find_by_id / find_by_guti / ...) take it too:
+ *    ogs_hash_set can expand the bucket array, so lock-free ogs_hash_get
+ *    on another thread would read freed memory.
+ */
 void mme_ctx_lock(void)
 {
-    if (mme_ctx_mutex_ready)
-        ogs_thread_mutex_lock(&mme_ctx_mutex);
+    ogs_metrics_dump_lock();
 }
 
 void mme_ctx_unlock(void)
 {
-    if (mme_ctx_mutex_ready)
-        ogs_thread_mutex_unlock(&mme_ctx_mutex);
+    ogs_metrics_dump_unlock();
 }
 
 /* PLMN-indexed csmap buckets (see mme_csmap_plmn_attach). */
@@ -216,6 +226,7 @@ static void mme_ue_add_abort(mme_ue_t *mme_ue)
 {
     ogs_assert(mme_ue);
 
+    mme_ctx_lock();
     if (mme_ue->mme_s11_teid_node) {
         ogs_hash_set(self.mme_s11_teid_hash,
                 &mme_ue->mme_s11_teid, sizeof(mme_ue->mme_s11_teid), NULL);
@@ -226,6 +237,7 @@ static void mme_ue_add_abort(mme_ue_t *mme_ue)
                 &mme_ue->gn.mme_gn_teid, sizeof(mme_ue->gn.mme_gn_teid), NULL);
         ogs_pool_free(&mme_gn_teid_pool, mme_ue->gn.mme_gn_teid_node);
     }
+    mme_ctx_unlock();
 
     if (mme_ue->t3413.timer)
         ogs_timer_delete(mme_ue->t3413.timer);
@@ -248,7 +260,9 @@ static void mme_ue_add_abort(mme_ue_t *mme_ue)
     if (mme_ue->t_s6a)
         ogs_timer_delete(mme_ue->t_s6a);
 
+    mme_ctx_lock();
     ogs_pool_id_free(&mme_ue_pool, mme_ue);
+    mme_ctx_unlock();
 }
 
 static int context_initialized = 0;
@@ -349,8 +363,9 @@ void mme_context_init(void)
 {
     ogs_assert(context_initialized == 0);
 
-    ogs_thread_mutex_init(&mme_ctx_mutex);
-    mme_ctx_mutex_ready = true;
+    /* mme_ctx_lock() needs the recursive metrics dump mutex; the
+     * metrics context may not be initialized yet at this point. */
+    ogs_metrics_dump_lock_init();
 
     /* Initial FreeDiameter Config */
     memset(&g_diam_conf, 0, sizeof(ogs_diam_config_t));
@@ -530,10 +545,8 @@ void mme_context_final(void)
     ogs_pool_final(&mme_vlr_pool);
     ogs_pool_final(&mme_hssmap_pool);
 
-    if (mme_ctx_mutex_ready) {
-        ogs_thread_mutex_destroy(&mme_ctx_mutex);
-        mme_ctx_mutex_ready = false;
-    }
+    /* The dump mutex is owned by the metrics layer
+     * (ogs_metrics_dump_lock_final); nothing to destroy here. */
 
     context_initialized = 0;
 }
@@ -5528,7 +5541,9 @@ mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
     ogs_assert(sock);
     ogs_assert(addr);
 
+    mme_ctx_lock();
     ogs_pool_id_calloc(&mme_enb_pool, &enb);
+    mme_ctx_unlock();
     if (!enb) {
         /*
          * mme_enb_pool is sized to global.max.peer * 2 in
@@ -5810,7 +5825,12 @@ int mme_enb_sock_type(ogs_sock_t *sock)
 
 mme_enb_t *mme_enb_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&mme_enb_pool, id);
+    mme_enb_t *enb = NULL;
+
+    mme_ctx_lock();
+    enb = ogs_pool_find_by_id(&mme_enb_pool, id);
+    mme_ctx_unlock();
+    return enb;
 }
 
 /** enb_ue_context handling function */
@@ -5826,7 +5846,9 @@ enb_ue_t *enb_ue_add(mme_enb_t *enb, uint32_t enb_ue_s1ap_id)
         return NULL;
     }
 
+    mme_ctx_lock();
     ogs_pool_id_calloc(&enb_ue_pool, &enb_ue);
+    mme_ctx_unlock();
     if (enb_ue == NULL) {
         static ogs_time_t last_pool_err = 0;
         ogs_time_t now = ogs_time_now();
@@ -5847,7 +5869,9 @@ enb_ue_t *enb_ue_add(mme_enb_t *enb, uint32_t enb_ue_s1ap_id)
             OGS_UINT_TO_POINTER(enb_ue->id));
     if (!enb_ue->t_s1_holding) {
         ogs_error("ogs_timer_add() failed");
+        mme_ctx_lock();
         ogs_pool_id_free(&enb_ue_pool, enb_ue);
+        mme_ctx_unlock();
         return NULL;
     }
 
@@ -5880,6 +5904,7 @@ enb_ue_t *enb_ue_add(mme_enb_t *enb, uint32_t enb_ue_s1ap_id)
 
     enb_ue->enb_id = enb->id;
 
+    mme_ctx_lock();
     ogs_list_add(&enb->enb_ue_list, enb_ue);
     enb->num_enb_ues++;
     if (enb->enb_ue_hash)
@@ -5887,6 +5912,7 @@ enb_ue_t *enb_ue_add(mme_enb_t *enb, uint32_t enb_ue_s1ap_id)
                 &enb_ue->enb_ue_s1ap_id,
                 sizeof(enb_ue->enb_ue_s1ap_id),
                 enb_ue);
+    mme_ctx_unlock();
 
     stats_add_enb_ue();
 
@@ -5914,6 +5940,7 @@ void enb_ue_remove(enb_ue_t *enb_ue)
 
     enb = mme_enb_find_by_id(enb_ue->enb_id);
 
+    mme_ctx_lock();
     if (enb) {
         ogs_list_remove(&enb->enb_ue_list, enb_ue);
         if (enb->num_enb_ues > 0) enb->num_enb_ues--;
@@ -5952,6 +5979,7 @@ void enb_ue_remove(enb_ue_t *enb_ue)
     ogs_timer_delete(enb_ue->t_s1_holding);
 
     ogs_pool_id_free(&enb_ue_pool, enb_ue);
+    mme_ctx_unlock();
 
     stats_remove_enb_ue();
 }
@@ -5971,6 +5999,7 @@ void enb_ue_switch_to_enb(enb_ue_t *enb_ue, mme_enb_t *new_enb)
      * back to this enb_ue. This is rare (one collision per UE handover)
      * and bounded by the small per-eNB UE count.
      */
+    mme_ctx_lock();
     if (enb && enb->enb_ue_hash) {
         ogs_hash_index_t *hi;
         for (hi = ogs_hash_first(enb->enb_ue_hash);
@@ -5996,6 +6025,7 @@ void enb_ue_switch_to_enb(enb_ue_t *enb_ue, mme_enb_t *new_enb)
                 &enb_ue->enb_ue_s1ap_id,
                 sizeof(enb_ue->enb_ue_s1ap_id),
                 enb_ue);
+    mme_ctx_unlock();
 
     enb_ue->enb_id = new_enb->id;
 
@@ -6032,23 +6062,39 @@ enb_ue_t *enb_ue_find_by_enb_ue_s1ap_id(
      * _switch_to_enb. Falls back to the linear scan only if the hash
      * was somehow not created (defensive; mme_enb_add always builds it).
      */
-    if (enb->enb_ue_hash)
-        return (enb_ue_t *)ogs_hash_get(enb->enb_ue_hash,
+    if (enb->enb_ue_hash) {
+        enb_ue_t *enb_ue = NULL;
+
+        mme_ctx_lock();
+        enb_ue = (enb_ue_t *)ogs_hash_get(enb->enb_ue_hash,
                 &enb_ue_s1ap_id, sizeof(enb_ue_s1ap_id));
+        mme_ctx_unlock();
+        return enb_ue;
+    }
 
     {
-        enb_ue_t *enb_ue = NULL;
+        enb_ue_t *enb_ue = NULL, *found = NULL;
+
+        mme_ctx_lock();
         ogs_list_for_each(&enb->enb_ue_list, enb_ue) {
-            if (enb_ue_s1ap_id == enb_ue->enb_ue_s1ap_id)
-                return enb_ue;
+            if (enb_ue_s1ap_id == enb_ue->enb_ue_s1ap_id) {
+                found = enb_ue;
+                break;
+            }
         }
-        return NULL;
+        mme_ctx_unlock();
+        return found;
     }
 }
 
 enb_ue_t *enb_ue_find(uint32_t index)
 {
-    return ogs_pool_find(&enb_ue_pool, index);
+    enb_ue_t *enb_ue = NULL;
+
+    mme_ctx_lock();
+    enb_ue = ogs_pool_find(&enb_ue_pool, index);
+    mme_ctx_unlock();
+    return enb_ue;
 }
 
 enb_ue_t *enb_ue_find_by_mme_ue_s1ap_id(uint32_t mme_ue_s1ap_id)
@@ -6072,7 +6118,12 @@ enb_ue_t *enb_ue_find_by_mme_ue_s1ap_id(uint32_t mme_ue_s1ap_id)
 
 enb_ue_t *enb_ue_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&enb_ue_pool, id);
+    enb_ue_t *enb_ue = NULL;
+
+    mme_ctx_lock();
+    enb_ue = ogs_pool_find_by_id(&enb_ue_pool, id);
+    mme_ctx_unlock();
+    return enb_ue;
 }
 
 /** sgw_ue_context handling function */
@@ -6082,7 +6133,9 @@ sgw_ue_t *sgw_ue_add(mme_sgw_t *sgw)
 
     ogs_assert(sgw);
 
+    mme_ctx_lock();
     ogs_pool_id_calloc(&sgw_ue_pool, &sgw_ue);
+    mme_ctx_unlock();
     ogs_assert(sgw_ue);
 
     sgw_ue->t_s11_holding = ogs_timer_add(
@@ -6090,13 +6143,17 @@ sgw_ue_t *sgw_ue_add(mme_sgw_t *sgw)
             OGS_UINT_TO_POINTER(sgw_ue->id));
     if (!sgw_ue->t_s11_holding) {
         ogs_error("ogs_timer_add() failed");
+        mme_ctx_lock();
         ogs_pool_id_free(&sgw_ue_pool, sgw_ue);
+        mme_ctx_unlock();
         return NULL;
     }
 
     sgw_ue->sgw = sgw;
 
+    mme_ctx_lock();
     ogs_list_add(&sgw->sgw_ue_list, sgw_ue);
+    mme_ctx_unlock();
 
     return sgw_ue;
 }
@@ -6109,12 +6166,14 @@ void sgw_ue_remove(sgw_ue_t *sgw_ue)
     sgw = sgw_ue->sgw;
     ogs_assert(sgw);
 
+    mme_ctx_lock();
     ogs_list_remove(&sgw->sgw_ue_list, sgw_ue);
 
     ogs_assert(sgw_ue->t_s11_holding);
     ogs_timer_delete(sgw_ue->t_s11_holding);
 
     ogs_pool_id_free(&sgw_ue_pool, sgw_ue);
+    mme_ctx_unlock();
 }
 
 void sgw_ue_switch_to_sgw(sgw_ue_t *sgw_ue, mme_sgw_t *new_sgw)
@@ -6124,10 +6183,12 @@ void sgw_ue_switch_to_sgw(sgw_ue_t *sgw_ue, mme_sgw_t *new_sgw)
     ogs_assert(new_sgw);
 
     /* Remove from the old sgw */
+    mme_ctx_lock();
     ogs_list_remove(&sgw_ue->sgw->sgw_ue_list, sgw_ue);
 
     /* Add to the new sgw */
     ogs_list_add(&new_sgw->sgw_ue_list, sgw_ue);
+    mme_ctx_unlock();
 
     /* Switch to sgw */
     sgw_ue->sgw = new_sgw;
@@ -6135,7 +6196,12 @@ void sgw_ue_switch_to_sgw(sgw_ue_t *sgw_ue, mme_sgw_t *new_sgw)
 
 sgw_ue_t *sgw_ue_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&sgw_ue_pool, id);
+    sgw_ue_t *sgw_ue = NULL;
+
+    mme_ctx_lock();
+    sgw_ue = ogs_pool_find_by_id(&sgw_ue_pool, id);
+    mme_ctx_unlock();
+    return sgw_ue;
 }
 
 sgw_relocation_e sgw_ue_check_if_relocated(
@@ -6761,36 +6827,47 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     /*
      * When used for the first time, if last node is set,
      * the search is performed from the first SGW in a round-robin manner.
+     *
+     * The round-robin cursor mme_self()->sgw is shared across shard
+     * workers: pick under the ctx lock and use a local afterwards.
      */
-    if (mme_sgw_list_has_filters()) {
-        mme_self()->sgw = mme_sgw_select_for_ue(enb_ue, mme_ue);
-    } else {
-        if (mme_self()->sgw == NULL)
-            mme_self()->sgw = ogs_list_last(&mme_self()->sgw_list);
-        mme_self()->sgw = selected_sgw_node(mme_self()->sgw, enb_ue);
-    }
-    if (!mme_self()->sgw) {
-        uint16_t tac = 0;
-        uint32_t cell_id = 0, enb_id = 0;
+    {
+        mme_sgw_t *picked_sgw = NULL;
 
-        mme_log_radio(NULL, enb_ue, &tac, &cell_id, &enb_id);
-        ogs_error("No SGW configured TAC[0x%04x] eNB_ID[0x%x] cell[0x%x]",
-                tac, enb_id, cell_id);
-        mme_ue_add_abort(mme_ue);
-        return NULL;
-    }
+        mme_ctx_lock();
+        if (mme_sgw_list_has_filters()) {
+            mme_self()->sgw = mme_sgw_select_for_ue(enb_ue, mme_ue);
+        } else {
+            if (mme_self()->sgw == NULL)
+                mme_self()->sgw = ogs_list_last(&mme_self()->sgw_list);
+            mme_self()->sgw = selected_sgw_node(mme_self()->sgw, enb_ue);
+        }
+        picked_sgw = mme_self()->sgw;
+        mme_ctx_unlock();
 
-    sgw_ue = sgw_ue_add(mme_self()->sgw);
-    if (!sgw_ue) {
-        char sgw_peer[OGS_ADDRSTRLEN];
+        if (!picked_sgw) {
+            uint16_t tac = 0;
+            uint32_t cell_id = 0, enb_id = 0;
 
-        ogs_error("[%s] Could not allocate sgw_ue SGW[%s]:%d",
-                mme_log_imsi(mme_ue),
-                OGS_ADDR(mme_self()->sgw->gnode.sa_list, sgw_peer),
-                mme_self()->sgw->gnode.sa_list ?
-                    OGS_PORT(mme_self()->sgw->gnode.sa_list) : 0);
-        mme_ue_add_abort(mme_ue);
-        return NULL;
+            mme_log_radio(NULL, enb_ue, &tac, &cell_id, &enb_id);
+            ogs_error("No SGW configured TAC[0x%04x] eNB_ID[0x%x] cell[0x%x]",
+                    tac, enb_id, cell_id);
+            mme_ue_add_abort(mme_ue);
+            return NULL;
+        }
+
+        sgw_ue = sgw_ue_add(picked_sgw);
+        if (!sgw_ue) {
+            char sgw_peer[OGS_ADDRSTRLEN];
+
+            ogs_error("[%s] Could not allocate sgw_ue SGW[%s]:%d",
+                    mme_log_imsi(mme_ue),
+                    OGS_ADDR(picked_sgw->gnode.sa_list, sgw_peer),
+                    picked_sgw->gnode.sa_list ?
+                        OGS_PORT(picked_sgw->gnode.sa_list) : 0);
+            mme_ue_add_abort(mme_ue);
+            return NULL;
+        }
     }
     if (!sgw_ue->gnode) {
         ogs_error("[%s] SGW has no gnode after pick", mme_log_imsi(mme_ue));
@@ -6802,7 +6879,7 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
     sgw_ue_associate_mme_ue(sgw_ue, mme_ue);
 
     if (mme_sgw_list_has_filters())
-        mme_sgw_log_pick(mme_ue, mme_self()->sgw, "initial", NULL);
+        mme_sgw_log_pick(mme_ue, sgw_ue->sgw, "initial", NULL);
     else
         ogs_debug("UE using SGW on IP[%s]",
                 OGS_ADDR(sgw_ue->gnode->sa_list, buf));
@@ -6941,7 +7018,12 @@ void mme_ue_remove_all(void)
 
 mme_ue_t *mme_ue_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&mme_ue_pool, id);
+    mme_ue_t *mme_ue = NULL;
+
+    mme_ctx_lock();
+    mme_ue = ogs_pool_find_by_id(&mme_ue_pool, id);
+    mme_ctx_unlock();
+    return mme_ue;
 }
 
 bool mme_ue_is_valid_for_s1(mme_ue_t *mme_ue)
@@ -7006,27 +7088,47 @@ mme_ue_t *mme_ue_find_by_imsi_bcd(const char *imsi_bcd)
 
 mme_ue_t *mme_ue_find_by_imsi(const uint8_t *imsi, int imsi_len)
 {
+    mme_ue_t *mme_ue = NULL;
+
     ogs_assert(imsi && imsi_len);
 
-    return (mme_ue_t *)ogs_hash_get(self.imsi_ue_hash, imsi, imsi_len);
+    mme_ctx_lock();
+    mme_ue = (mme_ue_t *)ogs_hash_get(self.imsi_ue_hash, imsi, imsi_len);
+    mme_ctx_unlock();
+    return mme_ue;
 }
 
 mme_ue_t *mme_ue_find_by_guti(const ogs_nas_eps_guti_t *guti)
 {
+    mme_ue_t *mme_ue = NULL;
+
     ogs_assert(guti);
 
-    return (mme_ue_t *)ogs_hash_get(
+    mme_ctx_lock();
+    mme_ue = (mme_ue_t *)ogs_hash_get(
             self.guti_ue_hash, guti, sizeof(ogs_nas_eps_guti_t));
+    mme_ctx_unlock();
+    return mme_ue;
 }
 
 mme_ue_t *mme_ue_find_by_s11_local_teid(uint32_t teid)
 {
-    return ogs_hash_get(self.mme_s11_teid_hash, &teid, sizeof(teid));
+    mme_ue_t *mme_ue = NULL;
+
+    mme_ctx_lock();
+    mme_ue = ogs_hash_get(self.mme_s11_teid_hash, &teid, sizeof(teid));
+    mme_ctx_unlock();
+    return mme_ue;
 }
 
 mme_ue_t *mme_ue_find_by_gn_local_teid(uint32_t teid)
 {
-    return ogs_hash_get(self.mme_gn_teid_hash, &teid, sizeof(teid));
+    mme_ue_t *mme_ue = NULL;
+
+    mme_ctx_lock();
+    mme_ue = ogs_hash_get(self.mme_gn_teid_hash, &teid, sizeof(teid));
+    mme_ctx_unlock();
+    return mme_ue;
 }
 
 static mme_ue_t *mme_ue_lookup_by_imsi_bcd(const char *imsi_bcd)
@@ -7749,7 +7851,9 @@ mme_sess_t *mme_sess_add(mme_ue_t *mme_ue, uint8_t pti)
     ogs_assert(mme_ue);
     ogs_assert(pti != OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED);
 
+    mme_ctx_lock();
     ogs_pool_id_calloc(&mme_sess_pool, &sess);
+    mme_ctx_unlock();
     ogs_assert(sess);
 
     ogs_list_init(&sess->bearer_list);
@@ -7864,7 +7968,12 @@ mme_sess_t *mme_sess_find_by_apn(const mme_ue_t *mme_ue, const char *apn)
 
 mme_sess_t *mme_sess_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&mme_sess_pool, id);
+    mme_sess_t *sess = NULL;
+
+    mme_ctx_lock();
+    sess = ogs_pool_find_by_id(&mme_sess_pool, id);
+    mme_ctx_unlock();
+    return sess;
 }
 
 mme_sess_t *mme_sess_first(const mme_ue_t *mme_ue)
@@ -7900,7 +8009,9 @@ mme_bearer_t *mme_bearer_add(mme_sess_t *sess)
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     ogs_assert(mme_ue);
 
+    mme_ctx_lock();
     ogs_pool_id_calloc(&mme_bearer_pool, &bearer);
+    mme_ctx_unlock();
     ogs_assert(bearer);
 
     ogs_list_init(&bearer->update.xact_list);
@@ -7913,7 +8024,9 @@ mme_bearer_t *mme_bearer_add(mme_sess_t *sess)
     if (bearer->ebi == INVALID_EPS_BEARER_ID) {
         mme_ue_error(mme_ue, NULL, "bearer", NULL,
                 "Bearer add failed: EBI pool exhausted");
-        ogs_pool_free(&mme_bearer_pool, bearer);
+        mme_ctx_lock();
+        ogs_pool_id_free(&mme_bearer_pool, bearer);
+        mme_ctx_unlock();
         return NULL;
     }
 
@@ -8332,7 +8445,12 @@ mme_bearer_t *mme_bearer_next(mme_bearer_t *bearer)
 
 mme_bearer_t *mme_bearer_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&mme_bearer_pool, id);
+    mme_bearer_t *bearer = NULL;
+
+    mme_ctx_lock();
+    bearer = ogs_pool_find_by_id(&mme_bearer_pool, id);
+    mme_ctx_unlock();
+    return bearer;
 }
 
 void mme_session_remove_all(mme_ue_t *mme_ue)
@@ -8615,7 +8733,9 @@ mme_m_tmsi_t *mme_m_tmsi_alloc(void)
 {
     mme_m_tmsi_t *m_tmsi = NULL;
 
+    mme_ctx_lock();
     ogs_pool_alloc(&m_tmsi_pool, &m_tmsi);
+    mme_ctx_unlock();
     ogs_assert(m_tmsi);
 
     /* TS23.003
@@ -8667,7 +8787,9 @@ int mme_m_tmsi_free(mme_m_tmsi_t *m_tmsi)
     *m_tmsi = (*m_tmsi & 0xffff) |
         ((*m_tmsi & 0x3f000000) >> 8) |     /* [29:24] -> index[21:16] */
         ((*m_tmsi & 0x00ff0000) << 6);      /* [23:16] -> index[29:22] */
+    mme_ctx_lock();
     ogs_pool_free(&m_tmsi_pool, m_tmsi);
+    mme_ctx_unlock();
 
     return OGS_OK;
 }
