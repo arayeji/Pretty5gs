@@ -1110,13 +1110,25 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                 ogs_assert_if_reached();
                 OGS_FSM_TRAN(s, &emm_state_initial_context_setup);
             } else if (mme_ue->tracking_area_update_accept_proc ==
-                    S1AP_ProcedureCode_id_InitialContextSetup) {
+                        S1AP_ProcedureCode_id_InitialContextSetup &&
+                    MME_NEXT_P_TMSI_IS_AVAILABLE(mme_ue)) {
                 /*
-                 * TAU Accept with ICS starts T3450; handle expiry in
-                 * emm_state_initial_context_setup (same as attach).
+                 * TAU Accept with ICS and a reallocated P-TMSI: the UE
+                 * answers with TAU Complete, handled (with the T3450
+                 * retransmit) in emm_state_initial_context_setup.
                  */
                 OGS_FSM_TRAN(s, &emm_state_initial_context_setup);
             } else {
+                /*
+                 * No new GUTI/P-TMSI -> the UE will NOT send TAU
+                 * Complete (TS 24.301 5.5.3.2.4) and the procedure is
+                 * already finished. Parking in initial_context_setup
+                 * here wedged the UE: the next EMM message (e.g. a
+                 * follow-up TAU or Service Request) fell into the
+                 * "Unknown message" hole and T3450 kept retransmitting
+                 * an answer nobody would ever acknowledge.
+                 */
+                CLEAR_MME_UE_TIMER(mme_ue->t3450);
                 OGS_FSM_TRAN(s, &emm_state_registered);
             }
             break;
