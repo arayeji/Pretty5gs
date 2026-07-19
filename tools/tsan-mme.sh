@@ -56,6 +56,18 @@ do_build() {
         ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
         echo "injected mme.workers:4 -> $f"
     fi
+
+    # SGWC shard workers (rehome / TEID shard-bit routing) under `sgwc:`.
+    if [ -f "$f" ] && ! awk '/^sgwc:/{s=1;next} /^[a-z]/{s=0} s&&/workers:/{f=1} END{exit !f}' "$f"; then
+        awk '
+            { print }
+            /^sgwc:/ && !done {
+                print "  workers: 4"
+                done = 1
+            }
+        ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+        echo "injected sgwc.workers:4 -> $f"
+    fi
 }
 
 do_test() {
