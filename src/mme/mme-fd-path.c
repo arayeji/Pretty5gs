@@ -2081,7 +2081,8 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
             mme_ue->charging_characteristics_presence = false;
         }
         if (!(subdatamask & OGS_DIAM_S6A_SUBDATA_UEAMBR)) {
-            ogs_error("no_AMBR");
+            ogs_error("[%s] ULA Subscription-Data without AMBR",
+                    mme_ue->imsi_bcd);
             error++;
             goto cleanup;
         }
@@ -2090,12 +2091,27 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
                 OGS_RAU_TAU_DEFAULT_TIME;
         }
         if (!(subdatamask & OGS_DIAM_S6A_SUBDATA_APN_CONFIG)) {
-            ogs_error("no_APN-Configuration-Profile");
+            ogs_error("[%s] ULA Subscription-Data without "
+                    "APN-Configuration-Profile", mme_ue->imsi_bcd);
             error++;
             goto cleanup;
         }
+    } else if (s6a_message->result_code != ER_DIAMETER_SUCCESS) {
+        /*
+         * Error answers (USER_UNKNOWN, roaming restriction, HSS ACL, ...)
+         * legitimately omit Subscription-Data. Push the event anyway so
+         * mme_s6a_handle_ula() rejects the attach with the proper EMM
+         * cause instead of leaving the UE to time out on t_s6a.
+         */
+        ogs_warn("[%s] ULA error answer without Subscription-Data "
+                "(%sResult-Code:%d)",
+                mme_ue->imsi_bcd,
+                s6a_message->exp_err ? "Experimental-" : "",
+                s6a_message->result_code);
     } else {
-        ogs_error("no_Subscription-Data");
+        ogs_error("[%s] no_Subscription-Data in successful ULA "
+                "(Result-Code:%d)",
+                mme_ue->imsi_bcd, s6a_message->result_code);
         error++;
         goto cleanup;
     }
