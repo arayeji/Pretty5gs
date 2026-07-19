@@ -5636,7 +5636,7 @@ int mme_enb_remove(mme_enb_t *enb)
             ogs_list_remove(&enb->s1ap_tx_hold, held);
             ogs_pkbuf_free(held);
         }
-        enb->s1ap_tx_pending = 0;
+        __atomic_store_n(&enb->s1ap_tx_pending, 0, __ATOMIC_RELEASE);
     }
 
     ogs_hash_set(self.enb_addr_hash,
@@ -7380,6 +7380,48 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
             old_sgw_ue = sgw_ue_find_by_id(old_mme_ue->sgw_ue_id);
             ogs_assert(old_sgw_ue);
             sgw_ue->sgw_s11_teid = old_sgw_ue->sgw_s11_teid;
+
+            /*
+             * Phase-5 : sess->session of the moved sessions points INTO
+             * old_mme_ue->session[] (see esm-handler.c). mme_ue_remove()
+             * frees those names and returns the OLD UE to the pool, so
+             * every moved sess would keep a dangling pointer
+             * (use-after-free seen in trace/APN paths under TSAN).
+             * Transfer the subscription-session array when the NEW UE
+             * has none yet; otherwise re-resolve by APN into the NEW
+             * UE's own array.
+             */
+            {
+                mme_sess_t *moved_sess = NULL;
+
+                if (mme_ue->num_of_session == 0 &&
+                        old_mme_ue->num_of_session > 0) {
+                    memcpy(mme_ue->session, old_mme_ue->session,
+                            sizeof(mme_ue->session));
+                    mme_ue->num_of_session = old_mme_ue->num_of_session;
+                    /* name ownership moved to NEW UE:
+                     * mme_session_remove_all(OLD) must free nothing */
+                    old_mme_ue->num_of_session = 0;
+                }
+
+                ogs_list_for_each(&mme_ue->sess_list, moved_sess) {
+                    ogs_session_t *old_ref = moved_sess->session;
+
+                    if (!old_ref ||
+                            old_ref < &old_mme_ue->session[0] ||
+                            old_ref >=
+                            &old_mme_ue->session[OGS_MAX_NUM_OF_SESS])
+                        continue;
+
+                    moved_sess->session = old_ref->name ?
+                        mme_session_find_by_apn(mme_ue, old_ref->name) :
+                        NULL;
+                    if (!moved_sess->session)
+                        ogs_warn("[%s] session APN[%s] lost in UE merge",
+                                mme_ue->imsi_bcd,
+                                old_ref->name ? old_ref->name : "-");
+                }
+            }
 
             mme_ue_remove(old_mme_ue);
         }

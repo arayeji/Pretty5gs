@@ -234,7 +234,9 @@ int s1ap_tx_post_dlnas(enb_ue_t *enb_ue, ogs_pkbuf_t *emmbuf)
         return rv;
     }
 
-    enb->s1ap_tx_pending++;
+    /* atomic: with mme.workers this runs on a UE-shard worker while
+     * TX_READY decrements on main */
+    __atomic_add_fetch(&enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
     return OGS_OK;
 }
 
@@ -281,8 +283,8 @@ void s1ap_tx_ready_handle(mme_event_t *e)
         return;
     }
 
-    if (enb->s1ap_tx_pending > 0)
-        enb->s1ap_tx_pending--;
+    if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0)
+        __atomic_sub_fetch(&enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
 
     if (e->pkbuf) {
         ogs_sctp_ppid_in_pkbuf(e->pkbuf) = OGS_SCTP_S1AP_PPID;
@@ -292,7 +294,7 @@ void s1ap_tx_ready_handle(mme_event_t *e)
 
     /* once nothing is in flight, release messages that s1ap_send_to_enb
      * held back to preserve per-association order */
-    if (enb->s1ap_tx_pending == 0) {
+    if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) == 0) {
         ogs_pkbuf_t *held = NULL, *next = NULL;
         ogs_list_for_each_safe(&enb->s1ap_tx_hold, next, held) {
             ogs_list_remove(&enb->s1ap_tx_hold, held);

@@ -487,7 +487,11 @@ typedef struct mme_enb_s {
      * DownlinkNASTransport encode jobs in flight on this eNB's TX
      * worker; while > 0, s1ap_send_to_enb() parks synchronous pkbufs
      * on s1ap_tx_hold so per-association order is preserved, and the
-     * TX_READY handler flushes them. Main thread only.
+     * TX_READY handler flushes them.
+     *
+     * Accessed with __atomic builtins: with mme.workers the increment
+     * happens on a UE-shard worker while TX_READY decrements on main.
+     * s1ap_tx_hold itself stays main-thread only.
      */
     int             s1ap_tx_pending;
     ogs_list_t      s1ap_tx_hold;

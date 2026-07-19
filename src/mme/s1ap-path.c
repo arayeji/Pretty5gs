@@ -80,7 +80,8 @@ int s1ap_send_to_enb(mme_enb_t *enb, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
      * not overtake them on the wire. Park it; the TX_READY handler
      * flushes the hold list once pending drops to zero (s1ap-tx.c).
      */
-    if (s1ap_tx_active() && enb->s1ap_tx_pending > 0) {
+    if (s1ap_tx_active() &&
+            __atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0) {
         ogs_list_add(&enb->s1ap_tx_hold, pkbuf);
         return OGS_OK;
     }
