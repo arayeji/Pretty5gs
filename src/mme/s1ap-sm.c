@@ -60,7 +60,11 @@ void s1ap_state_operational(ogs_fsm_t *s, mme_event_t *e)
     mme_sm_debug(e);
 
     enb = mme_enb_find_by_id(e->enb_id);
-    ogs_assert(enb);
+    if (!enb) {
+        ogs_warn("S1AP FSM: enb id=%d gone (event %s)",
+                e->enb_id, mme_event_get_name(e));
+        return;
+    }
 
     switch (e->id) {
     case OGS_FSM_ENTRY_SIG:

@@ -8105,11 +8105,13 @@ void mme_bearer_remove(mme_bearer_t *bearer)
 
     mme_bearer_removed_log(mme_ue, bearer);
 
+    /* Stop timers before FSM fini so late T3489/etc cannot re-enter ESM. */
+    CLEAR_BEARER_ALL_TIMERS(bearer);
+
     memset(&e, 0, sizeof(e));
     e.bearer_id = bearer->id;
     ogs_fsm_fini(&bearer->sm, &e);
 
-    CLEAR_BEARER_ALL_TIMERS(bearer);
     ogs_timer_delete(bearer->t3489.timer);
     ogs_timer_delete(bearer->t_bearer_setup.timer);
     ogs_timer_delete(bearer->t_nas_deactivate.timer);

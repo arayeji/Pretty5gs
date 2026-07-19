@@ -806,9 +806,17 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         ogs_fsm_dispatch(&bearer->sm, e);
         if (OGS_FSM_CHECK(&bearer->sm, esm_state_bearer_deactivated)) {
             sess = mme_sess_find_by_id(bearer->sess_id);
-            ogs_assert(sess);
+            if (!sess) {
+                ogs_warn("ESM timer: sess gone for bearer id=%d",
+                        bearer->id);
+                break;
+            }
             default_bearer = mme_default_bearer_in_sess(sess);
-            ogs_assert(default_bearer);
+            if (!default_bearer) {
+                ogs_warn("ESM timer: no default bearer in sess id=%d",
+                        sess->id);
+                break;
+            }
             if (default_bearer->ebi == bearer->ebi) {
                 MME_SESS_CLEAR(sess);
             } else {

@@ -33,6 +33,34 @@
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __esm_log_domain
 
+/*
+ * Late ESM timer / nested FSM entry can outlive the bearer (or its
+ * parent sess/mme_ue). Asserting here would abort the MME the same way
+ * emm_state_de_registered did — drop the event instead.
+ */
+#define ESM_FIND_CTX_OR_RETURN(e, bearer, sess, mme_ue) do {             \
+    (bearer) = mme_bearer_find_by_id((e)->bearer_id);                   \
+    if (!(bearer)) {                                                    \
+        ogs_warn("ESM: bearer id=%d gone (event %s)",                   \
+                (e)->bearer_id, mme_event_get_name(e));                 \
+        return;                                                         \
+    }                                                                   \
+    (sess) = mme_sess_find_by_id((bearer)->sess_id);                    \
+    if (!(sess)) {                                                      \
+        ogs_warn("ESM: sess id=%d gone for bearer=%d (event %s)",       \
+                (bearer)->sess_id, (bearer)->id,                        \
+                mme_event_get_name(e));                                 \
+        return;                                                         \
+    }                                                                   \
+    (mme_ue) = mme_ue_find_by_id((sess)->mme_ue_id);                    \
+    if (!(mme_ue)) {                                                    \
+        ogs_warn("ESM: mme_ue id=%d gone for bearer=%d (event %s)",     \
+                (sess)->mme_ue_id, (bearer)->id,                        \
+                mme_event_get_name(e));                                 \
+        return;                                                         \
+    }                                                                   \
+} while (0)
+
 static uint8_t gtp_cause_from_esm(uint8_t esm_cause)
 {
     switch (esm_cause) {
@@ -76,10 +104,14 @@ static void esm_handle_bearer_setup_timer(ogs_fsm_t *s,
         if (bearer->ebi == linked_bearer->ebi) {
             if (enb_ue && MME_HAVE_SGW_S1U_PATH(sess)) {
                 sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-                ogs_assert(sgw_ue);
-                ogs_assert(OGS_OK ==
-                    mme_gtp_send_delete_session_request(enb_ue, sgw_ue, sess,
-                        OGS_GTP_DELETE_NO_ACTION));
+                if (!sgw_ue) {
+                    ogs_warn("[%s] bearer setup timeout: sgw_ue gone",
+                            mme_ue->imsi_bcd);
+                } else {
+                    ogs_assert(OGS_OK ==
+                        mme_gtp_send_delete_session_request(
+                            enb_ue, sgw_ue, sess, OGS_GTP_DELETE_NO_ACTION));
+                }
             }
             OGS_FSM_TRAN(s, esm_state_exception);
         } else {
@@ -131,12 +163,7 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
 
     mme_sm_debug(e);
 
-    bearer = mme_bearer_find_by_id(e->bearer_id);
-    ogs_assert(bearer);
-    sess = mme_sess_find_by_id(bearer->sess_id);
-    ogs_assert(sess);
-    mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
-    ogs_assert(mme_ue);
+    ESM_FIND_CTX_OR_RETURN(e, bearer, sess, mme_ue);
 
     switch (e->id) {
     case OGS_FSM_ENTRY_SIG:
@@ -174,7 +201,12 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
                     mme_ue->imsi_bcd, sess->pti, bearer->ebi);
             if (MME_HAVE_SGW_S1U_PATH(sess)) {
                 sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-                ogs_assert(sgw_ue);
+                if (!sgw_ue) {
+                    ogs_warn("[%s] PDN disconnect: sgw_ue gone",
+                            mme_ue->imsi_bcd);
+                    OGS_FSM_TRAN(s, esm_state_exception);
+                    break;
+                }
 
                 ogs_assert(OGS_OK ==
                     mme_gtp_send_delete_session_request(enb_ue, sgw_ue, sess,
@@ -347,12 +379,7 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
 
     mme_sm_debug(e);
 
-    bearer = mme_bearer_find_by_id(e->bearer_id);
-    ogs_assert(bearer);
-    sess = mme_sess_find_by_id(bearer->sess_id);
-    ogs_assert(sess);
-    mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
-    ogs_assert(mme_ue);
+    ESM_FIND_CTX_OR_RETURN(e, bearer, sess, mme_ue);
 
     switch (e->id) {
     case OGS_FSM_ENTRY_SIG:
@@ -392,7 +419,12 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
 
             if (MME_HAVE_SGW_S1U_PATH(sess)) {
                 sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-                ogs_assert(sgw_ue);
+                if (!sgw_ue) {
+                    ogs_warn("[%s] PDN disconnect: sgw_ue gone",
+                            mme_ue->imsi_bcd);
+                    OGS_FSM_TRAN(s, esm_state_exception);
+                    break;
+                }
 
                 ogs_assert(OGS_OK ==
                     mme_gtp_send_delete_session_request(enb_ue, sgw_ue, sess,
@@ -527,12 +559,7 @@ void esm_state_pdn_will_disconnect(ogs_fsm_t *s, mme_event_t *e)
 
     mme_sm_debug(e);
 
-    bearer = mme_bearer_find_by_id(e->bearer_id);
-    ogs_assert(bearer);
-    sess = mme_sess_find_by_id(bearer->sess_id);
-    ogs_assert(sess);
-    mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
-    ogs_assert(mme_ue);
+    ESM_FIND_CTX_OR_RETURN(e, bearer, sess, mme_ue);
 
     switch (e->id) {
     case OGS_FSM_ENTRY_SIG:
@@ -647,6 +674,11 @@ void esm_state_exception(ogs_fsm_t *s, mme_event_t *e)
     mme_sm_debug(e);
 
     bearer = mme_bearer_find_by_id(e->bearer_id);
+    if (!bearer) {
+        ogs_warn("ESM exception: bearer id=%d gone (event %s)",
+                e->bearer_id, mme_event_get_name(e));
+        return;
+    }
 
     switch (e->id) {
     case OGS_FSM_ENTRY_SIG:
