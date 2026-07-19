@@ -42,7 +42,7 @@ typedef struct io_job_s {
     ogs_sock_t      *sock;
     ogs_pkbuf_t     *pkbuf;         /* IO_CMD_SEND (ownership: job) */
     bool            send_addr;      /* SEQPACKET: pass addr to sendmsg */
-    bool            has_peer;       /* peer addr for EPIPE → CONNREFUSED */
+    bool            has_peer;       /* peer addr copy (SEQPACKET / diag) */
     ogs_sockaddr_t  addr;           /* copied: enb->sctp.addr dies with enb */
 } io_job_t;
 
@@ -61,7 +61,12 @@ typedef struct io_sock_s {
     bool            dead_reported;  /* CONNREFUSED posted once */
 } io_sock_t;
 
-#define IO_WRITE_QUEUE_MAX  256
+/*
+ * Soft per-assoc backlog. When exceeded we DROP the new PDU only —
+ * never tear the eNB down. (Earlier code raised CONNREFUSED here and
+ * that alone could cascade-kill hundreds of cells under attach load.)
+ */
+#define IO_WRITE_QUEUE_MAX  1024
 
 static OGS_THREAD_LOCAL ogs_hash_t *io_sock_hash = NULL;
 
@@ -141,41 +146,54 @@ static bool io_errno_assoc_dead(ogs_err_t err)
 }
 
 /*
- * One-shot: tell main this association is dead so CONNREFUSED tears
- * down eNB + UEs. Without this, EPIPE only drops PDUs and the half-dead
- * assoc keeps producing Broken-pipe storms until SCTP heartbeat times out.
+ * Stop sending on this sock. Do NOT raise CONNREFUSED from the IO
+ * thread.
+ *
+ * Why: with s1ap_io_thread off, ogs_sctp_senddata() on EPIPE only
+ * drops the PDU — RX (COMM_LOST / SHUTDOWN / recv0) owns teardown.
+ * Raising CONNREFUSED from IO on every EPIPE / write-queue-full caused
+ * mass mme_enb_remove + UE release storms and wedged the MME even
+ * after the CONNREFUSED side-queue fix. Marking dead locally stops the
+ * Broken-pipe send spam; lifecycle stays on the RX path (same as IO off).
  */
-static void io_report_assoc_dead(io_sock_t *ctx)
+static void io_mark_assoc_dead(io_sock_t *ctx, const char *why)
 {
-    ogs_sockaddr_t *addr = NULL;
+    ogs_pkbuf_t *pkbuf = NULL, *next = NULL;
+    static ogs_time_t log_window;
+    static int log_count;
 
     ogs_assert(ctx);
 
-    if (ctx->dead_reported)
+    if (ctx->dead)
         return;
-    ctx->dead_reported = true;
     ctx->dead = true;
+    ctx->dead_reported = true;
 
-    if (ctx->has_peer) {
-        addr = ogs_calloc(1, sizeof(*addr));
-        if (addr)
-            memcpy(addr, &ctx->addr, sizeof(*addr));
+    ogs_list_for_each_safe(&ctx->write_queue, next, pkbuf) {
+        ogs_list_remove(&ctx->write_queue, pkbuf);
+        ogs_pkbuf_free(pkbuf);
+    }
+    if (ctx->poll_write) {
+        ogs_pollset_remove(ctx->poll_write);
+        ctx->poll_write = NULL;
     }
 
-    if (!addr) {
-        ogs_error("s1ap-io: assoc dead but no peer addr (sock:%p); "
-                "main will not see CONNREFUSED", (void *)ctx->sock);
-        return;
+    {
+        ogs_time_t now = ogs_time_now();
+        if (now - log_window > ogs_time_from_sec(1)) {
+            if (log_count > 1)
+                ogs_warn("s1ap-io: marked %d sock(s) send-dead in last "
+                        "window (latest: %s sock:%p)",
+                        log_count, why ? why : "?", (void *)ctx->sock);
+            else
+                ogs_warn("s1ap-io: sock:%p send-dead (%s) — waiting for "
+                        "RX teardown", (void *)ctx->sock,
+                        why ? why : "?");
+            log_window = now;
+            log_count = 0;
+        }
+        log_count++;
     }
-
-    /*
-     * One-shot per sock (dead_reported). CONNREFUSED goes to a dedicated
-     * side-queue (see mme-event.c) so an EPIPE storm cannot fill the
-     * S1AP message queue or freeze RX.
-     */
-    ogs_warn("s1ap-io: hard send error — raising CONNREFUSED");
-    mme_sctp_event_push(MME_EVENT_S1AP_LO_CONNREFUSED,
-            ctx->sock, addr, NULL, 0, 0);
 }
 
 /*
@@ -219,14 +237,12 @@ static void io_sock_flush(io_sock_t *ctx)
                         ogs_worker_self()->pollset,
                         OGS_POLLOUT, ctx->sock->fd, io_write_cb, ctx);
                 if (!ctx->poll_write) {
-                    /* fd died under us (teardown race): drop the queue,
-                     * DRAIN/close will finish the cleanup */
+                    /* fd died under us (teardown race): stop sending;
+                     * RX/DRAIN finish lifecycle — do not CONNREFUSED. */
                     ogs_error("s1ap-io: POLLOUT add failed (fd:%d)",
                             ctx->sock->fd);
-                    ogs_list_remove(&ctx->write_queue, pkbuf);
-                    ogs_pkbuf_free(pkbuf);
-                    io_report_assoc_dead(ctx);
-                    continue;
+                    io_mark_assoc_dead(ctx, "pollout-add-failed");
+                    return;
                 }
             }
             return;
@@ -234,21 +250,26 @@ static void io_sock_flush(io_sock_t *ctx)
 
         {
             ogs_err_t err = ogs_socket_errno;
-            ogs_log_message(OGS_LOG_ERROR, err,
-                    "s1ap-io: sendmsg(len:%d,ssn:%d) failed",
-                    pkbuf->len, (int)ogs_sctp_stream_no_in_pkbuf(pkbuf));
+            int pklen = (int)pkbuf->len;
+
             ogs_list_remove(&ctx->write_queue, pkbuf);
             ogs_pkbuf_free(pkbuf);
 
-            if (io_errno_assoc_dead(err)) {
-                io_report_assoc_dead(ctx);
-                /* drop the rest — further sendmsg will only spam */
-                while ((pkbuf = ogs_list_first(&ctx->write_queue)) != NULL) {
-                    ogs_list_remove(&ctx->write_queue, pkbuf);
-                    ogs_pkbuf_free(pkbuf);
-                }
-                break;
+            if (sent >= 0) {
+                /* Unexpected short SCTP send — drop PDU, keep assoc. */
+                ogs_error("s1ap-io: short sendmsg (%d/%d) sock:%p",
+                        sent, pklen, (void *)ctx->sock);
+                continue;
             }
+
+            if (io_errno_assoc_dead(err)) {
+                /* Match IO-off: drop + stop spam; RX raises CONNREFUSED. */
+                io_mark_assoc_dead(ctx, "hard-send-error");
+                return;
+            }
+
+            ogs_log_message(OGS_LOG_ERROR, err,
+                    "s1ap-io: sendmsg failed (non-fatal)");
         }
     }
 
@@ -290,10 +311,14 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
         }
 
         if (ogs_list_count(&ctx->write_queue) >= IO_WRITE_QUEUE_MAX) {
+            /*
+             * Soft backpressure only. Never CONNREFUSED / mark-dead here:
+             * a slow eNB under attach load easily exceeds a few hundred
+             * queued PDUs; killing the cell made IO-on unusable.
+             */
             ogs_error("s1ap-io: per-sock write queue full (sock:%p); "
-                    "dropping PDU and marking dead", (void *)job->sock);
+                    "dropping PDU", (void *)job->sock);
             ogs_pkbuf_free(job->pkbuf);
-            io_report_assoc_dead(ctx);
             break;
         }
 

@@ -261,9 +261,8 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         ogs_assert(sock);
         addr = e->addr;
         /*
-         * Prefer addr lookup; fall back to sock (IO-thread EPIPE path
-         * always supplies both, but sock is authoritative if the peer
-         * reconnected and addr collides).
+         * Prefer addr lookup; fall back to sock (sock is authoritative
+         * if the peer reconnected and addr collides).
          */
         enb = NULL;
         if (mme_sockaddr_valid(addr))

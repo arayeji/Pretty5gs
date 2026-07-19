@@ -85,8 +85,7 @@ int s1ap_send_to_enb(mme_enb_t *enb, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
         return OGS_OK;
     }
 
-    /* dedicated IO thread owns the write side (mme.s1ap_io_thread).
-     * Always pass peer addr so EPIPE can raise CONNREFUSED. */
+    /* dedicated IO thread owns the write side (mme.s1ap_io_thread) */
     if (s1ap_io_active())
         return s1ap_io_post_send(enb->sctp.sock, pkbuf, enb->sctp.addr,
                 enb->sctp.type != SOCK_STREAM);

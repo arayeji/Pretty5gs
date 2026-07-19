@@ -50,11 +50,15 @@ bool s1ap_io_active(void);
 /*
  * Queue one encoded S1AP PDU for transmission. ppid/stream_no must
  * already be set in the pkbuf metadata.
- *   peer_addr     — always preferred (EPIPE → CONNREFUSED needs it)
+ *   peer_addr     — destination for SEQPACKET / stored for diagnostics
  *   send_with_addr — true for SEQPACKET (pass addr to sendmsg);
  *                    false for connected STREAM
  * Takes ownership of pkbuf (freed on any failure). Returns OGS_OK
  * or OGS_ERROR (job alloc/queue-full drop).
+ *
+ * Hard send errors (EPIPE, etc.) only mark the sock send-dead on the
+ * IO thread — they do NOT raise CONNREFUSED. Teardown stays on the RX
+ * path (same behaviour as s1ap_io_thread: 0).
  */
 int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
         const ogs_sockaddr_t *peer_addr, bool send_with_addr);

@@ -249,8 +249,7 @@ static void tx_send_raw(mme_enb_t *enb, ogs_pkbuf_t *pkbuf)
         return;
     }
 
-    /* dedicated IO thread owns the write side (mme.s1ap_io_thread).
-     * Always pass peer addr (EPIPE → CONNREFUSED needs it). */
+    /* dedicated IO thread owns the write side (mme.s1ap_io_thread) */
     if (s1ap_io_active()) {
         s1ap_io_post_send(enb->sctp.sock, pkbuf, enb->sctp.addr,
                 enb->sctp.type != SOCK_STREAM);
