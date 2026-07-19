@@ -82,10 +82,20 @@ static int sgwc_gtp_deliver(sgwc_event_t *e, ogs_pkbuf_t *pkbuf)
             sgwc_event_free(e);
             return -1;
         }
+        int reply_shard;
+
         h2 = (ogs_gtp2_header_t *)pkbuf->data;
+        reply_shard = ogs_gtp2_rx_reply_shard(pkbuf->data, pkbuf->len);
         if (h2->type == OGS_GTP2_ECHO_REQUEST_TYPE ||
                 h2->type == OGS_GTP2_ECHO_RESPONSE_TYPE) {
             to_main = true; /* node-level, main owns the peer FSMs */
+        } else if (reply_shard >= 0) {
+            /* Reply to OUR request: deliver to the thread holding the
+             * xact (xid partition), not the TEID owner — main-created
+             * transactions (purge/audit paths) would never complete. */
+            uint32_t sqn_be = h2->teid_presence ? h2->sqn : h2->sqn_only;
+            fallback_key = OGS_GTP2_SQN_TO_XID(sqn_be);
+            wid = reply_shard - 1;    /* 0 = main -> wid -1 */
         } else if (h2->teid_presence && h2->teid != 0) {
             fallback_key = be32toh(h2->teid);
             wid = sgwc_shard_from_teid(fallback_key);

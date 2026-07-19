@@ -244,6 +244,12 @@ bool sgwc_worker_rehome_gtp2(sgwc_event_t *e, ogs_gtp2_message_t *message)
             message->h.type == OGS_GTP2_ECHO_RESPONSE_TYPE)
         return false;
 
+    /* Replies to OUR requests follow the xact (routed by xid shard);
+     * bouncing them to the UE/sess owner would strand the xact. */
+    if (e->pkbuf &&
+            ogs_gtp2_rx_reply_shard(e->pkbuf->data, e->pkbuf->len) >= 0)
+        return false;
+
     if (e->id == SGWC_EVT_S11_MESSAGE) {
         if (message->h.teid_presence && message->h.teid)
             sgwc_ue = sgwc_ue_find_by_teid(message->h.teid);
@@ -293,8 +299,11 @@ bool sgwc_worker_rehome_gtp1(sgwc_event_t *e, ogs_gtp1_message_t *message)
     if (!sgwc_workers_active())
         return false;
 
-    if (message->h.type == OGS_GTP1_ECHO_REQUEST_TYPE ||
-            message->h.type == OGS_GTP1_ECHO_RESPONSE_TYPE)
+    /* Only rehome peer-initiated requests; GTPv1 replies must stay on
+     * the thread holding the local xact. */
+    if (message->h.type != OGS_GTP1_CREATE_PDP_CONTEXT_REQUEST_TYPE &&
+            message->h.type != OGS_GTP1_UPDATE_PDP_CONTEXT_REQUEST_TYPE &&
+            message->h.type != OGS_GTP1_DELETE_PDP_CONTEXT_REQUEST_TYPE)
         return false;
 
     if (message->h.teid) {

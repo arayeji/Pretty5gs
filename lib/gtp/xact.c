@@ -266,6 +266,32 @@ static bool ogs_gtp2_xact_is_local_reply(
     return false;
 }
 
+int ogs_gtp2_rx_reply_shard(const void *data, size_t len)
+{
+    const ogs_gtp2_header_t *h = data;
+    uint32_t sqn, xid;
+    ogs_gtp_xact_stage_t stage;
+
+    if (!ogs_worker_shards_active())
+        return -1;
+    if (!data || len < 8)
+        return -1;
+    if (h->version != 2)
+        return -1;
+
+    sqn = h->teid_presence ? h->sqn : h->sqn_only;
+    xid = OGS_GTP2_SQN_TO_XID(sqn);
+    stage = ogs_gtp2_xact_get_stage(h->type, xid);
+
+    if (!ogs_gtp2_xact_is_local_reply(stage, xid))
+        return -1;
+
+    /* xact_next_xid(): GTPv2 xid space 1..0x800000 split into
+     * 2^OGS_WORKER_ID_BITS per-shard windows => shard = xid >> 20 */
+    return (int)((xid >> (23 - OGS_WORKER_ID_BITS)) &
+            ((1u << OGS_WORKER_ID_BITS) - 1));
+}
+
 static void ogs_gtp_xact_log_state(
         const ogs_gtp_xact_t *xact, uint8_t type, const char *why)
 {

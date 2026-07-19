@@ -262,6 +262,20 @@ static int mme_event_resolve_wid(mme_event_t *e)
     case MME_EVENT_S11_MESSAGE:
         if (e->pkbuf && e->pkbuf->len >= 8) {
             ogs_gtp2_header_t *h = (ogs_gtp2_header_t *)e->pkbuf->data;
+            /*
+             * Replies to OUR requests must reach the thread holding
+             * the xact (xid partition carries the creator shard).
+             * S1AP-driven sends — Release Access Bearers, Delete
+             * Session on S1 release/reset — create their xact on MAIN
+             * while the UE TEID names a worker; TEID routing would
+             * strand those responses and every such request would
+             * retransmit + time out ("GTP timeout ... SGW" storms).
+             */
+            int reply_shard = ogs_gtp2_rx_reply_shard(
+                    e->pkbuf->data, e->pkbuf->len);
+            if (reply_shard >= 0 && reply_shard - 1 < mme_worker_count)
+                return reply_shard - 1;    /* 0 = main -> wid -1 */
+
             if (h->teid_presence && h->teid) {
                 wid = mme_shard_from_teid(be32toh(h->teid));
             } else {
