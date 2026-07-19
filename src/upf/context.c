@@ -172,6 +172,24 @@ int upf_context_parse_config(void)
     return OGS_OK;
 }
 
+/*
+ * Format the CP (SMF) address of an F-SEID for metrics labels.
+ * `ip` is an ogs_ip_t, NOT a sockaddr — passing it to ogs_inet_ntop()
+ * reads garbage as sa_family and aborts ("Unknown family").
+ */
+static void upf_sess_cp_addr(const ogs_ip_t *ip, char *buf)
+{
+    ogs_assert(ip);
+    ogs_assert(buf);
+
+    if (ip->ipv6)
+        OGS_INET6_NTOP(ip->addr6, buf);
+    else if (ip->ipv4)
+        OGS_INET_NTOP(&ip->addr, buf);
+    else
+        ogs_cpystrn(buf, "unknown", OGS_ADDRSTRLEN);
+}
+
 upf_sess_t *upf_sess_add(ogs_pfcp_f_seid_t *cp_f_seid)
 {
     upf_sess_t *sess = NULL;
@@ -212,7 +230,7 @@ upf_sess_t *upf_sess_add(ogs_pfcp_f_seid_t *cp_f_seid)
     {
         char cp_addr[OGS_ADDRSTRLEN];
 
-        OGS_ADDR(&sess->smf_n4_f_seid.ip, cp_addr);
+        upf_sess_cp_addr(&sess->smf_n4_f_seid.ip, cp_addr);
         upf_metrics_inst_by_cp_add(cp_addr,
                 UPF_METR_BY_CP_GAUGE_SESSIONNBR, 1);
     }
@@ -255,18 +273,20 @@ int upf_sess_remove(upf_sess_t *sess)
 
     ogs_pfcp_pool_final(&sess->pfcp);
 
-    ogs_pool_free(&upf_n4_seid_pool, sess->upf_n4_seid_node);
-    ogs_pool_id_free(&upf_sess_pool, sess);
-    if (sess->apn_dnn)
-        ogs_free(sess->apn_dnn);
+    /* metrics/apn_dnn read `sess` — must happen BEFORE the pool frees */
     upf_metrics_inst_global_dec(UPF_METR_GLOB_GAUGE_UPF_SESSIONNBR);
     {
         char cp_addr[OGS_ADDRSTRLEN];
 
-        OGS_ADDR(&sess->smf_n4_f_seid.ip, cp_addr);
+        upf_sess_cp_addr(&sess->smf_n4_f_seid.ip, cp_addr);
         upf_metrics_inst_by_cp_add(cp_addr,
                 UPF_METR_BY_CP_GAUGE_SESSIONNBR, -1);
     }
+    if (sess->apn_dnn)
+        ogs_free(sess->apn_dnn);
+
+    ogs_pool_free(&upf_n4_seid_pool, sess->upf_n4_seid_node);
+    ogs_pool_id_free(&upf_sess_pool, sess);
 
     ogs_info("[Removed] Number of UPF-sessions is now %d",
             ogs_list_count(&self.sess_list));
