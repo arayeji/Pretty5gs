@@ -29,45 +29,50 @@ do_build() {
     fi
     ninja -C "$BUILDDIR"
 
-    # tests read <builddir>/configs/sample.yaml (see tests/meson.build);
-    # inject the SMP knobs right under its top-level `mme:` key. Sample
-    # config indentation is 2 spaces.
-    f="$BUILDDIR/configs/sample.yaml"
-    if [ -f "$f" ] && ! grep -q 's1ap_rx_workers' "$f"; then
-        awk '
-            { print }
-            /^mme:/ && !done {
-                print "  s1ap_rx_workers: 4"
-                print "  s1ap_tx_workers: 4"
-                print "  s1ap_io_thread: 1"
-                print "  workers: 4"
-                done = 1
-            }
-        ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-        echo "injected SMP knobs -> $f"
-    elif [ -f "$f" ] && ! grep -q 'workers:' "$f"; then
-        # Older TSAN trees already had rx/tx/io; add Stage A UE shards.
-        awk '
-            { print }
-            /^mme:/ && !done {
-                print "  workers: 4"
-                done = 1
-            }
-        ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-        echo "injected mme.workers:4 -> $f"
-    fi
+    # Each test suite reads its own <builddir>/configs/<suite>.yaml (see
+    # tests/*/abts-main.c: sample.yaml, attach.yaml, csfb.yaml, volte.yaml,
+    # ...). Inject the SMP knobs into every config with a top-level `mme:`
+    # key so all suites exercise the worker paths. Indentation is 2 spaces.
+    for f in "$BUILDDIR"/configs/*.yaml; do
+        [ -f "$f" ] || continue
+        grep -q '^mme:' "$f" || continue
+        if ! grep -q 's1ap_rx_workers' "$f"; then
+            awk '
+                { print }
+                /^mme:/ && !done {
+                    print "  s1ap_rx_workers: 4"
+                    print "  s1ap_tx_workers: 4"
+                    print "  s1ap_io_thread: 1"
+                    print "  workers: 4"
+                    done = 1
+                }
+            ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+            echo "injected SMP knobs -> $f"
+        elif ! grep -q 'workers:' "$f"; then
+            # Older TSAN trees already had rx/tx/io; add Stage A UE shards.
+            awk '
+                { print }
+                /^mme:/ && !done {
+                    print "  workers: 4"
+                    done = 1
+                }
+            ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+            echo "injected mme.workers:4 -> $f"
+        fi
 
-    # SGWC shard workers (rehome / TEID shard-bit routing) under `sgwc:`.
-    if [ -f "$f" ] && ! awk '/^sgwc:/{s=1;next} /^[a-z]/{s=0} s&&/workers:/{f=1} END{exit !f}' "$f"; then
-        awk '
-            { print }
-            /^sgwc:/ && !done {
-                print "  workers: 4"
-                done = 1
-            }
-        ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-        echo "injected sgwc.workers:4 -> $f"
-    fi
+        # SGWC shard workers (rehome / TEID shard-bit routing) under `sgwc:`.
+        if grep -q '^sgwc:' "$f" && \
+           ! awk '/^sgwc:/{s=1;next} /^[a-z]/{s=0} s&&/workers:/{f=1} END{exit !f}' "$f"; then
+            awk '
+                { print }
+                /^sgwc:/ && !done {
+                    print "  workers: 4"
+                    done = 1
+                }
+            ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+            echo "injected sgwc.workers:4 -> $f"
+        fi
+    done
 
     # Lab-only relocations, applied to every generated suite config
     # (tests connect using the same yaml, so both sides stay consistent):
@@ -112,7 +117,10 @@ cleanup_lab() {
 
 do_test() {
     suite="${1:-}"
-    export TSAN_OPTIONS="${TSAN_OPTIONS:-halt_on_error=0 history_size=7 second_deadlock_stack=1 log_path=tsan-mme}"
+    # exitcode=0: TSAN reports (freeDiameter shutdown races in the lab
+    # daemons) must not turn into nonzero exits, or the test harness's
+    # child_main asserts during teardown and aborts the whole suite.
+    export TSAN_OPTIONS="${TSAN_OPTIONS:-halt_on_error=0 exitcode=0 history_size=7 second_deadlock_stack=1 log_path=tsan-mme}"
     if [ -n "$suite" ]; then
         cleanup_lab
         meson test -C "$BUILDDIR" "$suite" --timeout-multiplier 4 \
