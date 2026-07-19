@@ -86,12 +86,12 @@ typedef enum {
     MME_EVENT_ORPHAN_SWEEP,
 
     /*
-     * Path Switch Request / Handover Notify tail deferred to the UE
-     * owner shard (mme.workers): location update, NH chain and the
-     * S11 Modify Bearer / Create Session sends must run on the owner
-     * thread — both to avoid the main-vs-shard mme_ue write race and
-     * so the GTP xact lives in the shard whose TEID the response
-     * carries. e->ho_kind selects the tail.
+     * S1AP procedure tail deferred to the UE owner shard
+     * (mme.workers): everything that mutates shard-owned mme_ue /
+     * bearer state or creates a GTP xact must run on the owner
+     * thread — both to avoid the main-vs-shard write race and so
+     * the S11 response routes back to the xact's shard.
+     * e->ho_kind selects the tail.
      */
     MME_EVENT_S1AP_HO_TAIL,
 
@@ -102,6 +102,26 @@ typedef enum {
 /* MME_EVENT_S1AP_HO_TAIL discriminators (mme_event_t.ho_kind) */
 #define MME_HO_TAIL_PATH_SWITCH     1
 #define MME_HO_TAIL_HANDOVER_NOTIFY 2
+#define MME_HO_TAIL_ICS_RSP         3
+
+/*
+ * MME_HO_TAIL_ICS_RSP payload, carried in e->pkbuf (freed with the
+ * event). The E-RAB Setup items are snapshotted on main from the
+ * decoded ASN.1 message; the owner shard applies them to the bearers
+ * (bearer->enb_s1u_teid/ip are shard-owned; TSAN: ICS-Response vs
+ * Create-Bearer-Request paging race).
+ */
+typedef struct mme_ics_rsp_erab_s {
+    uint8_t     ebi;
+    uint32_t    enb_s1u_teid;       /* host byte order */
+    ogs_ip_t    enb_s1u_ip;
+} mme_ics_rsp_erab_t;
+
+typedef struct mme_ics_rsp_tail_s {
+    bool        erab_present;       /* E_RABSetupListCtxtSURes IE present */
+    int         num_of_erab;
+    mme_ics_rsp_erab_t erab[];
+} mme_ics_rsp_tail_t;
 
 typedef long S1AP_ProcedureCode_t;
 typedef struct S1AP_S1AP_PDU ogs_s1ap_message_t;

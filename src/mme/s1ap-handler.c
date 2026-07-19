@@ -1281,16 +1281,33 @@ void s1ap_handle_initial_context_setup_response(
         return;
     }
 
-    if (E_RABSetupListCtxtSURes) {
-        int uli_presence = 0;
+    /*
+     * Snapshot the E-RAB Setup items out of the ASN.1 message on main
+     * (the decoded PDU is freed after dispatch), then run the tail —
+     * bearer enb_s1u_teid/ip writes, bearer_to_modify_list, the S11
+     * Modify Bearer send and the paging check — on the UE owner shard.
+     * All of that state is shard-owned (TSAN: main ICS-Response paging
+     * read vs owner-shard Create-Bearer-Request paging write).
+     */
+    {
+        mme_ics_rsp_tail_t *tail = NULL;
+        ogs_pkbuf_t *tailbuf = NULL;
+        int count = E_RABSetupListCtxtSURes ?
+            E_RABSetupListCtxtSURes->list.count : 0;
 
-        ogs_list_init(&mme_ue->bearer_to_modify_list);
+        tailbuf = ogs_pkbuf_alloc(NULL, sizeof(mme_ics_rsp_tail_t) +
+                count * sizeof(mme_ics_rsp_erab_t));
+        ogs_assert(tailbuf);
+        ogs_pkbuf_put(tailbuf, sizeof(mme_ics_rsp_tail_t) +
+                count * sizeof(mme_ics_rsp_erab_t));
+        tail = (mme_ics_rsp_tail_t *)tailbuf->data;
+        memset(tail, 0, tailbuf->len);
+        tail->erab_present = (E_RABSetupListCtxtSURes != NULL);
 
-        for (i = 0; i < E_RABSetupListCtxtSURes->list.count; i++) {
+        for (i = 0; i < count; i++) {
             S1AP_E_RABSetupItemCtxtSUResIEs_t *item = NULL;
             S1AP_E_RABSetupItemCtxtSURes_t *e_rab = NULL;
-
-            mme_bearer_t *bearer = NULL;
+            mme_ics_rsp_erab_t *erab = &tail->erab[tail->num_of_erab];
 
             item = (S1AP_E_RABSetupItemCtxtSUResIEs_t *)
                 E_RABSetupListCtxtSURes->list.array[i];
@@ -1300,6 +1317,7 @@ void s1ap_handle_initial_context_setup_response(
                     S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
+                ogs_pkbuf_free(tailbuf);
                 return;
             }
 
@@ -1310,40 +1328,29 @@ void s1ap_handle_initial_context_setup_response(
                     S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
+                ogs_pkbuf_free(tailbuf);
                 return;
             }
 
-            bearer = mme_bearer_find_by_ue_ebi(mme_ue, e_rab->e_RAB_ID);
-            if (!bearer) {
-                ogs_error("No Bearer [%d]", (int)e_rab->e_RAB_ID);
-                r = s1ap_send_error_indication2(mme_ue,
-                        S1AP_Cause_PR_radioNetwork,
-                        S1AP_CauseRadioNetwork_unknown_E_RAB_ID);
-                ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
-                return;
-            }
-
-            if (e_rab->gTP_TEID.size != sizeof(bearer->enb_s1u_teid)) {
+            if (e_rab->gTP_TEID.size != sizeof(erab->enb_s1u_teid)) {
                 ogs_error("Invalid e_rab->gTP_TEID.size = %d (expected %d)",
                         (int)e_rab->gTP_TEID.size,
-                        (int)sizeof(bearer->enb_s1u_teid));
+                        (int)sizeof(erab->enb_s1u_teid));
                 r = s1ap_send_error_indication2(mme_ue,
                         S1AP_Cause_PR_protocol,
                         S1AP_CauseProtocol_semantic_error);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
+                ogs_pkbuf_free(tailbuf);
                 return;
             }
-            memcpy(&bearer->enb_s1u_teid, e_rab->gTP_TEID.buf,
-                    sizeof(bearer->enb_s1u_teid));
-            bearer->enb_s1u_teid = be32toh(bearer->enb_s1u_teid);
-
-            ogs_debug("UE[%s] EBI[%d] Update enb_s1u_teid = 0x%x",
-                    mme_ue->imsi_bcd, bearer->ebi, bearer->enb_s1u_teid);
+            erab->ebi = e_rab->e_RAB_ID;
+            memcpy(&erab->enb_s1u_teid, e_rab->gTP_TEID.buf,
+                    sizeof(erab->enb_s1u_teid));
+            erab->enb_s1u_teid = be32toh(erab->enb_s1u_teid);
 
             rv = ogs_asn_BIT_STRING_to_ip(
-                    &e_rab->transportLayerAddress, &bearer->enb_s1u_ip);
+                    &e_rab->transportLayerAddress, &erab->enb_s1u_ip);
             if (rv != OGS_OK) {
                 ogs_error("No transportLayerAddress [%d]",
                         (int)e_rab->e_RAB_ID);
@@ -1352,12 +1359,72 @@ void s1ap_handle_initial_context_setup_response(
                         S1AP_CauseProtocol_abstract_syntax_error_falsely_constructed_message);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
+                ogs_pkbuf_free(tailbuf);
                 return;
             }
 
             ogs_log_hexdump(OGS_LOG_DEBUG,
                     e_rab->transportLayerAddress.buf,
                     e_rab->transportLayerAddress.size);
+
+            tail->num_of_erab++;
+        }
+
+        if (mme_workers_active()) {
+            /* takes ownership of tailbuf */
+            if (mme_worker_post_ho_tail(
+                        MME_HO_TAIL_ICS_RSP, enb_ue->id,
+                        mme_ue, tailbuf) != OGS_OK)
+                ogs_error("[%s] InitialContextSetupResponse tail post failed",
+                        mme_ue->imsi_bcd);
+            return;
+        }
+
+        s1ap_initial_context_setup_response_complete(enb_ue, mme_ue, tail);
+        ogs_pkbuf_free(tailbuf);
+    }
+}
+
+/*
+ * Tail of InitialContextSetupResponse handling. With mme.workers this
+ * runs on the UE owner shard (MME_EVENT_S1AP_HO_TAIL / ICS_RSP);
+ * workers off, it is called directly by the handler above.
+ */
+void s1ap_initial_context_setup_response_complete(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue, mme_ics_rsp_tail_t *tail)
+{
+    int i, r;
+
+    ogs_assert(enb_ue);
+    ogs_assert(mme_ue);
+    ogs_assert(tail);
+
+    if (tail->erab_present) {
+        int uli_presence = 0;
+
+        ogs_list_init(&mme_ue->bearer_to_modify_list);
+
+        for (i = 0; i < tail->num_of_erab; i++) {
+            mme_ics_rsp_erab_t *erab = &tail->erab[i];
+            mme_bearer_t *bearer = NULL;
+
+            bearer = mme_bearer_find_by_ue_ebi(mme_ue, erab->ebi);
+            if (!bearer) {
+                ogs_error("No Bearer [%d]", (int)erab->ebi);
+                r = s1ap_send_error_indication2(mme_ue,
+                        S1AP_Cause_PR_radioNetwork,
+                        S1AP_CauseRadioNetwork_unknown_E_RAB_ID);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+                return;
+            }
+
+            bearer->enb_s1u_teid = erab->enb_s1u_teid;
+            memcpy(&bearer->enb_s1u_ip, &erab->enb_s1u_ip,
+                    sizeof(bearer->enb_s1u_ip));
+
+            ogs_debug("UE[%s] EBI[%d] Update enb_s1u_teid = 0x%x",
+                    mme_ue->imsi_bcd, bearer->ebi, bearer->enb_s1u_teid);
             ogs_debug("    IPv4(%d): 0x%x",
                     bearer->enb_s1u_ip.ipv4, bearer->enb_s1u_ip.addr);
             ogs_debug("    IPv6(%d):", bearer->enb_s1u_ip.ipv6);
@@ -1377,7 +1444,7 @@ void s1ap_handle_initial_context_setup_response(
                             &mme_ue->bearer_to_modify_list,
                             &bearer->to_modify_node);
                 else
-                    ogs_warn("Bearer [%d] Duplicated", (int)e_rab->e_RAB_ID);
+                    ogs_warn("Bearer [%d] Duplicated", (int)erab->ebi);
             }
         }
 
@@ -3244,7 +3311,8 @@ void s1ap_handle_path_switch_request(
      */
     if (mme_workers_active()) {
         if (mme_worker_post_ho_tail(
-                    MME_HO_TAIL_PATH_SWITCH, enb_ue->id, mme_ue) != OGS_OK)
+                    MME_HO_TAIL_PATH_SWITCH, enb_ue->id,
+                    mme_ue, NULL) != OGS_OK)
             ogs_error("[%s] PathSwitchRequest tail post failed",
                     mme_ue->imsi_bcd);
         return;
@@ -4549,7 +4617,7 @@ void s1ap_handle_handover_notification(
     if (mme_workers_active()) {
         if (mme_worker_post_ho_tail(
                     MME_HO_TAIL_HANDOVER_NOTIFY, target_ue->id,
-                    mme_ue) != OGS_OK)
+                    mme_ue, NULL) != OGS_OK)
             ogs_error("[%s] HandoverNotify tail post failed",
                     mme_ue->imsi_bcd);
         return;

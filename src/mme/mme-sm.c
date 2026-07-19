@@ -1573,19 +1573,28 @@ cleanup:
             ogs_warn("HO tail (kind=%d): context gone "
                     "[enb_ue:%s mme_ue:%s]", e->ho_kind,
                     enb_ue ? "ok" : "gone", mme_ue ? "ok" : "gone");
-            break;
-        }
-
-        switch (e->ho_kind) {
+        } else switch (e->ho_kind) {
         case MME_HO_TAIL_PATH_SWITCH:
             s1ap_path_switch_request_complete(enb_ue, mme_ue);
             break;
         case MME_HO_TAIL_HANDOVER_NOTIFY:
             s1ap_handover_notify_complete(enb_ue, mme_ue);
             break;
+        case MME_HO_TAIL_ICS_RSP:
+            if (e->pkbuf && e->pkbuf->len >= sizeof(mme_ics_rsp_tail_t))
+                s1ap_initial_context_setup_response_complete(enb_ue, mme_ue,
+                        (mme_ics_rsp_tail_t *)e->pkbuf->data);
+            else
+                ogs_error("ICS_RSP tail without payload");
+            break;
         default:
             ogs_error("Unknown HO tail kind %d", e->ho_kind);
             break;
+        }
+
+        if (e->pkbuf) {
+            ogs_pkbuf_free(e->pkbuf);
+            e->pkbuf = NULL;
         }
         break;
     }

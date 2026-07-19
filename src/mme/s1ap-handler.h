@@ -21,6 +21,7 @@
 #define S1AP_HANDLER_H
 
 #include "mme-context.h"
+#include "mme-event.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -68,6 +69,15 @@ void s1ap_handle_path_switch_request(
  */
 void s1ap_path_switch_request_complete(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 void s1ap_handover_notify_complete(enb_ue_t *target_ue, mme_ue_t *mme_ue);
+
+/*
+ * InitialContextSetupResponse tail (bearer S1-U TEID/IP writes,
+ * bearer_to_modify_list, S11 Modify Bearer, paging check). Same owner
+ * shard rule as the handover tails; tail is the snapshot the main
+ * thread took from the ASN.1 message (mme_event_t.pkbuf).
+ */
+void s1ap_initial_context_setup_response_complete(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue, mme_ics_rsp_tail_t *tail);
 
 void s1ap_handle_enb_direct_information_transfer(
         mme_enb_t *enb, ogs_s1ap_message_t *message);
