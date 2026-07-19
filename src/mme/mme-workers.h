@@ -57,6 +57,14 @@ int mme_shard_from_imsi_bcd(const char *imsi_bcd);
 int mme_shard_from_mme_ue_id(ogs_pool_id_t mme_ue_id);
 int mme_shard_from_enb_ue_id(ogs_pool_id_t enb_ue_id);
 
+/*
+ * EMM messages resolved by GUTI/S-TMSI/message may find an mme_ue owned
+ * by a different shard (re-attach: new enb_ue hashes to another worker).
+ * If so, re-post the event to the owner (takes the pkbuf) and return
+ * true; caller must return immediately without touching mme_ue.
+ */
+bool mme_worker_rehome_emm(mme_event_t *e, mme_ue_t *mme_ue);
+
 /* Peek IMSI from a GTPv2-C pkbuf (Create Session Request TEID=0). */
 int mme_gtpv2_peek_imsi_bcd(ogs_pkbuf_t *pkbuf, char *bcd, size_t bcd_size);
 

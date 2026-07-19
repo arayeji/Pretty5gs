@@ -344,6 +344,43 @@ int mme_event_push_to_ue_owner(mme_event_t *e)
     return mme_event_push_to_worker(wid, e);
 }
 
+bool mme_worker_rehome_emm(mme_event_t *e, mme_ue_t *mme_ue)
+{
+    int owner, self;
+    mme_event_t *ne;
+
+    if (!mme_workers_active() || !e || !mme_ue)
+        return false;
+
+    owner = mme_shard_from_teid(mme_ue->mme_s11_teid);
+    if (owner < 0)
+        return false;
+
+    /* ogs_worker_self_id(): 0=main, 1..N=shard workers */
+    self = ogs_worker_self_id() - 1;
+    if (self == owner)
+        return false;
+
+    ne = mme_event_new(e->id);
+    if (!ne) {
+        ogs_error("mme_worker_rehome_emm: mme_event_new() failed");
+        return false;
+    }
+
+    ne->enb_ue_id = e->enb_ue_id;
+    ne->mme_ue_id = mme_ue->id;
+    ne->nas_type = e->nas_type;
+    ne->pkbuf = e->pkbuf;
+    e->pkbuf = NULL;
+
+    ogs_debug("EMM event %d rehomed: shard %d -> owner %d (mme_ue id %d)",
+            e->id, self, owner, mme_ue->id);
+
+    /* Frees ne (and its pkbuf) on failure; either way we bounced. */
+    mme_event_push_to_worker(owner, ne);
+    return true;
+}
+
 static void mme_worker_thread_init(ogs_worker_t *worker)
 {
     int rv;

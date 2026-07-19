@@ -115,9 +115,38 @@ Confirmed in prod perf: self overhead gone. list1 ranges still linear.
 - [x] Sticky shard bits in MME S11 TEID + `MME_UE_S1AP_ID`
 - [x] Bounce EMM/ESM/S11/S6a/timers/admin-UE to owner; eNB/SCTP/Echo stay on main
 - [x] Worker dispatch = UE cases of `mme_state_operational`; narrow `mme_ctx_lock` on hash add/remove
-- [x] `tools/tsan-mme.sh` injects `mme.workers: 2`
+- [x] `tools/tsan-mme.sh` injects `mme.workers: 4` (+ rx/tx/io knobs)
 - [ ] TSAN soak: attach / volte / handover / transfer green, no data races
 - [ ] Production YAML stays `workers: 0` until soak
+
+### TSAN lab findings (Jul 2026, workers:4 rx:4 tx:4 io:1)
+
+Fixed:
+
+- [x] `s1ap-io.c` close registry + `s1ap-rx.c` owner/poll hashes: dangling
+      hash keys (key memory freed while still hashed) → stable heap entries
+- [x] `ogs-trace.c` / `s1ap-io.c` lazy mutex init race → explicit init
+      during single-threaded startup
+- [x] `ogs-queue.c`: `terminated` read outside mutex in push/pop
+- [x] `enb->s1ap_tx_pending`: shard-worker increment vs main decrement →
+      `__atomic` builtins
+- [x] `mme_ue_set_imsi` merge: session array UAF after old-UE removal
+- [x] **timer rbtree races**: UE timers started/stopped on shard workers
+      while owner thread walks tree → per-manager mutex in `ogs-timer.c`;
+      `ogs_timer_mgr_expire` detaches under lock, callbacks outside
+- [x] **cross-shard EMM dispatch**: re-attach creates a new `enb_ue` that
+      hashes to a different shard than the existing `mme_ue` (found via
+      GUTI/S-TMSI/`mme_ue_find_by_message`) → two workers mutating the
+      same UE (`emm_state_exception` race). Fix: `mme_worker_rehome_emm()`
+      re-posts the EMM event to the owner shard before touching UE state.
+
+Known remaining (accepted / TODO):
+
+- [ ] Main thread still *reads* shard-owned `mme_ue` state in S1AP
+      handlers (e.g. S-TMSI lookup + `mme_ue_is_valid_for_s1` in
+      InitialUEMessage). Read-mostly; needs Stage B/C ownership handoff.
+- [ ] Test-harness noise: `tests/common/application.c` `test_child_create`
+      races (harness, not MME) and FreeDiameter internals.
 
 ### Prerequisites (Stage C-full)
 

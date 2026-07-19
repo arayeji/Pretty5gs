@@ -19,6 +19,7 @@
 
 #include "mme-context.h"
 #include "mme-sm.h"
+#include "mme-workers.h"
 #include "mme-timer.h"
 #include "mme-trace.h"
 
@@ -464,10 +465,18 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         if (mme_ue && !mme_ue_is_valid_for_s1(mme_ue))
             mme_ue = NULL;
 
+        /* Foreign-shard UE (or shard-owned UE resolved on main):
+         * re-post to the owner shard before touching any UE state. */
+        if (mme_ue && mme_worker_rehome_emm(e, mme_ue))
+            return;
+
         if (!mme_ue) {
             mme_ue = mme_ue_find_by_message(&nas_message);
             if (mme_ue && !mme_ue_is_valid_for_s1(mme_ue))
                 mme_ue = NULL;
+
+            if (mme_ue && mme_worker_rehome_emm(e, mme_ue))
+                return;
 
             if (!mme_ue) {
                 /*
