@@ -36,7 +36,10 @@ bool sgwc_workers_active(void);
 
 /* Bring up / tear down protocol shard workers. No-op when count==0. */
 int sgwc_workers_start(void);
+/* Join worker threads (timer managers stay alive for context final). */
 void sgwc_workers_stop(void);
+/* Free worker resources; call AFTER sgwc_context_final(). */
+void sgwc_workers_final(void);
 
 ogs_worker_t *sgwc_worker_by_id(int wid);
 

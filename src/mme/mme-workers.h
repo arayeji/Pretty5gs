@@ -34,7 +34,10 @@ extern "C" {
  */
 
 int mme_workers_start(int count);
+/* Join worker threads (timer managers stay alive for context final). */
 void mme_workers_stop(void);
+/* Free worker resources; call AFTER mme_context_final(). */
+void mme_workers_final(void);
 
 int mme_workers_count(void);
 bool mme_workers_active(void);

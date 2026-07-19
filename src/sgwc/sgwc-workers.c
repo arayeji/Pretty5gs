@@ -373,6 +373,17 @@ void sgwc_workers_stop(void)
 {
     int i;
 
+    /* Join threads only: session timers may live on worker timer
+     * managers and are deleted by sgwc_context_final() on the main
+     * thread. sgwc_workers_final() frees the managers afterwards. */
+    for (i = 0; i < sgwc_worker_count; i++)
+        ogs_worker_join(sgwc_workers[i]);
+}
+
+void sgwc_workers_final(void)
+{
+    int i;
+
     for (i = 0; i < sgwc_worker_count; i++) {
         ogs_worker_destroy(sgwc_workers[i]);
         sgwc_workers[i] = NULL;

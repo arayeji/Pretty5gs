@@ -159,12 +159,19 @@ void sgwc_terminate(void)
 
     ogs_metrics_context_close(ogs_metrics_self());
 
-    sgwc_gtp_close();
-    sgwc_pfcp_close();
-
     sgwc_ga_writer_close();
 
+    /* context final BEFORE socket teardown: sess_remove sends PFCP
+     * deletion/purge messages (sgwc_sess_purge_upf) and must not write
+     * through a destroyed PFCP socket (TSAN: heap-use-after-free in
+     * ogs_pfcp_sendto during sgwc_context_final). */
     sgwc_context_final();
+
+    /* session timers on worker timer managers are gone; free them */
+    sgwc_workers_final();
+
+    sgwc_gtp_close();
+    sgwc_pfcp_close();
 
     ogs_pfcp_context_final();
     ogs_gtp_context_final();

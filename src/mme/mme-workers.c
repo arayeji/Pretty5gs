@@ -486,6 +486,17 @@ void mme_workers_stop(void)
 {
     int i;
 
+    /* Join threads only: UE timers still live on the workers' timer
+     * managers and are deleted by mme_context_final() on the main
+     * thread. mme_workers_final() frees the managers afterwards. */
+    for (i = 0; i < mme_worker_count; i++)
+        ogs_worker_join(mme_workers[i]);
+}
+
+void mme_workers_final(void)
+{
+    int i;
+
     for (i = 0; i < mme_worker_count; i++) {
         ogs_worker_destroy(mme_workers[i]);
         mme_workers[i] = NULL;

@@ -213,6 +213,9 @@ void mme_terminate(void)
 
     mme_context_final();
 
+    /* UE timers on worker timer managers are gone; now free them */
+    mme_workers_final();
+
     ogs_gtp_context_final();
 
     ogs_gtp_xact_final();

@@ -82,6 +82,13 @@ ogs_worker_t *ogs_worker_create(int id,
 void ogs_worker_hooks(ogs_worker_t *worker,
         ogs_worker_hook_f thread_init, ogs_worker_hook_f thread_fini);
 void ogs_worker_start(ogs_worker_t *worker);
+/*
+ * Join the worker thread but keep queue/timer_mgr/pollset alive.
+ * Needed when NF contexts still reference the worker's timer manager
+ * (UE timers) and must be torn down single-threaded BEFORE the
+ * manager memory is freed by ogs_worker_destroy().
+ */
+void ogs_worker_join(ogs_worker_t *worker);
 void ogs_worker_destroy(ogs_worker_t *worker);
 
 /* Non-blocking push + wake. Returns OGS_RETRY if the worker queue is full. */

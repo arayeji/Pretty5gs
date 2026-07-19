@@ -103,7 +103,7 @@ void ogs_worker_start(ogs_worker_t *worker)
     ogs_thread_mutex_unlock(&worker->ready_mutex);
 }
 
-void ogs_worker_destroy(ogs_worker_t *worker)
+void ogs_worker_join(ogs_worker_t *worker)
 {
     ogs_assert(worker);
 
@@ -113,6 +113,13 @@ void ogs_worker_destroy(ogs_worker_t *worker)
         ogs_thread_destroy(worker->thread);   /* joins */
         worker->thread = NULL;
     }
+}
+
+void ogs_worker_destroy(ogs_worker_t *worker)
+{
+    ogs_assert(worker);
+
+    ogs_worker_join(worker);
 
     ogs_queue_destroy(worker->queue);
     ogs_timer_mgr_destroy(worker->timer_mgr);
