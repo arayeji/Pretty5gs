@@ -480,11 +480,19 @@ int mme_gtp_send_create_session_request(
         mme_sgw_reselect_for_ue_if_needed(mme_ue);
 
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        ogs_error("[%s] Create Session Request: SGW-UE gone "
+                "(create_action=%d)", mme_ue->imsi_bcd, create_action);
+        return OGS_ERROR;
+    }
 
     if (create_action == OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST) {
         sgw_ue = sgw_ue_find_by_id(sgw_ue->target_ue_id);
-        ogs_assert(sgw_ue);
+        if (!sgw_ue) {
+            ogs_error("[%s] Create Session Request: target SGW-UE gone "
+                    "(path switch)", mme_ue->imsi_bcd);
+            return OGS_ERROR;
+        }
     }
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));

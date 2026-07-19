@@ -108,12 +108,14 @@ ogs_thread_t *ogs_thread_create(void (*func)(void *), void *data)
 
 void ogs_thread_destroy(ogs_thread_t *thread)
 {
-    const ogs_time_t deadline = ogs_get_monotonic_time() + 5 * 1000 * 1000;
+    /* 30s: under load the MME main loop can take longer than a few
+     * seconds to drain after ogs_queue_term() (TX_READY / close confirms).
+     * Aborting here took production down during systemctl restart. */
+    const ogs_time_t deadline = ogs_get_monotonic_time() + 30 * 1000 * 1000;
     ogs_assert(thread);
 
     ogs_debug("[%p] thread running(%d)", thread, thread->running);
-    while(ogs_get_monotonic_time() <= deadline) {
-        /* wait 5 seconds */
+    while (ogs_get_monotonic_time() <= deadline) {
         ogs_thread_mutex_lock(&thread->mutex);
         if (!thread->running) {
             ogs_thread_mutex_unlock(&thread->mutex);
@@ -126,8 +128,18 @@ void ogs_thread_destroy(ogs_thread_t *thread)
     ogs_debug("[%p] thread destroy", thread);
     ogs_thread_mutex_lock(&thread->mutex);
     if (thread->running) {
-        ogs_fatal("thread still running after 3 seconds");
-        ogs_assert_if_reached();
+#if !defined(_WIN32)
+        ogs_error("[%p] thread still running after 30s; cancelling", thread);
+        pthread_cancel(thread->id);
+#else
+        ogs_error("[%p] thread still running after 30s; abandoning join",
+                thread);
+        ogs_thread_mutex_unlock(&thread->mutex);
+        ogs_thread_cond_destroy(&thread->cond);
+        ogs_thread_mutex_destroy(&thread->mutex);
+        ogs_free(thread);
+        return;
+#endif
     }
     ogs_thread_mutex_unlock(&thread->mutex);
 

@@ -740,9 +740,20 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         }
 
         sess = mme_sess_find_by_id(bearer->sess_id);
-        ogs_assert(sess);
+        if (!sess) {
+            ogs_error("ESM message for bearer with no session "
+                    "(bearer_id=%d sess_id=%d)",
+                    bearer->id, bearer->sess_id);
+            ogs_pkbuf_free(pkbuf);
+            break;
+        }
         default_bearer = mme_default_bearer_in_sess(sess);
-        ogs_assert(default_bearer);
+        if (!default_bearer) {
+            ogs_error("ESM message: session has no default bearer "
+                    "(sess_id=%d)", sess->id);
+            ogs_pkbuf_free(pkbuf);
+            break;
+        }
 
         e->bearer_id = bearer->id;
         e->nas_message = &nas_message;
