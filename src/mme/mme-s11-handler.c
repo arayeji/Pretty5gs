@@ -986,16 +986,29 @@ void mme_s11_handle_delete_session_response(
         return;
     }
     target_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(target_ue);
+    if (!target_ue) {
+        mme_ue_warn(mme_ue, enb_ue, "s11",
+                sess->session ? sess->session->name : NULL,
+                "SGW-UE Context has already been removed "
+                "(late Delete Session Response, action=%d)",
+                action);
+        return;
+    }
 
     if (action == OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST) {
         source_ue = sgw_ue_find_by_id(target_ue->source_ue_id);
         if (!source_ue) /* InterRAT to 2G/3G (SGSN) case: */
              source_ue = target_ue;
-        ogs_assert(source_ue);
     } else {
         source_ue = target_ue;
-        ogs_assert(source_ue);
+    }
+    if (!source_ue) {
+        mme_ue_warn(mme_ue, enb_ue, "s11",
+                sess->session ? sess->session->name : NULL,
+                "SGW-UE source context gone "
+                "(late Delete Session Response, action=%d)",
+                action);
+        return;
     }
 
     /************************
@@ -1429,18 +1442,16 @@ void mme_s11_handle_update_bearer_request(
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-        ogs_assert(sgw_ue);
-
-        if (req->bearer_contexts.presence == 0) {
+        if (!sgw_ue) {
+            ogs_error("Update Bearer: No SGW UE Context");
+            cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+        } else if (req->bearer_contexts.presence == 0) {
             ogs_error("No Bearer");
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
-        }
-        if (req->bearer_contexts.eps_bearer_id.presence == 0) {
+        } else if (req->bearer_contexts.eps_bearer_id.presence == 0) {
             ogs_error("No EPS Bearer ID");
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
-        }
-
-        if (cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+        } else {
             bearer = mme_bearer_find_by_ue_ebi(mme_ue,
                     req->bearer_contexts.eps_bearer_id.u8);
             if (!bearer) {
@@ -1603,9 +1614,10 @@ void mme_s11_handle_delete_bearer_request(
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-        ogs_assert(sgw_ue);
-
-        if (req->linked_eps_bearer_id.presence == 1) {
+        if (!sgw_ue) {
+            ogs_error("Delete Bearer: No SGW UE Context");
+            cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+        } else if (req->linked_eps_bearer_id.presence == 1) {
            /*
             * << Linked EPS Bearer ID >>
             *
@@ -1747,7 +1759,13 @@ void mme_s11_handle_release_access_bearers_response(
         return;
     }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        mme_ue_warn(mme_ue, enb_ue, "s11", NULL,
+                "SGW-UE Context has already been removed "
+                "(late Release Access Bearers Response, action=%d)",
+                action);
+        return;
+    }
 
     /********************
      * Check Cause Value
@@ -1923,9 +1941,10 @@ void mme_s11_handle_downlink_data_notification(
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-        ogs_assert(sgw_ue);
-
-        if (noti->eps_bearer_id.presence == 0) {
+        if (!sgw_ue) {
+            ogs_error("Downlink Data Notification: No SGW UE Context");
+            cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+        } else if (noti->eps_bearer_id.presence == 0) {
             mme_ue_warn(mme_ue, NULL, "s11", NULL, "No Bearer ID");
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
         }
@@ -2094,7 +2113,12 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
         return;
     }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        mme_ue_warn(mme_ue, source_ue, "s11", NULL,
+                "SGW-UE Context has already been removed "
+                "(late Create Indirect Data Forwarding Tunnel Response)");
+        return;
+    }
 
     /************************
      * Getting Cause Value
@@ -2249,7 +2273,13 @@ void mme_s11_handle_delete_indirect_data_forwarding_tunnel_response(
         return;
     }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        mme_ue_warn(mme_ue, enb_ue, "s11", NULL,
+                "SGW-UE Context has already been removed "
+                "(late Delete Indirect Data Forwarding Tunnel Response, "
+                "action=%d)", action);
+        return;
+    }
 
     /************************
      * Getting Cause Value
@@ -2390,7 +2420,13 @@ void mme_s11_handle_bearer_resource_failure_indication(
         return;
     }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        mme_ue_warn(mme_ue, NULL, "s11",
+                sess->session ? sess->session->name : NULL,
+                "SGW-UE Context has already been removed "
+                "(late Bearer Resource Failure Indication)");
+        return;
+    }
 
     if (!mme_ue_from_teid)
         ogs_error("No Context in TEID");

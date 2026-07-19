@@ -8099,9 +8099,49 @@ void mme_bearer_remove(mme_bearer_t *bearer)
 
     ogs_assert(bearer);
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
-    ogs_assert(mme_ue);
     sess = mme_sess_find_by_id(bearer->sess_id);
-    ogs_assert(sess);
+    /*
+     * Teardown can race session/UE free: a late ESM timer or nested
+     * remove may still hold a bearer pointer after sess/mme_ue is gone.
+     * Aborting here took production down — free what we can and return.
+     */
+    if (!mme_ue || !sess) {
+        ogs_error("mme_bearer_remove: context gone "
+                "(bearer=%d mme_ue_id=%d sess_id=%d mme_ue=%p sess=%p)",
+                bearer->id, bearer->mme_ue_id, bearer->sess_id,
+                mme_ue, sess);
+
+        CLEAR_BEARER_ALL_TIMERS(bearer);
+        memset(&e, 0, sizeof(e));
+        e.bearer_id = bearer->id;
+        if (OGS_FSM_STATE(&bearer->sm))
+            ogs_fsm_fini(&bearer->sm, &e);
+
+        ogs_timer_delete(bearer->t3489.timer);
+        ogs_timer_delete(bearer->t_bearer_setup.timer);
+        ogs_timer_delete(bearer->t_nas_deactivate.timer);
+
+        ogs_metrics_dump_lock();
+        if (sess)
+            ogs_list_remove(&sess->bearer_list, bearer);
+        OGS_TLV_CLEAR_DATA(&bearer->tft);
+        if (mme_ue) {
+            if (bearer->ebi >= MIN_EPS_BEARER_ID &&
+                    bearer->ebi <= MAX_EPS_BEARER_ID &&
+                    mme_ue->ebi_to_bearer_id[bearer->ebi] == bearer->id)
+                mme_ue->ebi_to_bearer_id[bearer->ebi] = OGS_INVALID_POOL_ID;
+            if (OGS_OK != mme_ebi_free(mme_ue, bearer->ebi))
+                ogs_warn("EBI free failed [ebi:%d]", bearer->ebi);
+        }
+        ogs_list_for_each_entry_safe(&bearer->update.xact_list,
+                next_xact, xact, to_update_node) {
+            ogs_timer_stop(xact->tm_peer);
+            ogs_list_remove(&bearer->update.xact_list, &xact->to_update_node);
+        }
+        ogs_pool_id_free(&mme_bearer_pool, bearer);
+        ogs_metrics_dump_unlock();
+        return;
+    }
 
     mme_bearer_removed_log(mme_ue, bearer);
 
