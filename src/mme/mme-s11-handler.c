@@ -818,7 +818,18 @@ void mme_s11_handle_modify_bearer_response(
         return;
     }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    /*
+     * Late MBR can race SGW relocation / session teardown: mme_ue still
+     * exists but sgw_ue is already gone. Aborting here took production
+     * down (workers:6) — treat like a removed mme_ue and drop the reply.
+     */
+    if (!sgw_ue) {
+        mme_ue_warn(mme_ue, enb_ue, "s11", NULL,
+                "SGW-UE Context has already been removed "
+                "(late Modify Bearer Response, action=%d)",
+                modify_action);
+        return;
+    }
 
     /************************
      * Getting Cause Value
@@ -905,7 +916,6 @@ void mme_s11_handle_modify_bearer_response(
      * Check ALL Context
      ********************/
     ogs_assert(mme_ue);
-    ogs_assert(sgw_ue);
 
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
             mme_ue->mme_s11_teid, sgw_ue->sgw_s11_teid);
