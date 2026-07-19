@@ -416,14 +416,27 @@ bool mme_worker_rehome_emm(mme_event_t *e, mme_ue_t *mme_ue)
         return false;
     }
 
+    /*
+     * Carry every field the destination EMM path needs. Missing
+     * s1ap_code broke CSFB Extended Service Request: after rehome the
+     * owner saw ProcedureCode 0 ("Invalid Procedure Code") and never
+     * sent UEContextModification / InitialContextSetup (csfb
+     * mo-idle-test hang with mme.workers).
+     */
     ne->enb_ue_id = e->enb_ue_id;
     ne->mme_ue_id = mme_ue->id;
     ne->nas_type = e->nas_type;
+    ne->create_action = e->create_action;
+    ne->s1ap_code = e->s1ap_code;
+    ne->nas_tai = e->nas_tai;
+    ne->nas_e_cgi = e->nas_e_cgi;
+    ne->nas_location_present = e->nas_location_present;
     ne->pkbuf = e->pkbuf;
     e->pkbuf = NULL;
 
-    ogs_debug("EMM event %d rehomed: shard %d -> owner %d (mme_ue id %d)",
-            e->id, self, owner, mme_ue->id);
+    ogs_debug("EMM event %d rehomed: shard %d -> owner %d "
+            "(mme_ue id %d s1ap_code %ld)",
+            e->id, self, owner, mme_ue->id, (long)ne->s1ap_code);
 
     /* Frees ne (and its pkbuf) on failure; either way we bounced. */
     mme_event_push_to_worker(owner, ne);
