@@ -21,6 +21,9 @@
 #include "pfcp-path.h"
 #include "gn-build.h"
 #include "metrics.h"
+/* metrics.h redefines OGS_LOG_DOMAIN; restore SGWC domain for this TU */
+#undef OGS_LOG_DOMAIN
+#define OGS_LOG_DOMAIN __sgwc_log_domain
 #include "sgwc-workers.h"
 #include "event.h"
 
@@ -891,7 +894,13 @@ int sgwc_gtp_send_s5c_delete_session_request(sgwc_sess_t *sess)
 
     bearer = sgwc_default_bearer_in_sess(sess);
     if (!bearer) {
-        ogs_error("No bearer for S5 Delete Session Request");
+        sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        /* Session teardown race: default bearer already gone */
+        ogs_warn("[%s] No default bearer for S5 Delete Session Request "
+                "[APN:%s sess_id=%d SGW_S5C_TEID:0x%x PGW_S5C_TEID:0x%x]",
+                sgwc_ue ? sgwc_ue->imsi_bcd : "Unknown",
+                sess->session.name ? sess->session.name : "-",
+                sess->id, sess->sgw_s5c_teid, sess->pgw_s5c_teid);
         return OGS_ERROR;
     }
 
@@ -1253,7 +1262,9 @@ static void bearer_timeout(ogs_gtp_xact_t *xact, void *data)
 
     bearer = sgwc_bearer_find_by_id(bearer_id);
     if (!bearer) {
-        ogs_error("Bearer[%d] has already been removed [%d]", bearer_id, type);
+        /* GTP xact timeout after local bearer cleanup — expected race */
+        ogs_warn("Bearer[%d] already removed on GTP timeout "
+                "[Message-Type:%d]", bearer_id, type);
         return;
     }
 

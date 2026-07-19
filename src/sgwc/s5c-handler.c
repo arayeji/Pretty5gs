@@ -22,6 +22,9 @@
 #include "ga-writer.h"
 #include "sgwc-trace.h"
 #include "metrics.h"
+/* metrics.h redefines OGS_LOG_DOMAIN; restore SGWC domain for this TU */
+#undef OGS_LOG_DOMAIN
+#define OGS_LOG_DOMAIN __sgwc_log_domain
 
 #include "s5c-handler.h"
 #include "gn-build.h"
@@ -114,27 +117,35 @@ static void bearer_timeout(ogs_gtp_xact_t *xact, void *data)
 
     bearer = sgwc_bearer_find_by_id(bearer_id);
     if (!bearer) {
-        ogs_error("Bearer has already been removed [%d]", type);
+        ogs_warn("Bearer already removed on S5 GTP timeout "
+                "[Message-Type:%d bearer_id=%d]", type, bearer_id);
         return;
     }
 
     sess = sgwc_sess_find_by_id(bearer->sess_id);
     if (!sess) {
-        ogs_error("Session has already been removed");
+        ogs_warn("Session already removed on S5 GTP timeout "
+                "[Message-Type:%d bearer_id=%d]", type, bearer_id);
         return;
     }
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
     if (!sgwc_ue) {
-        ogs_error("UE context has already been removed");
+        ogs_warn("UE already removed on S5 GTP timeout "
+                "[Message-Type:%d bearer_id=%d sess_id=%d]",
+                type, bearer_id, sess->id);
         return;
     }
 
     switch (type) {
     case OGS_GTP2_UPDATE_BEARER_REQUEST_TYPE:
-        ogs_error("[%s] No Update Bearer Response", sgwc_ue->imsi_bcd);
+        ogs_warn("[%s] No Update Bearer Response [EBI:%d APN:%s]",
+                sgwc_ue->imsi_bcd, bearer->ebi,
+                sess->session.name ? sess->session.name : "-");
         break;
     case OGS_GTP2_DELETE_BEARER_REQUEST_TYPE:
-        ogs_error("[%s] No Delete Bearer Response", sgwc_ue->imsi_bcd);
+        ogs_warn("[%s] No Delete Bearer Response [EBI:%d APN:%s]",
+                sgwc_ue->imsi_bcd, bearer->ebi,
+                sess->session.name ? sess->session.name : "-");
         ogs_debug("    bearer[EBI=%d]", bearer->ebi);
         ogs_assert(OGS_OK ==
             sgwc_pfcp_send_bearer_modification_request(
@@ -1105,18 +1116,27 @@ void sgwc_s5c_handle_delete_bearer_request(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sess) {
-        ogs_error("No Context in TEID");
+        /* Late Delete Bearer after session already torn down */
+        ogs_warn("S5 Delete Bearer Request: no session (TEID=0x%x)",
+                message->h.teid_presence ? message->h.teid : 0);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         if (!sgwc_ue) {
-            ogs_error("No UE Context");
+            ogs_warn("S5 Delete Bearer Request: no UE "
+                    "[sess_id=%d APN:%s SGW_S5C_TEID:0x%x]",
+                    sess->id,
+                    sess->session.name ? sess->session.name : "-",
+                    sess->sgw_s5c_teid);
             cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
         }
 
         if (req->linked_eps_bearer_id.presence == 0 &&
             req->eps_bearer_ids.presence == 0) {
-            ogs_error("No Linked EBI or EPS Bearer ID");
+            ogs_error("[%s] S5 Delete Bearer Request: "
+                    "no Linked EBI or EPS Bearer ID [APN:%s]",
+                    sgwc_ue ? sgwc_ue->imsi_bcd : "Unknown",
+                    sess->session.name ? sess->session.name : "-");
             cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
         }
 
@@ -1159,7 +1179,12 @@ void sgwc_s5c_handle_delete_bearer_request(
 
             bearer = sgwc_bearer_find_by_sess_ebi(sess, ebi);
             if (!bearer) {
-                ogs_error("No Context for EPS Bearer ID[%d]", ebi);
+                /* Common race: PGW Delete Bearer after local cleanup */
+                ogs_warn("[%s] S5 Delete Bearer Request: "
+                        "no bearer EBI[%d] [APN:%s SGW_S5C_TEID:0x%x]",
+                        sgwc_ue->imsi_bcd, ebi,
+                        sess->session.name ? sess->session.name : "-",
+                        sess->sgw_s5c_teid);
                 cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
             }
         }

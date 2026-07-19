@@ -21,6 +21,9 @@
 #include "pfcp-path.h"
 #include "sgwc-trace.h"
 #include "metrics.h"
+/* metrics.h redefines OGS_LOG_DOMAIN; restore SGWC domain for this TU */
+#undef OGS_LOG_DOMAIN
+#define OGS_LOG_DOMAIN __sgwc_log_domain
 
 #include "s11-handler.h"
 
@@ -1167,19 +1170,29 @@ void sgwc_s11_handle_delete_session_request(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sgwc_ue) {
-        ogs_error("No Context");
+        /* Late Delete Session after UE already removed (MME retry / HO) */
+        ogs_warn("S11 Delete Session Request: no UE "
+                "(TEID=0x%x)",
+                message->h.teid_presence ? message->h.teid : 0);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         if (req->linked_eps_bearer_id.presence == 0) {
-            ogs_error("No EPS Bearer ID");
+            ogs_error("[%s] S11 Delete Session Request: "
+                    "no Linked EPS Bearer ID "
+                    "[MME_S11_TEID:0x%x SGW_S11_TEID:0x%x]",
+                    sgwc_ue->imsi_bcd,
+                    sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
         }
 
         if (cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
             sess = sgwc_sess_find_by_ebi(sgwc_ue, req->linked_eps_bearer_id.u8);
             if (!sess) {
-                ogs_error("Unknown EPS Bearer [IMSI:%s, EBI:%d]",
-                        sgwc_ue->imsi_bcd, req->linked_eps_bearer_id.u8);
+                ogs_warn("[%s] S11 Delete Session Request: "
+                        "unknown EBI[%d] "
+                        "[MME_S11_TEID:0x%x SGW_S11_TEID:0x%x]",
+                        sgwc_ue->imsi_bcd, req->linked_eps_bearer_id.u8,
+                        sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);
                 cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
             }
         }
@@ -2303,15 +2316,15 @@ void sgwc_s11_handle_create_indirect_data_forwarding_tunnel_request(
                 num_of_modify++;
             }
         } else {
-            ogs_error("No Indirect Tunnel");
-            ogs_error("    UE IMSI[%s] APN[%s]",
-                    sgwc_ue->imsi_bcd, sess->session.name);
-            ogs_error("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
+            /* HO cancel / Delete Indirect Data Forwarding after tunnels gone */
+            ogs_warn("[%s] No Indirect Tunnel to remove [APN:%s "
+                    "MME_S11_TEID:0x%x SGW_S11_TEID:0x%x]",
+                    sgwc_ue->imsi_bcd, sess->session.name,
                     sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);
             ogs_list_for_each(&sess->bearer_list, bearer) {
-                ogs_error("    EBI[%d]", bearer->ebi);
+                ogs_warn("    EBI[%d]", bearer->ebi);
                 ogs_list_for_each(&bearer->tunnel_list, tunnel) {
-                    ogs_error("TUNNEL[%d] INF[%d]",
+                    ogs_warn("    TUNNEL[%d] INF[%d]",
                             tunnel->id, tunnel->interface_type);
                 }
             }
@@ -2397,15 +2410,15 @@ void sgwc_s11_handle_delete_indirect_data_forwarding_tunnel_request(
                     sess, s11_xact->id, gtpbuf,
                     OGS_PFCP_MODIFY_INDIRECT|OGS_PFCP_MODIFY_REMOVE));
         } else {
-            ogs_error("No Indirect Tunnel");
-            ogs_error("    UE IMSI[%s] APN[%s]",
-                    sgwc_ue->imsi_bcd, sess->session.name);
-            ogs_error("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
+            /* HO cancel / Delete Indirect Data Forwarding after tunnels gone */
+            ogs_warn("[%s] No Indirect Tunnel to remove [APN:%s "
+                    "MME_S11_TEID:0x%x SGW_S11_TEID:0x%x]",
+                    sgwc_ue->imsi_bcd, sess->session.name,
                     sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);
             ogs_list_for_each(&sess->bearer_list, bearer) {
-                ogs_error("    EBI[%d]", bearer->ebi);
+                ogs_warn("    EBI[%d]", bearer->ebi);
                 ogs_list_for_each(&bearer->tunnel_list, tunnel) {
-                    ogs_error("TUNNEL[%d] INF[%d]",
+                    ogs_warn("    TUNNEL[%d] INF[%d]",
                             tunnel->id, tunnel->interface_type);
                 }
             }
