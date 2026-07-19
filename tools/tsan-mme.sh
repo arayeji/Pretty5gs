@@ -68,21 +68,44 @@ do_build() {
         ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
         echo "injected sgwc.workers:4 -> $f"
     fi
+
+    # Lab-only address relocation: the production AMF on this host owns
+    # 127.0.0.5 (SBI/NGAP/metrics). Move the lab AMF to 127.0.0.105 in
+    # every suite config (tests connect using the same yaml, so both
+    # sides stay consistent).
+    for cf in "$BUILDDIR"/configs/*.yaml; do
+        [ -f "$cf" ] || continue
+        if grep -qE '127\.0\.0\.5([^0-9]|$)' "$cf"; then
+            sed -Ei 's/127\.0\.0\.5([^0-9]|$)/127.0.0.105\1/g' "$cf"
+            echo "relocated 127.0.0.5 -> 127.0.0.105 in $cf"
+        fi
+    done
+}
+
+# Failed suites leave sibling daemons running (the harness aborts when
+# one child dies); they then hold the loopback ports and break the next
+# suite. Kill anything spawned from this build tree.
+cleanup_lab() {
+    pkill -f "$BUILDDIR/[s]rc/" 2>/dev/null || true
+    sleep 1
 }
 
 do_test() {
     suite="${1:-}"
     export TSAN_OPTIONS="${TSAN_OPTIONS:-halt_on_error=0 history_size=7 second_deadlock_stack=1 log_path=tsan-mme}"
     if [ -n "$suite" ]; then
+        cleanup_lab
         meson test -C "$BUILDDIR" "$suite" --timeout-multiplier 4 \
             --print-errorlogs
     else
         for s in $SUITES; do
             echo "==== TSAN suite: $s ===="
+            cleanup_lab
             meson test -C "$BUILDDIR" "$s" --timeout-multiplier 4 \
                 --print-errorlogs || true
         done
     fi
+    cleanup_lab
     echo
     echo "TSAN reports (if any):"
     ls -la tsan-mme.* 2>/dev/null || echo "  none - clean run"
