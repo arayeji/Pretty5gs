@@ -137,8 +137,21 @@ int ogs_worker_post(ogs_worker_t *worker, void *event)
 {
     int rv;
 
-    ogs_assert(worker);
-    ogs_assert(event);
+    /*
+     * Never abort the process for a bad post. Callers (S1AP TX/RX/IO,
+     * UE-shard push) already treat != OGS_OK as drop / sync fallback.
+     * A NULL worker has been observed in production when a sticky
+     * index races teardown or a pool-id modulo underflows — that used
+     * to take the MME down via ogs_assert(worker).
+     */
+    if (!worker) {
+        ogs_error("ogs_worker_post: NULL worker (event=%p)", event);
+        return OGS_ERROR;
+    }
+    if (!event) {
+        ogs_error("ogs_worker_post: NULL event (worker id=%d)", worker->id);
+        return OGS_ERROR;
+    }
 
     /*
      * Non-blocking: RX callbacks (GTP/PFCP/S1AP) run on the main poll

@@ -91,7 +91,9 @@ void ogs_worker_start(ogs_worker_t *worker);
 void ogs_worker_join(ogs_worker_t *worker);
 void ogs_worker_destroy(ogs_worker_t *worker);
 
-/* Non-blocking push + wake. Returns OGS_RETRY if the worker queue is full. */
+/* Non-blocking push + wake.
+ * Returns OGS_RETRY if the worker queue is full, OGS_ERROR if worker/event
+ * is NULL. Never aborts — callers must free/drop on != OGS_OK. */
 int ogs_worker_post(ogs_worker_t *worker, void *event);
 
 /* Worker the calling thread belongs to, or NULL on the main/IO thread. */

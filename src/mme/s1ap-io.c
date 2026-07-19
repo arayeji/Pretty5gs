@@ -387,7 +387,13 @@ int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
 
     ogs_assert(sock);
     ogs_assert(pkbuf);
-    ogs_assert(io_worker);
+
+    if (!io_worker) {
+        ogs_error("s1ap-io: IO worker not running; drop PDU (len:%d)",
+                pkbuf->len);
+        ogs_pkbuf_free(pkbuf);
+        return OGS_ERROR;
+    }
 
     job = ogs_calloc(1, sizeof(*job));
     if (!job) {

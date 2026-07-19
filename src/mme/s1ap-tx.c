@@ -223,11 +223,23 @@ int s1ap_tx_post_dlnas(enb_ue_t *enb_ue, ogs_pkbuf_t *emmbuf)
     job->stream_no = enb_ue->enb_ostream_id;
     job->emmbuf = emmbuf;
 
-    /* sticky per eNB: all of one association's jobs share one FIFO */
-    rv = ogs_worker_post(
-            tx_workers[enb->id % tx_worker_count], job);
+    /* sticky per eNB: all of one association's jobs share one FIFO.
+     * Cast id to unsigned so a corrupt/negative pool id cannot yield a
+     * negative subscript and a NULL worker pointer. */
+    {
+        ogs_worker_t *w =
+            tx_workers[(uint32_t)enb->id % (uint32_t)tx_worker_count];
+        if (!w) {
+            ogs_error("s1ap-tx: worker[%u] missing (count=%d) — sync fallback",
+                    (unsigned)((uint32_t)enb->id % (uint32_t)tx_worker_count),
+                    tx_worker_count);
+            ogs_free(job);
+            return OGS_ERROR;
+        }
+        rv = ogs_worker_post(w, job);
+    }
     if (rv != OGS_OK) {
-        /* worker queue full: caller falls back to sync build+send.
+        /* worker queue full / gone: caller falls back to sync build+send.
          * Safe only because nothing was enqueued here; earlier
          * in-flight jobs still hold sync sends back via pending. */
         ogs_free(job);

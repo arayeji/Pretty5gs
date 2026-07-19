@@ -194,6 +194,12 @@ static bool rx_post(ogs_worker_t *worker, int op, ogs_sock_t *sock)
     rx_cmd_t *cmd = NULL;
     int rv;
 
+    if (!worker) {
+        ogs_error("s1ap-rx: %s post with NULL worker sock:%p",
+                op == RX_CMD_WATCH ? "WATCH" : "UNWATCH", (void *)sock);
+        return false;
+    }
+
     cmd = ogs_calloc(1, sizeof(*cmd));
     ogs_assert(cmd);
     cmd->op = op;
