@@ -25,6 +25,14 @@
 typedef struct ogs_timer_mgr_s {
     OGS_POOL(pool, ogs_timer_t);
     ogs_rbtree_t tree;
+    /*
+     * Protects tree + pool + timer->running. Historically single-thread,
+     * but with SMP shard workers (mme.workers / sgwc.workers) a UE's
+     * timers may be started/stopped from a worker while the manager's
+     * owner thread walks the tree in mgr_next()/mgr_expire(). Callbacks
+     * still run only on the owner thread (outside the lock).
+     */
+    ogs_thread_mutex_t lock;
 } ogs_timer_mgr_t;
 
 static void add_timer_node(
@@ -61,6 +69,7 @@ ogs_timer_mgr_t *ogs_timer_mgr_create(unsigned int capacity)
     }
 
     ogs_pool_init(&manager->pool, capacity);
+    ogs_thread_mutex_init(&manager->lock);
 
     return manager;
 }
@@ -69,6 +78,7 @@ void ogs_timer_mgr_destroy(ogs_timer_mgr_t *manager)
 {
     ogs_assert(manager);
 
+    ogs_thread_mutex_destroy(&manager->lock);
     ogs_pool_final(&manager->pool);
     ogs_free(manager);
 }
@@ -79,7 +89,9 @@ ogs_timer_t *ogs_timer_add(
     ogs_timer_t *timer = NULL;
     ogs_assert(manager);
 
+    ogs_thread_mutex_lock(&manager->lock);
     ogs_pool_alloc(&manager->pool, &timer);
+    ogs_thread_mutex_unlock(&manager->lock);
     if (!timer) {
         ogs_error("Failed to allocate timer object from pool");
         return NULL;
@@ -103,7 +115,9 @@ void ogs_timer_delete_debug(ogs_timer_t *timer, const char *file_line)
 
     ogs_timer_stop(timer);
 
+    ogs_thread_mutex_lock(&manager->lock);
     ogs_pool_free(&manager->pool, timer);
+    ogs_thread_mutex_unlock(&manager->lock);
 }
 
 void ogs_timer_start_debug(
@@ -116,11 +130,13 @@ void ogs_timer_start_debug(
     manager = timer->manager;
     ogs_assert(manager);
 
+    ogs_thread_mutex_lock(&manager->lock);
     if (timer->running == true)
         ogs_rbtree_delete(&manager->tree, timer);
 
     timer->running = true;
     add_timer_node(&manager->tree, timer, duration);
+    ogs_thread_mutex_unlock(&manager->lock);
 }
 
 void ogs_timer_stop_debug(ogs_timer_t *timer, const char *file_line)
@@ -130,11 +146,15 @@ void ogs_timer_stop_debug(ogs_timer_t *timer, const char *file_line)
     manager = timer->manager;
     ogs_assert(manager);
 
-    if (timer->running == false)
+    ogs_thread_mutex_lock(&manager->lock);
+    if (timer->running == false) {
+        ogs_thread_mutex_unlock(&manager->lock);
         return;
+    }
 
     timer->running = false;
     ogs_rbtree_delete(&manager->tree, timer);
+    ogs_thread_mutex_unlock(&manager->lock);
 }
 
 ogs_time_t ogs_timer_mgr_next(ogs_timer_mgr_t *manager)
@@ -144,15 +164,19 @@ ogs_time_t ogs_timer_mgr_next(ogs_timer_mgr_t *manager)
     ogs_assert(manager);
 
     current = ogs_get_monotonic_time();
+    ogs_thread_mutex_lock(&manager->lock);
     rbnode = ogs_rbtree_first(&manager->tree);
     if (rbnode) {
         ogs_timer_t *this = ogs_rb_entry(rbnode, ogs_timer_t, rbnode);
-        if (this->timeout > current) {
-            return (this->timeout - current);
+        ogs_time_t timeout = this->timeout;
+        ogs_thread_mutex_unlock(&manager->lock);
+        if (timeout > current) {
+            return (timeout - current);
         } else {
             return OGS_NO_WAIT_TIME;
         }
     }
+    ogs_thread_mutex_unlock(&manager->lock);
 
     return OGS_INFINITE_TIME;
 }
@@ -169,6 +193,12 @@ void ogs_timer_mgr_expire(ogs_timer_mgr_t *manager)
 
     current = ogs_get_monotonic_time();
 
+    /*
+     * Detach all expired timers under the lock (mark them stopped and
+     * unlink from the tree), then invoke callbacks outside the lock so
+     * callbacks can freely start/stop/delete timers.
+     */
+    ogs_thread_mutex_lock(&manager->lock);
     ogs_rbtree_for_each(&manager->tree, rbnode) {
         this = ogs_rb_entry(rbnode, ogs_timer_t, rbnode);
 
@@ -178,11 +208,17 @@ void ogs_timer_mgr_expire(ogs_timer_mgr_t *manager)
         ogs_list_add(&list, &this->lnode);
     }
 
+    ogs_list_for_each(&list, lnode) {
+        this = ogs_rb_entry(lnode, ogs_timer_t, lnode);
+        this->running = false;
+        ogs_rbtree_delete(&manager->tree, this);
+    }
+    ogs_thread_mutex_unlock(&manager->lock);
+
     /* You should not perform a delete on a timer using ogs_timer_delete()
      * in a callback function this->cb(). */
     ogs_list_for_each(&list, lnode) {
         this = ogs_rb_entry(lnode, ogs_timer_t, lnode);
-        ogs_timer_stop(this);
         if (this->cb)
             this->cb(this->data);
     }
