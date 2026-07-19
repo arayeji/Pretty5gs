@@ -139,12 +139,28 @@ Fixed:
       GUTI/S-TMSI/`mme_ue_find_by_message`) → two workers mutating the
       same UE (`emm_state_exception` race). Fix: `mme_worker_rehome_emm()`
       re-posts the EMM event to the owner shard before touching UE state.
+- [x] **UE location update on main**: `s1ap_handle_uplink_nas_transport`
+      wrote `mme_ue->tai/e_cgi` while the owner shard ran
+      `emm_handle_attach_request`. Fix: TAI/E-CGI snapshot in the EMM
+      event (taken on main from `enb_ue->saved`); owner applies it in
+      `mme-sm.c`; attach/TAU/ext-service handlers skip the re-read of
+      `enb_ue->saved` when workers are on.
+
+**Status (Jul 19 2026): attach suite runs with zero MME TSAN reports**
+(workers:4 rx:4 tx:4 io:1). The suite's remaining functional failure
+(guti-test, `Line 1445`) reproduces identically with ALL knobs at 0 on
+both the TSAN and regular builds → pre-existing fork/testsuite issue,
+not an SMP regression. Track separately before enabling `workers` in
+production; volte/csfb/handover/transfer suites still need TSAN soak.
 
 Known remaining (accepted / TODO):
 
 - [ ] Main thread still *reads* shard-owned `mme_ue` state in S1AP
       handlers (e.g. S-TMSI lookup + `mme_ue_is_valid_for_s1` in
       InitialUEMessage). Read-mostly; needs Stage B/C ownership handoff.
+- [ ] Handover paths (`path switch request`, `handover notify`) still
+      write `mme_ue->tai/e_cgi` on main (s1ap-handler.c ~3125/~4513);
+      needs the same snapshot treatment before HO works with workers.
 - [ ] Test-harness noise: `tests/common/application.c` `test_child_create`
       races (harness, not MME) and FreeDiameter internals.
 
