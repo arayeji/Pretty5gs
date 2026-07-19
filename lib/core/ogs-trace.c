@@ -29,12 +29,27 @@ static struct {
     bool exact[OGS_MAX_TRACE_IMSI_FILTERS];
 } trace_filter;
 
-static void trace_filter_init_once(void)
+void ogs_trace_filter_init(void)
 {
+    /* Runs from ogs_core_initialize() while the process is still
+     * single-threaded — the only safe place to create the mutex. */
     if (trace_filter.initialized)
         return;
     ogs_thread_mutex_init(&trace_filter.mutex);
     trace_filter.initialized = 1;
+}
+
+static void trace_filter_init_once(void)
+{
+    /*
+     * Lazy fallback for callers that never ran ogs_core_initialize()
+     * (unit tools). Do NOT rely on this in multithreaded daemons: two
+     * threads racing here would both run pthread_mutex_init. The real
+     * init happens single-threaded in ogs_trace_filter_init().
+     */
+    if (trace_filter.initialized)
+        return;
+    ogs_trace_filter_init();
 }
 
 static void trace_copy_str(char *dst, size_t dstlen, const char *src)

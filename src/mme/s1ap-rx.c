@@ -27,10 +27,27 @@
 static ogs_worker_t *rx_workers[OGS_MAX_WORKERS];
 static int rx_worker_count = 0;
 static int rx_next_worker = 0;          /* round-robin cursor, main only */
-static ogs_hash_t *rx_owner_hash = NULL; /* sock -> worker+1, main only */
+static ogs_hash_t *rx_owner_hash = NULL; /* sock -> rx_owner_t*, main only */
 
-/* worker-side: sock -> ogs_poll_t*, touched only by the owning worker */
+/* worker-side: sock -> rx_watch_t*, touched only by the owning worker */
 static OGS_THREAD_LOCAL ogs_hash_t *rx_poll_hash = NULL;
+
+/*
+ * ogs_hash stores key POINTERS, not copies — a hash key must stay valid
+ * for the entry's whole lifetime. Both maps therefore embed the sock
+ * pointer (the key) in a heap entry; never key off a stack variable or
+ * a buffer freed after insert (the old `&cmd->sock` key dangled as soon
+ * as rx_dispatch freed the command).
+ */
+typedef struct rx_owner_s {
+    ogs_sock_t *sock;   /* hash key storage */
+    int         wid;    /* owning worker index */
+} rx_owner_t;
+
+typedef struct rx_watch_s {
+    ogs_sock_t *sock;   /* hash key storage */
+    ogs_poll_t *poll;
+} rx_watch_t;
 
 typedef struct rx_cmd_s {
 #define RX_CMD_WATCH    1
@@ -47,6 +64,13 @@ static void rx_thread_init(ogs_worker_t *worker)
 
 static void rx_thread_fini(ogs_worker_t *worker)
 {
+    ogs_hash_index_t *hi = NULL;
+
+    for (hi = ogs_hash_first(rx_poll_hash); hi; hi = ogs_hash_next(hi)) {
+        rx_watch_t *watch = ogs_hash_this_val(hi);
+        if (watch)
+            ogs_free(watch);
+    }
     ogs_hash_destroy(rx_poll_hash);
     rx_poll_hash = NULL;
 }
@@ -55,6 +79,7 @@ static void rx_dispatch(ogs_worker_t *worker, void *data)
 {
     rx_cmd_t *cmd = data;
     ogs_poll_t *poll = NULL;
+    rx_watch_t *watch = NULL;
 
     ogs_assert(cmd);
     ogs_assert(cmd->sock);
@@ -78,14 +103,20 @@ static void rx_dispatch(ogs_worker_t *worker, void *data)
                     cmd->sock, NULL, NULL, 0, 0);
             break;
         }
-        ogs_hash_set(rx_poll_hash, &cmd->sock, sizeof(cmd->sock), poll);
+        watch = ogs_calloc(1, sizeof(*watch));
+        ogs_assert(watch);
+        watch->sock = cmd->sock;
+        watch->poll = poll;
+        ogs_hash_set(rx_poll_hash, &watch->sock, sizeof(watch->sock), watch);
         break;
 
     case RX_CMD_UNWATCH:
-        poll = ogs_hash_get(rx_poll_hash, &cmd->sock, sizeof(cmd->sock));
-        if (poll) {
-            ogs_pollset_remove(poll);
-            ogs_hash_set(rx_poll_hash, &cmd->sock, sizeof(cmd->sock), NULL);
+        watch = ogs_hash_get(rx_poll_hash, &cmd->sock, sizeof(cmd->sock));
+        if (watch) {
+            ogs_pollset_remove(watch->poll);
+            ogs_hash_set(rx_poll_hash,
+                    &watch->sock, sizeof(watch->sock), NULL);
+            ogs_free(watch);
         } else
             ogs_error("s1ap-rx: UNWATCH for unknown socket");
 
@@ -133,6 +164,7 @@ int s1ap_rx_workers_start(int count)
 void s1ap_rx_workers_stop(void)
 {
     int i;
+    ogs_hash_index_t *hi = NULL;
 
     for (i = 0; i < rx_worker_count; i++) {
         ogs_worker_destroy(rx_workers[i]);
@@ -141,6 +173,11 @@ void s1ap_rx_workers_stop(void)
     rx_worker_count = 0;
 
     if (rx_owner_hash) {
+        for (hi = ogs_hash_first(rx_owner_hash); hi; hi = ogs_hash_next(hi)) {
+            rx_owner_t *owner = ogs_hash_this_val(hi);
+            if (owner)
+                ogs_free(owner);
+        }
         ogs_hash_destroy(rx_owner_hash);
         rx_owner_hash = NULL;
     }
@@ -182,6 +219,7 @@ static bool rx_post(ogs_worker_t *worker, int op, ogs_sock_t *sock)
 void s1ap_rx_watch_sock(ogs_sock_t *sock)
 {
     int wid;
+    rx_owner_t *owner = NULL;
 
     ogs_assert(sock);
     ogs_assert(rx_worker_count > 0);
@@ -189,13 +227,17 @@ void s1ap_rx_watch_sock(ogs_sock_t *sock)
     wid = rx_next_worker;
     rx_next_worker = (rx_next_worker + 1) % rx_worker_count;
 
-    ogs_hash_set(rx_owner_hash, &sock, sizeof(sock),
-            (void *)(uintptr_t)(wid + 1));
+    owner = ogs_calloc(1, sizeof(*owner));
+    ogs_assert(owner);
+    owner->sock = sock;
+    owner->wid = wid;
+    ogs_hash_set(rx_owner_hash, &owner->sock, sizeof(owner->sock), owner);
 
     if (!rx_post(rx_workers[wid], RX_CMD_WATCH, sock)) {
         /* same handling as the accept->watch fd race: main tears the
          * half-created eNB down via WATCH_FAILED */
-        ogs_hash_set(rx_owner_hash, &sock, sizeof(sock), NULL);
+        ogs_hash_set(rx_owner_hash, &owner->sock, sizeof(owner->sock), NULL);
+        ogs_free(owner);
         mme_sctp_event_push(MME_EVENT_S1AP_RX_WATCH_FAILED,
                 sock, NULL, NULL, 0, 0);
     }
@@ -221,19 +263,22 @@ bool s1ap_rx_owned(ogs_sock_t *sock)
 
 bool s1ap_rx_unwatch_sock(ogs_sock_t *sock)
 {
-    uintptr_t owner;
+    rx_owner_t *owner = NULL;
+    int wid;
 
     ogs_assert(sock);
 
     if (!rx_owner_hash)
         return false;
 
-    owner = (uintptr_t)ogs_hash_get(rx_owner_hash, &sock, sizeof(sock));
+    owner = ogs_hash_get(rx_owner_hash, &sock, sizeof(sock));
     if (!owner)
         return false;
 
-    ogs_hash_set(rx_owner_hash, &sock, sizeof(sock), NULL);
-    if (!rx_post(rx_workers[owner - 1], RX_CMD_UNWATCH, sock)) {
+    wid = owner->wid;
+    ogs_hash_set(rx_owner_hash, &owner->sock, sizeof(owner->sock), NULL);
+    ogs_free(owner);
+    if (!rx_post(rx_workers[wid], RX_CMD_UNWATCH, sock)) {
         /*
          * The worker will never confirm; force the RX confirm here so
          * the close registry can complete. The worker's poll entry (if

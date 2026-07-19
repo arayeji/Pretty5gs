@@ -125,6 +125,9 @@ int mme_initialize(void)
     /* CONNREFUSED side-queue before any S1AP worker can post teardowns */
     mme_event_s1ap_connrefused_init();
 
+    /* close registry lock/hash before any thread can register/confirm */
+    s1ap_sock_close_init();
+
     /*
      * UE-shard workers first: ogs_worker_shards_enable() must run
      * before ANY ogs_worker_create (including S1AP RX/TX/IO helpers).

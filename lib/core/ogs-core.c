@@ -40,6 +40,7 @@ void ogs_core_initialize(void)
 {
     ogs_mem_init();
     ogs_log_init();
+    ogs_trace_filter_init();
     ogs_pkbuf_init();
     ogs_socket_init();
     ogs_tlv_init();

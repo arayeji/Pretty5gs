@@ -56,6 +56,8 @@ typedef struct ogs_trace_ctx_s {
 
 #define OGS_MAX_TRACE_IMSI_FILTERS 16
 
+/* single-threaded startup init (called by ogs_core_initialize) */
+void ogs_trace_filter_init(void);
 void ogs_trace_clear(void);
 void ogs_trace_set(const ogs_trace_ctx_t *ctx);
 

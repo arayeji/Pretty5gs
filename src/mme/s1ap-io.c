@@ -460,55 +460,69 @@ bool s1ap_io_drain_sock(ogs_sock_t *sock)
 }
 
 /*
- * ---- Socket close registry (main thread only) ----
+ * ---- Socket close registry ----
  *
- * sock -> bitmask of confirmations still outstanding.
+ * sock -> outstanding-confirmation entry.
+ *
+ * ogs_hash stores the key POINTER, not a copy. The key must therefore
+ * live on the heap for as long as the entry does: it is embedded in the
+ * entry struct (never `&sock` of a caller's stack frame — with
+ * mme.workers the registering frame may belong to a worker thread whose
+ * stack is unmapped before s1ap_sock_close_final() walks the hash).
  */
+typedef struct close_wait_entry_s {
+    ogs_sock_t *sock;       /* hash key storage — must stay first-class */
+    unsigned    mask;       /* confirmations still outstanding */
+} close_wait_entry_t;
+
 static ogs_hash_t *close_wait_hash = NULL;
 static ogs_thread_mutex_t close_wait_lock;
 static bool close_wait_lock_ready = false;
 
-static void close_wait_lock_init_once(void)
+void s1ap_sock_close_init(void)
 {
+    /* Called from mme_initialize() BEFORE any worker thread exists, so
+     * plain flags need no synchronization here. */
     if (!close_wait_lock_ready) {
         ogs_thread_mutex_init(&close_wait_lock);
         close_wait_lock_ready = true;
+    }
+    if (!close_wait_hash) {
+        close_wait_hash = ogs_hash_make();
+        ogs_assert(close_wait_hash);
     }
 }
 
 void s1ap_sock_close_register(ogs_sock_t *sock, int wait_mask)
 {
-    uintptr_t existing;
+    close_wait_entry_t *entry = NULL;
 
     ogs_assert(sock);
     ogs_assert(wait_mask);
+    ogs_assert(close_wait_lock_ready);
 
-    close_wait_lock_init_once();
     ogs_thread_mutex_lock(&close_wait_lock);
-
-    if (!close_wait_hash) {
-        close_wait_hash = ogs_hash_make();
-        ogs_assert(close_wait_hash);
-    }
 
     /*
      * Duplicate register is a tear-down race (e.g. CONNREFUSED overlapping
      * WATCH_FAILED, or a recycled sock pointer while a prior close is still
      * in flight). Merge outstanding confirms; never abort the MME.
      */
-    existing = (uintptr_t)ogs_hash_get(close_wait_hash, &sock, sizeof(sock));
-    if (existing) {
+    entry = ogs_hash_get(close_wait_hash, &sock, sizeof(sock));
+    if (entry) {
         ogs_warn("s1ap-io: close already registered sock:%p "
                 "(pending=0x%x, add=0x%x)",
-                (void *)sock, (unsigned)existing, (unsigned)wait_mask);
-        ogs_hash_set(close_wait_hash, &sock, sizeof(sock),
-                (void *)(uintptr_t)(existing | (uintptr_t)wait_mask));
+                (void *)sock, entry->mask, (unsigned)wait_mask);
+        entry->mask |= (unsigned)wait_mask;
         ogs_thread_mutex_unlock(&close_wait_lock);
         return;
     }
 
-    ogs_hash_set(close_wait_hash, &sock, sizeof(sock),
-            (void *)(uintptr_t)wait_mask);
+    entry = ogs_calloc(1, sizeof(*entry));
+    ogs_assert(entry);
+    entry->sock = sock;
+    entry->mask = (unsigned)wait_mask;
+    ogs_hash_set(close_wait_hash, &entry->sock, sizeof(entry->sock), entry);
     ogs_thread_mutex_unlock(&close_wait_lock);
 }
 
@@ -517,8 +531,8 @@ bool s1ap_sock_close_pending(ogs_sock_t *sock)
     bool pending;
 
     ogs_assert(sock);
+    ogs_assert(close_wait_lock_ready);
 
-    close_wait_lock_init_once();
     ogs_thread_mutex_lock(&close_wait_lock);
     pending = close_wait_hash &&
         ogs_hash_get(close_wait_hash, &sock, sizeof(sock)) != NULL;
@@ -539,17 +553,17 @@ void s1ap_sock_close_orphan(ogs_sock_t *sock)
 
 void s1ap_sock_close_confirm(ogs_sock_t *sock, int which)
 {
-    uintptr_t mask;
+    close_wait_entry_t *entry = NULL;
 
     ogs_assert(sock);
+    ogs_assert(close_wait_lock_ready);
 
-    close_wait_lock_init_once();
     ogs_thread_mutex_lock(&close_wait_lock);
 
-    mask = close_wait_hash ?
-        (uintptr_t)ogs_hash_get(close_wait_hash, &sock, sizeof(sock)) : 0;
+    entry = close_wait_hash ?
+        ogs_hash_get(close_wait_hash, &sock, sizeof(sock)) : NULL;
 
-    if (!mask) {
+    if (!entry) {
         /*
          * Spurious / late confirm after destroy (or for a sock that was
          * never registered). MUST NOT destroy here: the pointer may
@@ -561,15 +575,14 @@ void s1ap_sock_close_confirm(ogs_sock_t *sock, int which)
         return;
     }
 
-    mask &= ~(uintptr_t)which;
-    if (mask) {
-        ogs_hash_set(close_wait_hash, &sock, sizeof(sock),
-                (void *)mask);
+    entry->mask &= ~(unsigned)which;
+    if (entry->mask) {
         ogs_thread_mutex_unlock(&close_wait_lock);
         return;
     }
 
-    ogs_hash_set(close_wait_hash, &sock, sizeof(sock), NULL);
+    ogs_hash_set(close_wait_hash, &entry->sock, sizeof(entry->sock), NULL);
+    ogs_free(entry);
     ogs_thread_mutex_unlock(&close_wait_lock);
     ogs_sctp_destroy(sock);
 }
@@ -578,7 +591,9 @@ void s1ap_sock_close_final(void)
 {
     ogs_hash_index_t *hi = NULL;
 
-    close_wait_lock_init_once();
+    if (!close_wait_lock_ready)
+        return;
+
     ogs_thread_mutex_lock(&close_wait_lock);
 
     if (!close_wait_hash) {
@@ -589,10 +604,12 @@ void s1ap_sock_close_final(void)
     /* all worker threads are joined: confirmations that never arrived
      * can no longer race a destroy — reap the leftovers */
     for (hi = ogs_hash_first(close_wait_hash); hi; hi = ogs_hash_next(hi)) {
-        ogs_sock_t *sock = NULL;
-        memcpy(&sock, ogs_hash_this_key(hi), sizeof(sock));
-        if (sock)
-            ogs_sctp_destroy(sock);
+        close_wait_entry_t *entry = ogs_hash_this_val(hi);
+        if (entry) {
+            if (entry->sock)
+                ogs_sctp_destroy(entry->sock);
+            ogs_free(entry);
+        }
     }
     ogs_hash_destroy(close_wait_hash);
     close_wait_hash = NULL;

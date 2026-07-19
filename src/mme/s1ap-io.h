@@ -77,6 +77,8 @@ int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
 #define S1AP_SOCK_CONFIRM_RX  0x1
 #define S1AP_SOCK_CONFIRM_IO  0x2
 
+/* create the registry lock/hash; MUST run before any worker starts */
+void s1ap_sock_close_init(void);
 void s1ap_sock_close_register(ogs_sock_t *sock, int wait_mask);
 void s1ap_sock_close_confirm(ogs_sock_t *sock, int which);
 bool s1ap_sock_close_pending(ogs_sock_t *sock);

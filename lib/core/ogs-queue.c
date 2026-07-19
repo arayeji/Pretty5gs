@@ -122,11 +122,14 @@ static int queue_push(ogs_queue_t *queue, void *data, ogs_time_t timeout)
 {
     int rv;
 
+    ogs_thread_mutex_lock(&queue->one_big_mutex);
+
+    /* checked under the mutex: ogs_queue_term() sets it while holding
+     * the same lock, so an unlocked read here is a data race */
     if (queue->terminated) {
+        ogs_thread_mutex_unlock(&queue->one_big_mutex);
         return OGS_DONE; /* no more elements ever again */
     }
-
-    ogs_thread_mutex_lock(&queue->one_big_mutex);
 
     if (ogs_queue_full(queue)) {
         if (!timeout) {
@@ -152,9 +155,10 @@ static int queue_push(ogs_queue_t *queue, void *data, ogs_time_t timeout)
         }
         /* If we wake up and it's still empty, then we were interrupted */
         if (ogs_queue_full(queue)) {
+            int terminated = queue->terminated;
             ogs_warn("queue full (intr)");
             ogs_thread_mutex_unlock(&queue->one_big_mutex);
-            if (queue->terminated) {
+            if (terminated) {
                 return OGS_DONE; /* no more elements ever again */
             }
             else {
@@ -216,11 +220,12 @@ static int queue_pop(ogs_queue_t *queue, void **data, ogs_time_t timeout)
 {
     int rv;
 
+    ogs_thread_mutex_lock(&queue->one_big_mutex);
+
     if (queue->terminated) {
+        ogs_thread_mutex_unlock(&queue->one_big_mutex);
         return OGS_DONE; /* no more elements ever again */
     }
-
-    ogs_thread_mutex_lock(&queue->one_big_mutex);
 
     /* Keep waiting until we wake up and find that the queue is not empty. */
     if (ogs_queue_empty(queue)) {
@@ -247,9 +252,10 @@ static int queue_pop(ogs_queue_t *queue, void **data, ogs_time_t timeout)
         }
         /* If we wake up and it's still empty, then we were interrupted */
         if (ogs_queue_empty(queue)) {
+            int terminated = queue->terminated;
             ogs_warn("queue empty (intr)");
             ogs_thread_mutex_unlock(&queue->one_big_mutex);
-            if (queue->terminated) {
+            if (terminated) {
                 return OGS_DONE; /* no more elements ever again */
             } else {
                 return OGS_ERROR;
