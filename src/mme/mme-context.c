@@ -6053,7 +6053,21 @@ enb_ue_t *enb_ue_find(uint32_t index)
 
 enb_ue_t *enb_ue_find_by_mme_ue_s1ap_id(uint32_t mme_ue_s1ap_id)
 {
-    return enb_ue_find(mme_ue_s1ap_id);
+    enb_ue_t *enb_ue = NULL;
+
+    /*
+     * With mme.workers the top OGS_WORKER_ID_BITS of MME_UE_S1AP_ID
+     * carry the owner shard (mme_shard_compose over the pool index);
+     * strip them for the pool lookup. Harmless with workers off (the
+     * index never reaches those bits). Comparing the stored id catches
+     * both a reused pool slot and a stale/foreign shard prefix.
+     */
+    enb_ue = enb_ue_find(mme_ue_s1ap_id &
+            ((1u << (32 - OGS_WORKER_ID_BITS)) - 1));
+    if (enb_ue && enb_ue->mme_ue_s1ap_id != mme_ue_s1ap_id)
+        return NULL;
+
+    return enb_ue;
 }
 
 enb_ue_t *enb_ue_find_by_id(ogs_pool_id_t id)
