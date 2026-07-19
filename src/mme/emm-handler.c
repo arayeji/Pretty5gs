@@ -19,6 +19,7 @@
 
 #include "mme-event.h"
 #include "mme-sm.h"
+#include "mme-workers.h"
 
 #include "nas-security.h"
 
@@ -185,11 +186,16 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
             ogs_plmn_id_hexdump(&enb_ue->saved.e_cgi.plmn_id),
             enb_ue->saved.e_cgi.cell_id);
 
-    /* Copy Stream-No/TAI/ECGI from enb_ue */
+    /* Copy Stream-No/TAI/ECGI from enb_ue.
+     * With mme.workers the location was already applied on the owner
+     * from the event snapshot (mme-sm.c); do not re-read enb_ue->saved
+     * here, main may be overwriting it for a newer uplink message. */
     mme_ue->enb_ostream_id = enb_ue->enb_ostream_id;
-    memcpy(&mme_ue->tai, &enb_ue->saved.tai, sizeof(ogs_eps_tai_t));
-    memcpy(&mme_ue->e_cgi, &enb_ue->saved.e_cgi, sizeof(ogs_e_cgi_t));
-    mme_ue->ue_location_timestamp = ogs_time_now();
+    if (!mme_workers_active()) {
+        memcpy(&mme_ue->tai, &enb_ue->saved.tai, sizeof(ogs_eps_tai_t));
+        memcpy(&mme_ue->e_cgi, &enb_ue->saved.e_cgi, sizeof(ogs_e_cgi_t));
+        mme_ue->ue_location_timestamp = ogs_time_now();
+    }
 
     /* Check TAI */
     served_tai_index = mme_find_served_tai(&mme_ue->tai);
@@ -831,11 +837,14 @@ int emm_handle_tau_request(
             ogs_plmn_id_hexdump(&enb_ue->saved.e_cgi.plmn_id),
             enb_ue->saved.e_cgi.cell_id);
 
-    /* Copy Stream-No/TAI/ECGI from enb_ue */
+    /* Copy Stream-No/TAI/ECGI from enb_ue (owner applies the snapshot
+     * in mme-sm.c when mme.workers is active) */
     mme_ue->enb_ostream_id = enb_ue->enb_ostream_id;
-    memcpy(&mme_ue->tai, &enb_ue->saved.tai, sizeof(ogs_eps_tai_t));
-    memcpy(&mme_ue->e_cgi, &enb_ue->saved.e_cgi, sizeof(ogs_e_cgi_t));
-    mme_ue->ue_location_timestamp = ogs_time_now();
+    if (!mme_workers_active()) {
+        memcpy(&mme_ue->tai, &enb_ue->saved.tai, sizeof(ogs_eps_tai_t));
+        memcpy(&mme_ue->e_cgi, &enb_ue->saved.e_cgi, sizeof(ogs_e_cgi_t));
+        mme_ue->ue_location_timestamp = ogs_time_now();
+    }
 
     /* Check TAI */
     served_tai_index = mme_find_served_tai(&mme_ue->tai);
@@ -1003,11 +1012,14 @@ int emm_handle_extended_service_request(
             ogs_plmn_id_hexdump(&enb_ue->saved.e_cgi.plmn_id),
             enb_ue->saved.e_cgi.cell_id);
 
-    /* Copy Stream-No/TAI/ECGI from enb_ue */
+    /* Copy Stream-No/TAI/ECGI from enb_ue (owner applies the snapshot
+     * in mme-sm.c when mme.workers is active) */
     mme_ue->enb_ostream_id = enb_ue->enb_ostream_id;
-    memcpy(&mme_ue->tai, &enb_ue->saved.tai, sizeof(ogs_eps_tai_t));
-    memcpy(&mme_ue->e_cgi, &enb_ue->saved.e_cgi, sizeof(ogs_e_cgi_t));
-    mme_ue->ue_location_timestamp = ogs_time_now();
+    if (!mme_workers_active()) {
+        memcpy(&mme_ue->tai, &enb_ue->saved.tai, sizeof(ogs_eps_tai_t));
+        memcpy(&mme_ue->e_cgi, &enb_ue->saved.e_cgi, sizeof(ogs_e_cgi_t));
+        mme_ue->ue_location_timestamp = ogs_time_now();
+    }
 
     /* Check TAI */
     served_tai_index = mme_find_served_tai(&mme_ue->tai);

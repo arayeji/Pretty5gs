@@ -129,6 +129,16 @@ typedef struct mme_event_s {
     int create_action;
     ogs_nas_eps_message_t *nas_message;
 
+    /*
+     * TAI/E-CGI snapshot taken on main from enb_ue->saved when the EMM
+     * event is created (s1ap_send_to_nas). With mme.workers the owner
+     * shard applies it to mme_ue; main must not write shard-owned UE
+     * fields (TSAN: uplink-NAS vs attach-request location race).
+     */
+    ogs_eps_tai_t nas_tai;
+    ogs_e_cgi_t nas_e_cgi;
+    bool nas_location_present;
+
     ogs_diam_s6a_message_t *s6a_message;
 
     mme_vlr_t *vlr;

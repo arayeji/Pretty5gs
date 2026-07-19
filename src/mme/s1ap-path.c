@@ -329,6 +329,10 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
         e->s1ap_code = procedureCode;
         e->nas_type = security_header_type.type;
         e->pkbuf = nasbuf;
+        /* location snapshot for the owner shard (see mme-event.h) */
+        e->nas_tai = enb_ue->saved.tai;
+        e->nas_e_cgi = enb_ue->saved.e_cgi;
+        e->nas_location_present = true;
         rv = mme_event_push_to_ue_owner(e);
         if (rv != OGS_OK)
             ogs_error("s1ap_send_to_nas() failed:%d", (int)rv);

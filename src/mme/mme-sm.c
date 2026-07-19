@@ -566,6 +566,17 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             break;
         }
 
+        /*
+         * With mme.workers the UE location update is deferred to here
+         * (owner thread) using the snapshot taken at event creation;
+         * main-thread S1AP/EMM handlers skip their direct writes.
+         */
+        if (mme_workers_active() && e->nas_location_present) {
+            memcpy(&mme_ue->tai, &e->nas_tai, sizeof(ogs_eps_tai_t));
+            memcpy(&mme_ue->e_cgi, &e->nas_e_cgi, sizeof(ogs_e_cgi_t));
+            mme_ue->ue_location_timestamp = ogs_time_now();
+        }
+
         e->mme_ue_id = mme_ue->id;
         e->nas_message = &nas_message;
 

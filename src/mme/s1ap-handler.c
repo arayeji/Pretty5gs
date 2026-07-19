@@ -34,6 +34,7 @@
 
 #include "mme-path.h"
 #include "mme-sm.h"
+#include "mme-workers.h"
 #include "metrics.h"
 
 static enb_ue_t *s1ap_find_enb_ue_by_message_ue_ids(
@@ -1122,10 +1123,14 @@ void s1ap_handle_uplink_nas_transport(
         enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id,
         enb_ue->saved.tai.tac, enb_ue->saved.e_cgi.cell_id);
 
-    /* Copy Stream-No/TAI/ECGI from enb_ue (mme_ue checked at function entry) */
-    memcpy(&mme_ue->tai, &enb_ue->saved.tai, sizeof(ogs_eps_tai_t));
-    memcpy(&mme_ue->e_cgi, &enb_ue->saved.e_cgi, sizeof(ogs_e_cgi_t));
-    mme_ue->ue_location_timestamp = ogs_time_now();
+    /* Copy Stream-No/TAI/ECGI from enb_ue (mme_ue checked at function entry).
+     * With mme.workers the owner shard applies the snapshot instead
+     * (mme-sm.c); main must not write shard-owned mme_ue fields. */
+    if (!mme_workers_active()) {
+        memcpy(&mme_ue->tai, &enb_ue->saved.tai, sizeof(ogs_eps_tai_t));
+        memcpy(&mme_ue->e_cgi, &enb_ue->saved.e_cgi, sizeof(ogs_e_cgi_t));
+        mme_ue->ue_location_timestamp = ogs_time_now();
+    }
 
     ogs_expect(OGS_OK == s1ap_send_to_nas(
                 enb_ue, S1AP_ProcedureCode_id_uplinkNASTransport, NAS_PDU));
