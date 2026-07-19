@@ -104,6 +104,19 @@ static void mme_sm_post_emm_dispatch(ogs_pool_id_t mme_ue_id)
         return;
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+
+    /*
+     * emm_state_exception entry (emm-sm.c) already releases the S1/UE
+     * context when it can. Re-issuing the release here duplicated the
+     * UEContextReleaseCommand toward the eNB (observed in reset-test:
+     * the doubled downlink desynchronized the S1AP flow). Only act when
+     * no release is in flight yet.
+     */
+    if (enb_ue && enb_ue->ue_ctx_rel_action != S1AP_UE_CTX_REL_INVALID_ACTION)
+        return;
+    if (MME_SESSION_RELEASE_PENDING(mme_ue))
+        return;
+
     mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
 
     mme_ue = mme_ue_find_by_id(mme_ue_id);
