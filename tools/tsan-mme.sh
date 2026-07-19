@@ -86,6 +86,19 @@ do_build() {
             -e 's/db8:cafe/db8:babe/g' \
             "$cf"
     done
+
+    # Stock session subnets carry no `dev:` -> NFs default to ogstun,
+    # which production owns. Pin every session subnet to ogstun2 (the
+    # superadmin-owned lab tun with 10.46/16 + 2001:db8:babe::/48).
+    for cf in "$BUILDDIR"/configs/*.yaml; do
+        [ -f "$cf" ] || continue
+        if grep -q -- '- subnet:' "$cf" && ! grep -q 'dev: ogstun2' "$cf"; then
+            awk '
+                { print }
+                /- subnet: / { print "      dev: ogstun2" }
+            ' "$cf" > "$cf.tmp" && mv "$cf.tmp" "$cf"
+        fi
+    done
     echo "lab address/tun relocations applied -> $BUILDDIR/configs/*.yaml"
 }
 
