@@ -281,6 +281,7 @@ typedef struct mme_context_s {
 
     ogs_hash_t *enb_addr_hash;  /* hash table for ENB Address */
     ogs_hash_t *enb_id_hash;    /* hash table for ENB-ID */
+    ogs_hash_t *enb_sock_hash;  /* hash table (ogs_sock_t* : mme_enb) */
     ogs_hash_t *imsi_ue_hash;   /* hash table (IMSI : MME_UE) */
     ogs_hash_t *guti_ue_hash;   /* hash table (GUTI : MME_UE) */
 

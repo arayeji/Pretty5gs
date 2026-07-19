@@ -387,7 +387,22 @@ int ogs_app_initialize(
     /**************************************************************************
      * Stage 9 : Queue, Timer and Poll
      */
-    ogs_app()->queue = ogs_queue_create(ogs_app()->pool.event);
+    {
+        /*
+         * pool.event scales with max.ue (ue * pool_per_ue) and huge
+         * deployments push it to tens of millions. A queue that deep is
+         * pathological: the array alone costs capacity*8 bytes, and a
+         * consumer that falls behind accumulates hours of stale events
+         * (observed: MME wedged with 40M queued events, gauges frozen).
+         * Cap the queue so overload fails fast — producers already
+         * handle trypush failure by dropping.
+         */
+#define OGS_APP_QUEUE_MAX_CAPACITY (1024 * 1024)
+        unsigned int qcap = ogs_app()->pool.event;
+        if (qcap > OGS_APP_QUEUE_MAX_CAPACITY)
+            qcap = OGS_APP_QUEUE_MAX_CAPACITY;
+        ogs_app()->queue = ogs_queue_create(qcap);
+    }
     ogs_assert(ogs_app()->queue);
     ogs_app()->timer_mgr = ogs_timer_mgr_create(ogs_app()->pool.timer);
     ogs_assert(ogs_app()->timer_mgr);

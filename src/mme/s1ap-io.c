@@ -350,9 +350,11 @@ int s1ap_io_start(void)
     /*
      * poll capacity: every connected eNB could in theory be waiting on
      * POLLOUT at once, plus the queue-notify eventfd.
+     * Command queue capped: SEND jobs are drained continuously and
+     * per-sock backlog is bounded by IO_WRITE_QUEUE_MAX anyway.
      */
     io_worker = ogs_worker_create(0,
-            ogs_app()->pool.event, 64,
+            ogs_min(ogs_app()->pool.event, 262144), 64,
             ogs_global_conf()->max.peer * 2 + 64,
             io_dispatch, NULL);
     ogs_assert(io_worker);

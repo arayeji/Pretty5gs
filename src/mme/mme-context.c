@@ -429,6 +429,8 @@ void mme_context_init(void)
     ogs_assert(self.enb_addr_hash);
     self.enb_id_hash = ogs_hash_make();
     ogs_assert(self.enb_id_hash);
+    self.enb_sock_hash = ogs_hash_make();
+    ogs_assert(self.enb_sock_hash);
     self.imsi_ue_hash = ogs_hash_make();
     ogs_assert(self.imsi_ue_hash);
     self.guti_ue_hash = ogs_hash_make();
@@ -496,6 +498,8 @@ void mme_context_final(void)
     ogs_hash_destroy(self.enb_addr_hash);
     ogs_assert(self.enb_id_hash);
     ogs_hash_destroy(self.enb_id_hash);
+    ogs_assert(self.enb_sock_hash);
+    ogs_hash_destroy(self.enb_sock_hash);
 
     ogs_assert(self.imsi_ue_hash);
     ogs_hash_destroy(self.imsi_ue_hash);
@@ -5577,6 +5581,8 @@ mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
 
     ogs_hash_set(self.enb_addr_hash,
             enb->sctp.addr, sizeof(ogs_sockaddr_t), enb);
+    ogs_hash_set(self.enb_sock_hash,
+            &enb->sctp.sock, sizeof(enb->sctp.sock), enb);
 
     memset(&e, 0, sizeof(e));
     e.enb_id = enb->id;
@@ -5635,6 +5641,8 @@ int mme_enb_remove(mme_enb_t *enb)
 
     ogs_hash_set(self.enb_addr_hash,
             enb->sctp.addr, sizeof(ogs_sockaddr_t), NULL);
+    ogs_hash_set(self.enb_sock_hash,
+            &enb->sctp.sock, sizeof(enb->sctp.sock), NULL);
     if (enb->enb_id_presence == true)
         ogs_hash_set(self.enb_id_hash, &enb->enb_id, sizeof(enb->enb_id), NULL);
 
@@ -5760,14 +5768,14 @@ mme_enb_t *mme_enb_find_by_enb_id(uint32_t enb_id)
 
 mme_enb_t *mme_enb_find_by_sock(const void *sock)
 {
-    mme_enb_t *enb = NULL;
-
+    /*
+     * O(1). The old enb_list walk was O(n) and burned ~24% of the main
+     * thread during CONNREFUSED storms with thousands of eNBs (perf,
+     * production wedge 2026-07-19).
+     */
     ogs_assert(sock);
-    ogs_list_for_each(&self.enb_list, enb) {
-        if (enb->sctp.sock == sock)
-            return enb;
-    }
-    return NULL;
+    return (mme_enb_t *)ogs_hash_get(
+            self.enb_sock_hash, &sock, sizeof(sock));
 }
 
 int mme_enb_set_enb_id(mme_enb_t *enb, uint32_t enb_id)

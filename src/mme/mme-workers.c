@@ -424,8 +424,10 @@ int mme_workers_start(int count)
     ogs_worker_shards_enable();
 
     for (i = 0; i < count; i++) {
+        /* Same rationale as the main app queue cap (ogs-init.c):
+         * pool.event-deep queues waste memory and hide overload. */
         mme_workers[i] = ogs_worker_create(i,
-                ogs_app()->pool.event,
+                ogs_min(ogs_app()->pool.event, 1024 * 1024),
                 ogs_app()->pool.timer,
                 64,
                 mme_worker_dispatch, NULL);

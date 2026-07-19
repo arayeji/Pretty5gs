@@ -167,8 +167,12 @@ int s1ap_tx_workers_start(int count)
     ogs_assert(tx_worker_count == 0);
 
     for (i = 0; i < count; i++) {
+        /* Encode jobs are drained continuously; cap the queue instead
+         * of sizing it to pool.event (millions of 8B slots). On full,
+         * s1ap_tx_post_dlnas falls back to the sync path. */
         tx_workers[i] = ogs_worker_create(i,
-                ogs_app()->pool.event, 64, 64, tx_dispatch, NULL);
+                ogs_min(ogs_app()->pool.event, 262144),
+                64, 64, tx_dispatch, NULL);
         ogs_assert(tx_workers[i]);
         ogs_worker_start(tx_workers[i]);
     }

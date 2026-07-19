@@ -22,6 +22,7 @@
 #include "mme-event.h"
 #include "s1ap-path.h"
 #include "s1ap-rx.h"
+#include "s1ap-io.h"    /* s1ap_sock_close_confirm on UNWATCH post failure */
 
 static ogs_worker_t *rx_workers[OGS_MAX_WORKERS];
 static int rx_worker_count = 0;
@@ -112,8 +113,10 @@ int s1ap_rx_workers_start(int count)
     ogs_assert(rx_owner_hash);
 
     for (i = 0; i < count; i++) {
+        /* Command queue holds only WATCH/UNWATCH — a few per eNB
+         * lifetime. pool.event (millions) would waste 8B per slot. */
         rx_workers[i] = ogs_worker_create(i,
-                ogs_app()->pool.event, 64,
+                ogs_min(ogs_app()->pool.event, 65536), 64,
                 ogs_global_conf()->max.peer * 2 + 64,
                 rx_dispatch, NULL);
         ogs_assert(rx_workers[i]);
@@ -148,7 +151,8 @@ bool s1ap_rx_active(void)
     return rx_worker_count > 0;
 }
 
-static void rx_post(ogs_worker_t *worker, int op, ogs_sock_t *sock)
+/* Returns false if the worker command queue rejected the post. */
+static bool rx_post(ogs_worker_t *worker, int op, ogs_sock_t *sock)
 {
     rx_cmd_t *cmd = NULL;
     int rv;
@@ -159,7 +163,20 @@ static void rx_post(ogs_worker_t *worker, int op, ogs_sock_t *sock)
     cmd->sock = sock;
 
     rv = ogs_worker_post(worker, cmd);
-    ogs_assert(rv == OGS_OK);
+    if (rv != OGS_OK) {
+        /*
+         * Never abort the MME for one command. Callers degrade:
+         * WATCH failure → treat like the accept->watch race
+         * (WATCH_FAILED); UNWATCH failure → force the RX confirm so
+         * the close registry cannot wedge.
+         */
+        ogs_error("s1ap-rx: %s post failed (%d) sock:%p",
+                op == RX_CMD_WATCH ? "WATCH" : "UNWATCH",
+                (int)rv, (void *)sock);
+        ogs_free(cmd);
+        return false;
+    }
+    return true;
 }
 
 void s1ap_rx_watch_sock(ogs_sock_t *sock)
@@ -175,7 +192,13 @@ void s1ap_rx_watch_sock(ogs_sock_t *sock)
     ogs_hash_set(rx_owner_hash, &sock, sizeof(sock),
             (void *)(uintptr_t)(wid + 1));
 
-    rx_post(rx_workers[wid], RX_CMD_WATCH, sock);
+    if (!rx_post(rx_workers[wid], RX_CMD_WATCH, sock)) {
+        /* same handling as the accept->watch fd race: main tears the
+         * half-created eNB down via WATCH_FAILED */
+        ogs_hash_set(rx_owner_hash, &sock, sizeof(sock), NULL);
+        mme_sctp_event_push(MME_EVENT_S1AP_RX_WATCH_FAILED,
+                sock, NULL, NULL, 0, 0);
+    }
 }
 
 mme_enb_t *s1ap_rx_safe_enb_lookup(const ogs_sockaddr_t *addr)
@@ -210,7 +233,16 @@ bool s1ap_rx_unwatch_sock(ogs_sock_t *sock)
         return false;
 
     ogs_hash_set(rx_owner_hash, &sock, sizeof(sock), NULL);
-    rx_post(rx_workers[owner - 1], RX_CMD_UNWATCH, sock);
+    if (!rx_post(rx_workers[owner - 1], RX_CMD_UNWATCH, sock)) {
+        /*
+         * The worker will never confirm; force the RX confirm here so
+         * the close registry can complete. The worker's poll entry (if
+         * any) dies with its pollset at shutdown — the fd is closed by
+         * the registry destroy, so the worker just sees EBADF events
+         * it no longer dispatches.
+         */
+        s1ap_sock_close_confirm(sock, S1AP_SOCK_CONFIRM_RX);
+    }
 
     return true;
 }
