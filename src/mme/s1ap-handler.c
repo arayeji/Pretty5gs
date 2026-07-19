@@ -2328,11 +2328,19 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
          * Normal S1 release keeps a REGISTERED UE with live session(s)
          * on mme_ue_list (ECM-IDLE). Any context with no ESM session
          * after S1 is gone is a stale stub and must not linger.
+         *
+         * BUT only when this was the UE's last S1 context. On an
+         * immediate re-attach the UE is already mid-attach on a NEW
+         * enb_ue (no ESM session yet, AIR in flight) while the OLD
+         * held context is being released here; reclaiming the mme_ue
+         * at that point kills the ongoing attach (auth-test: the
+         * Authentication Request is never sent and the UE wedges).
          */
         if (mme_ue &&
                 ogs_list_empty(&mme_ue->sess_list) &&
                 !MME_SESSION_RELEASE_PENDING(mme_ue) &&
-                !mme_ue->ue_context_will_remove)
+                !mme_ue->ue_context_will_remove &&
+                enb_ue_find_by_id(mme_ue->enb_ue_id) == NULL)
             mme_ue_enter_ue_context_will_remove(mme_ue);
         break;
     case S1AP_UE_CTX_REL_S1_REMOVE_AND_UNLINK:
