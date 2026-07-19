@@ -37,10 +37,10 @@ do_build() {
         awk '
             { print }
             /^mme:/ && !done {
-                print "  s1ap_rx_workers: 2"
-                print "  s1ap_tx_workers: 2"
+                print "  s1ap_rx_workers: 4"
+                print "  s1ap_tx_workers: 4"
                 print "  s1ap_io_thread: 1"
-                print "  workers: 2"
+                print "  workers: 4"
                 done = 1
             }
         ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
@@ -50,11 +50,11 @@ do_build() {
         awk '
             { print }
             /^mme:/ && !done {
-                print "  workers: 2"
+                print "  workers: 4"
                 done = 1
             }
         ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-        echo "injected mme.workers:2 -> $f"
+        echo "injected mme.workers:4 -> $f"
     fi
 }
 
