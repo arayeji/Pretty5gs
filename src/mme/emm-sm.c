@@ -62,6 +62,20 @@
     }                                                                   \
 } while (0)
 
+/*
+ * Late EMM timer / rehomed message / nested FSM entry can outlive the
+ * mme_ue (pool slot already freed). Asserting here took production down
+ * (emm_state_de_registered). Drop the event instead.
+ */
+#define EMM_FIND_UE_OR_RETURN(e, mme_ue) do {                            \
+    (mme_ue) = mme_ue_find_by_id((e)->mme_ue_id);                       \
+    if (!(mme_ue)) {                                                    \
+        ogs_warn("EMM: mme_ue id=%d gone (event %s)",                   \
+                (e)->mme_ue_id, mme_event_get_name(e));                 \
+        return;                                                         \
+    }                                                                   \
+} while (0)
+
 typedef enum {
     EMM_COMMON_STATE_DEREGISTERED,
     EMM_COMMON_STATE_REGISTERED,
@@ -371,8 +385,7 @@ void emm_state_de_registered(ogs_fsm_t *s, mme_event_t *e)
 
     mme_sm_debug(e);
 
-    mme_ue = mme_ue_find_by_id(e->mme_ue_id);
-    ogs_assert(mme_ue);
+    EMM_FIND_UE_OR_RETURN(e, mme_ue);
 
     switch (e->id) {
     case OGS_FSM_ENTRY_SIG:
@@ -431,8 +444,7 @@ void emm_state_registered(ogs_fsm_t *s, mme_event_t *e)
 
     mme_sm_debug(e);
 
-    mme_ue = mme_ue_find_by_id(e->mme_ue_id);
-    ogs_assert(mme_ue);
+    EMM_FIND_UE_OR_RETURN(e, mme_ue);
 
     switch (e->id) {
     case OGS_FSM_ENTRY_SIG:
@@ -638,8 +650,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
 
     mme_sm_debug(e);
 
-    mme_ue = mme_ue_find_by_id(e->mme_ue_id);
-    ogs_assert(mme_ue);
+    EMM_FIND_UE_OR_RETURN(e, mme_ue);
 
     /* If transition is from REGISTERED, allow restoration */
     if (state == EMM_COMMON_STATE_REGISTERED) {
@@ -1504,8 +1515,7 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
 
     mme_sm_debug(e);
 
-    mme_ue = mme_ue_find_by_id(e->mme_ue_id);
-    ogs_assert(mme_ue);
+    EMM_FIND_UE_OR_RETURN(e, mme_ue);
 
     switch (e->id) {
     case OGS_FSM_ENTRY_SIG:
@@ -1725,8 +1735,7 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
 
     mme_sm_debug(e);
 
-    mme_ue = mme_ue_find_by_id(e->mme_ue_id);
-    ogs_assert(mme_ue);
+    EMM_FIND_UE_OR_RETURN(e, mme_ue);
 
     switch (e->id) {
     case OGS_FSM_ENTRY_SIG:
@@ -2003,8 +2012,7 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
 
     mme_sm_debug(e);
 
-    mme_ue = mme_ue_find_by_id(e->mme_ue_id);
-    ogs_assert(mme_ue);
+    EMM_FIND_UE_OR_RETURN(e, mme_ue);
 
     switch (e->id) {
     case OGS_FSM_ENTRY_SIG:
@@ -2318,8 +2326,7 @@ void emm_state_ue_context_will_remove(ogs_fsm_t *s, mme_event_t *e)
 
     mme_sm_debug(e);
 
-    mme_ue = mme_ue_find_by_id(e->mme_ue_id);
-    ogs_assert(mme_ue);
+    EMM_FIND_UE_OR_RETURN(e, mme_ue);
 
     switch (e->id) {
     case OGS_FSM_ENTRY_SIG:
@@ -2378,8 +2385,7 @@ void emm_state_exception(ogs_fsm_t *s, mme_event_t *e)
     ogs_assert(e);
     mme_sm_debug(e);
 
-    mme_ue = mme_ue_find_by_id(e->mme_ue_id);
-    ogs_assert(mme_ue);
+    EMM_FIND_UE_OR_RETURN(e, mme_ue);
 
     switch (e->id) {
     case OGS_FSM_ENTRY_SIG:

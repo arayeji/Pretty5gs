@@ -6945,11 +6945,16 @@ void mme_ue_remove(mme_ue_t *mme_ue)
     mme_li_report(mme_ue, OGS_LI_EVENT_EPS_DETACH, "ue-removed");
     ogs_list_remove(&self.mme_ue_list, mme_ue);
 
-    mme_ue_fsm_fini(mme_ue);
-
-    /* Stop timers first, then drop any already-queued events for this UE. */
+    /*
+     * Stop timers and purge queued events before FSM fini. Doing this
+     * after fini left a window where T3470/etc could still fire and
+     * ogs_fsm_dispatch into emm_state_* with a soon-to-be-freed (or
+     * already-freed) mme_ue — production abort at emm_state_de_registered.
+     */
     CLEAR_MME_UE_ALL_TIMERS(mme_ue);
     mme_event_purge_mme_ue(mme_ue->id);
+
+    mme_ue_fsm_fini(mme_ue);
 
     mme_ctx_lock();
     ogs_hash_set(self.mme_s11_teid_hash,
