@@ -69,17 +69,24 @@ do_build() {
         echo "injected sgwc.workers:4 -> $f"
     fi
 
-    # Lab-only address relocation: the production AMF on this host owns
-    # 127.0.0.5 (SBI/NGAP/metrics). Move the lab AMF to 127.0.0.105 in
-    # every suite config (tests connect using the same yaml, so both
-    # sides stay consistent).
+    # Lab-only relocations, applied to every generated suite config
+    # (tests connect using the same yaml, so both sides stay consistent):
+    #  - production AMF owns 127.0.0.5  -> lab AMF to 127.0.0.105
+    #  - production SMF owns 127.0.0.4  -> lab SMF to 127.0.0.104
+    #    (NOT .14: that is the stock NSSF address; 5GC suites collide)
+    #  - production owns ogstun/10.45.* -> lab uses ogstun2/10.46.*
+    # All rules are idempotent on a second pass.
     for cf in "$BUILDDIR"/configs/*.yaml; do
         [ -f "$cf" ] || continue
-        if grep -qE '127\.0\.0\.5([^0-9]|$)' "$cf"; then
-            sed -Ei 's/127\.0\.0\.5([^0-9]|$)/127.0.0.105\1/g' "$cf"
-            echo "relocated 127.0.0.5 -> 127.0.0.105 in $cf"
-        fi
+        sed -Ei \
+            -e 's/127\.0\.0\.5([^0-9]|$)/127.0.0.105\1/g' \
+            -e 's/127\.0\.0\.4([^0-9]|$)/127.0.0.104\1/g' \
+            -e 's/\bogstun\b/ogstun2/g' \
+            -e 's/10\.45\./10.46./g' \
+            -e 's/db8:cafe/db8:babe/g' \
+            "$cf"
     done
+    echo "lab address/tun relocations applied -> $BUILDDIR/configs/*.yaml"
 }
 
 # Failed suites leave sibling daemons running (the harness aborts when
