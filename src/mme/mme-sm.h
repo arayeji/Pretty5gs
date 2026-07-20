@@ -59,6 +59,8 @@ void sgsap_state_initial(ogs_fsm_t *s, mme_event_t *e);
 void sgsap_state_final(ogs_fsm_t *s, mme_event_t *e);
 void sgsap_state_will_connect(ogs_fsm_t *s, mme_event_t *e);
 void sgsap_state_connected(ogs_fsm_t *s, mme_event_t *e);
+/* Demux one SGsAP PDU; runs on main (VLR FSM) or the UE owner shard. */
+void sgsap_dispatch_message(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf);
 void sgsap_state_exception(ogs_fsm_t *s, mme_event_t *e);
 
 #define mme_sm_debug(__pe) \

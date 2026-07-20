@@ -1759,18 +1759,47 @@ cleanup:
 
         break;
     case MME_EVENT_SGSAP_MESSAGE:
-        sock = e->sock;
-        ogs_assert(sock);
         pkbuf = e->pkbuf;
         ogs_assert(pkbuf);
+
+        if (e->vlr) {
+            /*
+             * Bounced UE-addressed message on the UE owner shard:
+             * demux directly, skipping the main-owned VLR FSM.
+             */
+            sgsap_dispatch_message(e->vlr, pkbuf);
+            e->pkbuf = NULL;
+            ogs_pkbuf_free(pkbuf);
+            break;
+        }
+
+        sock = e->sock;
+        ogs_assert(sock);
 
         vlr = mme_vlr_find_by_sock(sock);
         ogs_assert(vlr);
         ogs_assert(OGS_FSM_STATE(&vlr->sm));
 
+        /*
+         * UE-addressed SGs messages mutate shard-owned mme_ue state
+         * (paging pkbuf/T3413, NAS DL count for MT-SMS, SGs flags):
+         * bounce them to the UE owner when mme.workers is active.
+         */
+        if (mme_workers_active() &&
+                OGS_FSM_CHECK(&vlr->sm, sgsap_state_connected)) {
+            int wid = mme_sgsap_peek_owner(pkbuf);
+            if (wid >= 0) {
+                e->pkbuf = NULL;
+                /* frees pkbuf on failure */
+                mme_worker_post_sgsap(wid, vlr, pkbuf);
+                break;
+            }
+        }
+
         e->vlr = vlr;
         ogs_fsm_dispatch(&vlr->sm, e);
 
+        e->pkbuf = NULL;
         ogs_pkbuf_free(pkbuf);
         break;
 

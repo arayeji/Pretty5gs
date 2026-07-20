@@ -19,6 +19,10 @@
 
 #include "ogs-core.h"
 
+#if !defined(_WIN32)
+#include <execinfo.h>
+#endif
+
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __ogs_mem_domain
 
@@ -30,11 +34,40 @@ void *__ogs_talloc_core;
 
 static ogs_thread_mutex_t mutex;
 
+/*
+ * talloc_abort() (bad magic = use-after-free / heap overrun of a
+ * talloc chunk) calls abort() WITHOUT any output unless a log
+ * function is registered — production died with silent SIGABRTs and
+ * truncated cores that could not be unwound. Log the reason and a
+ * backtrace through the ogs log (and raw stderr as a fallback, in
+ * case the log mutex is what got corrupted) before dying.
+ */
+static void mem_talloc_log(const char *message)
+{
+    ogs_fatal("talloc: %s", message);
+
+#if !defined(_WIN32)
+    {
+        void *addrs[32];
+        int n = backtrace(addrs, 32);
+        backtrace_symbols_fd(addrs, n, STDERR_FILENO);
+    }
+#endif
+}
+
+static void mem_talloc_abort(const char *reason)
+{
+    mem_talloc_log(reason);
+    abort();
+}
+
 void ogs_mem_init(void)
 {
     ogs_thread_mutex_init(&mutex);
 
     talloc_enable_null_tracking();
+    talloc_set_log_fn(mem_talloc_log);
+    talloc_set_abort_fn(mem_talloc_abort);
 
 #define TALLOC_MEMSIZE 1
     __ogs_talloc_core = talloc_named_const(NULL, TALLOC_MEMSIZE, "core");

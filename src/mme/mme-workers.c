@@ -23,6 +23,7 @@
 #include "mme-event.h"
 #include "mme-sm.h"
 #include "mme-workers.h"
+#include "sgsap-types.h"
 
 static ogs_worker_t *mme_workers[OGS_MAX_WORKERS];
 static int mme_worker_count = 0;
@@ -445,6 +446,84 @@ int mme_worker_post_ue_rel_tail(int rel_action, ogs_pool_id_t old_enb_ue_id,
     return mme_event_push_to_worker(owner, e);
 }
 
+int mme_sgsap_peek_owner(ogs_pkbuf_t *pkbuf)
+{
+    uint8_t type;
+    uint8_t *p, *end;
+
+    if (!mme_workers_active())
+        return -1;
+    if (!pkbuf || pkbuf->len < 1)
+        return -1;
+
+    type = *(uint8_t *)pkbuf->data;
+    switch (type) {
+    case SGSAP_LOCATION_UPDATE_ACCEPT:
+    case SGSAP_LOCATION_UPDATE_REJECT:
+    case SGSAP_ALERT_REQUEST:
+    case SGSAP_EPS_DETACH_ACK:
+    case SGSAP_IMSI_DETACH_ACK:
+    case SGSAP_PAGING_REQUEST:
+    case SGSAP_DOWNLINK_UNITDATA:
+    case SGSAP_RELEASE_REQUEST:
+    case SGSAP_MM_INFORMATION_REQUEST:
+        break;              /* UE-addressed: route by the IMSI IE */
+    default:
+        return -1;          /* RESET / STATUS / unknown: main */
+    }
+
+    /* SGsAP TLVs: 1-byte tag, 1-byte length (TS 29.118 clause 9) */
+    p = (uint8_t *)pkbuf->data + 1;
+    end = (uint8_t *)pkbuf->data + pkbuf->len;
+    while (p + 2 <= end) {
+        uint8_t tag = p[0];
+        uint8_t len = p[1];
+        uint8_t *val = p + 2;
+
+        if (val + len > end)
+            break;
+
+        if (tag == SGSAP_IE_IMSI_TYPE) {
+            char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+            mme_ue_t *mme_ue;
+
+            if (len < 4 || len > SGSAP_IE_IMSI_LEN)
+                return -1;
+
+            ogs_nas_eps_imsi_to_bcd(
+                    (ogs_nas_mobile_identity_imsi_t *)val, len, imsi_bcd);
+            mme_ue = mme_ue_find_by_imsi_bcd(imsi_bcd);
+            if (!mme_ue)
+                return -1;
+            return mme_shard_from_teid(mme_ue->mme_s11_teid);
+        }
+
+        p = val + len;
+    }
+
+    return -1;
+}
+
+int mme_worker_post_sgsap(int wid, mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
+{
+    mme_event_t *ne;
+
+    ogs_assert(vlr);
+    ogs_assert(pkbuf);
+
+    ne = mme_event_new(MME_EVENT_SGSAP_MESSAGE);
+    if (!ne) {
+        ogs_error("mme_worker_post_sgsap: mme_event_new() failed");
+        ogs_pkbuf_free(pkbuf);
+        return OGS_ERROR;
+    }
+    ne->vlr = vlr;
+    ne->pkbuf = pkbuf;
+
+    /* frees ne and pkbuf on failure */
+    return mme_event_push_to_worker(wid, ne);
+}
+
 int mme_worker_post_rel_ab(int action, ogs_pool_id_t enb_ue_id,
         mme_ue_t *mme_ue)
 {
@@ -566,6 +645,7 @@ static bool mme_event_is_ue_scoped(int id)
     case MME_EVENT_S1AP_HO_TAIL:
     case MME_EVENT_GN_MESSAGE:
     case MME_EVENT_GN_TIMER:
+    case MME_EVENT_SGSAP_MESSAGE:
     case OGS_FSM_ENTRY_SIG:
     case OGS_FSM_EXIT_SIG:
         return true;

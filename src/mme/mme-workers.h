@@ -96,6 +96,17 @@ int mme_worker_post_ue_rel_tail(int rel_action, ogs_pool_id_t old_enb_ue_id,
 int mme_worker_post_rel_ab(int action, ogs_pool_id_t enb_ue_id,
         mme_ue_t *mme_ue);
 
+/*
+ * SGsAP owner routing: UE-addressed SGs messages (paging, MT-SMS
+ * unitdata, LU accept/reject, ...) resolve their IMSI IE to the owner
+ * worker index, or -1 for main (VLR-level messages, unknown UE,
+ * workers off). mme_worker_post_sgsap() bounces the pkbuf there; the
+ * owner runs sgsap_dispatch_message() directly, skipping the
+ * main-owned VLR FSM.
+ */
+int mme_sgsap_peek_owner(ogs_pkbuf_t *pkbuf);
+int mme_worker_post_sgsap(int wid, mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf);
+
 /* Peek IMSI from a GTPv2-C pkbuf (Create Session Request TEID=0). */
 int mme_gtpv2_peek_imsi_bcd(ogs_pkbuf_t *pkbuf, char *bcd, size_t bcd_size);
 

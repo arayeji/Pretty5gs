@@ -46,6 +46,32 @@ static void show_help(const char *name)
        "\n", name);
 }
 
+#if !defined(_WIN32)
+#include <execinfo.h>
+
+/*
+ * abort() raised outside ogs_assert (talloc bad-magic, glibc heap
+ * checks, freeDiameter internals) died silently in production with
+ * cores too truncated to unwind. Print the aborting/faulting thread's
+ * own backtrace to stderr, then re-raise with the default action so
+ * the core still dumps.
+ */
+static void fatal_signal_backtrace(int signum)
+{
+    void *addrs[32];
+    int n;
+    static const char msg[] = "\n*** fatal signal backtrace ***\n";
+
+    n = write(STDERR_FILENO, msg, sizeof(msg) - 1);
+    (void)n;
+    n = backtrace(addrs, 32);
+    backtrace_symbols_fd(addrs, n, STDERR_FILENO);
+
+    ogs_signal(signum, SIG_DFL);
+    raise(signum);
+}
+#endif
+
 static int check_signal(int signum)
 {
     switch (signum) {
@@ -218,6 +244,12 @@ int main(int argc, const char *const argv[])
 
     ogs_signal_init();
     ogs_setup_signal_thread();
+
+#if !defined(_WIN32)
+    ogs_signal(SIGABRT, fatal_signal_backtrace);
+    ogs_signal(SIGSEGV, fatal_signal_backtrace);
+    ogs_signal(SIGBUS, fatal_signal_backtrace);
+#endif
 
     rv = ogs_app_initialize(OPEN5GS_VERSION, DEFAULT_CONFIG_FILENAME, argv_out);
     if (rv != OGS_OK) {

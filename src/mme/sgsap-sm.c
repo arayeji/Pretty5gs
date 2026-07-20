@@ -120,11 +120,61 @@ void sgsap_state_will_connect(ogs_fsm_t *s, mme_event_t *e)
     }
 }
 
+/*
+ * Demux one received SGsAP PDU to its handler. Shared between the VLR
+ * FSM (main thread) and the owner-shard bounce in mme-sm.c: with
+ * mme.workers, UE-addressed messages (paging, MT-SMS unitdata, LU
+ * accept/reject, ...) run here on the UE owner so the handlers'
+ * mme_ue mutations (paging pkbuf, NAS DL count, SGs state) never race
+ * the owner's own dispatch.
+ */
+void sgsap_dispatch_message(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
+{
+    uint8_t type;
+
+    ogs_assert(vlr);
+    ogs_assert(pkbuf);
+
+    type = *(unsigned char *)(pkbuf->data);
+    switch (type) {
+    case SGSAP_LOCATION_UPDATE_ACCEPT:
+        sgsap_handle_location_update_accept(vlr, pkbuf);
+        break;
+    case SGSAP_LOCATION_UPDATE_REJECT:
+        sgsap_handle_location_update_reject(vlr, pkbuf);
+        break;
+    case SGSAP_ALERT_REQUEST:
+        sgsap_handle_alert_request(vlr, pkbuf);
+        break;
+    case SGSAP_EPS_DETACH_ACK:
+    case SGSAP_IMSI_DETACH_ACK:
+        sgsap_handle_detach_ack(vlr, pkbuf);
+        break;
+    case SGSAP_PAGING_REQUEST:
+        sgsap_handle_paging_request(vlr, pkbuf);
+        break;
+    case SGSAP_DOWNLINK_UNITDATA:
+        sgsap_handle_downlink_unitdata(vlr, pkbuf);
+        break;
+    case SGSAP_RESET_INDICATION:
+        sgsap_handle_reset_indication(vlr, pkbuf);
+        break;
+    case SGSAP_RELEASE_REQUEST:
+        sgsap_handle_release_request(vlr, pkbuf);
+        break;
+    case SGSAP_MM_INFORMATION_REQUEST:
+        sgsap_handle_mm_information_request(vlr, pkbuf);
+        break;
+    default:
+        ogs_warn("Unknown Message Type: [%d]", type);
+        break;
+    }
+}
+
 void sgsap_state_connected(ogs_fsm_t *s, mme_event_t *e)
 {
     mme_vlr_t *vlr = NULL;
     ogs_pkbuf_t *pkbuf = NULL;
-    uint8_t type;
     ogs_assert(s);
     ogs_assert(e);
 
@@ -145,40 +195,7 @@ void sgsap_state_connected(ogs_fsm_t *s, mme_event_t *e)
     case MME_EVENT_SGSAP_MESSAGE:
         pkbuf = e->pkbuf;
         ogs_assert(pkbuf);
-        type = *(unsigned char *)(pkbuf->data);
-        switch (type) {
-        case SGSAP_LOCATION_UPDATE_ACCEPT:
-            sgsap_handle_location_update_accept(vlr, pkbuf);
-            break;
-        case SGSAP_LOCATION_UPDATE_REJECT:
-            sgsap_handle_location_update_reject(vlr, pkbuf);
-            break;
-        case SGSAP_ALERT_REQUEST:
-            sgsap_handle_alert_request(vlr, pkbuf);
-            break;
-        case SGSAP_EPS_DETACH_ACK:
-        case SGSAP_IMSI_DETACH_ACK:
-            sgsap_handle_detach_ack(vlr, pkbuf);
-            break;
-        case SGSAP_PAGING_REQUEST:
-            sgsap_handle_paging_request(vlr, pkbuf);
-            break;
-        case SGSAP_DOWNLINK_UNITDATA:
-            sgsap_handle_downlink_unitdata(vlr, pkbuf);
-            break;
-        case SGSAP_RESET_INDICATION:
-            sgsap_handle_reset_indication(vlr, pkbuf);
-            break;
-        case SGSAP_RELEASE_REQUEST:
-            sgsap_handle_release_request(vlr, pkbuf);
-            break;
-        case SGSAP_MM_INFORMATION_REQUEST:
-            sgsap_handle_mm_information_request(vlr, pkbuf);
-            break;
-        default:
-            ogs_warn("Unknown Message Type: [%d]", type);
-            break;
-        }
+        sgsap_dispatch_message(vlr, pkbuf);
         break;
     default:
         ogs_error("Unknown event %s", mme_event_get_name(e));
