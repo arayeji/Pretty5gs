@@ -56,6 +56,12 @@ typedef struct mme_metric_key_by_plmn_cause_s {
     mme_metric_type_by_plmn_cause_t t;
 } mme_metric_key_by_plmn_cause_t;
 
+typedef struct mme_metric_key_by_plmn_tac_s {
+    ogs_plmn_id_t                   plmn_id;
+    uint16_t                        tac;
+    mme_metric_type_by_plmn_tac_t   t;
+} mme_metric_key_by_plmn_tac_t;
+
 typedef struct mme_metric_key_by_reason_s {
     char                            reason[16];
     mme_metric_type_by_reason_t     t;
@@ -119,6 +125,11 @@ extern ogs_metrics_spec_t
 extern ogs_hash_t *metrics_hash_by_plmn_origin;
 extern mme_metrics_spec_def_t
     mme_metrics_spec_def_by_plmn_origin[_MME_METR_BY_PLMN_ORIGIN_MAX];
+extern ogs_metrics_spec_t
+    *mme_metrics_spec_by_plmn_tac[_MME_METR_BY_PLMN_TAC_MAX];
+extern ogs_hash_t *metrics_hash_by_plmn_tac;
+extern mme_metrics_spec_def_t
+    mme_metrics_spec_def_by_plmn_tac[_MME_METR_BY_PLMN_TAC_MAX];
 
 static bool mme_metrics_plmn_from_ue(mme_ue_t *mme_ue, ogs_plmn_id_t *plmn_id)
 {
@@ -149,6 +160,7 @@ static void mme_metrics_inst_by_plmn_add(ogs_plmn_id_t *plmn,
     plmn_key->plmn_id = *plmn;
     plmn_key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_plmn,
             plmn_key, sizeof(*plmn_key));
 
@@ -167,6 +179,7 @@ static void mme_metrics_inst_by_plmn_add(ogs_plmn_id_t *plmn,
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 static void mme_metrics_inst_by_plmn_cause_add(ogs_plmn_id_t *plmn,
@@ -188,6 +201,7 @@ static void mme_metrics_inst_by_plmn_cause_add(ogs_plmn_id_t *plmn,
     key->cause = cause;
     key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_plmn_cause,
             key, sizeof(*key));
 
@@ -207,6 +221,49 @@ static void mme_metrics_inst_by_plmn_cause_add(ogs_plmn_id_t *plmn,
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
+}
+
+static void mme_metrics_inst_by_plmn_tac_add(ogs_plmn_id_t *plmn,
+        uint16_t tac, mme_metric_type_by_plmn_tac_t t, int val)
+{
+    ogs_metrics_inst_t *metrics = NULL;
+    mme_metric_key_by_plmn_tac_t *key;
+    char plmn_id[OGS_PLMNIDSTRLEN] = "";
+    char tac_str[8];
+
+    ogs_assert(plmn);
+    if (!metrics_hash_by_plmn_tac)
+        return;
+
+    key = ogs_calloc(1, sizeof(*key));
+    ogs_assert(key);
+
+    key->plmn_id = *plmn;
+    key->tac = tac;
+    key->t = t;
+
+    ogs_metrics_dump_lock();
+    metrics = ogs_hash_get(metrics_hash_by_plmn_tac,
+            key, sizeof(*key));
+
+    if (!metrics) {
+        ogs_plmn_id_to_string(plmn, plmn_id);
+        ogs_snprintf(tac_str, sizeof(tac_str), "%u", tac);
+
+        metrics = ogs_metrics_inst_new(mme_metrics_spec_by_plmn_tac[t],
+                mme_metrics_spec_def_by_plmn_tac->num_labels,
+                (const char *[]){ plmn_id, tac_str });
+
+        ogs_assert(metrics);
+        ogs_hash_set(metrics_hash_by_plmn_tac,
+                key, sizeof(*key), metrics);
+    } else {
+        ogs_free(key);
+    }
+
+    ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 static void mme_metrics_inst_by_plmn_ho_add(ogs_plmn_id_t *plmn,
@@ -234,6 +291,7 @@ static void mme_metrics_inst_by_plmn_ho_add(ogs_plmn_id_t *plmn,
     key->cause_value = cause_value;
     key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_plmn_ho,
             key, sizeof(*key));
 
@@ -255,6 +313,7 @@ static void mme_metrics_inst_by_plmn_ho_add(ogs_plmn_id_t *plmn,
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 static void mme_metrics_inst_by_plmn_origin_add(ogs_plmn_id_t *plmn,
@@ -276,6 +335,7 @@ static void mme_metrics_inst_by_plmn_origin_add(ogs_plmn_id_t *plmn,
     ogs_cpystrn(key->origin, origin, sizeof(key->origin));
     key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_plmn_origin,
             key, sizeof(*key));
 
@@ -294,6 +354,7 @@ static void mme_metrics_inst_by_plmn_origin_add(ogs_plmn_id_t *plmn,
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 static void mme_metrics_inst_by_reason_add(const char *reason,
@@ -312,6 +373,7 @@ static void mme_metrics_inst_by_reason_add(const char *reason,
     ogs_cpystrn(key->reason, reason, sizeof(key->reason));
     key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_reason,
             key, sizeof(*key));
 
@@ -328,6 +390,7 @@ static void mme_metrics_inst_by_reason_add(const char *reason,
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 static void mme_metrics_inst_by_sgw_plmn_apn_add(
@@ -352,6 +415,7 @@ static void mme_metrics_inst_by_sgw_plmn_apn_add(
     ogs_cpystrn(key->apn, apn, sizeof(key->apn));
     key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_sgw_plmn_apn,
             key, sizeof(*key));
 
@@ -370,6 +434,7 @@ static void mme_metrics_inst_by_sgw_plmn_apn_add(
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 static void mme_metrics_inst_by_sgw_plmn_add(
@@ -392,6 +457,7 @@ static void mme_metrics_inst_by_sgw_plmn_add(
     key->plmn_id = *plmn;
     key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_sgw_plmn,
             key, sizeof(*key));
 
@@ -410,6 +476,7 @@ static void mme_metrics_inst_by_sgw_plmn_add(
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 void mme_metrics_attach_attempt(mme_ue_t *mme_ue)
@@ -421,6 +488,8 @@ void mme_metrics_attach_attempt(mme_ue_t *mme_ue)
 
     mme_metrics_inst_by_plmn_add(&plmn_id,
             MME_METR_BY_PLMN_CTR_ATTACH_ATTEMPT, 1);
+    mme_metrics_inst_by_plmn_tac_add(&plmn_id, mme_ue->tai.tac,
+            MME_METR_BY_PLMN_TAC_CTR_ATTACH_ATTEMPT, 1);
 }
 
 void mme_metrics_attach_success(mme_ue_t *mme_ue)
@@ -432,6 +501,8 @@ void mme_metrics_attach_success(mme_ue_t *mme_ue)
 
     mme_metrics_inst_by_plmn_add(&plmn_id,
             MME_METR_BY_PLMN_CTR_ATTACH_SUCCESS, 1);
+    mme_metrics_inst_by_plmn_tac_add(&plmn_id, mme_ue->tai.tac,
+            MME_METR_BY_PLMN_TAC_CTR_ATTACH_SUCCESS, 1);
 }
 
 void mme_metrics_attach_reject(mme_ue_t *mme_ue, uint8_t emm_cause)
@@ -446,6 +517,8 @@ void mme_metrics_attach_reject(mme_ue_t *mme_ue, uint8_t emm_cause)
 
     mme_metrics_inst_by_plmn_cause_add(&plmn_id, emm_cause,
             MME_METR_BY_PLMN_CAUSE_CTR_ATTACH_REJECT, 1);
+    mme_metrics_inst_by_plmn_tac_add(&plmn_id, mme_ue->tai.tac,
+            MME_METR_BY_PLMN_TAC_CTR_ATTACH_REJECT, 1);
 }
 
 void mme_metrics_esm_reject(mme_ue_t *mme_ue, uint8_t esm_cause)
@@ -1020,6 +1093,46 @@ static void mme_metrics_init_by_plmn(void)
     ogs_assert(metrics_hash_by_plmn);
 }
 
+/* BY IMSI PLMN and TAC */
+const char *labels_plmn_tac[] = {
+    "plmnid",
+    "tac"
+};
+
+#define MME_METR_BY_PLMN_TAC_CTR_ENTRY(_id, _name, _desc) \
+    [_id] = { \
+        .type = OGS_METRICS_METRIC_TYPE_COUNTER, \
+        .name = _name, \
+        .description = _desc, \
+        .num_labels = OGS_ARRAY_SIZE(labels_plmn_tac), \
+        .labels = labels_plmn_tac, \
+    },
+
+ogs_metrics_spec_t *mme_metrics_spec_by_plmn_tac[_MME_METR_BY_PLMN_TAC_MAX];
+ogs_hash_t *metrics_hash_by_plmn_tac = NULL;
+mme_metrics_spec_def_t
+        mme_metrics_spec_def_by_plmn_tac[_MME_METR_BY_PLMN_TAC_MAX] = {
+MME_METR_BY_PLMN_TAC_CTR_ENTRY(
+    MME_METR_BY_PLMN_TAC_CTR_ATTACH_ATTEMPT,
+    "mme_tac_attach_attempt_total",
+    "Attach attempts per IMSI PLMN and serving TAC")
+MME_METR_BY_PLMN_TAC_CTR_ENTRY(
+    MME_METR_BY_PLMN_TAC_CTR_ATTACH_SUCCESS,
+    "mme_tac_attach_success_total",
+    "Successful attach procedures per IMSI PLMN and serving TAC")
+MME_METR_BY_PLMN_TAC_CTR_ENTRY(
+    MME_METR_BY_PLMN_TAC_CTR_ATTACH_REJECT,
+    "mme_tac_attach_reject_total",
+    "Rejected attach procedures per IMSI PLMN and serving TAC "
+    "(no cause label: keeps series count bounded at 1000+ TACs)")
+};
+
+static void mme_metrics_init_by_plmn_tac(void)
+{
+    metrics_hash_by_plmn_tac = ogs_hash_make();
+    ogs_assert(metrics_hash_by_plmn_tac);
+}
+
 /* BY PLMN and CAUSE */
 const char *labels_plmn_cause[] = {
     "plmnid",
@@ -1261,12 +1374,16 @@ void mme_metrics_init(void)
     mme_metrics_init_spec(ctx, mme_metrics_spec_by_plmn_origin,
             mme_metrics_spec_def_by_plmn_origin,
             _MME_METR_BY_PLMN_ORIGIN_MAX);
+    mme_metrics_init_spec(ctx, mme_metrics_spec_by_plmn_tac,
+            mme_metrics_spec_def_by_plmn_tac,
+            _MME_METR_BY_PLMN_TAC_MAX);
 
     mme_metrics_init_inst_global();
     mme_metrics_init_by_plmn();
     mme_metrics_init_by_plmn_cause();
     mme_metrics_init_by_plmn_ho();
     mme_metrics_init_by_plmn_origin();
+    mme_metrics_init_by_plmn_tac();
     mme_metrics_init_by_reason();
     mme_metrics_init_by_sgw_plmn_apn();
     mme_metrics_init_by_sgw_plmn();
@@ -1298,6 +1415,18 @@ void mme_metrics_final(void)
         }
         ogs_hash_destroy(metrics_hash_by_plmn_cause);
         metrics_hash_by_plmn_cause = NULL;
+    }
+    if (metrics_hash_by_plmn_tac) {
+        for (hi = ogs_hash_first(metrics_hash_by_plmn_tac); hi;
+                hi = ogs_hash_next(hi)) {
+            mme_metric_key_by_plmn_tac_t *key =
+                (mme_metric_key_by_plmn_tac_t *)ogs_hash_this_key(hi);
+
+            ogs_hash_set(metrics_hash_by_plmn_tac, key, sizeof(*key), NULL);
+            ogs_free(key);
+        }
+        ogs_hash_destroy(metrics_hash_by_plmn_tac);
+        metrics_hash_by_plmn_tac = NULL;
     }
     if (metrics_hash_by_reason) {
         for (hi = ogs_hash_first(metrics_hash_by_reason); hi; hi = ogs_hash_next(hi)) {

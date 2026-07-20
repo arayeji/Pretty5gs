@@ -64,6 +64,14 @@ typedef enum mme_metric_type_by_plmn_cause_s {
     _MME_METR_BY_PLMN_CAUSE_MAX,
 } mme_metric_type_by_plmn_cause_t;
 
+/* BY IMSI PLMN and TAC */
+typedef enum mme_metric_type_by_plmn_tac_s {
+    MME_METR_BY_PLMN_TAC_CTR_ATTACH_ATTEMPT = 0,
+    MME_METR_BY_PLMN_TAC_CTR_ATTACH_SUCCESS,
+    MME_METR_BY_PLMN_TAC_CTR_ATTACH_REJECT,
+    _MME_METR_BY_PLMN_TAC_MAX,
+} mme_metric_type_by_plmn_tac_t;
+
 /* BY PLMN and HO type */
 typedef enum mme_metric_type_by_plmn_ho_s {
     MME_METR_BY_PLMN_HO_CTR_ATTEMPT = 0,
