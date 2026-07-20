@@ -5665,6 +5665,14 @@ int mme_enb_remove(mme_enb_t *enb)
         __atomic_store_n(&enb->s1ap_tx_pending, 0, __ATOMIC_RELEASE);
     }
 
+    /* eNB dropped mid-partial-reset: reclaim the unsent Reset Ack.
+     * We hold the dump/ctx lock, so this cannot race the take-and-null
+     * in the reset completion paths. */
+    if (enb->s1_reset_ack) {
+        ogs_pkbuf_free(enb->s1_reset_ack);
+        enb->s1_reset_ack = NULL;
+    }
+
     ogs_hash_set(self.enb_addr_hash,
             enb->sctp.addr, sizeof(ogs_sockaddr_t), NULL);
     ogs_hash_set(self.enb_sock_hash,

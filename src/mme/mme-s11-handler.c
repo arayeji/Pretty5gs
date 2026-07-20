@@ -1871,9 +1871,17 @@ void mme_s11_handle_release_access_bearers_response(
             mme_mobile_reachable_start(mme_ue);
 
             if (enb) {
+                ogs_pkbuf_t *reset_ack = NULL;
                 bool reset_remains = false;
 
-                /* Same shard/main split as above: walk under the lock. */
+                /*
+                 * Walk + take-and-null atomically: several UE owner
+                 * shards (and main) run this completion check for the
+                 * same eNB reset. Only the taker sends — a double take
+                 * enqueued the same pkbuf to the S1AP IO thread twice
+                 * and double-freed it in io_sock_flush (talloc
+                 * bad-magic abort).
+                 */
                 mme_ctx_lock();
                 ogs_list_for_each(&enb->enb_ue_list, iter) {
                     if (iter->part_of_s1_reset_requested == true) {
@@ -1884,6 +1892,10 @@ void mme_s11_handle_release_access_bearers_response(
                         break;
                     }
                 }
+                if (!reset_remains) {
+                    reset_ack = enb->s1_reset_ack;
+                    enb->s1_reset_ack = NULL;
+                }
                 mme_ctx_unlock();
                 if (reset_remains)
                     return;
@@ -1891,20 +1903,17 @@ void mme_s11_handle_release_access_bearers_response(
                 /* All ENB_UE context
                  * where PartOfS1_interface was requested
                  * REMOVED */
-                if (!enb || !enb->s1_reset_ack) {
+                if (!reset_ack) {
                     ogs_warn("s1_reset_ack missing, skip (eNB[%u])",
-                            enb ? enb->enb_id : 0);
+                            enb->enb_id);
                     return;
                 }
                 r = s1ap_send_to_enb(
-                        enb, enb->s1_reset_ack, S1AP_NON_UE_SIGNALLING);
+                        enb, reset_ack, S1AP_NON_UE_SIGNALLING);
                 if (r != OGS_OK) {
                     ogs_warn("s1ap_send_to_enb() failed [%d]", r);
                     return;
                 }
-
-                /* Clear S1-Reset Ack Buffer */
-                enb->s1_reset_ack = NULL;
             }
         } else {
             ogs_warn("ENB-S1 Context has already been removed");

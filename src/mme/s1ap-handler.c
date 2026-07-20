@@ -4812,10 +4812,16 @@ void s1ap_handle_s1_reset(
         partOfS1_Interface = ResetType->choice.partOfS1_Interface;
         ogs_assert(partOfS1_Interface);
 
+        /* enb->s1_reset_ack is taken (take-and-null) by whichever
+         * thread finishes the last partial-reset UE — main here or a
+         * UE owner shard in the Release Access Bearers response path —
+         * so every store/take must be under the ctx lock. */
+        mme_ctx_lock();
         if (enb->s1_reset_ack)
             ogs_pkbuf_free(enb->s1_reset_ack);
 
         enb->s1_reset_ack = ogs_s1ap_build_s1_reset_ack(partOfS1_Interface);
+        mme_ctx_unlock();
         if (!enb->s1_reset_ack) {
             ogs_error("ogs_s1ap_build_s1_reset_ack() failed");
             return;
@@ -4891,29 +4897,49 @@ void s1ap_handle_s1_reset(
          * for new UE-associated logical S1-connections over the S1 interface,
          * the MME shall respond with the RESET ACKNOWLEDGE message.
          */
-        ogs_list_for_each(&enb->enb_ue_list, iter) {
-            if (iter->part_of_s1_reset_requested == true) {
-                /* The ENB_UE context
-                 * where PartOfS1_interface was requested
-                 * still remains */
-                return;
+        {
+            ogs_pkbuf_t *reset_ack = NULL;
+            bool reset_remains = false;
+
+            /*
+             * Walk + take-and-null atomically: with mme.workers the
+             * Release Access Bearers response path runs the same
+             * completion check on UE owner shards. Whoever wins the
+             * take sends the ack exactly once; the buffer is enqueued
+             * to the S1AP IO thread, so a double take double-freed the
+             * pkbuf inside io_sock_flush (talloc bad-magic abort).
+             */
+            mme_ctx_lock();
+            ogs_list_for_each(&enb->enb_ue_list, iter) {
+                if (iter->part_of_s1_reset_requested == true) {
+                    /* The ENB_UE context
+                     * where PartOfS1_interface was requested
+                     * still remains */
+                    reset_remains = true;
+                    break;
+                }
             }
-        }
+            if (!reset_remains) {
+                reset_ack = enb->s1_reset_ack;
+                enb->s1_reset_ack = NULL;
+            }
+            mme_ctx_unlock();
 
-        /* All ENB_UE context
-         * where PartOfS1_interface was requested
-         * REMOVED */
-        if (!enb->s1_reset_ack) {
-            ogs_warn("No S1 Reset Ack buffer (eNB[%u], already sent?)",
-                    enb->enb_id);
-            break;
-        }
-        r = s1ap_send_to_enb(enb, enb->s1_reset_ack, S1AP_NON_UE_SIGNALLING);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
+            if (reset_remains)
+                return;
 
-        /* Clear S1-Reset Ack Buffer */
-        enb->s1_reset_ack = NULL;
+            /* All ENB_UE context
+             * where PartOfS1_interface was requested
+             * REMOVED */
+            if (!reset_ack) {
+                ogs_warn("No S1 Reset Ack buffer (eNB[%u], already sent?)",
+                        enb->enb_id);
+                break;
+            }
+            r = s1ap_send_to_enb(enb, reset_ack, S1AP_NON_UE_SIGNALLING);
+            ogs_expect(r == OGS_OK);
+            ogs_assert(r != OGS_ERROR);
+        }
         break;
     default:
         ogs_warn("Invalid ResetType[%d]", ResetType->present);
