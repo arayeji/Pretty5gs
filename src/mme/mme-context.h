@@ -1369,14 +1369,20 @@ typedef struct mme_bearer_s {
         CLEAR_BEARER_TIMER((__bEARER)->t_bearer_setup); \
         CLEAR_BEARER_TIMER((__bEARER)->t_nas_deactivate); \
     } while(0);
+/*
+     * Take-and-null before free. With mme.workers, main (S1AP E-RAB Setup
+     * Response) and the UE owner shard (NAS Activate Bearer Accept / reject)
+     * can CLEAR the same t_bearer_setup concurrently; a non-atomic
+     * check-then-free double-frees the pkbuf and aborts on bad talloc magic.
+     */
 #define CLEAR_BEARER_TIMER(__bEARER_TIMER) \
     do { \
+        ogs_pkbuf_t *_ogs_bt_pkbuf; \
         ogs_timer_stop((__bEARER_TIMER).timer); \
-        if ((__bEARER_TIMER).pkbuf) \
-        { \
-            ogs_pkbuf_free((__bEARER_TIMER).pkbuf); \
-            (__bEARER_TIMER).pkbuf = NULL; \
-        } \
+        _ogs_bt_pkbuf = __atomic_exchange_n( \
+                &(__bEARER_TIMER).pkbuf, NULL, __ATOMIC_ACQ_REL); \
+        if (_ogs_bt_pkbuf) \
+            ogs_pkbuf_free(_ogs_bt_pkbuf); \
         (__bEARER_TIMER).retry_count = 0; \
     } while(0);
     struct {

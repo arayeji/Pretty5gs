@@ -677,15 +677,20 @@ int nas_eps_send_esm_information_request(mme_bearer_t *bearer)
 static int nas_eps_arm_bearer_setup_timer(
         mme_bearer_t *bearer, ogs_pkbuf_t *s1apbuf)
 {
+    ogs_pkbuf_t *copy;
+
     ogs_assert(bearer);
     ogs_assert(s1apbuf);
 
     CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
-    bearer->t_bearer_setup.pkbuf = ogs_pkbuf_copy(s1apbuf);
-    if (!bearer->t_bearer_setup.pkbuf) {
+
+    copy = ogs_pkbuf_copy(s1apbuf);
+    if (!copy) {
         ogs_error("ogs_pkbuf_copy(t_bearer_setup) failed");
         return OGS_ERROR;
     }
+
+    __atomic_store_n(&bearer->t_bearer_setup.pkbuf, copy, __ATOMIC_RELEASE);
 
     ogs_timer_start(bearer->t_bearer_setup.timer,
             mme_timer_cfg(MME_TIMER_BEARER_SETUP)->duration);
@@ -695,13 +700,21 @@ static int nas_eps_arm_bearer_setup_timer(
 int nas_eps_resend_bearer_setup_request(mme_bearer_t *bearer)
 {
     int rv;
+    ogs_pkbuf_t *held = NULL;
     ogs_pkbuf_t *s1apbuf = NULL;
     mme_ue_t *mme_ue = NULL;
     enb_ue_t *enb_ue = NULL;
 
     ogs_assert(bearer);
 
-    if (!bearer->t_bearer_setup.pkbuf) {
+    /*
+     * Take the stored S1AP buffer so a concurrent CLEAR_BEARER_TIMER
+     * (E-RAB Setup Response on main) cannot free it under ogs_pkbuf_copy().
+     * Put it back after the copy so further retries / clear still work.
+     */
+    held = __atomic_exchange_n(
+            &bearer->t_bearer_setup.pkbuf, NULL, __ATOMIC_ACQ_REL);
+    if (!held) {
         ogs_error("No bearer-setup S1AP buffer");
         return OGS_ERROR;
     }
@@ -709,19 +722,30 @@ int nas_eps_resend_bearer_setup_request(mme_bearer_t *bearer)
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     if (!mme_ue) {
         ogs_warn("UE(mme-ue) context has already been removed");
+        ogs_pkbuf_free(held);
         return OGS_NOTFOUND;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
         ogs_warn("S1 context has already been removed");
+        ogs_pkbuf_free(held);
         return OGS_NOTFOUND;
     }
 
-    s1apbuf = ogs_pkbuf_copy(bearer->t_bearer_setup.pkbuf);
+    s1apbuf = ogs_pkbuf_copy(held);
     if (!s1apbuf) {
         ogs_error("ogs_pkbuf_copy(t_bearer_setup) failed");
+        ogs_pkbuf_free(held);
         return OGS_ERROR;
+    }
+
+    /* Another clear may have run while held was NULL; drop their empty. */
+    {
+        ogs_pkbuf_t *stale = __atomic_exchange_n(
+                &bearer->t_bearer_setup.pkbuf, held, __ATOMIC_ACQ_REL);
+        if (stale)
+            ogs_pkbuf_free(stale);
     }
 
     rv = nas_eps_send_to_enb(mme_ue, s1apbuf);
