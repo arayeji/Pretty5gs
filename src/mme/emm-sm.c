@@ -926,20 +926,27 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                 break;
             }
 
+            /*
+             * Inter-MME TAU without S10 (or unknown foreign GUTI): do not
+             * reject with #9. Fall back to Identification + authentication /
+             * HSS like Attach (TS 24.301). If PDN context still cannot be
+             * rebuilt after that, reject with #10 Implicitly detached so the
+             * UE performs Attach.
+             */
             if (!MME_UE_HAVE_IMSI(mme_ue)) {
-                ogs_info("TAU request : Unknown UE");
-                r = nas_eps_send_tau_reject(enb_ue, mme_ue,
-                    OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK);
+                ogs_info("TAU request : Unknown UE - Identity Request");
+                CLEAR_MME_UE_TIMER(mme_ue->t3470);
+                r = nas_eps_send_identity_request(mme_ue);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
-                MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             }
 
             if (!SESSION_CONTEXT_IS_AVAILABLE(mme_ue)) {
-                ogs_warn("No PDN Connection : UE[%s]", mme_ue->imsi_bcd);
+                ogs_warn("No PDN Connection (no S10/local session) : UE[%s] - "
+                        "Implicitly detached", mme_ue->imsi_bcd);
                 r = nas_eps_send_tau_reject(enb_ue, mme_ue,
-                    OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK);
+                    OGS_NAS_EMM_CAUSE_IMPLICITLY_DETACHED);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
@@ -1863,6 +1870,28 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
                 mme_gtp_send_create_session_request(enb_ue, sess,
                                                     OGS_GTP_CREATE_IN_TRACKING_AREA_UPDATE);
                 OGS_FSM_TRAN(s, &emm_state_initial_context_setup);
+                break;
+            }
+
+            /*
+             * TAU after Identity/Auth without transferred PDN (no S10): do not
+             * ULR+accept a bearer-less TAU. Reject #10 so UE attaches fresh.
+             */
+            if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST &&
+                !SESSION_CONTEXT_IS_AVAILABLE(mme_ue)) {
+                ogs_info("[%s] TAU Identity/Auth OK but no PDN context "
+                        "(no S10); TAU reject Implicitly detached",
+                        mme_ue->imsi_bcd);
+                r = nas_eps_send_tau_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_IMPLICITLY_DETACHED);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+                r = s1ap_send_ue_context_release_command(enb_ue,
+                        S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
+                        S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
+                ogs_expect(r == OGS_OK);
+                ogs_assert(r != OGS_ERROR);
+                OGS_FSM_TRAN(s, &emm_state_exception);
                 break;
             }
 

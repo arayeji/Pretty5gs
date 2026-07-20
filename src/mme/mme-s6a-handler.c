@@ -180,8 +180,14 @@ uint8_t mme_s6a_handle_ula(
         }
     } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
         if (!SESSION_CONTEXT_IS_AVAILABLE(mme_ue)) {
-            ogs_warn("No PDN Connection : UE[%s]", mme_ue->imsi_bcd);
-            return OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK;
+            /*
+             * Identified/authenticated after foreign-GUTI TAU, but no SGW
+             * session (S10 context transfer not available). #10 drives the
+             * UE to Attach and build a fresh PDN context.
+             */
+            ogs_warn("No PDN Connection after TAU Identity/Auth : UE[%s] - "
+                    "Implicitly detached", mme_ue->imsi_bcd);
+            return OGS_NAS_EMM_CAUSE_IMPLICITLY_DETACHED;
         }
 
         if (!ACTIVE_EPS_BEARERS_IS_AVAIABLE(mme_ue)) {

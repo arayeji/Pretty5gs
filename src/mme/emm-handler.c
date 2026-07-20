@@ -512,9 +512,13 @@ int emm_handle_identity_response(
             ogs_error("mobile_identity length (%d != %d)",
                     (int)sizeof(ogs_nas_mobile_identity_imsi_t),
                     mobile_identity->length);
-            r = nas_eps_send_attach_reject(enb_ue, mme_ue,
-                    OGS_NAS_EMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE,
-                    OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
+            if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST)
+                r = nas_eps_send_tau_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE);
+            else
+                r = nas_eps_send_attach_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE,
+                        OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
             return OGS_ERROR;
@@ -535,8 +539,11 @@ int emm_handle_identity_response(
             ogs_warn("[%s] Rejected by PLMN-ID access control "
                     "[home_plmn:%s emm_cause:%d]",
                     imsi_bcd, home_plmn, emm_cause);
-            r = nas_eps_send_attach_reject(enb_ue, mme_ue,
-                    emm_cause, OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
+            if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST)
+                r = nas_eps_send_tau_reject(enb_ue, mme_ue, emm_cause);
+            else
+                r = nas_eps_send_attach_reject(enb_ue, mme_ue,
+                        emm_cause, OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
             return OGS_ERROR;
@@ -544,15 +551,20 @@ int emm_handle_identity_response(
 
         mme_ue_set_imsi(mme_ue, imsi_bcd);
 
-        if (emm_inbound_roam_access_reject(enb_ue, mme_ue, imsi_bcd, false) !=
+        if (emm_inbound_roam_access_reject(enb_ue, mme_ue, imsi_bcd,
+                mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) !=
                 OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED)
             return OGS_ERROR;
 
         if (mme_ue->imsi_len != OGS_MAX_IMSI_LEN) {
             ogs_error("Invalid IMSI LEN[%d]", mme_ue->imsi_len);
-            r = nas_eps_send_attach_reject(enb_ue, mme_ue,
-                    OGS_NAS_EMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE,
-                    OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
+            if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST)
+                r = nas_eps_send_tau_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE);
+            else
+                r = nas_eps_send_attach_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE,
+                        OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
             return OGS_ERROR;
@@ -560,6 +572,8 @@ int emm_handle_identity_response(
 
         /* Flush GUTI-attach attempt deferred until IMSI was known. */
         mme_metrics_attach_imsi_known(mme_ue);
+        if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST)
+            mme_metrics_tau_attempt(mme_ue);
 
         ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
     } else {
