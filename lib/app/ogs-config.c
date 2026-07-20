@@ -85,8 +85,10 @@ static void recalculate_pool_size(void)
 
     ogs_app()->pool.gtpu = global_conf.max.ue * gtpu_buf_per_ue;
 
-    ogs_app()->pool.sess = global_conf.max.ue * sess_per_ue;
-    ogs_app()->pool.bearer = ogs_app()->pool.sess * bearer_per_sess;
+    ogs_app()->pool.sess = global_conf.max.sess ?
+        global_conf.max.sess : global_conf.max.ue * sess_per_ue;
+    ogs_app()->pool.bearer = global_conf.max.bearer ?
+        global_conf.max.bearer : ogs_app()->pool.sess * bearer_per_sess;
     ogs_app()->pool.tunnel = ogs_app()->pool.bearer * tunnel_per_bearer;
 
     ogs_app()->pool.timer = global_conf.max.ue * pool_per_ue;
@@ -370,6 +372,14 @@ int ogs_app_parse_global_conf(ogs_yaml_iter_t *parent)
                 } else if (!strcmp(max_key, "eps_tai0_partial_list")) {
                     const char *v = ogs_yaml_iter_value(&max_iter);
                     if (v) global_conf.max.eps_tai0_partial_list = atoi(v);
+                } else if (!strcmp(max_key, "sess")) {
+                    const char *v = ogs_yaml_iter_value(&max_iter);
+                    if (v) global_conf.max.sess =
+                        (uint32_t)strtoul(v, NULL, 10);
+                } else if (!strcmp(max_key, "bearer")) {
+                    const char *v = ogs_yaml_iter_value(&max_iter);
+                    if (v) global_conf.max.bearer =
+                        (uint32_t)strtoul(v, NULL, 10);
                 } else if (!strcmp(max_key, "sess_per_ue")) {
                     const char *v = ogs_yaml_iter_value(&max_iter);
                     if (v) global_conf.max.sess_per_ue =

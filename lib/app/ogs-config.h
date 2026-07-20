@@ -106,6 +106,15 @@ typedef struct ogs_global_conf_s {
          */
         uint32_t sess_per_ue;       /* default OGS_MAX_NUM_OF_SESS (4)    */
         uint32_t bearer_per_sess;   /* default OGS_MAX_NUM_OF_BEARER (4)  */
+        /*
+         * Absolute pool caps. When non-zero they OVERRIDE the derived
+         * products (ue * sess_per_ue and sess * bearer_per_sess):
+         * a deployment where most UEs hold one PDN (plus IMS on VoLTE
+         * phones) wastes GBs on the multiplied worst case. max.ue
+         * still caps concurrent ATTACHED UE contexts independently.
+         */
+        uint32_t sess;              /* 0 = derive: ue * sess_per_ue       */
+        uint32_t bearer;            /* 0 = derive: sess * bearer_per_sess */
         uint32_t tunnel_per_bearer; /* default MAX_NUM_OF_TUNNEL (3)      */
         uint32_t gtpu_buf_per_ue;   /* default OGS_MAX_NUM_OF_GTPU_BUFFER (64) */
         uint32_t pool_per_ue;       /* default POOL_NUM_PER_UE (16)       */

@@ -52,6 +52,9 @@ int ogs_queue_push(ogs_queue_t *queue, void *data);
 int ogs_queue_pop(ogs_queue_t *queue, void **data);
 
 int ogs_queue_trypush(ogs_queue_t *queue, void *data);
+/* trypush + was-the-queue-empty-before-push (evaluated under the queue
+ * mutex); lets producers elide the consumer wakeup on non-transitions. */
+int ogs_queue_trypush_hint(ogs_queue_t *queue, void *data, bool *was_empty);
 int ogs_queue_trypop(ogs_queue_t *queue, void **data);
 
 int ogs_queue_timedpush(ogs_queue_t *queue, void *data, ogs_time_t timeout);

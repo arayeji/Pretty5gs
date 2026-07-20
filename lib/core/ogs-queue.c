@@ -118,7 +118,8 @@ void ogs_queue_destroy(ogs_queue_t *queue)
     ogs_free(queue);
 }
 
-static int queue_push(ogs_queue_t *queue, void *data, ogs_time_t timeout)
+static int queue_push(ogs_queue_t *queue, void *data, ogs_time_t timeout,
+        bool *was_empty)
 {
     int rv;
 
@@ -167,6 +168,11 @@ static int queue_push(ogs_queue_t *queue, void *data, ogs_time_t timeout)
         }
     }
 
+    /* Observed under the mutex: lets producers skip the consumer
+     * wakeup when the (fully-draining) consumer must still be awake. */
+    if (was_empty)
+        *was_empty = (queue->nelts == 0);
+
     queue->data[queue->in] = data;
     queue->in++;
     if (queue->in >= queue->bounds)
@@ -184,7 +190,7 @@ static int queue_push(ogs_queue_t *queue, void *data, ogs_time_t timeout)
 
 int ogs_queue_push(ogs_queue_t *queue, void *data)
 {
-    return queue_push(queue, data, OGS_INFINITE_TIME);
+    return queue_push(queue, data, OGS_INFINITE_TIME, NULL);
 }
 
 /**
@@ -194,12 +200,24 @@ int ogs_queue_push(ogs_queue_t *queue, void *data)
  */
 int ogs_queue_trypush(ogs_queue_t *queue, void *data)
 {
-    return queue_push(queue, data, 0);
+    return queue_push(queue, data, 0, NULL);
+}
+
+/*
+ * Like ogs_queue_trypush(), but reports (under the queue mutex)
+ * whether the queue was EMPTY before this push. A consumer that
+ * drains to empty before sleeping only needs a wakeup for the
+ * empty -> non-empty transition; producers can skip the (syscall)
+ * notify otherwise.
+ */
+int ogs_queue_trypush_hint(ogs_queue_t *queue, void *data, bool *was_empty)
+{
+    return queue_push(queue, data, 0, was_empty);
 }
 
 int ogs_queue_timedpush(ogs_queue_t *queue, void *data, ogs_time_t timeout)
 {
-    return queue_push(queue, data, timeout);
+    return queue_push(queue, data, timeout, NULL);
 }
 
 /**

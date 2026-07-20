@@ -465,11 +465,13 @@ int emm_handle_authentication_response(
     if (authentication_response_parameter->length == 0 ||
         memcmp(authentication_response_parameter->res, mme_ue->xres,
         authentication_response_parameter->length) != 0) {
-        ogs_log_hexdump(OGS_LOG_WARN,
-                authentication_response_parameter->res,
-                authentication_response_parameter->length);
-        ogs_log_hexdump(OGS_LOG_WARN,
-                mme_ue->xres, OGS_MAX_RES_LEN);
+        if (ogs_log_guard()) {
+            ogs_log_hexdump(OGS_LOG_WARN,
+                    authentication_response_parameter->res,
+                    authentication_response_parameter->length);
+            ogs_log_hexdump(OGS_LOG_WARN,
+                    mme_ue->xres, OGS_MAX_RES_LEN);
+        }
         return OGS_ERROR;
     } else {
         mme_ue->selected_int_algorithm = mme_selected_int_algorithm(mme_ue);
@@ -1089,8 +1091,10 @@ int emm_handle_security_mode_complete(
             } else {
                 ogs_error("[%s] Unknown IMEISV Length [%d]",
                         mme_ue->imsi_bcd, imeisv->length);
-                ogs_log_hexdump(OGS_LOG_ERROR,
-                        (unsigned char *)&imeisv->imeisv, imeisv->length);
+                if (ogs_log_guard())
+                    ogs_log_hexdump(OGS_LOG_ERROR,
+                            (unsigned char *)&imeisv->imeisv,
+                            imeisv->length);
             }
             break;
         default:
