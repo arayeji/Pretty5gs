@@ -159,8 +159,15 @@ void mme_ue_log(
 
     ogs_assert(fmt);
 
-    if (level == OGS_LOG_DEBUG &&
-            !ogs_trace_filter_match(imsi) &&
+    /*
+     * Per-IMSI trace lines are an on-demand debugging tool: emit only
+     * for subscribers in the trace filter (or with the domain at
+     * debug). Formatting them unconditionally for every UE burned
+     * ~3.6% of CPU in vfprintf during production failure storms.
+     * Runtime enable without restart: POST /admin/trace/imsi with a
+     * prefix ("432" captures every UE).
+     */
+    if (!ogs_trace_filter_match(imsi) &&
             !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
         return;
 

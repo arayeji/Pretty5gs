@@ -80,9 +80,20 @@ void ogs_trace_merge(const ogs_trace_ctx_t *ctx);
 const ogs_trace_ctx_t *ogs_trace_get(void);
 size_t ogs_trace_format_prefix(char *buf, size_t buflen);
 
+/*
+ * Per-subscriber trace lines are an ON-DEMAND debugging tool: emit
+ * only when the current trace context's IMSI matches a configured
+ * filter (or the domain is at debug). With an empty filter list the
+ * whole prefix-format + vfprintf path is skipped — it burned ~3.6%
+ * of MME CPU during production failure storms. Runtime enable, no
+ * restart: POST /admin/trace/imsi with a prefix ("432" = every UE).
+ */
+bool ogs_trace_should_emit(int domain);
+
 #define OGS_TLOG(level, fmt, ...) \
     do { \
         char _ogs_tlog_prefix[OGS_TRACE_PREFIX_BUFSIZE]; \
+        if (!ogs_trace_should_emit(OGS_LOG_DOMAIN)) break; \
         ogs_trace_format_prefix(_ogs_tlog_prefix, sizeof(_ogs_tlog_prefix)); \
         ogs_log_printf(level, OGS_LOG_DOMAIN, 0, __FILE__, __LINE__, OGS_FUNC, \
                 0, "%s " fmt, _ogs_tlog_prefix, ##__VA_ARGS__); \

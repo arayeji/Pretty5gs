@@ -19,7 +19,10 @@
 
 #include "ogs-core.h"
 
-static ogs_trace_ctx_t self;
+/* Per-thread: shard workers each carry their own prefix context — a
+ * shared global let concurrent dispatches overwrite each other's
+ * fields mid-format (trace lines with another UE's IMSI/TEIDs). */
+static OGS_THREAD_LOCAL ogs_trace_ctx_t self;
 
 static struct {
     ogs_thread_mutex_t mutex;
@@ -120,6 +123,17 @@ void ogs_trace_merge(const ogs_trace_ctx_t *ctx)
 const ogs_trace_ctx_t *ogs_trace_get(void)
 {
     return &self;
+}
+
+bool ogs_trace_should_emit(int domain)
+{
+    /* Subscriber being traced: always emit. */
+    if (ogs_trace_filter_match(self.imsi))
+        return true;
+
+    /* Nobody traced (or not this one): per-IMSI trace lines are
+     * opt-in — only a debug-enabled domain still emits them. */
+    return ogs_log_domain_prints(domain, OGS_LOG_DEBUG);
 }
 
 static void trace_fmt_u32(char *buf, size_t buflen, uint32_t value)
@@ -223,6 +237,13 @@ bool ogs_trace_filter_match(const char *imsi_bcd)
     bool matched = false;
 
     if (!imsi_bcd || !imsi_bcd[0])
+        return false;
+
+    /* Lock-free fast path for the common case (no tracing active):
+     * with the opt-in trace gating this runs on every candidate trace
+     * line. A torn read of count is benign — filter edits are rare
+     * admin actions and the slow path re-checks under the mutex. */
+    if (trace_filter.count == 0)
         return false;
 
     trace_filter_init_once();

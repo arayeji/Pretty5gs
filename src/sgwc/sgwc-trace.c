@@ -88,8 +88,9 @@ void sgwc_ue_log(
     if (!sgwc_ue && sess)
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
 
-    if (level == OGS_LOG_DEBUG &&
-            !ogs_trace_filter_match(imsi) &&
+    /* Per-IMSI trace lines are opt-in (see mme-trace.c): emit only for
+     * filter-matched subscribers or a debug-enabled domain. */
+    if (!ogs_trace_filter_match(imsi) &&
             !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
         return;
 
@@ -120,6 +121,12 @@ void sgwc_ue_warn_no_ctx(
 
     ogs_assert(proc);
     ogs_assert(fmt);
+
+    /* No-context warnings carry no IMSI to match: emit them only when
+     * some subscriber tracing is active at all (or domain at debug). */
+    if (!ogs_trace_filter_count() &&
+            !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+        return;
 
     if (!ogs_log_guard())
         return;
