@@ -491,7 +491,13 @@ typedef struct mme_enb_s {
      *
      * Accessed with __atomic builtins: with mme.workers the increment
      * happens on a UE-shard worker while TX_READY decrements on main.
-     * s1ap_tx_hold itself stays main-thread only.
+     *
+     * s1ap_tx_hold is SHARED: UE-shard workers park pkbufs on it from
+     * s1ap_send_to_enb() while main drains it in the TX_READY handler
+     * and mme_enb_remove(). Every access — including the pending>0
+     * test that decides to park — must hold mme_ctx_lock(); it used to
+     * be main-thread-only, and the unlocked list surgery double-freed
+     * pkbufs (talloc bad-magic abort) once UE shards were enabled.
      */
     int             s1ap_tx_pending;
     ogs_list_t      s1ap_tx_hold;

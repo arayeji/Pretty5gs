@@ -305,11 +305,29 @@ void s1ap_tx_ready_handle(mme_event_t *e)
     }
 
     /* once nothing is in flight, release messages that s1ap_send_to_enb
-     * held back to preserve per-association order */
+     * held back to preserve per-association order.
+     *
+     * Detach the whole list under the ctx lock (UE-shard workers park
+     * pkbufs on it concurrently — see s1ap_send_to_enb), then send
+     * outside the lock so no I/O runs under it. ogs_list_add appends,
+     * so moving to a local list preserves order. */
     if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) == 0) {
+        ogs_list_t flush;
         ogs_pkbuf_t *held = NULL, *next = NULL;
-        ogs_list_for_each_safe(&enb->s1ap_tx_hold, next, held) {
-            ogs_list_remove(&enb->s1ap_tx_hold, held);
+
+        ogs_list_init(&flush);
+
+        mme_ctx_lock();
+        if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) == 0) {
+            ogs_list_for_each_safe(&enb->s1ap_tx_hold, next, held) {
+                ogs_list_remove(&enb->s1ap_tx_hold, held);
+                ogs_list_add(&flush, held);
+            }
+        }
+        mme_ctx_unlock();
+
+        ogs_list_for_each_safe(&flush, next, held) {
+            ogs_list_remove(&flush, held);
             tx_send_raw(enb, held);
         }
     }

@@ -79,11 +79,26 @@ int s1ap_send_to_enb(mme_enb_t *enb, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
      * flight on its TX worker, a synchronously-encoded message must
      * not overtake them on the wire. Park it; the TX_READY handler
      * flushes the hold list once pending drops to zero (s1ap-tx.c).
+     *
+     * The pending test and the park MUST be atomic w.r.t. the TX_READY
+     * flush: this runs on UE-shard workers (NAS sends, release
+     * commands, paging) while main flushes. Unsynchronized, the
+     * ogs_list_add raced ogs_list_remove and left a pkbuf reachable
+     * twice -> double ogs_pkbuf_free -> talloc bad-magic abort; and a
+     * park that lands just after pending hit 0 would never be flushed.
      */
-    if (s1ap_tx_active() &&
-            __atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0) {
-        ogs_list_add(&enb->s1ap_tx_hold, pkbuf);
-        return OGS_OK;
+    if (s1ap_tx_active()) {
+        bool parked = false;
+
+        mme_ctx_lock();
+        if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0) {
+            ogs_list_add(&enb->s1ap_tx_hold, pkbuf);
+            parked = true;
+        }
+        mme_ctx_unlock();
+
+        if (parked)
+            return OGS_OK;
     }
 
     /* dedicated IO thread owns the write side (mme.s1ap_io_thread) */

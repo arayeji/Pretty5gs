@@ -133,6 +133,22 @@ int mme_initialize(void)
      * before ANY ogs_worker_create (including S1AP RX/TX/IO helpers).
      */
     if (mme_self()->workers > 0) {
+        /*
+         * With UE shards, S1AP output must go through the IO thread.
+         * The legacy sync path (ogs_sctp_write_to_buffer) appends to
+         * the per-eNB write_queue and arms POLLOUT on the MAIN
+         * pollset — neither is thread-safe, so a shard worker sending
+         * a NAS/release PDU would corrupt the queue and touch another
+         * thread's pollset. Refuse the combination rather than crash
+         * at random under load.
+         */
+        if (!mme_self()->s1ap_io_thread) {
+            ogs_fatal("mme.workers requires mme.s1ap_io_thread: 1 "
+                    "(S1AP TX from shard workers is only safe via the "
+                    "IO thread). Set s1ap_io_thread: 1 or workers: 0.");
+            return OGS_ERROR;
+        }
+
         rv = mme_workers_start(mme_self()->workers);
         if (rv != OGS_OK) return OGS_ERROR;
     }
