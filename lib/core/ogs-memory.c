@@ -21,6 +21,7 @@
 
 #if !defined(_WIN32)
 #include <execinfo.h>
+#include <unistd.h>
 #endif
 
 #undef OGS_LOG_DOMAIN
