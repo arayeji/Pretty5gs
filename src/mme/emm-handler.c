@@ -558,6 +558,9 @@ int emm_handle_identity_response(
             return OGS_ERROR;
         }
 
+        /* Flush GUTI-attach attempt deferred until IMSI was known. */
+        mme_metrics_attach_imsi_known(mme_ue);
+
         ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
     } else {
         ogs_warn("Not supported Identity type[%d]", mobile_identity->imsi.type);

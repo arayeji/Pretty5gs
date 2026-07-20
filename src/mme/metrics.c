@@ -479,46 +479,140 @@ static void mme_metrics_inst_by_sgw_plmn_add(
     ogs_metrics_dump_unlock();
 }
 
-void mme_metrics_attach_attempt(mme_ue_t *mme_ue)
+static void mme_metrics_attach_clear(mme_ue_t *mme_ue)
+{
+    if (!mme_ue)
+        return;
+
+    mme_ue->metrics_attach_pending = false;
+    mme_ue->metrics_attach_attempted = false;
+    mme_ue->metrics_attach_tac_valid = false;
+    mme_ue->metrics_attach_tac = 0;
+}
+
+static uint16_t mme_metrics_attach_tac(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    if (mme_ue->metrics_attach_tac_valid)
+        return mme_ue->metrics_attach_tac;
+
+    return mme_ue->tai.tac;
+}
+
+/*
+ * Increment attach_attempt once per procedure under the home-PLMN label.
+ * No-op until IMSI is known (GUTI attach before Identity Response).
+ */
+static void mme_metrics_attach_count_attempt(mme_ue_t *mme_ue)
 {
     ogs_plmn_id_t plmn_id;
+    uint16_t tac;
+
+    ogs_assert(mme_ue);
+
+    if (mme_ue->metrics_attach_attempted)
+        return;
 
     if (!mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
         return;
 
+    tac = mme_metrics_attach_tac(mme_ue);
+
     mme_metrics_inst_by_plmn_add(&plmn_id,
             MME_METR_BY_PLMN_CTR_ATTACH_ATTEMPT, 1);
-    mme_metrics_inst_by_plmn_tac_add(&plmn_id, mme_ue->tai.tac,
+    mme_metrics_inst_by_plmn_tac_add(&plmn_id, tac,
             MME_METR_BY_PLMN_TAC_CTR_ATTACH_ATTEMPT, 1);
+
+    mme_ue->metrics_attach_attempted = true;
+    mme_ue->metrics_attach_pending = false;
+    if (!mme_ue->metrics_attach_tac_valid) {
+        mme_ue->metrics_attach_tac = tac;
+        mme_ue->metrics_attach_tac_valid = true;
+    }
+}
+
+void mme_metrics_attach_attempt(mme_ue_t *mme_ue)
+{
+    if (!mme_ue)
+        return;
+
+    /* New attach procedure: pin TAC from the Attach Request TAI. */
+    mme_ue->metrics_attach_attempted = false;
+    mme_ue->metrics_attach_pending = true;
+    mme_ue->metrics_attach_tac = mme_ue->tai.tac;
+    mme_ue->metrics_attach_tac_valid = true;
+
+    /* Count immediately when IMSI is already known; else defer. */
+    mme_metrics_attach_count_attempt(mme_ue);
+}
+
+void mme_metrics_attach_imsi_known(mme_ue_t *mme_ue)
+{
+    if (!mme_ue || !mme_ue->metrics_attach_pending)
+        return;
+
+    mme_metrics_attach_count_attempt(mme_ue);
 }
 
 void mme_metrics_attach_success(mme_ue_t *mme_ue)
 {
     ogs_plmn_id_t plmn_id;
+    uint16_t tac;
 
-    if (!mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+    if (!mme_ue)
         return;
+
+    /* Flush deferred GUTI-attach attempt before success. */
+    mme_metrics_attach_count_attempt(mme_ue);
+
+    if (!mme_metrics_plmn_from_ue(mme_ue, &plmn_id)) {
+        mme_metrics_attach_clear(mme_ue);
+        return;
+    }
+
+    tac = mme_metrics_attach_tac(mme_ue);
 
     mme_metrics_inst_by_plmn_add(&plmn_id,
             MME_METR_BY_PLMN_CTR_ATTACH_SUCCESS, 1);
-    mme_metrics_inst_by_plmn_tac_add(&plmn_id, mme_ue->tai.tac,
+    mme_metrics_inst_by_plmn_tac_add(&plmn_id, tac,
             MME_METR_BY_PLMN_TAC_CTR_ATTACH_SUCCESS, 1);
+
+    mme_metrics_attach_clear(mme_ue);
 }
 
 void mme_metrics_attach_reject(mme_ue_t *mme_ue, uint8_t emm_cause)
 {
     ogs_plmn_id_t plmn_id;
+    uint16_t tac;
 
     if (!mme_ue)
         return;
 
-    if (!mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
+    /*
+     * Pair reject with attempt under the same labels. Covers:
+     * - deferred GUTI attempt (pending until IMSI), and
+     * - early rejects that never called mme_metrics_attach_attempt().
+     */
+    if (!mme_ue->metrics_attach_tac_valid) {
+        mme_ue->metrics_attach_tac = mme_ue->tai.tac;
+        mme_ue->metrics_attach_tac_valid = true;
+    }
+    mme_metrics_attach_count_attempt(mme_ue);
+
+    if (!mme_metrics_plmn_from_ue(mme_ue, &plmn_id)) {
+        mme_metrics_attach_clear(mme_ue);
         return;
+    }
+
+    tac = mme_metrics_attach_tac(mme_ue);
 
     mme_metrics_inst_by_plmn_cause_add(&plmn_id, emm_cause,
             MME_METR_BY_PLMN_CAUSE_CTR_ATTACH_REJECT, 1);
-    mme_metrics_inst_by_plmn_tac_add(&plmn_id, mme_ue->tai.tac,
+    mme_metrics_inst_by_plmn_tac_add(&plmn_id, tac,
             MME_METR_BY_PLMN_TAC_CTR_ATTACH_REJECT, 1);
+
+    mme_metrics_attach_clear(mme_ue);
 }
 
 void mme_metrics_esm_reject(mme_ue_t *mme_ue, uint8_t esm_cause)

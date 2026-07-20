@@ -105,6 +105,7 @@ typedef enum mme_metric_type_by_sgw_plmn_s {
 } mme_metric_type_by_sgw_plmn_t;
 
 void mme_metrics_attach_attempt(mme_ue_t *mme_ue);
+void mme_metrics_attach_imsi_known(mme_ue_t *mme_ue);
 void mme_metrics_attach_success(mme_ue_t *mme_ue);
 void mme_metrics_attach_reject(mme_ue_t *mme_ue, uint8_t emm_cause);
 void mme_metrics_esm_reject(mme_ue_t *mme_ue, uint8_t esm_cause);

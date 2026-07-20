@@ -813,6 +813,19 @@ struct mme_ue_s {
     bool            metrics_plmn_valid;
     ogs_plmn_id_t   metrics_plmn_id;
 
+    /*
+     * Attach funnel metrics (attempt/success/reject) must share one
+     * (plmnid, tac) label set per procedure. GUTI Attach Request often
+     * has no IMSI yet, so attempt is deferred until IMSI is known;
+     * success/reject always flush a deferred attempt first. TAC is
+     * pinned at procedure start so a later TAI update cannot move
+     * success onto a different TAC than attempt.
+     */
+    bool            metrics_attach_pending;
+    bool            metrics_attach_attempted;
+    bool            metrics_attach_tac_valid;
+    uint16_t        metrics_attach_tac;
+
     /* Memento of context fields */
     mme_ue_memento_t memento;
 
