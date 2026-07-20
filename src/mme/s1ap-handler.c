@@ -306,10 +306,24 @@ void s1ap_handle_s1_setup_request(mme_enb_t *enb, ogs_s1ap_message_t *message)
         }
     }
 
-    /* Parse Supported TA */
-    for (i = 0, enb->num_of_supported_ta_list = 0;
+    /*
+     * Parse Supported TA into a LOCAL list, then publish it under the
+     * ctx lock. Shard workers walk supported_ta_list on every paging
+     * (s1ap_send_paging), so rebuilding it in place — count zeroed
+     * first, entries filled one by one — let a concurrent page see an
+     * empty or half-written list and skip the eNB (missed MT
+     * call/SMS). Publishing atomically also keeps a malformed S1 Setup
+     * from destroying the TA list the eNB is currently serving.
+     */
+    {
+    ogs_eps_tai_t new_ta_list[OGS_MAX_NUM_OF_SUPPORTED_TA];
+    int new_ta_count = 0;
+
+    memset(new_ta_list, 0, sizeof(new_ta_list));
+
+    for (i = 0;
             i < SupportedTAs->list.count &&
-            enb->num_of_supported_ta_list < OGS_MAX_NUM_OF_SUPPORTED_TA;
+            new_ta_count < OGS_MAX_NUM_OF_SUPPORTED_TA;
             i++) {
         S1AP_SupportedTAs_Item_t *SupportedTAs_Item = NULL;
         S1AP_TAC_t *tAC = NULL;
@@ -326,13 +340,12 @@ void s1ap_handle_s1_setup_request(mme_enb_t *enb, ogs_s1ap_message_t *message)
                 SupportedTAs_Item->broadcastPLMNs.list.array[j];
             ogs_assert(pLMNidentity);
 
-            if (enb->num_of_supported_ta_list >=
-                    OGS_ARRAY_SIZE(enb->supported_ta_list)) {
+            if (new_ta_count >= (int)OGS_ARRAY_SIZE(new_ta_list)) {
                 ogs_error("OVERFLOW ENB->num_of_supported_ta_list "
                         "[%d:%d:%d]",
-                        enb->num_of_supported_ta_list,
+                        new_ta_count,
                         OGS_MAX_NUM_OF_SUPPORTED_TA,
-                        (int)OGS_ARRAY_SIZE(enb->supported_ta_list));
+                        (int)OGS_ARRAY_SIZE(new_ta_list));
                 break;
             }
 
@@ -360,22 +373,25 @@ void s1ap_handle_s1_setup_request(mme_enb_t *enb, ogs_s1ap_message_t *message)
                 return;
             }
 
-            memcpy(&enb->supported_ta_list[enb->num_of_supported_ta_list].tac,
+            memcpy(&new_ta_list[new_ta_count].tac,
                     tAC->buf, sizeof(uint16_t));
-            enb->supported_ta_list[enb->num_of_supported_ta_list].tac =
-                be16toh(enb->supported_ta_list
-                        [enb->num_of_supported_ta_list].tac);
-            memcpy(&enb->supported_ta_list
-                        [enb->num_of_supported_ta_list].plmn_id,
+            new_ta_list[new_ta_count].tac =
+                be16toh(new_ta_list[new_ta_count].tac);
+            memcpy(&new_ta_list[new_ta_count].plmn_id,
                     pLMNidentity->buf, sizeof(ogs_plmn_id_t));
             ogs_debug("    PLMN_ID[MCC:%d MNC:%d] TAC[%d]",
-                ogs_plmn_id_mcc(&enb->supported_ta_list
-                    [enb->num_of_supported_ta_list].plmn_id),
-                ogs_plmn_id_mnc(&enb->supported_ta_list
-                    [enb->num_of_supported_ta_list].plmn_id),
-                enb->supported_ta_list[enb->num_of_supported_ta_list].tac);
-            enb->num_of_supported_ta_list++;
+                ogs_plmn_id_mcc(&new_ta_list[new_ta_count].plmn_id),
+                ogs_plmn_id_mnc(&new_ta_list[new_ta_count].plmn_id),
+                new_ta_list[new_ta_count].tac);
+            new_ta_count++;
         }
+    }
+
+    /* publish atomically for the paging readers */
+    mme_ctx_lock();
+    memcpy(enb->supported_ta_list, new_ta_list, sizeof(new_ta_list));
+    enb->num_of_supported_ta_list = new_ta_count;
+    mme_ctx_unlock();
     }
 
     if (maximum_number_of_enbs_is_reached()) {
@@ -474,9 +490,15 @@ void s1ap_handle_enb_configuration_update(
         S1AP_Cause_PR group = S1AP_Cause_PR_NOTHING;
         long cause = 0;
 
-        for (i = 0, enb->num_of_supported_ta_list = 0;
+        /* Local build + atomic publish: see the S1 Setup handler. */
+        ogs_eps_tai_t new_ta_list[OGS_MAX_NUM_OF_SUPPORTED_TA];
+        int new_ta_count = 0;
+
+        memset(new_ta_list, 0, sizeof(new_ta_list));
+
+        for (i = 0;
                 i < SupportedTAs->list.count &&
-                enb->num_of_supported_ta_list < OGS_MAX_NUM_OF_SUPPORTED_TA;
+                new_ta_count < OGS_MAX_NUM_OF_SUPPORTED_TA;
                 i++) {
             S1AP_SupportedTAs_Item_t *SupportedTAs_Item = NULL;
             S1AP_TAC_t *tAC = NULL;
@@ -493,13 +515,12 @@ void s1ap_handle_enb_configuration_update(
                     SupportedTAs_Item->broadcastPLMNs.list.array[j];
                 ogs_assert(pLMNidentity);
 
-                if (enb->num_of_supported_ta_list >=
-                        OGS_ARRAY_SIZE(enb->supported_ta_list)) {
+                if (new_ta_count >= (int)OGS_ARRAY_SIZE(new_ta_list)) {
                     ogs_error("OVERFLOW ENB->num_of_supported_ta_list "
                             "[%d:%d:%d]",
-                            enb->num_of_supported_ta_list,
+                            new_ta_count,
                             OGS_MAX_NUM_OF_SUPPORTED_TA,
-                            (int)OGS_ARRAY_SIZE(enb->supported_ta_list));
+                            (int)OGS_ARRAY_SIZE(new_ta_list));
                     break;
                 }
 
@@ -528,24 +549,25 @@ void s1ap_handle_enb_configuration_update(
                     return;
                 }
 
-                memcpy(&enb->supported_ta_list[
-                        enb->num_of_supported_ta_list].tac,
+                memcpy(&new_ta_list[new_ta_count].tac,
                         tAC->buf, sizeof(uint16_t));
-                enb->supported_ta_list[enb->num_of_supported_ta_list].tac =
-                    be16toh(enb->supported_ta_list
-                            [enb->num_of_supported_ta_list].tac);
-                memcpy(&enb->supported_ta_list
-                            [enb->num_of_supported_ta_list].plmn_id,
+                new_ta_list[new_ta_count].tac =
+                    be16toh(new_ta_list[new_ta_count].tac);
+                memcpy(&new_ta_list[new_ta_count].plmn_id,
                         pLMNidentity->buf, sizeof(ogs_plmn_id_t));
                 ogs_debug("    PLMN_ID[MCC:%d MNC:%d] TAC[%d]",
-                    ogs_plmn_id_mcc(&enb->supported_ta_list
-                        [enb->num_of_supported_ta_list].plmn_id),
-                    ogs_plmn_id_mnc(&enb->supported_ta_list
-                        [enb->num_of_supported_ta_list].plmn_id),
-                    enb->supported_ta_list[enb->num_of_supported_ta_list].tac);
-                enb->num_of_supported_ta_list++;
+                    ogs_plmn_id_mcc(&new_ta_list[new_ta_count].plmn_id),
+                    ogs_plmn_id_mnc(&new_ta_list[new_ta_count].plmn_id),
+                    new_ta_list[new_ta_count].tac);
+                new_ta_count++;
             }
         }
+
+        /* publish atomically for the paging readers */
+        mme_ctx_lock();
+        memcpy(enb->supported_ta_list, new_ta_list, sizeof(new_ta_list));
+        enb->num_of_supported_ta_list = new_ta_count;
+        mme_ctx_unlock();
 
         /*
          * TS36.413
