@@ -481,6 +481,17 @@ int s1ap_send_initial_context_setup_request(mme_ue_t *mme_ue)
 
     s1apbuf = s1ap_build_initial_context_setup_request(mme_ue, NULL);
     if (!s1apbuf) {
+        /*
+         * The builder resolves enb_ue itself; main can free the S1
+         * context while this runs on a UE-shard worker. Report that
+         * as NOTFOUND, not ERROR: callers tolerate NOTFOUND (same as
+         * this function's own guard above) but many abort on ERROR
+         * via ogs_assert(r != OGS_ERROR).
+         */
+        if (!enb_ue_find_by_id(mme_ue->enb_ue_id)) {
+            ogs_warn("S1 context has already been removed");
+            return OGS_NOTFOUND;
+        }
         ogs_error("s1ap_build_initial_context_setup_request() failed");
         return OGS_ERROR;
     }
@@ -510,6 +521,17 @@ int s1ap_send_ue_context_modification_request(mme_ue_t *mme_ue)
 
     s1apbuf = s1ap_build_ue_context_modification_request(mme_ue);
     if (!s1apbuf) {
+        /*
+         * The builder resolves enb_ue itself; main can free the S1
+         * context while this runs on a UE-shard worker. Report that
+         * as NOTFOUND, not ERROR: callers tolerate NOTFOUND (same as
+         * this function's own guard above) but many abort on ERROR
+         * via ogs_assert(r != OGS_ERROR).
+         */
+        if (!enb_ue_find_by_id(mme_ue->enb_ue_id)) {
+            ogs_warn("S1 context has already been removed");
+            return OGS_NOTFOUND;
+        }
         ogs_error("s1ap_build_ue_context_modification_request() failed");
         return OGS_ERROR;
     }
@@ -693,6 +715,17 @@ int s1ap_send_e_rab_modification_confirm(mme_ue_t *mme_ue)
 
     s1apbuf = s1ap_build_e_rab_modification_confirm(mme_ue);
     if (!s1apbuf) {
+        /*
+         * The builder resolves enb_ue itself; main can free the S1
+         * context while this runs on a UE-shard worker. Report that
+         * as NOTFOUND, not ERROR: callers tolerate NOTFOUND (same as
+         * this function's own guard above) but many abort on ERROR
+         * via ogs_assert(r != OGS_ERROR).
+         */
+        if (!enb_ue_find_by_id(mme_ue->enb_ue_id)) {
+            ogs_warn("S1 context has already been removed");
+            return OGS_NOTFOUND;
+        }
         ogs_error("s1ap_build_e_rab_modification_confirm() failed");
         return OGS_ERROR;
     }
@@ -726,6 +759,17 @@ int s1ap_send_path_switch_ack(
     s1apbuf = s1ap_build_path_switch_ack(
                 mme_ue, e_rab_to_switched_in_uplink_list);
     if (!s1apbuf) {
+        /*
+         * The builder resolves enb_ue itself; main can free the S1
+         * context while this runs on a UE-shard worker. Report that
+         * as NOTFOUND, not ERROR: callers tolerate NOTFOUND (same as
+         * this function's own guard above) but many abort on ERROR
+         * via ogs_assert(r != OGS_ERROR).
+         */
+        if (!enb_ue_find_by_id(mme_ue->enb_ue_id)) {
+            ogs_warn("S1 context has already been removed");
+            return OGS_NOTFOUND;
+        }
         ogs_error("s1ap_build_path_switch_ack() failed");
         return OGS_ERROR;
     }

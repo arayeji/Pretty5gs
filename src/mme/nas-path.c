@@ -792,6 +792,15 @@ int nas_eps_send_activate_default_bearer_context_request(
 
     s1apbuf = s1ap_build_e_rab_setup_request(bearer, esmbuf);
     if (!s1apbuf) {
+        /*
+         * Builder resolves enb_ue from the bearer's UE; main can free
+         * the S1 context while this runs on a shard worker. NOTFOUND,
+         * not ERROR: callers abort on ERROR via ogs_assert(r != OGS_ERROR).
+         */
+        if (!enb_ue_find_by_id(mme_ue->enb_ue_id)) {
+            ogs_warn("S1 context has already been removed");
+            return OGS_NOTFOUND;
+        }
         ogs_error("s1ap_build_e_rab_setup_request() failed");
         return OGS_ERROR;
     }
@@ -837,6 +846,15 @@ int nas_eps_send_activate_dedicated_bearer_context_request(
 
     s1apbuf = s1ap_build_e_rab_setup_request(bearer, esmbuf);
     if (!s1apbuf) {
+        /*
+         * Builder resolves enb_ue from the bearer's UE; main can free
+         * the S1 context while this runs on a shard worker. NOTFOUND,
+         * not ERROR: callers abort on ERROR via ogs_assert(r != OGS_ERROR).
+         */
+        if (!enb_ue_find_by_id(mme_ue->enb_ue_id)) {
+            ogs_warn("S1 context has already been removed");
+            return OGS_NOTFOUND;
+        }
         ogs_error("s1ap_build_e_rab_setup_request() failed");
         return OGS_ERROR;
     }
@@ -898,6 +916,15 @@ int nas_eps_send_modify_bearer_context_request(
     if (qos_presence == 1) {
         s1apbuf = s1ap_build_e_rab_modify_request(bearer, esmbuf);
         if (!s1apbuf) {
+            /*
+             * Builder resolves enb_ue from the bearer's UE; main can free
+             * the S1 context while this runs on a shard worker. NOTFOUND,
+             * not ERROR: callers abort on ERROR via ogs_assert(r != OGS_ERROR).
+             */
+            if (!enb_ue_find_by_id(mme_ue->enb_ue_id)) {
+                ogs_warn("S1 context has already been removed");
+                return OGS_NOTFOUND;
+            }
             ogs_error("s1ap_build_e_rab_modify_request() failed");
             return OGS_ERROR;
         }
@@ -945,6 +972,15 @@ int nas_eps_send_deactivate_bearer_context_request(
     s1apbuf = s1ap_build_e_rab_release_command(bearer, esmbuf,
             S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release);
     if (!s1apbuf) {
+        /*
+         * Builder resolves enb_ue from the bearer's UE; main can free
+         * the S1 context while this runs on a shard worker. NOTFOUND,
+         * not ERROR: callers abort on ERROR via ogs_assert(r != OGS_ERROR).
+         */
+        if (!enb_ue_find_by_id(mme_ue->enb_ue_id)) {
+            ogs_warn("S1 context has already been removed");
+            return OGS_NOTFOUND;
+        }
         ogs_error("s1ap_build_e_rab_release_command() failed");
         return OGS_ERROR;
     }
