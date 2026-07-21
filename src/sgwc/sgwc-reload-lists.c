@@ -711,6 +711,14 @@ static void sgwc_reload_inbound_roam(ogs_yaml_iter_t *sgwc_iter)
                     (uint32_t)strtoul(rv, NULL, 0);
                 sgwc_reload_lists_changed++;
             }
+        } else if (!strcmp(rk, "mtu")) {
+            const char *rv = ogs_yaml_iter_value(&roam_iter);
+            if (rv) {
+                self->inbound_roam_mtu = (uint16_t)atoi(rv);
+                sgwc_reload_lists_changed++;
+                ogs_reload_audit_note("sgwc.inbound_roam.mtu=%u",
+                        self->inbound_roam_mtu);
+            }
         } else if (sgwc_reload_nwi_rule_key(rk)) {
             (void)sgwc_reload_nwi_append(&roam_iter);
         }

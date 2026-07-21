@@ -33,6 +33,17 @@ int sgwc_gtp_apn_tolower_copy(
 int sgwc_gtp_roam_pco_build(
         uint8_t *dst, int dst_max, void *src, int src_len);
 
+/*
+ * Rewrite IPv4 link MTU (PCO/ePCO id 0x0010) for inbound-roam CSA.
+ * - missing MTU → inject local_mtu
+ * - home MTU > local_mtu → clamp
+ * - home MTU <= local_mtu → copy src unchanged
+ * Returns built length, or 0 on failure / no change buffer needed.
+ */
+int sgwc_gtp_roam_pco_mtu_rewrite(
+        uint8_t *dst, int dst_max, void *src, int src_len,
+        uint16_t local_mtu);
+
 #ifdef __cplusplus
 }
 #endif

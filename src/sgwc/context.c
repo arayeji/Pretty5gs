@@ -1673,6 +1673,12 @@ int sgwc_context_parse_config(void)
                             if (rv)
                                 self.inbound_roam_teid_offset =
                                     (uint32_t)strtoul(rv, NULL, 0);
+                        } else if (!strcmp(rk, "mtu")) {
+                            const char *rv =
+                                ogs_yaml_iter_value(&roam_iter);
+                            if (rv)
+                                self.inbound_roam_mtu =
+                                    (uint16_t)atoi(rv);
                         } else if (sgwc_sgwu_nwi_rewrite_key(rk)) {
                             sgwc_sgwu_nwi_rewrite_parse(&roam_iter);
                         } else
@@ -1704,6 +1710,10 @@ int sgwc_context_parse_config(void)
                                     "needs force_cp_teid:true when SGW-U "
                                     "advertises FTUP");
                     }
+                    if (self.inbound_roam_mtu)
+                        ogs_info("Inbound roam PCO/ePCO MTU rewrite=%u "
+                                "(inject if missing, clamp if higher)",
+                                self.inbound_roam_mtu);
                 } else if (!strcmp(sgwc_key, "gn")) {
                     ogs_yaml_iter_t gn_iter;
                     ogs_yaml_iter_recurse(&sgwc_iter, &gn_iter);

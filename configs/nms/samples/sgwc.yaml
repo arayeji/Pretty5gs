@@ -63,6 +63,9 @@ sgwc:
     teid_range_indication: 4
     teid_range: 10
   inbound_roam:
+    # PCO/ePCO IPv4 link MTU on S11 Create Session Response (0 = off).
+    # Inject if home PGW omits MTU; clamp if home MTU is higher.
+    mtu: 1400
     gtpc:
       source_port: 2124
       teid_offset: 2147483648
@@ -151,6 +154,7 @@ sgwc:
   #   gtpu — GTP-U force_cp_teid + teid_offset/range (needs force_cp_teid if FTUP)
   #
 #  inbound_roam:
+#    mtu: 1400              # PCO/ePCO IPv4 link MTU rewrite (0 = off)
 #    gtpc:
 #      source_port: 2124
 #      teid_offset: 0x80000000

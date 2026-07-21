@@ -133,6 +133,7 @@ char *sgwc_runtime_config_dump(void)
             ctx->inbound_roam_gtpu_force_cp_teid);
     cJSON_AddNumberToObject(inbound, "gtpu_teid_offset",
             ctx->inbound_roam_gtpu_teid_offset);
+    cJSON_AddNumberToObject(inbound, "mtu", ctx->inbound_roam_mtu);
 
     cdr = cJSON_CreateObject();
     ogs_assert(cdr);

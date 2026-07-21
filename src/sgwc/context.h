@@ -161,6 +161,13 @@ typedef struct sgwc_context_s {
     uint8_t inbound_roam_gtpu_teid_range_indication;
     uint8_t inbound_roam_gtpu_teid_range;
 
+    /*
+     * IPv4 link MTU (PCO/ePCO 0x0010) rewrite on S11 Create Session
+     * Response for inbound home-routed roam. 0 = disabled. When set:
+     * inject if home PGW omitted MTU; clamp if home MTU > this value.
+     */
+    uint16_t inbound_roam_mtu;
+
     ogs_sock_t *roam_gtpc_sock;
     ogs_sock_t *roam_gtpc_sock6;
     ogs_sockaddr_t *roam_gtpc_addr;

@@ -66,10 +66,13 @@ sgwc:
 #    teid_range: 10
   #
   # Inbound roam (Huawei HR, etc.):
+  #   mtu  — PCO/ePCO IPv4 link MTU on S11 Create Session Response (0 = off).
+  #          Inject if home PGW omits MTU; clamp if home MTU is higher.
   #   gtpc — GTP-C source_port / teid_offset (S11+S5-C)
   #   gtpu — GTP-U force_cp_teid + teid_offset/range (needs force_cp_teid if FTUP)
   #
 #  inbound_roam:
+#    mtu: 1400
 #    gtpc:
 #      source_port: 2124
 #      teid_offset: 0x80000000

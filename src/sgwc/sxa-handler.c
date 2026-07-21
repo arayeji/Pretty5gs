@@ -1792,7 +1792,82 @@ indirect_fail:
                 return;
             }
 
-            pkbuf = ogs_gtp2_build_msg(recv_message);
+            /*
+             * Inbound home-routed roam: rewrite PCO/ePCO IPv4 link MTU
+             * before forwarding Create Session Response to MME.
+             */
+            if (sgwc_sess_is_inbound_roam(sess) &&
+                    sgwc_self()->inbound_roam_mtu) {
+                uint16_t local_mtu = sgwc_self()->inbound_roam_mtu;
+                uint8_t roam_pco_buf[OGS_MAX_PCO_LEN];
+                uint8_t *roam_epco_buf = NULL;
+                int n;
+
+                if (gtp_rsp->protocol_configuration_options.presence) {
+                    n = sgwc_gtp_roam_pco_mtu_rewrite(
+                            roam_pco_buf, (int)sizeof(roam_pco_buf),
+                            gtp_rsp->protocol_configuration_options.data,
+                            gtp_rsp->protocol_configuration_options.len,
+                            local_mtu);
+                    if (n > 0) {
+                        gtp_rsp->protocol_configuration_options.data =
+                            roam_pco_buf;
+                        gtp_rsp->protocol_configuration_options.len = n;
+                    }
+                }
+
+                if (gtp_rsp->extended_protocol_configuration_options.
+                        presence) {
+                    int epco_max =
+                        gtp_rsp->extended_protocol_configuration_options.
+                            len + 16;
+                    if (epco_max < 16)
+                        epco_max = 16;
+                    if (epco_max > OGS_MAX_EPCO_LEN)
+                        epco_max = OGS_MAX_EPCO_LEN;
+
+                    roam_epco_buf = ogs_malloc(epco_max);
+                    if (roam_epco_buf) {
+                        n = sgwc_gtp_roam_pco_mtu_rewrite(
+                                roam_epco_buf, epco_max,
+                                gtp_rsp->
+                                    extended_protocol_configuration_options.
+                                    data,
+                                gtp_rsp->
+                                    extended_protocol_configuration_options.
+                                    len,
+                                local_mtu);
+                        if (n > 0) {
+                            gtp_rsp->
+                                extended_protocol_configuration_options.
+                                data = roam_epco_buf;
+                            gtp_rsp->
+                                extended_protocol_configuration_options.
+                                len = n;
+                        }
+                    }
+                }
+
+                if (!gtp_rsp->protocol_configuration_options.presence &&
+                    !gtp_rsp->extended_protocol_configuration_options.
+                        presence) {
+                    n = sgwc_gtp_roam_pco_mtu_rewrite(
+                            roam_pco_buf, (int)sizeof(roam_pco_buf),
+                            NULL, 0, local_mtu);
+                    if (n > 0) {
+                        gtp_rsp->protocol_configuration_options.presence = 1;
+                        gtp_rsp->protocol_configuration_options.data =
+                            roam_pco_buf;
+                        gtp_rsp->protocol_configuration_options.len = n;
+                    }
+                }
+
+                pkbuf = ogs_gtp2_build_msg(recv_message);
+                if (roam_epco_buf)
+                    ogs_free(roam_epco_buf);
+            } else {
+                pkbuf = ogs_gtp2_build_msg(recv_message);
+            }
             if (!pkbuf) {
                 ogs_error("ogs_gtp2_build_msg() failed");
                 sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,

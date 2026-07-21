@@ -152,3 +152,80 @@ int sgwc_gtp_roam_pco_build(
 
     return size;
 }
+
+int sgwc_gtp_roam_pco_mtu_rewrite(
+        uint8_t *dst, int dst_max, void *src, int src_len,
+        uint16_t local_mtu)
+{
+    ogs_pco_t pco;
+    uint16_t mtu_be;
+    int i, mtu_idx = -1;
+    int size;
+
+    ogs_assert(dst);
+
+    if (dst_max <= 0 || !local_mtu)
+        return 0;
+
+    memset(&pco, 0, sizeof(pco));
+    mtu_be = htobe16(local_mtu);
+
+    if (src && src_len > 0) {
+        size = ogs_pco_parse(&pco, src, src_len);
+        if (size <= 0) {
+            ogs_warn("ogs_pco_parse() failed for roam MTU rewrite "
+                    "[size:%d len:%d]", size, src_len);
+            return 0;
+        }
+
+        for (i = 0; i < pco.num_of_id; i++) {
+            if (pco.ids[i].id == OGS_PCO_ID_IPV4_LINK_MTU_REQUEST) {
+                mtu_idx = i;
+                break;
+            }
+        }
+
+        if (mtu_idx >= 0) {
+            if (pco.ids[mtu_idx].len == (int)sizeof(uint16_t) &&
+                    pco.ids[mtu_idx].data) {
+                uint16_t home_mtu =
+                    be16toh(*(uint16_t *)pco.ids[mtu_idx].data);
+
+                if (home_mtu <= local_mtu) {
+                    if (src_len > dst_max)
+                        return 0;
+                    memcpy(dst, src, src_len);
+                    return src_len;
+                }
+            }
+
+            /* Clamp (or replace malformed length) with local_mtu */
+            pco.ids[mtu_idx].len = (int)sizeof(uint16_t);
+            pco.ids[mtu_idx].data = (uint8_t *)&mtu_be;
+        } else {
+            if (pco.num_of_id >= OGS_MAX_NUM_OF_PROTOCOL_OR_CONTAINER_ID) {
+                ogs_warn("roam MTU inject: PCO id list full");
+                return 0;
+            }
+            pco.ids[pco.num_of_id].id = OGS_PCO_ID_IPV4_LINK_MTU_REQUEST;
+            pco.ids[pco.num_of_id].len = (int)sizeof(uint16_t);
+            pco.ids[pco.num_of_id].data = (uint8_t *)&mtu_be;
+            pco.num_of_id++;
+        }
+    } else {
+        /* No home PCO/ePCO: synthesize header and inject MTU (like SMF). */
+        pco.ext = 1;
+        pco.configuration_protocol =
+            OGS_PCO_PPP_FOR_USE_WITH_IP_PDP_TYPE_OR_IP_PDN_TYPE;
+        pco.ids[0].id = OGS_PCO_ID_IPV4_LINK_MTU_REQUEST;
+        pco.ids[0].len = (int)sizeof(uint16_t);
+        pco.ids[0].data = (uint8_t *)&mtu_be;
+        pco.num_of_id = 1;
+    }
+
+    size = ogs_pco_build(dst, dst_max, &pco);
+    if (size <= 0)
+        return 0;
+
+    return size;
+}
