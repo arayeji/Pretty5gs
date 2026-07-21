@@ -239,20 +239,20 @@ int nas_eps_resend_t3450_initial_context(mme_ue_t *mme_ue)
         return OGS_ERROR;
     }
 
-    if (!mme_ue->t3450.pkbuf) {
-        ogs_error("No T3450 NAS buffer");
-        return OGS_ERROR;
-    }
-
     /*
      * s1ap_build_initial_context_setup_request() takes ownership of emmbuf
      * and frees it. Keep mme_ue->t3450.pkbuf for further T3450 retries.
+     * Atomic take: a plain read races CLEAR_MME_UE_TIMER from the main
+     * thread (ICS Failure) freeing the buffer under us.
      */
-    emmbuf = ogs_pkbuf_copy(mme_ue->t3450.pkbuf);
+    emmbuf = MME_UE_TIMER_TAKE_PKBUF(mme_ue->t3450);
     if (!emmbuf) {
-        ogs_error("ogs_pkbuf_copy() failed for T3450 NAS buffer");
+        ogs_error("No T3450 NAS buffer (taken concurrently)");
         return OGS_ERROR;
     }
+    mme_ue->t3450.pkbuf = ogs_pkbuf_copy(emmbuf);
+    if (!mme_ue->t3450.pkbuf)
+        ogs_error("ogs_pkbuf_copy() failed for T3450 NAS buffer");
 
     s1apbuf = s1ap_build_initial_context_setup_request(mme_ue, emmbuf);
     if (!s1apbuf) {
@@ -336,9 +336,8 @@ int nas_eps_send_identity_request(mme_ue_t *mme_ue)
 
     ogs_debug("Identity request");
 
-    if (mme_ue->t3470.pkbuf) {
-        emmbuf = mme_ue->t3470.pkbuf;
-    } else {
+    emmbuf = MME_UE_TIMER_TAKE_PKBUF(mme_ue->t3470);
+    if (!emmbuf) {
         emmbuf = emm_build_identity_request(mme_ue);
         if (!emmbuf) {
             ogs_error("emm_build_identity_request() failed");
@@ -380,9 +379,8 @@ int nas_eps_send_authentication_request(mme_ue_t *mme_ue)
 
     ogs_debug("[%s] Authentication request", mme_ue->imsi_bcd);
 
-    if (mme_ue->t3460.pkbuf) {
-        emmbuf = mme_ue->t3460.pkbuf;
-    } else {
+    emmbuf = MME_UE_TIMER_TAKE_PKBUF(mme_ue->t3460);
+    if (!emmbuf) {
         emmbuf = emm_build_authentication_request(mme_ue);
         if (!emmbuf) {
             ogs_error("emm_build_authentication_request() failed");
@@ -427,9 +425,8 @@ int nas_eps_send_security_mode_command(mme_ue_t *mme_ue)
 
     ogs_debug("[%s] Security mode command", mme_ue->imsi_bcd);
 
-    if (mme_ue->t3460.pkbuf) {
-        emmbuf = mme_ue->t3460.pkbuf;
-    } else {
+    emmbuf = MME_UE_TIMER_TAKE_PKBUF(mme_ue->t3460);
+    if (!emmbuf) {
         emmbuf = emm_build_security_mode_command(mme_ue);
         if (!emmbuf) {
             ogs_error("emm_build_security_mode_command() failed");
@@ -506,9 +503,8 @@ int nas_eps_send_detach_request(mme_ue_t *mme_ue)
 
     mme_metrics_detach(mme_ue, "network");
 
-    if (mme_ue->t3422.pkbuf) {
-        emmbuf = mme_ue->t3422.pkbuf;
-    } else {
+    emmbuf = MME_UE_TIMER_TAKE_PKBUF(mme_ue->t3422);
+    if (!emmbuf) {
         emmbuf = emm_build_detach_request(mme_ue);
         if (!emmbuf) {
             ogs_error("emm_build_detach_request() failed");

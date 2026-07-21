@@ -131,7 +131,13 @@ static void emm_handle_t3450_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
             return;
         }
 
-        emmbuf = mme_ue->t3450.pkbuf;
+        emmbuf = MME_UE_TIMER_TAKE_PKBUF(mme_ue->t3450);
+        if (!emmbuf) {
+            ogs_warn("[%s] T3450 NAS buffer taken concurrently; "
+                    "stop retransmission", mme_ue->imsi_bcd);
+            OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
+            return;
+        }
         mme_ue->t3450.pkbuf = ogs_pkbuf_copy(emmbuf);
         if (!mme_ue->t3450.pkbuf) {
             ogs_error("ogs_pkbuf_copy() failed");

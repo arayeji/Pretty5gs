@@ -613,9 +613,8 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
             if (memcmp(&enb->supported_ta_list[i], &mme_ue->tai,
                         sizeof(ogs_eps_tai_t)) == 0) {
 
-                if (mme_ue->t3413.pkbuf) {
-                    s1apbuf = mme_ue->t3413.pkbuf;
-                } else {
+                s1apbuf = MME_UE_TIMER_TAKE_PKBUF(mme_ue->t3413);
+                if (!s1apbuf) {
                     s1apbuf = s1ap_build_paging(mme_ue, cn_domain);
                     if (!s1apbuf) {
                         ogs_error("s1ap_build_paging() failed");

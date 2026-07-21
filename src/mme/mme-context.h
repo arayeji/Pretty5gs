@@ -1122,13 +1122,24 @@ struct mme_ue_s {
             } \
         } \
     } while(0);
+/*
+ * Take-and-null before free, exactly like CLEAR_BEARER_TIMER below.
+ * With mme.workers, main-thread S1AP handlers (e.g. InitialContext-
+ * SetupFailure -> CLEAR_MME_UE_ALL_TIMERS) race the UE owner shard
+ * (T3413/T3450/T3460/T3470/T3422 retransmits, EMM CLEARs) on the same
+ * timer pkbuf; a non-atomic check-then-free double-frees it and aborts
+ * on bad talloc magic. Every reader that takes the pkbuf must use
+ * MME_UE_TIMER_TAKE_PKBUF, never a plain read.
+ */
+#define MME_UE_TIMER_TAKE_PKBUF(__mME_UE_TIMER) \
+    __atomic_exchange_n(&(__mME_UE_TIMER).pkbuf, NULL, __ATOMIC_ACQ_REL)
 #define CLEAR_MME_UE_TIMER(__mME_UE_TIMER) \
     do { \
+        ogs_pkbuf_t *_ogs_ut_pkbuf; \
         ogs_timer_stop((__mME_UE_TIMER).timer); \
-        if ((__mME_UE_TIMER).pkbuf) { \
-            ogs_pkbuf_free((__mME_UE_TIMER).pkbuf); \
-            (__mME_UE_TIMER).pkbuf = NULL; \
-        } \
+        _ogs_ut_pkbuf = MME_UE_TIMER_TAKE_PKBUF(__mME_UE_TIMER); \
+        if (_ogs_ut_pkbuf) \
+            ogs_pkbuf_free(_ogs_ut_pkbuf); \
         (__mME_UE_TIMER).retry_count = 0; \
     } while(0);
     struct {
