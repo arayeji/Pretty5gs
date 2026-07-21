@@ -1393,13 +1393,21 @@ void s1ap_handle_initial_context_setup_response(
         }
 
         if (mme_workers_active()) {
-            /* takes ownership of tailbuf */
+            /* takes ownership of tailbuf on success only */
             if (mme_worker_post_ho_tail(
                         MME_HO_TAIL_ICS_RSP, enb_ue->id,
-                        mme_ue, tailbuf) != OGS_OK)
-                ogs_error("[%s] InitialContextSetupResponse tail post failed",
-                        mme_ue->imsi_bcd);
-            return;
+                        mme_ue, tailbuf) == OGS_OK)
+                return;
+
+            /*
+             * Dropping the tail means Modify Bearer Request is never
+             * sent and the SGW keeps forwarding DL to the previous
+             * (dead) eNB TEID until the next paging cycle. Run inline
+             * on main instead: a rare cross-shard access beats a
+             * black-holed session.
+             */
+            ogs_warn("[%s] InitialContextSetupResponse tail post failed; "
+                    "running inline", mme_ue->imsi_bcd);
         }
 
         s1ap_initial_context_setup_response_complete(enb_ue, mme_ue, tail);
@@ -1467,6 +1475,16 @@ void s1ap_initial_context_setup_response_complete(
                             &bearer->to_modify_node);
                 else
                     ogs_warn("Bearer [%d] Duplicated", (int)erab->ebi);
+            } else {
+                /*
+                 * TEID stored but Modify Bearer skipped: the SGW keeps
+                 * the previous eNB TEID for this bearer. Surface it —
+                 * a stale-TEID DL black hole starts exactly here.
+                 */
+                ogs_warn("UE[%s] EBI[%d] ESM inactive in "
+                        "InitialContextSetupResponse: Modify Bearer "
+                        "skipped, SGW keeps previous eNB TEID",
+                        mme_ue->imsi_bcd, bearer->ebi);
             }
         }
 
@@ -3353,10 +3371,12 @@ void s1ap_handle_path_switch_request(
     if (mme_workers_active()) {
         if (mme_worker_post_ho_tail(
                     MME_HO_TAIL_PATH_SWITCH, enb_ue->id,
-                    mme_ue, NULL) != OGS_OK)
-            ogs_error("[%s] PathSwitchRequest tail post failed",
-                    mme_ue->imsi_bcd);
-        return;
+                    mme_ue, NULL) == OGS_OK)
+            return;
+        /* Dropped tail = no Modify Bearer = stale eNB TEID at the SGW.
+         * Fall back to running the tail inline on main. */
+        ogs_warn("[%s] PathSwitchRequest tail post failed; running inline",
+                mme_ue->imsi_bcd);
     }
 
     s1ap_path_switch_request_complete(enb_ue, mme_ue);
@@ -4658,10 +4678,12 @@ void s1ap_handle_handover_notification(
     if (mme_workers_active()) {
         if (mme_worker_post_ho_tail(
                     MME_HO_TAIL_HANDOVER_NOTIFY, target_ue->id,
-                    mme_ue, NULL) != OGS_OK)
-            ogs_error("[%s] HandoverNotify tail post failed",
-                    mme_ue->imsi_bcd);
-        return;
+                    mme_ue, NULL) == OGS_OK)
+            return;
+        /* Dropped tail = no Modify Bearer = stale eNB TEID at the SGW.
+         * Fall back to running the tail inline on main. */
+        ogs_warn("[%s] HandoverNotify tail post failed; running inline",
+                mme_ue->imsi_bcd);
     }
 
     s1ap_handover_notify_complete(target_ue, mme_ue);

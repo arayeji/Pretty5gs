@@ -950,6 +950,29 @@ void sgwc_s11_handle_modify_bearer_request(
         sess = sgwc_sess_find_by_id(bearer->sess_id);
         ogs_assert(sess);
 
+        /*
+         * Data Plane(DL) : eNB-S1U. Parse the eNB F-TEID up front:
+         * the retransmit check below must compare it against what is
+         * already programmed in the DL tunnel.
+         */
+        enb_s1u_teid =
+            req->bearer_contexts_to_be_modified[i].s1_u_enodeb_f_teid.data;
+        if (!enb_s1u_teid) {
+            ogs_error("No eNB-S1U F-TEID data");
+            cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
+            goto cleanup;
+        }
+
+        rv = ogs_gtp2_f_teid_to_ip(enb_s1u_teid, &remote_ip);
+        if (rv != OGS_OK) {
+            ogs_error("No IPv4 or IPv6 in eNB-S1U(DL)");
+            cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
+            goto cleanup;
+        }
+
+        dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
+        ogs_assert(dl_tunnel);
+
         ogs_list_for_each_entry(&pfcp_xact_list, pfcp_xact, tmpnode) {
             if (pfcp_xact->modify_flags & OGS_PFCP_MODIFY_SESSION) {
                 ogs_pool_id_t sess_id = OGS_POINTER_TO_UINT(pfcp_xact->data);
@@ -975,22 +998,51 @@ void sgwc_s11_handle_modify_bearer_request(
          * instead of starting a second modification (UPG-VPP answers the
          * first XID; the duplicate orphan xact then drops the response with
          * "invalid step[0] type[53]" in lib/pfcp/xact.c).
+         *
+         * ONLY dedup when the F-TEID matches what the in-flight
+         * modification is already programming. A different F-TEID means
+         * this is a NEW Modify Bearer (idle -> paging -> Service Request
+         * cycle assigns a fresh eNB TEID); dropping it here left the FAR
+         * on the SGW-U pointing at the previous, dead eNB TEID and
+         * black-holed DL until the next paging cycle.
          */
         if (current_xact && current_xact->step >= 1) {
-            current_xact->assoc_xact_id = s11_xact->id;
-            if (gtpbuf) {
-                if (current_xact->gtpbuf)
-                    ogs_pkbuf_free(current_xact->gtpbuf);
-                current_xact->gtpbuf = ogs_pkbuf_copy(gtpbuf);
-                ogs_assert(current_xact->gtpbuf);
+            if (dl_tunnel->remote_teid == be32toh(enb_s1u_teid->teid) &&
+                memcmp(&dl_tunnel->remote_ip, &remote_ip,
+                    sizeof(ogs_ip_t)) == 0) {
+
+                current_xact->assoc_xact_id = s11_xact->id;
+                if (gtpbuf) {
+                    if (current_xact->gtpbuf)
+                        ogs_pkbuf_free(current_xact->gtpbuf);
+                    current_xact->gtpbuf = ogs_pkbuf_copy(gtpbuf);
+                    ogs_assert(current_xact->gtpbuf);
+                }
+
+                ogs_list_for_each_entry(&pfcp_xact_list, pfcp_xact, tmpnode) {
+                    if (pfcp_xact == current_xact)
+                        goto next_bearer;
+                }
+                ogs_list_add(&pfcp_xact_list, &current_xact->tmpnode);
+                goto next_bearer;
             }
 
-            ogs_list_for_each_entry(&pfcp_xact_list, pfcp_xact, tmpnode) {
-                if (pfcp_xact == current_xact)
-                    goto next_bearer;
-            }
-            ogs_list_add(&pfcp_xact_list, &current_xact->tmpnode);
-            goto next_bearer;
+            ogs_warn("[%s] Modify Bearer with NEW eNB F-TEID[0x%x] while "
+                    "PFCP modification for F-TEID[0x%x] is in flight; "
+                    "sending follow-up modification",
+                    sgwc_ue->imsi_bcd, be32toh(enb_s1u_teid->teid),
+                    dl_tunnel->remote_teid);
+
+            /*
+             * bearer->to_modify_node is a single embedded lnode; unlink
+             * it from the in-flight xact before the follow-up xact links
+             * it, or both lists end up corrupted.
+             */
+            if (ogs_list_exists(&current_xact->bearer_to_modify_list,
+                        &bearer->to_modify_node))
+                ogs_list_remove(&current_xact->bearer_to_modify_list,
+                        &bearer->to_modify_node);
+            current_xact = NULL;
         }
 
         if (!current_xact) {
@@ -1013,25 +1065,7 @@ void sgwc_s11_handle_modify_bearer_request(
             ogs_list_add(&pfcp_xact_list, &current_xact->tmpnode);
         }
 
-        dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
-        ogs_assert(dl_tunnel);
-
-        /* Data Plane(DL) : eNB-S1U */
-        enb_s1u_teid =
-            req->bearer_contexts_to_be_modified[i].s1_u_enodeb_f_teid.data;
-        if (!enb_s1u_teid) {
-            ogs_error("No eNB-S1U F-TEID data");
-            cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
-            goto cleanup;
-        }
         dl_tunnel->remote_teid = be32toh(enb_s1u_teid->teid);
-
-        rv = ogs_gtp2_f_teid_to_ip(enb_s1u_teid, &remote_ip);
-        if (rv != OGS_OK) {
-            ogs_error("No IPv4 or IPv6 in eNB-S1U(DL)");
-            cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
-            goto cleanup;
-        }
 
         memset(&zero_ip, 0, sizeof(ogs_ip_t));
 

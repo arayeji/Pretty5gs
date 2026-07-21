@@ -382,10 +382,17 @@ int mme_event_push_to_ue_owner(mme_event_t *e)
     return mme_event_push_to_worker(wid, e);
 }
 
+/*
+ * On failure the CALLER retains ownership of pkbuf: the S1AP handlers
+ * fall back to running the HO tail inline (a dropped tail black-holes
+ * DL until the next paging cycle — the SGW keeps forwarding to the
+ * previous eNB TEID because Modify Bearer is never sent).
+ */
 int mme_worker_post_ho_tail(int kind, ogs_pool_id_t enb_ue_id,
         mme_ue_t *mme_ue, ogs_pkbuf_t *pkbuf)
 {
-    int owner;
+    int owner, rv;
+    ogs_worker_t *worker;
     mme_event_t *e;
 
     ogs_assert(mme_ue);
@@ -395,16 +402,18 @@ int mme_worker_post_ho_tail(int kind, ogs_pool_id_t enb_ue_id,
     if (owner < 0) {
         ogs_error("mme_worker_post_ho_tail: no owner for mme_ue [%s]",
                 mme_ue->imsi_bcd);
-        if (pkbuf)
-            ogs_pkbuf_free(pkbuf);
+        return OGS_ERROR;
+    }
+
+    worker = mme_worker_by_id(owner);
+    if (!worker) {
+        ogs_error("mme_worker_post_ho_tail: bad wid %d", owner);
         return OGS_ERROR;
     }
 
     e = mme_event_new(MME_EVENT_S1AP_HO_TAIL);
     if (!e) {
         ogs_error("mme_worker_post_ho_tail: mme_event_new() failed");
-        if (pkbuf)
-            ogs_pkbuf_free(pkbuf);
         return OGS_ERROR;
     }
     e->ho_kind = kind;
@@ -412,8 +421,16 @@ int mme_worker_post_ho_tail(int kind, ogs_pool_id_t enb_ue_id,
     e->mme_ue_id = mme_ue->id;
     e->pkbuf = pkbuf;
 
-    /* frees e (and pkbuf) on failure */
-    return mme_event_push_to_worker(owner, e);
+    rv = ogs_worker_post(worker, e);
+    if (rv != OGS_OK) {
+        ogs_error("mme_worker_post_ho_tail: ogs_worker_post(wid=%d) "
+                "failed [%d]", owner, rv);
+        /* not enqueued: we still own e; pkbuf stays with the caller */
+        e->pkbuf = NULL;
+        mme_event_free(e);
+        return OGS_ERROR;
+    }
+    return OGS_OK;
 }
 
 int mme_worker_post_ue_rel_tail(int rel_action, ogs_pool_id_t old_enb_ue_id,
