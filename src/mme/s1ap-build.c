@@ -529,7 +529,18 @@ ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
 
     ogs_assert(mme_ue);
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-    ogs_assert(enb_ue);
+    if (!enb_ue) {
+        /*
+         * enb_ue is MAIN-owned but these builders run on UE-shard
+         * workers: main can free the S1 context (release complete, S1
+         * reset, eNB drop) between the caller's guard and this lookup.
+         * Aborting the whole MME for one UE losing its S1 mid-procedure
+         * is never right — the callers all handle NULL by failing the
+         * procedure (e.g. the service-request "ics_fail" path).
+         */
+        ogs_warn("S1 context has already been removed");
+        return NULL;
+    }
 
     ogs_debug("InitialContextSetupRequest");
 
@@ -989,7 +1000,18 @@ ogs_pkbuf_t *s1ap_build_ue_context_modification_request(mme_ue_t *mme_ue)
 
     ogs_assert(mme_ue);
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-    ogs_assert(enb_ue);
+    if (!enb_ue) {
+        /*
+         * enb_ue is MAIN-owned but these builders run on UE-shard
+         * workers: main can free the S1 context (release complete, S1
+         * reset, eNB drop) between the caller's guard and this lookup.
+         * Aborting the whole MME for one UE losing its S1 mid-procedure
+         * is never right — the callers all handle NULL by failing the
+         * procedure (e.g. the service-request "ics_fail" path).
+         */
+        ogs_warn("S1 context has already been removed");
+        return NULL;
+    }
 
     ogs_debug("UEContextModificationRequest");
 
@@ -1210,7 +1232,18 @@ ogs_pkbuf_t *s1ap_build_e_rab_setup_request(
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     ogs_assert(mme_ue);
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-    ogs_assert(enb_ue);
+    if (!enb_ue) {
+        /*
+         * enb_ue is MAIN-owned but these builders run on UE-shard
+         * workers: main can free the S1 context (release complete, S1
+         * reset, eNB drop) between the caller's guard and this lookup.
+         * Aborting the whole MME for one UE losing its S1 mid-procedure
+         * is never right — the callers all handle NULL by failing the
+         * procedure (e.g. the service-request "ics_fail" path).
+         */
+        ogs_warn("S1 context has already been removed");
+        return NULL;
+    }
 
     ogs_debug("E-RABSetupRequest");
 
@@ -1362,7 +1395,18 @@ ogs_pkbuf_t *s1ap_build_e_rab_modify_request(
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     ogs_assert(mme_ue);
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-    ogs_assert(enb_ue);
+    if (!enb_ue) {
+        /*
+         * enb_ue is MAIN-owned but these builders run on UE-shard
+         * workers: main can free the S1 context (release complete, S1
+         * reset, eNB drop) between the caller's guard and this lookup.
+         * Aborting the whole MME for one UE losing its S1 mid-procedure
+         * is never right — the callers all handle NULL by failing the
+         * procedure (e.g. the service-request "ics_fail" path).
+         */
+        ogs_warn("S1 context has already been removed");
+        return NULL;
+    }
 
     ogs_debug("E-RABModifyRequest");
 
@@ -1494,7 +1538,18 @@ ogs_pkbuf_t *s1ap_build_e_rab_release_command(
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     ogs_assert(mme_ue);
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-    ogs_assert(enb_ue);
+    if (!enb_ue) {
+        /*
+         * enb_ue is MAIN-owned but these builders run on UE-shard
+         * workers: main can free the S1 context (release complete, S1
+         * reset, eNB drop) between the caller's guard and this lookup.
+         * Aborting the whole MME for one UE losing its S1 mid-procedure
+         * is never right — the callers all handle NULL by failing the
+         * procedure (e.g. the service-request "ics_fail" path).
+         */
+        ogs_warn("S1 context has already been removed");
+        return NULL;
+    }
 
     ogs_debug("E-RABReleaseCommand");
 
@@ -1616,7 +1671,18 @@ ogs_pkbuf_t *s1ap_build_e_rab_modification_confirm(mme_ue_t *mme_ue)
 
     ogs_assert(mme_ue);
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-    ogs_assert(enb_ue);
+    if (!enb_ue) {
+        /*
+         * enb_ue is MAIN-owned but these builders run on UE-shard
+         * workers: main can free the S1 context (release complete, S1
+         * reset, eNB drop) between the caller's guard and this lookup.
+         * Aborting the whole MME for one UE losing its S1 mid-procedure
+         * is never right — the callers all handle NULL by failing the
+         * procedure (e.g. the service-request "ics_fail" path).
+         */
+        ogs_warn("S1 context has already been removed");
+        return NULL;
+    }
 
     ogs_debug("E-RABModificationConfirm");
 
@@ -1941,7 +2007,18 @@ ogs_pkbuf_t *s1ap_build_path_switch_ack(
 
     ogs_assert(mme_ue);
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-    ogs_assert(enb_ue);
+    if (!enb_ue) {
+        /*
+         * enb_ue is MAIN-owned but these builders run on UE-shard
+         * workers: main can free the S1 context (release complete, S1
+         * reset, eNB drop) between the caller's guard and this lookup.
+         * Aborting the whole MME for one UE losing its S1 mid-procedure
+         * is never right — the callers all handle NULL by failing the
+         * procedure (e.g. the service-request "ics_fail" path).
+         */
+        ogs_warn("S1 context has already been removed");
+        return NULL;
+    }
 
     ogs_debug("PathSwitchAcknowledge");
 
