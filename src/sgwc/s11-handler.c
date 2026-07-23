@@ -1361,7 +1361,19 @@ void sgwc_s11_handle_create_bearer_response(
      ********************/
     ogs_assert(s11_xact);
     s5c_xact = ogs_gtp_xact_find_by_id(s11_xact->assoc_xact_id);
-    ogs_assert(s5c_xact);
+    if (!s5c_xact) {
+        /*
+         * Same hazard as Update Bearer Response: the paired S5-C
+         * transaction toward the PGW can be gone (SGW-U/PFCP
+         * association loss tearing down the S5 side) when a late
+         * Create Bearer Response arrives on S11. Nothing to relay;
+         * commit S11 and return rather than abort.
+         */
+        ogs_error("Create Bearer Response: associated S5-C transaction "
+                "already removed; nothing to relay");
+        ogs_gtp_xact_commit(s11_xact);
+        return;
+    }
 
     if (s11_xact->xid & OGS_GTP_CMD_XACT_ID) {
         /* MME received Bearer Resource Modification Request */
@@ -1625,7 +1637,20 @@ void sgwc_s11_handle_update_bearer_response(
      ********************/
     ogs_assert(s11_xact);
     s5c_xact = ogs_gtp_xact_find_by_id(s11_xact->assoc_xact_id);
-    ogs_assert(s5c_xact);
+    if (!s5c_xact) {
+        /*
+         * The paired S5-C transaction toward the PGW is already gone —
+         * seen in production when an SGW-U / PFCP association drops and
+         * the S5 side is torn down, then a late Update Bearer Response
+         * arrives on S11. Nothing left to relay it to, so commit the
+         * S11 transaction and return instead of aborting the whole
+         * SGW-C for one stranded bearer procedure.
+         */
+        ogs_error("Update Bearer Response: associated S5-C transaction "
+                "already removed; nothing to relay");
+        ogs_gtp_xact_commit(s11_xact);
+        return;
+    }
 
     if (s11_xact->xid & OGS_GTP_CMD_XACT_ID) {
         /* MME received Bearer Resource Modification Request */
