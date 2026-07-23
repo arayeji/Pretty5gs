@@ -7514,12 +7514,27 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
             /* Phase-3 : Clear Session Context in OLD MME-UE Context */
             memset(&old_mme_ue->sess_list, 0, sizeof(old_mme_ue->sess_list));
 
-            /* Phase-4 : Move sgw_ue->sgw_s11_teid */
+            /* Phase-4 : Move sgw_ue->sgw_s11_teid
+             *
+             * Do NOT abort if either SGW-UE is gone. By this point the
+             * session move (Phase 1-3) is already committed, so we must
+             * finish the merge, not bail. The OLD UE's sgw_ue can be
+             * absent because its S11 session was already torn down, or
+             * (with mme.workers) because old_mme_ue is owned by another
+             * shard and is being reclaimed concurrently while this
+             * attach runs on the NEW UE's shard. Either way, carrying
+             * over the S11 TEID is impossible; this being an Attach, a
+             * fresh Create Session rebuilds S11 anyway. Crashing the
+             * whole MME for one UE's stale re-attach merge is never
+             * right (production: mme_ue_set_imsi old_sgw_ue assert). */
             sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-            ogs_assert(sgw_ue);
             old_sgw_ue = sgw_ue_find_by_id(old_mme_ue->sgw_ue_id);
-            ogs_assert(old_sgw_ue);
-            sgw_ue->sgw_s11_teid = old_sgw_ue->sgw_s11_teid;
+            if (sgw_ue && old_sgw_ue)
+                sgw_ue->sgw_s11_teid = old_sgw_ue->sgw_s11_teid;
+            else
+                ogs_warn("[%s] UE merge: %s SGW-UE gone; "
+                        "S11 TEID not carried over",
+                        mme_ue->imsi_bcd, !sgw_ue ? "new" : "old");
 
             /*
              * Phase-5 : sess->session of the moved sessions points INTO
