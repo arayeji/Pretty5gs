@@ -7389,7 +7389,21 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
     ogs_cpystrn(mme_ue->imsi_bcd, imsi_bcd, OGS_MAX_IMSI_BCD_LEN+1);
     ogs_bcd_to_buffer(mme_ue->imsi_bcd, mme_ue->imsi, &mme_ue->imsi_len);
 
-    /* Check if OLD mme_ue_t is existed */
+    /*
+     * Check if an OLD mme_ue exists for this IMSI (duplicate re-attach).
+     *
+     * Hold mme_ctx_lock across the ENTIRE find -> transfer -> remove.
+     * old_mme_ue is found via the global IMSI hash and may be owned by
+     * a DIFFERENT shard than this attaching UE. mme_ue_remove() holds
+     * the same recursive lock for its whole teardown, so taking it here
+     * makes the merge mutually exclusive with that teardown. Without it,
+     * this shard spliced old_mme_ue->sess_list (Phase 1-3) while the
+     * owner shard freed those same sessions in mme_ue_remove() —
+     * use-after-free; the old_sgw_ue assert was only the visible tip.
+     * The lock spans the find too: otherwise old_mme_ue could be freed
+     * between the lookup and acquiring the lock.
+     */
+    mme_ctx_lock();
     old_mme_ue = mme_ue_find_by_imsi(mme_ue->imsi, mme_ue->imsi_len);
     if (old_mme_ue) {
         /* Check if OLD mme_ue_t is different with NEW mme_ue_t */
@@ -7581,6 +7595,7 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
             mme_ue_remove(old_mme_ue);
         }
     }
+    mme_ctx_unlock();
 
     /* Register new IMSI in hash.
      * Old IMSI hash entry was already removed at the top of this function. */
