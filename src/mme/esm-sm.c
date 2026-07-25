@@ -646,7 +646,9 @@ void esm_state_pdn_did_disconnect(ogs_fsm_t *s, mme_event_t *e)
     case OGS_FSM_EXIT_SIG:
         break;
     default:
-        ogs_error("Unknown event %s", mme_event_get_name(e));
+        /* ESM message for a disconnected PDN - drop it */
+        ogs_warn("ESM pdn-did-disconnect: event %s ignored",
+                mme_event_get_name(e));
         break;
     }
 }
@@ -662,7 +664,9 @@ void esm_state_bearer_deactivated(ogs_fsm_t *s, mme_event_t *e)
     case OGS_FSM_EXIT_SIG:
         break;
     default:
-        ogs_error("Unknown event %s", mme_event_get_name(e));
+        /* ESM message for a deactivated bearer - drop it */
+        ogs_warn("ESM bearer-deactivated: event %s ignored",
+                mme_event_get_name(e));
         break;
     }
 }
@@ -687,7 +691,9 @@ void esm_state_exception(ogs_fsm_t *s, mme_event_t *e)
     case OGS_FSM_EXIT_SIG:
         break;
     default:
-        ogs_error("Unknown event %s", mme_event_get_name(e));
+        /* ESM message for a bearer already in exception (procedure
+         * aborted) - drop it; nothing actionable */
+        ogs_warn("ESM exception: event %s ignored", mme_event_get_name(e));
         break;
     }
 }

@@ -99,7 +99,10 @@ uint8_t mme_s6a_handle_ula(
     ogs_assert(subscription_data);
 
     if (s6a_message->result_code != ER_DIAMETER_SUCCESS) {
-        ogs_error("[%s] S6a ULA failed result=%d",
+        /* Per-subscriber HSS reject (5420 unknown-EPS-subscription,
+         * 5004 roaming-not-allowed, ...) - normal outcome for roamers
+         * and unprovisioned SIMs, not an MME error. */
+        ogs_warn("[%s] S6a ULA failed result=%d",
                 mme_ue->imsi_bcd, s6a_message->result_code);
         mme_ue_progress(mme_ue, "s6a_ula_fail");
         return emm_cause_from_diameter(s6a_message->err, s6a_message->exp_err);

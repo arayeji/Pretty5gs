@@ -846,7 +846,9 @@ void mme_s11_handle_modify_bearer_response(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!mme_ue_from_teid) {
-        ogs_error("[%s] No Context in TEID [Cause:%d]",
+        /* SGW answered Context-Not-Found (or our context was re-keyed
+         * meanwhile); recovered below via sgw_context_lost - benign */
+        ogs_warn("[%s] No Context in TEID [Cause:%d]",
                 mme_ue->imsi_bcd, session_cause);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     }

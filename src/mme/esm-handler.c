@@ -145,7 +145,10 @@ int esm_handle_pdn_connectivity_request(
                         mme_ue->imsi_bcd, apn, roam_cause);
                 r = nas_eps_send_pdn_connectivity_reject(
                         sess, roam_cause, create_action);
-                ogs_expect(r == OGS_OK);
+                if (r != OGS_OK)
+                    /* S1 usually gone by now; reject is best-effort */
+                    ogs_warn("[%s] PDN connectivity reject not sent",
+                            mme_ue->imsi_bcd);
                 ogs_assert(r != OGS_ERROR);
                 return OGS_ERROR;
             }

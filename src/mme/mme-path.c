@@ -1002,7 +1002,10 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
             ogs_warn("MME-initiated Detach cannot be invoked");
         } else {
             r = nas_eps_send_detach_request(mme_ue);
-            ogs_expect(r == OGS_OK);
+            if (r != OGS_OK)
+                /* UE dropped the connection right after paging response */
+                ogs_warn("[%s] Detach request after paging not sent",
+                        mme_ue->imsi_bcd);
             ogs_assert(r != OGS_ERROR);
             if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
                 if (sgsap_send_detach_indication(mme_ue) != OGS_OK) {

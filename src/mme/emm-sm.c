@@ -151,7 +151,8 @@ static void emm_handle_t3450_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
 
         r = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
         if (r != OGS_OK) {
-            ogs_error("T3450 Downlink NAS retransmit failed");
+            /* S1 dropped mid-procedure; exception entry bounds cleanup */
+            ogs_warn("T3450 Downlink NAS retransmit failed");
             OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
         }
         return;
@@ -159,7 +160,8 @@ static void emm_handle_t3450_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
 
     r = nas_eps_resend_t3450_initial_context(mme_ue);
     if (r != OGS_OK) {
-        ogs_error("T3450 ICS retransmit failed");
+        /* S1 dropped mid-procedure; exception entry bounds cleanup */
+        ogs_warn("T3450 ICS retransmit failed");
         OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
     }
 }
@@ -349,6 +351,16 @@ static bool emm_clear_stale_timer(mme_ue_t *mme_ue, int timer_id)
         ogs_debug("[%s] Stale %s in EMM state; clearing",
                 mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
         CLEAR_MME_UE_TIMER(mme_ue->t3470);
+        return true;
+    case MME_TIMER_MOBILE_REACHABLE:
+        ogs_debug("[%s] Stale %s in EMM state; clearing",
+                mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
+        CLEAR_MME_UE_TIMER(mme_ue->t_mobile_reachable);
+        return true;
+    case MME_TIMER_IMPLICIT_DETACH:
+        ogs_debug("[%s] Stale %s in EMM state; clearing",
+                mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
+        CLEAR_MME_UE_TIMER(mme_ue->t_implicit_detach);
         return true;
     case MME_TIMER_SGS_TS6_1:
         ogs_debug("[%s] Stale %s in EMM state; clearing",
@@ -1745,14 +1757,19 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
                 ogs_warn("Retransmission of IMSI[%s] failed. "
                         "Stop retransmission", mme_ue->imsi_bcd);
                 r = nas_eps_send_authentication_reject(mme_ue);
-                ogs_expect(r == OGS_OK);
+                if (r != OGS_OK)
+                    /* S1 usually gone by now; reject is best-effort */
+                    ogs_warn("[%s] Authentication reject not sent",
+                            mme_ue->imsi_bcd);
                 ogs_assert(r != OGS_ERROR);
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             } else {
                 mme_ue->t3460.retry_count++;
                 r = nas_eps_send_authentication_request(mme_ue);
-                ogs_expect(r == OGS_OK);
+                if (r != OGS_OK)
+                    ogs_warn("[%s] Authentication request retransmit "
+                            "not sent", mme_ue->imsi_bcd);
                 ogs_assert(r != OGS_ERROR);
             }
             break;
@@ -2618,6 +2635,31 @@ void emm_state_exception(ogs_fsm_t *s, mme_event_t *e)
 
         default:
             ogs_warn("Unknown message[%d]", message->emm.h.message_type);
+        }
+        break;
+
+    case MME_EVENT_EMM_TIMER:
+        /*
+         * Exception entry clears all UE timers, but an expiry event that
+         * was already queued (or a cross-thread race with the owner
+         * shard) still lands here. These are stale by definition - the
+         * context lifetime is bounded by the entry hook - so clear them
+         * quietly instead of spamming "Unknown event[MME_EVENT_EMM_TIMER]"
+         * errors.
+         */
+        switch (e->timer_id) {
+        case MME_TIMER_SGS_TS6_1:
+            emm_handle_sgs_ts6_1_timer(s, mme_ue);
+            break;
+        case MME_TIMER_S6A:
+            emm_handle_s6a_timer(s, mme_ue);
+            break;
+        default:
+            if (emm_clear_stale_timer(mme_ue, e->timer_id))
+                break;
+            ogs_error("Unknown timer[%s:%d]",
+                    mme_timer_get_name(e->timer_id), e->timer_id);
+            break;
         }
         break;
 

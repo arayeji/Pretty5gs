@@ -1248,7 +1248,8 @@ struct mme_ue_s {
 #define MME_UE_REMOVE_WITH_PAGING_FAIL(__mME) \
     do { \
         if (MME_PAGING_ONGOING(__mME)) { \
-            ogs_error("Paging is ON-Going [%d]", (__mME)->paging.type); \
+            /* expected when a UE is torn down mid-paging */ \
+            ogs_warn("Paging is ON-Going [%d]", (__mME)->paging.type); \
             mme_send_after_paging(__mME, false); \
         } \
         mme_ue_remove(__mME); \
