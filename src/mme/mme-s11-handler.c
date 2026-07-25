@@ -1845,9 +1845,14 @@ void mme_s11_handle_release_access_bearers_response(
             mme_mobile_reachable_start(mme_ue);
 
             /* With mme.workers this response runs on the UE owner
-             * shard; main mutates enb_ue_list under the ctx lock. */
+             * shard; main mutates enb_ue_list under the ctx lock.
+             * num_enb_ues replaces ogs_list_count(): the O(n) count
+             * per response made a reset-all O(n^2) overall and pegged
+             * the main thread on busy eNBs. */
             mme_ctx_lock();
-            r = (enb && ogs_list_count(&enb->enb_ue_list) == 0);
+            r = (enb && enb->num_enb_ues == 0);
+            if (r)
+                enb->last_reset_all = 0;
             mme_ctx_unlock();
             if (r) {
                 r = s1ap_send_s1_reset_ack(enb, NULL);
@@ -1859,8 +1864,6 @@ void mme_s11_handle_release_access_bearers_response(
         }
 
     } else if (action == OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_RESET_PARTIAL) {
-        enb_ue_t *iter = NULL;
-
         if (enb_ue) {
             mme_enb_t *enb = NULL;
 
@@ -1875,23 +1878,19 @@ void mme_s11_handle_release_access_bearers_response(
                 bool reset_remains = false;
 
                 /*
-                 * Walk + take-and-null atomically: several UE owner
+                 * Check + take-and-null atomically: several UE owner
                  * shards (and main) run this completion check for the
                  * same eNB reset. Only the taker sends — a double take
                  * enqueued the same pkbuf to the S1AP IO thread twice
                  * and double-freed it in io_sock_flush (talloc
                  * bad-magic abort).
+                 *
+                 * num_part_reset_pending replaces the whole-list scan:
+                 * O(1) instead of O(n) per response under the global
+                 * ctx lock (the old walk made a partial reset O(n^2)).
                  */
                 mme_ctx_lock();
-                ogs_list_for_each(&enb->enb_ue_list, iter) {
-                    if (iter->part_of_s1_reset_requested == true) {
-                        /* The ENB_UE context
-                         * where PartOfS1_interface was requested
-                         * still remains */
-                        reset_remains = true;
-                        break;
-                    }
-                }
+                reset_remains = (enb->num_part_reset_pending > 0);
                 if (!reset_remains) {
                     reset_ack = enb->s1_reset_ack;
                     enb->s1_reset_ack = NULL;

@@ -473,6 +473,26 @@ typedef struct mme_enb_s {
     int             num_enb_ues;
 
     /*
+     * Number of enb_ue's on this eNB still flagged
+     * part_of_s1_reset_requested (set on partial S1 Reset, cleared in
+     * enb_ue_remove). The RESET ACK completion check used to walk the
+     * whole enb_ue_list per Release Access Bearers response - O(n) per
+     * response / O(n^2) per reset - which pegged the main thread at
+     * 100% under mme_ctx_lock on busy eNBs. Mutated under mme_ctx_lock.
+     */
+    int             num_part_reset_pending;
+
+    /*
+     * Timestamp of the last reset-all (S1AP_ResetType_PR_s1_Interface)
+     * that triggered a mass Release Access Bearers walk. eNBs
+     * retransmit Reset until they get the ack; without this throttle
+     * every retransmission re-walked the full enb_ue_list and re-sent
+     * a release for every UE (CPU/GTP storm). Zeroed when the ack is
+     * sent. Mutated under mme_ctx_lock.
+     */
+    ogs_time_t      last_reset_all;
+
+    /*
      * Lookup index for enb_ue by ENB-UE-S1AP-ID. Each S1AP message
      * carrying an ENB-UE-S1AP-ID hits enb_ue_find_by_enb_ue_s1ap_id();
      * with a busy eNB hosting hundreds of UEs the linear walk over

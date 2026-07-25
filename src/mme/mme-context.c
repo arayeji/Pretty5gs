@@ -5983,6 +5983,13 @@ void enb_ue_remove(enb_ue_t *enb_ue)
     if (enb) {
         ogs_list_remove(&enb->enb_ue_list, enb_ue);
         if (enb->num_enb_ues > 0) enb->num_enb_ues--;
+        /* Keep the partial-reset completion counter in sync (O(1)
+         * replacement for the old whole-list scan). */
+        if (enb_ue->part_of_s1_reset_requested) {
+            enb_ue->part_of_s1_reset_requested = false;
+            if (enb->num_part_reset_pending > 0)
+                enb->num_part_reset_pending--;
+        }
         if (enb->enb_ue_hash) {
             /*
              * Fast path: the current field value still matches the key
@@ -6055,10 +6062,15 @@ void enb_ue_switch_to_enb(enb_ue_t *enb_ue, mme_enb_t *new_enb)
     if (enb) {
         ogs_list_remove(&enb->enb_ue_list, enb_ue);
         if (enb->num_enb_ues > 0) enb->num_enb_ues--;
+        if (enb_ue->part_of_s1_reset_requested &&
+                enb->num_part_reset_pending > 0)
+            enb->num_part_reset_pending--;
     }
 
     ogs_list_add(&new_enb->enb_ue_list, enb_ue);
     new_enb->num_enb_ues++;
+    if (enb_ue->part_of_s1_reset_requested)
+        new_enb->num_part_reset_pending++;
     if (new_enb->enb_ue_hash)
         ogs_hash_set(new_enb->enb_ue_hash,
                 &enb_ue->enb_ue_s1ap_id,

@@ -4807,8 +4807,6 @@ void s1ap_handle_s1_reset(
     S1AP_ResetType_t *ResetType = NULL;
     S1AP_UE_associatedLogicalS1_ConnectionListRes_t *partOfS1_Interface = NULL;
 
-    enb_ue_t *iter = NULL;
-
     ogs_assert(enb);
     ogs_assert(enb->sctp.sock);
 
@@ -4862,8 +4860,37 @@ void s1ap_handle_s1_reset(
     case S1AP_ResetType_PR_s1_Interface:
         ogs_warn("    S1AP_ResetType_PR_s1_Interface");
 
-        mme_gtp_send_release_all_ue_in_enb(
-                enb, OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_RESET_ALL);
+        /*
+         * Throttle Reset retransmissions. eNBs re-send Reset until they
+         * receive the ack, and the ack is only sent once every UE on
+         * the eNB is released. Re-running the mass release for every
+         * retransmission re-walked the whole enb_ue_list and re-sent a
+         * Release Access Bearers Request per UE - with tens of
+         * thousands of UEs this pegged the main thread at 100% under
+         * mme_ctx_lock and made the MME unresponsive (perf: 56% of
+         * cycles in s1ap_handle_s1_reset / ogs_list_next).
+         */
+        {
+            bool release_in_progress = false;
+            ogs_time_t now = ogs_time_now();
+
+            mme_ctx_lock();
+            if (enb->last_reset_all &&
+                    now - enb->last_reset_all < ogs_time_from_sec(10))
+                release_in_progress = true;
+            else
+                enb->last_reset_all = now;
+            mme_ctx_unlock();
+
+            if (release_in_progress)
+                ogs_warn("S1 Reset (all) retransmission within 10s - "
+                        "release already in progress "
+                        "(eNB[%u], %d UEs remaining)",
+                        enb->enb_id, enb->num_enb_ues);
+            else
+                mme_gtp_send_release_all_ue_in_enb(enb,
+                        OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_RESET_ALL);
+        }
 
         /*
          * TS36.413
@@ -4877,8 +4904,13 @@ void s1ap_handle_s1_reset(
          * the UE S1AP IDs for all indicated UE associations which can be used
          * for new UE-associated logical S1-connections over the S1 interface,
          * the MME shall respond with the RESET ACKNOWLEDGE message.
+         *
+         * num_enb_ues replaces ogs_list_count(): O(1) instead of O(n).
          */
-        if (ogs_list_count(&enb->enb_ue_list) == 0) {
+        if (enb->num_enb_ues == 0) {
+            mme_ctx_lock();
+            enb->last_reset_all = 0;
+            mme_ctx_unlock();
             r = s1ap_send_s1_reset_ack(enb, NULL);
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
@@ -4948,17 +4980,47 @@ void s1ap_handle_s1_reset(
                     item->mME_UE_S1AP_ID ? (int)*item->mME_UE_S1AP_ID : -1,
                     item->eNB_UE_S1AP_ID ? (int)*item->eNB_UE_S1AP_ID : -1);
 
-            /* ENB_UE Context where PartOfS1_interface was requested */
-            enb_ue->part_of_s1_reset_requested = true;
+            /*
+             * ENB_UE Context where PartOfS1_interface was requested.
+             * Flag + per-eNB pending counter are kept in sync under
+             * the ctx lock; enb_ue_remove() decrements the counter.
+             * An already-flagged context means this Reset is a
+             * retransmission for a release that is still in flight -
+             * don't send another Release Access Bearers Request.
+             */
+            {
+                bool already_flagged;
+
+                mme_ctx_lock();
+                already_flagged = enb_ue->part_of_s1_reset_requested;
+                if (!already_flagged) {
+                    enb_ue->part_of_s1_reset_requested = true;
+                    enb->num_part_reset_pending++;
+                }
+                mme_ctx_unlock();
+
+                if (already_flagged)
+                    continue;
+            }
 
             mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
             if (mme_ue) {
                 if (mme_gtp_send_release_access_bearers_request(enb_ue->id,
                         mme_ue,
                         OGS_GTP_RELEASE_S1_CONTEXT_REMOVE_BY_RESET_PARTIAL)
-                        != OGS_OK)
+                        != OGS_OK) {
                     ogs_error("[%s] Release Access Bearers failed "
                             "(partial S1 reset)", mme_ue->imsi_bcd);
+                    /*
+                     * The release will never complete, so the flagged
+                     * context would wedge the RESET ACK forever (the
+                     * eNB then retransmits Reset indefinitely). Drop
+                     * the S1 context now; enb_ue_remove() clears the
+                     * flag and the pending counter.
+                     */
+                    enb_ue_deassociate_mme_ue(enb_ue, mme_ue);
+                    enb_ue_remove(enb_ue);
+                }
             } else {
                 enb_ue_remove(enb_ue);
             }
@@ -4982,23 +5044,18 @@ void s1ap_handle_s1_reset(
             bool reset_remains = false;
 
             /*
-             * Walk + take-and-null atomically: with mme.workers the
+             * Check + take-and-null atomically: with mme.workers the
              * Release Access Bearers response path runs the same
              * completion check on UE owner shards. Whoever wins the
              * take sends the ack exactly once; the buffer is enqueued
              * to the S1AP IO thread, so a double take double-freed the
              * pkbuf inside io_sock_flush (talloc bad-magic abort).
+             *
+             * num_part_reset_pending replaces the whole-list scan:
+             * O(1) instead of O(n) under the global ctx lock.
              */
             mme_ctx_lock();
-            ogs_list_for_each(&enb->enb_ue_list, iter) {
-                if (iter->part_of_s1_reset_requested == true) {
-                    /* The ENB_UE context
-                     * where PartOfS1_interface was requested
-                     * still remains */
-                    reset_remains = true;
-                    break;
-                }
-            }
+            reset_remains = (enb->num_part_reset_pending > 0);
             if (!reset_remains) {
                 reset_ack = enb->s1_reset_ack;
                 enb->s1_reset_ack = NULL;
