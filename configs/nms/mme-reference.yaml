@@ -180,3 +180,7 @@ mme:
         categories: [police, ambulance, fire]
 
   mip_home_agent_host_dns: true
+  pgw_selection:
+    mode: standard
+    dns:
+      enabled: false

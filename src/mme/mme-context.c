@@ -22,6 +22,7 @@
 
 #include "mme-context.h"
 #include "mme-pgw-host.h"
+#include "mme-pgw-dns.h"
 #include "eplmn-config.h"
 #include "mme-event.h"
 #include "mme-path.h"
@@ -456,6 +457,8 @@ void mme_context_init(void)
     ogs_assert(self.mme_gn_teid_hash);
 
     self.mip_home_agent_host_dns = true;
+    self.pgw_selection.force_yaml = false;
+    self.pgw_selection.dns_enabled = false;
 
     self.inbound_roam_gtp_apn_format = MME_INBOUND_ROAM_GTP_APN_FQDN;
     self.inbound_roam_gtp_apn_lowercase = false;
@@ -473,6 +476,7 @@ void mme_context_init(void)
     self.ambr_limit.uplink_bps = 200U * 1000000U;
 
     mme_pgw_host_cache_init();
+    mme_pgw_dns_cache_init();
 
     ogs_list_init(&self.mme_ue_list);
 
@@ -506,6 +510,7 @@ void mme_context_final(void)
     mme_served_tai_map_final();
 
     mme_pgw_host_cache_final();
+    mme_pgw_dns_cache_final();
 
     mme_access_control_free_all();
 
@@ -1750,6 +1755,7 @@ int mme_context_parse_config(void)
                                         ogs_plmn_id_t pgw_serving_plmn;
                                         bool pgw_imsi_plmn_parsed = false;
                                         ogs_plmn_id_t pgw_imsi_plmn;
+                                        bool pgw_force = false;
 
                                         ogs_assert(tac);
                                         imsi_prefix_buf[0] = '\0';
@@ -1966,6 +1972,11 @@ int mme_context_parse_config(void)
                                                                 imsi_prefix_buf));
                                                     imsi_prefix_set = true;
                                                 }
+                                            } else if (!strcmp(smf_key,
+                                                        "force")) {
+                                                pgw_force =
+                                                    ogs_yaml_iter_bool(
+                                                            &smf_iter);
                                             } else
                                                 ogs_warn("unknown key `%s`",
                                                         smf_key);
@@ -2030,6 +2041,7 @@ int mme_context_parse_config(void)
                                             ogs_cpystrn(pgw->imsi_prefix,
                                                     imsi_prefix_buf,
                                                     sizeof(pgw->imsi_prefix));
+                                        pgw->force = pgw_force;
 
                                         ogs_free(tac);
                                         smf_entry_idx++;
@@ -2491,6 +2503,52 @@ int mme_context_parse_config(void)
                     ogs_info("MIP-Home-Agent-Host DNS resolve: %s",
                             self.mip_home_agent_host_dns ? "enabled" :
                             "disabled");
+                } else if (!strcmp(mme_key, "pgw_selection")) {
+                    ogs_yaml_iter_t pgw_sel_iter;
+
+                    ogs_yaml_iter_recurse(&mme_iter, &pgw_sel_iter);
+                    while (ogs_yaml_iter_next(&pgw_sel_iter)) {
+                        const char *psk = ogs_yaml_iter_key(&pgw_sel_iter);
+
+                        ogs_assert(psk);
+                        if (!strcmp(psk, "mode")) {
+                            const char *v = ogs_yaml_iter_value(&pgw_sel_iter);
+
+                            if (v && (!strcmp(v, "force") ||
+                                        !strcmp(v, "force_yaml") ||
+                                        !strcmp(v, "static-only") ||
+                                        !strcmp(v, "static_only"))) {
+                                self.pgw_selection.force_yaml = true;
+                            } else if (v && (!strcmp(v, "standard") ||
+                                        !strcmp(v, "standard-with-dns"))) {
+                                self.pgw_selection.force_yaml = false;
+                            } else if (v) {
+                                ogs_warn("Unknown pgw_selection.mode `%s' "
+                                        "(use: standard|force)", v);
+                            }
+                        } else if (!strcmp(psk, "force_yaml") ||
+                                !strcmp(psk, "force")) {
+                            self.pgw_selection.force_yaml =
+                                ogs_yaml_iter_bool(&pgw_sel_iter);
+                        } else if (!strcmp(psk, "dns")) {
+                            ogs_yaml_iter_t dns_iter;
+
+                            ogs_yaml_iter_recurse(&pgw_sel_iter, &dns_iter);
+                            while (ogs_yaml_iter_next(&dns_iter)) {
+                                const char *dk = ogs_yaml_iter_key(&dns_iter);
+
+                                ogs_assert(dk);
+                                if (!strcmp(dk, "enabled")) {
+                                    self.pgw_selection.dns_enabled =
+                                        ogs_yaml_iter_bool(&dns_iter);
+                                }
+                            }
+                        }
+                    }
+                    ogs_info("PGW selection: mode=%s apn_dns=%s",
+                            self.pgw_selection.force_yaml ? "force" : "standard",
+                            self.pgw_selection.dns_enabled ?
+                            "enabled" : "disabled");
                 } else if (!strcmp(mme_key, "omit_indication_on_gtp_csr") ||
                         !strcmp(mme_key, "omit_gtp_indication")) {
                     self.omit_indication_on_gtp_csr =
@@ -4837,7 +4895,7 @@ static void mme_pgw_format_rule(
     buf[0] = '\0';
 
     if (mme_pgw_is_default(pgw)) {
-        ogs_cpystrn(buf, "default", buflen);
+        ogs_cpystrn(buf, pgw->force ? "default force" : "default", buflen);
         return;
     }
 
@@ -4876,7 +4934,8 @@ static void mme_pgw_format_rule(
     if (len == 0)
         ogs_cpystrn(buf, "filtered", buflen);
     else
-        ogs_snprintf(buf + len, buflen - len, " order:%d", pgw->selection_order);
+        ogs_snprintf(buf + len, buflen - len, " order:%d%s",
+                pgw->selection_order, pgw->force ? " force" : "");
 }
 
 void mme_pgw_log_pick(mme_ue_t *mme_ue, const mme_pgw_t *pgw, const char *apn)
@@ -4900,8 +4959,36 @@ void mme_pgw_log_pick(mme_ue_t *mme_ue, const mme_pgw_t *pgw, const char *apn)
             imsi, apn ? apn : "-", addr, rule);
 }
 
+mme_pgw_t *mme_pgw_find_forced_for_sess(
+    ogs_list_t *list, const mme_sess_t *sess)
+{
+    mme_pgw_t *pgw = NULL;
+    mme_pgw_t *best = NULL;
+    int best_order = INT_MAX;
+
+    ogs_assert(list);
+
+    ogs_list_for_each(list, pgw) {
+        if (!pgw->force)
+            continue;
+
+        /* A default (filter-less) force rule matches every session. */
+        if (!mme_pgw_is_default(pgw)) {
+            if (!sess || !compare_pgw_info(pgw, sess))
+                continue;
+        }
+
+        if (pgw->selection_order < best_order) {
+            best_order = pgw->selection_order;
+            best = pgw;
+        }
+    }
+
+    return best;
+}
+
 mme_pgw_t *mme_pgw_find_for_sess(
-        ogs_list_t *list, const mme_sess_t *sess)
+    ogs_list_t *list, const mme_sess_t *sess)
 {
     mme_pgw_t *pgw = NULL;
     mme_pgw_t *default_pgw = NULL;

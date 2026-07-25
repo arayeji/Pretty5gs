@@ -199,6 +199,31 @@ mme:
       - ambulance
       - fire
   mip_home_agent_host_dns: true
+  #
+  # PGW selection (S11 Create Session PGW-C address), SIGHUP reloadable:
+  #   0) gtpc.client.smf entry with force: true matching the session
+  #      (apn / serving_plmn_id / imsi_plmn_id / imsi_prefix / tac /
+  #       e_cell_id) always wins — overrides HSS MIP6 and APN DNS.
+  #   mode: standard (default)
+  #     1) HSS static MIP6 (allocation != DYNAMIC)
+  #     2) APN DNS / S-NAPTR when dns.enabled (home/visited by roam)
+  #     3) HSS MIP6 even if DYNAMIC (soft fallback)
+  #     4) gtpc.client.smf YAML
+  #   mode: force
+  #     Always use gtpc.client.smf for every session (global force)
+  #
+  # Per-rule example:
+  #   gtpc:
+  #     client:
+  #       smf:
+  #       - address: 10.0.0.9
+  #         apn: ims
+  #         force: true          # ims PDNs always to 10.0.0.9
+  pgw_selection:
+    mode: standard
+    # force_yaml: true          # same as mode: force (global)
+    dns:
+      enabled: false            # set true for TS 29.303 APN-FQDN discovery
 
 # --- Full parameter reference (upstream yaml.in; active lines commented) ---
 #logger:

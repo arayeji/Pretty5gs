@@ -88,6 +88,21 @@ mme:
 #    Resolve home PGW from HSS MIP-Home-Agent-Host (Destination-Host/Realm)
 #    via DNS and cache the result. Set to false to skip DNS and use only
 #    mme.gtpc.client.smf / PGW list addresses. Default: true
+#  pgw_selection:                # SIGHUP reloadable
+#    mode: standard              # standard | force (global force)
+#    # force_yaml: true          # alias for mode: force (always YAML smf)
+#    dns:
+#      enabled: false            # TS 29.303 APN-FQDN S-NAPTR/A lookup
+#    standard: HSS static MIP6 -> APN DNS (if enabled) -> HSS MIP6 soft -> YAML
+#    force: always gtpc.client.smf (ignore HSS and APN DNS)
+#  Per-rule force (preferred over global): add `force: true` to a
+#  gtpc.client.smf entry; sessions matching that entry's filters
+#  (apn / serving_plmn_id / imsi_plmn_id / imsi_prefix / tac / e_cell_id)
+#  always use that PGW, overriding HSS MIP6 and APN DNS. SIGHUP reloadable.
+#      smf:
+#      - address: 10.0.0.9
+#        apn: ims
+#        force: true
 #  omit_indication_on_gtp_csr: false
 #    Omit GTP Indication IE on all Create Session Requests (global).
 #  inbound_roam:

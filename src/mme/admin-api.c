@@ -31,6 +31,7 @@
 #include "admin-api.h"   /* pulls in ogs-metrics.h */
 #include "mme-li.h"
 #include "mme-pgw-host.h"
+#include "mme-pgw-dns.h"
 #include "runtime-config.h"
 #include "mme-trace-sync.h"
 
@@ -441,8 +442,9 @@ int mme_admin_pgw_host_cache(const ogs_metrics_query_t *q,
 
     if (q->clear) {
         removed = mme_pgw_host_cache_clear_all();
+        removed += mme_pgw_dns_cache_clear_all();
         written = snprintf(body, body_cap,
-                "{\"ok\":true,\"detail\":\"pgw-host cache cleared\","
+                "{\"ok\":true,\"detail\":\"pgw-host/apn-dns cache cleared\","
                 "\"removed\":%d}\n", removed);
     } else {
         if (mme_pgw_host_cache_remove_fqdn(q->fqdn) != OGS_OK) {

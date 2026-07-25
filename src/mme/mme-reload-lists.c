@@ -1439,6 +1439,8 @@ static int reload_gtpc_client_entry_add_only(
         ogs_plmn_id_t imsi_plmn;
         const char *apn[OGS_MAX_NUM_OF_APN] = {NULL,};
         uint8_t num_of_apn = 0;
+        bool force_v = false;
+        bool force_key = false;
         mme_sgw_t *sgw = NULL;
         mme_pgw_t *pgw_node = NULL;
         int before = mme_reload_lists_changed;
@@ -1556,6 +1558,9 @@ static int reload_gtpc_client_entry_add_only(
                     ogs_cpystrn(imsi_prefix_buf, v, sizeof(imsi_prefix_buf));
                     imsi_prefix_set = true;
                 }
+            } else if (!strcmp(client_key, "force")) {
+                force_v = ogs_yaml_iter_bool(&client_iter);
+                force_key = true;
             }
         }
 
@@ -1673,6 +1678,12 @@ static int reload_gtpc_client_entry_add_only(
                         sizeof(pgw_node->imsi_prefix));
                 mme_reload_lists_changed++;
             }
+            if (force_key && pgw_node->force != force_v) {
+                pgw_node->force = force_v;
+                mme_reload_lists_changed++;
+                ogs_reload_audit_note(" smf/pgw force=%s",
+                        force_v ? "true" : "false");
+            }
         }
 
         if (mme_reload_lists_changed > before)
@@ -1785,6 +1796,47 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
         return reload_emergency_replace(mme_iter);
     if (!strcmp(mme_key, "attach_accept")) {
         reload_attach_accept_scalars(mme_iter);
+        return 0;
+    }
+    if (!strcmp(mme_key, "pgw_selection")) {
+        ogs_yaml_iter_t pgw_sel_iter;
+
+        ogs_yaml_iter_recurse(mme_iter, &pgw_sel_iter);
+        while (ogs_yaml_iter_next(&pgw_sel_iter)) {
+            const char *psk = ogs_yaml_iter_key(&pgw_sel_iter);
+
+            ogs_assert(psk);
+            if (!strcmp(psk, "mode")) {
+                const char *v = ogs_yaml_iter_value(&pgw_sel_iter);
+
+                if (v && (!strcmp(v, "force") || !strcmp(v, "force_yaml") ||
+                            !strcmp(v, "static-only") ||
+                            !strcmp(v, "static_only")))
+                    self->pgw_selection.force_yaml = true;
+                else if (v && (!strcmp(v, "standard") ||
+                            !strcmp(v, "standard-with-dns")))
+                    self->pgw_selection.force_yaml = false;
+            } else if (!strcmp(psk, "force_yaml") || !strcmp(psk, "force")) {
+                self->pgw_selection.force_yaml =
+                    ogs_yaml_iter_bool(&pgw_sel_iter);
+            } else if (!strcmp(psk, "dns")) {
+                ogs_yaml_iter_t dns_iter;
+
+                ogs_yaml_iter_recurse(&pgw_sel_iter, &dns_iter);
+                while (ogs_yaml_iter_next(&dns_iter)) {
+                    const char *dk = ogs_yaml_iter_key(&dns_iter);
+
+                    ogs_assert(dk);
+                    if (!strcmp(dk, "enabled"))
+                        self->pgw_selection.dns_enabled =
+                            ogs_yaml_iter_bool(&dns_iter);
+                }
+            }
+        }
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" pgw_selection mode=%s apn_dns=%s",
+                self->pgw_selection.force_yaml ? "force" : "standard",
+                self->pgw_selection.dns_enabled ? "on" : "off");
         return 0;
     }
 

@@ -164,6 +164,19 @@ typedef struct mme_context_s {
     bool            mip_home_agent_host_dns;
 
     /*
+     * PGW selection policy for S11 Create Session.
+     *
+     * force_yaml / mode=force:
+     *   Always use mme.gtpc.client.smf (ignores HSS MIP6 and APN DNS).
+     * standard (default):
+     *   HSS static MIP6 -> APN DNS (if dns.enabled) -> YAML fallback.
+     */
+    struct {
+        bool force_yaml;
+        bool dns_enabled;
+    } pgw_selection;
+
+    /*
      * Inbound roam / home PGW: GTP APN on S11 (SGWC forwards on S5).
      * inbound_roam_gtp_apn_format: received = HSS/UE NI only;
      *   fqdn = NI + OI (home PLMN if MIP-Home-Agent set, else serving).
@@ -387,6 +400,13 @@ typedef struct mme_pgw_s {
     ogs_plmn_id_t   imsi_plmn_id;
     char            imsi_prefix[OGS_MAX_IMSI_BCD_LEN + 1];
     int             selection_order;
+
+    /*
+     * force: true — sessions matching this rule (apn / serving_plmn_id /
+     * imsi_plmn_id / imsi_prefix / tac / e_cell_id) always use this PGW,
+     * overriding HSS MIP6 and APN DNS. SIGHUP reloadable.
+     */
+    bool            force;
 } mme_pgw_t;
 
 #define MME_SGSAP_IS_CONNECTED(__mME) \
@@ -1522,6 +1542,9 @@ void mme_pgw_remove(mme_pgw_t *pgw);
 void mme_pgw_remove_all(void);
 ogs_sockaddr_t *mme_pgw_addr_find_by_apn_enb(
         ogs_list_t *list, int family, const mme_sess_t *sess);
+/* Lowest-order force:true rule matching this session (NULL if none). */
+mme_pgw_t *mme_pgw_find_forced_for_sess(
+        ogs_list_t *list, const mme_sess_t *sess);
 mme_pgw_t *mme_pgw_find_for_sess(
         ogs_list_t *list, const mme_sess_t *sess);
 ogs_sockaddr_t *mme_pgw_sockaddr_by_family(

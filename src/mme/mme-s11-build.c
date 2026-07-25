@@ -21,6 +21,7 @@
 #include "mme-apn.h"
 #include "mme-ambr.h"
 #include "mme-trace.h"
+#include "mme-pgw-select.h"
 
 #include "mme-s11-build.h"
 
@@ -126,63 +127,54 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
     memset(&pgw_s5c_teid, 0, sizeof(ogs_gtp2_f_teid_t));
     pgw_s5c_teid.interface_type = OGS_GTP2_F_TEID_S5_S8_PGW_GTP_C;
     pgw_s5c_teid.teid = htobe32(sess->pgw_s5c_teid);
-    if (session->smf_ip.ipv4 || session->smf_ip.ipv6) {
-        pgw_s5c_teid.ipv4 = session->smf_ip.ipv4;
-        pgw_s5c_teid.ipv6 = session->smf_ip.ipv6;
-        if (pgw_s5c_teid.ipv4 && pgw_s5c_teid.ipv6) {
-            pgw_s5c_teid.both.addr = session->smf_ip.addr;
-            memcpy(pgw_s5c_teid.both.addr6, session->smf_ip.addr6,
-                    sizeof session->smf_ip.addr6);
-            req->pgw_s5_s8_address_for_control_plane_or_pmip.len =
-                OGS_GTP2_F_TEID_IPV4V6_LEN;
-        } else if (pgw_s5c_teid.ipv4) {
-            pgw_s5c_teid.addr = session->smf_ip.addr;
-            req->pgw_s5_s8_address_for_control_plane_or_pmip.len =
-                OGS_GTP2_F_TEID_IPV4_LEN;
-        } else if (pgw_s5c_teid.ipv6) {
-            memcpy(pgw_s5c_teid.addr6, session->smf_ip.addr6,
-                    sizeof session->smf_ip.addr6);
-            req->pgw_s5_s8_address_for_control_plane_or_pmip.len =
-                OGS_GTP2_F_TEID_IPV6_LEN;
-        }
-        req->pgw_s5_s8_address_for_control_plane_or_pmip.presence = 1;
-        req->pgw_s5_s8_address_for_control_plane_or_pmip.data =
-            &pgw_s5c_teid;
-    } else {
-        ogs_sockaddr_t *pgw_addr = NULL;
-        ogs_sockaddr_t *pgw_addr6 = NULL;
+    {
+        ogs_ip_t selected_pgw_ip;
+        mme_pgw_selection_source_t pgw_source =
+            MME_PGW_SOURCE_YAML_FALLBACK;
 
-        {
-            mme_pgw_t *pgw = mme_pgw_find_for_sess(
-                    &mme_self()->pgw_list, sess);
-
-            if (!pgw) {
-                ogs_error("[%s] No SMF/PGW match for DNN[%s]",
-                        mme_ue->imsi_bcd, session->name);
-                return NULL;
-            }
-
-            mme_pgw_log_pick(mme_ue, pgw, session->name);
-            mme_ue_progress(mme_ue, "pgw_selected");
-
-            pgw_addr = mme_pgw_sockaddr_by_family(pgw, AF_INET);
-            pgw_addr6 = mme_pgw_sockaddr_by_family(pgw, AF_INET6);
-        }
-        if (!pgw_addr && !pgw_addr6) {
-            ogs_error("[%s] No SMF/PGW address for DNN[%s]",
+        /*
+         * Prefer PGW already anchored on this PDN session (TAU / path switch /
+         * restoration). Otherwise run selection (force-yaml / HSS / APN DNS /
+         * YAML). force_yaml applies only to new selection, not re-anchor.
+         */
+        if (sess->pgw_s5c_ip.ipv4 || sess->pgw_s5c_ip.ipv6) {
+            memcpy(&selected_pgw_ip, &sess->pgw_s5c_ip,
+                    sizeof(selected_pgw_ip));
+            ogs_debug("[%s] Reusing PDN-session PGW for APN[%s]",
+                    mme_ue->imsi_bcd, session->name);
+        } else if (mme_pgw_select_for_sess(mme_ue, sess, session,
+                    &selected_pgw_ip, NULL, &pgw_source) != OGS_OK) {
+            ogs_error("[%s] PGW selection failed for DNN[%s]",
                     mme_ue->imsi_bcd, session->name);
             return NULL;
         }
 
-        rv = ogs_gtp2_sockaddr_to_f_teid(
-                pgw_addr, pgw_addr6, &pgw_s5c_teid, &len);
-        if (rv != OGS_OK) {
-            ogs_error("ogs_gtp2_sockaddr_to_f_teid() failed");
+        pgw_s5c_teid.ipv4 = selected_pgw_ip.ipv4;
+        pgw_s5c_teid.ipv6 = selected_pgw_ip.ipv6;
+        if (pgw_s5c_teid.ipv4 && pgw_s5c_teid.ipv6) {
+            pgw_s5c_teid.both.addr = selected_pgw_ip.addr;
+            memcpy(pgw_s5c_teid.both.addr6, selected_pgw_ip.addr6,
+                    sizeof selected_pgw_ip.addr6);
+            req->pgw_s5_s8_address_for_control_plane_or_pmip.len =
+                OGS_GTP2_F_TEID_IPV4V6_LEN;
+        } else if (pgw_s5c_teid.ipv4) {
+            pgw_s5c_teid.addr = selected_pgw_ip.addr;
+            req->pgw_s5_s8_address_for_control_plane_or_pmip.len =
+                OGS_GTP2_F_TEID_IPV4_LEN;
+        } else if (pgw_s5c_teid.ipv6) {
+            memcpy(pgw_s5c_teid.addr6, selected_pgw_ip.addr6,
+                    sizeof selected_pgw_ip.addr6);
+            req->pgw_s5_s8_address_for_control_plane_or_pmip.len =
+                OGS_GTP2_F_TEID_IPV6_LEN;
+        } else {
+            ogs_error("[%s] Selected PGW has no usable address for DNN[%s]",
+                    mme_ue->imsi_bcd, session->name);
             return NULL;
         }
         req->pgw_s5_s8_address_for_control_plane_or_pmip.presence = 1;
-        req->pgw_s5_s8_address_for_control_plane_or_pmip.data = &pgw_s5c_teid;
-        req->pgw_s5_s8_address_for_control_plane_or_pmip.len = len;
+        req->pgw_s5_s8_address_for_control_plane_or_pmip.data =
+            &pgw_s5c_teid;
+        (void)pgw_source;
     }
 
     apn_fqdn_len = mme_apn_for_gtp(
