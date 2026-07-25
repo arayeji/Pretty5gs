@@ -480,22 +480,26 @@ void sgwc_sxa_handle_session_establishment_response(
         }
     }
 
-    if (pfcp_rsp->up_f_seid.presence == 0) {
-        ogs_error("No UP F-SEID");
+    /*
+     * UP F-SEID is only mandatory on an accepted establishment. A reject
+     * (e.g. cause 73 RULE_CREATION_MODIFICATION_FAILURE) normally carries
+     * no F-SEID - do not spam "No UP F-SEID" for every UPF reject.
+     */
+    if (pfcp_rsp->up_f_seid.presence == 0 &&
+            !(pfcp_rsp->cause.presence &&
+              pfcp_rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED)) {
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
     }
 
     if (pfcp_rsp->cause.presence) {
         if (pfcp_rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
-            ogs_error("PFCP Cause [%d:%s] : Not Accepted",
-                    pfcp_rsp->cause.u8,
-                    ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8));
+            /* Rich IMSI/APN/peer line is emitted below; avoid a second
+             * anonymous ERROR that floods the log with no UE identity. */
             if (ogs_pfcp_cause_no_association(pfcp_rsp->cause.u8) && sess)
                 sgwc_pfcp_request_reassociation(sess->pfcp_node);
             cause_value = gtp_cause_from_pfcp(pfcp_rsp->cause.u8);
         }
     } else {
-        ogs_error("No Cause");
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
     }
 
@@ -600,11 +604,17 @@ void sgwc_sxa_handle_session_establishment_response(
         sgwc_log_sgwu_peer(sgwu_peer, sizeof(sgwu_peer), sess);
         sgwc_log_mme_peer(mme_peer, sizeof(mme_peer), sgwc_ue);
         sgwc_log_pgw_peer(pgw_peer, sizeof(pgw_peer), sess);
-        sgwc_ue_error(sgwc_ue, sess, "sxa",
-                sess && sess->session.name ? sess->session.name : NULL,
-                "SGW-U rejected PFCP Session Establishment "
-                "SGW-U[%s] MME[%s] PGW[%s] PFCP cause[%u:%s] -> S11 cause[%u] "
+        /*
+         * Always-on ogs_error (not sgwc_ue_error): the per-IMSI helper is
+         * filter-gated for CPU, so production only ever saw the anonymous
+         * "No UP F-SEID" / "PFCP Cause" lines with no subscriber identity.
+         */
+        ogs_error("[%s] SGW-U rejected PFCP Session Establishment "
+                "APN[%s] SGW-U[%s] MME[%s] PGW[%s] "
+                "PFCP cause[%u:%s] -> S11 cause[%u] "
                 "sess_id[%d] offending_ie[%u] vpp[%s]",
+                sgwc_ue && sgwc_ue->imsi_bcd[0] ? sgwc_ue->imsi_bcd : "-",
+                sess && sess->session.name ? sess->session.name : "-",
                 sgwu_peer[0] ? sgwu_peer : "-",
                 mme_peer[0] ? mme_peer : "-",
                 pgw_peer[0] ? pgw_peer : "-",
@@ -1013,10 +1023,11 @@ void sgwc_sxa_handle_session_modification_response(
                         pfcp_pkbuf, vpp_detail, sizeof(vpp_detail)))
                 vpp_detail[0] = '\0';
 
-            sgwc_ue_error(sgwc_ue, sess, "sxa",
-                    sess && sess->session.name ? sess->session.name : NULL,
-                    "SGW-U rejected PFCP Session Modification "
-                    "PFCP cause[%u:%s] -> S11 cause[%u] vpp[%s]",
+            /* Always-on: sgwc_ue_error is filter-gated and would hide IMSI */
+            ogs_error("[%s] SGW-U rejected PFCP Session Modification "
+                    "APN[%s] PFCP cause[%u:%s] -> S11 cause[%u] vpp[%s]",
+                    sgwc_ue && sgwc_ue->imsi_bcd[0] ? sgwc_ue->imsi_bcd : "-",
+                    sess && sess->session.name ? sess->session.name : "-",
                     pfcp_rsp->cause.u8,
                     ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8),
                     gtp_cause_from_pfcp(pfcp_rsp->cause.u8),
