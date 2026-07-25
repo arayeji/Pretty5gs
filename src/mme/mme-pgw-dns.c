@@ -376,7 +376,7 @@ static int pgw_dns_query_udp(
     for (ns = ns_list; ns; ns = ns->next) {
         ssize_t n;
         fd_set rfds;
-        ogs_socklen_t fromlen;
+        socklen_t fromlen;
         ogs_sockaddr_t from;
 
         sock = socket(ns->ogs_sa_family, SOCK_DGRAM, 0);
