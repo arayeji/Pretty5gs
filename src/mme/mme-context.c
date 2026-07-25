@@ -8642,9 +8642,12 @@ ogs_session_t *mme_default_session(mme_ue_t *mme_ue)
  * is preserved by inserting hash keys first-come and taking the minimum of
  * the hash hit and the range hit.
  *
- * All writers (config parse, SIGHUP reload, admin TAC hot-add) and all
- * readers run on the MME main thread, so a dirty flag with lazy rebuild
- * needs no locking.
+ * Writers (config parse, SIGHUP reload, admin TAC hot-add) mutate
+ * served_tai[] and rebuild this hash. With mme.workers, readers run on
+ * UE-owner shards concurrently - a SIGHUP that memset/frees list0 while a
+ * worker is in mme_find_served_tai() wedges the main thread (reload) and
+ * then crashes the worker (UAF / double-free of the hash arena). All
+ * find/rebuild/replace paths therefore take mme_ctx_lock() (recursive).
  */
 typedef struct served_tai_key_s {
     uint8_t     plmn_id[OGS_PLMN_ID_LEN];
@@ -8667,6 +8670,7 @@ void mme_served_tai_map_invalidate(void)
 
 void mme_served_tai_map_final(void)
 {
+    mme_ctx_lock();
     if (served_tai_hash) {
         ogs_hash_destroy(served_tai_hash);
         served_tai_hash = NULL;
@@ -8677,6 +8681,7 @@ void mme_served_tai_map_final(void)
     }
     served_tai_num_keys = served_tai_max_keys = 0;
     served_tai_hash_dirty = true;
+    mme_ctx_unlock();
 }
 
 static void served_tai_key_build(
@@ -8780,6 +8785,8 @@ int mme_find_served_tai(ogs_eps_tai_t *tai)
 
     ogs_assert(tai);
 
+    mme_ctx_lock();
+
     if (served_tai_hash_dirty || !served_tai_hash)
         served_tai_hash_rebuild();
 
@@ -8814,6 +8821,7 @@ int mme_find_served_tai(ogs_eps_tai_t *tai)
         }
     }
 
+    mme_ctx_unlock();
     return best;
 }
 

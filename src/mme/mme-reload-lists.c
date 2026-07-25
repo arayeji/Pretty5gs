@@ -202,6 +202,7 @@ static void reload_served_tai_clear_all(void)
     mme_context_t *self = mme_self();
     int i;
 
+    mme_ctx_lock();
     for (i = 0; i < OGS_MAX_NUM_OF_SUPPORTED_TA; i++) {
         if (self->served_tai[i].list0) {
             ogs_free(self->served_tai[i].list0);
@@ -212,6 +213,7 @@ static void reload_served_tai_clear_all(void)
     memset(self->served_tai, 0, sizeof(self->served_tai));
     self->num_of_served_tai = 0;
     mme_served_tai_map_invalidate();
+    mme_ctx_unlock();
 }
 
 static int reload_served_tai_add_one(
@@ -221,6 +223,7 @@ static int reload_served_tai_add_one(
     ogs_eps_tai_t tai;
     ogs_eps_tai2_list_t *list2 = NULL;
     int i;
+    int added = 0;
 
     ogs_assert(plmn_id);
 
@@ -228,8 +231,12 @@ static int reload_served_tai_add_one(
     memcpy(&tai.plmn_id, plmn_id, OGS_PLMN_ID_LEN);
     tai.tac = tac;
 
-    if (mme_find_served_tai(&tai) >= 0)
+    mme_ctx_lock();
+
+    if (mme_find_served_tai(&tai) >= 0) {
+        mme_ctx_unlock();
         return 0;
+    }
 
     for (i = 0; i < self->num_of_served_tai; i++) {
         list2 = &self->served_tai[i].list2;
@@ -246,13 +253,14 @@ static int reload_served_tai_add_one(
         mme_reload_lists_changed++;
         ogs_reload_audit_note(" served TAI added PLMN=%06x TAC=0x%04x",
                 ogs_plmn_id_hexdump(plmn_id), tac);
-        return 1;
+        added = 1;
+        goto out;
     }
 
     if (self->num_of_served_tai >= OGS_MAX_NUM_OF_SUPPORTED_TA) {
         ogs_reload_audit_warn("served TAI list full (max %d)",
                 OGS_MAX_NUM_OF_SUPPORTED_TA);
-        return 0;
+        goto out;
     }
 
     i = self->num_of_served_tai;
@@ -267,7 +275,11 @@ static int reload_served_tai_add_one(
     mme_reload_lists_changed++;
     ogs_reload_audit_note(" served TAI added PLMN=%06x TAC=0x%04x",
             ogs_plmn_id_hexdump(plmn_id), tac);
-    return 1;
+    added = 1;
+
+out:
+    mme_ctx_unlock();
+    return added;
 }
 
 static int reload_served_tai_add_range(
@@ -1022,14 +1034,22 @@ static int reload_served_tai_replace(ogs_yaml_iter_t *mme_iter)
      * Detach the current TAI table into a backup so a bad/empty `tai:`
      * section can be rejected instead of leaving the MME with zero
      * served TAIs (which would reject every attach).
+     *
+     * Hold mme_ctx_lock across the swap: with mme.workers, UE shards
+     * call mme_find_served_tai() concurrently. Clearing list0 without
+     * the lock races those readers (wedge on main + UAF crash on the
+     * worker) - the failure mode observed after SIGHUP under load.
      */
     backup = ogs_malloc(sizeof(self->served_tai));
     ogs_assert(backup);
+
+    mme_ctx_lock();
     memcpy(backup, self->served_tai, sizeof(self->served_tai));
     backup_num = self->num_of_served_tai;
 
     memset(self->served_tai, 0, sizeof(self->served_tai));
     self->num_of_served_tai = 0;
+    mme_served_tai_map_invalidate();
 
     added = reload_served_tai_add_from_yaml(mme_iter);
 
@@ -1039,6 +1059,7 @@ static int reload_served_tai_replace(ogs_yaml_iter_t *mme_iter)
         memcpy(self->served_tai, backup, sizeof(self->served_tai));
         self->num_of_served_tai = backup_num;
         mme_served_tai_map_invalidate();
+        mme_ctx_unlock();
         ogs_free(backup);
         ogs_reload_audit_warn(
                 "tai yielded no entries; previous served TAI list kept");
@@ -1049,10 +1070,11 @@ static int reload_served_tai_replace(ogs_yaml_iter_t *mme_iter)
         if (backup[i].list0)
             ogs_free(backup[i].list0);
     }
-    ogs_free(backup);
-
     mme_served_tai_map_invalidate();
     mme_reload_lists_changed++;
+    mme_ctx_unlock();
+
+    ogs_free(backup);
     ogs_reload_audit_note(" served TAI replaced (%d TAC entries)", added);
 
     return added;

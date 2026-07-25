@@ -48,7 +48,13 @@ static void mme_sighup_handler(void)
     int rv;
 
     e = mme_event_new(MME_EVENT_CONFIG_RELOAD);
-    ogs_assert(e);
+    if (!e) {
+        /* Under load the event pool can be empty; asserting here aborted
+         * the whole MME on an otherwise recoverable SIGHUP. */
+        ogs_error("SIGHUP: mme_event_new(CONFIG_RELOAD) failed - "
+                "config reload skipped");
+        return;
+    }
 
     rv = ogs_queue_push(ogs_app()->queue, e);
     if (rv != OGS_OK) {
