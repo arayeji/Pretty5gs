@@ -206,6 +206,8 @@ int nas_eps_send_attach_accept(mme_ue_t *mme_ue)
     if (!s1apbuf) {
         ogs_error("[%s] s1ap_build_initial_context_setup_request() failed",
                 mme_ue->imsi_bcd);
+        /* Builder did not consume emmbuf on failure — free it here. */
+        ogs_pkbuf_free(emmbuf);
         mme_ue_progress(mme_ue, "attach_accept_fail");
         return OGS_ERROR;
     }
@@ -240,8 +242,8 @@ int nas_eps_resend_t3450_initial_context(mme_ue_t *mme_ue)
     }
 
     /*
-     * s1ap_build_initial_context_setup_request() takes ownership of emmbuf
-     * and frees it. Keep mme_ue->t3450.pkbuf for further T3450 retries.
+     * Builder consumes emmbuf only on success (copied into E-RAB NAS-PDU).
+     * Keep mme_ue->t3450.pkbuf for further T3450 retries.
      * Atomic take: a plain read races CLEAR_MME_UE_TIMER from the main
      * thread (ICS Failure) freeing the buffer under us.
      */
@@ -257,6 +259,7 @@ int nas_eps_resend_t3450_initial_context(mme_ue_t *mme_ue)
     s1apbuf = s1ap_build_initial_context_setup_request(mme_ue, emmbuf);
     if (!s1apbuf) {
         ogs_error("s1ap_build_initial_context_setup_request() failed");
+        ogs_pkbuf_free(emmbuf);
         return OGS_ERROR;
     }
 

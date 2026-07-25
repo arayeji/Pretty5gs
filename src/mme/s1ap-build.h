@@ -39,6 +39,8 @@ ogs_pkbuf_t *s1ap_build_enb_configuration_update_failure(
 ogs_pkbuf_t *s1ap_build_downlink_nas_transport(
     enb_ue_t *enb_ue, ogs_pkbuf_t *emmbuf);
 
+/* On success, consumes/frees emmbuf once embedded in an E-RAB NAS-PDU.
+ * On failure (NULL), caller retains ownership of emmbuf. */
 ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
     mme_ue_t *mme_ue, ogs_pkbuf_t *emmbuf);
 ogs_pkbuf_t *s1ap_build_ue_context_modification_request(mme_ue_t *mme_ue);

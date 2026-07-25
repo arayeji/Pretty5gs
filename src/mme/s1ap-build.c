@@ -760,13 +760,9 @@ ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
                 mme_ue->imsi_bcd);
     }
 
-    if (emmbuf && emmbuf->len) {
-        ogs_error("NAS message without session/bearer");
-        ogs_pkbuf_free(emmbuf);
-        emmbuf = NULL;
-    }
-
     if (!E_RABToBeSetupListCtxtSUReq->list.count) {
+        if (emmbuf && emmbuf->len)
+            ogs_error("NAS message without session/bearer");
         ogs_list_for_each(&mme_ue->sess_list, sess) {
             ogs_error("    APN[%s]",
                     sess->session ? sess->session->name : "Unknown");
@@ -788,6 +784,11 @@ ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
         ogs_error("Before ogs_s1ap_free()");
         ogs_s1ap_free(&pdu);
         ogs_error("After ogs_s1ap_free()");
+        /*
+         * Do NOT free emmbuf here. Ownership stays with the caller so
+         * TAU Accept can fall back to DownlinkNASTransport. Only free
+         * emmbuf once it has been copied into an E-RAB NAS-PDU above.
+         */
         return NULL;
     }
 
