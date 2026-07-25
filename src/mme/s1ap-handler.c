@@ -3557,6 +3557,7 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
 {
     mme_enb_t *target_enb = NULL;
     uint32_t target_enb_id = 0;
+    S1AP_ENB_ID_PR target_enb_id_pr = S1AP_ENB_ID_PR_NOTHING;
     mme_ue_t *mme_ue = NULL;
     int r;
 
@@ -3579,6 +3580,8 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
 
     switch (TargetID->present) {
     case S1AP_TargetID_PR_targeteNB_ID:
+        target_enb_id_pr =
+            TargetID->choice.targeteNB_ID->global_ENB_ID.eNB_ID.present;
         ogs_s1ap_ENB_ID_to_uint32(
             &TargetID->choice.targeteNB_ID->global_ENB_ID.eNB_ID,
             &target_enb_id);
@@ -3593,9 +3596,42 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
     }
 
     target_enb = mme_enb_find_by_enb_id(target_enb_id);
+
+    /*
+     * Tolerate the common macro/home eNB-ID encoding mismatch: a
+     * 28-bit home eNB ID is the 20-bit macro eNB ID shifted left by
+     * 8 bits (with the cell part appended). Some eNB vendors encode
+     * the target in Handover Required with a different choice than
+     * the target eNB used in its own S1 Setup Request, so the direct
+     * lookup misses even though the eNB is attached to this MME.
+     */
     if (target_enb == NULL) {
-        ogs_warn("Handover required : cannot find target eNB-id[0x%x] IMSI[%s]",
-                    target_enb_id, mme_ue->imsi_bcd);
+        if (target_enb_id_pr == S1AP_ENB_ID_PR_homeENB_ID) {
+            target_enb = mme_enb_find_by_enb_id(target_enb_id >> 8);
+            if (target_enb)
+                ogs_info("Handover required : target eNB-id[0x%x] matched "
+                        "as macro id[0x%x] (home->macro fallback)",
+                        target_enb_id, target_enb_id >> 8);
+        } else if (target_enb_id_pr == S1AP_ENB_ID_PR_macroENB_ID) {
+            uint32_t low;
+            for (low = 0; low < 0x100 && target_enb == NULL; low++)
+                target_enb = mme_enb_find_by_enb_id(
+                        (target_enb_id << 8) | low);
+            if (target_enb)
+                ogs_info("Handover required : target eNB-id[0x%x] matched "
+                        "as home id[0x%x] (macro->home fallback)",
+                        target_enb_id, (target_enb_id << 8) | (low - 1));
+        }
+    }
+
+    if (target_enb == NULL) {
+        ogs_warn("Handover required : cannot find target eNB-id[0x%x] "
+                "(%s) IMSI[%s]",
+                target_enb_id,
+                target_enb_id_pr == S1AP_ENB_ID_PR_homeENB_ID ? "Home" :
+                target_enb_id_pr == S1AP_ENB_ID_PR_macroENB_ID ? "Macro" :
+                "Other",
+                mme_ue->imsi_bcd);
         r = s1ap_send_handover_preparation_failure(source_ue,
                 S1AP_Cause_PR_radioNetwork,
                 S1AP_CauseRadioNetwork_unknown_targetID);

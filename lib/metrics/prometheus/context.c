@@ -49,6 +49,115 @@
 static void free_callback(void *cls) { ogs_free(cls); }
 #endif
 
+/*
+ * Wall-clock epoch recorded when the metrics context initializes.
+ * Fallback for metrics_real_start_time() on non-Linux or /proc failure.
+ */
+static double metrics_init_epoch = 0.0;
+
+/*
+ * libprom's process collector exports the raw 'starttime' field of
+ * /proc/self/stat (clock ticks since boot) as process_start_time_seconds,
+ * which renders as a 1970s timestamp. The proper value is
+ * boot_time_epoch + starttime / CLK_TCK. The collector lives in the
+ * prometheus-client-c subproject (not tracked in this repo), so compute
+ * the correct value here and patch the scrape output before serving it.
+ */
+static double metrics_real_start_time(void)
+{
+    static double cached = 0.0;
+
+    if (cached > 0.0)
+        return cached;
+
+#ifdef __linux__
+    {
+        double btime = 0.0;
+        unsigned long long start_ticks = 0;
+        long hz;
+        FILE *fp;
+        char line[1024];
+
+        fp = fopen("/proc/stat", "r");
+        if (fp) {
+            while (fgets(line, sizeof(line), fp)) {
+                if (sscanf(line, "btime %lf", &btime) == 1)
+                    break;
+            }
+            fclose(fp);
+        }
+
+        fp = fopen("/proc/self/stat", "r");
+        if (fp) {
+            if (fgets(line, sizeof(line), fp)) {
+                /* comm (field 2) may contain spaces; skip past ") " */
+                char *p = strrchr(line, ')');
+                if (p && p[1]) {
+                    int field = 2;
+                    char *save = NULL;
+                    char *tok = strtok_r(p + 2, " ", &save);
+                    while (tok && ++field < 22)
+                        tok = strtok_r(NULL, " ", &save);
+                    if (tok && field == 22)
+                        start_ticks = strtoull(tok, NULL, 10);
+                }
+            }
+            fclose(fp);
+        }
+
+        hz = sysconf(_SC_CLK_TCK);
+        if (btime > 0.0 && hz > 0)
+            cached = btime + (double)start_ticks / (double)hz;
+    }
+#endif
+
+    if (cached <= 0.0)
+        cached = metrics_init_epoch > 0.0 ?
+            metrics_init_epoch : (double)time(NULL);
+
+    return cached;
+}
+
+/*
+ * Returns a malloc()ed copy of 'buf' with the process_start_time_seconds
+ * sample value replaced by the real start epoch, or NULL when nothing
+ * needed patching (caller then serves 'buf' unchanged).
+ */
+static char *metrics_patch_process_start_time(const char *buf)
+{
+    static const char needle[] = "process_start_time_seconds ";
+    const char *line, *val_end;
+    char *out;
+    char val[32];
+    size_t prefix_len, val_len, suffix_len;
+
+    /* Match only at line start; skips the '# HELP'/'# TYPE' lines. */
+    line = strstr(buf, needle);
+    while (line && line != buf && line[-1] != '\n')
+        line = strstr(line + 1, needle);
+    if (!line)
+        return NULL;
+
+    prefix_len = (size_t)(line - buf) + sizeof(needle) - 1;
+    val_end = buf + prefix_len;
+    while (*val_end && *val_end != '\n')
+        val_end++;
+    suffix_len = strlen(val_end);
+
+    val_len = (size_t)snprintf(val, sizeof(val), "%.2f",
+            metrics_real_start_time());
+
+    out = malloc(prefix_len + val_len + suffix_len + 1);
+    if (!out)
+        return NULL;
+
+    memcpy(out, buf, prefix_len);
+    memcpy(out + prefix_len, val, val_len);
+    memcpy(out + prefix_len + val_len, val_end, suffix_len + 1);
+
+    return out;
+}
+
 typedef struct ogs_metrics_server_s {
     ogs_socknode_t node;
     struct MHD_Daemon *mhd;
@@ -615,12 +724,21 @@ mhd_server_access_handler(void *cls, struct MHD_Connection *connection,
                     "metrics bridge failed\n");
         }
 
-        size_t len = strlen(buf);
+        /*
+         * Fix libprom's bogus process_start_time_seconds (raw clock
+         * ticks since boot instead of a unix epoch). Serves the patched
+         * copy when the rewrite succeeds, the original otherwise.
+         */
+        char *patched = metrics_patch_process_start_time(buf);
+        const char *body = patched ? patched : buf;
+
+        size_t len = strlen(body);
         rsp = MHD_create_response_from_buffer(
-                len, (void *)buf, MHD_RESPMEM_MUST_COPY);
+                len, (void *)body, MHD_RESPMEM_MUST_COPY);
         if (!rsp) {
             ogs_error("/metrics: MHD_create_response_from_buffer failed "
                     "(len=%zu)", len);
+            free(patched);
             prom_free((void *)buf);
             return (_MHD_Result)MHD_NO;
         }
@@ -628,6 +746,7 @@ mhd_server_access_handler(void *cls, struct MHD_Connection *connection,
                 "text/plain; version=0.0.4; charset=utf-8");
         ret = MHD_queue_response(connection, MHD_HTTP_OK, rsp);
         MHD_destroy_response(rsp);
+        free(patched);
         prom_free((void *)buf);
 
         ogs_time_t dt = ogs_time_now() - t0;
@@ -941,6 +1060,8 @@ void ogs_metrics_spec_init(ogs_metrics_context_t *ctx)
 {
     ogs_list_init(&ctx->spec_list);
     ogs_pool_init(&metrics_spec_pool, ogs_app()->metrics.max_specs);
+    if (metrics_init_epoch <= 0.0)
+        metrics_init_epoch = (double)time(NULL);
     prom_collector_registry_default_init();
 }
 

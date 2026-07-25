@@ -518,6 +518,14 @@ struct enb_ue_s {
     ogs_pool_id_t   id;
     uint32_t        index;
 
+    /*
+     * Set once inside enb_ue_remove() under mme_ctx_lock. Makes removal
+     * exactly-once: a second (racing or stale-pointer) enb_ue_remove()
+     * returns early instead of double-freeing the pool object and
+     * double-decrementing the enb_ue gauge (which had gone negative).
+     */
+    bool            being_removed;
+
     /* UE identity */
 #define INVALID_UE_S1AP_ID      0xffffffff /* Initial value of enb_ue_s1ap_id */
     uint32_t        enb_ue_s1ap_id; /* eNB-UE-S1AP-ID received from eNB */

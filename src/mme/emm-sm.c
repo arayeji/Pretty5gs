@@ -454,6 +454,16 @@ void emm_state_registered(ogs_fsm_t *s, mme_event_t *e)
 
     switch (e->id) {
     case OGS_FSM_ENTRY_SIG:
+        /*
+         * Keep the mme_ue_registered gauge in sync with EMM-REGISTERED.
+         * Counting only on Attach Complete undercounted badly: UEs that
+         * (re)register via TAU - the dominant path after an MME restart,
+         * and one that often completes without a TAU Complete when no
+         * GUTI is reallocated - never hit the attach path. The increment
+         * itself is idempotent per context (metrics_registered flag), so
+         * repeated entries are harmless.
+         */
+        mme_metrics_ue_registered_inc(mme_ue);
         break;
     case OGS_FSM_EXIT_SIG:
         break;
@@ -2165,19 +2175,6 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
             }
 
             mme_metrics_attach_success(mme_ue);
-            /*
-             * Count each UE context in the mme_ue_registered gauge at most
-             * once. The same mme_ue is reused across re-attaches (a new Attach
-             * Request on a live context flows back through attach-complete
-             * here), but the gauge is only decremented once on context removal
-             * (mme_metrics_on_ue_remove, gated by metrics_registered). Without
-             * this guard every re-attach leaked +1, inflating the gauge far
-             * above the real number of attached UEs.
-             */
-            if (!mme_ue->metrics_registered) {
-                mme_metrics_ue_registered_inc(mme_ue);
-                mme_ue->metrics_registered = true;
-            }
 
             OGS_FSM_TRAN(s, &emm_state_registered);
             break;

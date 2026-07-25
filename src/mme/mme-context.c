@@ -5946,6 +5946,26 @@ void enb_ue_remove(enb_ue_t *enb_ue)
     ogs_assert(enb_ue);
 
     /*
+     * Exactly-once removal. Multiple paths (S1 release, S1 holding timer,
+     * LRU eviction, Delete-Session response, NAS error paths) can race or
+     * hold a stale pointer to the same enb_ue. A second remove used to
+     * double-free the pool slot and double-decrement the enb_ue gauge,
+     * driving it negative. Validate the pointer is still the live pool
+     * object AND claim the removal flag under the same lock.
+     */
+    mme_ctx_lock();
+    if (ogs_pool_find_by_id(&enb_ue_pool, enb_ue->id) != enb_ue ||
+            enb_ue->being_removed) {
+        mme_ctx_unlock();
+        ogs_error("enb_ue_remove() ignored: context already removed "
+                "or removal in progress (ENB_UE_S1AP_ID[%u])",
+                enb_ue->enb_ue_s1ap_id);
+        return;
+    }
+    enb_ue->being_removed = true;
+    mme_ctx_unlock();
+
+    /*
      * Mark the owning mme_ue as IDLE for the LRU eviction path. If the
      * mme_ue is also being torn down (detach / implicit detach), its
      * mme_ue_remove() runs immediately after this and the field is

@@ -300,6 +300,12 @@ static void mme_metrics_inst_by_plmn_ho_add(ogs_plmn_id_t *plmn,
         ogs_snprintf(cause_value_str, sizeof(cause_value_str), "%ld",
                 cause_value);
 
+        /*
+         * The label-value array must match the spec: attempt/success use
+         * the 2-label (plmnid, type) spec, fail uses the full 4-label one.
+         * Passing extra values would export series that don't match the
+         * declared label set.
+         */
         metrics = ogs_metrics_inst_new(mme_metrics_spec_by_plmn_ho[t],
                 mme_metrics_spec_def_by_plmn_ho[t].num_labels,
                 (const char *[]){
@@ -863,6 +869,16 @@ void mme_metrics_ue_registered_inc(mme_ue_t *mme_ue)
 {
     ogs_plmn_id_t plmn_id;
 
+    /*
+     * Count each UE context at most once: the flag is only cleared by
+     * mme_metrics_on_ue_remove(). Guarding here (instead of at every
+     * call site) also keeps the flag consistent with the actual
+     * increment - a caller-side flag set on a failed PLMN derivation
+     * would permanently block the increment for that context.
+     */
+    if (mme_ue->metrics_registered)
+        return;
+
     if (!mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
         return;
 
@@ -877,6 +893,7 @@ void mme_metrics_ue_registered_inc(mme_ue_t *mme_ue)
      */
     mme_ue->metrics_plmn_id = plmn_id;
     mme_ue->metrics_plmn_valid = true;
+    mme_ue->metrics_registered = true;
 }
 
 static const char *mme_metrics_detach_reason(mme_ue_t *mme_ue)
@@ -915,6 +932,7 @@ void mme_metrics_on_ue_remove(mme_ue_t *mme_ue)
                 MME_METR_BY_PLMN_GAUGE_UE_REGISTERED, -1);
         mme_ue->metrics_plmn_valid = false;
     }
+    mme_ue->metrics_registered = false;
 
     mme_metrics_inst_by_reason_add(mme_metrics_detach_reason(mme_ue),
             MME_METR_BY_REASON_CTR_UE_LOST, 1);
@@ -1281,6 +1299,17 @@ const char *labels_plmn_ho[] = {
     "cause_value"
 };
 
+/*
+ * Attempt/success counters carry no failure cause, so they get a
+ * 2-label spec. Exporting them with constant cause_group="none",
+ * cause_value="0" labels only bloated the series and slowed PromQL
+ * joins against mme_ho_fail_total.
+ */
+const char *labels_plmn_ho_nocause[] = {
+    "plmnid",
+    "type"
+};
+
 #define MME_METR_BY_PLMN_HO_CTR_ENTRY(_id, _name, _desc) \
     [_id] = { \
         .type = OGS_METRICS_METRIC_TYPE_COUNTER, \
@@ -1290,15 +1319,24 @@ const char *labels_plmn_ho[] = {
         .labels = labels_plmn_ho, \
     },
 
+#define MME_METR_BY_PLMN_HO_NOCAUSE_CTR_ENTRY(_id, _name, _desc) \
+    [_id] = { \
+        .type = OGS_METRICS_METRIC_TYPE_COUNTER, \
+        .name = _name, \
+        .description = _desc, \
+        .num_labels = OGS_ARRAY_SIZE(labels_plmn_ho_nocause), \
+        .labels = labels_plmn_ho_nocause, \
+    },
+
 ogs_metrics_spec_t *mme_metrics_spec_by_plmn_ho[_MME_METR_BY_PLMN_HO_MAX];
 ogs_hash_t *metrics_hash_by_plmn_ho = NULL;
 mme_metrics_spec_def_t mme_metrics_spec_def_by_plmn_ho[_MME_METR_BY_PLMN_HO_MAX] = {
-MME_METR_BY_PLMN_HO_CTR_ENTRY(
+MME_METR_BY_PLMN_HO_NOCAUSE_CTR_ENTRY(
     MME_METR_BY_PLMN_HO_CTR_ATTEMPT,
     "mme_ho_attempt_total",
     "Handover preparation attempts per IMSI PLMN and HO type "
     "(TS 32.410: counted on Handover Required / Path Switch Request)")
-MME_METR_BY_PLMN_HO_CTR_ENTRY(
+MME_METR_BY_PLMN_HO_NOCAUSE_CTR_ENTRY(
     MME_METR_BY_PLMN_HO_CTR_SUCCESS,
     "mme_ho_success_total",
     "Successful handovers per IMSI PLMN and HO type "
