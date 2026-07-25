@@ -8665,23 +8665,30 @@ static int served_tai_max_keys = 0;
 
 void mme_served_tai_map_invalidate(void)
 {
+    /* Callers that mutate served_tai[] must already hold mme_ctx_lock.
+     * Readers observe the dirty flag under the same lock in
+     * mme_find_served_tai(), so a plain store is enough. */
     served_tai_hash_dirty = true;
 }
 
 void mme_served_tai_map_final(void)
 {
+    ogs_hash_t *old_hash;
+    served_tai_key_t *old_keys;
+
     mme_ctx_lock();
-    if (served_tai_hash) {
-        ogs_hash_destroy(served_tai_hash);
-        served_tai_hash = NULL;
-    }
-    if (served_tai_keys) {
-        ogs_free(served_tai_keys);
-        served_tai_keys = NULL;
-    }
+    old_hash = served_tai_hash;
+    old_keys = served_tai_keys;
+    served_tai_hash = NULL;
+    served_tai_keys = NULL;
     served_tai_num_keys = served_tai_max_keys = 0;
     served_tai_hash_dirty = true;
     mme_ctx_unlock();
+
+    if (old_hash)
+        ogs_hash_destroy(old_hash);
+    if (old_keys)
+        ogs_free(old_keys);
 }
 
 static void served_tai_key_build(
@@ -8714,16 +8721,25 @@ static void served_tai_hash_rebuild(void)
 {
     int i, j, k;
     int capacity = 0;
+    ogs_hash_t *old_hash;
+    served_tai_key_t *old_keys;
 
-    if (served_tai_hash) {
-        ogs_hash_destroy(served_tai_hash);
-        served_tai_hash = NULL;
-    }
-    if (served_tai_keys) {
-        ogs_free(served_tai_keys);
-        served_tai_keys = NULL;
-    }
+    /*
+     * Take-and-null before free so a racing rebuild (should not happen
+     * under mme_ctx_lock, but did under SIGHUP before the lock) cannot
+     * double-destroy the same hash and trip talloc bad-magic abort.
+     */
+    old_hash = served_tai_hash;
+    old_keys = served_tai_keys;
+    served_tai_hash = NULL;
+    served_tai_keys = NULL;
     served_tai_num_keys = 0;
+    served_tai_max_keys = 0;
+
+    if (old_hash)
+        ogs_hash_destroy(old_hash);
+    if (old_keys)
+        ogs_free(old_keys);
 
     /* worst-case number of exact TACs across all entries */
     for (i = 0; i < self.num_of_served_tai; i++) {

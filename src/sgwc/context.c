@@ -3070,7 +3070,18 @@ void sgwc_bearer_urr_setup(sgwc_bearer_t *bearer)
     if (bearer->urr) return;
 
     urr = ogs_pfcp_urr_add(&sess->pfcp);
-    ogs_assert(urr);
+    if (!urr) {
+        /*
+         * Per-session URR id pool is only OGS_MAX_NUM_OF_URR (16). If
+         * bearers are recycled without freeing their URR, the pool
+         * exhausts and the old ogs_assert(urr) aborted the whole SGW-C.
+         * Skip CDR for this bearer instead of taking down the daemon.
+         */
+        ogs_error("sgwc_bearer_urr_setup: URR alloc failed "
+                "(sess_id=%d ebi=%d) - CDR disabled for this bearer",
+                sess->id, bearer->ebi);
+        return;
+    }
     bearer->urr = urr;
 
     urr->meas_method = OGS_PFCP_MEASUREMENT_METHOD_VOLUME |
@@ -3084,8 +3095,14 @@ void sgwc_bearer_urr_setup(sgwc_bearer_t *bearer)
 
     dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
     ul_tunnel = sgwc_ul_tunnel_in_bearer(bearer);
-    ogs_assert(dl_tunnel && dl_tunnel->pdr);
-    ogs_assert(ul_tunnel && ul_tunnel->pdr);
+    if (!dl_tunnel || !dl_tunnel->pdr || !ul_tunnel || !ul_tunnel->pdr) {
+        ogs_error("sgwc_bearer_urr_setup: missing DL/UL PDR "
+                "(sess_id=%d ebi=%d) - releasing URR",
+                sess->id, bearer->ebi);
+        ogs_pfcp_urr_remove(urr);
+        bearer->urr = NULL;
+        return;
+    }
 
     ogs_pfcp_pdr_associate_urr(dl_tunnel->pdr, urr);
     ogs_pfcp_pdr_associate_urr(ul_tunnel->pdr, urr);
@@ -3103,6 +3120,15 @@ int sgwc_bearer_remove(sgwc_bearer_t *bearer)
     ogs_list_remove(&sess->bearer_list, bearer);
 
     sgwc_tunnel_remove_all(bearer);
+
+    /* Return the CDR URR id to the per-session pool; otherwise repeated
+     * bearer create/delete on the same session exhausts urr_id_pool and
+     * used to abort in sgwc_bearer_urr_setup(). */
+    if (bearer->urr) {
+        ogs_pfcp_urr_remove(bearer->urr);
+        bearer->urr = NULL;
+        bearer->urr_created = false;
+    }
 
     ogs_pool_id_free(&sgwc_bearer_pool, bearer);
     sgwc_ctx_unlock();
