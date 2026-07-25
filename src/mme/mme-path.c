@@ -213,6 +213,34 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
          */
         if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
             continue;
+
+        /*
+         * Safety net for "parked" UEs: a REGISTERED, ECM-IDLE context
+         * must always have either the mobile-reachable or the implicit
+         * detach timer running - that chain is the ONLY thing that ever
+         * reclaims an idle subscriber (the purge below deliberately
+         * skips contexts with live sessions). If a release path failed
+         * to arm it (e.g. an SGs detach that was swallowed, a race on
+         * S1 release, or a historic bug), the UE would otherwise stay
+         * registered forever and ue_count grows without bound. Restart
+         * the chain here; the UE is implicit-detached after
+         * mobile-reachable + implicit-detach expire unless it contacts
+         * the network first (which stops the timers as usual).
+         */
+        if (do_purge &&
+                OGS_FSM_CHECK(&mme_ue->sm, emm_state_registered) &&
+                ECM_IDLE(mme_ue) &&
+                !MME_PAGING_ONGOING(mme_ue) &&
+                mme_ue->t_mobile_reachable.timer &&
+                !mme_ue->t_mobile_reachable.timer->running &&
+                mme_ue->t_implicit_detach.timer &&
+                !mme_ue->t_implicit_detach.timer->running) {
+            ogs_warn("orphan sweep: parked UE imsi=%s - restarting "
+                    "mobile-reachable chain",
+                    mme_ue->imsi_bcd[0] ? mme_ue->imsi_bcd : "-");
+            mme_mobile_reachable_start(mme_ue);
+        }
+
         /*
          * A live ESM session means this is a real subscriber (ECM-IDLE
          * or not). Only reclaim contexts with no session at all — that
@@ -977,8 +1005,17 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
             if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
-                if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
-                    ogs_error("sgsap_send_detach_indication() failed");
+                if (sgsap_send_detach_indication(mme_ue) != OGS_OK) {
+                    enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+                    /* VLR/SGs down: continue the EPS-side detach so
+                     * the context is not parked forever. */
+                    ogs_error("sgsap_send_detach_indication() failed - "
+                            "proceeding with EPS detach");
+                    if (enb_ue)
+                        mme_send_delete_session_or_detach(enb_ue, mme_ue);
+                    else
+                        ogs_warn("ENB-S1 Context has already been removed");
+                }
             } else {
                 enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
                 if (enb_ue)
@@ -1260,10 +1297,22 @@ void mme_mobile_reachable_start(mme_ue_t *mme_ue)
 {
     ogs_assert(mme_ue);
 
-    CLEAR_MME_UE_ALL_TIMERS(mme_ue);
-
+    /*
+     * Only act on REGISTERED contexts. The old code cleared ALL UE
+     * timers first and then bailed out for non-registered states:
+     * a UE that lost S1 in the middle of a procedure (authentication,
+     * security mode, initial context setup, MME-initiated detach) had
+     * its T3450/T3460/T3470/T3422 retransmission timers killed with
+     * nothing restarted, so the procedure could never time out into
+     * emm_state_exception and the context was parked forever - the
+     * slow, unbounded ue_count growth. Leave in-procedure timers
+     * alone; their expiry drives the FSM to exception, whose entry
+     * hook bounds the context lifetime.
+     */
     if (!OGS_FSM_CHECK(&mme_ue->sm, emm_state_registered))
         return;
+
+    CLEAR_MME_UE_ALL_TIMERS(mme_ue);
 
     ogs_info("Mobile Reachable timer started for IMSI[%s]",
             mme_ue->imsi_bcd);

@@ -442,8 +442,17 @@ void mme_s6a_handle_clr(mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
             ogs_expect(r == OGS_OK);
             ogs_assert(r != OGS_ERROR);
             if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
-                if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
-                    ogs_error("sgsap_send_detach_indication() failed");
+                if (sgsap_send_detach_indication(mme_ue) != OGS_OK) {
+                    enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+                    /* VLR/SGs down: continue the EPS-side detach so
+                     * the context is not parked forever. */
+                    ogs_error("sgsap_send_detach_indication() failed - "
+                            "proceeding with EPS detach");
+                    if (enb_ue)
+                        mme_send_delete_session_or_detach(enb_ue, mme_ue);
+                    else
+                        ogs_warn("ENB-S1 Context has already been removed");
+                }
             } else {
                 enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
                 if (enb_ue)
@@ -472,8 +481,17 @@ void mme_s6a_handle_clr(mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
          * So, we don't have to check whether UE is IDLE or not.
          */
         if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
-            if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
-                ogs_error("sgsap_send_detach_indication() failed");
+            if (sgsap_send_detach_indication(mme_ue) != OGS_OK) {
+                enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+                /* VLR/SGs down: continue the EPS-side detach so the
+                 * context is not parked forever. */
+                ogs_error("sgsap_send_detach_indication() failed - "
+                        "proceeding with EPS detach");
+                if (enb_ue)
+                    mme_send_delete_session_or_detach(enb_ue, mme_ue);
+                else
+                    ogs_warn("ENB-S1 Context has already been removed");
+            }
         } else {
             enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
             if (enb_ue)
