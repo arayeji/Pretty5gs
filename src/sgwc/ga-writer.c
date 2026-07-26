@@ -512,14 +512,20 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
         ber_end(&b, m);
     }
 
+    /*
+     * [36] p-GWAddressUsed is a GSNAddress (= IPAddress CHOICE), so it
+     * encodes directly as [36]{ [0] 4-byte OCTET STRING } — same shape
+     * as [4] and [6]. The previous extra constructed [0] wrapper
+     * ([36]{[0]{[0]}}) made Huawei-style CGF decoders misread the inner
+     * TLV header bytes as part of the address (seen as a garbled /
+     * "reversed" PGW IP on the GA). Verified against Huawei reference
+     * captures which emit [36]{[0]} with identical address bytes.
+     */
     {
         uint32_t pgw_addr = gsn_ipv4_from_gnode(sess->gnode);
 
-        if (pgw_addr) {
-            size_t m = ber_begin_ctx(&b, 36);
-            encode_gsn_address_v4(&b, 0, pgw_addr);
-            ber_end(&b, m);
-        }
+        if (pgw_addr)
+            encode_gsn_address_v4(&b, 36, pgw_addr);
     }
 
     {
