@@ -224,6 +224,15 @@ mme:
     # force_yaml: true          # same as mode: force (global)
     dns:
       enabled: false            # set true for TS 29.303 APN-FQDN discovery
+    # Per-APN policy rules (no PGW address needed). mode: dns resolves the
+    # PGW via APN DNS only, ignoring HSS MIP6 and gtpc.client.smf. Runs
+    # even when dns.enabled above is false. Match keys AND together
+    # (apn / imsi_prefix / serving_plmn_id / imsi_plmn_id).
+    # fallback on DNS failure: none (reject, default) | hss | yaml
+    # rules:
+    #   - apn: mtnirancell
+    #     mode: dns
+    #     fallback: none
 
 # --- Full parameter reference (upstream yaml.in; active lines commented) ---
 #logger:

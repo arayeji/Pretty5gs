@@ -1831,6 +1831,10 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
                         self->pgw_selection.dns_enabled =
                             ogs_yaml_iter_bool(&dns_iter);
                 }
+            } else if (!strcmp(psk, "rules")) {
+                int n = mme_pgw_sel_rules_parse(&pgw_sel_iter);
+
+                ogs_reload_audit_note(" pgw_selection rules=%d", n);
             }
         }
         mme_reload_lists_changed++;

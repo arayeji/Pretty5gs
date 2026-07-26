@@ -174,6 +174,8 @@ typedef struct mme_context_s {
     struct {
         bool force_yaml;
         bool dns_enabled;
+        /* pgw_selection.rules — see mme_pgw_sel_rule_t. */
+        ogs_list_t rule_list;
     } pgw_selection;
 
     /*
@@ -408,6 +410,40 @@ typedef struct mme_pgw_s {
      */
     bool            force;
 } mme_pgw_t;
+
+/*
+ * mme.pgw_selection.rules — per-APN PGW selection policy (no address).
+ *
+ * mode: dns — resolve the PGW via TS 29.303 APN DNS only, ignoring the
+ * HSS MIP6 address and the static gtpc.client.smf list. Runs even when
+ * the global pgw_selection.dns.enabled flag is off.
+ *
+ * All specified match keys must match (AND). SIGHUP reloadable.
+ */
+typedef enum mme_pgw_sel_rule_mode_e {
+    MME_PGW_SEL_RULE_MODE_DNS = 1,
+} mme_pgw_sel_rule_mode_t;
+
+typedef enum mme_pgw_sel_rule_fallback_e {
+    MME_PGW_SEL_RULE_FALLBACK_NONE = 0, /* reject session (default) */
+    MME_PGW_SEL_RULE_FALLBACK_HSS,      /* HSS MIP6 address if present */
+    MME_PGW_SEL_RULE_FALLBACK_YAML,     /* static gtpc.client.smf list */
+} mme_pgw_sel_rule_fallback_t;
+
+typedef struct mme_pgw_sel_rule_s {
+    ogs_lnode_t     lnode;
+
+    char            *apn[OGS_MAX_NUM_OF_APN];
+    uint8_t         num_of_apn;
+    char            imsi_prefix[OGS_MAX_IMSI_BCD_LEN + 1];
+    bool            serving_plmn_present;
+    ogs_plmn_id_t   serving_plmn_id;
+    bool            imsi_plmn_present;
+    ogs_plmn_id_t   imsi_plmn_id;
+
+    mme_pgw_sel_rule_mode_t     mode;
+    mme_pgw_sel_rule_fallback_t fallback;
+} mme_pgw_sel_rule_t;
 
 #define MME_SGSAP_IS_CONNECTED(__mME) \
     ((__mME) && ((__mME)->csmap) && ((__mME)->csmap->vlr) && \
@@ -1545,6 +1581,11 @@ ogs_sockaddr_t *mme_pgw_addr_find_by_apn_enb(
 /* Lowest-order force:true rule matching this session (NULL if none). */
 mme_pgw_t *mme_pgw_find_forced_for_sess(
         ogs_list_t *list, const mme_sess_t *sess);
+/* pgw_selection.rules: parse a YAML `rules` sequence (replaces list). */
+int mme_pgw_sel_rules_parse(ogs_yaml_iter_t *rules_key_iter);
+void mme_pgw_sel_rule_remove_all(void);
+/* First rule whose match keys all cover this session (NULL if none). */
+mme_pgw_sel_rule_t *mme_pgw_sel_rule_find_for_sess(const mme_sess_t *sess);
 mme_pgw_t *mme_pgw_find_for_sess(
         ogs_list_t *list, const mme_sess_t *sess);
 ogs_sockaddr_t *mme_pgw_sockaddr_by_family(

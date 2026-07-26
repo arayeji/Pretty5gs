@@ -93,7 +93,11 @@ mme:
 #    # force_yaml: true          # alias for mode: force (always YAML smf)
 #    dns:
 #      enabled: false            # TS 29.303 APN-FQDN S-NAPTR/A lookup
-#    standard: HSS static MIP6 -> APN DNS (if enabled) -> HSS MIP6 soft -> YAML
+#    rules:                      # per-APN policy, no PGW address needed
+#      - apn: mtnirancell        # match keys AND: apn / imsi_prefix /
+#        mode: dns               #   serving_plmn_id / imsi_plmn_id
+#        fallback: none          # none (reject) | hss | yaml
+#    standard: HSS MIP6 -> APN DNS (if enabled) -> YAML
 #    force: always gtpc.client.smf (ignore HSS and APN DNS)
 #  Per-rule force (preferred over global): add `force: true` to a
 #  gtpc.client.smf entry; sessions matching that entry's filters

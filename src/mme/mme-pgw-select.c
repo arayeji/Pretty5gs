@@ -163,6 +163,56 @@ int mme_pgw_select_for_sess(
     }
 
     /*
+     * 1c) Per-APN policy rule (pgw_selection.rules): mode=dns resolves
+     *     the PGW via APN DNS only, ignoring HSS MIP6 and the static
+     *     YAML list. Runs even when the global dns.enabled flag is off.
+     */
+    {
+        mme_pgw_sel_rule_t *rule = mme_pgw_sel_rule_find_for_sess(sess);
+
+        if (rule && rule->mode == MME_PGW_SEL_RULE_MODE_DNS && mme_ue) {
+            if (mme_pgw_select_apn_dns(mme_ue, session, out_ip) == OGS_OK) {
+                source = MME_PGW_SOURCE_APN_DNS;
+                goto done;
+            }
+            switch (rule->fallback) {
+            case MME_PGW_SEL_RULE_FALLBACK_HSS:
+                if (session->smf_ip.ipv4 || session->smf_ip.ipv6) {
+                    memcpy(out_ip, &session->smf_ip, sizeof(*out_ip));
+                    source = MME_PGW_SOURCE_HSS_STATIC;
+                    ogs_warn("[%s] APN DNS failed for APN[%s]; "
+                            "rule fallback=hss",
+                            mme_ue->imsi_bcd,
+                            session->name ? session->name : "-");
+                    goto done;
+                }
+                ogs_error("[%s] APN DNS failed for APN[%s]; "
+                        "rule fallback=hss but no HSS PGW address",
+                        mme_ue->imsi_bcd,
+                        session->name ? session->name : "-");
+                return OGS_ERROR;
+            case MME_PGW_SEL_RULE_FALLBACK_YAML:
+                source = MME_PGW_SOURCE_YAML_FALLBACK;
+                ogs_warn("[%s] APN DNS failed for APN[%s]; "
+                        "rule fallback=yaml",
+                        mme_ue->imsi_bcd,
+                        session->name ? session->name : "-");
+                if (mme_pgw_select_yaml(mme_ue, sess, session,
+                            out_ip, out_pgw) != OGS_OK)
+                    return OGS_ERROR;
+                goto done;
+            case MME_PGW_SEL_RULE_FALLBACK_NONE:
+            default:
+                ogs_error("[%s] APN DNS failed for APN[%s]; "
+                        "dns-only rule, no fallback — rejecting session",
+                        mme_ue->imsi_bcd,
+                        session->name ? session->name : "-");
+                return OGS_ERROR;
+            }
+        }
+    }
+
+    /*
      * 2) HSS MIP6 PGW address, including DYNAMIC allocation type.
      *
      * DYNAMIC formally means "last/previously allocated PGW", but in

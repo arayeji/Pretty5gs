@@ -459,6 +459,7 @@ void mme_context_init(void)
     self.mip_home_agent_host_dns = true;
     self.pgw_selection.force_yaml = false;
     self.pgw_selection.dns_enabled = false;
+    ogs_list_init(&self.pgw_selection.rule_list);
 
     self.inbound_roam_gtp_apn_format = MME_INBOUND_ROAM_GTP_APN_FQDN;
     self.inbound_roam_gtp_apn_lowercase = false;
@@ -496,6 +497,7 @@ void mme_context_final(void)
 
     mme_sgw_remove_all();
     mme_pgw_remove_all();
+    mme_pgw_sel_rule_remove_all();
     mme_csmap_remove_all();
     if (mme_csmap_plmn_hash) {
         ogs_hash_destroy(mme_csmap_plmn_hash);
@@ -2543,6 +2545,8 @@ int mme_context_parse_config(void)
                                         ogs_yaml_iter_bool(&dns_iter);
                                 }
                             }
+                        } else if (!strcmp(psk, "rules")) {
+                            mme_pgw_sel_rules_parse(&pgw_sel_iter);
                         }
                     }
                     ogs_info("PGW selection: mode=%s apn_dns=%s",
@@ -5017,6 +5021,203 @@ mme_pgw_t *mme_pgw_find_for_sess(
         return best;
 
     return default_pgw;
+}
+
+static void mme_pgw_sel_rule_free(mme_pgw_sel_rule_t *rule)
+{
+    int i;
+
+    ogs_assert(rule);
+    for (i = 0; i < rule->num_of_apn; i++)
+        if (rule->apn[i])
+            ogs_free(rule->apn[i]);
+    ogs_free(rule);
+}
+
+void mme_pgw_sel_rule_remove_all(void)
+{
+    mme_pgw_sel_rule_t *rule = NULL, *next_rule = NULL;
+
+    ogs_list_for_each_safe(&self.pgw_selection.rule_list, next_rule, rule) {
+        ogs_list_remove(&self.pgw_selection.rule_list, rule);
+        mme_pgw_sel_rule_free(rule);
+    }
+}
+
+int mme_pgw_sel_rules_parse(ogs_yaml_iter_t *rules_key_iter)
+{
+    ogs_yaml_iter_t rule_array, rule_iter;
+    int count = 0;
+
+    ogs_assert(rules_key_iter);
+
+    /* Replace the whole list (initial parse and SIGHUP reload). */
+    mme_pgw_sel_rule_remove_all();
+
+    ogs_yaml_iter_recurse(rules_key_iter, &rule_array);
+    do {
+        mme_pgw_sel_rule_t *rule = NULL;
+
+        if (ogs_yaml_iter_type(&rule_array) == YAML_MAPPING_NODE) {
+            memcpy(&rule_iter, &rule_array, sizeof(ogs_yaml_iter_t));
+        } else if (ogs_yaml_iter_type(&rule_array) == YAML_SEQUENCE_NODE) {
+            if (!ogs_yaml_iter_next(&rule_array))
+                break;
+            ogs_yaml_iter_recurse(&rule_array, &rule_iter);
+        } else if (ogs_yaml_iter_type(&rule_array) == YAML_SCALAR_NODE) {
+            break;
+        } else
+            break;
+
+        rule = ogs_calloc(1, sizeof(*rule));
+        ogs_assert(rule);
+        rule->mode = MME_PGW_SEL_RULE_MODE_DNS;
+        rule->fallback = MME_PGW_SEL_RULE_FALLBACK_NONE;
+
+        while (ogs_yaml_iter_next(&rule_iter)) {
+            const char *rk = ogs_yaml_iter_key(&rule_iter);
+
+            ogs_assert(rk);
+            if (!strcmp(rk, "apn") || !strcmp(rk, "dnn")) {
+                ogs_yaml_iter_t apn_iter;
+
+                ogs_yaml_iter_recurse(&rule_iter, &apn_iter);
+                ogs_assert(ogs_yaml_iter_type(&apn_iter) !=
+                        YAML_MAPPING_NODE);
+                do {
+                    const char *v = NULL;
+
+                    if (ogs_yaml_iter_type(&apn_iter) ==
+                            YAML_SEQUENCE_NODE) {
+                        if (!ogs_yaml_iter_next(&apn_iter))
+                            break;
+                    }
+                    if (rule->num_of_apn >= OGS_MAX_NUM_OF_APN) {
+                        ogs_warn("pgw_selection.rules apn limit (%d)",
+                                OGS_MAX_NUM_OF_APN);
+                        break;
+                    }
+                    v = ogs_yaml_iter_value(&apn_iter);
+                    if (v) {
+                        rule->apn[rule->num_of_apn] = ogs_strdup(v);
+                        ogs_assert(rule->apn[rule->num_of_apn]);
+                        rule->num_of_apn++;
+                    }
+                } while (ogs_yaml_iter_type(&apn_iter) ==
+                        YAML_SEQUENCE_NODE);
+            } else if (!strcmp(rk, "imsi_prefix")) {
+                const char *v = ogs_yaml_iter_value(&rule_iter);
+
+                if (v)
+                    ogs_cpystrn(rule->imsi_prefix, v,
+                            sizeof(rule->imsi_prefix));
+            } else if (!strcmp(rk, "plmn_id") ||
+                    !strcmp(rk, "serving_plmn_id") ||
+                    !strcmp(rk, "imsi_plmn_id")) {
+                mme_gtpc_client_parse_plmn_id_key(
+                        &rule_iter, rk,
+                        &rule->serving_plmn_present,
+                        &rule->serving_plmn_id,
+                        &rule->imsi_plmn_present,
+                        &rule->imsi_plmn_id);
+            } else if (!strcmp(rk, "mode")) {
+                const char *v = ogs_yaml_iter_value(&rule_iter);
+
+                if (v && !strcmp(v, "dns"))
+                    rule->mode = MME_PGW_SEL_RULE_MODE_DNS;
+                else if (v)
+                    ogs_warn("Unknown pgw_selection.rules mode `%s' "
+                            "(use: dns)", v);
+            } else if (!strcmp(rk, "fallback")) {
+                const char *v = ogs_yaml_iter_value(&rule_iter);
+
+                if (v && !strcmp(v, "none"))
+                    rule->fallback = MME_PGW_SEL_RULE_FALLBACK_NONE;
+                else if (v && !strcmp(v, "hss"))
+                    rule->fallback = MME_PGW_SEL_RULE_FALLBACK_HSS;
+                else if (v && (!strcmp(v, "yaml") || !strcmp(v, "static")))
+                    rule->fallback = MME_PGW_SEL_RULE_FALLBACK_YAML;
+                else if (v)
+                    ogs_warn("Unknown pgw_selection.rules fallback `%s' "
+                            "(use: none|hss|yaml)", v);
+            } else
+                ogs_warn("unknown pgw_selection.rules key `%s`", rk);
+        }
+
+        if (rule->num_of_apn == 0 && !rule->imsi_prefix[0] &&
+                !rule->serving_plmn_present && !rule->imsi_plmn_present) {
+            ogs_warn("pgw_selection.rules entry without match keys ignored "
+                    "(need apn / imsi_prefix / serving_plmn_id / "
+                    "imsi_plmn_id)");
+            mme_pgw_sel_rule_free(rule);
+            continue;
+        }
+
+        ogs_list_add(&self.pgw_selection.rule_list, rule);
+        count++;
+        ogs_info("PGW selection rule: apn[0]=%s mode=dns fallback=%s",
+                rule->num_of_apn ? rule->apn[0] : "-",
+                rule->fallback == MME_PGW_SEL_RULE_FALLBACK_NONE ? "none" :
+                rule->fallback == MME_PGW_SEL_RULE_FALLBACK_HSS ? "hss" :
+                "yaml");
+    } while (ogs_yaml_iter_type(&rule_array) == YAML_SEQUENCE_NODE);
+
+    return count;
+}
+
+mme_pgw_sel_rule_t *mme_pgw_sel_rule_find_for_sess(const mme_sess_t *sess)
+{
+    mme_pgw_sel_rule_t *rule = NULL;
+    mme_ue_t *mme_ue = NULL;
+
+    if (!sess)
+        return NULL;
+
+    mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
+    if (!mme_ue)
+        return NULL;
+
+    ogs_list_for_each(&self.pgw_selection.rule_list, rule) {
+        int i;
+        bool matched;
+
+        /* All specified keys must match (AND). */
+        if (rule->num_of_apn) {
+            matched = false;
+            if (sess->session && sess->session->name) {
+                for (i = 0; i < rule->num_of_apn; i++) {
+                    if (!ogs_strcasecmp(rule->apn[i],
+                                sess->session->name)) {
+                        matched = true;
+                        break;
+                    }
+                }
+            }
+            if (!matched)
+                continue;
+        }
+        if (rule->imsi_prefix[0]) {
+            if (!MME_UE_HAVE_IMSI(mme_ue) ||
+                    strncmp(mme_ue->imsi_bcd, rule->imsi_prefix,
+                        strlen(rule->imsi_prefix)) != 0)
+                continue;
+        }
+        if (rule->imsi_plmn_present) {
+            if (!MME_UE_HAVE_IMSI(mme_ue) ||
+                    !ogs_plmn_id_imsi_prefix_match(
+                        mme_ue->imsi_bcd, &rule->imsi_plmn_id))
+                continue;
+        }
+        if (rule->serving_plmn_present) {
+            if (memcmp(&rule->serving_plmn_id, &mme_ue->tai.plmn_id,
+                        OGS_PLMN_ID_LEN) != 0)
+                continue;
+        }
+
+        return rule;
+    }
+
+    return NULL;
 }
 
 ogs_sockaddr_t *mme_pgw_addr_find_by_apn_enb(
