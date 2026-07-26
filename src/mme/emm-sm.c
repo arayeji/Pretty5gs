@@ -1936,16 +1936,22 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
             }
 
             /*
-             * TAU after Identity/Auth without transferred PDN (no S10): do not
-             * ULR+accept a bearer-less TAU. Reject #10 so UE attaches fresh.
+             * TAU after Identity/Auth without transferred PDN (no S10): do
+             * not ULR+accept a bearer-less TAU. Reject with #9 "UE identity
+             * cannot be derived by the network" — integrity protected
+             * (post-SMC), it makes the UE delete its foreign GUTI and
+             * perform a fresh Attach. The previous #10 (Implicitly
+             * detached) left some UEs looping TAU on T3411 every 10s
+             * without ever re-attaching (prod 2026-07-26).
              */
             if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST &&
                 !SESSION_CONTEXT_IS_AVAILABLE(mme_ue)) {
                 ogs_info("[%s] TAU Identity/Auth OK but no PDN context "
-                        "(no S10); TAU reject Implicitly detached",
+                        "(no S10); TAU reject #9 "
+                        "(UE identity cannot be derived)",
                         mme_ue->imsi_bcd);
                 r = nas_eps_send_tau_reject(enb_ue, mme_ue,
-                        OGS_NAS_EMM_CAUSE_IMPLICITLY_DETACHED);
+                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
                 r = s1ap_send_ue_context_release_command(enb_ue,
