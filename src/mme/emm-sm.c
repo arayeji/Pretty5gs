@@ -1606,11 +1606,17 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
         case OGS_NAS_EPS_AUTHENTICATION_RESPONSE:
             rv = emm_handle_authentication_response(enb_ue, mme_ue,
                     &message->emm.authentication_response);
-            if (rv != OGS_OK) {
+            if (rv == OGS_ERROR) {
                 ogs_debug("emm_handle_authentication_response() failed");
                 r = nas_eps_send_authentication_reject(mme_ue);
                 ogs_expect(r == OGS_OK);
                 ogs_assert(r != OGS_ERROR);
+                MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
+                break;
+            }
+            if (rv != OGS_OK) {
+                /* OGS_DONE: procedure reject already sent (e.g. #23) */
+                ogs_debug("emm_handle_authentication_response() rejected");
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             }

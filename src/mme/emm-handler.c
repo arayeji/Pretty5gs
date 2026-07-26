@@ -448,6 +448,7 @@ int emm_handle_authentication_response(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         ogs_nas_eps_authentication_response_t *authentication_response)
 {
+    int r;
     ogs_nas_authentication_response_parameter_t
         *authentication_response_parameter =
             &authentication_response->authentication_response_parameter;
@@ -479,11 +480,43 @@ int emm_handle_authentication_response(
 
         if (mme_ue->selected_int_algorithm ==
                 OGS_NAS_SECURITY_ALGORITHMS_EIA0) {
-            ogs_error("Encrypt[0x%x] can be skipped with EEA0, "
-                "but Integrity[0x%x] cannot be bypassed with EIA0",
+            ogs_error("[%s] Encrypt[0x%x] can be skipped with EEA0, "
+                "but Integrity[0x%x] cannot be bypassed with EIA0 "
+                "(eia=0x%x eea=0x%x nas_type=%d)",
+                mme_ue->imsi_bcd,
                 mme_ue->selected_enc_algorithm,
-                mme_ue->selected_int_algorithm);
-            return OGS_ERROR;
+                mme_ue->selected_int_algorithm,
+                mme_ue->ue_network_capability.eia,
+                mme_ue->ue_network_capability.eea,
+                mme_ue->nas_eps.type);
+
+            /*
+             * Prefer procedure reject (#23) over AUTHENTICATION REJECT so
+             * the UE re-attaches with UE Network Capability. Return
+             * OGS_DONE so the FSM does not also send Auth Reject.
+             */
+            switch (mme_ue->nas_eps.type) {
+            case MME_EPS_TYPE_ATTACH_REQUEST:
+                r = nas_eps_send_attach_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_UE_SECURITY_CAPABILITIES_MISMATCH,
+                        OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
+                break;
+            case MME_EPS_TYPE_TAU_REQUEST:
+                r = nas_eps_send_tau_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_UE_SECURITY_CAPABILITIES_MISMATCH);
+                break;
+            case MME_EPS_TYPE_SERVICE_REQUEST:
+            case MME_EPS_TYPE_EXTENDED_SERVICE_REQUEST:
+                r = nas_eps_send_service_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_UE_SECURITY_CAPABILITIES_MISMATCH);
+                break;
+            default:
+                r = nas_eps_send_authentication_reject(mme_ue);
+                break;
+            }
+            ogs_expect(r == OGS_OK);
+            ogs_assert(r != OGS_ERROR);
+            return OGS_DONE;
         }
     }
 
@@ -907,6 +940,29 @@ int emm_handle_tau_request(
         memcpy(&mme_ue->ue_network_capability,
                 &tau_request->ue_network_capability,
                 sizeof(tau_request->ue_network_capability));
+    }
+
+    /*
+     * UE Network Capability is optional in TAU. A new/unknown-GUTI context
+     * starts with eia=0; if the IE is absent we keep that empty bitmap.
+     * Auth would then select EIA0 and fail at Auth Response. Reject here
+     * (same cause as Attach) so the UE re-attaches with the mandatory IE.
+     */
+    if (mme_selected_int_algorithm(mme_ue) ==
+            OGS_NAS_SECURITY_ALGORITHMS_EIA0) {
+        ogs_warn("[%s] TAU rejected: no usable NAS integrity algorithm "
+                "(UE Network Capability %s, eia=0x%x eea=0x%x)",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "Unknown",
+                (tau_request->presencemask &
+                 OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_UE_NETWORK_CAPABILITY_PRESENT)
+                    ? "present" : "absent",
+                mme_ue->ue_network_capability.eia,
+                mme_ue->ue_network_capability.eea);
+        r = nas_eps_send_tau_reject(enb_ue, mme_ue,
+                OGS_NAS_EMM_CAUSE_UE_SECURITY_CAPABILITIES_MISMATCH);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return OGS_ERROR;
     }
 
     if (tau_request->presencemask &
