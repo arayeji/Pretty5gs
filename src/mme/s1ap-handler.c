@@ -1219,8 +1219,19 @@ void s1ap_handle_ue_capability_info_indication(
 
     mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
     if (mme_ue) {
-        ogs_assert(UERadioCapability);
-        OGS_ASN_STORE_DATA(&mme_ue->ueRadioCapability, UERadioCapability);
+        /*
+         * UERadioCapability is mandatory per S1AP, but a malformed or
+         * partial UECapabilityInfoIndication (seen in production right
+         * after eNB SCTP timeouts) can arrive without it, leaving the
+         * pointer NULL. It is only cached for later handover use, so a
+         * missing IE must warn-and-skip, never abort the whole MME.
+         */
+        if (UERadioCapability)
+            OGS_ASN_STORE_DATA(&mme_ue->ueRadioCapability, UERadioCapability);
+        else
+            ogs_warn("UECapabilityInfoIndication without UERadioCapability "
+                    "IE [eNB:%d ENB_UE_S1AP_ID:%d]",
+                    enb->enb_id, enb_ue->enb_ue_s1ap_id);
     }
 }
 
