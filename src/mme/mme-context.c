@@ -8421,7 +8421,7 @@ mme_bearer_t *mme_bearer_add(mme_sess_t *sess)
     mme_ctx_unlock();
     ogs_assert(bearer);
 
-    ogs_list_init(&bearer->update.xact_list);
+    bearer->update.num_of_xacts = 0;
 
     /*
      * Allocate a new EBI from the UE bitmap.
@@ -8486,7 +8486,6 @@ void mme_bearer_remove(mme_bearer_t *bearer)
     mme_event_t e;
     mme_ue_t *mme_ue = NULL;
     mme_sess_t *sess = NULL;
-    ogs_gtp_xact_t *xact = NULL, *next_xact = NULL;
 
     ogs_assert(bearer);
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
@@ -8524,11 +8523,7 @@ void mme_bearer_remove(mme_bearer_t *bearer)
             if (OGS_OK != mme_ebi_free(mme_ue, bearer->ebi))
                 ogs_warn("EBI free failed [ebi:%d]", bearer->ebi);
         }
-        ogs_list_for_each_entry_safe(&bearer->update.xact_list,
-                next_xact, xact, to_update_node) {
-            ogs_timer_stop(xact->tm_peer);
-            ogs_list_remove(&bearer->update.xact_list, &xact->to_update_node);
-        }
+        mme_bearer_update_xact_clear(bearer);
         ogs_pool_id_free(&mme_bearer_pool, bearer);
         ogs_metrics_dump_unlock();
         return;
@@ -8569,14 +8564,107 @@ void mme_bearer_remove(mme_bearer_t *bearer)
     if (OGS_OK != mme_ebi_free(mme_ue, bearer->ebi))
         ogs_warn("EBI free failed [ebi:%d]", bearer->ebi);
 
-    ogs_list_for_each_entry_safe(&bearer->update.xact_list,
-            next_xact, xact, to_update_node) {
-        ogs_timer_stop(xact->tm_peer);
-        ogs_list_remove(&bearer->update.xact_list, &xact->to_update_node);
-    }
+    mme_bearer_update_xact_clear(bearer);
 
     ogs_pool_id_free(&mme_bearer_pool, bearer);
     ogs_metrics_dump_unlock();
+}
+
+/*
+ * Update Bearer xact FIFO. IDs only; resolve+validate on every access so
+ * a transaction freed behind our back (holding-timer expiry, response
+ * timeout, SGW node reset) is skipped, never dereferenced.
+ */
+static ogs_gtp_xact_t *bearer_update_xact_resolve(ogs_pool_id_t xact_id)
+{
+    ogs_gtp_xact_t *xact = NULL;
+
+    if (xact_id < OGS_MIN_POOL_ID || xact_id > OGS_MAX_POOL_ID)
+        return NULL;
+
+    xact = ogs_gtp_xact_find_by_id(xact_id);
+    if (!xact || xact->id != xact_id)
+        return NULL;
+
+    return xact;
+}
+
+static void bearer_update_xact_shift(mme_bearer_t *bearer, int idx)
+{
+    int i;
+
+    for (i = idx; i < bearer->update.num_of_xacts - 1; i++)
+        bearer->update.xact_ids[i] = bearer->update.xact_ids[i + 1];
+    bearer->update.num_of_xacts--;
+}
+
+void mme_bearer_update_xact_add(mme_bearer_t *bearer, ogs_gtp_xact_t *xact)
+{
+    ogs_assert(bearer);
+    ogs_assert(xact);
+
+    if (bearer->update.num_of_xacts >= MME_BEARER_MAX_UPDATE_XACTS) {
+        ogs_error("Update xact FIFO full [EBI:%d]; dropping oldest",
+                bearer->ebi);
+        bearer_update_xact_shift(bearer, 0);
+    }
+    bearer->update.xact_ids[bearer->update.num_of_xacts++] = xact->id;
+}
+
+ogs_gtp_xact_t *mme_bearer_update_xact_first(mme_bearer_t *bearer)
+{
+    ogs_assert(bearer);
+
+    while (bearer->update.num_of_xacts > 0) {
+        ogs_gtp_xact_t *xact =
+            bearer_update_xact_resolve(bearer->update.xact_ids[0]);
+
+        if (xact)
+            return xact;
+
+        ogs_warn("Update xact [%d] already freed; dropping stale entry",
+                bearer->update.xact_ids[0]);
+        bearer_update_xact_shift(bearer, 0);
+    }
+    return NULL;
+}
+
+ogs_gtp_xact_t *mme_bearer_update_xact_pop(mme_bearer_t *bearer)
+{
+    ogs_gtp_xact_t *xact = mme_bearer_update_xact_first(bearer);
+
+    if (xact)
+        bearer_update_xact_shift(bearer, 0);
+    return xact;
+}
+
+bool mme_bearer_update_xact_remove(mme_bearer_t *bearer, ogs_pool_id_t xact_id)
+{
+    int i;
+
+    ogs_assert(bearer);
+
+    for (i = 0; i < bearer->update.num_of_xacts; i++) {
+        if (bearer->update.xact_ids[i] == xact_id) {
+            bearer_update_xact_shift(bearer, i);
+            return true;
+        }
+    }
+    return false;
+}
+
+void mme_bearer_update_xact_clear(mme_bearer_t *bearer)
+{
+    ogs_assert(bearer);
+
+    while (bearer->update.num_of_xacts > 0) {
+        ogs_gtp_xact_t *xact =
+            bearer_update_xact_resolve(bearer->update.xact_ids[0]);
+
+        if (xact && xact->tm_peer)
+            ogs_timer_stop(xact->tm_peer);
+        bearer_update_xact_shift(bearer, 0);
+    }
 }
 
 void mme_bearer_remove_all(mme_sess_t *sess)

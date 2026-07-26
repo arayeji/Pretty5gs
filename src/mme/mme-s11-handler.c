@@ -191,11 +191,8 @@ static void gtp_remote_peer_timeout(ogs_gtp_xact_t *xact, void *data)
          * Therefore, we need to delete the Transaction Node
          * that was managed by the Bearer Context from the List.
          */
-        if (ogs_list_exists(
-                    &bearer->update.xact_list,
-                    &xact->to_update_node) == true) {
+        if (mme_bearer_update_xact_remove(bearer, xact->id) == true) {
             ogs_error("Bearer-ID [%d] removed from the list", bearer->id);
-            ogs_list_remove(&bearer->update.xact_list, &xact->to_update_node);
         } else {
             ogs_error("[%d] %s HAVE ALREADY BEEN REMOVED "
                     "for step %d type %d peer [%s]:%d",
@@ -1514,7 +1511,7 @@ void mme_s11_handle_update_bearer_request(
     xact->peer_cb = gtp_remote_peer_timeout;
     xact->peer_data = OGS_UINT_TO_POINTER(bearer->id);
 
-    ogs_list_add(&bearer->update.xact_list, &xact->to_update_node);
+    mme_bearer_update_xact_add(bearer, xact);
 
     if (req->bearer_contexts.bearer_level_qos.presence == 1) {
         /* Bearer QoS */

@@ -766,7 +766,7 @@ int mme_gtp_send_update_bearer_response(
 {
     int rv;
 
-    ogs_gtp_xact_t *xact = NULL, *next_xact = NULL;
+    ogs_gtp_xact_t *xact = NULL;
     mme_ue_t *mme_ue = NULL;
     sgw_ue_t *sgw_ue = NULL;
 
@@ -791,14 +791,10 @@ int mme_gtp_send_update_bearer_response(
      * UE->MME:         Second Modify EPS bearer context accept
      * MME->SGW-C->SMF: Second Update Bearer Response
      *
-     * After sending the Update Bearer Response, remove the corresponding
-     * Transaction Node from the list managed by the Bearer Context.
+     * Pop the oldest pending Update xact (FIFO, validated against the
+     * xact pool — stale IDs are skipped).
      */
-    ogs_list_for_each_entry_safe(
-            &bearer->update.xact_list, next_xact, xact, to_update_node) {
-        ogs_list_remove(&bearer->update.xact_list, &xact->to_update_node);
-        break;
-    }
+    xact = mme_bearer_update_xact_pop(bearer);
     if (!xact) {
         ogs_warn("GTP transaction(UPDATE) has already been removed");
         return OGS_OK;
@@ -809,7 +805,8 @@ int mme_gtp_send_update_bearer_response(
      * MME can send Update Bearer Response to the SGW-C,
      * so stop the peer waiting timer
      */
-    ogs_timer_stop(xact->tm_peer);
+    if (xact->tm_peer)
+        ogs_timer_stop(xact->tm_peer);
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
     h.type = OGS_GTP2_UPDATE_BEARER_RESPONSE_TYPE;

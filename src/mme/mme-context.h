@@ -1552,8 +1552,19 @@ typedef struct mme_bearer_s {
     struct {
         ogs_pool_id_t  xact_id;
     } create, delete, notify;
+    /*
+     * Update Bearer Request xacts, FIFO. Stored as pool IDs, not
+     * pointers/lnodes: the GTP xact layer frees a transaction on
+     * holding-timer expiry, response timeout or SGW node reset without
+     * telling the bearer, and a stale lnode here aborted the MME in
+     * mme_bearer_remove (ogs_timer_stop on NULL tm_peer, prod
+     * 2026-07-26). Every read revalidates the ID against the pool so
+     * dead transactions are skipped instead of dereferenced.
+     */
+#define MME_BEARER_MAX_UPDATE_XACTS 8
     struct {
-        ogs_list_t  xact_list;
+        ogs_pool_id_t  xact_ids[MME_BEARER_MAX_UPDATE_XACTS];
+        int            num_of_xacts;
     } update;
 } mme_bearer_t;
 
@@ -1810,6 +1821,13 @@ unsigned int mme_sess_count(const mme_ue_t *mme_ue);
 mme_bearer_t *mme_bearer_add(mme_sess_t *sess);
 void mme_bearer_remove(mme_bearer_t *bearer);
 void mme_bearer_remove_all(mme_sess_t *sess);
+
+/* Update Bearer xact FIFO (validated pool IDs — see mme_bearer_t.update) */
+void mme_bearer_update_xact_add(mme_bearer_t *bearer, ogs_gtp_xact_t *xact);
+ogs_gtp_xact_t *mme_bearer_update_xact_first(mme_bearer_t *bearer);
+ogs_gtp_xact_t *mme_bearer_update_xact_pop(mme_bearer_t *bearer);
+bool mme_bearer_update_xact_remove(mme_bearer_t *bearer, ogs_pool_id_t xact_id);
+void mme_bearer_update_xact_clear(mme_bearer_t *bearer);
 mme_bearer_t *mme_bearer_find_by_sess_ebi(const mme_sess_t *sess, uint8_t ebi);
 mme_bearer_t *mme_bearer_find_by_ue_ebi(const mme_ue_t *mme_ue, uint8_t ebi);
 mme_bearer_t *mme_bearer_find_or_add_by_message(
