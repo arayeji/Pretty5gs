@@ -185,6 +185,6 @@ mme:
     dns:
       enabled: false
     # rules:
-    #   - apn: mtnirancell
+    #   - apn: roamapn
     #     mode: dns            # APN DNS only; ignore HSS MIP6 / YAML smf
     #     fallback: none       # none | hss | yaml

@@ -149,7 +149,7 @@ mme:
     # denied_apn: [ims]
     # apn_reject_cause: 27
     # apn_rule:
-    # - plmn_id: { mcc: 432, mnc: 11 }
+    # - plmn_id: { mcc: 999, mnc: 70 }
     #   allowed_apn: [internet]
     #   denied_apn: [ims]
   ambr_limit:
@@ -230,9 +230,14 @@ mme:
     # (apn / imsi_prefix / serving_plmn_id / imsi_plmn_id).
     # fallback on DNS failure: none (reject, default) | hss | yaml
     # rules:
-    #   - apn: mtnirancell
+    #   - imsi_plmn_id:         # all subscribers of one home PLMN
+    #       mcc: '999'
+    #       mnc: '70'
     #     mode: dns
     #     fallback: none
+    #   - apn: someapn          # or per-APN; keys AND together
+    #     mode: dns
+    #     fallback: yaml
 
 # --- Full parameter reference (upstream yaml.in; active lines commented) ---
 #logger:

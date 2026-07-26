@@ -93,9 +93,11 @@ mme:
 #    # force_yaml: true          # alias for mode: force (always YAML smf)
 #    dns:
 #      enabled: false            # TS 29.303 APN-FQDN S-NAPTR/A lookup
-#    rules:                      # per-APN policy, no PGW address needed
-#      - apn: mtnirancell        # match keys AND: apn / imsi_prefix /
-#        mode: dns               #   serving_plmn_id / imsi_plmn_id
+#    rules:                      # per-PLMN/APN policy, no PGW address needed
+#      - imsi_plmn_id:           # match keys AND: apn / imsi_prefix /
+#          mcc: '999'            #   serving_plmn_id / imsi_plmn_id
+#          mnc: '70'
+#        mode: dns               # APN DNS only; ignore HSS MIP6 / YAML smf
 #        fallback: none          # none (reject) | hss | yaml
 #    standard: HSS MIP6 -> APN DNS (if enabled) -> YAML
 #    force: always gtpc.client.smf (ignore HSS and APN DNS)
@@ -122,7 +124,7 @@ mme:
 #    denied_apn: [ims]            # always wins over allowed_apn
 #    apn_reject_cause: 27         # ESM cause when APN blocked (default 27)
 #    apn_rule:                    # per-home-PLMN overrides (SIGHUP reloadable)
-#    - plmn_id: { mcc: 432, mnc: 11 }
+#    - plmn_id: { mcc: 999, mnc: 70 }
 #      allowed_apn: [internet]
 #      denied_apn: [ims]
 #  ambr_limit:
