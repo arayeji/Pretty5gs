@@ -162,14 +162,26 @@ int mme_pgw_select_for_sess(
         goto done;
     }
 
-    /* 2) HSS static MIP6 assignment */
-    if (mme_pgw_hss_static_usable(session)) {
+    /*
+     * 2) HSS MIP6 PGW address, including DYNAMIC allocation type.
+     *
+     * DYNAMIC formally means "last/previously allocated PGW", but in
+     * practice (e.g. inbound S8 roaming partners) the HSS-provided
+     * address is authoritative and the APN DNS zone may point to a PGW
+     * that rejects the session. So HSS MIP6 always wins over APN DNS;
+     * DNS is used only when the HSS provides no PGW address.
+     */
+    if (session->smf_ip.ipv4 || session->smf_ip.ipv6) {
         memcpy(out_ip, &session->smf_ip, sizeof(*out_ip));
         source = MME_PGW_SOURCE_HSS_STATIC;
+        if (!mme_pgw_hss_static_usable(session))
+            ogs_debug("[%s] Using HSS MIP6 PGW (DYNAMIC) for APN[%s]",
+                    mme_ue ? mme_ue->imsi_bcd : "-",
+                    session->name ? session->name : "-");
         goto done;
     }
 
-    /* 3) Standards APN DNS discovery */
+    /* 3) Standards APN DNS discovery (no HSS-provided PGW) */
     if (mme_self()->pgw_selection.dns_enabled && mme_ue) {
         if (mme_pgw_select_apn_dns(mme_ue, session, out_ip) == OGS_OK) {
             source = MME_PGW_SOURCE_APN_DNS;
@@ -182,20 +194,7 @@ int mme_pgw_select_for_sess(
                 mme_ue->imsi_bcd, session->name ? session->name : "-");
     }
 
-    /*
-     * 4) Soft use of HSS MIP6 even when DYNAMIC (last allocated PGW), when
-     *    APN DNS is off or failed. Preserves prior Pretty5GS behaviour.
-     */
-    if (session->smf_ip.ipv4 || session->smf_ip.ipv6) {
-        memcpy(out_ip, &session->smf_ip, sizeof(*out_ip));
-        source = MME_PGW_SOURCE_HSS_STATIC;
-        ogs_info("[%s] Using HSS MIP6 PGW (incl. dynamic) for APN[%s]",
-                mme_ue ? mme_ue->imsi_bcd : "-",
-                session->name ? session->name : "-");
-        goto done;
-    }
-
-    /* 5) YAML fallback (legacy Open5GS behaviour) */
+    /* 4) YAML fallback (legacy Open5GS behaviour) */
     source = MME_PGW_SOURCE_YAML_FALLBACK;
     if (mme_pgw_select_yaml(mme_ue, sess, session, out_ip, out_pgw) != OGS_OK)
         return OGS_ERROR;
