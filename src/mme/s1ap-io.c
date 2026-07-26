@@ -53,6 +53,9 @@ typedef struct io_job_s {
 typedef struct io_sock_s {
     ogs_sock_t      *sock;
     ogs_list_t      write_queue;    /* ogs_pkbuf_t FIFO */
+    int             wq_count;       /* O(1) depth of write_queue */
+    uint32_t        wq_dropped;     /* drops in current log window */
+    ogs_time_t      wq_drop_window; /* start of current log window */
     ogs_poll_t      *poll_write;    /* POLLOUT on io_worker->pollset */
     bool            send_addr;      /* pass addr to sendmsg (SEQPACKET) */
     bool            has_peer;
@@ -65,8 +68,16 @@ typedef struct io_sock_s {
  * Soft per-assoc backlog. When exceeded we DROP the new PDU only —
  * never tear the eNB down. (Earlier code raised CONNREFUSED here and
  * that alone could cascade-kill hundreds of cells under attach load.)
+ * Overridable via mme.s1ap_io_write_queue_max.
  */
-#define IO_WRITE_QUEUE_MAX  1024
+#define IO_WRITE_QUEUE_MAX_DEFAULT  10240
+
+static int io_write_queue_max(void)
+{
+    int v = mme_self()->s1ap_io_write_queue_max;
+
+    return v > 0 ? v : IO_WRITE_QUEUE_MAX_DEFAULT;
+}
 
 static OGS_THREAD_LOCAL ogs_hash_t *io_sock_hash = NULL;
 
@@ -173,6 +184,7 @@ static void io_mark_assoc_dead(io_sock_t *ctx, const char *why)
         ogs_list_remove(&ctx->write_queue, pkbuf);
         ogs_pkbuf_free(pkbuf);
     }
+    ctx->wq_count = 0;
     if (ctx->poll_write) {
         ogs_pollset_remove(ctx->poll_write);
         ctx->poll_write = NULL;
@@ -212,6 +224,7 @@ static void io_sock_flush(io_sock_t *ctx)
             ogs_list_remove(&ctx->write_queue, pkbuf);
             ogs_pkbuf_free(pkbuf);
         }
+        ctx->wq_count = 0;
         if (ctx->poll_write) {
             ogs_pollset_remove(ctx->poll_write);
             ctx->poll_write = NULL;
@@ -227,6 +240,7 @@ static void io_sock_flush(io_sock_t *ctx)
 
         if (sent >= 0 && sent == (int)pkbuf->len) {
             ogs_list_remove(&ctx->write_queue, pkbuf);
+            ctx->wq_count--;
             ogs_pkbuf_free(pkbuf);
             continue;
         }
@@ -253,6 +267,7 @@ static void io_sock_flush(io_sock_t *ctx)
             int pklen = (int)pkbuf->len;
 
             ogs_list_remove(&ctx->write_queue, pkbuf);
+            ctx->wq_count--;
             ogs_pkbuf_free(pkbuf);
 
             if (sent >= 0) {
@@ -310,19 +325,32 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
             break;
         }
 
-        if (ogs_list_count(&ctx->write_queue) >= IO_WRITE_QUEUE_MAX) {
+        if (ctx->wq_count >= io_write_queue_max()) {
             /*
              * Soft backpressure only. Never CONNREFUSED / mark-dead here:
              * a slow eNB under attach load easily exceeds a few hundred
              * queued PDUs; killing the cell made IO-on unusable.
+             * Log once per second per sock — the drop log itself must
+             * not become the flood.
              */
-            ogs_error("s1ap-io: per-sock write queue full (sock:%p); "
-                    "dropping PDU", (void *)job->sock);
+            ogs_time_t now = ogs_time_now();
+
+            ctx->wq_dropped++;
+            if (now - ctx->wq_drop_window > ogs_time_from_sec(1)) {
+                ogs_error("s1ap-io: per-sock write queue full "
+                        "(sock:%p depth:%d max:%d); dropped %u PDU(s) "
+                        "in last window",
+                        (void *)job->sock, ctx->wq_count,
+                        io_write_queue_max(), ctx->wq_dropped);
+                ctx->wq_drop_window = now;
+                ctx->wq_dropped = 0;
+            }
             ogs_pkbuf_free(job->pkbuf);
             break;
         }
 
         ogs_list_add(&ctx->write_queue, job->pkbuf);
+        ctx->wq_count++;
         io_sock_flush(ctx);
         break;
 
@@ -351,7 +379,7 @@ int s1ap_io_start(void)
      * poll capacity: every connected eNB could in theory be waiting on
      * POLLOUT at once, plus the queue-notify eventfd.
      * Command queue capped: SEND jobs are drained continuously and
-     * per-sock backlog is bounded by IO_WRITE_QUEUE_MAX anyway.
+     * per-sock backlog is bounded by io_write_queue_max() anyway.
      */
     io_worker = ogs_worker_create(0,
             ogs_min(ogs_app()->pool.event, 262144), 64,

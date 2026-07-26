@@ -219,6 +219,10 @@ mme:
   #       - address: 10.0.0.9
   #         apn: ims
   #         force: true          # ims PDNs always to 10.0.0.9
+  # s1ap_io_write_queue_max: 10240  # per-eNB outbound S1AP PDU cap on the
+  #                                 # IO thread (s1ap_io_thread: 1); PDUs
+  #                                 # over the cap are dropped. SIGHUP
+  #                                 # reloadable. 0/unset = default 10240.
   pgw_selection:
     mode: standard
     # force_yaml: true          # same as mode: force (global)

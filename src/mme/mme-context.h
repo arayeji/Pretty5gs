@@ -286,6 +286,11 @@ typedef struct mme_context_s {
     int             s1ap_tx_workers;
     /* dedicated S1AP SCTP send thread (0/1, default 0) — s1ap-io.c */
     int             s1ap_io_thread;
+    /*
+     * Per-eNB-association outbound PDU cap on the S1AP IO thread.
+     * PDUs beyond this are dropped (soft backpressure). 0 = default.
+     */
+    int             s1ap_io_write_queue_max;
     /* UE-shard workers (Stage A bounce router, 0 = off) — mme-workers.c */
     int             workers;
 

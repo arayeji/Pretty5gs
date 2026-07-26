@@ -1273,6 +1273,14 @@ int mme_context_parse_config(void)
                     if (v) {
                         self.s1ap_io_thread = atoi(v) ? 1 : 0;
                     }
+                } else if (!strcmp(mme_key, "s1ap_io_write_queue_max")) {
+                    /* per-eNB outbound PDU cap (0 = default 10240) */
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+                    if (v) {
+                        self.s1ap_io_write_queue_max = atoi(v);
+                        if (self.s1ap_io_write_queue_max < 0)
+                            self.s1ap_io_write_queue_max = 0;
+                    }
                 } else if (!strcmp(mme_key, "workers")) {
                     /* UE-shard bounce workers (0 = off, Stage A) */
                     const char *v = ogs_yaml_iter_value(&mme_iter);
