@@ -1844,6 +1844,28 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
         return 0;
     }
 
+    if (!strcmp(mme_key, "paging")) {
+        ogs_yaml_iter_t paging_iter;
+
+        ogs_yaml_iter_recurse(mme_iter, &paging_iter);
+        while (ogs_yaml_iter_next(&paging_iter)) {
+            const char *pk = ogs_yaml_iter_key(&paging_iter);
+
+            ogs_assert(pk);
+            if (!strcmp(pk, "first_wave")) {
+                const char *v = ogs_yaml_iter_value(&paging_iter);
+
+                if (v && !strcmp(v, "last_enb"))
+                    self->paging_first_wave_last_enb = true;
+                else if (v && !strcmp(v, "tai"))
+                    self->paging_first_wave_last_enb = false;
+            }
+        }
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" paging first_wave=%s",
+                self->paging_first_wave_last_enb ? "last_enb" : "tai");
+        return 0;
+    }
     if (!strcmp(mme_key, "s1ap_io_write_queue_max")) {
         const char *v = ogs_yaml_iter_value(mme_iter);
 

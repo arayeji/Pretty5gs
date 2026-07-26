@@ -1281,6 +1281,31 @@ int mme_context_parse_config(void)
                         if (self.s1ap_io_write_queue_max < 0)
                             self.s1ap_io_write_queue_max = 0;
                     }
+                } else if (!strcmp(mme_key, "paging")) {
+                    ogs_yaml_iter_t paging_iter;
+
+                    ogs_yaml_iter_recurse(&mme_iter, &paging_iter);
+                    while (ogs_yaml_iter_next(&paging_iter)) {
+                        const char *pk = ogs_yaml_iter_key(&paging_iter);
+
+                        ogs_assert(pk);
+                        if (!strcmp(pk, "first_wave")) {
+                            const char *v =
+                                ogs_yaml_iter_value(&paging_iter);
+
+                            if (v && !strcmp(v, "last_enb"))
+                                self.paging_first_wave_last_enb = true;
+                            else if (v && !strcmp(v, "tai"))
+                                self.paging_first_wave_last_enb = false;
+                            else if (v)
+                                ogs_warn("Unknown paging.first_wave `%s' "
+                                        "(use: tai|last_enb)", v);
+                        } else
+                            ogs_warn("unknown key `mme.paging.%s`", pk);
+                    }
+                    ogs_info("Paging first wave: %s",
+                            self.paging_first_wave_last_enb ?
+                            "last_enb" : "tai (full fan-out)");
                 } else if (!strcmp(mme_key, "workers")) {
                     /* UE-shard bounce workers (0 = off, Stage A) */
                     const char *v = ogs_yaml_iter_value(&mme_iter);

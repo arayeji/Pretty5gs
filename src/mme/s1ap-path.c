@@ -580,12 +580,51 @@ int s1ap_send_ue_context_release_command(
     return rv;
 }
 
-int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
+/* Queue one Paging PDU to one eNB; refreshes t3413.pkbuf for retries. */
+static int paging_send_to_enb(
+        mme_ue_t *mme_ue, mme_enb_t *enb, S1AP_CNDomain_t cn_domain)
 {
     ogs_pkbuf_t *s1apbuf = NULL;
-    mme_enb_t *enb = NULL;
-    int i;
     int rv;
+
+    s1apbuf = MME_UE_TIMER_TAKE_PKBUF(mme_ue->t3413);
+    if (!s1apbuf) {
+        s1apbuf = s1ap_build_paging(mme_ue, cn_domain);
+        if (!s1apbuf) {
+            ogs_error("s1ap_build_paging() failed");
+            return OGS_ERROR;
+        }
+    }
+
+    mme_ue->t3413.pkbuf = ogs_pkbuf_copy(s1apbuf);
+    if (!mme_ue->t3413.pkbuf) {
+        ogs_error("ogs_pkbuf_copy() failed");
+        ogs_pkbuf_free(s1apbuf);
+        return OGS_ERROR;
+    }
+
+    rv = s1ap_send_to_enb(enb, s1apbuf, S1AP_NON_UE_SIGNALLING);
+    if (rv != OGS_OK)
+        ogs_error("s1ap_send_to_enb() failed");
+    return rv;
+}
+
+static bool enb_serves_tai(const mme_enb_t *enb, const ogs_eps_tai_t *tai)
+{
+    int i;
+
+    for (i = 0; i < enb->num_of_supported_ta_list; i++)
+        if (memcmp(&enb->supported_ta_list[i], tai,
+                    sizeof(ogs_eps_tai_t)) == 0)
+            return true;
+    return false;
+}
+
+int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
+{
+    mme_enb_t *enb = NULL;
+    int rv;
+    bool sent = false;
 
     ogs_debug("S1-Paging");
 
@@ -597,49 +636,57 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
     mme_metrics_paging_attempt(mme_ue);
 
     /*
-     * Find eNB with matched TAI.
-     *
      * Paging runs on the UE owner shard (T3413 expiry, DDN, S1
      * release) while main adds/removes eNBs on SCTP churn: walk
-     * enb_list only under the ctx lock — enb add/remove mutate it
-     * under the same (recursive) mutex. The sends inside just queue
-     * to the S1AP IO/TX path, so holding the lock across the walk is
-     * cheap.
+     * enb_list / eNB hashes only under the ctx lock — enb add/remove
+     * mutate them under the same (recursive) mutex. The sends inside
+     * just queue to the S1AP IO/TX path, so holding the lock across
+     * the walk is cheap.
      */
     mme_ctx_lock();
-    ogs_list_for_each(&mme_self()->enb_list, enb) {
-        for (i = 0; i < enb->num_of_supported_ta_list; i++) {
 
-            if (memcmp(&enb->supported_ta_list[i], &mme_ue->tai,
-                        sizeof(ogs_eps_tai_t)) == 0) {
+    /*
+     * Smart paging (mme.paging.first_wave: last_enb): first wave goes
+     * only to the eNB the UE last camped on, derived from the stored
+     * eCGI (cell_id >> 8 = macro eNB id; full 28 bits = home eNB id).
+     * T3413 retries fan out to the whole TA, so a UE that moved cells
+     * while idle is still reached.
+     */
+    if (mme_self()->paging_first_wave_last_enb &&
+            mme_ue->t3413.retry_count == 0 &&
+            mme_ue->e_cgi.cell_id) {
+        mme_enb_t *last_enb =
+            mme_enb_find_by_enb_id(mme_ue->e_cgi.cell_id >> 8);
 
-                s1apbuf = MME_UE_TIMER_TAKE_PKBUF(mme_ue->t3413);
-                if (!s1apbuf) {
-                    s1apbuf = s1ap_build_paging(mme_ue, cn_domain);
-                    if (!s1apbuf) {
-                        ogs_error("s1ap_build_paging() failed");
-                        mme_ctx_unlock();
-                        return OGS_ERROR;
-                    }
-                }
+        if (!last_enb)
+            last_enb = mme_enb_find_by_enb_id(
+                    mme_ue->e_cgi.cell_id & 0x0fffffff);
 
-                mme_ue->t3413.pkbuf = ogs_pkbuf_copy(s1apbuf);
-                if (!mme_ue->t3413.pkbuf) {
-                    ogs_error("ogs_pkbuf_copy() failed");
-                    ogs_pkbuf_free(s1apbuf);
-                    mme_ctx_unlock();
-                    return OGS_ERROR;
-                }
+        if (last_enb && enb_serves_tai(last_enb, &mme_ue->tai)) {
+            rv = paging_send_to_enb(mme_ue, last_enb, cn_domain);
+            if (rv != OGS_OK) {
+                mme_ctx_unlock();
+                return rv;
+            }
+            sent = true;
+        }
+        /* last eNB gone / TA changed: fall through to full fan-out */
+    }
 
-                rv = s1ap_send_to_enb(enb, s1apbuf, S1AP_NON_UE_SIGNALLING);
-                if (rv != OGS_OK) {
-                    ogs_error("s1ap_send_to_enb() failed");
-                    mme_ctx_unlock();
-                    return rv;
-                }
+    if (!sent) {
+        /* Full fan-out: every eNB advertising the UE's TAI. */
+        ogs_list_for_each(&mme_self()->enb_list, enb) {
+            if (!enb_serves_tai(enb, &mme_ue->tai))
+                continue;
+
+            rv = paging_send_to_enb(mme_ue, enb, cn_domain);
+            if (rv != OGS_OK) {
+                mme_ctx_unlock();
+                return rv;
             }
         }
     }
+
     mme_ctx_unlock();
 
     /* Start T3413 */

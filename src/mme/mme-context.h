@@ -291,6 +291,12 @@ typedef struct mme_context_s {
      * PDUs beyond this are dropped (soft backpressure). 0 = default.
      */
     int             s1ap_io_write_queue_max;
+    /*
+     * Smart paging: first S1 Paging wave goes only to the eNB the UE
+     * last camped on (from stored eCGI); T3413 retries fan out to the
+     * whole TA. Cuts paging PDU volume by ~1/fan-out. SIGHUP reloadable.
+     */
+    bool            paging_first_wave_last_enb;
     /* UE-shard workers (Stage A bounce router, 0 = off) — mme-workers.c */
     int             workers;
 
