@@ -81,6 +81,21 @@ static int io_write_queue_max(void)
 
 static OGS_THREAD_LOCAL ogs_hash_t *io_sock_hash = NULL;
 
+/* eNB peer address for diagnostics (both send paths pass enb->sctp.addr) */
+static const char *io_sock_peer_str(io_sock_t *ctx, char *buf)
+{
+    ogs_sockaddr_t *a = NULL;
+
+    if (ctx->has_peer)
+        a = &ctx->addr;
+    else if (ctx->sock && ctx->sock->remote_addr.ogs_sa_family)
+        a = &ctx->sock->remote_addr;
+
+    if (!a)
+        return "unknown";
+    return OGS_ADDR(a, buf) ? buf : "unknown";
+}
+
 static void io_thread_init(ogs_worker_t *worker)
 {
     io_sock_hash = ogs_hash_make();
@@ -193,13 +208,17 @@ static void io_mark_assoc_dead(io_sock_t *ctx, const char *why)
     {
         ogs_time_t now = ogs_time_now();
         if (now - log_window > ogs_time_from_sec(1)) {
+            char peer[OGS_ADDRSTRLEN];
+
             if (log_count > 1)
                 ogs_warn("s1ap-io: marked %d sock(s) send-dead in last "
-                        "window (latest: %s sock:%p)",
-                        log_count, why ? why : "?", (void *)ctx->sock);
+                        "window (latest: %s eNB[%s] sock:%p)",
+                        log_count, why ? why : "?",
+                        io_sock_peer_str(ctx, peer), (void *)ctx->sock);
             else
-                ogs_warn("s1ap-io: sock:%p send-dead (%s) — waiting for "
-                        "RX teardown", (void *)ctx->sock,
+                ogs_warn("s1ap-io: eNB[%s] sock:%p send-dead (%s) — "
+                        "waiting for RX teardown",
+                        io_sock_peer_str(ctx, peer), (void *)ctx->sock,
                         why ? why : "?");
             log_window = now;
             log_count = 0;
@@ -337,9 +356,12 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
 
             ctx->wq_dropped++;
             if (now - ctx->wq_drop_window > ogs_time_from_sec(1)) {
-                ogs_error("s1ap-io: per-sock write queue full "
+                char peer[OGS_ADDRSTRLEN];
+
+                ogs_error("s1ap-io: write queue full for eNB[%s] "
                         "(sock:%p depth:%d max:%d); dropped %u PDU(s) "
                         "in last window",
+                        io_sock_peer_str(ctx, peer),
                         (void *)job->sock, ctx->wq_count,
                         io_write_queue_max(), ctx->wq_dropped);
                 ctx->wq_drop_window = now;
