@@ -309,7 +309,7 @@ int nas_eps_send_attach_reject(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         }
     }
 
-    emmbuf = emm_build_attach_reject(emm_cause, esmbuf);
+    emmbuf = emm_build_attach_reject(mme_ue, emm_cause, esmbuf);
     if (!emmbuf) {
         ogs_error("emm_build_attach_reject() failed");
         return OGS_ERROR;

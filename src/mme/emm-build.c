@@ -313,7 +313,7 @@ ogs_pkbuf_t *emm_build_attach_accept(
     return pkbuf;
 }
 
-ogs_pkbuf_t *emm_build_attach_reject(
+ogs_pkbuf_t *emm_build_attach_reject(mme_ue_t *mme_ue,
         ogs_nas_emm_cause_t emm_cause, ogs_pkbuf_t *esmbuf)
 {
     ogs_nas_eps_message_t message;
@@ -321,6 +321,16 @@ ogs_pkbuf_t *emm_build_attach_reject(
     ogs_nas_eps_attach_reject_t *attach_reject = &message.emm.attach_reject;
 
     memset(&message, 0, sizeof(message));
+
+    /* Same rationale as emm_build_tau_reject: integrity-protect the
+     * reject when the security context is valid (post-SMC) so the UE
+     * honours the EMM cause instead of abnormal-case retrying. */
+    if (SECURITY_CONTEXT_IS_VALID(mme_ue)) {
+        message.h.security_header_type =
+            OGS_NAS_SECURITY_HEADER_INTEGRITY_PROTECTED_AND_CIPHERED;
+        message.h.protocol_discriminator = OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM;
+    }
+
     message.emm.h.protocol_discriminator = OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM;
     message.emm.h.message_type = OGS_NAS_EPS_ATTACH_REJECT;
 
@@ -333,7 +343,10 @@ ogs_pkbuf_t *emm_build_attach_reject(
         attach_reject->esm_message_container.length = esmbuf->len;
     }
 
-    pkbuf = ogs_nas_eps_plain_encode(&message);
+    if (SECURITY_CONTEXT_IS_VALID(mme_ue))
+        pkbuf = nas_eps_security_encode(mme_ue, &message);
+    else
+        pkbuf = ogs_nas_eps_plain_encode(&message);
     if (esmbuf)
         ogs_pkbuf_free(esmbuf);
 
@@ -763,6 +776,21 @@ ogs_pkbuf_t *emm_build_tau_reject(
     ogs_debug("    Cause[%d]", emm_cause);
 
     memset(&message, 0, sizeof(message));
+
+    /*
+     * TS 24.301 5.5.3.2.5: a TAU REJECT with cause #9/#10 that is not
+     * integrity protected does NOT make the UE delete its GUTI and
+     * re-attach; the UE treats it as an abnormal case and just retries
+     * TAU on T3411 (observed as a 10s reject loop for inbound UEs
+     * without S10 context). Send it protected whenever the current EPS
+     * security context is valid (i.e. after a successful SMC).
+     */
+    if (SECURITY_CONTEXT_IS_VALID(mme_ue)) {
+        message.h.security_header_type =
+            OGS_NAS_SECURITY_HEADER_INTEGRITY_PROTECTED_AND_CIPHERED;
+        message.h.protocol_discriminator = OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM;
+    }
+
     message.emm.h.protocol_discriminator = OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM;
     message.emm.h.message_type = OGS_NAS_EPS_TRACKING_AREA_UPDATE_REJECT;
 
@@ -780,6 +808,9 @@ ogs_pkbuf_t *emm_build_tau_reject(
         }
     }
 
+    if (SECURITY_CONTEXT_IS_VALID(mme_ue))
+        return nas_eps_security_encode(mme_ue, &message);
+
     return ogs_nas_eps_plain_encode(&message);
 }
 
@@ -790,6 +821,15 @@ ogs_pkbuf_t *emm_build_service_reject(
     ogs_nas_eps_service_reject_t *service_reject = &message.emm.service_reject;
 
     memset(&message, 0, sizeof(message));
+
+    /* Same rationale as emm_build_tau_reject: protect when possible so
+     * the UE acts on the cause instead of applying abnormal-case retry. */
+    if (SECURITY_CONTEXT_IS_VALID(mme_ue)) {
+        message.h.security_header_type =
+            OGS_NAS_SECURITY_HEADER_INTEGRITY_PROTECTED_AND_CIPHERED;
+        message.h.protocol_discriminator = OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM;
+    }
+
     message.emm.h.protocol_discriminator = OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM;
     message.emm.h.message_type = OGS_NAS_EPS_SERVICE_REJECT;
 
@@ -806,6 +846,9 @@ ogs_pkbuf_t *emm_build_service_reject(
                     (long)mme_self()->time.t3346.value);
         }
     }
+
+    if (SECURITY_CONTEXT_IS_VALID(mme_ue))
+        return nas_eps_security_encode(mme_ue, &message);
 
     return ogs_nas_eps_plain_encode(&message);
 }

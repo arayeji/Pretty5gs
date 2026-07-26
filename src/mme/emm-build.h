@@ -28,7 +28,7 @@ extern "C" {
 
 ogs_pkbuf_t *emm_build_attach_accept(
         mme_ue_t *mme_ue, ogs_pkbuf_t *esmbuf);
-ogs_pkbuf_t *emm_build_attach_reject(
+ogs_pkbuf_t *emm_build_attach_reject(mme_ue_t *mme_ue,
         ogs_nas_emm_cause_t emm_cause, ogs_pkbuf_t *esmbuf);
 
 ogs_pkbuf_t *emm_build_identity_request(mme_ue_t *mme_ue);

@@ -92,7 +92,7 @@ int mme_maintenance_reject_without_ue(
         emmbuf = emm_build_service_reject(emm_cause, NULL);
     } else switch (message->emm.h.message_type) {
     case OGS_NAS_EPS_ATTACH_REQUEST:
-        emmbuf = emm_build_attach_reject(emm_cause, NULL);
+        emmbuf = emm_build_attach_reject(NULL, emm_cause, NULL);
         break;
     case OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST:
         emmbuf = emm_build_tau_reject(emm_cause, NULL);
