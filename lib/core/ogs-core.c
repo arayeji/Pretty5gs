@@ -30,7 +30,10 @@ static ogs_core_context_t self = {
     .log.domain_pool = 64,
     .log.level = OGS_LOG_DEFAULT,
 
-    .pkbuf.pool = 8,
+    /* pool-object headroom for per-thread pkbuf pools (default +
+     * one per worker thread; MME can run main + 7 shards + 4 RX +
+     * 4 TX + IO). Each unused slot costs a few hundred bytes. */
+    .pkbuf.pool = 64,
     .pkbuf.config_pool = 8,
 
     .tlv.pool = 512,

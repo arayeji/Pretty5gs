@@ -83,6 +83,21 @@ void ogs_pkbuf_default_destroy(void);
 ogs_pkbuf_pool_t *ogs_pkbuf_pool_create(ogs_pkbuf_config_t *config);
 void ogs_pkbuf_pool_destroy(ogs_pkbuf_pool_t *pool);
 
+/*
+ * Per-thread default pool (opt-in, no-op on talloc builds).
+ *
+ * After ogs_pkbuf_thread_pool_set(pool) on a thread, every
+ * ogs_pkbuf_alloc(NULL, ...) from that thread allocates from `pool`
+ * (its own mutex) instead of the process-wide default pool, removing
+ * the one mutex all threads otherwise contend on. Frees route through
+ * pkbuf->pool, so buffers may be freed from ANY thread, and the pool
+ * must therefore outlive every buffer allocated from it — destroy it
+ * only at process shutdown, not at thread exit. Exhaustion falls back
+ * silently to the default pool.
+ */
+void ogs_pkbuf_thread_pool_set(ogs_pkbuf_pool_t *pool);
+ogs_pkbuf_pool_t *ogs_pkbuf_thread_pool_get(void);
+
 #define ogs_pkbuf_alloc(pool, size) \
     ogs_pkbuf_alloc_debug(pool, size, OGS_FILE_LINE)
 ogs_pkbuf_t *ogs_pkbuf_alloc_debug(

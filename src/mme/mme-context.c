@@ -59,6 +59,88 @@
 
 #define MME_RECOVERY_COUNTER_FILE "/var/lib/open5gs/mme_recovery_counter"
 
+/*
+ * Per-thread pkbuf pools (mme.pkbuf_thread_pool, default 0 = off).
+ *
+ * The process-wide default pkbuf pool has a single mutex taken by every
+ * alloc/free/copy from every thread (main + shard/RX/TX/IO workers) —
+ * the biggest single-lock funnel left once SMP knobs are on. Each
+ * helper thread (and mme_main) attaches its own pool at thread start;
+ * allocs then take a private mutex and frees route to the owning pool
+ * via pkbuf->pool. Exhaustion falls back silently to the default pool,
+ * so undersizing degrades to today's behavior rather than dropping.
+ *
+ * Pools must outlive every pkbuf allocated from them (buffers cross
+ * threads), so they are registered here and destroyed only in
+ * mme_pkbuf_thread_pools_final() at process shutdown — never at
+ * thread exit.
+ */
+#define MME_MAX_PKBUF_THREAD_POOLS \
+    (1 /* mme_main */ + 3 * (OGS_MAX_WORKERS - 1) /* shard+rx+tx */ + \
+     1 /* io */ + 4 /* headroom */)
+static mme_context_t self;
+
+static ogs_thread_mutex_t pkbuf_tp_mutex;
+static ogs_pkbuf_pool_t *pkbuf_tp[MME_MAX_PKBUF_THREAD_POOLS];
+static int num_pkbuf_tp = 0;
+
+void mme_pkbuf_thread_pool_attach(void)
+{
+    ogs_pkbuf_config_t config;
+    ogs_pkbuf_pool_t *pool = NULL;
+    int n = self.pkbuf_thread_pool;
+
+    if (n <= 0)
+        return;
+
+    memset(&config, 0, sizeof config);
+    config.cluster_128_pool = n * 4;
+    config.cluster_256_pool = n * 2;
+    config.cluster_512_pool = n;
+    config.cluster_1024_pool = n;
+    config.cluster_2048_pool = n;
+    config.cluster_8192_pool = ogs_max(n / 4, 16);
+    /* jumbo classes stay on the (rare) default-pool path */
+    config.cluster_32768_pool = 0;
+    config.cluster_big_pool = 0;
+
+    /* ogs_pkbuf_pool_create() touches an unlocked global pool array;
+     * worker threads start concurrently, so serialize creation. */
+    ogs_thread_mutex_lock(&pkbuf_tp_mutex);
+    if (num_pkbuf_tp >= MME_MAX_PKBUF_THREAD_POOLS) {
+        ogs_thread_mutex_unlock(&pkbuf_tp_mutex);
+        ogs_error("pkbuf thread pool registry full (%d); "
+                "thread keeps using the default pool", num_pkbuf_tp);
+        return;
+    }
+    pool = ogs_pkbuf_pool_create(&config);
+    if (pool)
+        pkbuf_tp[num_pkbuf_tp++] = pool;
+    ogs_thread_mutex_unlock(&pkbuf_tp_mutex);
+
+    if (!pool) {
+        /* talloc build or pool-object exhaustion */
+        ogs_warn("pkbuf thread pool create failed; using default pool");
+        return;
+    }
+
+    ogs_pkbuf_thread_pool_set(pool);
+}
+
+void mme_pkbuf_thread_pools_final(void)
+{
+    int i;
+
+    for (i = 0; i < num_pkbuf_tp; i++) {
+        if (pkbuf_tp[i])
+            ogs_pkbuf_pool_destroy(pkbuf_tp[i]);
+        pkbuf_tp[i] = NULL;
+    }
+    num_pkbuf_tp = 0;
+
+    ogs_thread_mutex_destroy(&pkbuf_tp_mutex);
+}
+
 /* Returns the persisted counter (0..255), or -1 if the file is missing
  * or unreadable so the caller can fall back to a time-based seed. */
 static int
@@ -145,7 +227,6 @@ mme_save_recovery_counter(const char *path, uint8_t val)
     return true;
 }
 
-static mme_context_t self;
 static ogs_diam_config_t g_diam_conf;
 
 /*
@@ -367,6 +448,8 @@ void mme_context_init(void)
     /* mme_ctx_lock() needs the recursive metrics dump mutex; the
      * metrics context may not be initialized yet at this point. */
     ogs_metrics_dump_lock_init();
+
+    ogs_thread_mutex_init(&pkbuf_tp_mutex);
 
     /* Initial FreeDiameter Config */
     memset(&g_diam_conf, 0, sizeof(ogs_diam_config_t));
@@ -1317,6 +1400,20 @@ int mme_context_parse_config(void)
                                     OGS_MAX_WORKERS - 1);
                             self.workers = 0;
                         }
+                    }
+                } else if (!strcmp(mme_key, "pkbuf_thread_pool")) {
+                    /* per-thread pkbuf pools (0 = off; startup-only,
+                     * NOT SIGHUP-reloadable: threads already hold
+                     * their pools) */
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+                    if (v) {
+                        self.pkbuf_thread_pool = atoi(v);
+                        if (self.pkbuf_thread_pool < 0)
+                            self.pkbuf_thread_pool = 0;
+                        if (self.pkbuf_thread_pool)
+                            ogs_info("Per-thread pkbuf pools: %d "
+                                    "clusters/class",
+                                    self.pkbuf_thread_pool);
                     }
                 } else if (!strcmp(mme_key, "s1ap")) {
                     ogs_yaml_iter_t s1ap_iter;

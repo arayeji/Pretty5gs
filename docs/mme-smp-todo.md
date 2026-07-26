@@ -193,6 +193,25 @@ Known remaining (accepted / TODO):
 
 ---
 
+## 5. Per-thread pkbuf pools — LANDED (default off)
+
+Prod perf with workers:7 rx:4 tx:4 io:1 (Jul 26): load spreads well
+(mme_main ~22% of a core, shards ~6% each) but `__lll_lock_wait` is
+~7% of mme_main children — every alloc/free/copy from every thread
+takes the ONE default pkbuf-pool mutex.
+
+- [x] `ogs_pkbuf_thread_pool_set()` (lib/core): opt-in TLS pool tried
+      before default_pool on `ogs_pkbuf_alloc(NULL, ...)`; frees route
+      via `pkbuf->pool` (cross-thread safe); exhaustion falls back
+      silently to the default pool. Fixed cluster-meta leak on the
+      exhaustion path; pkbuf field init moved outside the pool mutex.
+- [x] Knob `mme.pkbuf_thread_pool: N` (0 = off, startup-only): attach
+      in mme_main + shard/RX/TX/IO thread_init; pools destroyed LAST in
+      mme_terminate (buffers cross threads, pools must outlive them).
+- [ ] Prod soak with `pkbuf_thread_pool: 2048`; re-perf lll_lock_wait
+
+---
+
 ## Suggested order (current)
 
 1. ~~`mme_find_served_tai`~~ — done / confirmed in perf  

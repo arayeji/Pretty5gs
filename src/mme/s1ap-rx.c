@@ -58,6 +58,8 @@ typedef struct rx_cmd_s {
 
 static void rx_thread_init(ogs_worker_t *worker)
 {
+    mme_pkbuf_thread_pool_attach();
+
     rx_poll_hash = ogs_hash_make();
     ogs_assert(rx_poll_hash);
 }

@@ -229,6 +229,15 @@ mme:
   #                                 # T3413 retries page the whole TA.
   #                                 # tai (default) = TA-wide every wave.
   #                                 # SIGHUP reloadable.
+  # pkbuf_thread_pool: 2048         # per-thread pkbuf pools (0/unset = off).
+  #                                 # mme_main + every shard/RX/TX/IO worker
+  #                                 # allocates packet buffers from a private
+  #                                 # pool instead of contending on the one
+  #                                 # process-wide pool mutex. Value = cluster
+  #                                 # count per size class (~13 MB RAM per
+  #                                 # thread at 2048); exhaustion falls back
+  #                                 # to the shared pool. Startup-only (NOT
+  #                                 # SIGHUP reloadable).
   pgw_selection:
     mode: standard
     # force_yaml: true          # same as mode: force (global)

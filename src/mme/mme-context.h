@@ -299,6 +299,15 @@ typedef struct mme_context_s {
     bool            paging_first_wave_last_enb;
     /* UE-shard workers (Stage A bounce router, 0 = off) — mme-workers.c */
     int             workers;
+    /*
+     * Per-thread pkbuf pool size (0 = off, startup-only). When > 0,
+     * mme_main and every shard/RX/TX/IO worker allocates pkbufs from
+     * a private pool instead of contending on the single default-pool
+     * mutex. Value = cluster count for the 512/1024/2048 classes
+     * (128/256 get 4x/2x, 8192 gets 1/4); exhaustion falls back to
+     * the default pool. ~13 MB per thread at 2048.
+     */
+    int             pkbuf_thread_pool;
 
     /* Generator for unique identification */
     uint32_t        mme_ue_s1ap_id;         /* mme_ue_s1ap_id generator */
@@ -1571,6 +1580,16 @@ typedef struct mme_bearer_s {
 void mme_context_init(void);
 void mme_context_final(void);
 mme_context_t *mme_self(void);
+
+/*
+ * Attach a private pkbuf pool to the CALLING thread (no-op when
+ * mme.pkbuf_thread_pool is 0). Call once from each worker thread_init
+ * and from mme_main. Pools outlive their threads (buffers cross
+ * threads); destroy them all only at shutdown, after every thread has
+ * joined and the context is final.
+ */
+void mme_pkbuf_thread_pool_attach(void);
+void mme_pkbuf_thread_pools_final(void);
 
 /* Narrow lock for shared pool/hash mutations when mme.workers > 0 */
 void mme_ctx_lock(void);

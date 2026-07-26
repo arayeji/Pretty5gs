@@ -243,12 +243,19 @@ void mme_terminate(void)
     ogs_gtp_xact_final();
 
     mme_metrics_final();
+
+    /* LAST: every thread is joined and every holder of pkbufs
+     * (context, xacts) is final — per-thread pools are now empty */
+    mme_pkbuf_thread_pools_final();
 }
 
 static void mme_main(void *data)
 {
     ogs_fsm_t mme_sm;
     int rv;
+
+    /* private pkbuf pool for the main loop (mme.pkbuf_thread_pool) */
+    mme_pkbuf_thread_pool_attach();
 
     ogs_fsm_init(&mme_sm, mme_state_initial, mme_state_final, 0);
 

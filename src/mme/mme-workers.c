@@ -626,6 +626,8 @@ static void mme_worker_thread_init(ogs_worker_t *worker)
 
     ogs_assert(worker);
 
+    mme_pkbuf_thread_pool_attach();
+
     rv = ogs_gtp_xact_init();
     ogs_assert(rv == OGS_OK);
 

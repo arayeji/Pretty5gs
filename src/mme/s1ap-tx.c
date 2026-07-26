@@ -159,6 +159,12 @@ static void tx_dispatch(ogs_worker_t *worker, void *data)
     ogs_free(job);
 }
 
+static void tx_thread_init(ogs_worker_t *worker)
+{
+    /* DLNAS encode allocates the S1AP PDU pkbuf on this thread */
+    mme_pkbuf_thread_pool_attach();
+}
+
 int s1ap_tx_workers_start(int count)
 {
     int i;
@@ -174,6 +180,7 @@ int s1ap_tx_workers_start(int count)
                 ogs_min(ogs_app()->pool.event, 262144),
                 64, 64, tx_dispatch, NULL);
         ogs_assert(tx_workers[i]);
+        ogs_worker_hooks(tx_workers[i], tx_thread_init, NULL);
         ogs_worker_start(tx_workers[i]);
     }
 

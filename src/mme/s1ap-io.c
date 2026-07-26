@@ -98,6 +98,8 @@ static const char *io_sock_peer_str(io_sock_t *ctx, char *buf)
 
 static void io_thread_init(ogs_worker_t *worker)
 {
+    mme_pkbuf_thread_pool_attach();
+
     io_sock_hash = ogs_hash_make();
     ogs_assert(io_sock_hash);
 }
