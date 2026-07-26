@@ -11,8 +11,17 @@ server-sync/
 # Local ops scripts with embedded credentials (kept local, not tracked)
 tools/smf_vpp_diff.sh
 
-# Local pcap / attach debug scripts and scratch output
+# Local pcap / attach debug scripts and scratch output (never push)
+# Network captures must never be committed (upstream docs/assets/pcapng
+# demo files are already tracked and stay unaffected by these rules).
+*.pcap
+*.pcapng
+*.cap
 pfcp-out.txt
+tools/_*.py
+tools/_*.sh
+tools/_pcap_extract/
+tools/_pcap_extract1/
 tools/s1_setup_failures*.csv
 tools/s1_setup_failures*_mme_tai.yaml
 tools/compare_csr_hex_tmf.py
