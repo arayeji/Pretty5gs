@@ -44,9 +44,16 @@ extern "C" {
  * shard id worker->id + 1 (see ogs_worker_self_id()). Per-shard arrays
  * (xact local/remote lists, xact hashes) are sized OGS_MAX_WORKERS and
  * indexed by shard id, so at most OGS_MAX_WORKERS - 1 workers may exist.
+ *
+ * 4 bits / 15 workers (was 3/7). Cost of the extra bit: sequence
+ * spaces halve — S11 TEID / MME_UE_S1AP_ID raw space 2^28 (268M),
+ * GTPv2 xid 2^19 per shard, GTPv1 xid 4096 per shard, PFCP xid 2^19
+ * per shard — all still far above pool sizes / in-flight windows.
+ * SGW-C inbound_roam gtpc.teid_offset must fit below 2^28 when
+ * sgwc.workers > 0 (validated at startup in sgwc/init.c).
  */
-#define OGS_MAX_WORKERS      8
-#define OGS_WORKER_ID_BITS   3
+#define OGS_MAX_WORKERS      16
+#define OGS_WORKER_ID_BITS   4
 
 typedef struct ogs_worker_s ogs_worker_t;
 

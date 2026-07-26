@@ -20,6 +20,8 @@
 #include "ogs-sctp.h"
 #include "ogs-app.h"
 
+#include "mme-context.h"
+
 int app_initialize(const char *const argv[])
 {
     int rv;
@@ -39,6 +41,12 @@ void app_terminate(void)
 {
     mme_terminate();
     ogs_sctp_final();
+
+    /* After ogs_sctp_final(): even a usrsctp build can no longer free
+     * pkbufs, so the per-thread pkbuf pools are safe to destroy now
+     * (they must outlive every buffer allocated from them). */
+    mme_pkbuf_thread_pools_final();
+
     ogs_info("MME terminate...done");
 }
 

@@ -110,8 +110,10 @@ int sgwc_shard_from_seid(uint64_t seid)
 
 int sgwc_shard_from_xid(uint32_t xid)
 {
-    /* GTPv2/PFCP: shard bits at 22..20, below CMD bit 23. */
-    return (int)((xid >> 20) & 7) - 1;
+    /* GTPv2/PFCP: shard bits directly below CMD bit 23 (was a
+     * hardcoded ">> 20 & 7"; must track OGS_WORKER_ID_BITS). */
+    return (int)((xid >> (23 - OGS_WORKER_ID_BITS)) &
+            ((1u << OGS_WORKER_ID_BITS) - 1)) - 1;
 }
 
 int sgwc_shard_from_imsi_bcd(const char *imsi_bcd)

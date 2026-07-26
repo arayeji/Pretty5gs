@@ -111,7 +111,7 @@ Confirmed in prod perf: self overhead gone. list1 ranges still linear.
 
 ### Stage A — bounce router — LANDED (default off)
 
-- [x] Knob `mme.workers` (0..7); `ogs_worker_shards_enable()` before any helper worker
+- [x] Knob `mme.workers` (0..15 since OGS_WORKER_ID_BITS=4; was 0..7); `ogs_worker_shards_enable()` before any helper worker
 - [x] Sticky shard bits in MME S11 TEID + `MME_UE_S1AP_ID`
 - [x] Bounce EMM/ESM/S11/S6a/timers/admin-UE to owner; eNB/SCTP/Echo stay on main
 - [x] Worker dispatch = UE cases of `mme_state_operational`; narrow `mme_ctx_lock` on hash add/remove

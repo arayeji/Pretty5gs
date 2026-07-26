@@ -56,7 +56,7 @@ static OGS_THREAD_LOCAL xact_pool_t tls_pool;
 
 /* Worker-partitioned xid allocation; see lib/gtp/xact.c for rationale.
  * PFCP xid span (1..0x800000) is a power of two, so shard slices are
- * exact and a response's owner is xid >> 20. */
+ * exact and a response's owner is xid >> (23 - OGS_WORKER_ID_BITS). */
 /* O(1) transaction index on the PFCP node — same scheme and same
  * duplicate-key semantics as lib/gtp/xact.c: keep the FIRST xact per
  * (org,xid), remove only if the slot points at the dying xact, and

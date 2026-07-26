@@ -244,9 +244,8 @@ void mme_terminate(void)
 
     mme_metrics_final();
 
-    /* LAST: every thread is joined and every holder of pkbufs
-     * (context, xacts) is final — per-thread pools are now empty */
-    mme_pkbuf_thread_pools_final();
+    /* Per-thread pkbuf pools are destroyed in app_terminate() AFTER
+     * ogs_sctp_final(), not here: pools must outlive every pkbuf. */
 }
 
 static void mme_main(void *data)

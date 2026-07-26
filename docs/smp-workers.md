@@ -17,21 +17,21 @@ the single-threaded daemon.
    `sgwc_event_push_local()`. Never call into another shard's state.
 3. **Ownership is visible in the ID.** Every locally-allocated
    protocol identifier carries the owner's worker id in its top
-   `OGS_WORKER_ID_BITS` (=3) bits:
+   `OGS_WORKER_ID_BITS` (=4 since Jul 2026; was 3) bits:
    | space | width | shard bits | helper |
    |---|---|---|---|
-   | GTPv2 xid | 23 (of 24-bit SQN, bit 23 = CMD) | 22..20 | `xact_next_xid()` lib/gtp/xact.c |
-   | GTPv1 SQN | 16 | 15..13 | same |
-   | PFCP xid/SQN | 23 | 22..20 | `xact_next_xid()` lib/pfcp/xact.c |
-   | S11/S5C TEID | 32 | 31..29 | `sgwc_shard_compose()` src/sgwc/context.c |
-   | Sx SEID | 64 (values < 2^32) | 31..29 | same (equals S5C TEID) |
-   Raw values must stay below 2^29 (asserted only when sharding is
+   | GTPv2 xid | 23 (of 24-bit SQN, bit 23 = CMD) | 22..19 | `xact_next_xid()` lib/gtp/xact.c |
+   | GTPv1 SQN | 16 | 15..12 | same |
+   | PFCP xid/SQN | 23 | 22..19 | `xact_next_xid()` lib/pfcp/xact.c |
+   | S11/S5C TEID | 32 | 31..28 | `sgwc_shard_compose()` src/sgwc/context.c |
+   | Sx SEID | 64 (values < 2^32) | 31..28 | same (equals S5C TEID) |
+   Raw values must stay below 2^28 (asserted only when sharding is
    enabled); the inbound-roam TEID offset is applied *before* shard
-   composition — validate `offset + pool size < 2^29` at config parse
+   composition — validate `offset + pool size < 2^28` at config parse
    before enabling shard workers.
 
-   **Router mask rule (GTPv2/PFCP):** shard bits sit at 22..20, BELOW
-   the CMD bit (23). Owner extraction is `(xid >> 20) & 7` — the `& 7`
+   **Router mask rule (GTPv2/PFCP):** shard bits sit at 22..19, BELOW
+   the CMD bit (23). Owner extraction is `(xid >> 19) & 15` — the mask
    is mandatory or Command-triggered transactions route to the wrong
    worker (audit F5).
 

@@ -287,7 +287,8 @@ int ogs_gtp2_rx_reply_shard(const void *data, size_t len)
         return -1;
 
     /* xact_next_xid(): GTPv2 xid space 1..0x800000 split into
-     * 2^OGS_WORKER_ID_BITS per-shard windows => shard = xid >> 20 */
+     * 2^OGS_WORKER_ID_BITS per-shard windows
+     * => shard = xid >> (23 - OGS_WORKER_ID_BITS) */
     return (int)((xid >> (23 - OGS_WORKER_ID_BITS)) &
             ((1u << OGS_WORKER_ID_BITS) - 1));
 }
