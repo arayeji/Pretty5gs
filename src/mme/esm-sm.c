@@ -323,6 +323,32 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
                     activate_dedicated_eps_bearer_context_reject->esm_cause)));
             OGS_FSM_TRAN(s, esm_state_bearer_deactivated);
             break;
+        case OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REJECT:
+            /*
+             * TS 24.301 6.4.1.4: the UE rejected the default bearer
+             * activation - abort the procedure and tear down the core
+             * session; previously this fell into "Unknown message" and
+             * the SGW/PGW session leaked until implicit detach.
+             */
+            mme_ue_error(mme_ue, NULL, "esm",
+                    sess->session ? sess->session->name : NULL,
+                    "Default bearer rejected PTI=%d EBI=%d ESM_CAUSE=%d",
+                    sess->pti, bearer->ebi,
+                    message->esm.activate_default_eps_bearer_context_reject.
+                        esm_cause);
+            CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
+            if (MME_HAVE_SGW_S1U_PATH(sess)) {
+                sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+                if (sgw_ue)
+                    ogs_assert(OGS_OK ==
+                        mme_gtp_send_delete_session_request(
+                            enb_ue, sgw_ue, sess, OGS_GTP_DELETE_NO_ACTION));
+                else
+                    ogs_warn("[%s] default bearer reject: sgw_ue gone",
+                            mme_ue->imsi_bcd);
+            }
+            OGS_FSM_TRAN(s, esm_state_exception);
+            break;
         default:
             ogs_error("Unknown message(type:%d)", message->esm.h.message_type);
             break;
@@ -474,6 +500,22 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
                     mme_ue->imsi_bcd, sess->pti, bearer->ebi);
             esm_handle_bearer_resource_modification_request(
                     enb_ue, bearer, message);
+            break;
+        case OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_ACCEPT:
+        case OGS_NAS_EPS_ACTIVATE_DEDICATED_EPS_BEARER_CONTEXT_ACCEPT:
+            /*
+             * Duplicate accept - valid per TS 24.301 6.4.1.5/6.4.2.5:
+             * the UE answers every (re)transmitted ACTIVATE ... BEARER
+             * CONTEXT REQUEST. When our retransmission crosses the
+             * UE's first accept in flight, the second accept arrives
+             * after the bearer already went ACTIVE. The procedure was
+             * completed by the first accept; just absorb it.
+             */
+            ogs_debug("Duplicate bearer context accept(type:%d) ignored "
+                    "IMSI[%s] PTI[%d] EBI[%d]",
+                    message->esm.h.message_type,
+                    mme_ue->imsi_bcd, sess->pti, bearer->ebi);
+            CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
             break;
         default:
             ogs_error("Unknown message(type:%d)",
