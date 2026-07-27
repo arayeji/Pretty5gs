@@ -4458,6 +4458,10 @@ int smf_bearer_remove(smf_bearer_t *bearer)
         ogs_freeaddrinfo(bearer->pgw_s5u_addr);
     if (bearer->pgw_s5u_addr6)
         ogs_freeaddrinfo(bearer->pgw_s5u_addr6);
+    if (bearer->relay_core_addr)
+        ogs_freeaddrinfo(bearer->relay_core_addr);
+    if (bearer->relay_core_addr6)
+        ogs_freeaddrinfo(bearer->relay_core_addr6);
 
     smf_pf_remove_all(bearer);
 

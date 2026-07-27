@@ -1072,6 +1072,17 @@ void smf_s5c_handle_create_bearer_response(
         return;
     }
 
+    /*
+     * S11 (collapsed SAEGW-C): the MME addresses the UE with one SGW S11
+     * TEID, so the header TEID may belong to a sibling PDN connection.
+     * The bearer from the transaction knows its own session.
+     */
+    if (sess->s11) {
+        smf_sess_t *bearer_sess = smf_sess_find_by_id(bearer->sess_id);
+        if (bearer_sess)
+            sess = bearer_sess;
+    }
+
     /************************
      * Check Session Context
      ************************/
@@ -1100,6 +1111,17 @@ void smf_s5c_handle_create_bearer_response(
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
     }
 
+    if (sess->s11) {
+        /*
+         * Collapsed SAEGW-C: the MME's Create Bearer Response carries
+         * the eNB S1-U F-TEID (instance 0, the DL target) and echoes our
+         * SGW S1-U F-TEID (instance 1, used to locate the bearer).
+         */
+        if (rsp->bearer_contexts.s1_u_enodeb_f_teid.presence)
+            sgw_s5u_teid = rsp->bearer_contexts.s1_u_enodeb_f_teid.data;
+        if (rsp->bearer_contexts.s4_u_sgsn_f_teid.presence)
+            pgw_s5u_teid = rsp->bearer_contexts.s4_u_sgsn_f_teid.data;
+    } else
     if (rsp->bearer_contexts.s5_s8_u_pgw_f_teid.presence &&
         rsp->bearer_contexts.s5_s8_u_sgw_f_teid.presence) {
         if (rsp->bearer_contexts.s5_s8_u_pgw_f_teid.presence)

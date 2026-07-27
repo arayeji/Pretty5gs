@@ -20,6 +20,7 @@
 #include "context.h"
 #include "s5c-build.h"
 #include "s11-handler.h"
+#include "s11-relay.h"
 #include "pfcp-path.h"
 #include "gtp-path.h"
 #include "n4-handler.h"
@@ -1572,6 +1573,15 @@ void smf_epc_n4_handle_session_modification_response(
         if (flags & OGS_PFCP_MODIFY_S11_BUFFER) {
             if (gtp_xact && recv_message &&
                     recv_message->h.type ==
+                        OGS_GTP2_CREATE_SESSION_REQUEST_TYPE) {
+                /* S11 re-anchor via idle TAU: UPF is buffering DL,
+                 * answer the MME from the adopted session. */
+                ogs_assert(OGS_OK == smf_gtp2_send_create_session_response(
+                            sess, gtp_xact));
+                return;
+            }
+            if (gtp_xact && recv_message &&
+                    recv_message->h.type ==
                         OGS_GTP2_RELEASE_ACCESS_BEARERS_REQUEST_TYPE) {
                 ogs_gtp2_header_t h;
                 ogs_pkbuf_t *pkbuf = NULL;
@@ -1719,6 +1729,29 @@ void smf_epc_n4_handle_session_modification_response(
                     smf_gtp1_send_update_pdp_context_response(bearer, gtp_xact);
                 else
                     ogs_error("Bearer has already been removed");
+
+            } else if (recv_message && recv_message->h.type ==
+                        OGS_GTP2_CREATE_SESSION_REQUEST_TYPE) {
+
+                /*
+                 * Collapsed SAEGW-C (S11) re-anchor: the DL FAR now points
+                 * at the target eNB (path-switch CSR); answer the MME with
+                 * a Create Session Response from the adopted session.
+                 */
+                ogs_assert(OGS_OK == smf_gtp2_send_create_session_response(
+                            sess, gtp_xact));
+
+            } else if (sess->s11_relay && recv_message &&
+                        recv_message->h.type ==
+                            OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE) {
+
+                /*
+                 * S8 relay: the UL FAR now forwards to the home PGW;
+                 * rewrite the buffered S5 Create Session Response and
+                 * send it to the MME over S11.
+                 */
+                smf_s11_relay_forward_create_session_response(
+                        sess, gtp_xact, recv_message);
 
             } else {
 

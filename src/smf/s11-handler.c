@@ -21,7 +21,25 @@
 #include "event.h"
 #include "gtp-path.h"
 #include "pfcp-path.h"
+#include "n4-build.h"
 #include "s11-handler.h"
+
+static void reanchor_pfcp_timeout(ogs_pfcp_xact_t *xact, void *data)
+{
+    smf_sess_t *sess = NULL;
+    ogs_pool_id_t sess_id;
+
+    ogs_assert(data);
+    sess_id = OGS_POINTER_TO_UINT(data);
+
+    sess = smf_sess_find_active_by_id(sess_id);
+    if (!sess) {
+        ogs_error("S11 re-anchor PFCP timeout: session[%u] removed", sess_id);
+        return;
+    }
+    ogs_error("S11 re-anchor: no PFCP Session Modification Response "
+            "from UPF (session[%u])", sess_id);
+}
 
 bool smf_s11_csr_is_s11(ogs_gtp2_create_session_request_t *req)
 {
@@ -75,6 +93,197 @@ bool smf_s11_csr_pgw_is_local(ogs_gtp2_create_session_request_t *req)
         return true;
 
     return false;
+}
+
+smf_sess_t *smf_s11_csr_find_reanchor_sess(
+        ogs_gtp2_create_session_request_t *req, bool pgw_is_remote)
+{
+    ogs_gtp2_f_teid_t *pgw_f_teid = NULL;
+    smf_sess_t *sess = NULL;
+    smf_ue_t *smf_ue = NULL;
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+
+    ogs_assert(req);
+
+    /*
+     * TAU / path-switch with SGW relocation: the MME re-sends the PGW
+     * S5/S8 F-TEID it learned at attach. When the session is anchored
+     * here, that TEID is our own per-session GTP-C TEID; when the
+     * session is relayed to a home PGW (S8 relay), it is the PGW TEID
+     * we learned from the Create Session Response. Either way, adopt
+     * the existing session instead of creating a duplicate.
+     */
+    if (req->pgw_s5_s8_address_for_control_plane_or_pmip.presence == 0)
+        return NULL;
+    pgw_f_teid = req->pgw_s5_s8_address_for_control_plane_or_pmip.data;
+    if (!pgw_f_teid || be32toh(pgw_f_teid->teid) == 0)
+        return NULL;
+
+    if (pgw_is_remote) {
+        smf_sess_t *s = NULL;
+        ogs_ip_t pgw_ip;
+
+        if (req->imsi.presence == 0 || !req->imsi.data)
+            return NULL;
+        smf_ue = smf_ue_find_by_imsi(req->imsi.data, req->imsi.len);
+        if (!smf_ue)
+            return NULL;
+        if (ogs_gtp2_f_teid_to_ip(pgw_f_teid, &pgw_ip) != OGS_OK)
+            return NULL;
+
+        ogs_list_for_each(&smf_ue->sess_list, s) {
+            if (s->s11_relay &&
+                    s->pgw_s5c_teid == be32toh(pgw_f_teid->teid) &&
+                    memcmp(&s->pgw_s5c_ip, &pgw_ip, sizeof(ogs_ip_t)) == 0)
+                return s;
+        }
+        return NULL;
+    }
+
+    sess = smf_sess_find_active_by_teid(be32toh(pgw_f_teid->teid));
+    if (!sess || !sess->s11 || sess->s11_relay || !sess->epc)
+        return NULL;
+
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+    if (!smf_ue)
+        return NULL;
+
+    /* The TEID must belong to the same subscriber. */
+    if (req->imsi.presence == 0 || !req->imsi.data)
+        return NULL;
+    ogs_buffer_to_bcd(req->imsi.data, req->imsi.len, imsi_bcd);
+    if (strcmp(imsi_bcd, smf_ue->imsi_bcd) != 0) {
+        ogs_error("S11 re-anchor TEID[0x%x] IMSI mismatch [%s != %s]",
+                be32toh(pgw_f_teid->teid), imsi_bcd, smf_ue->imsi_bcd);
+        return NULL;
+    }
+
+    return sess;
+}
+
+void smf_s11_handle_reanchor_csr(
+        smf_sess_t *sess, ogs_gtp_xact_t *xact, ogs_pkbuf_t *gtpbuf,
+        ogs_gtp2_create_session_request_t *req)
+{
+    int rv, i;
+    smf_ue_t *smf_ue = NULL;
+    smf_bearer_t *bearer = NULL;
+    int num_of_enb_f_teid = 0;
+
+    ogs_assert(sess);
+    ogs_assert(xact);
+    ogs_assert(gtpbuf);
+    ogs_assert(req);
+
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+    ogs_assert(smf_ue);
+
+    ogs_info("[%s:%s] S11 Create Session (re-anchor: TAU/path-switch "
+            "with SGW relocation)", smf_ue->imsi_bcd, sess->session.name);
+
+    /* New MME endpoint */
+    if (req->sender_f_teid_for_control_plane.presence &&
+            req->sender_f_teid_for_control_plane.data) {
+        ogs_gtp2_f_teid_t *mme_f_teid =
+            req->sender_f_teid_for_control_plane.data;
+        sess->sgw_s5c_teid = be32toh(mme_f_teid->teid);
+        rv = ogs_gtp2_f_teid_to_ip(mme_f_teid, &sess->sgw_s5c_ip);
+        ogs_assert(rv == OGS_OK);
+        OGS_SETUP_GTP_NODE(sess, xact->gnode);
+    }
+
+    /*
+     * Path-switch (Handover Indication) carries the target eNB S1-U
+     * F-TEID per bearer: point the DL FAR at it. A plain TAU carries no
+     * eNB F-TEID: the UE is idle at the target, so buffer DL until the
+     * Modify Bearer Request from the Service Request arrives.
+     */
+    ogs_list_init(&sess->qos_flow_to_modify_list);
+
+    for (i = 0; i < OGS_BEARER_PER_UE; i++) {
+        ogs_gtp2_f_teid_t *enb_f_teid = NULL;
+
+        if (req->bearer_contexts_to_be_created[i].presence == 0)
+            break;
+        if (req->bearer_contexts_to_be_created[i].
+                eps_bearer_id.presence == 0)
+            continue;
+        if (req->bearer_contexts_to_be_created[i].
+                s1_u_enodeb_f_teid.presence == 0)
+            continue;
+
+        bearer = smf_bearer_find_by_ebi(sess,
+                req->bearer_contexts_to_be_created[i].eps_bearer_id.u8);
+        if (!bearer) {
+            ogs_error("[%s] S11 re-anchor: no bearer for EBI[%d]",
+                    smf_ue->imsi_bcd,
+                    req->bearer_contexts_to_be_created[i].eps_bearer_id.u8);
+            continue;
+        }
+
+        enb_f_teid = req->bearer_contexts_to_be_created[i].
+            s1_u_enodeb_f_teid.data;
+        ogs_assert(enb_f_teid);
+
+        bearer->sgw_s5u_teid = be32toh(enb_f_teid->teid);
+        ogs_assert(OGS_OK ==
+                ogs_gtp2_f_teid_to_ip(enb_f_teid, &bearer->sgw_s5u_ip));
+
+        ogs_assert(bearer->dl_far);
+        bearer->dl_far->apply_action = OGS_PFCP_APPLY_ACTION_FORW;
+        ogs_assert(OGS_OK ==
+            ogs_pfcp_ip_to_outer_header_creation(
+                &bearer->sgw_s5u_ip,
+                &bearer->dl_far->outer_header_creation,
+                &bearer->dl_far->outer_header_creation_len));
+        bearer->dl_far->outer_header_creation.teid = bearer->sgw_s5u_teid;
+
+        ogs_list_add(&sess->qos_flow_to_modify_list,
+                &bearer->to_modify_node);
+        num_of_enb_f_teid++;
+    }
+
+    if (num_of_enb_f_teid) {
+        ogs_pfcp_xact_t *pfcp_xact = NULL;
+
+        pfcp_xact = ogs_pfcp_xact_local_create(
+                        sess->pfcp_node, reanchor_pfcp_timeout,
+                        OGS_UINT_TO_POINTER(sess->id));
+        ogs_assert(pfcp_xact);
+
+        pfcp_xact->epc = true;
+        pfcp_xact->assoc_xact_id = xact->id;
+        pfcp_xact->modify_flags =
+            OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_ACTIVATE;
+        pfcp_xact->gtp_pti = OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED;
+        pfcp_xact->gtp_cause = OGS_GTP2_CAUSE_UNDEFINED_VALUE;
+        pfcp_xact->local_seid = sess->smf_n4_seid;
+
+        pfcp_xact->gtpbuf = ogs_pkbuf_copy(gtpbuf);
+        ogs_assert(pfcp_xact->gtpbuf);
+
+        ogs_assert(OGS_OK == smf_pfcp_send_modify_list(
+                sess, smf_n4_build_qos_flow_to_modify_list, pfcp_xact, 0));
+    } else {
+        /* Idle TAU: eNB tunnel unknown - buffer DL at the UPF. */
+        ogs_list_for_each(&sess->bearer_list, bearer) {
+            bearer->sgw_s5u_teid = 0;
+            memset(&bearer->sgw_s5u_ip, 0, sizeof(bearer->sgw_s5u_ip));
+        }
+        rv = smf_epc_pfcp_send_all_pdr_modification_request(
+                sess, xact->id, gtpbuf,
+                OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_DEACTIVATE|
+                OGS_PFCP_MODIFY_S11_BUFFER,
+                OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED,
+                OGS_GTP2_CAUSE_UNDEFINED_VALUE);
+        if (rv != OGS_OK) {
+            ogs_error("[%s] S11 re-anchor: PFCP modification failed",
+                    smf_ue->imsi_bcd);
+            ogs_gtp2_send_error_message(xact, sess->sgw_s5c_teid,
+                    OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                    OGS_GTP2_CAUSE_SYSTEM_FAILURE);
+        }
+    }
 }
 
 smf_sess_t *smf_s11_sess_find_by_ebi(smf_sess_t *any_sess, uint8_t ebi)

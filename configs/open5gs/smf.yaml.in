@@ -22,8 +22,11 @@ smf:
 #  Data Notification. The UPF terminates S1-U from the eNB directly.
 #  Point mme.gtpc.client.sgwc at this SMF's gtpc address to use it.
 #  Sessions whose PGW S5/S8 address (chosen by the MME) is NOT this SMF
-#  (home-routed roamers) are rejected for now; keep a real SGW-C for them.
-#  Dedicated bearers over S11 are not supported yet. Default: false.
+#  (home-routed roamers) are relayed over S5/S8 to that home PGW: the SMF
+#  plays the SGW-C role and the UPF forwards GTP-U (no UE IP / Gx / Gy for
+#  those sessions). Dedicated bearers over S11 are supported for local
+#  sessions; PGW-initiated Create Bearer towards relayed roamers is
+#  rejected. See docs/collapsed-saegw.md. Default: false.
 #  collapsed: true
   sbi:
     server:

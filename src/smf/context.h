@@ -572,6 +572,23 @@ typedef struct smf_bearer_s {
     uint32_t        sgw_s5u_teid;   /* SGW-S5U TEID */
     ogs_ip_t        sgw_s5u_ip;     /* SGW-S5U IPv4/IPv6 */
 
+    /*
+     * Collapsed SAEGW-C S8 relay (sess->s11_relay): the UPF forwards
+     * GTP-U between the eNB and the home PGW. The access side reuses
+     * pgw_s5u_* (UPF local, advertised to the MME as S1-U SGW) and
+     * sgw_s5u_* (eNB, learned from Modify Bearer Request). The core side
+     * lives here:
+     *   - relay_core_*: UPF local F-TEID facing the home PGW
+     *     (advertised in the relayed Create Session Request as
+     *     "S5/S8-U SGW F-TEID"),
+     *   - relay_pgw_s5u_*: the home PGW S5/S8-U F-TEID (UL FAR target).
+     */
+    uint32_t        relay_core_teid;
+    ogs_sockaddr_t  *relay_core_addr;
+    ogs_sockaddr_t  *relay_core_addr6;
+    uint32_t        relay_pgw_s5u_teid;
+    ogs_ip_t        relay_pgw_s5u_ip;
+
     struct {
         char        *name;          /* EPC: PCC Rule Name */
         char        *id;            /* 5GC: PCC Rule Id */
@@ -631,6 +648,19 @@ typedef struct smf_sess_s {
      *     both "S1-U SGW F-TEID" and "S5/S8-U PGW F-TEID".
      */
     bool            s11;
+
+    /*
+     * Collapsed SAEGW-C phase 2 (S8 relay): the PGW S5/S8 address chosen
+     * by the MME is NOT this SMF (home-routed roamer). The SMF plays the
+     * SGW-C role for this session: it relays GTPv2-C between the MME
+     * (S11) and the home PGW (S5/S8) and programs the UPF as a pure
+     * GTP-U forwarder (no UE IP anchoring, no Gx/Gy). Implies sess->s11.
+     */
+    bool            s11_relay;
+    uint32_t        pgw_s5c_teid;   /* home PGW S5/S8-C TEID (relay) */
+    ogs_ip_t        pgw_s5c_ip;     /* home PGW S5/S8-C IP (relay) */
+    ogs_gtp_node_t  *pgw_gnode;     /* home PGW GTP-C node (relay) */
+
     ogs_time_t      created;        /* session creation epoch (orphan aging) */
     bool            collision_replace; /* Re-attach: wait UPF delete before new CSR */
     unsigned        metrics_session_counted : 1;

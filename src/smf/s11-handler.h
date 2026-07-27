@@ -50,6 +50,21 @@ bool smf_s11_csr_pgw_is_local(ogs_gtp2_create_session_request_t *req);
  * at the MME, so any of the UE's session TEIDs may appear in the header). */
 smf_sess_t *smf_s11_sess_find_by_ebi(smf_sess_t *any_sess, uint8_t ebi);
 
+/* TAU / path-switch with SGW relocation: if the S11 Create Session Request
+ * carries a PGW S5/S8 F-TEID matching an existing session (locally
+ * anchored, or an S8 relay towards that PGW when pgw_is_remote), return
+ * that session so it can be adopted instead of duplicated. */
+smf_sess_t *smf_s11_csr_find_reanchor_sess(
+        ogs_gtp2_create_session_request_t *req, bool pgw_is_remote);
+
+/* Adopt an existing session for a re-anchoring Create Session Request:
+ * update the MME endpoint, point the DL FAR at the new eNB F-TEID
+ * (path-switch) or buffer (idle TAU), then answer with a Create Session
+ * Response built from the existing session state. */
+void smf_s11_handle_reanchor_csr(
+        smf_sess_t *sess, ogs_gtp_xact_t *xact, ogs_pkbuf_t *gtpbuf,
+        ogs_gtp2_create_session_request_t *req);
+
 void smf_s11_handle_release_access_bearers_request(
         smf_sess_t *sess, ogs_gtp_xact_t *xact, ogs_pkbuf_t *gtpbuf,
         ogs_gtp2_release_access_bearers_request_t *req);

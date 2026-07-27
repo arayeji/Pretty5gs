@@ -25,6 +25,7 @@
 #include "sbi-path.h"
 #include "s5c-handler.h"
 #include "s11-handler.h"
+#include "s11-relay.h"
 #include "collision-replace.h"
 #include "smf-trace.h"
 #include "gn-handler.h"
@@ -201,6 +202,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
     ogs_gtp2_sender_f_teid_t gtp2_sender_f_teid;
     ogs_gtp1_message_t gtp1_message;
     bool csr_is_s11 = false;
+    bool csr_is_relay = false;
 
     ogs_diam_gx_message_t *gx_message = NULL;
     ogs_diam_gy_message_t *gy_message = NULL;
@@ -314,25 +316,12 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                         OGS_GTP2_CAUSE_SERVICE_NOT_SUPPORTED);
                 break;
             }
-            if (csr_is_s11 && !smf_s11_csr_pgw_is_local(
-                        &gtp2_message.create_session_request)) {
-                /*
-                 * Home-routed roamer: the MME selected a PGW that is not
-                 * us. The S8 relay role (SGW-C towards a remote PGW) is
-                 * phase 2 of the collapsed gateway; reject clearly so the
-                 * failure is visible instead of silently anchoring the
-                 * roamer on the local user plane.
-                 */
-                ogs_error("S11 Create Session Request for home-routed "
-                        "roamer (remote PGW selected by MME); S8 relay "
-                        "is not supported yet - rejecting");
-                ogs_gtp2_send_error_message(gtp_xact,
-                        gtp2_sender_f_teid.teid_presence ?
-                            gtp2_sender_f_teid.teid : 0,
-                        OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
-                        OGS_GTP2_CAUSE_NO_RESOURCES_AVAILABLE);
-                break;
-            }
+            /*
+             * Home-routed roamer: the MME selected a PGW that is not us.
+             * The SMF plays the SGW-C role (S8 relay) for this session.
+             */
+            csr_is_relay = csr_is_s11 && !smf_s11_csr_pgw_is_local(
+                        &gtp2_message.create_session_request);
 
             if (smf_self()->maintenance_mode &&
                     (gtp2_message.h.teid == 0 || csr_is_s11)) {
@@ -344,6 +333,24 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                         OGS_GTP2_CAUSE_NO_RESOURCES_AVAILABLE);
                 break;
             }
+            /*
+             * S11 re-anchor (TAU / path-switch with SGW relocation):
+             * the MME re-sends the PGW S5/S8 F-TEID it learned at attach.
+             * If that TEID belongs to one of our sessions, adopt it
+             * instead of creating a duplicate PDN connection.
+             */
+            if (csr_is_s11) {
+                smf_sess_t *reanchor_sess =
+                    smf_s11_csr_find_reanchor_sess(
+                        &gtp2_message.create_session_request, csr_is_relay);
+                if (reanchor_sess) {
+                    smf_s11_handle_reanchor_csr(
+                            reanchor_sess, gtp_xact, recvbuf,
+                            &gtp2_message.create_session_request);
+                    break;
+                }
+            }
+
             /*
              * S11 note: the MME addresses the whole UE with one SGW S11
              * TEID, so an additional-PDN or re-attach Create Session
@@ -364,20 +371,34 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                 if (!old_sess)
                     old_sess = smf_sess_find_collision_by_ipv4_gtp2(
                             &gtp2_message);
+                /*
+                 * An S5 Create Session Request (from an SGW-C) can never
+                 * legitimately collide with an S8-relay session: relay
+                 * sessions belong to inbound roamers whose control plane
+                 * runs over S11. Ignore such matches (this also enables a
+                 * loopback test topology where this SMF is the home PGW).
+                 */
+                if (old_sess && old_sess->s11_relay && !csr_is_s11)
+                    old_sess = NULL;
                 if (old_sess) {
-                    if (smf_sess_collision_replace_begin_gtp2(
-                            old_sess, e, &gtp2_sender_f_teid))
+                    if (!old_sess->s11_relay &&
+                            smf_sess_collision_replace_begin_gtp2(
+                                old_sess, e, &gtp2_sender_f_teid))
                         break;
                     collision_ue = smf_ue_find_by_id(old_sess->smf_ue_id);
                     ogs_info("OLD Session Will Release [IMSI:%s,APN:%s]",
                             collision_ue ? collision_ue->imsi_bcd : "-",
                             old_sess->session.name);
+                    if (old_sess->s11_relay && old_sess->upf_n4_seid)
+                        smf_epc_pfcp_send_session_deletion_best_effort(
+                                old_sess);
                     smf_sess_remove(old_sess);
                 }
                 sess = smf_sess_add_by_gtp2_message(&gtp2_message);
                 if (sess) {
                     OGS_SETUP_GTP_NODE(sess, smf_gnode->gnode);
                     sess->s11 = csr_is_s11;
+                    sess->s11_relay = csr_is_relay;
                 }
             }
             if (!sess) {
@@ -400,6 +421,14 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             ogs_debug("    SGW_S5C_TEID[0x%x], Sender F-TEID(%d)[0x%x]",
                     sess->sgw_s5c_teid,
                     gtp2_sender_f_teid.teid_presence, gtp2_sender_f_teid.teid);
+
+            if (sess->s11_relay) {
+                /* SGW-C role: no Gx/Gy, no local anchor - relay towards
+                 * the home PGW instead of running the GSM state machine. */
+                smf_s11_relay_handle_create_session_request(
+                        sess, gtp_xact, recvbuf, &gtp2_message);
+                break;
+            }
 
             e->sess_id = sess->id;
             ogs_fsm_dispatch(&sess->sm, e);
@@ -448,14 +477,80 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     break;
                 }
             }
+            if (sess->s11_relay) {
+                /* SGW-C role: relay the Delete Session to the home PGW. */
+                smf_s11_relay_handle_delete_session_request(
+                        sess, gtp_xact, recvbuf, &gtp2_message);
+                break;
+            }
             e->sess_id = sess->id;
             ogs_fsm_dispatch(&sess->sm, e);
+            break;
+        case OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE:
+            /* S8 relay: Create Session Response from the home PGW. */
+            if (!sess) {
+                ogs_error("Create Session Response: no session");
+                rv = ogs_gtp_xact_commit(gtp_xact);
+                ogs_expect(rv == OGS_OK);
+                break;
+            }
+            if (!sess->s11_relay) {
+                ogs_error("Create Session Response for a non-relay "
+                        "session; ignoring");
+                rv = ogs_gtp_xact_commit(gtp_xact);
+                ogs_expect(rv == OGS_OK);
+                break;
+            }
+            smf_s11_relay_handle_create_session_response(
+                    sess, gtp_xact, recvbuf, &gtp2_message);
+            break;
+        case OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE:
+            /* S8 relay: Delete Session Response from the home PGW. */
+            if (!sess || !sess->s11_relay) {
+                ogs_error("Delete Session Response: no relay session");
+                rv = ogs_gtp_xact_commit(gtp_xact);
+                ogs_expect(rv == OGS_OK);
+                break;
+            }
+            smf_s11_relay_handle_delete_session_response(
+                    sess, gtp_xact, recvbuf, &gtp2_message);
             break;
         case OGS_GTP2_MODIFY_BEARER_REQUEST_TYPE:
             if (!gtp2_message.h.teid_presence) ogs_error("No TEID");
             smf_s5c_handle_modify_bearer_request(
                 sess, gtp_xact, recvbuf,
                 &gtp2_message.modify_bearer_request, &gtp2_sender_f_teid);
+            break;
+        case OGS_GTP2_CREATE_BEARER_REQUEST_TYPE:
+            /*
+             * S8 relay: the home PGW wants a dedicated bearer. Relaying
+             * Create Bearer (new UPF tunnels + F-TEID translation) is not
+             * implemented yet - reject so the PGW does not wait for the
+             * transaction to time out.
+             */
+            if (!gtp2_message.h.teid_presence) ogs_error("No TEID");
+            if (sess && sess->s11_relay) {
+                ogs_error("S8 relay: dedicated bearers for home-routed "
+                        "roamers are not supported yet - rejecting "
+                        "Create Bearer Request");
+                ogs_gtp2_send_error_message(gtp_xact, sess->pgw_s5c_teid,
+                        OGS_GTP2_CREATE_BEARER_RESPONSE_TYPE,
+                        OGS_GTP2_CAUSE_SERVICE_NOT_SUPPORTED);
+            } else {
+                ogs_warn("Create Bearer Request: not a relay session");
+            }
+            break;
+        case OGS_GTP2_UPDATE_BEARER_REQUEST_TYPE:
+        case OGS_GTP2_DELETE_BEARER_REQUEST_TYPE:
+            /* S8 relay: PGW-initiated bearer procedures pass through. */
+            if (!gtp2_message.h.teid_presence) ogs_error("No TEID");
+            if (sess && sess->s11_relay) {
+                smf_s11_relay_bearer_request_to_mme(
+                        sess, gtp_xact, &gtp2_message);
+            } else {
+                ogs_warn("Bearer Request (type:%d): not a relay session",
+                        gtp2_message.h.type);
+            }
             break;
         case OGS_GTP2_CREATE_BEARER_RESPONSE_TYPE:
             if (!gtp2_message.h.teid_presence) ogs_error("No TEID");
@@ -476,6 +571,12 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                 ogs_expect(rv == OGS_OK);
                 break;
             }
+            if (sess->s11_relay) {
+                /* S8 relay: pass the MME's answer back to the home PGW. */
+                smf_s11_relay_bearer_response_to_pgw(
+                        sess, gtp_xact, &gtp2_message);
+                break;
+            }
             smf_s5c_handle_update_bearer_response(
                 sess, gtp_xact, &gtp2_message.update_bearer_response);
             break;
@@ -486,6 +587,29 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                 rv = ogs_gtp_xact_commit(gtp_xact);
                 ogs_expect(rv == OGS_OK);
                 break;
+            }
+            if (sess->s11_relay) {
+                /* S8 relay: pass the MME's answer back to the home PGW. */
+                smf_s11_relay_bearer_response_to_pgw(
+                        sess, gtp_xact, &gtp2_message);
+                break;
+            }
+            /*
+             * S11 (collapsed SAEGW-C): the MME replies with the UE-scoped
+             * S11 TEID, which may name a sibling PDN connection. The
+             * transaction carries the bearer, which knows its session -
+             * critical here because a default-bearer response releases
+             * the whole session.
+             */
+            if (sess->s11 && gtp_xact->data) {
+                smf_bearer_t *xact_bearer = smf_bearer_find_by_id(
+                        OGS_POINTER_TO_UINT(gtp_xact->data));
+                if (xact_bearer) {
+                    smf_sess_t *xact_sess =
+                        smf_sess_find_by_id(xact_bearer->sess_id);
+                    if (xact_sess)
+                        sess = xact_sess;
+                }
             }
             e->sess_id = sess->id;
             ogs_fsm_dispatch(&sess->sm, e);

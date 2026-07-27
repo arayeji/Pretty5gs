@@ -46,6 +46,12 @@ mme:
       sgwc:
         - address: 127.0.0.4   # the SMF: collapsed SAEGW-C
       smf:
+        # S8-relay test roamer: force the "home PGW" (the SMF's second
+        # GTP-C address; not its advertised one, so the SMF classifies
+        # the session as home-routed and relays S5/S8 to itself).
+        - address: 127.0.1.4
+          imsi_prefix: "99970786"
+          force: true
         - address: 127.0.0.4
   metrics:
     server:
@@ -82,6 +88,7 @@ smf:
   gtpc:
     server:
       - address: 127.0.0.4
+      - address: 127.0.1.4   # loopback "home PGW" S5/S8-C for the relay test
   gtpu:
     server:
       - address: 127.0.0.4

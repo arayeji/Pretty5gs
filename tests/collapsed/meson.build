@@ -19,6 +19,7 @@
 # Reuses the attach test scenarios against the collapsed topology.
 testapp_collapsed_sources = files('''
     abts-main.c
+    relay-test.c
     ../attach/s1setup-test.c
     ../attach/simple-test.c
     ../attach/guti-test.c

@@ -545,6 +545,8 @@ ogs_pkbuf_t *smf_s5c_build_create_bearer_request(
     ogs_gtp2_create_bearer_request_t *req = NULL;
 
     ogs_gtp2_f_teid_t pgw_s5u_teid;
+    ogs_gtp2_f_teid_t sgw_s1u_teid;
+    int sgw_s1u_len = 0;
     ogs_gtp2_bearer_qos_t bearer_qos;
     char bearer_qos_buf[GTP2_BEARER_QOS_LEN];
     int len;
@@ -600,6 +602,28 @@ ogs_pkbuf_t *smf_s5c_build_create_bearer_request(
     req->bearer_contexts.s4_u_sgsn_f_teid.presence = 1;
     req->bearer_contexts.s4_u_sgsn_f_teid.data = &pgw_s5u_teid;
     req->bearer_contexts.s4_u_sgsn_f_teid.len = len;
+
+    /*
+     * Collapsed SAEGW-C (S11): the MME requires the "S1-U SGW F-TEID"
+     * (bearer instance 0) in the Create Bearer Request. The UPF
+     * terminates S1-U directly, so it is the same F-TEID as instance 1
+     * above, retyped as S1-U SGW GTP-U.
+     */
+    if (sess->s11) {
+        memset(&sgw_s1u_teid, 0, sizeof(ogs_gtp2_f_teid_t));
+        sgw_s1u_teid.interface_type = OGS_GTP2_F_TEID_S1_U_SGW_GTP_U;
+        sgw_s1u_teid.teid = htobe32(bearer->pgw_s5u_teid);
+        rv = ogs_gtp2_sockaddr_to_f_teid(
+            bearer->pgw_s5u_addr, bearer->pgw_s5u_addr6,
+            &sgw_s1u_teid, &sgw_s1u_len);
+        if (rv != OGS_OK) {
+            ogs_error("ogs_gtp2_sockaddr_to_f_teid() failed");
+            return NULL;
+        }
+        req->bearer_contexts.s1_u_enodeb_f_teid.presence = 1;
+        req->bearer_contexts.s1_u_enodeb_f_teid.data = &sgw_s1u_teid;
+        req->bearer_contexts.s1_u_enodeb_f_teid.len = sgw_s1u_len;
+    }
 
     /* Bearer QoS */
     memset(&bearer_qos, 0, sizeof(bearer_qos));

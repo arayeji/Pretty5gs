@@ -636,14 +636,18 @@ static void _gtpv1_u_recv_cb(short when, ogs_socket_t fd, void *data)
              pdr->src_if_type == OGS_PFCP_3GPP_INTERFACE_TYPE_N9_FOR_ROAMING)) {
 
             if (far->dst_if_type_presence == true &&
-                far->dst_if_type ==
-                    OGS_PFCP_3GPP_INTERFACE_TYPE_N9_FOR_ROAMING) {
+                (far->dst_if_type ==
+                    OGS_PFCP_3GPP_INTERFACE_TYPE_N9_FOR_ROAMING ||
+                 far->dst_if_type ==
+                    OGS_PFCP_3GPP_INTERFACE_TYPE_S5_S8_U)) {
                 /*
                  * <SKIP>
                  *
                  * However, Home Routed Roaming is excluded from this check,
                  * as the V-UPF does not have the necessary IP address
-                 * information to perform the verification.
+                 * information to perform the verification. The same applies
+                 * to the EPC S8 relay (collapsed SAEGW-C acting as SGW-U
+                 * towards a home PGW): the FAR targets S5/S8-U.
                  */
 
             } else if (ip_h->ip_v == 4 && sess->ipv4) {

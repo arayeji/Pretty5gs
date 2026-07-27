@@ -23,6 +23,7 @@
 #include "metrics.h"
 
 #include "n4-handler.h"
+#include "s11-relay.h"
 
 static void pfcp_restoration(ogs_pfcp_node_t *node);
 static void reselect_upf(ogs_pfcp_node_t *node);
@@ -363,6 +364,13 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
                 ogs_pfcp_xact_commit(xact);
                 break;
             }
+            if (sess->s11_relay) {
+                /* S8 relay sessions bypass the GSM state machine. */
+                smf_s11_relay_pfcp_establishment_response(sess, xact,
+                        e->gtp2_message,
+                        &message->pfcp_session_establishment_response);
+                break;
+            }
             ogs_fsm_dispatch(&sess->sm, e);
             break;
 
@@ -421,6 +429,12 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
                         OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
                 break;
             }
+            if (sess->s11_relay) {
+                /* S8 relay sessions bypass the GSM state machine. */
+                smf_s11_relay_pfcp_deletion_response(sess, xact,
+                        e->gtp2_message);
+                break;
+            }
             ogs_fsm_dispatch(&sess->sm, e);
             break;
 
@@ -433,6 +447,15 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
                         OGS_PFCP_SESSION_REPORT_RESPONSE_TYPE,
                         OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND, 0);
                     break;
+            }
+            if (sess->s11_relay) {
+                /* S8 relay sessions bypass the GSM state machine:
+                 * handle the report (DDN on downlink data) directly. */
+                if (smf_n4_handle_session_report_request(sess, xact,
+                        &message->pfcp_session_report_request) !=
+                        OGS_PFCP_CAUSE_REQUEST_ACCEPTED)
+                    ogs_error("S8 relay: session report handling failed");
+                break;
             }
             ogs_fsm_dispatch(&sess->sm, e);
             break;

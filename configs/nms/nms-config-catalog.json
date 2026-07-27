@@ -124,7 +124,7 @@
         { "path": "smf.pfcp.client.upf[].service_addr", "type": "string", "group": "pfcp", "description": "UPF inventory address" },
         { "path": "smf.pfcp.client.upf[].dnn", "type": "string", "group": "pfcp", "description": "DNN-based UPF selection" },
         { "path": "smf.gtpc.server[].address", "type": "string", "group": "gtpc", "description": "PGW-C GTP-C listen (S5/S11/Gn)" },
-        { "path": "smf.collapsed", "type": "boolean", "group": "gtpc", "default": false, "description": "Collapsed SAEGW-C: accept S11 directly from the MME (no SGW-C/SGW-U); UPF terminates S1-U from the eNB", "notes": "Point mme.gtpc.client.sgwc at this SMF. Home-routed roamers (PGW address not local) are rejected; dedicated bearers over S11 not supported yet. Restart required." },
+        { "path": "smf.collapsed", "type": "boolean", "group": "gtpc", "default": false, "description": "Collapsed SAEGW-C: accept S11 directly from the MME (no SGW-C/SGW-U); UPF terminates S1-U from the eNB", "notes": "Point mme.gtpc.client.sgwc at this SMF. Home-routed roamers (PGW address not local) are relayed over S5/S8 to the home PGW (SGW-C role); dedicated bearers over S11 supported for local sessions. Restart required." },
         { "path": "smf.metrics.server[].port", "type": "integer", "group": "metrics", "description": "Admin HTTP port", "example": 9090 },
         { "path": "smf.session[].subnet", "type": "cidr", "group": "ip_pool", "description": "UE IPv4/IPv6 pool CIDR" },
         { "path": "smf.session[].gateway", "type": "string", "group": "ip_pool", "description": "Pool gateway address" },
