@@ -944,8 +944,15 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
             /* Auth-Info accepted from HSS, now authenticate the UE: */
             r = nas_eps_send_authentication_request(mme_ue);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
+            if (r != OGS_OK)
+                /*
+                 * Do NOT assert: under overload the NAS build/send can
+                 * fail for one UE (pkbuf exhaustion, S1 race) - this
+                 * crashed the whole MME. T3460 retransmission recovers
+                 * the send-failure case; otherwise the UE re-attaches.
+                 */
+                ogs_error("[%s] Authentication request not sent (r=%d)",
+                        mme_ue->imsi_bcd, r);
 
             break;
         case OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION:
