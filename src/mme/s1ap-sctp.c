@@ -24,6 +24,7 @@
 #include "mme-trace.h"
 #include "s1ap-path.h"
 #include "s1ap-rx.h"
+#include "s1ap-shard.h"
 
 #if HAVE_USRSCTP
 static void usrsctp_recv_handler(struct socket *socket, void *data, int flags);
@@ -335,7 +336,16 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
             ogs_assert(pdu);
 
             if (ogs_s1ap_decode(pdu, pkbuf) == OGS_OK) {
-                s1ap_event_push_decoded(sock, addr, pkbuf, pdu);
+                /*
+                 * Stage C: UE-scoped procedures go straight to the
+                 * owning UE shard worker (shard id lives in the top
+                 * bits of MME_UE_S1AP_ID) — main never sees them.
+                 */
+                int wid = s1ap_shard_classify_wid(pdu);
+                if (wid >= 0)
+                    s1ap_shard_push_decoded(wid, sock, addr, pkbuf, pdu);
+                else
+                    s1ap_event_push_decoded(sock, addr, pkbuf, pdu);
                 return 1;
             }
 

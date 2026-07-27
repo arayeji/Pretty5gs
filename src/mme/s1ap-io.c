@@ -33,7 +33,22 @@
 #define ECONNABORTED 103
 #endif
 
-static ogs_worker_t *io_worker = NULL;
+/*
+ * mme.s1ap_io_thread: N (1..MME_S1AP_IO_MAX) IO threads. Each socket is
+ * sticky to one IO worker (pointer hash), so per-association order is
+ * preserved and each worker's io_sock_hash stays thread-local. SEND and
+ * DRAIN for one sock always land on the same worker's FIFO.
+ */
+#define MME_S1AP_IO_MAX 4
+
+static ogs_worker_t *io_workers[MME_S1AP_IO_MAX];
+static int io_worker_count = 0;
+
+static ogs_worker_t *io_pick(ogs_sock_t *sock)
+{
+    /* >>6: strip allocator alignment so socks spread across workers */
+    return io_workers[((uintptr_t)sock >> 6) % (unsigned)io_worker_count];
+}
 
 typedef struct io_job_s {
 #define IO_CMD_SEND     1
@@ -395,40 +410,49 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
     ogs_free(job);
 }
 
-int s1ap_io_start(void)
+int s1ap_io_start(int count)
 {
-    ogs_assert(io_worker == NULL);
+    int i;
 
-    /*
-     * poll capacity: every connected eNB could in theory be waiting on
-     * POLLOUT at once, plus the queue-notify eventfd.
-     * Command queue capped: SEND jobs are drained continuously and
-     * per-sock backlog is bounded by io_write_queue_max() anyway.
-     */
-    io_worker = ogs_worker_create(0,
-            ogs_min(ogs_app()->pool.event, 262144), 64,
-            ogs_global_conf()->max.peer * 2 + 64,
-            io_dispatch, NULL);
-    ogs_assert(io_worker);
-    ogs_worker_hooks(io_worker, io_thread_init, io_thread_fini);
-    ogs_worker_start(io_worker);
+    ogs_assert(io_worker_count == 0);
+    ogs_assert(count > 0 && count <= MME_S1AP_IO_MAX);
 
-    ogs_info("S1AP TX IO thread: on");
+    for (i = 0; i < count; i++) {
+        /*
+         * poll capacity: every connected eNB could in theory be waiting
+         * on POLLOUT at once, plus the queue-notify eventfd.
+         * Command queue capped: SEND jobs are drained continuously and
+         * per-sock backlog is bounded by io_write_queue_max() anyway.
+         */
+        io_workers[i] = ogs_worker_create(i,
+                ogs_min(ogs_app()->pool.event, 262144), 64,
+                ogs_global_conf()->max.peer * 2 + 64,
+                io_dispatch, NULL);
+        ogs_assert(io_workers[i]);
+        ogs_worker_hooks(io_workers[i], io_thread_init, io_thread_fini);
+        ogs_worker_start(io_workers[i]);
+    }
+    io_worker_count = count;
+
+    ogs_info("S1AP TX IO thread(s): %d", count);
     return OGS_OK;
 }
 
 void s1ap_io_stop(void)
 {
-    if (!io_worker)
-        return;
+    int i;
 
-    ogs_worker_destroy(io_worker);   /* joins; thread_fini frees queues */
-    io_worker = NULL;
+    for (i = 0; i < io_worker_count; i++) {
+        /* joins; thread_fini frees queues */
+        ogs_worker_destroy(io_workers[i]);
+        io_workers[i] = NULL;
+    }
+    io_worker_count = 0;
 }
 
 bool s1ap_io_active(void)
 {
-    return io_worker != NULL;
+    return io_worker_count > 0;
 }
 
 int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
@@ -440,7 +464,7 @@ int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
     ogs_assert(sock);
     ogs_assert(pkbuf);
 
-    if (!io_worker) {
+    if (!io_worker_count) {
         ogs_error("s1ap-io: IO worker not running; drop PDU (len:%d)",
                 pkbuf->len);
         ogs_pkbuf_free(pkbuf);
@@ -463,7 +487,7 @@ int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
         memcpy(&job->addr, peer_addr, sizeof(job->addr));
     }
 
-    rv = ogs_worker_post(io_worker, job);
+    rv = ogs_worker_post(io_pick(sock), job);
     if (rv != OGS_OK) {
         /*
          * IO queue full — meltdown-level backlog. Dropping keeps order
@@ -482,19 +506,24 @@ int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
 bool s1ap_io_drain_sock(ogs_sock_t *sock)
 {
     io_job_t *job = NULL;
+    ogs_worker_t *worker = NULL;
     int rv;
 
     ogs_assert(sock);
 
-    if (!io_worker)
+    if (!io_worker_count)
         return false;
+
+    /* same worker as every SEND for this sock — FIFO makes the drain
+     * observe all prior sends */
+    worker = io_pick(sock);
 
     job = ogs_calloc(1, sizeof(*job));
     ogs_assert(job);
     job->op = IO_CMD_DRAIN;
     job->sock = sock;
 
-    rv = ogs_worker_post(io_worker, job);
+    rv = ogs_worker_post(worker, job);
     if (rv != OGS_OK) {
         /*
          * DRAIN must not be lost: without it the close registry never
@@ -505,7 +534,7 @@ bool s1ap_io_drain_sock(ogs_sock_t *sock)
         int tries = 0;
         while (rv != OGS_OK && tries++ < 1000) {
             ogs_usleep(1000);
-            rv = ogs_worker_post(io_worker, job);
+            rv = ogs_worker_post(worker, job);
         }
         if (rv != OGS_OK) {
             ogs_error("s1ap-io: DRAIN post failed; leaking sock ref");

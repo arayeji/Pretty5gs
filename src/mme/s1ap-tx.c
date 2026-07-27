@@ -29,6 +29,10 @@
 static ogs_worker_t *tx_workers[OGS_MAX_WORKERS];
 static int tx_worker_count = 0;
 
+/* mme.s1ap_tx_direct: TX workers hand encoded PDUs straight to the IO
+ * thread(s) instead of round-tripping through main (TX_READY). */
+static bool tx_direct = false;
+
 typedef struct tx_job_s {
     ogs_pool_id_t   enb_id;          /* mme_enb_t pool id (main resolves) */
     uint32_t        mme_ue_s1ap_id;  /* snapshot */
@@ -139,6 +143,73 @@ static void tx_post_ready(
     ogs_pollset_notify(ogs_app()->pollset);
 }
 
+/*
+ * Direct-send completion, run ON THE TX WORKER (mme.s1ap_tx_direct):
+ * post the encoded PDU straight to the IO thread and flush the hold
+ * list ourselves — main is out of the send path entirely.
+ *
+ * Everything happens under mme_ctx_lock, for two reasons:
+ *
+ *  1. SEND-before-DRAIN: mme_enb_remove() runs its whole teardown —
+ *     including the IO DRAIN post — under this (recursive) lock. If we
+ *     resolve the eNB under the lock and post the SEND before
+ *     releasing it, the IO worker is guaranteed to see our SEND ahead
+ *     of any DRAIN for the same socket, so it can never touch a
+ *     destroyed sock. If the eNB is already gone, find_by_id is NULL
+ *     and we just drop.
+ *
+ *  2. The pending decrement and the hold-list splice must be atomic
+ *     w.r.t. shard workers parking pkbufs in s1ap_send_to_enb()
+ *     (same contract the TX_READY handler documents).
+ *
+ * Posting to the IO queue under the lock is cheap (calloc + trypush,
+ * never blocking I/O).
+ */
+static void tx_complete_direct(
+        ogs_pool_id_t enb_id, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
+{
+    mme_enb_t *enb = NULL;
+
+    mme_ctx_lock();
+
+    enb = mme_enb_find_by_id(enb_id);
+    if (!enb) {
+        mme_ctx_unlock();
+        if (pkbuf)
+            ogs_pkbuf_free(pkbuf);
+        return;
+    }
+
+    if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0)
+        __atomic_sub_fetch(&enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
+
+    if (pkbuf) {
+        if (enb->sctp.sock && enb->sctp.sock->fd != INVALID_SOCKET) {
+            ogs_sctp_ppid_in_pkbuf(pkbuf) = OGS_SCTP_S1AP_PPID;
+            ogs_sctp_stream_no_in_pkbuf(pkbuf) = stream_no;
+            s1ap_io_post_send(enb->sctp.sock, pkbuf, enb->sctp.addr,
+                    enb->sctp.type != SOCK_STREAM);
+        } else {
+            ogs_pkbuf_free(pkbuf);
+        }
+    }
+
+    if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) == 0) {
+        ogs_pkbuf_t *held = NULL, *next = NULL;
+
+        ogs_list_for_each_safe(&enb->s1ap_tx_hold, next, held) {
+            ogs_list_remove(&enb->s1ap_tx_hold, held);
+            if (enb->sctp.sock && enb->sctp.sock->fd != INVALID_SOCKET)
+                s1ap_io_post_send(enb->sctp.sock, held, enb->sctp.addr,
+                        enb->sctp.type != SOCK_STREAM);
+            else
+                ogs_pkbuf_free(held);
+        }
+    }
+
+    mme_ctx_unlock();
+}
+
 static void tx_dispatch(ogs_worker_t *worker, void *data)
 {
     tx_job_t *job = data;
@@ -153,8 +224,12 @@ static void tx_dispatch(ogs_worker_t *worker, void *data)
         ogs_error("s1ap-tx: DownlinkNASTransport encode failed "
                 "(MME_UE_S1AP_ID[%u])", job->mme_ue_s1ap_id);
 
-    /* NULL s1apbuf still posts: main must decrement pending */
-    tx_post_ready(job->enb_id, s1apbuf, job->stream_no);
+    if (tx_direct)
+        /* NULL s1apbuf still completes: pending must be decremented */
+        tx_complete_direct(job->enb_id, s1apbuf, job->stream_no);
+    else
+        /* NULL s1apbuf still posts: main must decrement pending */
+        tx_post_ready(job->enb_id, s1apbuf, job->stream_no);
 
     ogs_free(job);
 }
@@ -165,12 +240,14 @@ static void tx_thread_init(ogs_worker_t *worker)
     mme_pkbuf_thread_pool_attach();
 }
 
-int s1ap_tx_workers_start(int count)
+int s1ap_tx_workers_start(int count, bool direct)
 {
     int i;
 
     ogs_assert(count > 0 && count <= OGS_MAX_WORKERS - 1);
     ogs_assert(tx_worker_count == 0);
+
+    tx_direct = direct;
 
     for (i = 0; i < count; i++) {
         /* Encode jobs are drained continuously; cap the queue instead
@@ -185,7 +262,8 @@ int s1ap_tx_workers_start(int count)
     }
 
     tx_worker_count = count;
-    ogs_info("S1AP TX encode offload: %d worker(s)", count);
+    ogs_info("S1AP TX encode offload: %d worker(s)%s", count,
+            tx_direct ? " (direct-to-IO send)" : "");
 
     return OGS_OK;
 }

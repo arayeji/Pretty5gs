@@ -284,7 +284,14 @@ typedef struct mme_context_s {
     /* S1AP RX decode offload worker threads (0 = single-threaded) */
     int             s1ap_rx_workers;
     int             s1ap_tx_workers;
-    /* dedicated S1AP SCTP send thread (0/1, default 0) — s1ap-io.c */
+    /*
+     * TX workers hand encoded PDUs straight to the IO thread(s)
+     * instead of round-tripping through main's TX_READY handler.
+     * Requires s1ap_tx_workers > 0 and s1ap_io_thread >= 1.
+     * (0/1, default 0, startup-only) — s1ap-tx.c
+     */
+    int             s1ap_tx_direct;
+    /* dedicated S1AP SCTP send thread(s) (0..4, default 0) — s1ap-io.c */
     int             s1ap_io_thread;
     /*
      * Per-eNB-association outbound PDU cap on the S1AP IO thread.
@@ -299,6 +306,14 @@ typedef struct mme_context_s {
     bool            paging_first_wave_last_enb;
     /* UE-shard workers (Stage A bounce router, 0 = off) — mme-workers.c */
     int             workers;
+    /*
+     * Stage C: RX workers route UE-scoped S1AP procedures (uplink NAS,
+     * UE capability, ICS/UECtxMod/E-RAB-Setup responses) directly to
+     * the owning UE shard, bypassing main. Requires workers > 0 (and
+     * therefore s1ap_io_thread >= 1). (0/1, default 0, startup-only)
+     * — s1ap-shard.c
+     */
+    int             stage_c;
     /*
      * Per-thread pkbuf pool size (0 = off, startup-only). When > 0,
      * mme_main and every shard/RX/TX/IO worker allocates pkbufs from

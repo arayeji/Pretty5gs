@@ -23,6 +23,7 @@
 #include "mme-event.h"
 #include "mme-sm.h"
 #include "mme-workers.h"
+#include "s1ap-shard.h"
 #include "sgsap-types.h"
 
 static ogs_worker_t *mme_workers[OGS_MAX_WORKERS];
@@ -679,6 +680,18 @@ static void mme_worker_dispatch(ogs_worker_t *worker, void *data)
 
     ogs_assert(worker);
     ogs_assert(e);
+
+    /*
+     * Stage C: UE-scoped S1AP PDUs arrive here straight from the RX
+     * workers. They bypass the per-eNB FSM (whose state word is owned
+     * by main) and go through the whitelisted-handler dispatcher.
+     */
+    if (e->id == MME_EVENT_S1AP_MESSAGE) {
+        /* false = ownership moved to the main queue; never touch e */
+        if (s1ap_shard_handle(e))
+            mme_event_free(e);
+        return;
+    }
 
     if (!mme_event_is_ue_scoped(e->id)) {
         ogs_error("MME shard worker %d got non-UE event %d — dropped",

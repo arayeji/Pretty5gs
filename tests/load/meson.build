@@ -1,4 +1,4 @@
-# Copyright (C) 2019 by Sukchan Lee <acetcom@gmail.com>
+# Copyright (C) 2019-2026 by Sukchan Lee <acetcom@gmail.com>
 
 # This file is part of Open5GS.
 
@@ -15,23 +15,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-testinc = include_directories('.')
+testapp_load_sources = files('''
+    abts-main.c
+    load-test.c
+'''.split())
 
-subdir('core')
-subdir('crypt')
-subdir('sctp')
-subdir('unit')
-subdir('af')
-subdir('common')
-subdir('app')
-subdir('registration')
-subdir('vonr')
-subdir('slice')
-subdir('attach')
-subdir('load')
-subdir('volte')
-subdir('csfb')
-subdir('310014')
-subdir('handover')
-subdir('non3gpp')
-subdir('transfer')
+testapp_load_exe = executable('load',
+    sources : testapp_load_sources,
+    c_args : testunit_core_cc_flags,
+    dependencies : libtestepc_dep)
+
+test('load', testapp_load_exe, is_parallel : false, suite: 'epc')

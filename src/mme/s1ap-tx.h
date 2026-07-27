@@ -58,9 +58,16 @@ extern "C" {
  *
  * eNB teardown: mme_enb_remove() drains the hold list; TX_READY for a
  * removed eNB just frees the pkbuf (enb pool id lookup fails).
+ *
+ * DIRECT MODE (mme.s1ap_tx_direct, requires s1ap_io_thread >= 1): the
+ * TX worker skips TX_READY entirely — it posts the encoded PDU to the
+ * IO thread itself and flushes the hold list under mme_ctx_lock. The
+ * lock also guarantees SEND-before-DRAIN against mme_enb_remove()
+ * (whole teardown runs under the same recursive lock), so the IO
+ * thread can never receive a SEND for a destroyed socket.
  */
 
-int s1ap_tx_workers_start(int count);
+int s1ap_tx_workers_start(int count, bool direct);
 void s1ap_tx_workers_stop(void);
 
 bool s1ap_tx_active(void);

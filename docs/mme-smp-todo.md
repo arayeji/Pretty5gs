@@ -212,6 +212,35 @@ takes the ONE default pkbuf-pool mutex.
 
 ---
 
+## 6. Stage C RX→shard routing + direct TX send + multi-IO — LANDED (default off)
+
+Feature branch `feature/stage-c-sharding`. Three knobs, all startup-only,
+all default 0 (bit-identical to before when off):
+
+- [x] `mme.stage_c` (needs `workers > 0`): RX workers classify decoded
+      PDUs (`s1ap-shard.c`) — UplinkNASTransport, UECapabilityInfo,
+      InitialContextSetup/UEContextModification/E-RAB-Setup responses
+      carrying a valid shard prefix in MME_UE_S1AP_ID go straight to the
+      owning UE shard worker; everything else (and any miss: unknown UE,
+      eNB not set up, queue full) bounces to main exactly as before.
+      `enb->state.s1_setup_success` reads/writes are atomic now.
+- [x] `mme.s1ap_tx_direct` (needs `s1ap_tx_workers > 0` and
+      `s1ap_io_thread >= 1`): TX workers post encoded DLNAS PDUs to the
+      IO thread themselves (`tx_complete_direct` under `mme_ctx_lock`,
+      which also flushes the per-eNB hold list) instead of round-tripping
+      through main's TX_READY.
+- [x] `mme.s1ap_io_thread: 0..4` (was 0/1): N send threads; sockets are
+      sticky per thread (pointer hash) so per-association order holds.
+- [x] Load test `tests/load` + `configs/load.yaml.in` — runs the whole
+      EPC with workers:4 stage_c:1 rx:2 tx:2 tx_direct:1 io:2
+      pkbuf_thread_pool:256. Scenarios: S1-Setup churn, 4-eNB parallel
+      mass attach/detach (24 UEs), parallel idle/service-request/TAU,
+      paging, cross-eNB idle TAU (shard rehome). eNB threads record
+      failures and main asserts after join (ABTS is not thread-safe).
+- [ ] Prod soak stage_c + tx_direct after test-rig green
+
+---
+
 ## Suggested order (current)
 
 1. ~~`mme_find_served_tai`~~ — done / confirmed in perf  

@@ -441,7 +441,8 @@ void s1ap_handle_s1_setup_request(mme_enb_t *enb, ogs_s1ap_message_t *message)
         return;
     }
 
-    enb->state.s1_setup_success = true;
+    /* atomic: Stage C shard workers read this flag off-main */
+    __atomic_store_n(&enb->state.s1_setup_success, true, __ATOMIC_RELEASE);
     r = s1ap_send_s1_setup_response(enb);
     ogs_expect(r == OGS_OK);
     ogs_assert(r != OGS_ERROR);

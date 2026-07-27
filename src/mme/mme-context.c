@@ -1350,11 +1350,24 @@ int mme_context_parse_config(void)
                             self.s1ap_tx_workers = 0;
                         }
                     }
+                } else if (!strcmp(mme_key, "s1ap_tx_direct")) {
+                    /* TX workers send straight to the IO thread(s);
+                     * validated against tx/io knobs in mme-init.c */
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+                    if (v)
+                        self.s1ap_tx_direct = atoi(v) ? 1 : 0;
                 } else if (!strcmp(mme_key, "s1ap_io_thread")) {
-                    /* dedicated S1AP SCTP send thread (0/1, default 0) */
+                    /* dedicated S1AP SCTP send thread(s) (0..4) */
                     const char *v = ogs_yaml_iter_value(&mme_iter);
                     if (v) {
-                        self.s1ap_io_thread = atoi(v) ? 1 : 0;
+                        self.s1ap_io_thread = atoi(v);
+                        if (self.s1ap_io_thread < 0)
+                            self.s1ap_io_thread = 0;
+                        if (self.s1ap_io_thread > 4) {
+                            ogs_error("mme.s1ap_io_thread must be 0..4; "
+                                    "clamping to 4");
+                            self.s1ap_io_thread = 4;
+                        }
                     }
                 } else if (!strcmp(mme_key, "s1ap_io_write_queue_max")) {
                     /* per-eNB outbound PDU cap (0 = default 10240) */
@@ -1401,6 +1414,12 @@ int mme_context_parse_config(void)
                             self.workers = 0;
                         }
                     }
+                } else if (!strcmp(mme_key, "stage_c")) {
+                    /* UE-scoped S1AP straight to shard workers;
+                     * validated against mme.workers in mme-init.c */
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+                    if (v)
+                        self.stage_c = atoi(v) ? 1 : 0;
                 } else if (!strcmp(mme_key, "pkbuf_thread_pool")) {
                     /* per-thread pkbuf pools (0 = off; startup-only,
                      * NOT SIGHUP-reloadable: threads already hold

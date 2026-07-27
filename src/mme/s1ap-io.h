@@ -27,23 +27,24 @@ extern "C" {
 #endif
 
 /*
- * Dedicated S1AP SCTP send (IO) thread — knob `mme.s1ap_io_thread`.
+ * Dedicated S1AP SCTP send (IO) thread(s) — knob `mme.s1ap_io_thread`.
  *
- * A single thread owns every eNB socket's WRITE side: per-socket FIFO,
- * non-blocking sendmsg, POLLOUT on the IO thread's own pollset when the
- * kernel buffer is full. One thread means all sends stay serialized
- * (per-association order is trivially preserved) while `mme_main` no
+ * N threads (1..4) own the eNB sockets' WRITE side: per-socket FIFO,
+ * non-blocking sendmsg, POLLOUT on the owning IO thread's pollset when
+ * the kernel buffer is full. Sockets are sticky per IO worker (pointer
+ * hash), so per-association order is preserved and `mme_main` no
  * longer spends cycles in sendmsg / sctp_write_callback.
  *
  * Ownership rules (mirrors s1ap-rx.c):
- *  - main posts SEND/DRAIN jobs; it never touches the IO-side queues
- *  - the IO thread never touches mme context (jobs carry the sock
+ *  - main (or, with s1ap_tx_direct, a TX worker under mme_ctx_lock)
+ *    posts SEND/DRAIN jobs; nothing else touches the IO-side queues
+ *  - IO threads never touch mme context (jobs carry the sock
  *    pointer and, for SEQPACKET, a copied destination address)
  *  - socket destroy is deferred until every worker that references the
  *    sock confirms (see the close registry below)
  */
 
-int s1ap_io_start(void);
+int s1ap_io_start(int count);
 void s1ap_io_stop(void);
 bool s1ap_io_active(void);
 

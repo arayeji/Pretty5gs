@@ -159,6 +159,21 @@ int mme_initialize(void)
         if (rv != OGS_OK) return OGS_ERROR;
     }
 
+    /* Stage C needs UE shard workers to route to. */
+    if (mme_self()->stage_c && mme_self()->workers <= 0) {
+        ogs_warn("mme.stage_c requires mme.workers > 0; disabling stage_c");
+        mme_self()->stage_c = 0;
+    }
+
+    /* Direct TX send needs both the encode workers and the IO thread. */
+    if (mme_self()->s1ap_tx_direct &&
+        (mme_self()->s1ap_tx_workers <= 0 ||
+         mme_self()->s1ap_io_thread <= 0)) {
+        ogs_warn("mme.s1ap_tx_direct requires s1ap_tx_workers > 0 and "
+                "s1ap_io_thread >= 1; disabling s1ap_tx_direct");
+        mme_self()->s1ap_tx_direct = 0;
+    }
+
     /* before s1ap_open(): eNB sockets are assigned at accept time */
     if (mme_self()->s1ap_rx_workers > 0) {
         rv = s1ap_rx_workers_start(mme_self()->s1ap_rx_workers);
@@ -168,14 +183,15 @@ int mme_initialize(void)
     /* TX encode workers do not own sockets; start before accept so the
      * first DownlinkNASTransport can already post (default 0 = off). */
     if (mme_self()->s1ap_tx_workers > 0) {
-        rv = s1ap_tx_workers_start(mme_self()->s1ap_tx_workers);
+        rv = s1ap_tx_workers_start(mme_self()->s1ap_tx_workers,
+                mme_self()->s1ap_tx_direct ? true : false);
         if (rv != OGS_OK) return OGS_ERROR;
     }
 
-    /* dedicated SCTP send thread: must exist before the first eNB
+    /* dedicated SCTP send thread(s): must exist before the first eNB
      * accept so every send since association start goes through it */
     if (mme_self()->s1ap_io_thread) {
-        rv = s1ap_io_start();
+        rv = s1ap_io_start(mme_self()->s1ap_io_thread);
         if (rv != OGS_OK) return OGS_ERROR;
     }
 

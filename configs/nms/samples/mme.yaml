@@ -238,6 +238,21 @@ mme:
   #                                 # thread at 2048); exhaustion falls back
   #                                 # to the shared pool. Startup-only (NOT
   #                                 # SIGHUP reloadable).
+  # s1ap_io_thread: 2               # dedicated S1AP SCTP send thread(s),
+  #                                 # 0..4 (0/unset = off). Sockets are
+  #                                 # sticky per thread so per-eNB ordering
+  #                                 # holds. Startup-only.
+  # s1ap_tx_direct: 1               # TX encode workers hand encoded PDUs
+  #                                 # straight to the IO thread(s) instead of
+  #                                 # bouncing through mme_main. Requires
+  #                                 # s1ap_tx_workers > 0 and
+  #                                 # s1ap_io_thread >= 1. Startup-only.
+  # stage_c: 1                      # UE-scoped S1AP (uplink NAS, UE radio
+  #                                 # capability, ICS/UECtxMod/E-RAB-Setup
+  #                                 # responses) is routed by the RX workers
+  #                                 # directly to the owning UE shard worker,
+  #                                 # bypassing mme_main. Requires
+  #                                 # workers > 0. Startup-only.
   pgw_selection:
     mode: standard
     # force_yaml: true          # same as mode: force (global)
