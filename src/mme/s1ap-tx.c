@@ -119,6 +119,7 @@ static void tx_post_ready(
 {
     mme_event_t *e = NULL;
     int rv;
+    int tries = 0;
 
     e = mme_event_new(MME_EVENT_S1AP_TX_READY);
     ogs_assert(e);
@@ -126,17 +127,42 @@ static void tx_post_ready(
     e->pkbuf = pkbuf;
     e->tx_stream_no = stream_no;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        /* queue is being terminated (shutdown) */
-        ogs_error("s1ap-tx: queue_push failed:%d", (int)rv);
-        if (pkbuf)
-            ogs_pkbuf_free(pkbuf);
-        mme_event_free(e);
-        return;
+    for (;;) {
+        rv = ogs_queue_push(ogs_app()->queue, e);
+        if (rv == OGS_OK) {
+            ogs_pollset_notify(ogs_app()->pollset);
+            return;
+        }
+
+        /* Shutdown: queue will never accept again. */
+        if (rv == OGS_DONE)
+            break;
+
+        /*
+         * OGS_ERROR used to be treated as fatal here (and the comment
+         * claimed "shutdown"), which dropped TX_READY, leaked
+         * s1ap_tx_pending, and wedged that eNB's hold list — so Attach /
+         * Auth / SMC after a Service-Reject storm never left the MME.
+         * Retry until the main queue accepts us.
+         */
+        if (++tries == 1 || (tries % 1000) == 0)
+            ogs_error("s1ap-tx: queue_push failed:%d — retrying (try %d)",
+                    (int)rv, tries);
+        ogs_pollset_notify(ogs_app()->pollset);
+        ogs_usleep(100);
     }
 
-    ogs_pollset_notify(ogs_app()->pollset);
+    if (pkbuf)
+        ogs_pkbuf_free(pkbuf);
+    mme_event_free(e);
+
+    /* Best-effort pending repair on shutdown only (main is stopping). */
+    {
+        mme_enb_t *enb = mme_enb_find_by_id(enb_id);
+        if (enb &&
+            __atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0)
+            __atomic_sub_fetch(&enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
+    }
 }
 
 static void tx_dispatch(ogs_worker_t *worker, void *data)
