@@ -597,6 +597,11 @@ void mme_context_final(void)
     mme_pgw_host_cache_final();
     mme_pgw_dns_cache_final();
 
+    if (self.mme_name) {
+        ogs_free(self.mme_name);
+        self.mme_name = NULL;
+    }
+
     mme_access_control_free_all();
 
     ogs_assert(self.enb_addr_hash);
@@ -3896,7 +3901,19 @@ int mme_context_parse_config(void)
                             ogs_warn("unknown key `%s`", sgsap_key);
                     }
                 } else if (!strcmp(mme_key, "mme_name")) {
-                    self.mme_name = ogs_yaml_iter_value(&mme_iter);
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+                    /* Copy out of the YAML document: ogs_yaml_iter_value()
+                     * returns a pointer into the parse tree, which
+                     * yaml_document_delete() frees on SIGHUP reload.
+                     * Leaving a dangling mme_name made S1SetupResponse
+                     * encode garbage PrintableString bytes; strict eNBs
+                     * then replied ErrorIndication transfer-syntax-error. */
+                    if (self.mme_name) {
+                        ogs_free(self.mme_name);
+                        self.mme_name = NULL;
+                    }
+                    if (v && *v)
+                        self.mme_name = ogs_strdup(v);
                 } else if (!strcmp(mme_key, "time")) {
                     ogs_yaml_iter_t time_iter;
                     ogs_yaml_iter_recurse(&mme_iter, &time_iter);

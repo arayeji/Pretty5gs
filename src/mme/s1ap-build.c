@@ -56,14 +56,32 @@ ogs_pkbuf_t *s1ap_build_setup_rsp(mme_enb_t *enb)
     S1SetupResponse = &successfulOutcome->value.choice.S1SetupResponse;
 
     if (mme_self()->mme_name) {
-        ie = CALLOC(1, sizeof(S1AP_S1SetupResponseIEs_t));
-        ASN_SEQUENCE_ADD(&S1SetupResponse->protocolIEs, ie);
+        const char *n = mme_self()->mme_name;
+        size_t nlen = strlen(n);
+        size_t k;
+        bool printable = nlen > 0 && nlen <= 150;
 
-        ie->id = S1AP_ProtocolIE_ID_id_MMEname;
-        ie->criticality = S1AP_Criticality_ignore;
-        ie->value.present = S1AP_S1SetupResponseIEs__value_PR_MMEname;
+        /* S1AP MMEname is PrintableString; non-ASCII / control bytes make
+         * strict eNBs answer ErrorIndication(transfer-syntax-error). */
+        for (k = 0; printable && k < nlen; k++) {
+            unsigned char c = (unsigned char)n[k];
+            if (c < 0x20 || c > 0x7e)
+                printable = false;
+        }
 
-        MMEname = &ie->value.choice.MMEname;
+        if (printable) {
+            ie = CALLOC(1, sizeof(S1AP_S1SetupResponseIEs_t));
+            ASN_SEQUENCE_ADD(&S1SetupResponse->protocolIEs, ie);
+
+            ie->id = S1AP_ProtocolIE_ID_id_MMEname;
+            ie->criticality = S1AP_Criticality_ignore;
+            ie->value.present = S1AP_S1SetupResponseIEs__value_PR_MMEname;
+
+            MMEname = &ie->value.choice.MMEname;
+        } else {
+            ogs_error("mme_name is not a valid PrintableString "
+                    "(len=%zu) — omitting MMEname IE", nlen);
+        }
     }
 
     ie = CALLOC(1, sizeof(S1AP_S1SetupResponseIEs_t));
@@ -84,10 +102,9 @@ ogs_pkbuf_t *s1ap_build_setup_rsp(mme_enb_t *enb)
 
     RelativeMMECapacity = &ie->value.choice.RelativeMMECapacity;
 
-    if (MMEname) {
-        ogs_asn_buffer_to_OCTET_STRING((char*)mme_self()->mme_name,
+    if (MMEname)
+        ogs_asn_buffer_to_OCTET_STRING(mme_self()->mme_name,
                 strlen(mme_self()->mme_name), MMEname);
-    }
 
     if (enb && enb->supported_ta_plmn_present)
         preferred_plmn = &enb->supported_ta_plmn;

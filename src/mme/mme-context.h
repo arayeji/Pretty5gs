@@ -275,8 +275,8 @@ typedef struct mme_context_s {
     ogs_nas_network_name_t short_name; /* Network short name */
     ogs_nas_network_name_t full_name; /* Network Full Name */
 
-    /* MME Name */
-    const char *mme_name;
+    /* MME Name (owned; strdup'd from YAML so SIGHUP cannot dangle it) */
+    char *mme_name;
 
     /* S1SetupResponse */
     uint8_t         relative_capacity;
