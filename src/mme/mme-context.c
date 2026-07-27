@@ -7698,10 +7698,12 @@ static mme_ue_t *mme_ue_lookup_by_eps_mobile_identity(
 
     switch (type) {
     case OGS_NAS_EPS_MOBILE_IDENTITY_IMSI:
-        if (sizeof(ogs_nas_mobile_identity_imsi_t) !=
-                eps_mobile_identity->length) {
-            ogs_error("mobile_identity length (%d != %d) [%s]",
-                    (int)sizeof(ogs_nas_mobile_identity_imsi_t),
+        /* TS 24.008 10.5.1.4: variable length, do not require 8 octets */
+        if (eps_mobile_identity->length <
+                    OGS_NAS_MOBILE_IDENTITY_IMSI_MIN_LEN ||
+            eps_mobile_identity->length >
+                    sizeof(ogs_nas_mobile_identity_imsi_t)) {
+            ogs_error("Invalid IMSI mobile_identity length (%d) [%s]",
                     eps_mobile_identity->length, proc);
             return NULL;
         }

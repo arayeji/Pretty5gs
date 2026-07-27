@@ -144,9 +144,9 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
             ogs_debug("    Requested EPS_ATTACH_TYPE[3, EPS_EMERGENCY_ATTACH]");
             break;
         case OGS_NAS_ATTACH_TYPE_RESERVED:
-            ogs_error("    Invalid Requested EPS_ATTACH_TYPE[%d]",
-                      mme_ue->nas_eps.attach.value);
-            break;
+            /* Do NOT keep the reserved value: it would be copied into
+             * the Attach Accept EPS-attach-result field, which only
+             * allows EPS(1)/combined(2), and UEs discard the Accept. */
         case OGS_NAS_ATTACH_TYPE_EPS_RLOS_ATTACH:
                 /* fall-through: '"EPS RLOS attach" shall be interpreted as "EPS attach"
                  * by a network not supporting attach for access to RLOS."'*/
@@ -258,13 +258,25 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
 
     switch (eps_mobile_identity->imsi.type) {
     case OGS_NAS_EPS_MOBILE_IDENTITY_IMSI:
-        if (sizeof(ogs_nas_mobile_identity_imsi_t) !=
-                eps_mobile_identity->length) {
-            ogs_error("mobile_identity length (%d != %d)",
-                    (int)sizeof(ogs_nas_mobile_identity_imsi_t),
+        /*
+         * TS 24.008 10.5.1.4: the IMSI mobile identity is variable
+         * length (up to 8 octets). IMSIs shorter than 15 digits encode
+         * to fewer octets, so do not require exactly 8 - only reject
+         * lengths that cannot hold MCC+MNC+MSIN (4 octets = 6 digits)
+         * or that overflow the storage.
+         */
+        if (eps_mobile_identity->length <
+                    OGS_NAS_MOBILE_IDENTITY_IMSI_MIN_LEN ||
+            eps_mobile_identity->length >
+                    sizeof(ogs_nas_mobile_identity_imsi_t)) {
+            ogs_error("Invalid IMSI mobile_identity length [%d]",
                     eps_mobile_identity->length);
             return OGS_ERROR;
         }
+        /* Pad with 0xFF so fixed-length consumers (SGsAP IMSI IE)
+         * see TBCD filler nibbles after a short IMSI. */
+        memset(&mme_ue->nas_mobile_identity_imsi, 0xff,
+            sizeof(mme_ue->nas_mobile_identity_imsi));
         memcpy(&mme_ue->nas_mobile_identity_imsi,
             &eps_mobile_identity->imsi, eps_mobile_identity->length);
 
@@ -541,9 +553,12 @@ int emm_handle_identity_response(
     if (mobile_identity->imsi.type == OGS_NAS_IDENTITY_TYPE_2_IMSI) {
         char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
 
-        if (sizeof(ogs_nas_mobile_identity_imsi_t) != mobile_identity->length) {
-            ogs_error("mobile_identity length (%d != %d)",
-                    (int)sizeof(ogs_nas_mobile_identity_imsi_t),
+        /* TS 24.008 10.5.1.4: variable length, do not require 8 octets */
+        if (mobile_identity->length <
+                    OGS_NAS_MOBILE_IDENTITY_IMSI_MIN_LEN ||
+            mobile_identity->length >
+                    sizeof(ogs_nas_mobile_identity_imsi_t)) {
+            ogs_error("Invalid IMSI mobile_identity length [%d]",
                     mobile_identity->length);
             if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST)
                 r = nas_eps_send_tau_reject(enb_ue, mme_ue,
@@ -556,6 +571,10 @@ int emm_handle_identity_response(
             ogs_assert(r != OGS_ERROR);
             return OGS_ERROR;
         }
+        /* Pad with 0xFF so fixed-length consumers (SGsAP IMSI IE)
+         * see TBCD filler nibbles after a short IMSI. */
+        memset(&mme_ue->nas_mobile_identity_imsi, 0xff,
+            sizeof(mme_ue->nas_mobile_identity_imsi));
         memcpy(&mme_ue->nas_mobile_identity_imsi,
             &mobile_identity->imsi, mobile_identity->length);
 
@@ -589,7 +608,9 @@ int emm_handle_identity_response(
                 OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED)
             return OGS_ERROR;
 
-        if (mme_ue->imsi_len != OGS_MAX_IMSI_LEN) {
+        /* Variable-length IMSIs (<15 digits) yield fewer TBCD octets
+         * (ceil(digits/2)); only reject impossible sizes. */
+        if (mme_ue->imsi_len < 3 || mme_ue->imsi_len > OGS_MAX_IMSI_LEN) {
             ogs_error("Invalid IMSI LEN[%d]", mme_ue->imsi_len);
             if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST)
                 r = nas_eps_send_tau_reject(enb_ue, mme_ue,

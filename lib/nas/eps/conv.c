@@ -44,9 +44,11 @@ void ogs_nas_eps_imsi_to_bcd(
 
     bcd_len = imsi_len * 2 - 1;
     if (!imsi->odd_even) { /* if bcd length is even */
-        if (imsi->digit15 != 0xf)
-            ogs_warn("Spec warning : bcd[%d] = 0x%x, 0x%x",
-                    bcd_len-1, imsi->digit15, bcd[bcd_len-1]);
+        /* The filler nibble is the LAST digit of THIS identity,
+         * not digit15 - identities shorter than 8 octets end earlier. */
+        if (bcd[bcd_len-1] != (char)('0' + 0xf))
+            ogs_warn("Spec warning : bcd[%d] = 0x%x",
+                    bcd_len-1, bcd[bcd_len-1] - '0');
         (bcd_len)--;
     }
 

@@ -77,6 +77,11 @@ typedef ogs_nas_routing_area_identification_t ogs_nas_rai_t;
 
 #define OGS_NAS_MOBILE_IDENTITY_EVEN 0
 #define OGS_NAS_MOBILE_IDENTITY_ODD 1
+
+/* TS 24.008 10.5.1.4: the IMSI identity is variable length (up to
+ * 8 octets). 4 octets is the smallest that can hold MCC+MNC+MSIN
+ * (6 digits); shorter identities are treated as malformed. */
+#define OGS_NAS_MOBILE_IDENTITY_IMSI_MIN_LEN 4
 typedef struct ogs_nas_mobile_identity_imsi_s {
 ED3(uint8_t digit1:4;,
     uint8_t odd_even:1;,
