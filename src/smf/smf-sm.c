@@ -24,6 +24,7 @@
 #include "pfcp-path.h"
 #include "sbi-path.h"
 #include "s5c-handler.h"
+#include "s11-handler.h"
 #include "collision-replace.h"
 #include "smf-trace.h"
 #include "gn-handler.h"
@@ -199,6 +200,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
     ogs_gtp2_message_t gtp2_message;
     ogs_gtp2_sender_f_teid_t gtp2_sender_f_teid;
     ogs_gtp1_message_t gtp1_message;
+    bool csr_is_s11 = false;
 
     ogs_diam_gx_message_t *gx_message = NULL;
     ogs_diam_gy_message_t *gy_message = NULL;
@@ -293,7 +295,47 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     &gtp2_message.create_session_request, "create-session");
             smf_metrics_inst_global_inc(SMF_METR_GLOB_CTR_S5C_RX_CREATESESSIONREQ);
             smf_metrics_inst_gtp_node_inc(smf_gnode->metrics, SMF_METR_GTP_NODE_CTR_S5C_RX_CREATESESSIONREQ);
-            if (smf_self()->maintenance_mode && gtp2_message.h.teid == 0) {
+
+            /*
+             * Collapsed SAEGW-C: a Create Session Request whose sender
+             * F-TEID is "S11 MME GTP-C" comes directly from an MME.
+             */
+            csr_is_s11 = smf_s11_csr_is_s11(
+                    &gtp2_message.create_session_request);
+            if (csr_is_s11 && !smf_self()->collapsed) {
+                ogs_error("S11 Create Session Request received but "
+                        "smf.collapsed is disabled; rejecting "
+                        "(point the MME at an SGW-C or enable "
+                        "smf.collapsed)");
+                ogs_gtp2_send_error_message(gtp_xact,
+                        gtp2_sender_f_teid.teid_presence ?
+                            gtp2_sender_f_teid.teid : 0,
+                        OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                        OGS_GTP2_CAUSE_SERVICE_NOT_SUPPORTED);
+                break;
+            }
+            if (csr_is_s11 && !smf_s11_csr_pgw_is_local(
+                        &gtp2_message.create_session_request)) {
+                /*
+                 * Home-routed roamer: the MME selected a PGW that is not
+                 * us. The S8 relay role (SGW-C towards a remote PGW) is
+                 * phase 2 of the collapsed gateway; reject clearly so the
+                 * failure is visible instead of silently anchoring the
+                 * roamer on the local user plane.
+                 */
+                ogs_error("S11 Create Session Request for home-routed "
+                        "roamer (remote PGW selected by MME); S8 relay "
+                        "is not supported yet - rejecting");
+                ogs_gtp2_send_error_message(gtp_xact,
+                        gtp2_sender_f_teid.teid_presence ?
+                            gtp2_sender_f_teid.teid : 0,
+                        OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                        OGS_GTP2_CAUSE_NO_RESOURCES_AVAILABLE);
+                break;
+            }
+
+            if (smf_self()->maintenance_mode &&
+                    (gtp2_message.h.teid == 0 || csr_is_s11)) {
                 ogs_warn("Create Session rejected: SMF maintenance mode");
                 ogs_gtp2_send_error_message(gtp_xact,
                         gtp2_sender_f_teid.teid_presence ?
@@ -302,11 +344,22 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                         OGS_GTP2_CAUSE_NO_RESOURCES_AVAILABLE);
                 break;
             }
-            if (gtp2_message.h.teid == 0) {
+            /*
+             * S11 note: the MME addresses the whole UE with one SGW S11
+             * TEID, so an additional-PDN or re-attach Create Session
+             * Request arrives with a non-zero header TEID belonging to
+             * another session of the UE. Always run the collision check
+             * and create a fresh session for S11 CSRs.
+             */
+            if (gtp2_message.h.teid == 0 || csr_is_s11) {
                 smf_sess_t *old_sess = NULL;
                 smf_ue_t *collision_ue = NULL;
 
-                ogs_expect(!sess);
+                if (!csr_is_s11)
+                    ogs_expect(!sess);
+                /* For S11 CSRs the header TEID may reference another PDN
+                 * connection of the UE; never reuse it as the target. */
+                sess = NULL;
                 old_sess = smf_sess_find_collision_for_gtp2(&gtp2_message);
                 if (!old_sess)
                     old_sess = smf_sess_find_collision_by_ipv4_gtp2(
@@ -322,8 +375,10 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     smf_sess_remove(old_sess);
                 }
                 sess = smf_sess_add_by_gtp2_message(&gtp2_message);
-                if (sess)
+                if (sess) {
                     OGS_SETUP_GTP_NODE(sess, smf_gnode->gnode);
+                    sess->s11 = csr_is_s11;
+                }
             }
             if (!sess) {
                 smf_ue_error(NULL, NULL, "create-session",
@@ -361,6 +416,25 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                         OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE,
                         OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
                 break;
+            }
+            /*
+             * S11 (collapsed SAEGW-C): the MME addresses the UE with a
+             * single SGW S11 TEID, so the header TEID may belong to a
+             * different PDN connection. Re-target the session using the
+             * Linked EPS Bearer ID.
+             */
+            if (sess->s11 && gtp2_message.delete_session_request.
+                    linked_eps_bearer_id.presence) {
+                smf_sess_t *target = smf_s11_sess_find_by_ebi(sess,
+                        gtp2_message.delete_session_request.
+                            linked_eps_bearer_id.u8);
+                if (target)
+                    sess = target;
+                else
+                    ogs_warn("Delete Session Request [s11]: no session "
+                            "owns LBI[%d]; using header-TEID session",
+                            gtp2_message.delete_session_request.
+                                linked_eps_bearer_id.u8);
             }
             if (gtp2_sender_f_teid.teid_presence == true) {
                 if (sess->sgw_s5c_teid != gtp2_sender_f_teid.teid) {
@@ -421,6 +495,20 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             smf_s5c_handle_bearer_resource_command(
                 sess, gtp_xact,
                 &gtp2_message.bearer_resource_command, &gtp2_sender_f_teid);
+            break;
+        case OGS_GTP2_RELEASE_ACCESS_BEARERS_REQUEST_TYPE:
+            /* Collapsed SAEGW-C (S11 server role) */
+            if (!gtp2_message.h.teid_presence) ogs_error("No TEID");
+            smf_s11_handle_release_access_bearers_request(
+                sess, gtp_xact, recvbuf,
+                &gtp2_message.release_access_bearers_request);
+            break;
+        case OGS_GTP2_DOWNLINK_DATA_NOTIFICATION_ACKNOWLEDGE_TYPE:
+            /* Collapsed SAEGW-C (S11 server role) */
+            if (!gtp2_message.h.teid_presence) ogs_error("No TEID");
+            smf_s11_handle_downlink_data_notification_ack(
+                sess, gtp_xact,
+                &gtp2_message.downlink_data_notification_acknowledge);
             break;
         default:
             ogs_warn("Not implemented(type:%d)", gtp2_message.h.type);

@@ -145,6 +145,21 @@ void smf_bearer_binding(smf_sess_t *sess)
             if (!bearer) {
                 ogs_pfcp_pdr_t *dl_pdr = NULL, *ul_pdr = NULL;
 
+                if (sess->s11) {
+                    /*
+                     * Collapsed SAEGW-C phase 2: the Create Bearer Request
+                     * built for S5 does not carry the S1-U SGW F-TEID the
+                     * MME expects on S11. Skip dedicated-bearer creation
+                     * instead of confusing the MME with a malformed
+                     * request; the default bearer keeps working.
+                     */
+                    ogs_error("PCC Rule [%s] needs a dedicated bearer, "
+                            "but dedicated bearers over S11 (collapsed "
+                            "SAEGW-C) are not supported yet - skipping",
+                            pcc_rule->name);
+                    continue;
+                }
+
                 if (pcc_rule->num_of_flow == 0) {
                     /* TFT is mandatory in
                      * activate dedicated EPS bearer context request */

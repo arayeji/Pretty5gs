@@ -1653,6 +1653,8 @@ int smf_context_parse_config(void)
                         } else
                             ogs_warn("unknown key `%s` in smf.orphan", ok);
                     }
+                } else if (!strcmp(smf_key, "collapsed")) {
+                    self.collapsed = ogs_yaml_iter_bool(&smf_iter);
                 } else if (!strcmp(smf_key, "pfcp")) {
                     /* handle config in pfcp library */
                 } else if (!strcmp(smf_key, "upf")) {

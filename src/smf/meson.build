@@ -47,6 +47,7 @@ libsmf_sources = files('''
     gn-handler.h
     s5c-build.h
     s5c-handler.h
+    s11-handler.h
     fd-path.h
     gx-handler.h
     gy-handler.h
@@ -103,6 +104,7 @@ libsmf_sources = files('''
     gn-handler.c
     s5c-build.c
     s5c-handler.c
+    s11-handler.c
     fd-path.c
     gx-path.c
     gy-path.c

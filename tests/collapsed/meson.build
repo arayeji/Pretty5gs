@@ -15,23 +15,19 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-testinc = include_directories('.')
+# Collapsed SAEGW-C (MME S11 -> SMF, no SGW-C/SGW-U).
+# Reuses the attach test scenarios against the collapsed topology.
+testapp_collapsed_sources = files('''
+    abts-main.c
+    ../attach/s1setup-test.c
+    ../attach/simple-test.c
+    ../attach/guti-test.c
+    ../attach/idle-test.c
+'''.split())
 
-subdir('core')
-subdir('crypt')
-subdir('sctp')
-subdir('unit')
-subdir('af')
-subdir('common')
-subdir('app')
-subdir('registration')
-subdir('vonr')
-subdir('slice')
-subdir('attach')
-subdir('collapsed')
-subdir('volte')
-subdir('csfb')
-subdir('310014')
-subdir('handover')
-subdir('non3gpp')
-subdir('transfer')
+testapp_collapsed_exe = executable('collapsed',
+    sources : testapp_collapsed_sources,
+    c_args : testunit_core_cc_flags,
+    dependencies : libtestepc_dep)
+
+test('collapsed', testapp_collapsed_exe, is_parallel : false, suite: 'epc')

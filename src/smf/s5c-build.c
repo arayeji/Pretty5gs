@@ -39,8 +39,11 @@ ogs_pkbuf_t *smf_s5c_build_create_session_response(
     ogs_gtp2_cause_t bearer_cause[OGS_BEARER_PER_UE];
     ogs_gtp2_f_teid_t pgw_s5u_teid[OGS_BEARER_PER_UE];
     int pgw_s5u_len[OGS_BEARER_PER_UE];
+    ogs_gtp2_f_teid_t sgw_s1u_teid[OGS_BEARER_PER_UE];
+    int sgw_s1u_len[OGS_BEARER_PER_UE];
 
     ogs_gtp2_f_teid_t smf_s5c_teid;
+    ogs_gtp2_f_teid_t sgw_s11_teid;
     ogs_gtp2_ambr_t ambr;
     ogs_gtp2_bearer_qos_t bearer_qos;
     char bearer_qos_buf[OGS_BEARER_PER_UE][GTP2_BEARER_QOS_LEN];
@@ -111,6 +114,33 @@ ogs_pkbuf_t *smf_s5c_build_create_session_response(
         data = &smf_s5c_teid;
     rsp->pgw_s5_s8__s2a_s2b_f_teid_for_pmip_based_interface_or_for_gtp_based_control_plane_interface.
         len = len;
+
+    /*
+     * Collapsed SAEGW-C (S11): the MME expects the SGW's S11 F-TEID in
+     * the Sender F-TEID IE. We are the "SGW", so advertise our GTP-C
+     * address with the session's local TEID (same TEID as the PGW S5/S8
+     * F-TEID above - one TEID space, one node).
+     */
+    if (sess->s11) {
+        memset(&sgw_s11_teid, 0, sizeof(ogs_gtp2_f_teid_t));
+        sgw_s11_teid.interface_type = OGS_GTP2_F_TEID_S11_S4_SGW_GTP_C;
+        sgw_s11_teid.teid = htobe32(sess->smf_n4_teid);
+        if (ogs_gtp_self()->gtpc_ip.ipv4 || ogs_gtp_self()->gtpc_ip.ipv6) {
+            rv = ogs_gtp2_ip_to_f_teid(
+                    &ogs_gtp_self()->gtpc_ip, &sgw_s11_teid, &len);
+        } else {
+            rv = ogs_gtp2_sockaddr_to_f_teid(
+                    ogs_gtp_self()->gtpc_addr, ogs_gtp_self()->gtpc_addr6,
+                    &sgw_s11_teid, &len);
+        }
+        if (rv != OGS_OK) {
+            ogs_error("SGW S11 F-TEID build failed");
+            goto cleanup;
+        }
+        rsp->sender_f_teid_for_control_plane.presence = 1;
+        rsp->sender_f_teid_for_control_plane.data = &sgw_s11_teid;
+        rsp->sender_f_teid_for_control_plane.len = len;
+    }
 
     /* PDN Address Allocation */
     rsp->pdn_address_allocation.data = &sess->paa;
@@ -274,6 +304,26 @@ ogs_pkbuf_t *smf_s5c_build_create_session_response(
                 &pgw_s5u_teid[i];
             rsp->bearer_contexts_created[i].s5_s8_u_sgw_f_teid.len =
                 pgw_s5u_len[i];
+
+            /*
+             * Collapsed SAEGW-C (S11): the MME also requires the
+             * "S1-U SGW F-TEID" (instance 0). The UPF terminates S1-U
+             * directly, so it carries the same F-TEID as the PGW S5/S8-U
+             * one above, retyped as S1-U SGW GTP-U.
+             */
+            if (sess->s11) {
+                memcpy(&sgw_s1u_teid[i], &pgw_s5u_teid[i],
+                        sizeof(ogs_gtp2_f_teid_t));
+                sgw_s1u_len[i] = pgw_s5u_len[i];
+                sgw_s1u_teid[i].interface_type =
+                    OGS_GTP2_F_TEID_S1_U_SGW_GTP_U;
+                rsp->bearer_contexts_created[i].s1_u_enodeb_f_teid.
+                    presence = 1;
+                rsp->bearer_contexts_created[i].s1_u_enodeb_f_teid.
+                    data = &sgw_s1u_teid[i];
+                rsp->bearer_contexts_created[i].s1_u_enodeb_f_teid.
+                    len = sgw_s1u_len[i];
+            }
             break;
         case OGS_GTP2_RAT_TYPE_WLAN:
             pgw_s5u_teid[i].interface_type = OGS_GTP2_F_TEID_S2B_U_PGW_GTP_U;
@@ -455,6 +505,31 @@ ogs_pkbuf_t *smf_s5c_build_modify_bearer_response(
     }
 
     /* build */
+    gtp_message.h.type = type;
+    return ogs_gtp2_build_msg(&gtp_message);
+}
+
+/* Collapsed SAEGW-C (S11 server role) */
+ogs_pkbuf_t *smf_s5c_build_release_access_bearers_response(uint8_t type)
+{
+    ogs_gtp2_message_t gtp_message;
+    ogs_gtp2_release_access_bearers_response_t *rsp = NULL;
+
+    ogs_gtp2_cause_t cause;
+
+    rsp = &gtp_message.release_access_bearers_response;
+    memset(&gtp_message, 0, sizeof(ogs_gtp2_message_t));
+
+    memset(&cause, 0, sizeof(cause));
+    cause.value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
+
+    rsp->cause.presence = 1;
+    rsp->cause.data = &cause;
+    rsp->cause.len = sizeof(cause);
+
+    rsp->recovery.presence = 1;
+    rsp->recovery.u8 = smf_self()->gtpc_recovery;
+
     gtp_message.h.type = type;
     return ogs_gtp2_build_msg(&gtp_message);
 }

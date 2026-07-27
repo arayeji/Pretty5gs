@@ -144,15 +144,27 @@ uint32_t smf_gx_handle_cca_initial_request(
     up2cp_far = sess->up2cp_far;
     ogs_assert(up2cp_far);
 
-    dl_far->apply_action = OGS_PFCP_APPLY_ACTION_FORW;
+    if (sess->s11 &&
+            !bearer->sgw_s5u_ip.ipv4 && !bearer->sgw_s5u_ip.ipv6) {
+        /*
+         * Collapsed SAEGW-C attach: the eNB S1-U F-TEID is not known yet
+         * (it arrives in the Modify Bearer Request), so keep the DL FAR
+         * buffering with CP notification, exactly like a 5GC session
+         * waiting for AN tunnel info.
+         */
+        dl_far->apply_action =
+            OGS_PFCP_APPLY_ACTION_BUFF | OGS_PFCP_APPLY_ACTION_NOCP;
+    } else {
+        dl_far->apply_action = OGS_PFCP_APPLY_ACTION_FORW;
 
-    /* Set Outer Header Creation to the Default DL FAR */
-    ogs_assert(OGS_OK ==
-        ogs_pfcp_ip_to_outer_header_creation(
-            &bearer->sgw_s5u_ip,
-            &dl_far->outer_header_creation,
-            &dl_far->outer_header_creation_len));
-    dl_far->outer_header_creation.teid = bearer->sgw_s5u_teid;
+        /* Set Outer Header Creation to the Default DL FAR */
+        ogs_assert(OGS_OK ==
+            ogs_pfcp_ip_to_outer_header_creation(
+                &bearer->sgw_s5u_ip,
+                &dl_far->outer_header_creation,
+                &dl_far->outer_header_creation_len));
+        dl_far->outer_header_creation.teid = bearer->sgw_s5u_teid;
+    }
 
     /* Setup PDR */
     dl_pdr = bearer->dl_pdr;

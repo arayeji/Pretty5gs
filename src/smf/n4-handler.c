@@ -19,6 +19,7 @@
 
 #include "context.h"
 #include "s5c-build.h"
+#include "s11-handler.h"
 #include "pfcp-path.h"
 #include "gtp-path.h"
 #include "n4-handler.h"
@@ -1562,6 +1563,45 @@ void smf_epc_n4_handle_session_modification_response(
 
     } else if (flags & OGS_PFCP_MODIFY_DEACTIVATE) {
         /*
+         * Collapsed SAEGW-C (S11): the deactivation only switches the UPF
+         * to DL buffering (Release Access Bearers or Error Indication).
+         * If the MME is waiting for a Release Access Bearers Response,
+         * acknowledge it; either way do NOT fall through to the PDN
+         * deactivation logic below (it would send Delete Bearer Request).
+         */
+        if (flags & OGS_PFCP_MODIFY_S11_BUFFER) {
+            if (gtp_xact && recv_message &&
+                    recv_message->h.type ==
+                        OGS_GTP2_RELEASE_ACCESS_BEARERS_REQUEST_TYPE) {
+                ogs_gtp2_header_t h;
+                ogs_pkbuf_t *pkbuf = NULL;
+                int rv;
+
+                memset(&h, 0, sizeof(ogs_gtp2_header_t));
+                h.type = OGS_GTP2_RELEASE_ACCESS_BEARERS_RESPONSE_TYPE;
+                h.teid = sess->sgw_s5c_teid; /* MME S11 TEID */
+
+                pkbuf = smf_s5c_build_release_access_bearers_response(h.type);
+                if (!pkbuf) {
+                    ogs_error(
+                        "smf_s5c_build_release_access_bearers_response() "
+                        "failed");
+                    return;
+                }
+
+                rv = ogs_gtp_xact_update_tx(gtp_xact, &h, pkbuf);
+                if (rv != OGS_OK) {
+                    ogs_error("ogs_gtp_xact_update_tx() failed");
+                    return;
+                }
+
+                rv = ogs_gtp_xact_commit(gtp_xact);
+                ogs_expect(rv == OGS_OK);
+            }
+            return;
+        }
+
+        /*
          * TS23.214
          * 6.3.1.7 Procedures with modification of bearer
          * p50
@@ -1897,6 +1937,27 @@ uint8_t smf_n4_handle_session_report_request(
             return OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND;
         }
 
+        if (sess->s11) {
+            /*
+             * Collapsed SAEGW-C: the UPF buffered downlink data for an
+             * idle UE; page it via Downlink Data Notification to the MME
+             * (the EPC counterpart of the 5GC N1N2 message transfer below).
+             */
+            smf_bearer_t *report_bearer =
+                smf_bearer_find_by_pdr_id(sess, pdr->id);
+            if (!report_bearer)
+                report_bearer = smf_default_bearer_in_sess(sess);
+            if (report_bearer) {
+                if (smf_s11_send_downlink_data_notification(
+                        OGS_GTP2_CAUSE_UNDEFINED_VALUE,
+                        report_bearer) != OGS_OK)
+                    ogs_error("smf_s11_send_downlink_data_notification() "
+                            "failed");
+            } else {
+                ogs_error("Downlink Data Report [s11]: no bearer for "
+                        "PDR-ID[%d]", pdr->id);
+            }
+        } else
         switch (sess->up_cnx_state) {
         case OpenAPI_up_cnx_state_NULL:
             /* UE Requested PDU Session is NOT established */
@@ -2037,6 +2098,32 @@ uint8_t smf_n4_handle_session_report_request(
                 ogs_error("[%s:%s] Error Indication from SGW-U: "
                         "no bearer found for FAR",
                     smf_ue->imsi_bcd, sess->session.name);
+            } else if (sess->s11) {
+                /*
+                 * Collapsed SAEGW-C: behave like the SGW-C (TS 23.007).
+                 * The eNB S1-U tunnel is broken: stop DL forwarding
+                 * (UPF buffers) and send a Downlink Data Notification
+                 * with cause "Error Indication received" so the MME
+                 * releases the S1 context and pages the UE.
+                 */
+                ogs_warn("[%s:%s] Error Indication from eNB "
+                        "[EBI:%d] (s11)",
+                    smf_ue->imsi_bcd, sess->session.name,
+                    matched_bearer->ebi);
+
+                ogs_assert(OGS_OK ==
+                    smf_epc_pfcp_send_all_pdr_modification_request(
+                        sess, OGS_INVALID_POOL_ID, NULL,
+                        OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_DEACTIVATE|
+                        OGS_PFCP_MODIFY_S11_BUFFER,
+                        OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED,
+                        OGS_GTP2_CAUSE_UNDEFINED_VALUE));
+
+                if (smf_s11_send_downlink_data_notification(
+                        OGS_GTP2_CAUSE_ERROR_INDICATION_RECEIVED,
+                        matched_bearer) != OGS_OK)
+                    ogs_error("smf_s11_send_downlink_data_notification() "
+                            "failed");
             } else if (matched_bearer == smf_default_bearer_in_sess(sess)) {
                 ogs_error("[%s:%s] Error Indication from SGW-U "
                         "[EBI:%d] (default bearer)",

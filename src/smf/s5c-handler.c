@@ -23,6 +23,7 @@
 #include "fd-path.h"
 #include "s5c-build.h"
 #include "s5c-handler.h"
+#include "s11-handler.h"
 #include "smf-trace.h"
 #include "pfcp-path.h"
 #include "radius-path.h"
@@ -263,7 +264,13 @@ uint8_t smf_s5c_handle_create_session_request(
     }
     switch (sess->gtp_rat_type) {
     case OGS_GTP2_RAT_TYPE_EUTRAN:
-        if (req->bearer_contexts_to_be_created[0].
+        /*
+         * S11 (collapsed SAEGW-C): at attach time the MME has no S1-U
+         * F-TEID yet (the eNB tunnel comes later via Modify Bearer
+         * Request), so no data-plane F-TEID is required in the CSR.
+         */
+        if (!sess->s11 &&
+            req->bearer_contexts_to_be_created[0].
                 s5_s8_u_sgw_f_teid.presence == 0) {
             smf_ue_error(NULL, sess, "create-session", "No S5/S8 SGW GTP-U TEID");
             cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
@@ -590,6 +597,29 @@ uint8_t smf_s5c_handle_create_session_request(
 
         switch (sess->gtp_rat_type) {
         case OGS_GTP2_RAT_TYPE_EUTRAN:
+            if (sess->s11) {
+                /*
+                 * Collapsed SAEGW-C: the downlink target is the eNB S1-U
+                 * F-TEID. It is present only in handover/TAU-triggered
+                 * CSRs; on attach the DL FAR stays buffering until the
+                 * Modify Bearer Request delivers the eNB F-TEID.
+                 */
+                if (req->bearer_contexts_to_be_created[i].
+                        s1_u_enodeb_f_teid.presence) {
+                    sgw_s5u_teid = req->bearer_contexts_to_be_created[i].
+                        s1_u_enodeb_f_teid.data;
+                    ogs_assert(sgw_s5u_teid);
+                    bearer->sgw_s5u_teid = be32toh(sgw_s5u_teid->teid);
+                    rv = ogs_gtp2_f_teid_to_ip(
+                            sgw_s5u_teid, &bearer->sgw_s5u_ip);
+                    if (rv != OGS_OK) {
+                        ogs_error("Invalid eNB-S1U TEID");
+                        smf_bearer_remove_all(sess);
+                        return OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
+                    }
+                }
+                break;
+            }
             sgw_s5u_teid = req->bearer_contexts_to_be_created[i].
                 s5_s8_u_sgw_f_teid.data;
             ogs_assert(sgw_s5u_teid);
@@ -844,6 +874,21 @@ void smf_s5c_handle_modify_bearer_request(
      * Check ALL Context
      ********************/
     ogs_assert(sess);
+
+    /*
+     * S11 (collapsed SAEGW-C): the MME addresses the UE with a single
+     * SGW S11 TEID, so the header TEID may belong to a different PDN
+     * connection of the UE. Re-target using the first EPS Bearer ID.
+     */
+    if (sess->s11 &&
+            req->bearer_contexts_to_be_modified[0].presence &&
+            req->bearer_contexts_to_be_modified[0].eps_bearer_id.presence) {
+        smf_sess_t *target = smf_s11_sess_find_by_ebi(sess,
+                req->bearer_contexts_to_be_modified[0].eps_bearer_id.u8);
+        if (target)
+            sess = target;
+    }
+
     smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
     ogs_assert(smf_ue);
 
@@ -881,16 +926,25 @@ void smf_s5c_handle_modify_bearer_request(
             break;
         }
 
-        if (req->bearer_contexts_to_be_modified[i].s4_u_sgsn_f_teid.presence) {
+        if ((sess->s11 &&
+             req->bearer_contexts_to_be_modified[i].
+                s1_u_enodeb_f_teid.presence) ||
+            (!sess->s11 &&
+             req->bearer_contexts_to_be_modified[i].
+                s4_u_sgsn_f_teid.presence)) {
             ogs_pfcp_far_t *far = NULL;
             ogs_gtp2_f_teid_t *sgw_s5u_teid = NULL;
 
             ogs_ip_t remote_ip;
             ogs_ip_t zero_ip;
 
-            /* Data Plane(DL) : SGW-S5U */
-            sgw_s5u_teid = req->bearer_contexts_to_be_modified[i].
-                            s4_u_sgsn_f_teid.data;
+            /* Data Plane(DL): eNB-S1U (S11 collapsed) or SGW-S5U (S5) */
+            if (sess->s11)
+                sgw_s5u_teid = req->bearer_contexts_to_be_modified[i].
+                                s1_u_enodeb_f_teid.data;
+            else
+                sgw_s5u_teid = req->bearer_contexts_to_be_modified[i].
+                                s4_u_sgsn_f_teid.data;
             ogs_assert(sgw_s5u_teid);
             bearer->sgw_s5u_teid = be32toh(sgw_s5u_teid->teid);
             ogs_assert(OGS_OK ==

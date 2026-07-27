@@ -404,6 +404,15 @@ typedef struct smf_context_s {
     bool maintenance_mode;
 
     /*
+     * Collapsed SAEGW-C mode (smf.collapsed: true): accept S11 Create Session
+     * Requests directly from the MME and serve as combined SGW-C + PGW-C for
+     * local subscribers. Home-routed roamers (CSR whose PGW S5/S8 address is
+     * not one of our GTP-C addresses) are rejected until the S8 relay role
+     * is implemented (phase 2).
+     */
+    bool collapsed;
+
+    /*
      * Batched /admin/maintenance/drain bookkeeping (see smf-sm.c).
      * Sessions are drained in fixed-size UE batches paced by a timer so
      * a large drain cannot monopolise the main thread or burst-flood
@@ -610,6 +619,18 @@ typedef struct smf_sess_s {
     } sm_data;
 
     bool            epc;            /**< EPC or 5GC */
+
+    /*
+     * Collapsed SAEGW-C: this EPC session was established over S11 directly
+     * from the MME (no SGW-C in the path). The SMF terminates S11 and the
+     * UPF terminates S1-U from the eNB:
+     *   - sgw_s5c_teid/sgw_s5c_ip hold the MME S11 F-TEID,
+     *   - bearer->sgw_s5u_teid/sgw_s5u_ip hold the eNB S1-U F-TEID
+     *     (unknown at attach; learned from Modify Bearer Request),
+     *   - bearer->pgw_s5u_* (the UPF UL F-TEID) is advertised to the MME as
+     *     both "S1-U SGW F-TEID" and "S5/S8-U PGW F-TEID".
+     */
+    bool            s11;
     ogs_time_t      created;        /* session creation epoch (orphan aging) */
     bool            collision_replace; /* Re-attach: wait UPF delete before new CSR */
     unsigned        metrics_session_counted : 1;
