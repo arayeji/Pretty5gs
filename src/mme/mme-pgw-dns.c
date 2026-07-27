@@ -375,7 +375,6 @@ static int pgw_dns_query_udp(
 
     for (ns = ns_list; ns; ns = ns->next) {
         ssize_t n;
-        fd_set rfds;
         socklen_t fromlen;
         ogs_sockaddr_t from;
 
@@ -395,13 +394,15 @@ static int pgw_dns_query_udp(
             continue;
         }
 
-        FD_ZERO(&rfds);
-        FD_SET(sock, &rfds);
-        if (select(sock + 1, &rfds, NULL, NULL, &tv) <= 0) {
-            close(sock);
-            sock = -1;
-            continue;
-        }
+        /*
+         * NO select()/FD_SET here: fd_set only covers fds < 1024 and
+         * this MME holds thousands of SCTP fds, so FD_SET on a
+         * high-numbered DNS socket overflowed the on-stack fd_set —
+         * glibc fortify "*** buffer overflow detected ***" abort on
+         * every APN-DNS Create Session under load (prod 2026-07-27).
+         * SO_RCVTIMEO above already bounds recvfrom() to the same
+         * timeout the select() enforced.
+         */
 
         memset(&from, 0, sizeof(from));
         fromlen = sizeof(from.ss);
