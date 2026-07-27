@@ -3838,9 +3838,20 @@ void s1ap_handle_handover_required(mme_enb_t *enb, ogs_s1ap_message_t *message)
     case S1AP_HandoverType_eps_to_5gs:
     case S1AP_HandoverType_fivegs_to_eps:
     default: /* Enumeration is extensible */
-        ogs_error("Rx Handover Required HandoverType=%ld not implemented!", *HandoverType);
+        /*
+         * Refuse with radioNetwork/ho-target-not-allowed, NOT
+         * protocol/semantic-error: the message is well-formed, we just
+         * don't support the target RAT. This cause lets the eNB
+         * blacklist the handover target and fall back to release with
+         * redirection instead of retrying the preparation.
+         */
+        ogs_warn("Rx Handover Required HandoverType=%ld not supported; "
+                "replying Handover Preparation Failure "
+                "(ho-target-not-allowed) ENB_UE_S1AP_ID[%d]",
+                *HandoverType, source_ue->enb_ue_s1ap_id);
         r = s1ap_send_handover_preparation_failure(source_ue,
-                S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
+                S1AP_Cause_PR_radioNetwork,
+                S1AP_CauseRadioNetwork_ho_target_not_allowed);
         ogs_expect(r == OGS_OK);
         ogs_assert(r != OGS_ERROR);
         break;
