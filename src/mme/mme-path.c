@@ -873,15 +873,13 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
             goto cleanup;
         }
 
-        if (failed == true) {
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_downlink_data_notification_ack(
-                    bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE));
-        } else {
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_downlink_data_notification_ack(
-                    bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED));
-        }
+        /* A failed ack must not abort the MME: the SGW retransmits the
+         * DDN anyway, and aborting here caused a crash loop. */
+        if (mme_gtp_send_downlink_data_notification_ack(bearer,
+                failed == true ? OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE :
+                    OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+            mme_ue_error(mme_ue, NULL, "paging", NULL,
+                    "DDN Ack not sent [failed=%d]", failed);
         break;
     case MME_PAGING_TYPE_CREATE_BEARER:
         bearer = mme_bearer_find_by_id(

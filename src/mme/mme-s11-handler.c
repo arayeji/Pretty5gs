@@ -2007,9 +2007,9 @@ void mme_s11_handle_downlink_data_notification(
         ogs_warn("[%s] PDN connection inactivity reported by SGW",
                 mme_ue->imsi_bcd);
         mme_mobile_reachable_start(mme_ue);
-        ogs_assert(OGS_OK ==
-            mme_gtp_send_downlink_data_notification_ack(
-                bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED));
+        if (mme_gtp_send_downlink_data_notification_ack(
+                bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+            ogs_error("[%s] DDN Ack not sent", mme_ue->imsi_bcd);
         return;
     }
 /*
@@ -2034,9 +2034,9 @@ void mme_s11_handle_downlink_data_notification(
         ogs_assert(r != OGS_ERROR);
     } else if (ECM_CONNECTED(mme_ue)) {
         MME_CLEAR_PAGING_INFO(mme_ue);
-        ogs_assert(OGS_OK ==
-            mme_gtp_send_downlink_data_notification_ack(
-                bearer, OGS_GTP2_CAUSE_UE_ALREADY_RE_ATTACHED));
+        if (mme_gtp_send_downlink_data_notification_ack(
+                bearer, OGS_GTP2_CAUSE_UE_ALREADY_RE_ATTACHED) != OGS_OK)
+            ogs_error("[%s] DDN Ack not sent", mme_ue->imsi_bcd);
 
         if (cause_value == OGS_GTP2_CAUSE_ERROR_INDICATION_RECEIVED) {
 

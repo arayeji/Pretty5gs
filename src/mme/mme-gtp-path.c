@@ -1143,19 +1143,40 @@ int mme_gtp_send_downlink_data_notification_ack(
     ogs_pkbuf_t *s11buf = NULL;
 
     ogs_assert(bearer);
-    ogs_assert(bearer->notify.xact_id >= OGS_MIN_POOL_ID &&
-            bearer->notify.xact_id <= OGS_MAX_POOL_ID);
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     ogs_assert(mme_ue);
 
+    if (bearer->notify.xact_id < OGS_MIN_POOL_ID ||
+            bearer->notify.xact_id > OGS_MAX_POOL_ID) {
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                "DDN Ack: no saved GTP transaction (already acknowledged?)");
+        return OGS_OK;
+    }
+
     xact = ogs_gtp_xact_find_by_id(bearer->notify.xact_id);
+    /* One ack per DDN: never reuse a stale id - after the holding
+     * timer frees the transaction the pool slot can be recycled by an
+     * unrelated transaction, and update_tx on it would fail (this
+     * previously crashed the MME via ogs_assert in the callers). */
+    bearer->notify.xact_id = OGS_INVALID_POOL_ID;
     if (!xact) {
         mme_ue_warn(mme_ue, NULL, "s11", NULL,
                 "GTP transaction(NOTIFY) has already been removed");
         return OGS_OK;
     }
+    if (xact->org != OGS_GTP_REMOTE_ORIGINATOR ||
+            xact->seq[0].type != OGS_GTP2_DOWNLINK_DATA_NOTIFICATION_TYPE) {
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                "DDN Ack: saved xact id now belongs to another "
+                "transaction (org=%d type=%d); dropping ack",
+                xact->org, xact->seq[0].type);
+        return OGS_OK;
+    }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        ogs_error("[%s] DDN Ack: SGW UE context gone", mme_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
 
     /* Build Downlink data notification ack */
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
