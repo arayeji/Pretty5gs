@@ -90,12 +90,12 @@ int s1ap_send_to_enb(mme_enb_t *enb, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
     if (s1ap_tx_active()) {
         bool parked = false;
 
-        mme_ctx_lock();
+        ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
         if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0) {
             ogs_list_add(&enb->s1ap_tx_hold, pkbuf);
             parked = true;
         }
-        mme_ctx_unlock();
+        ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
 
         if (parked)
             return OGS_OK;

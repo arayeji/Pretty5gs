@@ -591,12 +591,25 @@ typedef struct mme_enb_s {
      * s1ap_tx_hold is SHARED: UE-shard workers park pkbufs on it from
      * s1ap_send_to_enb() while main drains it in the TX_READY handler
      * and mme_enb_remove(). Every access — including the pending>0
-     * test that decides to park — must hold mme_ctx_lock(); it used to
-     * be main-thread-only, and the unlocked list surgery double-freed
-     * pkbufs (talloc bad-magic abort) once UE shards were enabled.
+     * test that decides to park — must hold s1ap_tx_hold_lock below;
+     * it used to be main-thread-only, and the unlocked list surgery
+     * double-freed pkbufs (talloc bad-magic abort) once UE shards were
+     * enabled.
      */
     int             s1ap_tx_pending;
     ogs_list_t      s1ap_tx_hold;
+
+    /*
+     * Guards s1ap_tx_hold. This was the global mme_ctx_lock(), which put a
+     * process-wide mutex on main's hot path: main takes it per downlink
+     * message to flush the hold list, contending with every worker and the
+     * admin thread. Per-eNB removes that coupling - two eNBs' flushes have
+     * nothing to serialise against each other.
+     *
+     * Lock order: mme_ctx_lock() may be held while taking this (see
+     * mme_enb_remove); never the reverse.
+     */
+    ogs_thread_mutex_t s1ap_tx_hold_lock;
 
 } mme_enb_t;
 

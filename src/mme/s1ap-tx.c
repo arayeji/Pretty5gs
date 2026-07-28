@@ -347,14 +347,14 @@ void s1ap_tx_ready_handle(mme_event_t *e)
 
         ogs_list_init(&flush);
 
-        mme_ctx_lock();
+        ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
         if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) == 0) {
             ogs_list_for_each_safe(&enb->s1ap_tx_hold, next, held) {
                 ogs_list_remove(&enb->s1ap_tx_hold, held);
                 ogs_list_add(&flush, held);
             }
         }
-        mme_ctx_unlock();
+        ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
 
         ogs_list_for_each_safe(&flush, next, held) {
             ogs_list_remove(&flush, held);

@@ -6051,6 +6051,7 @@ mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
     ogs_list_init(&enb->enb_ue_list);
     enb->s1ap_tx_pending = 0;
     ogs_list_init(&enb->s1ap_tx_hold);
+    ogs_thread_mutex_init(&enb->s1ap_tx_hold_lock);
     enb->context_created = ogs_time_now();
     enb->enb_ue_hash = ogs_hash_make();
     ogs_assert(enb->enb_ue_hash);
@@ -6108,12 +6109,15 @@ int mme_enb_remove(mme_enb_t *enb)
      * just free its pkbuf */
     {
         ogs_pkbuf_t *held = NULL, *held_next = NULL;
+        ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
         ogs_list_for_each_safe(&enb->s1ap_tx_hold, held_next, held) {
             ogs_list_remove(&enb->s1ap_tx_hold, held);
             ogs_pkbuf_free(held);
         }
         __atomic_store_n(&enb->s1ap_tx_pending, 0, __ATOMIC_RELEASE);
+        ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
     }
+    ogs_thread_mutex_destroy(&enb->s1ap_tx_hold_lock);
 
     /* eNB dropped mid-partial-reset: reclaim the unsent Reset Ack.
      * We hold the dump/ctx lock, so this cannot race the take-and-null
