@@ -197,6 +197,17 @@ void sgsap_state_connected(ogs_fsm_t *s, mme_event_t *e)
         ogs_assert(pkbuf);
         sgsap_dispatch_message(vlr, pkbuf);
         break;
+    case MME_EVENT_SGSAP_TIMER:
+        /*
+         * t_conn expired and queued its event just before SCTP came up.
+         * will_connect's EXIT_SIG stops the timer but cannot unqueue the
+         * event already in flight, so it lands here on a connection that
+         * has since succeeded. Drop it - retrying would tear down a
+         * healthy VLR association.
+         */
+        ogs_debug("[SGsAP] Stale timer[%s:%d] after connect, ignored",
+                mme_timer_get_name(e->timer_id), e->timer_id);
+        break;
     default:
         ogs_error("Unknown event %s", mme_event_get_name(e));
         break;

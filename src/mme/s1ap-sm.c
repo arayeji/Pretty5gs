@@ -145,6 +145,23 @@ void s1ap_state_operational(ogs_fsm_t *s, mme_event_t *e)
             case S1AP_ProcedureCode_id_E_RABReleaseIndication:
                 s1ap_handle_e_rab_release_indication(enb, pdu);
                 break;
+            case S1AP_ProcedureCode_id_PWSRestartIndication:
+            case S1AP_ProcedureCode_id_PWSFailureIndication:
+                /*
+                 * TS 36.413 8.14/8.15: the eNB reports that cells lost or
+                 * failed their Public Warning System state. The MME's only
+                 * role is to forward this to a CBC over SBc, which we do
+                 * not implement, and both are class 2 (no response). So
+                 * absorbing is the complete correct behaviour - it was only
+                 * reaching the "Not implemented" default and logging at
+                 * ERROR on every eNB restart.
+                 */
+                ogs_debug("eNB-id[0x%x] PWS %s Indication ignored "
+                        "(no SBc/CBC)", enb->enb_id,
+                        initiatingMessage->procedureCode ==
+                            S1AP_ProcedureCode_id_PWSRestartIndication ?
+                                "Restart" : "Failure");
+                break;
             default:
                 ogs_error("Not implemented(choice:%d, proc:%d)",
                         pdu->present, (int)initiatingMessage->procedureCode);

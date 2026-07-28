@@ -3844,11 +3844,29 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
     }
 
     if (!ACTIVE_EPS_BEARERS_IS_AVAIABLE(mme_ue)) {
-        ogs_error("No active EPS bearers : IMSI[%s]", mme_ue->imsi_bcd);
+        /*
+         * The UE is S1-connected and has session context, but not one
+         * bearer reached esm_state_active - typically because Create
+         * Session never completed. Nothing can be handed over, and the
+         * state cannot recover on its own: the eNB just retries Handover
+         * Required forever (observed at >100 retries per UE) while the
+         * context lingers. Refuse the handover, then release S1 so the UE
+         * drops to idle and re-attaches instead of looping.
+         */
+        ogs_warn("No active EPS bearers : IMSI[%s] - releasing S1 context",
+                mme_ue->imsi_bcd);
         r = s1ap_send_handover_preparation_failure(source_ue,
                 S1AP_Cause_PR_nas, S1AP_CauseNas_authentication_failure);
         ogs_expect(r == OGS_OK);
         ogs_assert(r != OGS_ERROR);
+
+        r = s1ap_send_ue_context_release_command(source_ue,
+                S1AP_Cause_PR_radioNetwork,
+                S1AP_CauseRadioNetwork_unspecified,
+                S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
+        if (r != OGS_OK)
+            ogs_error("[%s] UEContextReleaseCommand failed after "
+                    "bearer-less handover", mme_ue->imsi_bcd);
         return;
     }
 
