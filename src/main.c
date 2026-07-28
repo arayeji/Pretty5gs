@@ -60,9 +60,24 @@ static void fatal_signal_backtrace(int signum)
 {
     void *addrs[32];
     int n;
-    static const char msg[] = "\n*** fatal signal backtrace ***\n";
+    const char *msg;
 
-    n = write(STDERR_FILENO, msg, sizeof(msg) - 1);
+    /*
+     * Naming the signal matters: a SIGFPE died in production with no
+     * output at all and the core was too large for systemd-coredump to
+     * keep, leaving nothing to identify the divide-by-zero. Literals
+     * only - this runs in a signal handler.
+     */
+    switch (signum) {
+    case SIGABRT: msg = "\n*** fatal signal SIGABRT backtrace ***\n"; break;
+    case SIGSEGV: msg = "\n*** fatal signal SIGSEGV backtrace ***\n"; break;
+    case SIGBUS:  msg = "\n*** fatal signal SIGBUS backtrace ***\n"; break;
+    case SIGFPE:  msg = "\n*** fatal signal SIGFPE backtrace ***\n"; break;
+    case SIGILL:  msg = "\n*** fatal signal SIGILL backtrace ***\n"; break;
+    default:      msg = "\n*** fatal signal backtrace ***\n"; break;
+    }
+
+    n = write(STDERR_FILENO, msg, strlen(msg));
     (void)n;
     n = backtrace(addrs, 32);
     backtrace_symbols_fd(addrs, n, STDERR_FILENO);
@@ -249,6 +264,8 @@ int main(int argc, const char *const argv[])
     ogs_signal(SIGABRT, fatal_signal_backtrace);
     ogs_signal(SIGSEGV, fatal_signal_backtrace);
     ogs_signal(SIGBUS, fatal_signal_backtrace);
+    ogs_signal(SIGFPE, fatal_signal_backtrace);
+    ogs_signal(SIGILL, fatal_signal_backtrace);
 #endif
 
     rv = ogs_app_initialize(OPEN5GS_VERSION, DEFAULT_CONFIG_FILENAME, argv_out);
