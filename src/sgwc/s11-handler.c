@@ -878,6 +878,7 @@ void sgwc_s11_handle_modify_bearer_request(
         ogs_pkbuf_t *gtpbuf, ogs_gtp2_message_t *message)
 {
     int rv, i = 0;
+    int num_of_modified = 0, num_of_unknown = 0;
     uint16_t decoded;
     uint8_t cause_value = 0;
 
@@ -941,11 +942,23 @@ void sgwc_s11_handle_modify_bearer_request(
         bearer = sgwc_bearer_find_by_ue_ebi(sgwc_ue,
                     req->bearer_contexts_to_be_modified[i].eps_bearer_id.u8);
         if (!bearer) {
-            ogs_error("Unknown EPS Bearer ID[%d]",
+            /*
+             * Rejecting the whole message here black-holed downlink for
+             * every *known* bearer in the same Modify Bearer Request: the
+             * MME keeps a bearer the SGW never created (or already
+             * deleted), and the SGW-U FAR for the other bearers stayed on
+             * the previous, dead eNB TEID. Skip the unknown bearer and
+             * still program the ones we do know.
+             */
+            ogs_warn("[%s] Unknown EPS Bearer ID[%d] in Modify Bearer "
+                    "Request; skipping this bearer context",
+                    sgwc_ue->imsi_bcd,
                     req->bearer_contexts_to_be_modified[i].eps_bearer_id.u8);
-            cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
-            break;
+            num_of_unknown++;
+            goto next_bearer;
         }
+
+        num_of_modified++;
 
         sess = sgwc_sess_find_by_id(bearer->sess_id);
         ogs_assert(sess);
@@ -1116,6 +1129,14 @@ next_bearer:
 
     if (i == 0) {
         ogs_error("No Bearer");
+        goto cleanup;
+    }
+
+    if (num_of_modified == 0) {
+        ogs_error("[%s] Modify Bearer Request: none of the %d bearer "
+                "context(s) is known to the SGW",
+                sgwc_ue->imsi_bcd, num_of_unknown);
+        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
         goto cleanup;
     }
 

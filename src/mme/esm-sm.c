@@ -647,6 +647,18 @@ void esm_state_pdn_will_disconnect(ogs_fsm_t *s, mme_event_t *e)
 
             OGS_FSM_TRAN(s, esm_state_inactive);
             break;
+        case OGS_NAS_EPS_PDN_DISCONNECT_REQUEST:
+            /*
+             * TS 24.301 6.5.2: the UE retransmits PDN Disconnect on T3492
+             * until it sees the Deactivate EPS Bearer Context Request. The
+             * disconnect is already in progress here (Delete Session /
+             * NAS-Deactivate in flight), so absorb the duplicate instead of
+             * starting a second teardown.
+             */
+            ogs_debug("Duplicate PDN disconnect request ignored "
+                    "IMSI[%s] PTI[%d] EBI[%d]",
+                    mme_ue->imsi_bcd, sess->pti, bearer->ebi);
+            break;
         default:
             ogs_error("Unknown message(type:%d)", 
                     message->esm.h.message_type);

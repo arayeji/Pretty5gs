@@ -1472,7 +1472,19 @@ void s1ap_initial_context_setup_response_complete(
             ogs_log_hexdump(OGS_LOG_DEBUG,
                     bearer->enb_s1u_ip.addr6, OGS_IPV6_LEN);
 
-            if (OGS_FSM_CHECK(&bearer->sm, esm_state_active)) {
+            if (!bearer->sgw_s1u_teid) {
+                /*
+                 * The SGW never created (or already deleted) this bearer.
+                 * Including it would make the SGW-C reject the whole
+                 * Modify Bearer Request with Context Not Found, so the
+                 * *other* bearers keep the previous eNB TEID and downlink
+                 * black-holes for the entire UE.
+                 */
+                ogs_warn("UE[%s] EBI[%d] has no SGW S1-U TEID in "
+                        "InitialContextSetupResponse: excluded from "
+                        "Modify Bearer Request",
+                        mme_ue->imsi_bcd, bearer->ebi);
+            } else if (OGS_FSM_CHECK(&bearer->sm, esm_state_active)) {
                 ogs_debug("    NAS_EPS Type[%d]", mme_ue->nas_eps.type);
                 if (mme_ue->nas_eps.type != MME_EPS_TYPE_ATTACH_REQUEST) {
                     ogs_debug("    ### ULI PRESENT ###");
@@ -2557,6 +2569,146 @@ void s1ap_ue_context_release_tail(mme_ue_t *mme_ue, int rel_action,
     }
 }
 
+void s1ap_handle_e_rab_release_indication(
+        mme_enb_t *enb, ogs_s1ap_message_t *message)
+{
+    char buf[OGS_ADDRSTRLEN];
+    int i, r;
+    int num_of_released = 0, num_of_radio_left = 0;
+
+    S1AP_InitiatingMessage_t *initiatingMessage = NULL;
+    S1AP_E_RABReleaseIndication_t *E_RABReleaseIndication = NULL;
+
+    S1AP_E_RABReleaseIndicationIEs_t *ie = NULL;
+    S1AP_MME_UE_S1AP_ID_t *MME_UE_S1AP_ID = NULL;
+    S1AP_ENB_UE_S1AP_ID_t *ENB_UE_S1AP_ID = NULL;
+    S1AP_E_RABList_t *E_RABReleasedList = NULL;
+
+    enb_ue_t *enb_ue = NULL;
+    mme_ue_t *mme_ue = NULL;
+    mme_sess_t *sess = NULL;
+    mme_bearer_t *bearer = NULL;
+
+    ogs_assert(enb);
+    ogs_assert(enb->sctp.sock);
+
+    ogs_assert(message);
+    initiatingMessage = message->choice.initiatingMessage;
+    ogs_assert(initiatingMessage);
+    E_RABReleaseIndication =
+        &initiatingMessage->value.choice.E_RABReleaseIndication;
+    ogs_assert(E_RABReleaseIndication);
+
+    for (i = 0; i < E_RABReleaseIndication->protocolIEs.list.count; i++) {
+        ie = E_RABReleaseIndication->protocolIEs.list.array[i];
+        switch (ie->id) {
+        case S1AP_ProtocolIE_ID_id_MME_UE_S1AP_ID:
+            MME_UE_S1AP_ID = &ie->value.choice.MME_UE_S1AP_ID;
+            break;
+        case S1AP_ProtocolIE_ID_id_eNB_UE_S1AP_ID:
+            ENB_UE_S1AP_ID = &ie->value.choice.ENB_UE_S1AP_ID;
+            break;
+        case S1AP_ProtocolIE_ID_id_E_RABReleasedList:
+            E_RABReleasedList = &ie->value.choice.E_RABList;
+            break;
+        default:
+            break;
+        }
+    }
+
+    ogs_debug("E-RABReleaseIndication IP[%s] ENB_ID[%d]",
+            OGS_ADDR(enb->sctp.addr, buf), enb->enb_id);
+
+    enb_ue = s1ap_find_enb_ue_by_message_ue_ids(
+            enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID);
+    if (!enb_ue) {
+        ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
+        return;
+    }
+
+    if (!E_RABReleasedList) {
+        ogs_error("No E-RABReleasedList");
+        r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
+                S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return;
+    }
+
+    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+    if (!mme_ue) {
+        ogs_warn("E-RABReleaseIndication on stale S1 context "
+                "[MME_UE_S1AP_ID:%d] - sending UEContextReleaseCommand",
+                enb_ue->mme_ue_s1ap_id);
+        r = s1ap_send_ue_context_release_command(
+                enb_ue, S1AP_Cause_PR_radioNetwork,
+                S1AP_CauseRadioNetwork_unspecified,
+                S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
+        ogs_expect(r == OGS_OK);
+        ogs_assert(r != OGS_ERROR);
+        return;
+    }
+
+    for (i = 0; i < E_RABReleasedList->list.count; i++) {
+        S1AP_E_RABItemIEs_t *item = NULL;
+        S1AP_E_RABItem_t *e_rab = NULL;
+
+        item = (S1AP_E_RABItemIEs_t *)E_RABReleasedList->list.array[i];
+        if (!item)
+            continue;
+
+        e_rab = &item->value.choice.E_RABItem;
+
+        bearer = mme_bearer_find_by_ue_ebi(mme_ue, (uint8_t)e_rab->e_RAB_ID);
+        if (!bearer) {
+            ogs_warn("[%s] E-RABReleaseIndication for unknown E-RAB[%d]",
+                    mme_ue->imsi_bcd, (int)e_rab->e_RAB_ID);
+            continue;
+        }
+
+        /*
+         * The eNB has already torn down the radio bearer. Drop our copy of
+         * the eNB S1-U TEID: keeping it makes the next Modify Bearer
+         * Request program the SGW-U FAR with a dead TEID, which black-holes
+         * downlink for the whole UE until it detaches.
+         */
+        ogs_info("[%s] E-RAB[%d] released by eNB (cause %d:%ld)",
+                mme_ue->imsi_bcd, (int)e_rab->e_RAB_ID,
+                e_rab->cause.present,
+                e_rab->cause.present == S1AP_Cause_PR_radioNetwork ?
+                    e_rab->cause.choice.radioNetwork : 0);
+        CLEAR_ENB_S1U_PATH(bearer);
+        num_of_released++;
+    }
+
+    if (!num_of_released)
+        return;
+
+    ogs_list_for_each(&mme_ue->sess_list, sess) {
+        mme_bearer_t *b = NULL;
+        ogs_list_for_each(&sess->bearer_list, b) {
+            if (MME_HAVE_ENB_S1U_PATH(b))
+                num_of_radio_left++;
+        }
+    }
+
+    /*
+     * Every E-RAB is gone but the S1 context is still up: ask the SGW to
+     * release the access bearers so downlink data is buffered and triggers
+     * paging instead of being forwarded to an eNB that no longer has a
+     * radio bearer for this UE.
+     */
+    if (num_of_radio_left == 0 && ECM_CONNECTED(mme_ue)) {
+        ogs_info("[%s] all E-RABs released by eNB; "
+                "sending Release Access Bearers Request", mme_ue->imsi_bcd);
+        if (mme_gtp_send_release_access_bearers_request(
+                enb_ue->id, mme_ue,
+                OGS_GTP_RELEASE_SEND_UE_CONTEXT_RELEASE_COMMAND) != OGS_OK)
+            ogs_error("[%s] Release Access Bearers Request not sent after "
+                    "E-RABReleaseIndication", mme_ue->imsi_bcd);
+    }
+}
+
 void s1ap_handle_e_rab_modification_indication(
         mme_enb_t *enb, ogs_s1ap_message_t *message)
 {
@@ -2725,7 +2877,11 @@ void s1ap_handle_e_rab_modification_indication(
         ogs_log_hexdump(OGS_LOG_DEBUG,
                 bearer->enb_s1u_ip.addr6, OGS_IPV6_LEN);
 
-        if (ogs_list_exists(
+        if (!bearer->sgw_s1u_teid)
+            ogs_warn("UE[%s] EBI[%d] has no SGW S1-U TEID in "
+                    "E-RAB Modification Indication: excluded from "
+                    "Modify Bearer Request", mme_ue->imsi_bcd, bearer->ebi);
+        else if (ogs_list_exists(
                     &mme_ue->bearer_to_modify_list,
                     &bearer->to_modify_node) == false)
             ogs_list_add(
@@ -3362,7 +3518,11 @@ void s1ap_handle_path_switch_request(
         ogs_log_hexdump(OGS_LOG_DEBUG,
                 bearer->enb_s1u_ip.addr6, OGS_IPV6_LEN);
 
-        if (ogs_list_exists(
+        if (!bearer->sgw_s1u_teid)
+            ogs_warn("UE[%s] EBI[%d] has no SGW S1-U TEID in "
+                    "Path Switch Request: excluded from "
+                    "Modify Bearer Request", mme_ue->imsi_bcd, bearer->ebi);
+        else if (ogs_list_exists(
                     &mme_ue->bearer_to_modify_list,
                     &bearer->to_modify_node) == false)
             ogs_list_add(
@@ -4801,6 +4961,14 @@ void s1ap_handover_notify_complete(enb_ue_t *target_ue, mme_ue_t *mme_ue)
                 ogs_debug("    IPv6(%d):", bearer->enb_s1u_ip.ipv6);
                 ogs_log_hexdump(OGS_LOG_DEBUG,
                         bearer->enb_s1u_ip.addr6, OGS_IPV6_LEN);
+
+                if (!bearer->sgw_s1u_teid) {
+                    ogs_warn("UE[%s] EBI[%d] has no SGW S1-U TEID after "
+                            "Handover Notify: excluded from "
+                            "Modify Bearer Request",
+                            mme_ue->imsi_bcd, bearer->ebi);
+                    continue;
+                }
 
                 ogs_list_add(
                         &mme_ue->bearer_to_modify_list,
