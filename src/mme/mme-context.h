@@ -1329,7 +1329,11 @@ struct mme_ue_s {
     bool            sgs_lu_pending;
 
     ogs_timer_t     *t_s6a;
-    uint16_t        s6a_pending_cmd;
+    /*
+     * Cleared by the freeDiameter worker as soon as an answer arrives, so the
+     * watchdog measures HSS latency rather than event-queue latency.
+     */
+    volatile uint16_t s6a_pending_cmd;
 
     mme_csmap_t     *csmap;
     mme_hssmap_t    *hssmap;

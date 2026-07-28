@@ -127,8 +127,10 @@ static void mme_s6a_post_failure(
      * Do not call mme_s6a_timer_stop() here. ogs_timer_* is owned by the
      * UE owner thread (main, or an mme.workers shard); stopping from a
      * freeDiameter worker races the timer rbtree and can SIGSEGV. The
-     * owner stops the timer when it handles MME_EVENT_S6A_MESSAGE.
+     * owner stops the timer when it handles MME_EVENT_S6A_MESSAGE; clearing
+     * the pending marker is all that is safe to do from here.
      */
+    mme_s6a_answer_received(mme_ue);
 
     s6a_message = ogs_calloc(1, sizeof(*s6a_message));
     if (!s6a_message) {
@@ -167,6 +169,20 @@ void mme_s6a_timer_start(mme_ue_t *mme_ue, uint16_t cmd_code)
 
     mme_ue->s6a_pending_cmd = cmd_code;
     ogs_timer_start(mme_ue->t_s6a, mme_timer_cfg(MME_TIMER_S6A)->duration);
+}
+
+/*
+ * Callable from a freeDiameter worker: only clears the pending marker, never
+ * touches ogs_timer_*. A watchdog that expires afterwards sees no pending
+ * command and returns without rejecting the UE; the owner thread stops the
+ * timer when it handles MME_EVENT_S6A_MESSAGE.
+ */
+void mme_s6a_answer_received(mme_ue_t *mme_ue)
+{
+    if (!mme_ue)
+        return;
+
+    mme_ue->s6a_pending_cmd = 0;
 }
 
 void mme_s6a_timer_stop(mme_ue_t *mme_ue)
@@ -1269,6 +1285,8 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
         goto cleanup;
     }
 
+    mme_s6a_answer_received(mme_ue);
+
     /* Set Authentication-Information Command */
     s6a_message->cmd_code = OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION;
     aia_message = &s6a_message->aia_message;
@@ -1909,6 +1927,8 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
         error++;
         goto cleanup;
     }
+
+    mme_s6a_answer_received(mme_ue);
 
     /* Set Update-Location Command */
     s6a_message->cmd_code = OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION;
