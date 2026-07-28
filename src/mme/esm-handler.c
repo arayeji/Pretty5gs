@@ -121,38 +121,51 @@ int esm_handle_pdn_connectivity_request(
                 mme_ue->imsi_bcd);
         return OGS_ERROR;
     }
-    if ((req->presencemask &
-            OGS_NAS_EPS_PDN_CONNECTIVITY_REQUEST_ACCESS_POINT_NAME_PRESENT) ||
-        emergency) {
-        const char *apn;
-        if (emergency) {
-            apn = emergency_dnn;
-            sess->ue_request_type.value = 1;
-        } else {
-            apn = req->access_point_name.apn;
+    /*
+     * TS 23.401 / 24.301: APN IE absent or empty → select the default APN
+     * from the S6a subscription (mme_default_session). Only a non-empty
+     * UE-supplied APN is subject to inbound_roam allowed_apn policy.
+     */
+    sess->ue_provided_apn = false;
+    if (emergency) {
+        const char *apn = emergency_dnn;
+        sess->ue_request_type.value = 1;
+        sess->ue_provided_apn = true;
+        mme_ue_info(mme_ue, NULL, "esm", apn,
+                "PDN connectivity request APN[%s] (emergency)", apn);
+        sess->session = mme_session_find_by_apn(mme_ue, apn);
+        if (!sess->session) {
+            r = nas_eps_send_pdn_connectivity_reject(
+                    sess, OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN,
+                    create_action);
+            ogs_expect(r == OGS_OK);
+            mme_ue_warn(mme_ue, NULL, "esm",
+                    apn, "Invalid emergency APN[%s]", apn);
+            return OGS_ERROR;
         }
-        {
-            uint8_t roam_cause =
-                    mme_inbound_roam_apn_esm_cause(mme_ue, apn);
+    } else if ((req->presencemask &
+            OGS_NAS_EPS_PDN_CONNECTIVITY_REQUEST_ACCESS_POINT_NAME_PRESENT) &&
+            req->access_point_name.length > 0 &&
+            req->access_point_name.apn[0] != '\0') {
+        const char *apn = req->access_point_name.apn;
+        uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(mme_ue, apn);
 
-            if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
-                ogs_warn("[%s] inbound roam APN policy: reject PDN APN[%s] "
-                        "esm_cause=%u",
-                        mme_ue->imsi_bcd, apn, roam_cause);
-                r = nas_eps_send_pdn_connectivity_reject(
-                        sess, roam_cause, create_action);
-                if (r != OGS_OK)
-                    /* S1 usually gone by now; reject is best-effort */
-                    ogs_warn("[%s] PDN connectivity reject not sent",
-                            mme_ue->imsi_bcd);
-                return OGS_ERROR;
-            }
+        sess->ue_provided_apn = true;
+        if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
+            ogs_warn("[%s] inbound roam APN policy: reject PDN APN[%s] "
+                    "esm_cause=%u",
+                    mme_ue->imsi_bcd, apn, roam_cause);
+            r = nas_eps_send_pdn_connectivity_reject(
+                    sess, roam_cause, create_action);
+            if (r != OGS_OK)
+                ogs_warn("[%s] PDN connectivity reject not sent",
+                        mme_ue->imsi_bcd);
+            return OGS_ERROR;
         }
         mme_ue_info(mme_ue, NULL, "esm", apn,
                 "PDN connectivity request APN[%s]", apn);
         sess->session = mme_session_find_by_apn(mme_ue, apn);
         if (!sess->session) {
-            /* Invalid APN */
             r = nas_eps_send_pdn_connectivity_reject(
                     sess, OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN,
                     create_action);
@@ -208,25 +221,32 @@ int esm_handle_pdn_connectivity_request(
     }
 
     if (!sess->session) {
-        /* Default APN */
+        /* Default APN from S6a (UE omitted or sent empty APN IE) */
         sess->session = mme_default_session(mme_ue);
+        if (sess->session && sess->session->name)
+            mme_ue_info(mme_ue, NULL, "esm", sess->session->name,
+                    "PDN connectivity: using S6a default APN[%s] "
+                    "(UE APN absent/empty)", sess->session->name);
     }
 
     if (sess->session) {
-        uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(
-                mme_ue, sess->session->name);
-
         ogs_assert(sess->session->name);
         ogs_debug("    APN[%s]", sess->session->name);
 
-        if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
-            ogs_warn("[%s] inbound roam APN policy: reject PDN APN[%s] "
-                    "esm_cause=%u",
-                    mme_ue->imsi_bcd, sess->session->name, roam_cause);
-            r = nas_eps_send_pdn_connectivity_reject(
-                    sess, roam_cause, create_action);
-            ogs_expect(r == OGS_OK);
-            return OGS_ERROR;
+        /* Allow-list only when the UE explicitly requested an APN */
+        if (sess->ue_provided_apn) {
+            uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(
+                    mme_ue, sess->session->name);
+
+            if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
+                ogs_warn("[%s] inbound roam APN policy: reject PDN APN[%s] "
+                        "esm_cause=%u",
+                        mme_ue->imsi_bcd, sess->session->name, roam_cause);
+                r = nas_eps_send_pdn_connectivity_reject(
+                        sess, roam_cause, create_action);
+                ogs_expect(r == OGS_OK);
+                return OGS_ERROR;
+            }
         }
 
         mme_bearer_t *default_bearer = NULL;
@@ -259,7 +279,8 @@ int esm_handle_pdn_connectivity_request(
             return OGS_ERROR;
         }
     } else {
-        ogs_error("[%s] No APN", mme_ue->imsi_bcd);
+        ogs_error("[%s] No APN: UE omitted/empty APN and S6a has no "
+                "default Context-Identifier", mme_ue->imsi_bcd);
         r = nas_eps_send_pdn_connectivity_reject(
                 sess, OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN, create_action);
         ogs_expect(r == OGS_OK);
@@ -288,11 +309,18 @@ int esm_handle_information_response(
         return OGS_NOTFOUND;
     }
 
-    if (rsp->presencemask &
-            OGS_NAS_EPS_ESM_INFORMATION_RESPONSE_ACCESS_POINT_NAME_PRESENT) {
+    /*
+     * Non-empty UE APN → look up subscription + apply allow-list.
+     * Absent/empty APN → S6a default APN; skip allow-list (TS 23.401).
+     */
+    if ((rsp->presencemask &
+            OGS_NAS_EPS_ESM_INFORMATION_RESPONSE_ACCESS_POINT_NAME_PRESENT) &&
+            rsp->access_point_name.length > 0 &&
+            rsp->access_point_name.apn[0] != '\0') {
         uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(
                 mme_ue, rsp->access_point_name.apn);
 
+        sess->ue_provided_apn = true;
         if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
             ogs_warn("[%s] inbound roam APN policy: reject attach APN[%s] "
                     "esm_cause=%u",
@@ -305,6 +333,15 @@ int esm_handle_information_response(
 
         sess->session = mme_session_find_by_apn(
                             mme_ue, rsp->access_point_name.apn);
+    } else {
+        sess->ue_provided_apn = false;
+        if (!sess->session) {
+            sess->session = mme_default_session(mme_ue);
+            if (sess->session && sess->session->name)
+                ogs_info("[%s] ESM Information Response: using S6a "
+                        "default APN[%s] (UE APN absent/empty)",
+                        mme_ue->imsi_bcd, sess->session->name);
+        }
     }
 
     if (rsp->presencemask &
@@ -324,20 +361,22 @@ int esm_handle_information_response(
     }
 
     if (sess->session) {
-        uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(
-                mme_ue, sess->session->name);
-
         ogs_assert(sess->session->name);
         ogs_debug("    APN[%s]", sess->session->name);
 
-        if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
-            ogs_warn("[%s] inbound roam APN policy: reject attach APN[%s] "
-                    "esm_cause=%u",
-                    mme_ue->imsi_bcd, sess->session->name, roam_cause);
-            r = nas_eps_send_pdn_connectivity_reject(
-                    sess, roam_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
-            ogs_expect(r == OGS_OK);
-            return OGS_ERROR;
+        if (sess->ue_provided_apn) {
+            uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(
+                    mme_ue, sess->session->name);
+
+            if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
+                ogs_warn("[%s] inbound roam APN policy: reject attach APN[%s] "
+                        "esm_cause=%u",
+                        mme_ue->imsi_bcd, sess->session->name, roam_cause);
+                r = nas_eps_send_pdn_connectivity_reject(
+                        sess, roam_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
+                ogs_expect(r == OGS_OK);
+                return OGS_ERROR;
+            }
         }
 
         if (sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
@@ -405,11 +444,12 @@ int esm_handle_information_response(
             }
         }
     } else {
-        if (rsp->access_point_name.length)
-            ogs_warn("[%s] Invalid APN[%s]", mme_ue->imsi_bcd,
-                    rsp->access_point_name.apn);
+        if (sess->ue_provided_apn && rsp->access_point_name.length)
+            ogs_warn("[%s] Invalid APN[%s] (not in S6a subscription)",
+                    mme_ue->imsi_bcd, rsp->access_point_name.apn);
         else
-            ogs_warn("[%s] No APN", mme_ue->imsi_bcd);
+            ogs_warn("[%s] No APN: UE omitted APN and S6a has no "
+                    "default Context-Identifier", mme_ue->imsi_bcd);
 
         r = nas_eps_send_pdn_connectivity_reject(
                 sess, OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN,

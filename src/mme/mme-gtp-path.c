@@ -457,7 +457,8 @@ int mme_gtp_send_create_session_request(
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     ogs_assert(mme_ue);
 
-    if (sess->session && sess->session->name &&
+    /* Skip allow-list when APN came from S6a default (UE APN absent/empty) */
+    if (sess->ue_provided_apn && sess->session && sess->session->name &&
             !mme_inbound_roam_apn_allowed(mme_ue, sess->session->name)) {
         ogs_warn("[%s] inbound roam APN policy: block Create Session APN[%s] "
                 "esm_cause=%u create_action=%d",

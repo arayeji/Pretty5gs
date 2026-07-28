@@ -9001,8 +9001,11 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
     if (message->esm.h.message_type == OGS_NAS_EPS_PDN_CONNECTIVITY_REQUEST) {
         ogs_nas_eps_pdn_connectivity_request_t *pdn_connectivity_request =
             &message->esm.pdn_connectivity_request;
-        if (pdn_connectivity_request->presencemask &
-            OGS_NAS_EPS_PDN_CONNECTIVITY_REQUEST_ACCESS_POINT_NAME_PRESENT) {
+        /* Empty APN IE counts as absent (S6a default path) */
+        if ((pdn_connectivity_request->presencemask &
+            OGS_NAS_EPS_PDN_CONNECTIVITY_REQUEST_ACCESS_POINT_NAME_PRESENT) &&
+            pdn_connectivity_request->access_point_name.length > 0 &&
+            pdn_connectivity_request->access_point_name.apn[0] != '\0') {
             sess = mme_sess_find_by_apn(mme_ue,
                     pdn_connectivity_request->access_point_name.apn);
             if (sess && create_action != OGS_GTP_CREATE_IN_ATTACH_REQUEST) {

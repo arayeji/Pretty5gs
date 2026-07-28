@@ -1428,6 +1428,14 @@ typedef struct mme_sess_s {
 
     ogs_session_t   *session;
 
+    /*
+     * True when the UE supplied a non-empty APN IE in PDN Connectivity
+     * Request / ESM Information Response. False when APN was omitted or
+     * empty and the MME selected the HSS/S6a default - inbound_roam
+     * allowed_apn policy is then bypassed (subscription default wins).
+     */
+    bool            ue_provided_apn;
+
     /* PDN Address Allocation (PAA) */
     ogs_paa_t       paa;
 
