@@ -56,14 +56,12 @@ static void mme_sighup_handler(void)
         return;
     }
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        ogs_error("SIGHUP: config reload event dropped:%d", (int)rv);
         mme_event_free(e);
         return;
     }
-
-    ogs_pollset_notify(ogs_app()->pollset);
 }
 
 static ogs_thread_t *thread;
@@ -252,6 +250,9 @@ static void mme_main(void *data)
 {
     ogs_fsm_t mme_sm;
     int rv;
+
+    /* Sole consumer of ogs_app()->queue: must never block pushing to it. */
+    mme_event_mark_main_thread();
 
     /* private pkbuf pool for the main loop (mme.pkbuf_thread_pool) */
     mme_pkbuf_thread_pool_attach();

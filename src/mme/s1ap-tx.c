@@ -128,11 +128,9 @@ static void tx_post_ready(
     e->tx_stream_no = stream_no;
 
     for (;;) {
-        rv = ogs_queue_push(ogs_app()->queue, e);
-        if (rv == OGS_OK) {
-            ogs_pollset_notify(ogs_app()->pollset);
+        rv = mme_queue_push_main(e);
+        if (rv == OGS_OK)
             return;
-        }
 
         /* Shutdown: queue will never accept again. */
         if (rv == OGS_DONE)
@@ -145,10 +143,9 @@ static void tx_post_ready(
          * Auth / SMC after a Service-Reject storm never left the MME.
          * Retry until the main queue accepts us.
          */
-        if (++tries == 1 || (tries % 1000) == 0)
-            ogs_error("s1ap-tx: queue_push failed:%d — retrying (try %d)",
+        if (++tries == 1 || (tries % 50) == 0)
+            ogs_error("s1ap-tx: main queue full:%d — retrying (try %d)",
                     (int)rv, tries);
-        ogs_pollset_notify(ogs_app()->pollset);
         ogs_usleep(100);
     }
 

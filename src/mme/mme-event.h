@@ -238,6 +238,22 @@ OGS_STATIC_ASSERT(OGS_EVENT_SIZE >= sizeof(mme_event_t));
 void mme_event_term(void);
 
 /*
+ * The mme_main() thread is the ONLY consumer of ogs_app()->queue. A
+ * blocking ogs_queue_push() issued from that same thread (poll callback,
+ * timer callback, signal handler) therefore waits on a drain that can
+ * never happen: mme_main() stops polling, every socket it owns stops
+ * being read, and the S11 UDP Recv-Q overflows until all GTP
+ * transactions time out. Push through mme_queue_push_main() instead --
+ * it never blocks the main thread and only retries briefly elsewhere.
+ *
+ * Returns OGS_OK (queued, pollset notified), OGS_RETRY (queue full,
+ * caller must drop and free the event) or OGS_DONE (queue terminated).
+ */
+void mme_event_mark_main_thread(void);
+bool mme_event_on_main_thread(void);
+int mme_queue_push_main(void *event);
+
+/*
  * S1AP CONNREFUSED side-channel: teardowns must not compete with a
  * full S1AP message queue. Init before RX/IO workers start; main
  * drains via mme_event_s1ap_connrefused_trypop() before the app queue.

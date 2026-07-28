@@ -166,12 +166,10 @@ static void orphan_sweep_timer_cb(void *data)
         return;
     }
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed [%d] for orphan sweep", rv);
+        ogs_error("orphan sweep event dropped [%d]", rv);
         mme_event_free(e);
-    } else {
-        ogs_pollset_notify(ogs_app()->pollset);
     }
 }
 

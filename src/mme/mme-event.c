@@ -348,6 +348,53 @@ static void mme_event_drop_log(const char *what, int id, int rv)
     ogs_thread_mutex_unlock(&drop_log_lock);
 }
 
+/*
+ * Identity of the mme_main() thread, i.e. the single consumer of
+ * ogs_app()->queue. Everything that runs inside its poll/timer callbacks
+ * inherits the flag, which is exactly the set of contexts that must never
+ * block waiting for that queue to drain.
+ */
+static OGS_THREAD_LOCAL bool thread_is_main = false;
+
+void mme_event_mark_main_thread(void)
+{
+    thread_is_main = true;
+}
+
+bool mme_event_on_main_thread(void)
+{
+    return thread_is_main;
+}
+
+/* ~20ms at 100us; only ever spent on non-main threads. */
+#define MME_MAIN_PUSH_MAX_TRIES 200
+
+int mme_queue_push_main(void *event)
+{
+    int rv, tries = 0;
+
+    ogs_assert(event);
+
+    for (;;) {
+        rv = ogs_queue_trypush(ogs_app()->queue, event);
+        if (rv == OGS_OK) {
+            ogs_pollset_notify(ogs_app()->pollset);
+            return OGS_OK;
+        }
+        if (rv != OGS_RETRY)
+            return rv; /* terminated */
+
+        /*
+         * Full. Waking main is the only thing that can help, and on main
+         * itself there is nobody left to wait for.
+         */
+        ogs_pollset_notify(ogs_app()->pollset);
+        if (thread_is_main || ++tries > MME_MAIN_PUSH_MAX_TRIES)
+            return OGS_RETRY;
+        ogs_usleep(100);
+    }
+}
+
 void mme_event_s1ap_connrefused_init(void)
 {
     if (s1ap_cr_ready)
@@ -541,14 +588,10 @@ void mme_sctp_event_push(mme_event_e id,
         return;
     }
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        mme_event_drop_log("mme_sctp_event_push (main)", id, (int)rv);
         mme_event_discard_s1ap_push(e);
         return;
     }
-
-#if HAVE_USRSCTP
-    ogs_pollset_notify(ogs_app()->pollset);
-#endif
 }

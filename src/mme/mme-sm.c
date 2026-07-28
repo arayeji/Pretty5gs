@@ -78,9 +78,9 @@ static void admin_detach_enb_finalize(void *data)
 
     ogs_assert(e);
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
-        ogs_error("admin_detach_enb_finalize: ogs_queue_push failed: %d", rv);
+        ogs_error("admin_detach_enb_finalize: event dropped: %d", rv);
         if (e->timer) ogs_timer_delete(e->timer);
         mme_event_free(e);
     }

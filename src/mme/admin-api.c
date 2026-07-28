@@ -140,7 +140,7 @@ int mme_admin_enb_detach(const ogs_metrics_query_t *q,
     e->enb_id = enb_pool_id;
     e->admin_force = q->force ? 1 : 0;
 
-    int rv = ogs_queue_push(ogs_app()->queue, e);
+    int rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
         mme_event_free(e);
         *body_len = fmt_json_status(body, body_cap,
@@ -294,7 +294,7 @@ static int mme_admin_maintenance_queue(mme_event_e id, int force,
     }
     e->admin_force = force;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
         mme_event_free(e);
         *body_len = fmt_json_status(body, body_cap,

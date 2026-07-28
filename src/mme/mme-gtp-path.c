@@ -152,13 +152,11 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
         uint8_t type = ((ogs_gtp2_header_t *)pkbuf->data)->type;
         if (type == OGS_GTP2_ECHO_REQUEST_TYPE ||
                 type == OGS_GTP2_ECHO_RESPONSE_TYPE) {
-            rv = ogs_queue_push(ogs_app()->queue, e);
+            rv = mme_queue_push_main(e);
             if (rv != OGS_OK) {
-                ogs_error("ogs_queue_push() failed:%d", (int)rv);
+                ogs_error("GTP echo event dropped:%d", (int)rv);
                 ogs_pkbuf_free(e->pkbuf);
                 mme_event_free(e);
-            } else {
-                ogs_pollset_notify(ogs_app()->pollset);
             }
             return;
         }

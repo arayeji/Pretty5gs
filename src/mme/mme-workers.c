@@ -354,28 +354,28 @@ int mme_event_push_to_ue_owner(mme_event_t *e)
     ogs_assert(e);
 
     if (!mme_workers_active()) {
-        rv = ogs_queue_push(ogs_app()->queue, e);
+        rv = mme_queue_push_main(e);
         if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
+            ogs_error("event id=%d dropped on main queue:%d",
+                    (int)e->id, (int)rv);
             mme_event_discard_payload(e);
             mme_event_free(e);
             return OGS_ERROR;
         }
-        ogs_pollset_notify(ogs_app()->pollset);
         return OGS_OK;
     }
 
     wid = mme_event_resolve_wid(e);
     if (wid < 0) {
         /* Owner not known yet (e.g. first attach before mme_ue): main. */
-        rv = ogs_queue_push(ogs_app()->queue, e);
+        rv = mme_queue_push_main(e);
         if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
+            ogs_error("unowned event id=%d dropped on main queue:%d",
+                    (int)e->id, (int)rv);
             mme_event_discard_payload(e);
             mme_event_free(e);
             return OGS_ERROR;
         }
-        ogs_pollset_notify(ogs_app()->pollset);
         return OGS_OK;
     }
 
