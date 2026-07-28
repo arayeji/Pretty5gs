@@ -522,12 +522,12 @@ static uint8_t mme_ue_session_from_slice_data(mme_ue_t *mme_ue,
             break;
         }
 
-        if (src->name &&
-                !mme_inbound_roam_apn_allowed(mme_ue, src->name)) {
-            ogs_info("[%s] inbound roam APN policy: skip HSS session APN[%s]",
-                    mme_ue->imsi_bcd, src->name);
-            continue;
-        }
+        /*
+         * Keep all HSS APNs in the subscription. inbound_roam allowed_apn
+         * is enforced only when the UE supplies a non-empty APN IE
+         * (PDN Connectivity / ESM Information). Absent/empty APN uses the
+         * S6a default and must not have that default stripped here.
+         */
 
         if (src->name) {
             mme_ue->session[dst].name = ogs_strdup(src->name);
