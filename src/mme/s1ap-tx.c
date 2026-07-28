@@ -143,7 +143,13 @@ static void tx_post_ready(
          * Auth / SMC after a Service-Reject storm never left the MME.
          * Retry until the main queue accepts us.
          */
-        if (++tries == 1 || (tries % 50) == 0)
+        /*
+         * Every 50 tries (5 ms) x 8 TX workers was ~1,600 flushed log
+         * lines/sec, precisely while the main queue was already full -
+         * logging that amplifies the congestion it reports. Every 5000
+         * tries = one line per worker per 0.5 s.
+         */
+        if (++tries == 1 || (tries % 5000) == 0)
             ogs_error("s1ap-tx: main queue full:%d — retrying (try %d)",
                     (int)rv, tries);
         ogs_usleep(100);

@@ -115,6 +115,15 @@ void ogs_log_vprintf(ogs_log_level_e level, int id,
  */
 bool ogs_log_guard(void);
 
+/*
+ * Budget for debug lines emitted only because an IMSI trace filter
+ * matched (domain level would suppress them otherwise). Process-wide,
+ * OGS_TRACE_LOG_RATE_LIMIT lines/sec (0 = unlimited, default 2000).
+ * consume=true takes a token; consume=false just peeks, for callers
+ * that want to skip expensive prefix enrichment when over budget.
+ */
+bool ogs_log_trace_budget(bool consume);
+
 void ogs_log_printf(ogs_log_level_e level, int domain_id,
     ogs_err_t err, const char *file, int line, const char *func,
     int content_only, const char *format, ...)

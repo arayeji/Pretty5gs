@@ -55,6 +55,10 @@ typedef struct ogs_log_s {
 
     ogs_log_type_e type;
 
+    /* file_writer: last time this sink was fflush()ed. INFO/DEBUG lines
+     * batch flushes (see file_writer); WARN and worse always flush. */
+    ogs_time_t last_flush;
+
     union {
         struct {
             FILE *out;
@@ -161,6 +165,18 @@ ogs_log_t *ogs_log_add_stderr(void)
 
 #if !defined(_WIN32)
     log->print.color = 1;
+
+    /*
+     * Under systemd, stderr is a socket to journald and glibc leaves it
+     * unbuffered - one write() per fprintf conversion. During a debug
+     * storm that serialized every thread on the stderr FILE lock and
+     * drowned journald. Buffer it when not interactive; file_writer
+     * still flushes WARN-and-worse lines immediately.
+     */
+    if (!isatty(fileno(stderr))) {
+        fflush(stderr);
+        setvbuf(stderr, NULL, _IOFBF, 65536);
+    }
 #endif
 
     return log;
@@ -468,6 +484,7 @@ void ogs_log_vprintf(ogs_log_level_e level, int id,
     char *p, *last;
 
     int wrote_stderr = 0;
+    int bypass_checked = 0, bypass_ok = 0;
 
     ogs_list_for_each(&log_list, log) {
         domain = ogs_pool_find(&domain_pool, id);
@@ -480,6 +497,14 @@ void ogs_log_vprintf(ogs_log_level_e level, int id,
                 return;
             if (!ogs_trace_get()->imsi[0] ||
                     !ogs_trace_filter_match(ogs_trace_get()->imsi))
+                return;
+            /* Emitting only because of the trace filter: bounded.
+             * Consume once per line, not once per sink. */
+            if (!bypass_checked) {
+                bypass_ok = ogs_log_trace_budget(true);
+                bypass_checked = 1;
+            }
+            if (!bypass_ok)
                 return;
         }
 
@@ -542,6 +567,64 @@ void ogs_log_vprintf(ogs_log_level_e level, int id,
         fprintf(stderr, "%s", logstr);
         fflush(stderr);
     }
+}
+
+/*
+ * Budget for lines emitted ONLY because an IMSI trace filter matched
+ * (the domain's configured level would normally suppress them). A
+ * whole-population prefix ("432" matches every home subscriber) turns
+ * the filter into process-wide debug logging: every line paid
+ * fprintf+fflush serialized on the FILE lock across all threads, which
+ * collapsed MME dispatch latency from 3 ms to 6.6 s in production.
+ * The cap is process-wide and generous for tracing individual IMSIs.
+ */
+#define OGS_LOG_TRACE_BYPASS_PER_SEC_DEFAULT 2000
+
+static int trace_bypass_limit = -1; /* first-use init, see ogs_log_guard */
+static int64_t trace_bypass_sec;
+static int trace_bypass_count;
+static int trace_bypass_suppressed;
+
+bool ogs_log_trace_budget(bool consume)
+{
+    int64_t now, seen;
+
+    if (trace_bypass_limit < 0) {
+        const char *env = getenv("OGS_TRACE_LOG_RATE_LIMIT");
+        trace_bypass_limit =
+            env ? atoi(env) : OGS_LOG_TRACE_BYPASS_PER_SEC_DEFAULT;
+        if (trace_bypass_limit < 0)
+            trace_bypass_limit = 0;
+    }
+
+    if (trace_bypass_limit == 0) /* explicit opt-out */
+        return true;
+
+    now = (int64_t)time(NULL);
+    seen = __atomic_load_n(&trace_bypass_sec, __ATOMIC_RELAXED);
+    if (seen != now &&
+        __atomic_compare_exchange_n(&trace_bypass_sec, &seen, now,
+            false, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+        int sup = __atomic_exchange_n(
+                &trace_bypass_suppressed, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&trace_bypass_count, 0, __ATOMIC_RELAXED);
+        if (sup)
+            ogs_warn("trace rate-limit: %d line(s) suppressed "
+                    "(OGS_TRACE_LOG_RATE_LIMIT=%d/s; narrow the trace "
+                    "prefix instead of tracing the whole population)",
+                    sup, trace_bypass_limit);
+    }
+
+    if (__atomic_load_n(&trace_bypass_count, __ATOMIC_RELAXED) <
+            trace_bypass_limit) {
+        if (consume)
+            __atomic_add_fetch(&trace_bypass_count, 1, __ATOMIC_RELAXED);
+        return true;
+    }
+
+    if (consume)
+        __atomic_add_fetch(&trace_bypass_suppressed, 1, __ATOMIC_RELAXED);
+    return false;
 }
 
 #define OGS_LOG_GUARD_DEFAULT_PER_SEC 200
@@ -764,7 +847,27 @@ static char *log_linefeed(char *buf, char *last)
 static void file_writer(
         ogs_log_t *log, ogs_log_level_e level, const char *string)
 {
+    ogs_time_t now;
+
     fprintf(log->file.out, "%s", string);
-    fflush(log->file.out);
+
+    /*
+     * fflush() per line means one write() syscall per log line, across
+     * all threads, serialized on the FILE lock. At debug volumes that
+     * was a dominant cost (measured: MME dispatch latency 3 ms -> 6.6 s
+     * with whole-population tracing on). WARN and worse still flush
+     * immediately so crash forensics lose nothing that matters;
+     * INFO/DEBUG batch into at most one flush per 100 ms per sink.
+     */
+    if (level <= OGS_LOG_WARN) {
+        fflush(log->file.out);
+        return;
+    }
+
+    now = ogs_get_monotonic_time();
+    if (now - log->last_flush >= ogs_time_from_msec(100)) {
+        log->last_flush = now;
+        fflush(log->file.out);
+    }
 }
 

@@ -171,9 +171,19 @@ void mme_ue_log(
             !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
         return;
 
-    /* storm guard: skip formatting entirely when over budget;
-     * filter-matched DEBUG capture is never suppressed */
+    /* storm guard: skip formatting entirely when over budget */
     if (level != OGS_LOG_DEBUG && !ogs_log_guard())
+        return;
+
+    /*
+     * Filter-matched DEBUG is capped by the process-wide trace budget
+     * instead of ogs_log_guard. Peek (not consume - ogs_log_vprintf
+     * consumes) before the enrichment below: mme_ue_resolve_enb +
+     * ogs_mme_trace_set cost ~4 global-mutex lookups per line, which a
+     * whole-population trace prefix multiplied into meltdown.
+     */
+    if (ogs_log_get_domain_level(OGS_LOG_DOMAIN) < (ogs_log_level_e)level &&
+            !ogs_log_trace_budget(false))
         return;
 
     enb_ue = mme_ue_resolve_enb(mme_ue, enb_ue);

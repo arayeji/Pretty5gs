@@ -2253,8 +2253,26 @@ void sgwc_s11_handle_create_indirect_data_forwarding_tunnel_request(
             req_teid = req->bearer_contexts[i].s1_u_enodeb_f_teid.data;
             ogs_assert(req_teid);
 
-            tunnel = sgwc_tunnel_add(bearer,
+            /*
+             * Repeated S1 handover attempt: the previous indirect tunnel
+             * was never deleted (HO failed or was abandoned without a
+             * Delete Indirect request). Reuse it - the PDR/FAR pair is
+             * updated in place and the SGW-U side create is idempotent
+             * (ogs_pfcp_pdr_find_or_add), so forwarding simply repoints
+             * to the new target eNB. Allocating a fresh tunnel per
+             * attempt leaked PDRs until the session's 16-PDR budget was
+             * exhausted ("PDR ID pool exhausted [PDR:16/16]"), breaking
+             * the bearer for good.
+             */
+            tunnel = sgwc_tunnel_find_by_interface_type(bearer,
                     OGS_GTP2_F_TEID_SGW_GTP_U_FOR_DL_DATA_FORWARDING);
+            if (tunnel)
+                ogs_warn("[%s] Reusing stale DL indirect tunnel "
+                        "EBI[%d] TEID[0x%x]", sgwc_log_imsi(sgwc_ue),
+                        bearer->ebi, tunnel->local_teid);
+            else
+                tunnel = sgwc_tunnel_add(bearer,
+                        OGS_GTP2_F_TEID_SGW_GTP_U_FOR_DL_DATA_FORWARDING);
             if (!tunnel) {
                 ogs_error("sgwc_tunnel_add() failed");
                 cause_value = OGS_GTP2_CAUSE_SYSTEM_FAILURE;
@@ -2301,8 +2319,16 @@ void sgwc_s11_handle_create_indirect_data_forwarding_tunnel_request(
             req_teid = req->bearer_contexts[i].s12_rnc_f_teid.data;
             ogs_assert(req_teid);
 
-            tunnel = sgwc_tunnel_add(bearer,
+            /* Same reuse-in-place as the DL forwarding tunnel above. */
+            tunnel = sgwc_tunnel_find_by_interface_type(bearer,
                     OGS_GTP2_F_TEID_SGW_GTP_U_FOR_UL_DATA_FORWARDING);
+            if (tunnel)
+                ogs_warn("[%s] Reusing stale UL indirect tunnel "
+                        "EBI[%d] TEID[0x%x]", sgwc_log_imsi(sgwc_ue),
+                        bearer->ebi, tunnel->local_teid);
+            else
+                tunnel = sgwc_tunnel_add(bearer,
+                        OGS_GTP2_F_TEID_SGW_GTP_U_FOR_UL_DATA_FORWARDING);
             if (!tunnel) {
                 ogs_error("sgwc_tunnel_add() failed");
                 cause_value = OGS_GTP2_CAUSE_SYSTEM_FAILURE;
