@@ -428,8 +428,8 @@ void emm_state_de_registered(ogs_fsm_t *s, mme_event_t *e)
             } else {
                 mme_ue->t3470.retry_count++;
                 r = nas_eps_send_identity_request(mme_ue);
-                ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
+                if (r != OGS_OK)
+                    ogs_warn("Identity request retransmit not sent");
             }
             break;
 
@@ -519,8 +519,8 @@ void emm_state_registered(ogs_fsm_t *s, mme_event_t *e)
             } else {
                 mme_ue->t3470.retry_count++;
                 r = nas_eps_send_identity_request(mme_ue);
-                ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
+                if (r != OGS_OK)
+                    ogs_warn("Identity request retransmit not sent");
             }
             break;
 
@@ -1775,7 +1775,6 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
                     /* S1 usually gone by now; reject is best-effort */
                     ogs_warn("[%s] Authentication reject not sent",
                             mme_ue->imsi_bcd);
-                ogs_assert(r != OGS_ERROR);
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             } else {
@@ -1784,7 +1783,6 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
                 if (r != OGS_OK)
                     ogs_warn("[%s] Authentication request retransmit "
                             "not sent", mme_ue->imsi_bcd);
-                ogs_assert(r != OGS_ERROR);
             }
             break;
         case MME_TIMER_SGS_TS6_1:

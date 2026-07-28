@@ -815,8 +815,9 @@ void mme_send_delete_session_or_mme_ue_context_release(
             r = s1ap_send_ue_context_release_command(enb_ue,
                     S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                     S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
+            if (r != OGS_OK)
+                ogs_warn("[%s] UE Context Release Command not sent",
+                        mme_ue->imsi_bcd);
         } else {
             /*
              * No S1 context exists (eNB UE context already gone).
