@@ -441,6 +441,14 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
         case OGS_PFCP_SESSION_REPORT_REQUEST_TYPE:
             if (!message->h.seid_presence) ogs_error("No SEID");
 
+            /* Report for a session we already deleted: benign race
+             * (the CONTEXT_NOT_FOUND answer also tells the SGW-U to
+             * drop its orphan session). */
+            if (!sess)
+                ogs_warn("Session Report Request for unknown/removed "
+                        "session SEID[0x%lx]; replying CONTEXT_NOT_FOUND",
+                        (unsigned long)message->h.seid);
+
             sgwc_sxa_handle_session_report_request(
                 sess, xact, &message->pfcp_session_report_request);
             break;

@@ -3861,8 +3861,11 @@ void s1ap_handle_handover_required(mme_enb_t *enb, ogs_s1ap_message_t *message)
 
     source_ue = enb_ue_find_by_mme_ue_s1ap_id(*MME_UE_S1AP_ID);
     if (!source_ue) {
-        ogs_error("No eNB UE Context : MME_UE_S1AP_ID[%lld]",
-                (long long)*MME_UE_S1AP_ID);
+        /* Stale reference: the UE context was released mid-handover
+         * (ping-pong HO churn). Error Indication cleans up the eNB. */
+        ogs_warn("No eNB UE Context : MME_UE_S1AP_ID[%lld] "
+                "from eNB_ID[%d]",
+                (long long)*MME_UE_S1AP_ID, enb->enb_id);
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, NULL,
                 S1AP_Cause_PR_radioNetwork,
                 S1AP_CauseRadioNetwork_unknown_mme_ue_s1ap_id);
@@ -4016,8 +4019,11 @@ void s1ap_handle_handover_request_ack(
 
     target_ue = enb_ue_find_by_mme_ue_s1ap_id(*MME_UE_S1AP_ID);
     if (!target_ue) {
-        ogs_error("No eNB UE Context : MME_UE_S1AP_ID[%lld]",
-                (long long)*MME_UE_S1AP_ID);
+        /* Stale reference: the UE context was released mid-handover
+         * (ping-pong HO churn). Error Indication cleans up the eNB. */
+        ogs_warn("No eNB UE Context : MME_UE_S1AP_ID[%lld] "
+                "from eNB_ID[%d]",
+                (long long)*MME_UE_S1AP_ID, enb->enb_id);
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, NULL,
                 S1AP_Cause_PR_radioNetwork,
                 S1AP_CauseRadioNetwork_unknown_mme_ue_s1ap_id);
@@ -4286,8 +4292,11 @@ void s1ap_handle_handover_failure(mme_enb_t *enb, ogs_s1ap_message_t *message)
 
     target_ue = enb_ue_find_by_mme_ue_s1ap_id(*MME_UE_S1AP_ID);
     if (!target_ue) {
-        ogs_error("No eNB UE Context : MME_UE_S1AP_ID[%lld]",
-                (long long)*MME_UE_S1AP_ID);
+        /* Stale reference: the UE context was released mid-handover
+         * (ping-pong HO churn). Error Indication cleans up the eNB. */
+        ogs_warn("No eNB UE Context : MME_UE_S1AP_ID[%lld] "
+                "from eNB_ID[%d]",
+                (long long)*MME_UE_S1AP_ID, enb->enb_id);
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, NULL,
                 S1AP_Cause_PR_radioNetwork,
                 S1AP_CauseRadioNetwork_unknown_mme_ue_s1ap_id);
@@ -4399,8 +4408,11 @@ void s1ap_handle_handover_cancel(mme_enb_t *enb, ogs_s1ap_message_t *message)
 
     source_ue = enb_ue_find_by_mme_ue_s1ap_id(*MME_UE_S1AP_ID);
     if (!source_ue) {
-        ogs_error("No eNB UE Context : MME_UE_S1AP_ID[%lld]",
-                (long long)*MME_UE_S1AP_ID);
+        /* Stale reference: the UE context was released mid-handover
+         * (ping-pong HO churn). Error Indication cleans up the eNB. */
+        ogs_warn("No eNB UE Context : MME_UE_S1AP_ID[%lld] "
+                "from eNB_ID[%d]",
+                (long long)*MME_UE_S1AP_ID, enb->enb_id);
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, NULL,
                 S1AP_Cause_PR_radioNetwork,
                 S1AP_CauseRadioNetwork_unknown_mme_ue_s1ap_id);
@@ -4522,8 +4534,11 @@ void s1ap_handle_enb_status_transfer(
 
     source_ue = enb_ue_find_by_mme_ue_s1ap_id(*MME_UE_S1AP_ID);
     if (!source_ue) {
-        ogs_error("No eNB UE Context : MME_UE_S1AP_ID[%lld]",
-                (long long)*MME_UE_S1AP_ID);
+        /* Stale reference: the UE context was released mid-handover
+         * (ping-pong HO churn). Error Indication cleans up the eNB. */
+        ogs_warn("No eNB UE Context : MME_UE_S1AP_ID[%lld] "
+                "from eNB_ID[%d]",
+                (long long)*MME_UE_S1AP_ID, enb->enb_id);
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, NULL,
                 S1AP_Cause_PR_radioNetwork,
                 S1AP_CauseRadioNetwork_unknown_mme_ue_s1ap_id);
@@ -4643,8 +4658,11 @@ void s1ap_handle_handover_notification(
 
     target_ue = enb_ue_find_by_mme_ue_s1ap_id(*MME_UE_S1AP_ID);
     if (!target_ue) {
-        ogs_error("No eNB UE Context : MME_UE_S1AP_ID[%lld]",
-                (long long)*MME_UE_S1AP_ID);
+        /* Stale reference: the UE context was released mid-handover
+         * (ping-pong HO churn). Error Indication cleans up the eNB. */
+        ogs_warn("No eNB UE Context : MME_UE_S1AP_ID[%lld] "
+                "from eNB_ID[%d]",
+                (long long)*MME_UE_S1AP_ID, enb->enb_id);
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, NULL,
                 S1AP_Cause_PR_radioNetwork,
                 S1AP_CauseRadioNetwork_unknown_mme_ue_s1ap_id);

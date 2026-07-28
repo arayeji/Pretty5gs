@@ -1594,12 +1594,21 @@ void mme_s11_handle_delete_bearer_request(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!mme_ue) {
-        ogs_error("No Context in TEID");
+        /* Normal churn: the SMF-initiated delete raced with a detach
+         * that already removed the UE. CONTEXT_NOT_FOUND is the
+         * correct answer and the SGWC completes its own cleanup. */
+        ogs_warn("Delete Bearer Request for already-removed UE "
+                "linked-EBI[%d] EBI[%d]; replying CONTEXT_NOT_FOUND",
+                req->linked_eps_bearer_id.presence ?
+                    req->linked_eps_bearer_id.u8 : -1,
+                req->eps_bearer_ids.presence ?
+                    req->eps_bearer_ids.u8 : -1);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
         if (!sgw_ue) {
-            ogs_error("Delete Bearer: No SGW UE Context");
+            ogs_error("[%s] Delete Bearer: No SGW UE Context",
+                    mme_ue->imsi_bcd);
             cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
         } else if (req->linked_eps_bearer_id.presence == 1) {
            /*
@@ -1646,8 +1655,7 @@ void mme_s11_handle_delete_bearer_request(
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
         ogs_gtp2_send_error_message(xact, sgw_ue ? sgw_ue->sgw_s11_teid : 0,
-                OGS_GTP2_DELETE_BEARER_RESPONSE_TYPE,
-                OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
+                OGS_GTP2_DELETE_BEARER_RESPONSE_TYPE, cause_value);
         return;
     }
 
@@ -1697,7 +1705,21 @@ void mme_s11_handle_delete_bearer_request(
     } else {
         MME_CLEAR_PAGING_INFO(mme_ue);
         r = nas_eps_send_deactivate_bearer_context_request(bearer, esm_cause);
-        ogs_expect(r == OGS_OK);
+        if (r == OGS_NOTFOUND) {
+            /* S1 released between the ECM check and the send; answer
+             * SGW/SMF directly so the teardown does not stall (the
+             * NAS-Deactivate watchdog is not armed on this path). */
+            ogs_warn("[%s] S1 released before NAS Deactivate could be "
+                    "sent EBI[%d]; answering SGW/SMF directly",
+                    mme_ue->imsi_bcd, bearer->ebi);
+            if (mme_gtp_send_delete_bearer_response(
+                    bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+                ogs_error("[%s] Delete Bearer Response not sent EBI[%d]",
+                        mme_ue->imsi_bcd, bearer->ebi);
+        } else if (r != OGS_OK) {
+            ogs_error("[%s] NAS Deactivate Bearer send failed rv=%d EBI[%d]",
+                    mme_ue->imsi_bcd, r, bearer->ebi);
+        }
     }
 }
 

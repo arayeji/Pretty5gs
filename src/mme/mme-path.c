@@ -965,7 +965,33 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         } else {
             r = nas_eps_send_deactivate_bearer_context_request(
                     bearer, mme_ue->paging.esm_cause);
-            ogs_expect(r == OGS_OK);
+            if (r == OGS_NOTFOUND) {
+                /*
+                 * The S1 context vanished between the paging success
+                 * and this dispatch (immediate re-release race). The
+                 * NAS-Deactivate watchdog was never armed in this
+                 * case, so without a synthetic answer the
+                 * PGW-initiated bearer deactivation stalls at the
+                 * SGW/SMF until GTP timeout. Answer it now; the core
+                 * side is tearing the bearer down regardless.
+                 */
+                mme_ue_warn(mme_ue, NULL, "paging", NULL,
+                        "S1 released before NAS Deactivate could be "
+                        "sent EBI[%d]; answering SGW/SMF directly",
+                        bearer->ebi);
+                if (bearer->delete.xact_id >= OGS_MIN_POOL_ID &&
+                        bearer->delete.xact_id <= OGS_MAX_POOL_ID &&
+                        mme_gtp_send_delete_bearer_response(
+                            bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
+                                != OGS_OK)
+                    mme_ue_error(mme_ue, NULL, "paging", NULL,
+                            "Delete Bearer Response not sent EBI[%d]",
+                            bearer->ebi);
+            } else if (r != OGS_OK) {
+                mme_ue_error(mme_ue, NULL, "paging", NULL,
+                        "NAS Deactivate Bearer send failed rv=%d EBI[%d]",
+                        r, bearer->ebi);
+            }
         }
         break;
     case MME_PAGING_TYPE_CS_CALL_SERVICE:

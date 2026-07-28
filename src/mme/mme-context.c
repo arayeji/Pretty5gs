@@ -8906,7 +8906,12 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
     if (ebi != OGS_NAS_EPS_BEARER_IDENTITY_UNASSIGNED) {
         bearer = mme_bearer_find_by_ue_ebi(mme_ue, ebi);
         if (!bearer) {
-            ogs_error("No Bearer : EBI[%d]", ebi);
+            /* UE referenced a bearer the MME no longer has (state
+             * mismatch, e.g. after MME restart); reject so the UE
+             * re-attaches with fresh state. */
+            ogs_warn("[%s] No Bearer : EBI[%d] ESM message type[%d]; "
+                    "rejecting", mme_ue->imsi_bcd, ebi,
+                    message->esm.h.message_type);
             r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                     OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                     OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
@@ -9061,7 +9066,8 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
     } else {
         sess = mme_sess_find_by_pti(mme_ue, pti);
         if (!sess) {
-            ogs_error("No Session : ESM message type[%d], PTI[%d]",
+            ogs_warn("[%s] No Session : ESM message type[%d], PTI[%d]; "
+                    "rejecting", mme_ue->imsi_bcd,
                     message->esm.h.message_type, pti);
             r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                     OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,

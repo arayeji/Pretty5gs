@@ -261,7 +261,9 @@ void sgwc_s5c_handle_create_session_response(
      * arrives (MME Delete Session, PFCP failure cleanup, etc.).
      ************************/
     if (!sess) {
-        ogs_error("No Context in TEID [Cause:%d]", session_cause);
+        ogs_warn("S5 Create Session Response for already-removed session "
+                "SGW-S5C-TEID[0x%x] [Cause:%d]",
+                s5c_xact->local_teid, session_cause);
         if (s11_xact->gtp_version == 1) {
             ogs_gtp1_send_error_message(s11_xact, 0,
                     OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE,
@@ -587,12 +589,15 @@ void sgwc_s5c_handle_modify_bearer_response(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sess) {
-        ogs_error("No Context in TEID [Cause:%d]", session_cause);
+        ogs_warn("S5 Modify Bearer Response for already-removed session "
+                "SGW-S5C-TEID[0x%x] [Cause:%d]",
+                s5c_xact->local_teid, session_cause);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         if (!sgwc_ue) {
-            ogs_error("No UE Context");
+            ogs_warn("S5 Modify Bearer Response: UE context already "
+                    "removed SGW-S5C-TEID[0x%x]", s5c_xact->local_teid);
             cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
         }
     }
@@ -776,12 +781,17 @@ void sgwc_s5c_handle_delete_session_response(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sess) {
-        ogs_error("No Context in TEID [Cause:%d]", session_cause);
+        /* Benign race: the session was already torn down locally
+         * (concurrent cleanup) before the PGW's response arrived. */
+        ogs_warn("S5 Delete Session Response for already-removed session "
+                "SGW-S5C-TEID[0x%x] [Cause:%d]",
+                s5c_xact->local_teid, session_cause);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         if (!sgwc_ue) {
-            ogs_error("No UE Context");
+            ogs_warn("S5 Delete Session Response: UE context already "
+                    "removed SGW-S5C-TEID[0x%x]", s5c_xact->local_teid);
             cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
         }
     }

@@ -389,6 +389,19 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
         case MME_TIMER_BEARER_SETUP:
             esm_handle_bearer_setup_timer(s, mme_ue, sess, bearer);
             break;
+        case MME_TIMER_NAS_DEACTIVATE_BEARER:
+            /*
+             * The bearer went back to inactive (e.g. a new PDN
+             * Connectivity re-purposed it) while the NAS-Deactivate
+             * watchdog was still armed from the aborted deactivation.
+             * The procedure is moot - just disarm; previously this
+             * fell into "Unknown timer" ERROR spam.
+             */
+            ogs_debug("[%s] stale NAS-Deactivate watchdog in inactive "
+                    "state; disarming (EBI=%d)",
+                    mme_ue->imsi_bcd, bearer->ebi);
+            CLEAR_BEARER_TIMER(bearer->t_nas_deactivate);
+            break;
         default:
             ogs_error("Unknown timer[%s:%d]",
                     mme_timer_get_name(e->timer_id), e->timer_id);

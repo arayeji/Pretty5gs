@@ -2320,7 +2320,8 @@ cleanup:
         /* Release the UE context once its last PDN connection is gone. */
         sgwc_ue_remove_if_empty(owner_ue);
     } else
-        ogs_error("PFCP Session Deletion Response from SGW-U, but SGWC "
+        /* Benign: both sides were tearing the session down at once */
+        ogs_warn("PFCP Session Deletion Response from SGW-U, but SGWC "
                 "session context was already removed "
                 "(local SXA-SEID[0x%llx] PFCP-cause[%d]); nothing to clean up",
                 (unsigned long long)pfcp_xact->local_seid,
@@ -2353,7 +2354,7 @@ void sgwc_sxa_handle_session_report_request(
      * - Session could be deleted before a message is received from SMF.
      ************************/
     if (!sess) {
-        ogs_error("No Context");
+        /* Already logged with the SEID at the dispatch site */
         cause_value = OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND;
     }
 

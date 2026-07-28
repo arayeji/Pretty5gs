@@ -438,7 +438,6 @@ void sgwu_sxa_handle_session_report_response(
 
     if (rsp->cause.presence) {
         if (rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
-            ogs_error("PFCP Cause[%d] : Not Accepted", rsp->cause.u8);
             cause_value = rsp->cause.u8;
         }
     } else {
@@ -447,7 +446,25 @@ void sgwu_sxa_handle_session_report_response(
     }
 
     if (cause_value != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
-        ogs_error("Cause request not accepted[%d]", cause_value);
+        if (sess && cause_value == OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND) {
+            /*
+             * The SGW-C no longer knows this session (deleted while our
+             * report was in flight, or lost across a CP restart).
+             * Without this cleanup the orphan session stays installed
+             * and re-reports on every downlink packet for its stale
+             * F-TEID - observed as a permanent "No Context" flood on
+             * the SGW-C (2,000+ lines per 30 min). Per 29.244 the UP
+             * should delete the local session on this cause.
+             */
+            ogs_warn("Session Report rejected with context-not-found; "
+                    "removing orphan session "
+                    "SEID[CP:0x%lx UP:0x%lx]",
+                    (unsigned long)sess->sgwc_sxa_f_seid.seid,
+                    (unsigned long)sess->sgwu_sxa_seid);
+            sgwu_sess_remove(sess);
+        } else
+            ogs_error("Session Report Response cause not accepted[%d]",
+                    cause_value);
         return;
     }
 }
