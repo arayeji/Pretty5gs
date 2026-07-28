@@ -309,16 +309,33 @@ static int mme_admin_maintenance_queue(mme_event_e id, int force,
     return ADMIN_HTTP_ACCEPTED;
 }
 
+/*
+ * Counting these means walking every mme_ue under mme_ctx_lock(), which is
+ * the one global mutex every mme_ue_find_by_id() on every worker also needs.
+ * At a few hundred thousand contexts that walk starves the whole MME - a
+ * capture during a production stall showed this function holding the mutex
+ * with 17 of 75 threads blocked on it and the S11 receive queue overflowing.
+ * Nothing here is worth stalling call processing for, so the counts are
+ * computed at most once per TTL and served from cache in between. Callers
+ * see how stale they are via counts_age_s.
+ */
+#define MME_MAINT_COUNTS_TTL ogs_time_from_sec(10)
+
+static ogs_time_t maint_counts_time;
+static int maint_ue_count, maint_sessionless, maint_idle;
+static int maint_will_remove, maint_orphan_candidates;
+
 size_t mme_dump_maintenance_status(char *buf, size_t buflen,
         size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
-    int ue_count = 0;
-    int sessionless = 0, idle = 0, will_remove = 0, orphan_candidates = 0;
+    int ue_count, sessionless, idle, will_remove, orphan_candidates;
     bool maintenance = false;
     bool drain_active = false;
     unsigned drain_processed = 0;
     int written;
     mme_ue_t *mme_ue = NULL;
+    ogs_time_t now;
+    long long counts_age_s;
 
     ogs_time_t sweep_last_run = 0;
     int sweep_last_purged = 0, sweep_last_remaining = 0;
@@ -332,26 +349,49 @@ size_t mme_dump_maintenance_status(char *buf, size_t buflen,
     if (!buf || buflen == 0)
         return 0;
 
+    now = ogs_time_now();
+
     ogs_metrics_dump_lock();
     maintenance = mme_self()->maintenance_mode;
     drain_active = mme_self()->drain_active;
     drain_processed = mme_self()->drain_processed;
-    ogs_list_for_each(&mme_self()->mme_ue_list, mme_ue) {
-        bool no_sess = ogs_list_empty(&mme_ue->sess_list);
-        bool is_idle = !ECM_CONNECTED(mme_ue);
 
-        ue_count++;
-        if (no_sess) sessionless++;
-        if (is_idle) idle++;
-        if (mme_ue->ue_context_will_remove) will_remove++;
-        /*
-         * What the orphan sweep is meant to reclaim: a session-less context
-         * that is not actively mid-removal. Tracks the leak directly.
-         */
-        if (no_sess &&
-                !OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
-            orphan_candidates++;
+    if (!maint_counts_time || now - maint_counts_time >= MME_MAINT_COUNTS_TTL) {
+        int n_ue = 0, n_sessionless = 0, n_idle = 0;
+        int n_will_remove = 0, n_orphan = 0;
+
+        ogs_list_for_each(&mme_self()->mme_ue_list, mme_ue) {
+            bool no_sess = ogs_list_empty(&mme_ue->sess_list);
+            bool is_idle = !ECM_CONNECTED(mme_ue);
+
+            n_ue++;
+            if (no_sess) n_sessionless++;
+            if (is_idle) n_idle++;
+            if (mme_ue->ue_context_will_remove) n_will_remove++;
+            /*
+             * What the orphan sweep is meant to reclaim: a session-less
+             * context that is not actively mid-removal. Tracks the leak
+             * directly.
+             */
+            if (no_sess && !OGS_FSM_CHECK(&mme_ue->sm,
+                        emm_state_ue_context_will_remove))
+                n_orphan++;
+        }
+
+        maint_ue_count = n_ue;
+        maint_sessionless = n_sessionless;
+        maint_idle = n_idle;
+        maint_will_remove = n_will_remove;
+        maint_orphan_candidates = n_orphan;
+        maint_counts_time = now;
     }
+
+    ue_count = maint_ue_count;
+    sessionless = maint_sessionless;
+    idle = maint_idle;
+    will_remove = maint_will_remove;
+    orphan_candidates = maint_orphan_candidates;
+    counts_age_s = (long long)ogs_time_to_sec(now - maint_counts_time);
     ogs_metrics_dump_unlock();
 
     mme_orphan_sweep_get_stats(&sweep_last_run, &sweep_last_purged,
@@ -363,12 +403,12 @@ size_t mme_dump_maintenance_status(char *buf, size_t buflen,
     written = snprintf(buf, buflen,
             "{\"maintenance\":%s,\"ue_count\":%d,"
             "\"sessionless\":%d,\"idle\":%d,\"will_remove\":%d,"
-            "\"orphan_candidates\":%d,"
+            "\"orphan_candidates\":%d,\"counts_age_s\":%lld,"
             "\"drain\":{\"active\":%s,\"processed\":%u},"
             "\"sweep\":{\"age_s\":%lld,\"last_purged\":%d,"
             "\"last_remaining\":%d,\"total_purged\":%llu}}\n",
             maintenance ? "true" : "false", ue_count,
-            sessionless, idle, will_remove, orphan_candidates,
+            sessionless, idle, will_remove, orphan_candidates, counts_age_s,
             drain_active ? "true" : "false", drain_processed,
             sweep_age_s, sweep_last_purged, sweep_last_remaining,
             (unsigned long long)sweep_total_purged);
