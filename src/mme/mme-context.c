@@ -8538,6 +8538,9 @@ mme_bearer_t *mme_bearer_add(mme_sess_t *sess)
     ogs_assert(bearer);
 
     bearer->update.num_of_xacts = 0;
+    bearer->create.xact_id = OGS_INVALID_POOL_ID;
+    bearer->delete.xact_id = OGS_INVALID_POOL_ID;
+    bearer->notify.xact_id = OGS_INVALID_POOL_ID;
 
     /*
      * Allocate a new EBI from the UE bitmap.

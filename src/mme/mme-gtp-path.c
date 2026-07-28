@@ -726,18 +726,37 @@ int mme_gtp_send_create_bearer_response(
     ogs_pkbuf_t *pkbuf = NULL;
 
     ogs_assert(bearer);
-    ogs_assert(bearer->create.xact_id >= OGS_MIN_POOL_ID &&
-            bearer->create.xact_id <= OGS_MAX_POOL_ID);
-    xact = ogs_gtp_xact_find_by_id(bearer->create.xact_id);
-    if (!xact) {
-        ogs_warn("GTP transaction(CREATE) has already been removed");
+    mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
+    ogs_assert(mme_ue);
+
+    if (bearer->create.xact_id < OGS_MIN_POOL_ID ||
+            bearer->create.xact_id > OGS_MAX_POOL_ID) {
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                "Create Bearer Response: no saved GTP transaction");
         return OGS_OK;
     }
 
-    mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
-    ogs_assert(mme_ue);
+    xact = ogs_gtp_xact_find_by_id(bearer->create.xact_id);
+    bearer->create.xact_id = OGS_INVALID_POOL_ID;
+    if (!xact) {
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                "GTP transaction(CREATE) has already been removed");
+        return OGS_OK;
+    }
+    if (xact->org != OGS_GTP_REMOTE_ORIGINATOR ||
+            xact->seq[0].type != OGS_GTP2_CREATE_BEARER_REQUEST_TYPE) {
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                "Create Bearer Response: saved xact id now belongs to "
+                "another transaction (org=%d type=%d); dropping",
+                xact->org, xact->seq[0].type);
+        return OGS_OK;
+    }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        ogs_error("[%s] Create Bearer Response: SGW UE context gone",
+                mme_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
     h.type = OGS_GTP2_CREATE_BEARER_RESPONSE_TYPE;
@@ -843,19 +862,44 @@ int mme_gtp_send_delete_bearer_response(
     ogs_pkbuf_t *pkbuf = NULL;
 
     ogs_assert(bearer);
-    ogs_assert(bearer->delete.xact_id >= OGS_MIN_POOL_ID &&
-            bearer->delete.xact_id <= OGS_MAX_POOL_ID);
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     ogs_assert(mme_ue);
 
+    /*
+     * Deactivate Accept can arrive with no pending Delete Bearer
+     * Request (e.g. UE-initiated PDN disconnect after Delete Session,
+     * duplicate Accept, or xact already consumed). Asserting here
+     * previously crashed the MME at 03:07.
+     */
+    if (bearer->delete.xact_id < OGS_MIN_POOL_ID ||
+            bearer->delete.xact_id > OGS_MAX_POOL_ID) {
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                "Delete Bearer Response: no saved GTP transaction "
+                "(UE-initiated or already acknowledged)");
+        return OGS_OK;
+    }
+
     xact = ogs_gtp_xact_find_by_id(bearer->delete.xact_id);
+    bearer->delete.xact_id = OGS_INVALID_POOL_ID;
     if (!xact) {
         mme_ue_warn(mme_ue, NULL, "s11", NULL,
                 "GTP transaction(DELETE) has already been removed");
         return OGS_OK;
     }
+    if (xact->org != OGS_GTP_REMOTE_ORIGINATOR ||
+            xact->seq[0].type != OGS_GTP2_DELETE_BEARER_REQUEST_TYPE) {
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                "Delete Bearer Response: saved xact id now belongs to "
+                "another transaction (org=%d type=%d); dropping",
+                xact->org, xact->seq[0].type);
+        return OGS_OK;
+    }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        ogs_error("[%s] Delete Bearer Response: SGW UE context gone",
+                mme_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
     h.type = OGS_GTP2_DELETE_BEARER_RESPONSE_TYPE;

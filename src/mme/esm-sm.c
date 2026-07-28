@@ -482,9 +482,12 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
             ogs_debug("    IMSI[%s] PTI[%d] EBI[%d]",
                     mme_ue->imsi_bcd, sess->pti, bearer->ebi);
             CLEAR_BEARER_TIMER(bearer->t_nas_deactivate);
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_delete_bearer_response(
-                    bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED));
+            /* Only answer a network-initiated Delete Bearer Request.
+             * UE-initiated PDN disconnect has no pending S11 xact. */
+            if (mme_gtp_send_delete_bearer_response(
+                    bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+                ogs_error("[%s] Delete Bearer Response not sent EBI[%d]",
+                        mme_ue->imsi_bcd, bearer->ebi);
             OGS_FSM_TRAN(s, esm_state_bearer_deactivated);
             break;
         case OGS_NAS_EPS_BEARER_RESOURCE_ALLOCATION_REQUEST:
@@ -560,9 +563,11 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
                         "Response to SGW/SMF (xact_id=%d) to unblock "
                         "network-initiated teardown",
                         mme_ue->imsi_bcd, (int)bearer->delete.xact_id);
-                ogs_assert(OGS_OK ==
-                    mme_gtp_send_delete_bearer_response(
-                        bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED));
+                if (mme_gtp_send_delete_bearer_response(
+                        bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+                    ogs_error("[%s] synthetic Delete Bearer Response "
+                            "not sent EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
             }
             OGS_FSM_TRAN(s, esm_state_bearer_deactivated);
             } else {
