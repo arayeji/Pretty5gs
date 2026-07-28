@@ -846,7 +846,13 @@ void mme_send_release_access_bearer_or_ue_context_release(enb_ue_t *enb_ue)
                     mme_ue->imsi_bcd);
     } else {
         ogs_debug("No UE Context");
-        ogs_assert(enb_ue->relcause.group);
+        if (!enb_ue->relcause.group) {
+            ogs_error("Release with no cause set; "
+                    "using eutran-generated-reason");
+            enb_ue->relcause.group = S1AP_Cause_PR_radioNetwork;
+            enb_ue->relcause.cause =
+                S1AP_CauseRadioNetwork_release_due_to_eutran_generated_reason;
+        }
         r = s1ap_send_ue_context_release_command(enb_ue,
                 enb_ue->relcause.group, enb_ue->relcause.cause,
                 S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);

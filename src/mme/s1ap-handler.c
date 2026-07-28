@@ -2710,6 +2710,15 @@ void s1ap_handle_e_rab_release_indication(
     if (num_of_radio_left == 0 && ECM_CONNECTED(mme_ue)) {
         ogs_info("[%s] all E-RABs released by eNB; "
                 "sending Release Access Bearers Request", mme_ue->imsi_bcd);
+        /*
+         * The response handler builds the UE Context Release Command from
+         * relcause, so it must be set before the request goes out. Leaving
+         * it at zero aborted the MME in
+         * mme_s11_handle_release_access_bearers_response().
+         */
+        enb_ue->relcause.group = S1AP_Cause_PR_radioNetwork;
+        enb_ue->relcause.cause =
+            S1AP_CauseRadioNetwork_release_due_to_eutran_generated_reason;
         if (mme_gtp_send_release_access_bearers_request(
                 enb_ue->id, mme_ue,
                 OGS_GTP_RELEASE_SEND_UE_CONTEXT_RELEASE_COMMAND) != OGS_OK)

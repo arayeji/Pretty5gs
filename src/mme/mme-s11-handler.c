@@ -1809,7 +1809,19 @@ void mme_s11_handle_release_access_bearers_response(
 
     if (action == OGS_GTP_RELEASE_SEND_UE_CONTEXT_RELEASE_COMMAND) {
         if (enb_ue) {
-            ogs_assert(enb_ue->relcause.group);
+            /*
+             * A caller that requested this action without setting relcause
+             * used to abort the MME here. Releasing S1 with a generic cause
+             * is always better than dying, so fall back instead.
+             */
+            if (!enb_ue->relcause.group) {
+                ogs_error("[%s] Release Access Bearers Response with no "
+                        "release cause; using eutran-generated-reason",
+                        mme_ue->imsi_bcd);
+                enb_ue->relcause.group = S1AP_Cause_PR_radioNetwork;
+                enb_ue->relcause.cause =
+                    S1AP_CauseRadioNetwork_release_due_to_eutran_generated_reason;
+            }
             r = s1ap_send_ue_context_release_command(enb_ue,
                     enb_ue->relcause.group, enb_ue->relcause.cause,
                     S1AP_UE_CTX_REL_S1_REMOVE_AND_UNLINK, 0);
