@@ -84,6 +84,8 @@ typedef enum {
 static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
         emm_common_state_e state);
 
+static bool emm_defer_retransmission(mme_ue_t *mme_ue, int timer_id);
+
 static void emm_handle_t3450_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
 {
     int r;
@@ -92,6 +94,9 @@ static void emm_handle_t3450_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
 
     ogs_assert(s);
     ogs_assert(mme_ue);
+
+    if (emm_defer_retransmission(mme_ue, MME_TIMER_T3450))
+        return;
 
     if (mme_ue->t3450.retry_count >=
             mme_timer_cfg(MME_TIMER_T3450)->max_count) {
@@ -374,6 +379,55 @@ static bool emm_clear_stale_timer(mme_ue_t *mme_ue, int timer_id)
     }
 }
 
+/*
+ * A retransmission timer only proves the peer is silent if the MME kept up
+ * with dispatch. While the event queue is deeper than the defer threshold,
+ * the reply may already have arrived and be waiting behind us, so re-arm
+ * without spending the UE's retry budget. Bounded, so a peer that really is
+ * silent still reaches max_count.
+ */
+static bool emm_defer_retransmission(mme_ue_t *mme_ue, int timer_id)
+{
+    ogs_time_t lag;
+    uint32_t *defer_count = NULL;
+    ogs_timer_t *timer = NULL;
+
+    ogs_assert(mme_ue);
+
+    switch (timer_id) {
+    case MME_TIMER_T3450:
+        defer_count = &mme_ue->t3450.defer_count;
+        timer = mme_ue->t3450.timer;
+        break;
+    case MME_TIMER_T3460:
+        defer_count = &mme_ue->t3460.defer_count;
+        timer = mme_ue->t3460.timer;
+        break;
+    case MME_TIMER_T3470:
+        defer_count = &mme_ue->t3470.defer_count;
+        timer = mme_ue->t3470.timer;
+        break;
+    default:
+        return false;
+    }
+
+    lag = mme_event_lag();
+    if (lag < MME_UE_TIMER_LAG_DEFER_THRESHOLD)
+        return false;
+    if (*defer_count >= MME_UE_TIMER_MAX_DEFER)
+        return false;
+
+    (*defer_count)++;
+    if (timer)
+        ogs_timer_start(timer, mme_timer_cfg(timer_id)->duration);
+
+    ogs_debug("[%s] %s deferred, event lag %dms (defer %u/%u)",
+            mme_ue->imsi_bcd, mme_timer_get_name(timer_id),
+            (int)(lag / 1000), *defer_count, MME_UE_TIMER_MAX_DEFER);
+
+    return true;
+}
+
 void emm_state_initial(ogs_fsm_t *s, mme_event_t *e)
 {
     ogs_assert(s);
@@ -417,6 +471,8 @@ void emm_state_de_registered(ogs_fsm_t *s, mme_event_t *e)
     case MME_EVENT_EMM_TIMER:
         switch (e->timer_id) {
         case MME_TIMER_T3470:
+            if (emm_defer_retransmission(mme_ue, MME_TIMER_T3470))
+                break;
             if (mme_ue->t3470.retry_count >=
                     mme_timer_cfg(MME_TIMER_T3470)->max_count) {
                 ogs_warn("Retransmission of Identity-Request failed. "
@@ -515,6 +571,8 @@ void emm_state_registered(ogs_fsm_t *s, mme_event_t *e)
             break;
 
         case MME_TIMER_T3470:
+            if (emm_defer_retransmission(mme_ue, MME_TIMER_T3470))
+                break;
             if (mme_ue->t3470.retry_count >=
                     mme_timer_cfg(MME_TIMER_T3470)->max_count) {
                 ogs_warn("Retransmission of Identity-Request failed. "
@@ -1751,6 +1809,8 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
     case MME_EVENT_EMM_TIMER:
         switch (e->timer_id) {
         case MME_TIMER_T3460:
+            if (emm_defer_retransmission(mme_ue, MME_TIMER_T3460))
+                break;
             if (mme_ue->t3460.retry_count >=
                     mme_timer_cfg(MME_TIMER_T3460)->max_count) {
                 ogs_warn("Retransmission of IMSI[%s] failed. "
@@ -2073,6 +2133,8 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
     case MME_EVENT_EMM_TIMER:
         switch (e->timer_id) {
         case MME_TIMER_T3460:
+            if (emm_defer_retransmission(mme_ue, MME_TIMER_T3460))
+                break;
             if (mme_ue->t3460.retry_count >=
                     mme_timer_cfg(MME_TIMER_T3460)->max_count) {
                 ogs_warn("Retransmission of IMSI[%s] failed. "

@@ -203,8 +203,51 @@ mme_event_t *mme_event_new(mme_event_e id)
     ogs_assert(e);
 
     e->id = id;
+    e->created_at = ogs_get_monotonic_time();
 
     return e;
+}
+
+/*
+ * Rises immediately to the worst lag seen and decays geometrically, so a
+ * backlog is reported the moment it appears and clears only once dispatch
+ * has actually caught up.
+ */
+static int64_t event_lag_usec = 0;
+
+void mme_event_lag_observe(const mme_event_t *e)
+{
+    ogs_time_t lag;
+    int64_t prev, next;
+
+    if (!e || !e->created_at)
+        return;
+
+    lag = ogs_get_monotonic_time() - e->created_at;
+    if (lag < 0)
+        lag = 0;
+
+    prev = __atomic_load_n(&event_lag_usec, __ATOMIC_RELAXED);
+    next = ((int64_t)lag > prev) ? (int64_t)lag : prev - (prev - (int64_t)lag) / 8;
+    __atomic_store_n(&event_lag_usec, next, __ATOMIC_RELAXED);
+
+    if (next >= MME_UE_TIMER_LAG_DEFER_THRESHOLD) {
+        static int64_t last_warn = 0;
+        ogs_time_t now = ogs_get_monotonic_time();
+        int64_t seen = __atomic_load_n(&last_warn, __ATOMIC_RELAXED);
+
+        if (now - seen >= ogs_time_from_sec(10) &&
+            __atomic_compare_exchange_n(&last_warn, &seen, (int64_t)now,
+                false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            ogs_warn("Event queue lag %dms - NAS retransmission timers "
+                    "deferred (MME is behind, peers are not)",
+                    (int)(next / 1000));
+    }
+}
+
+ogs_time_t mme_event_lag(void)
+{
+    return (ogs_time_t)__atomic_load_n(&event_lag_usec, __ATOMIC_RELAXED);
 }
 
 void mme_event_free(mme_event_t *e)

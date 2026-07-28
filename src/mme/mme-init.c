@@ -298,6 +298,7 @@ static void mme_main(void *data)
             }
 
             ogs_assert(e);
+            mme_event_lag_observe(e);
             ogs_fsm_dispatch(&mme_sm, e);
             mme_event_free(e);
         }

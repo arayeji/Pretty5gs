@@ -1246,6 +1246,7 @@ struct mme_ue_s {
             ogs_pkbuf_free(_ogs_ut_pkbuf); \
         (__mME_UE_TIMER).retry_count = 0; \
         (__mME_UE_TIMER).send_failure_count = 0; \
+        (__mME_UE_TIMER).defer_count = 0; \
     } while(0);
 
 /*
@@ -1259,11 +1260,24 @@ struct mme_ue_s {
  */
 #define MME_UE_TIMER_MAX_SEND_FAILURE 4
 
+/*
+ * A NAS retransmission timer is only evidence that the peer is silent if the
+ * MME was able to process the peer's reply within the timer's budget. When
+ * the event queue is deeper than this, replies that already arrived are still
+ * waiting to be dispatched, and firing the timer retransmits to a UE that has
+ * answered - which costs an encode plus a queue slot and deepens the very
+ * backlog that caused it. Defer instead, bounded so a genuinely silent UE is
+ * still given up on.
+ */
+#define MME_UE_TIMER_LAG_DEFER_THRESHOLD ogs_time_from_msec(1500)
+#define MME_UE_TIMER_MAX_DEFER 8
+
     struct {
         ogs_pkbuf_t     *pkbuf;
         ogs_timer_t     *timer;
         uint32_t        retry_count;;
         uint32_t        send_failure_count;
+        uint32_t        defer_count;
     } t3413, t3422, t3450, t3460, t3470, t_mobile_reachable,
         t_implicit_detach;
 

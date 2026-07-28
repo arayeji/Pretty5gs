@@ -688,6 +688,7 @@ static void mme_worker_dispatch(ogs_worker_t *worker, void *data)
         return;
     }
 
+    mme_event_lag_observe(e);
     ogs_fsm_dispatch(&worker_fsm, e);
     mme_event_free(e);
 }

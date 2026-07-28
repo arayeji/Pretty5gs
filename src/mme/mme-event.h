@@ -225,6 +225,9 @@ typedef struct mme_event_s {
     char admin_mnc[4];
     int admin_tac;
 
+    /* Set at creation; the dispatching thread turns it into queue lag */
+    ogs_time_t created_at;
+
     /* MME_EVENT_S1AP_HO_TAIL: MME_HO_TAIL_* discriminator */
     int ho_kind;
     /* MME_HO_TAIL_UE_REL: S1AP_UE_CTX_REL_* action + MME_UE_REL_F_* */
@@ -264,6 +267,15 @@ int mme_event_s1ap_connrefused_trypop(mme_event_t **e);
 
 mme_event_t *mme_event_new(mme_event_e id);
 void mme_event_free(mme_event_t *e);
+
+/*
+ * Event-queue lag: how long a dispatched event waited between creation and
+ * dispatch. Timers whose budget is smaller than this are measuring the MME's
+ * own backlog rather than the peer, so retransmitting on them is wrong.
+ * Observed by every dispatching thread, read from anywhere.
+ */
+void mme_event_lag_observe(const mme_event_t *e);
+ogs_time_t mme_event_lag(void);
 
 /*
  * Drop queued events targeting a MME-UE that is being removed (main app
