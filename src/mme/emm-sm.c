@@ -1395,9 +1395,11 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
 
             if (!MME_UE_HAVE_IMSI(mme_ue)) {
                 ogs_warn("Detach request : Unknown UE");
-                ogs_assert(OGS_OK ==
-                    nas_eps_send_service_reject(enb_ue, mme_ue,
-                    OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK));
+                if (nas_eps_send_service_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
+                        != OGS_OK)
+                    ogs_error("[%s] Service Reject failed",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             }
@@ -1405,9 +1407,11 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
                 mme_ue_error(mme_ue, enb_ue, "emm", NULL,
                         "No Security Context");
-                ogs_assert(OGS_OK ==
-                    nas_eps_send_service_reject(enb_ue, mme_ue,
-                    OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK));
+                if (nas_eps_send_service_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
+                        != OGS_OK)
+                    ogs_error("[%s] Service Reject failed",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             }
@@ -1711,9 +1715,11 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
 
             if (!MME_UE_HAVE_IMSI(mme_ue)) {
                 ogs_warn("Detach request : Unknown UE");
-                ogs_assert(OGS_OK ==
-                    nas_eps_send_service_reject(enb_ue, mme_ue,
-                    OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK));
+                if (nas_eps_send_service_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
+                        != OGS_OK)
+                    ogs_error("[%s] Service Reject failed",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             }
@@ -1721,9 +1727,11 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
             if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
                 mme_ue_error(mme_ue, enb_ue, "emm", NULL,
                         "No Security Context");
-                ogs_assert(OGS_OK ==
-                    nas_eps_send_service_reject(enb_ue, mme_ue,
-                    OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK));
+                if (nas_eps_send_service_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
+                        != OGS_OK)
+                    ogs_error("[%s] Service Reject failed",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             }
@@ -2028,9 +2036,11 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
 
             if (!MME_UE_HAVE_IMSI(mme_ue)) {
                 ogs_warn("Detach request : Unknown UE");
-                ogs_assert(OGS_OK ==
-                    nas_eps_send_service_reject(enb_ue, mme_ue,
-                    OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK));
+                if (nas_eps_send_service_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
+                        != OGS_OK)
+                    ogs_error("[%s] Service Reject failed",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
                 OGS_FSM_TRAN(s, &emm_state_exception);
                 break;
             }
@@ -2038,9 +2048,11 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
             if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
                 mme_ue_error(mme_ue, enb_ue, "emm", NULL,
                         "No Security Context");
-                ogs_assert(OGS_OK ==
-                    nas_eps_send_service_reject(enb_ue, mme_ue,
-                    OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK));
+                if (nas_eps_send_service_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
+                        != OGS_OK)
+                    ogs_error("[%s] Service Reject failed",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
                 OGS_FSM_TRAN(s, &emm_state_exception);
                 break;
             }
@@ -2343,9 +2355,11 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
 
             if (!MME_UE_HAVE_IMSI(mme_ue)) {
                 ogs_warn("Detach request : Unknown UE");
-                ogs_assert(OGS_OK ==
-                    nas_eps_send_service_reject(enb_ue, mme_ue,
-                    OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK));
+                if (nas_eps_send_service_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
+                        != OGS_OK)
+                    ogs_error("[%s] Service Reject failed",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
                 OGS_FSM_TRAN(s, &emm_state_exception);
                 break;
             }
@@ -2353,9 +2367,11 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
             if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
                 mme_ue_error(mme_ue, enb_ue, "emm", NULL,
                         "No Security Context");
-                ogs_assert(OGS_OK ==
-                    nas_eps_send_service_reject(enb_ue, mme_ue,
-                    OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK));
+                if (nas_eps_send_service_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
+                        != OGS_OK)
+                    ogs_error("[%s] Service Reject failed",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
                 OGS_FSM_TRAN(s, &emm_state_exception);
                 break;
             }

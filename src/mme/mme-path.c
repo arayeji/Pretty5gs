@@ -731,10 +731,11 @@ void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
             enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
             if (enb_ue) {
                 ogs_warn("[%s] UEContextReleaseCommand Sent", mme_ue->imsi_bcd);
-                ogs_assert(OGS_OK ==
-                    s1ap_send_ue_context_release_command(enb_ue,
-                        S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
-                        S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0));
+                if (s1ap_send_ue_context_release_command(enb_ue,
+                            S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
+                            S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0) != OGS_OK)
+                    ogs_error("[%s] UEContextReleaseCommand failed",
+                            mme_ue->imsi_bcd);
             } else {
             /*
              * No S1 context exists (eNB UE context already gone).
@@ -889,9 +890,10 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         }
 
         if (failed == true) {
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_create_bearer_response(
-                    bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE));
+            if (mme_gtp_send_create_bearer_response(
+                        bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE) != OGS_OK)
+                ogs_error("[%s] Create Bearer Response (unable to page) "
+                        "failed EBI[%d]", mme_ue->imsi_bcd, bearer->ebi);
             /*
              * The Create Bearer Response (failure) was sent back to SGW/SMF,
              * so the network side will tear down the bearer on its end.
@@ -916,9 +918,10 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         }
 
         if (failed == true) {
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_update_bearer_response(
-                    bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE));
+            if (mme_gtp_send_update_bearer_response(
+                        bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE) != OGS_OK)
+                ogs_error("[%s] Update Bearer Response (unable to page) "
+                        "failed EBI[%d]", mme_ue->imsi_bcd, bearer->ebi);
         } else {
             ogs_gtp_xact_t *xact = mme_bearer_update_xact_first(bearer);
 

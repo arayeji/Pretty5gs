@@ -1238,13 +1238,13 @@ cleanup:
                     mme_ue, GTP_COUNTER_DELETE_SESSION_BY_PATH_SWITCH);
 
                 enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-                if (enb_ue) {
-                    ogs_assert(OGS_OK ==
-                        mme_gtp_send_delete_session_request(
-                            enb_ue, sgw_ue, sess,
-                            OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST));
-                } else
+                if (!enb_ue)
                     ogs_warn("ENB-S1 Context has already been removed");
+                else if (mme_gtp_send_delete_session_request(
+                            enb_ue, sgw_ue, sess,
+                            OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST) != OGS_OK)
+                    ogs_error("[%s] Delete Session Request failed in "
+                            "Path Switch Request", mme_ue->imsi_bcd);
 
             }
             break;
@@ -1445,13 +1445,13 @@ cleanup:
                     mme_ue, GTP_COUNTER_DELETE_SESSION_BY_PATH_SWITCH);
 
                 enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-                if (enb_ue) {
-                    ogs_assert(OGS_OK ==
-                        mme_gtp_send_delete_session_request(
-                            enb_ue, sgw_ue, sess,
-                            OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST));
-                } else
+                if (!enb_ue)
                     ogs_warn("ENB-S1 Context has already been removed");
+                else if (mme_gtp_send_delete_session_request(
+                            enb_ue, sgw_ue, sess,
+                            OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST) != OGS_OK)
+                    ogs_error("[%s] Delete Session Request failed in "
+                            "Path Switch Request", mme_ue->imsi_bcd);
             }
             break;
 

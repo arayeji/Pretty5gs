@@ -483,8 +483,11 @@ int esm_handle_bearer_resource_modification_request(
         return OGS_NOTFOUND;
     }
 
-    ogs_assert(OGS_OK ==
-        mme_gtp_send_bearer_resource_command(bearer, message));
+    if (mme_gtp_send_bearer_resource_command(bearer, message) != OGS_OK) {
+        ogs_error("[%s] Bearer Resource Command failed EBI[%d]",
+                mme_ue->imsi_bcd, bearer->ebi);
+        return OGS_ERROR;
+    }
 
     return OGS_OK;
 }

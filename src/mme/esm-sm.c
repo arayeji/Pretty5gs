@@ -107,17 +107,22 @@ static void esm_handle_bearer_setup_timer(ogs_fsm_t *s,
                 if (!sgw_ue) {
                     ogs_warn("[%s] bearer setup timeout: sgw_ue gone",
                             mme_ue->imsi_bcd);
-                } else {
-                    ogs_assert(OGS_OK ==
-                        mme_gtp_send_delete_session_request(
-                            enb_ue, sgw_ue, sess, OGS_GTP_DELETE_NO_ACTION));
+                } else if (mme_gtp_send_delete_session_request(
+                            enb_ue, sgw_ue, sess,
+                            OGS_GTP_DELETE_NO_ACTION) != OGS_OK) {
+                    ogs_error("[%s] Delete Session Request failed on "
+                            "bearer setup timeout EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
                 }
             }
             OGS_FSM_TRAN(s, esm_state_exception);
         } else {
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_create_bearer_response(bearer,
-                    OGS_GTP2_CAUSE_REQUEST_REJECTED_REASON_NOT_SPECIFIED));
+            if (mme_gtp_send_create_bearer_response(bearer,
+                        OGS_GTP2_CAUSE_REQUEST_REJECTED_REASON_NOT_SPECIFIED)
+                    != OGS_OK)
+                ogs_error("[%s] Create Bearer Response (reject) failed on "
+                        "bearer setup timeout EBI[%d]",
+                        mme_ue->imsi_bcd, bearer->ebi);
             OGS_FSM_TRAN(s, esm_state_bearer_deactivated);
         }
     } else {
@@ -208,9 +213,12 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
                     break;
                 }
 
-                ogs_assert(OGS_OK ==
-                    mme_gtp_send_delete_session_request(enb_ue, sgw_ue, sess,
-                        OGS_GTP_DELETE_SEND_DEACTIVATE_BEARER_CONTEXT_REQUEST));
+                if (mme_gtp_send_delete_session_request(enb_ue, sgw_ue, sess,
+                            OGS_GTP_DELETE_SEND_DEACTIVATE_BEARER_CONTEXT_REQUEST)
+                        != OGS_OK)
+                    ogs_error("[%s] Delete Session Request failed on PDN "
+                            "disconnect EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
             } else {
                 r = nas_eps_send_deactivate_bearer_context_request(
                         bearer, OGS_NAS_ESM_CAUSE_REGULAR_DEACTIVATION);
@@ -284,8 +292,11 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
                 ogs_list_init(&mme_ue->bearer_to_modify_list);
                 ogs_list_add(&mme_ue->bearer_to_modify_list,
                                 &bearer->to_modify_node);
-                ogs_assert(OGS_OK ==
-                    mme_gtp_send_modify_bearer_request(enb_ue, mme_ue, 0, 0));
+                if (mme_gtp_send_modify_bearer_request(
+                            enb_ue, mme_ue, 0, 0) != OGS_OK)
+                    ogs_error("[%s] Modify Bearer Request failed on default "
+                            "bearer accept EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
             }
 
             nas_eps_send_activate_all_dedicated_bearers(bearer);
@@ -300,9 +311,12 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
             /* Check if Initial Context Setup Response or 
              *          E-RAB Setup Response is received */
             if (MME_HAVE_ENB_S1U_PATH(bearer)) {
-                ogs_assert(OGS_OK ==
-                    mme_gtp_send_create_bearer_response(
-                        bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED));
+                if (mme_gtp_send_create_bearer_response(
+                            bearer,
+                            OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+                    ogs_error("[%s] Create Bearer Response failed on "
+                            "dedicated bearer accept EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
             }
 
             OGS_FSM_TRAN(s, esm_state_active);
@@ -317,10 +331,13 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
                     sess->pti, bearer->ebi,
                     activate_dedicated_eps_bearer_context_reject->esm_cause);
             CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_create_bearer_response(bearer,
-                gtp_cause_from_esm(
-                    activate_dedicated_eps_bearer_context_reject->esm_cause)));
+            if (mme_gtp_send_create_bearer_response(bearer,
+                        gtp_cause_from_esm(
+                            activate_dedicated_eps_bearer_context_reject->
+                                esm_cause)) != OGS_OK)
+                ogs_error("[%s] Create Bearer Response failed on dedicated "
+                        "bearer reject EBI[%d]",
+                        mme_ue->imsi_bcd, bearer->ebi);
             OGS_FSM_TRAN(s, esm_state_bearer_deactivated);
             break;
         case OGS_NAS_EPS_ACTIVATE_DEFAULT_EPS_BEARER_CONTEXT_REJECT:
@@ -339,13 +356,15 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
             CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
             if (MME_HAVE_SGW_S1U_PATH(sess)) {
                 sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-                if (sgw_ue)
-                    ogs_assert(OGS_OK ==
-                        mme_gtp_send_delete_session_request(
-                            enb_ue, sgw_ue, sess, OGS_GTP_DELETE_NO_ACTION));
-                else
+                if (!sgw_ue)
                     ogs_warn("[%s] default bearer reject: sgw_ue gone",
                             mme_ue->imsi_bcd);
+                else if (mme_gtp_send_delete_session_request(
+                            enb_ue, sgw_ue, sess,
+                            OGS_GTP_DELETE_NO_ACTION) != OGS_OK)
+                    ogs_error("[%s] Delete Session Request failed on default "
+                            "bearer reject EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
             }
             OGS_FSM_TRAN(s, esm_state_exception);
             break;
@@ -452,9 +471,12 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
                     break;
                 }
 
-                ogs_assert(OGS_OK ==
-                    mme_gtp_send_delete_session_request(enb_ue, sgw_ue, sess,
-                    OGS_GTP_DELETE_SEND_DEACTIVATE_BEARER_CONTEXT_REQUEST));
+                if (mme_gtp_send_delete_session_request(enb_ue, sgw_ue, sess,
+                            OGS_GTP_DELETE_SEND_DEACTIVATE_BEARER_CONTEXT_REQUEST)
+                        != OGS_OK)
+                    ogs_error("[%s] Delete Session Request failed on PDN "
+                            "disconnect (active) EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
             } else {
                 r = nas_eps_send_deactivate_bearer_context_request(
                         bearer, OGS_NAS_ESM_CAUSE_REGULAR_DEACTIVATION);
@@ -472,9 +494,11 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
             ogs_debug("    IMSI[%s] PTI[%d] EBI[%d]",
                     mme_ue->imsi_bcd, sess->pti, bearer->ebi);
 
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_update_bearer_response(
-                    bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED));
+            if (mme_gtp_send_update_bearer_response(
+                        bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+                ogs_error("[%s] Update Bearer Response failed on modify "
+                        "bearer accept EBI[%d]",
+                        mme_ue->imsi_bcd, bearer->ebi);
             break;
         case OGS_NAS_EPS_DEACTIVATE_EPS_BEARER_CONTEXT_ACCEPT:
             ogs_debug("Deactivate EPS bearer "

@@ -1990,13 +1990,17 @@ void s1ap_handle_e_rab_setup_response(
                     ogs_list_init(&mme_ue->bearer_to_modify_list);
                     ogs_list_add(&mme_ue->bearer_to_modify_list,
                                     &bearer->to_modify_node);
-                    ogs_assert(OGS_OK ==
-                        mme_gtp_send_modify_bearer_request(
-                            enb_ue, mme_ue, 0, 0));
+                    if (mme_gtp_send_modify_bearer_request(
+                                enb_ue, mme_ue, 0, 0) != OGS_OK)
+                        ogs_error("[%s] Modify Bearer Request failed "
+                                "after E-RAB setup EBI[%d]",
+                                mme_ue->imsi_bcd, bearer->ebi);
                 } else {
-                    ogs_assert(OGS_OK ==
-                        mme_gtp_send_create_bearer_response(
-                            bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED));
+                    if (mme_gtp_send_create_bearer_response(
+                                bearer,
+                                OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+                        ogs_error("[%s] Create Bearer Response failed EBI[%d]",
+                                mme_ue->imsi_bcd, bearer->ebi);
                 }
             }
         }
@@ -2056,14 +2060,18 @@ void s1ap_handle_e_rab_setup_response(
 
                 /* Radio failure cleanup:
                  * delete session without E-RAB release procedure */
-                ogs_assert(OGS_OK ==
-                    mme_gtp_send_delete_session_request(enb_ue, sgw_ue, sess,
-                        OGS_GTP_DELETE_NO_ACTION));
-                ogs_warn("Delete Session Request");
+                if (mme_gtp_send_delete_session_request(enb_ue, sgw_ue, sess,
+                            OGS_GTP_DELETE_NO_ACTION) != OGS_OK)
+                    ogs_error("[%s] Delete Session Request failed EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
+                else
+                    ogs_warn("Delete Session Request");
             } else {
-                ogs_assert(OGS_OK ==
-                    mme_gtp_send_create_bearer_response(bearer,
-                        OGS_GTP2_CAUSE_REQUEST_REJECTED_REASON_NOT_SPECIFIED));
+                if (mme_gtp_send_create_bearer_response(bearer,
+                            OGS_GTP2_CAUSE_REQUEST_REJECTED_REASON_NOT_SPECIFIED)
+                        != OGS_OK)
+                    ogs_error("[%s] Create Bearer Response (reject) failed "
+                            "EBI[%d]", mme_ue->imsi_bcd, bearer->ebi);
                 mme_bearer_remove(bearer);
             }
         }
@@ -2525,12 +2533,13 @@ void s1ap_ue_context_release_tail(mme_ue_t *mme_ue, int rel_action,
                     "HO peer S1 context already released");
 
         if (mme_ue_have_indirect_tunnel(mme_ue) == true) {
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_delete_indirect_data_forwarding_tunnel_request(
-                    target_ue, mme_ue,
-                    rel_action == S1AP_UE_CTX_REL_S1_HANDOVER_COMPLETE ?
-                        OGS_GTP_DELETE_INDIRECT_HANDOVER_COMPLETE :
-                        OGS_GTP_DELETE_INDIRECT_HANDOVER_CANCEL));
+            if (mme_gtp_send_delete_indirect_data_forwarding_tunnel_request(
+                        target_ue, mme_ue,
+                        rel_action == S1AP_UE_CTX_REL_S1_HANDOVER_COMPLETE ?
+                            OGS_GTP_DELETE_INDIRECT_HANDOVER_COMPLETE :
+                            OGS_GTP_DELETE_INDIRECT_HANDOVER_CANCEL) != OGS_OK)
+                ogs_error("[%s] Delete Indirect Data Forwarding Tunnel "
+                        "Request failed", mme_ue->imsi_bcd);
         } else {
             ogs_warn("Check your eNodeB");
             ogs_warn("  No INDIRECT TUNNEL");
@@ -2891,8 +2900,10 @@ void s1ap_handle_e_rab_modification_indication(
     }
 
     if (ogs_list_count(&mme_ue->bearer_to_modify_list)) {
-        ogs_assert(OGS_OK == mme_gtp_send_modify_bearer_request(
-                    enb_ue, mme_ue, 0, OGS_GTP_MODIFY_IN_E_RAB_MODIFICATION));
+        if (mme_gtp_send_modify_bearer_request(enb_ue, mme_ue, 0,
+                    OGS_GTP_MODIFY_IN_E_RAB_MODIFICATION) != OGS_OK)
+            ogs_error("[%s] Modify Bearer Request failed in "
+                    "E-RAB Modification Indication", mme_ue->imsi_bcd);
     }
 }
 
@@ -3586,8 +3597,10 @@ void s1ap_path_switch_request_complete(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     relocation = sgw_ue_check_if_relocated(mme_ue, enb_ue);
     if (relocation == SGW_WITHOUT_RELOCATION) {
         if (ogs_list_count(&mme_ue->bearer_to_modify_list)) {
-            ogs_assert(OGS_OK == mme_gtp_send_modify_bearer_request(
-                    enb_ue, mme_ue, 1, OGS_GTP_MODIFY_IN_PATH_SWITCH_REQUEST));
+            if (mme_gtp_send_modify_bearer_request(enb_ue, mme_ue, 1,
+                        OGS_GTP_MODIFY_IN_PATH_SWITCH_REQUEST) != OGS_OK)
+                ogs_error("[%s] Modify Bearer Request failed in "
+                        "Path Switch Request", mme_ue->imsi_bcd);
         }
     } else if (relocation == SGW_WITH_RELOCATION) {
         mme_sess_t *sess = NULL;
@@ -3596,9 +3609,10 @@ void s1ap_path_switch_request_complete(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
             GTP_COUNTER_INCREMENT(
                 mme_ue, GTP_COUNTER_CREATE_SESSION_BY_PATH_SWITCH);
 
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_create_session_request(
-                    enb_ue, sess, OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST));
+            if (mme_gtp_send_create_session_request(enb_ue, sess,
+                        OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST) != OGS_OK)
+                ogs_error("[%s] Create Session Request failed in "
+                        "Path Switch Request", mme_ue->imsi_bcd);
         }
     } else if (relocation == SGW_HAS_ALREADY_BEEN_RELOCATED) {
         ogs_error("SGW has already been relocated");
@@ -4314,15 +4328,24 @@ void s1ap_handle_handover_request_ack(
     OGS_ASN_STORE_DATA(&mme_ue->container,
             Target_ToSource_TransparentContainer);
 
-    if (mme_ue_have_indirect_tunnel(mme_ue) == true) {
-        ogs_assert(OGS_OK ==
+    if (mme_ue_have_indirect_tunnel(mme_ue) == true &&
             mme_gtp_send_create_indirect_data_forwarding_tunnel_request(
-                source_ue, mme_ue));
-    } else {
-        r = s1ap_send_handover_command(source_ue);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-    }
+                source_ue, mme_ue) == OGS_OK)
+        return;
+
+    /*
+     * No indirect tunnel, or the S11 request could not be sent. Proceed with
+     * the handover anyway: packets in flight may be lost, but stalling here
+     * would leave the UE without a Handover Command at all.
+     */
+    if (mme_ue_have_indirect_tunnel(mme_ue) == true)
+        ogs_error("[%s] Create Indirect Data Forwarding Tunnel Request "
+                "failed; sending Handover Command without it",
+                mme_ue->imsi_bcd);
+
+    r = s1ap_send_handover_command(source_ue);
+    ogs_expect(r == OGS_OK);
+    ogs_assert(r != OGS_ERROR);
 }
 
 void s1ap_handle_handover_failure(mme_enb_t *enb, ogs_s1ap_message_t *message)
@@ -4978,8 +5001,10 @@ void s1ap_handover_notify_complete(enb_ue_t *target_ue, mme_ue_t *mme_ue)
     }
 
     if (ogs_list_count(&mme_ue->bearer_to_modify_list)) {
-        ogs_assert(OGS_OK == mme_gtp_send_modify_bearer_request(
-                    target_ue, mme_ue, 1, 0));
+        if (mme_gtp_send_modify_bearer_request(
+                    target_ue, mme_ue, 1, 0) != OGS_OK)
+            ogs_error("[%s] Modify Bearer Request failed after "
+                    "Handover Notify", mme_ue->imsi_bcd);
     }
 }
 

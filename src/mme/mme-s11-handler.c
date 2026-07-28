@@ -1580,9 +1580,10 @@ void mme_s11_handle_update_bearer_request(
             ogs_assert(r != OGS_ERROR);
         }
 
-        ogs_assert(OGS_OK ==
-            mme_gtp_send_update_bearer_response(
-                bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED));
+        if (mme_gtp_send_update_bearer_response(
+                    bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+            ogs_error("[%s] Update Bearer Response failed EBI[%d]",
+                    mme_ue->imsi_bcd, bearer->ebi);
     }
 }
 
