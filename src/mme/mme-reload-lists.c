@@ -1857,6 +1857,7 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
     }
     if (!strcmp(mme_key, "pgw_selection")) {
         ogs_yaml_iter_t pgw_sel_iter;
+        bool rules_seen = false;
 
         ogs_yaml_iter_recurse(mme_iter, &pgw_sel_iter);
         while (ogs_yaml_iter_next(&pgw_sel_iter)) {
@@ -1891,9 +1892,22 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
             } else if (!strcmp(psk, "rules")) {
                 int n = mme_pgw_sel_rules_parse(&pgw_sel_iter);
 
+                rules_seen = true;
                 ogs_reload_audit_note(" pgw_selection rules=%d", n);
             }
         }
+
+        /*
+         * mme_pgw_sel_rules_parse() replaces the list, but it only runs
+         * when the key is still in the file. Deleting the whole `rules:`
+         * block otherwise left the previous rules live.
+         */
+        if (!rules_seen &&
+                ogs_list_first(&self->pgw_selection.rule_list) != NULL) {
+            mme_pgw_sel_rule_remove_all();
+            ogs_reload_audit_note(" pgw_selection rules removed");
+        }
+
         mme_reload_lists_changed++;
         ogs_reload_audit_note(" pgw_selection mode=%s apn_dns=%s",
                 self->pgw_selection.force_yaml ? "force" : "standard",
