@@ -643,14 +643,12 @@ void mme_admin_detach_ue(mme_ue_t *mme_ue, bool force)
                 MME_PAGING_TYPE_DETACH_TO_UE, NULL);
         r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
     MME_CLEAR_PAGING_INFO(mme_ue);
     r = nas_eps_send_detach_request(mme_ue);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 
     if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
         if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
@@ -687,7 +685,6 @@ void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
                 xact_count) {
             r = nas_eps_send_detach_accept(mme_ue);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
         break;
 
@@ -858,7 +855,6 @@ void mme_send_release_access_bearer_or_ue_context_release(enb_ue_t *enb_ue)
                 enb_ue->relcause.group, enb_ue->relcause.cause,
                 S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     }
 }
 
@@ -912,7 +908,6 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         } else {
             r = nas_eps_send_activate_dedicated_bearer_context_request(bearer);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
         break;
     case MME_PAGING_TYPE_UPDATE_BEARER:
@@ -951,7 +946,6 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
                     (xact->update_flags &
                         OGS_GTP_MODIFY_TFT_UPDATE) ? 1 : 0);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
         break;
     case MME_PAGING_TYPE_DELETE_BEARER:
@@ -972,7 +966,6 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
             r = nas_eps_send_deactivate_bearer_context_request(
                     bearer, mme_ue->paging.esm_cause);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
         break;
     case MME_PAGING_TYPE_CS_CALL_SERVICE:
@@ -1008,7 +1001,6 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
                 /* UE dropped the connection right after paging response */
                 ogs_warn("[%s] Detach request after paging not sent",
                         mme_ue->imsi_bcd);
-            ogs_assert(r != OGS_ERROR);
             if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
                 if (sgsap_send_detach_indication(mme_ue) != OGS_OK) {
                     enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
@@ -1174,7 +1166,6 @@ void mme_send_tau_accept_and_check_release(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     r = nas_eps_send_tau_accept(mme_ue,
             mme_ue->tracking_area_update_accept_proc);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 
     /*
      * TS 24.301 Ch5.5.3.3

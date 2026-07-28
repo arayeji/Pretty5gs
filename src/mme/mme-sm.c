@@ -371,7 +371,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                     enb, NULL, NULL, S1AP_Cause_PR_protocol,
                     S1AP_CauseProtocol_abstract_syntax_error_falsely_constructed_message);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
 
         ogs_s1ap_free(&s1ap_message);
@@ -441,7 +440,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
             r = s1ap_send_to_enb_ue(enb_ue, pkbuf);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             ogs_timer_delete(e->timer);
             break;
         case MME_TIMER_S1_HOLDING:
@@ -514,7 +512,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                             S1AP_CauseMisc_control_processing_overload,
                             S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                     ogs_pkbuf_free(pkbuf);
                     return;
                 }
@@ -915,7 +912,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                             enb_ue, mme_ue, emm_cause,
                             OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
                     /* This is usually an UE coming from 2G (Cell reselection),
                      * which we decided to re-authenticate */
@@ -924,7 +920,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                     r = nas_eps_send_tau_reject(
                             enb_ue, mme_ue, emm_cause);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 } else
                     ogs_error("Invalid Type[%d]", mme_ue->nas_eps.type);
 
@@ -932,7 +927,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                         S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                         S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 break;
             }
 
@@ -965,14 +959,12 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                             enb_ue, mme_ue, emm_cause,
                             OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
                     ogs_info("[%s] TAU reject [OGS_NAS_EMM_CAUSE:%d]",
                             mme_ue->imsi_bcd, emm_cause);
                     r = nas_eps_send_tau_reject(
                             enb_ue, mme_ue, emm_cause);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 } else
                     ogs_error("Invalid Type[%d]", mme_ue->nas_eps.type);
 
@@ -992,7 +984,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                                 S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE :
                                 S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 } else {
                     ogs_warn("[%s] ULA reject with no S1 context; "
                             "removing UE", mme_ue->imsi_bcd);
@@ -1609,7 +1600,6 @@ cleanup:
                     MME_PAGING_TYPE_UE_REACHABILITY, NULL);
             r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
         break;
     }

@@ -229,7 +229,6 @@ uint8_t mme_s6a_handle_ula(
             r = nas_eps_send_tau_accept(mme_ue,
                     mme_ue->tracking_area_update_accept_proc);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
     } else {
         ogs_error("Invalid Type[%d]", mme_ue->nas_eps.type);
@@ -438,12 +437,10 @@ void mme_s6a_handle_clr(mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
                 MME_PAGING_TYPE_DETACH_TO_UE, NULL);
             r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         } else {
             MME_CLEAR_PAGING_INFO(mme_ue);
             r = nas_eps_send_detach_request(mme_ue);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
                 if (sgsap_send_detach_indication(mme_ue) != OGS_OK) {
                     enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);

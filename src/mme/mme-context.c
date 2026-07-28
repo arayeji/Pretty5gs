@@ -8907,7 +8907,6 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
                     OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                     OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return NULL;
         }
 
@@ -8921,7 +8920,6 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
                 OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                 OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return NULL;
     }
 
@@ -8940,7 +8938,6 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
                     OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                     OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return NULL;
         }
     } else if (message->esm.h.message_type ==
@@ -8960,7 +8957,6 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
                     mme_ue, pti,
                     OGS_NAS_ESM_CAUSE_INVALID_EPS_BEARER_IDENTITY);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return NULL;
         }
 
@@ -8981,7 +8977,6 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
                     mme_ue, pti,
                     OGS_NAS_ESM_CAUSE_INVALID_EPS_BEARER_IDENTITY);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return NULL;
         }
     }
@@ -9010,7 +9005,6 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
                         OGS_NAS_ESM_CAUSE_MULTIPLE_PDN_CONNECTIONS_FOR_A_GIVEN_APN_NOT_ALLOWED,
                         create_action);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 ogs_mme_trace_set(
                         enb_ue_find_by_id(mme_ue->enb_ue_id), mme_ue,
                         pdn_connectivity_request->access_point_name.apn,
@@ -9069,7 +9063,6 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
                     OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                     OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return NULL;
         }
     }

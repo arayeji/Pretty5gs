@@ -877,7 +877,6 @@ void nas_eps_send_activate_all_dedicated_bearers(mme_bearer_t *default_bearer)
         r = nas_eps_send_activate_dedicated_bearer_context_request(
                 dedicated_bearer);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         dedicated_bearer = mme_bearer_next(dedicated_bearer);
     }
 }

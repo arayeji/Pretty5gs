@@ -129,7 +129,6 @@ static void esm_handle_bearer_setup_timer(ogs_fsm_t *s,
         bearer->t_bearer_setup.retry_count++;
         r = nas_eps_resend_bearer_setup_request(bearer);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     }
 }
 
@@ -223,7 +222,6 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
                 r = nas_eps_send_deactivate_bearer_context_request(
                         bearer, OGS_NAS_ESM_CAUSE_REGULAR_DEACTIVATION);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
 
             CLEAR_SGW_S1U_PATH(sess);
@@ -247,12 +245,10 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
                         OGS_NAS_EMM_CAUSE_SECURITY_MODE_REJECTED_UNSPECIFIED,
                         OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 r = s1ap_send_ue_context_release_command(enb_ue,
                         S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                         S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 OGS_FSM_TRAN(s, &esm_state_exception);
                 break;
             }
@@ -264,12 +260,10 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
                         OGS_NAS_EMM_CAUSE_SECURITY_MODE_REJECTED_UNSPECIFIED,
                         OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 r = s1ap_send_ue_context_release_command(enb_ue,
                         S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                         S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 OGS_FSM_TRAN(s, &esm_state_exception);
                 break;
             }
@@ -386,12 +380,10 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
                         OGS_NAS_ESM_CAUSE_ESM_INFORMATION_NOT_RECEIVED,
                         e->create_action);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             } else {
                 bearer->t3489.retry_count++;
                 r = nas_eps_send_esm_information_request(bearer);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
             break;
         case MME_TIMER_BEARER_SETUP:
@@ -481,7 +473,6 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
                 r = nas_eps_send_deactivate_bearer_context_request(
                         bearer, OGS_NAS_ESM_CAUSE_REGULAR_DEACTIVATION);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
 
             CLEAR_SGW_S1U_PATH(sess);
@@ -598,7 +589,6 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
                 bearer->t_nas_deactivate.retry_count++;
                 r = nas_eps_resend_deactivate_bearer_context_request(bearer);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
             break;
         case MME_TIMER_BEARER_SETUP:

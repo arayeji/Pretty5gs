@@ -323,12 +323,10 @@ static void mme_s11_create_session_fail(
                 OGS_NAS_EMM_CAUSE_NETWORK_FAILURE,
                 OGS_NAS_ESM_CAUSE_NETWORK_FAILURE);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else if (create_action == OGS_GTP_CREATE_IN_TRACKING_AREA_UPDATE) {
         r = nas_eps_send_tau_reject(enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_NETWORK_FAILURE);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     }
 
     mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
@@ -739,7 +737,6 @@ void mme_s11_handle_create_session_response(
         r = nas_eps_send_activate_default_bearer_context_request(
                 bearer, create_action);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else if (create_action == OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST) {
 
         GTP_COUNTER_CHECK(mme_ue, GTP_COUNTER_CREATE_SESSION_BY_PATH_SWITCH,
@@ -756,7 +753,6 @@ void mme_s11_handle_create_session_response(
             }
             r = s1ap_send_path_switch_ack(mme_ue, true);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         );
 
     } else {
@@ -923,12 +919,10 @@ void mme_s11_handle_modify_bearer_response(
     case OGS_GTP_MODIFY_IN_PATH_SWITCH_REQUEST:
         r = s1ap_send_path_switch_ack(mme_ue, false);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         break;
     case OGS_GTP_MODIFY_IN_E_RAB_MODIFICATION:
         r = s1ap_send_e_rab_modification_confirm(mme_ue);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         break;
     default:
         if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST) {
@@ -1069,7 +1063,6 @@ void mme_s11_handle_delete_session_response(
         if (mme_sess_count(mme_ue) == 1) /* Last Session */ {
             r = nas_eps_send_detach_accept(mme_ue);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
 
     } else if (action ==
@@ -1083,7 +1076,6 @@ void mme_s11_handle_delete_session_response(
         r = nas_eps_send_deactivate_bearer_context_request(
                 bearer, OGS_NAS_ESM_CAUSE_REGULAR_DEACTIVATION);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         /* mme_sess_remove() should not be called here. */
         return;
@@ -1101,7 +1093,6 @@ void mme_s11_handle_delete_session_response(
                     S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                     S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
         }
 
@@ -1112,7 +1103,6 @@ void mme_s11_handle_delete_session_response(
                     S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                     S1AP_UE_CTX_REL_S1_REMOVE_AND_UNLINK, 0);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
 
     } else if (action == OGS_GTP_DELETE_HANDLE_PDN_CONNECTIVITY_REQUEST) {
@@ -1125,7 +1115,6 @@ void mme_s11_handle_delete_session_response(
                         OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                         OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
         }
 
@@ -1399,12 +1388,10 @@ void mme_s11_handle_create_bearer_request(
                 MME_PAGING_TYPE_CREATE_BEARER, bearer->id);
             r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         } else {
             MME_CLEAR_PAGING_INFO(mme_ue);
             r = nas_eps_send_activate_dedicated_bearer_context_request(bearer);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
     } else {
         MME_CLEAR_PAGING_INFO(mme_ue);
@@ -1549,7 +1536,6 @@ void mme_s11_handle_update_bearer_request(
                 MME_PAGING_TYPE_UPDATE_BEARER, bearer->id);
             r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         } else {
             /*
              * MME must wait for Modify Bearer Context Accept
@@ -1564,7 +1550,6 @@ void mme_s11_handle_update_bearer_request(
                     req->bearer_contexts.bearer_level_qos.presence,
                     req->bearer_contexts.tft.presence);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
     } else {
         MME_CLEAR_PAGING_INFO(mme_ue);
@@ -1577,7 +1562,6 @@ void mme_s11_handle_update_bearer_request(
                     mme_ue, sess->pti,
                     OGS_NAS_ESM_CAUSE_SERVICE_OPTION_NOT_SUPPORTED);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
 
         if (mme_gtp_send_update_bearer_response(
@@ -1710,12 +1694,10 @@ void mme_s11_handle_delete_bearer_request(
         mme_ue->paging.esm_cause = esm_cause;
         r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else {
         MME_CLEAR_PAGING_INFO(mme_ue);
         r = nas_eps_send_deactivate_bearer_context_request(bearer, esm_cause);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     }
 }
 
@@ -1826,7 +1808,6 @@ void mme_s11_handle_release_access_bearers_response(
                     enb_ue->relcause.group, enb_ue->relcause.cause,
                     S1AP_UE_CTX_REL_S1_REMOVE_AND_UNLINK, 0);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         } else {
             ogs_warn("ENB-S1 Context has already been removed");
         }
@@ -1869,7 +1850,6 @@ void mme_s11_handle_release_access_bearers_response(
             if (r) {
                 r = s1ap_send_s1_reset_ack(enb, NULL);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
         } else {
             ogs_warn("ENB-S1 Context has already been removed");
@@ -2044,7 +2024,6 @@ void mme_s11_handle_downlink_data_notification(
             MME_PAGING_TYPE_DOWNLINK_DATA_NOTIFICATION, bearer->id);
         r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else if (ECM_CONNECTED(mme_ue)) {
         MME_CLEAR_PAGING_INFO(mme_ue);
         if (mme_gtp_send_downlink_data_notification_ack(
@@ -2086,7 +2065,6 @@ void mme_s11_handle_downlink_data_notification(
                     S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                     S1AP_UE_CTX_REL_S1_PAGING, 0);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
     }
 }
@@ -2253,7 +2231,6 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
 
     r = s1ap_send_handover_command(source_ue);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 }
 
 void mme_s11_handle_delete_indirect_data_forwarding_tunnel_response(
@@ -2384,7 +2361,6 @@ void mme_s11_handle_delete_indirect_data_forwarding_tunnel_response(
         }
         r = s1ap_send_handover_cancel_ack(enb_ue);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else {
         ogs_fatal("Invalid action = %d", action);
         ogs_assert_if_reached();
@@ -2476,7 +2452,6 @@ void mme_s11_handle_bearer_resource_failure_indication(
     r = nas_eps_send_bearer_resource_modification_reject(
             mme_ue, sess->pti, esm_cause_from_gtp(cause_value));
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 
     if (!sgw_ue ||
         cause_value == OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND) {

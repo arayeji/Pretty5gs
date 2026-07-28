@@ -194,13 +194,11 @@ error:
                 OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                 OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
         r = nas_eps_send_tau_reject(
                 enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else {
         ogs_error("[%s] Invalid EPS-Type[%d]",
                 mme_ue->imsi_bcd, mme_ue->nas_eps.type);
@@ -669,14 +667,12 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
                     MME_PAGING_TYPE_CS_CALL_SERVICE, NULL);
                 r = s1ap_send_paging(mme_ue, S1AP_CNDomain_cs);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             } else if (SMS_SERVICE_INDICATOR(mme_ue)) {
                 /* UE will respond Service Request in PS CNDomain*/
                 MME_STORE_PAGING_INFO(mme_ue,
                     MME_PAGING_TYPE_SMS_SERVICE, NULL);
                 r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             } else {
                 sgs_cause = SGSAP_SGS_CAUSE_MT_CS_FALLBACK_REJECT_BY_USER;
                 goto paging_reject;
@@ -686,7 +682,6 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
             if (CS_CALL_SERVICE_INDICATOR(mme_ue)) {
                 r = nas_eps_send_cs_service_notification(mme_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             } else if (SMS_SERVICE_INDICATOR(mme_ue)) {
                 /* Was ogs_assert() - SGs/VLR down must not abort MME */
                 if (sgsap_send_service_request(
@@ -789,7 +784,6 @@ void sgsap_handle_downlink_unitdata(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     r = nas_eps_send_downlink_nas_transport(mme_ue,
             nas_message_container_buffer, nas_message_container_length);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 }
 
 void sgsap_handle_reset_indication(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
