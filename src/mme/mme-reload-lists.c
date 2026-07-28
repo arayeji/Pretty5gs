@@ -445,6 +445,61 @@ static void reload_sgw_ecell_add(mme_sgw_t *sgw, uint32_t e_cell_id)
     mme_reload_lists_changed++;
 }
 
+/*
+ * The gtpc client reload merges YAML into the existing peers, so deleting a
+ * selection rule (tac / e_cell_id / plmn_id / imsi_prefix) from an entry used
+ * to have no effect: the peer kept matching on the rule that was no longer in
+ * the file. Wipe the rules on every peer before the entries are re-applied so
+ * a reload is a replace, not an append. Duplicate YAML entries for the same
+ * address still accumulate, because the wipe happens once per reload pass and
+ * not per entry.
+ */
+static void reload_sgw_clear_all_rules(void)
+{
+    mme_sgw_t *sgw = NULL;
+
+    ogs_list_for_each(&mme_self()->sgw_list, sgw) {
+        if (sgw->num_of_tac || sgw->num_of_e_cell_id ||
+            sgw->serving_plmn_present || sgw->imsi_plmn_present ||
+            sgw->imsi_prefix[0])
+            mme_reload_lists_changed++;
+
+        sgw->num_of_tac = 0;
+        sgw->num_of_e_cell_id = 0;
+        sgw->serving_plmn_present = false;
+        sgw->imsi_plmn_present = false;
+        sgw->imsi_prefix[0] = '\0';
+    }
+}
+
+static void reload_pgw_clear_all_rules(void)
+{
+    mme_pgw_t *pgw = NULL;
+    int i;
+
+    ogs_list_for_each(&mme_self()->pgw_list, pgw) {
+        if (pgw->num_of_apn || pgw->num_of_tac || pgw->num_of_e_cell_id ||
+            pgw->serving_plmn_present || pgw->imsi_plmn_present ||
+            pgw->imsi_prefix[0] || pgw->force)
+            mme_reload_lists_changed++;
+
+        pgw->force = false;
+
+        for (i = 0; i < pgw->num_of_apn; i++) {
+            if (pgw->apn[i]) {
+                ogs_free((void *)pgw->apn[i]);
+                pgw->apn[i] = NULL;
+            }
+        }
+        pgw->num_of_apn = 0;
+        pgw->num_of_tac = 0;
+        pgw->num_of_e_cell_id = 0;
+        pgw->serving_plmn_present = false;
+        pgw->imsi_plmn_present = false;
+        pgw->imsi_prefix[0] = '\0';
+    }
+}
+
 static bool reload_pgw_tac_has(mme_pgw_t *pgw, uint16_t tac)
 {
     int i;
@@ -1719,6 +1774,7 @@ int mme_reload_gtpc_client_add_only(ogs_yaml_iter_t *gtpc_iter)
                     int entry_idx = 0;
 
                     ogs_yaml_iter_recurse(&client_iter, &sgwc_array);
+                    reload_sgw_clear_all_rules();
                     added += reload_gtpc_client_entry_add_only(
                             &sgwc_array, false, &entry_idx);
                     reload_gtpc_resort_sgw_list();
@@ -1727,6 +1783,7 @@ int mme_reload_gtpc_client_add_only(ogs_yaml_iter_t *gtpc_iter)
                     int entry_idx = 0;
 
                     ogs_yaml_iter_recurse(&client_iter, &smf_array);
+                    reload_pgw_clear_all_rules();
                     added += reload_gtpc_client_entry_add_only(
                             &smf_array, true, &entry_idx);
                     reload_gtpc_resort_pgw_list();

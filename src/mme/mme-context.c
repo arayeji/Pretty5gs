@@ -2142,10 +2142,16 @@ int mme_context_parse_config(void)
                                         pgw = mme_pgw_add(addr);
                                         ogs_assert(pgw);
 
+                                        /*
+                                         * Own the APN strings: the YAML
+                                         * document they come from is freed
+                                         * after parsing, and SIGHUP reload
+                                         * frees/replaces them.
+                                         */
                                         pgw->num_of_apn = num_of_apn;
-                                        if (num_of_apn != 0)
-                                            memcpy(pgw->apn,
-                                                    apn, sizeof(pgw->apn));
+                                        for (i = 0; i < num_of_apn; i++)
+                                            pgw->apn[i] = apn[i] ?
+                                                ogs_strdup(apn[i]) : NULL;
 
                                         pgw->num_of_tac = num_of_tac;
                                         if (num_of_tac != 0)
@@ -4881,9 +4887,18 @@ mme_pgw_t *mme_pgw_add(ogs_sockaddr_t *addr)
 
 void mme_pgw_remove(mme_pgw_t *pgw)
 {
+    int i;
+
     ogs_assert(pgw);
 
     ogs_list_remove(&self.pgw_list, pgw);
+
+    for (i = 0; i < pgw->num_of_apn; i++) {
+        if (pgw->apn[i]) {
+            ogs_free((void *)pgw->apn[i]);
+            pgw->apn[i] = NULL;
+        }
+    }
 
     ogs_freeaddrinfo(pgw->sa_list);
     ogs_free(pgw->tac);
