@@ -1245,11 +1245,25 @@ struct mme_ue_s {
         if (_ogs_ut_pkbuf) \
             ogs_pkbuf_free(_ogs_ut_pkbuf); \
         (__mME_UE_TIMER).retry_count = 0; \
+        (__mME_UE_TIMER).send_failure_count = 0; \
     } while(0);
+
+/*
+ * A NAS retransmission timer expiry may only spend the UE's retry budget
+ * when the message actually left the MME. While the downlink path is
+ * congested the command never reaches the eNB, and charging those attempts
+ * to the UE made the MME reject subscribers for its own backlog - EMM #24
+ * "security mode rejected" and #9 "identity cannot be derived". Sends that
+ * fail are counted separately so a permanently broken path still gives up
+ * rather than re-arming the timer forever.
+ */
+#define MME_UE_TIMER_MAX_SEND_FAILURE 4
+
     struct {
         ogs_pkbuf_t     *pkbuf;
         ogs_timer_t     *timer;
         uint32_t        retry_count;;
+        uint32_t        send_failure_count;
     } t3413, t3422, t3450, t3460, t3470, t_mobile_reachable,
         t_implicit_detach;
 

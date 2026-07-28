@@ -423,10 +423,18 @@ void emm_state_de_registered(ogs_fsm_t *s, mme_event_t *e)
                         "Stop retransmission");
                 OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
             } else {
-                mme_ue->t3470.retry_count++;
                 r = nas_eps_send_identity_request(mme_ue);
-                if (r != OGS_OK)
+                if (r == OGS_OK) {
+                    mme_ue->t3470.retry_count++;
+                } else {
                     ogs_warn("Identity request retransmit not sent");
+                    if (++mme_ue->t3470.send_failure_count >=
+                            MME_UE_TIMER_MAX_SEND_FAILURE)
+                        mme_ue->t3470.retry_count =
+                            mme_timer_cfg(MME_TIMER_T3470)->max_count;
+                    ogs_timer_start(mme_ue->t3470.timer,
+                            mme_timer_cfg(MME_TIMER_T3470)->duration);
+                }
             }
             break;
 
@@ -513,10 +521,18 @@ void emm_state_registered(ogs_fsm_t *s, mme_event_t *e)
                         "Stop retransmission");
                 OGS_FSM_TRAN(&mme_ue->sm, &emm_state_exception);
             } else {
-                mme_ue->t3470.retry_count++;
                 r = nas_eps_send_identity_request(mme_ue);
-                if (r != OGS_OK)
+                if (r == OGS_OK) {
+                    mme_ue->t3470.retry_count++;
+                } else {
                     ogs_warn("Identity request retransmit not sent");
+                    if (++mme_ue->t3470.send_failure_count >=
+                            MME_UE_TIMER_MAX_SEND_FAILURE)
+                        mme_ue->t3470.retry_count =
+                            mme_timer_cfg(MME_TIMER_T3470)->max_count;
+                    ogs_timer_start(mme_ue->t3470.timer,
+                            mme_timer_cfg(MME_TIMER_T3470)->duration);
+                }
             }
             break;
 
@@ -1747,11 +1763,19 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             } else {
-                mme_ue->t3460.retry_count++;
                 r = nas_eps_send_authentication_request(mme_ue);
-                if (r != OGS_OK)
+                if (r == OGS_OK) {
+                    mme_ue->t3460.retry_count++;
+                } else {
                     ogs_warn("[%s] Authentication request retransmit "
                             "not sent", mme_ue->imsi_bcd);
+                    if (++mme_ue->t3460.send_failure_count >=
+                            MME_UE_TIMER_MAX_SEND_FAILURE)
+                        mme_ue->t3460.retry_count =
+                            mme_timer_cfg(MME_TIMER_T3460)->max_count;
+                    ogs_timer_start(mme_ue->t3460.timer,
+                            mme_timer_cfg(MME_TIMER_T3460)->duration);
+                }
             }
             break;
         case MME_TIMER_SGS_TS6_1:
@@ -2061,9 +2085,19 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
                         OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
                 ogs_expect(r == OGS_OK);
             } else {
-                mme_ue->t3460.retry_count++;
                 r = nas_eps_send_security_mode_command(mme_ue);
-                ogs_expect(r == OGS_OK);
+                if (r == OGS_OK) {
+                    mme_ue->t3460.retry_count++;
+                } else {
+                    ogs_warn("[%s] Security mode command retransmit "
+                            "not sent", mme_ue->imsi_bcd);
+                    if (++mme_ue->t3460.send_failure_count >=
+                            MME_UE_TIMER_MAX_SEND_FAILURE)
+                        mme_ue->t3460.retry_count =
+                            mme_timer_cfg(MME_TIMER_T3460)->max_count;
+                    ogs_timer_start(mme_ue->t3460.timer,
+                            mme_timer_cfg(MME_TIMER_T3460)->duration);
+                }
             }
             break;
         case MME_TIMER_SGS_TS6_1:
