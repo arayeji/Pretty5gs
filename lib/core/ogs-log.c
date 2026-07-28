@@ -27,6 +27,10 @@
 #include <stdarg.h>
 #endif
 
+#if HAVE_UNISTD_H
+#include <unistd.h>     /* isatty() */
+#endif
+
 #include "ogs-core.h"
 
 #define TA_NOR              "\033[0m"       /* all off */
