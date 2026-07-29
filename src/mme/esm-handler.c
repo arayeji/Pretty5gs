@@ -123,8 +123,11 @@ int esm_handle_pdn_connectivity_request(
     }
     /*
      * TS 23.401 / 24.301: APN IE absent or empty → select the default APN
-     * from the S6a subscription (mme_default_session). Only a non-empty
-     * UE-supplied APN is subject to inbound_roam allowed_apn policy.
+     * from the S6a subscription (mme_default_session). The inbound_roam
+     * allowed_apn policy is then enforced on the RESOLVED APN (whether the
+     * UE supplied it or it came from the S6a default), so a disallowed
+     * default APN never produces a Create Session toward SGW-U with a
+     * non-existent NWI.
      */
     sess->ue_provided_apn = false;
     if (emergency) {
@@ -233,15 +236,18 @@ int esm_handle_pdn_connectivity_request(
         ogs_assert(sess->session->name);
         ogs_debug("    APN[%s]", sess->session->name);
 
-        /* Allow-list only when the UE explicitly requested an APN */
-        if (sess->ue_provided_apn) {
+        /* Enforce allow-list on the resolved APN (UE-provided OR the
+         * S6a default) so disallowed APNs never reach the SGW */
+        {
             uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(
                     mme_ue, sess->session->name);
 
             if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
-                ogs_warn("[%s] inbound roam APN policy: reject PDN APN[%s] "
+                ogs_warn("[%s] inbound roam APN policy: reject PDN APN[%s]%s "
                         "esm_cause=%u",
-                        mme_ue->imsi_bcd, sess->session->name, roam_cause);
+                        mme_ue->imsi_bcd, sess->session->name,
+                        sess->ue_provided_apn ? "" : " (S6a default)",
+                        roam_cause);
                 r = nas_eps_send_pdn_connectivity_reject(
                         sess, roam_cause, create_action);
                 ogs_expect(r == OGS_OK);
@@ -311,7 +317,8 @@ int esm_handle_information_response(
 
     /*
      * Non-empty UE APN → look up subscription + apply allow-list.
-     * Absent/empty APN → S6a default APN; skip allow-list (TS 23.401).
+     * Absent/empty APN → S6a default APN (TS 23.401); the allow-list is
+     * then enforced on the resolved APN below either way.
      */
     if ((rsp->presencemask &
             OGS_NAS_EPS_ESM_INFORMATION_RESPONSE_ACCESS_POINT_NAME_PRESENT) &&
@@ -364,14 +371,18 @@ int esm_handle_information_response(
         ogs_assert(sess->session->name);
         ogs_debug("    APN[%s]", sess->session->name);
 
-        if (sess->ue_provided_apn) {
+        /* Enforce allow-list on the resolved APN (UE-provided OR the
+         * S6a default) so disallowed APNs never reach the SGW */
+        {
             uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(
                     mme_ue, sess->session->name);
 
             if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
-                ogs_warn("[%s] inbound roam APN policy: reject attach APN[%s] "
-                        "esm_cause=%u",
-                        mme_ue->imsi_bcd, sess->session->name, roam_cause);
+                ogs_warn("[%s] inbound roam APN policy: reject attach "
+                        "APN[%s]%s esm_cause=%u",
+                        mme_ue->imsi_bcd, sess->session->name,
+                        sess->ue_provided_apn ? "" : " (S6a default)",
+                        roam_cause);
                 r = nas_eps_send_pdn_connectivity_reject(
                         sess, roam_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
                 ogs_expect(r == OGS_OK);
