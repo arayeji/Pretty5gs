@@ -210,14 +210,34 @@ ogs_pkbuf_t *esm_build_activate_default_bearer_context_request(
     mme_bearer_t *bearer = NULL;
     ogs_session_t *session = NULL;
 
-    ogs_assert(sess);
+    if (!sess) {
+        ogs_error("Activate default bearer: sess is NULL");
+        return NULL;
+    }
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
-    ogs_assert(mme_ue);
+    if (!mme_ue) {
+        ogs_error("Activate default bearer: UE context already removed");
+        return NULL;
+    }
+    /*
+     * Under attach/PDN storms, Create Session can time out / tear down
+     * while Attach Accept or E-RAB Setup still tries to encode ADBCR.
+     * Hard-asserting here used to SIGABRT the whole MME.
+     */
     session = sess->session;
-    ogs_assert(session);
-    ogs_assert(session->name);
+    if (!session || !session->name) {
+        ogs_error("[%s] Activate default bearer: no session/APN "
+                "(PTI=%d create_action=%d)",
+                mme_ue->imsi_bcd, sess->pti, create_action);
+        return NULL;
+    }
     bearer = mme_default_bearer_in_sess(sess);
-    ogs_assert(bearer);
+    if (!bearer) {
+        ogs_error("[%s] Activate default bearer: no default bearer "
+                "(PTI=%d APN[%s])",
+                mme_ue->imsi_bcd, sess->pti, session->name);
+        return NULL;
+    }
 
     ogs_debug("Activate default bearer context request");
     ogs_debug("    IMSI[%s] PTI[%d] EBI[%d]",
