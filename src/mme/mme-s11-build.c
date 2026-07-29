@@ -494,7 +494,18 @@ ogs_pkbuf_t *mme_s11_build_modify_bearer_request(
     ogs_list_for_each_entry(
             &mme_ue->bearer_to_modify_list, bearer, to_modify_node) {
         mme_sess_t *sess = mme_sess_find_by_id(bearer->sess_id);
-        ogs_assert(sess);
+
+        /*
+         * Session can already be gone (PDN disconnect / race) while the
+         * bearer is still on bearer_to_modify_list. Do not abort the MME;
+         * skip HO-indication check for that bearer.
+         */
+        if (!sess) {
+            ogs_warn("[%s] Modify Bearer: session gone for EBI[%d] "
+                    "sess_id[%d]; skip handover indication check",
+                    mme_ue->imsi_bcd, bearer->ebi, bearer->sess_id);
+            continue;
+        }
 
         if (sess->ue_request_type.value == OGS_NAS_EPS_REQUEST_TYPE_HANDOVER) {
             indication.handover_indication = 1;
