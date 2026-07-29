@@ -283,7 +283,7 @@ static const char *mme_s11_create_session_cause_text(uint8_t cause)
     }
 }
 
-static void mme_s11_create_session_fail(
+void mme_s11_create_session_fail(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         int create_action, uint8_t fail_cause,
         const char *reason)

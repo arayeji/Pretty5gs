@@ -78,7 +78,10 @@ static void sgwc_reload_parse_cdr(ogs_yaml_iter_t *sgwc_iter,
     ogs_yaml_iter_recurse(sgwc_iter, &c_iter);
     while (ogs_yaml_iter_next(&c_iter)) {
         const char *ck = ogs_yaml_iter_key(&c_iter);
-        const char *cv = ogs_yaml_iter_value(&c_iter);
+        /* value may be a mapping/sequence: ogs_yaml_iter_value() would
+         * abort the daemon on non-scalar nodes (SIGHUP crash) */
+        const char *cv = ogs_yaml_iter_has_value(&c_iter) ?
+                ogs_yaml_iter_value(&c_iter) : NULL;
 
         ogs_assert(ck);
         if (!strcmp(ck, "enabled")) {
@@ -669,7 +672,8 @@ static void sgwc_reload_inbound_roam(ogs_yaml_iter_t *sgwc_iter)
             ogs_yaml_iter_recurse(&roam_iter, &gtpc_iter);
             while (ogs_yaml_iter_next(&gtpc_iter)) {
                 const char *gk = ogs_yaml_iter_key(&gtpc_iter);
-                const char *gv = ogs_yaml_iter_value(&gtpc_iter);
+                const char *gv = ogs_yaml_iter_has_value(&gtpc_iter) ?
+                        ogs_yaml_iter_value(&gtpc_iter) : NULL;
                 ogs_assert(gk);
 
                 if (!strcmp(gk, "source_port") ||
@@ -840,7 +844,14 @@ void sgwc_context_reload_runtime(void)
                 ogs_yaml_iter_recurse(&sgwc_iter, &gtpc_iter);
                 while (ogs_yaml_iter_next(&gtpc_iter)) {
                     const char *gk = ogs_yaml_iter_key(&gtpc_iter);
-                    const char *gv = ogs_yaml_iter_value(&gtpc_iter);
+                    /*
+                     * gtpc: contains non-scalar children (server: is a
+                     * sequence). Calling ogs_yaml_iter_value() on those
+                     * aborts the daemon (YAML_SCALAR_NODE assert) —
+                     * this crashed SGWC on SIGHUP. Guard every value.
+                     */
+                    const char *gv = ogs_yaml_iter_has_value(&gtpc_iter) ?
+                            ogs_yaml_iter_value(&gtpc_iter) : NULL;
 
                     if (gk && !strcmp(gk, "echo_interval") && gv) {
                         self->gtpc_echo_interval = (uint32_t)atoi(gv);
@@ -884,6 +895,34 @@ void sgwc_context_reload_runtime(void)
                 found = true;
             } else if (!strcmp(sgwc_key, "gn")) {
                 sgwc_reload_gn(&sgwc_iter);
+                found = true;
+            } else if (!strcmp(sgwc_key, "admission")) {
+                ogs_yaml_iter_t adm_iter;
+
+                ogs_yaml_iter_recurse(&sgwc_iter, &adm_iter);
+                while (ogs_yaml_iter_next(&adm_iter)) {
+                    const char *ak = ogs_yaml_iter_key(&adm_iter);
+                    const char *av = ogs_yaml_iter_has_value(&adm_iter) ?
+                            ogs_yaml_iter_value(&adm_iter) : NULL;
+
+                    if (!ak || !av)
+                        continue;
+                    if (!strcmp(ak, "max_outstanding")) {
+                        __atomic_store_n(&self->admission_max_outstanding,
+                                atoi(av), __ATOMIC_RELAXED);
+                        sgwc_reload_lists_changed++;
+                        ogs_reload_audit_note(
+                                "sgwc.admission.max_outstanding=%d",
+                                self->admission_max_outstanding);
+                    } else if (!strcmp(ak, "rate_per_sec")) {
+                        __atomic_store_n(&self->admission_rate_per_sec,
+                                atoi(av), __ATOMIC_RELAXED);
+                        sgwc_reload_lists_changed++;
+                        ogs_reload_audit_note(
+                                "sgwc.admission.rate_per_sec=%d",
+                                self->admission_rate_per_sec);
+                    }
+                }
                 found = true;
             } else if (!strcmp(sgwc_key, "cdr")) {
                 sgwc_reload_cdr_replace(&sgwc_iter);

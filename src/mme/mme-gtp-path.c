@@ -28,6 +28,7 @@
 #include "mme-inbound-roam-apn.h"
 #include "s1ap-path.h"
 #include "mme-s11-build.h"
+#include "mme-s11-handler.h"
 #include "mme-sm.h"
 #include "mme-workers.h"
 #include "metrics.h"
@@ -192,13 +193,26 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
                 mme_ue_id <= OGS_MAX_POOL_ID);
         mme_ue = mme_ue_find_by_id(mme_ue_id);
         if (!mme_ue) {
+            /* Storm-safe: when the SGW dies, thousands of these fire per
+             * second. Log one line/sec with the suppressed count. */
+            static ogs_time_t last_log = 0;
+            static unsigned long suppressed = 0;
+            ogs_time_t log_now = ogs_time_now();
             char peer[OGS_ADDRSTRLEN];
 
-            ogs_error("GTP timeout: MME-UE[%u] removed type[%u:%s] SGW[%s]:%d",
-                    mme_ue_id, type, mme_gtp2_message_type_name(type),
-                    xact && xact->gnode ?
-                        OGS_ADDR(&xact->gnode->addr, peer) : "-",
-                    xact && xact->gnode ? OGS_PORT(&xact->gnode->addr) : 0);
+            suppressed++;
+            if (log_now - last_log >= ogs_time_from_sec(1)) {
+                ogs_error("GTP timeout: MME-UE[%u] removed type[%u:%s] "
+                        "SGW[%s]:%d (%lu in last window)",
+                        mme_ue_id, type, mme_gtp2_message_type_name(type),
+                        xact && xact->gnode ?
+                            OGS_ADDR(&xact->gnode->addr, peer) : "-",
+                        xact && xact->gnode ?
+                            OGS_PORT(&xact->gnode->addr) : 0,
+                        suppressed);
+                last_log = log_now;
+                suppressed = 0;
+            }
             return;
         }
         break;
@@ -283,6 +297,18 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
         break;
     case OGS_GTP2_BEARER_RESOURCE_COMMAND_TYPE:
         /* Nothing to do */
+        break;
+    case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
+        /*
+         * SGW dead or overloaded: previously this fell into the default
+         * branch (silent context release), so UEs re-attached immediately
+         * and piled up. Treat the timeout like a congestion reject:
+         * attach/TAU reject EMM #22 (+T3346 backoff) then release.
+         */
+        mme_s11_create_session_fail(enb_ue, mme_ue,
+                xact->create_action,
+                OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING,
+                "GTP timeout (SGW not responding)");
         break;
     default:
         if (enb_ue)

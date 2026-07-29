@@ -2782,18 +2782,23 @@ uint8_t sgwc_admission_check(void)
         return OGS_GTP2_CAUSE_GTP_C_ENTITY_CONGESTION;
     }
 
-    /* In-flight Create Session cap (0 = unlimited) */
-    if (self.admission_max_outstanding > 0) {
+    /* In-flight Create Session cap (0 = unlimited; SIGHUP-reloadable) */
+    int max_outstanding = __atomic_load_n(
+            &self.admission_max_outstanding, __ATOMIC_RELAXED);
+    if (max_outstanding > 0) {
         outstanding = __atomic_load_n(
                 &self.admission_outstanding, __ATOMIC_RELAXED);
-        if (outstanding >= self.admission_max_outstanding) {
+        if (outstanding >= max_outstanding) {
             sgwc_metrics_admission_reject(SGWC_ADMISSION_REJECT_CAP);
             return OGS_GTP2_CAUSE_GTP_C_ENTITY_CONGESTION;
         }
     }
 
-    /* Optional accepted-per-second token bucket (0 = disabled) */
-    if (self.admission_rate_per_sec > 0) {
+    /* Optional accepted-per-second token bucket
+     * (0 = disabled; SIGHUP-reloadable) */
+    int rate_per_sec = __atomic_load_n(
+            &self.admission_rate_per_sec, __ATOMIC_RELAXED);
+    if (rate_per_sec > 0) {
         ogs_time_t now = ogs_time_now();
         ogs_time_t win = __atomic_load_n(
                 &self.admission_rate_window, __ATOMIC_RELAXED);
@@ -2804,7 +2809,7 @@ uint8_t sgwc_admission_check(void)
                         &self.admission_rate_window, &win, now, false,
                         __ATOMIC_RELAXED, __ATOMIC_RELAXED))
                 __atomic_store_n(&self.admission_rate_tokens,
-                        self.admission_rate_per_sec, __ATOMIC_RELAXED);
+                        rate_per_sec, __ATOMIC_RELAXED);
         }
 
         if (__atomic_sub_fetch(

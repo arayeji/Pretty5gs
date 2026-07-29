@@ -30,6 +30,14 @@ void mme_s11_check_peer_recovery(
         ogs_gtp_node_t *gnode, ogs_gtp2_message_t *message);
 void mme_s11_handle_sgw_context_lost(mme_ue_t *mme_ue, uint8_t gtp_cause);
 
+/* Reject attach/TAU (EMM #22 + T3346 for congestion causes) and release
+ * the UE context. Shared by Create Session Response failures and Create
+ * Session Request GTP timeouts (SGW dead/overloaded). */
+void mme_s11_create_session_fail(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        int create_action, uint8_t fail_cause,
+        const char *reason);
+
 void mme_s11_handle_echo_request(
         ogs_gtp_xact_t *xact, ogs_gtp2_echo_request_t *req);
 void mme_s11_handle_echo_response(
