@@ -3435,6 +3435,7 @@ int mme_context_parse_config(void)
                         }
                         if (!strcmp(sgsap_key, "client")) {
                             ogs_yaml_iter_t client_iter, client_array;
+                            mme_vlr_t *prev_vlr = NULL;
                             ogs_yaml_iter_recurse(&sgsap_iter, &client_array);
                             do {
                                 mme_vlr_t *vlr = NULL;
@@ -3844,27 +3845,54 @@ int mme_context_parse_config(void)
                                         ogs_global_conf()->parameter.
                                         prefer_ipv4);
 
+                                /*
+                                 * Huawei-style exports often list each map as
+                                 * its own client sequence item (`- map:`) with
+                                 * no address. Open5GS previously discarded
+                                 * those silently (addr == NULL → continue),
+                                 * so only the first map under `address:` was
+                                 * loaded and almost no SGsAP LU was sent.
+                                 * Attach address-less map blocks to the
+                                 * previous VLR instead.
+                                 */
                                 if (addr == NULL) {
-                                    ogs_free(map);
-                                    continue;
+                                    if (map_num == 0 || !prev_vlr) {
+                                        ogs_error("sgsap.client map entry "
+                                                "has no address and no prior "
+                                                "VLR — %d map(s) ignored",
+                                                map_num);
+                                        ogs_free(map);
+                                        continue;
+                                    }
+                                    ogs_warn("sgsap.client: %d map(s) without "
+                                            "address — attaching to previous "
+                                            "VLR [%s]",
+                                            map_num,
+                                            ogs_sockaddr_to_string_static(
+                                                prev_vlr->sa_list) ?
+                                            ogs_sockaddr_to_string_static(
+                                                prev_vlr->sa_list) : "-");
+                                    vlr = prev_vlr;
+                                } else {
+                                    local_addr = NULL;
+                                    for (i = 0; i < local_hostname_num; i++) {
+                                        rv = ogs_addaddrinfo(&local_addr,
+                                                family, local_hostname[i],
+                                                port, 0);
+                                        ogs_assert(rv == OGS_OK);
+                                    }
+
+                                    ogs_filter_ip_version(&local_addr,
+                                            ogs_global_conf()->parameter.no_ipv4,
+                                            ogs_global_conf()->parameter.no_ipv6,
+                                            ogs_global_conf()->parameter.
+                                            prefer_ipv4);
+
+                                    vlr = mme_vlr_add(addr, local_addr,
+                                            is_option ? &option : NULL);
+                                    ogs_assert(vlr);
+                                    prev_vlr = vlr;
                                 }
-
-                                local_addr = NULL;
-                                for (i = 0; i < local_hostname_num; i++) {
-                                    rv = ogs_addaddrinfo(&local_addr,
-                                            family, local_hostname[i], port, 0);
-                                    ogs_assert(rv == OGS_OK);
-                                }
-
-                                ogs_filter_ip_version(&local_addr,
-                                        ogs_global_conf()->parameter.no_ipv4,
-                                        ogs_global_conf()->parameter.no_ipv6,
-                                        ogs_global_conf()->parameter.
-                                        prefer_ipv4);
-
-                                vlr = mme_vlr_add(addr, local_addr,
-                                        is_option ? &option : NULL);
-                                ogs_assert(vlr);
 
                                 for (i = 0; i < map_num; i++) {
                                     mme_csmap_t *csmap = mme_csmap_add(vlr);
@@ -3903,6 +3931,10 @@ int mme_context_parse_config(void)
                                 ogs_free(map);
                             } while (ogs_yaml_iter_type(&client_array) ==
                                     YAML_SEQUENCE_NODE);
+                            ogs_info("sgsap: loaded %d TAI-LAI map(s) "
+                                    "across %d VLR(s)",
+                                    ogs_list_count(&self.csmap_list),
+                                    ogs_list_count(&self.vlr_list));
                         } else
                             ogs_warn("unknown key `%s`", sgsap_key);
                     }
