@@ -188,6 +188,21 @@ typedef struct sgwc_context_s {
     bool maintenance_mode;
 
     /*
+     * Attach-storm admission control (sgwc.admission in yaml).
+     * max_outstanding caps in-flight Create Session -> PFCP Session
+     * Establishment (0 = unlimited); rate_per_sec is an optional token
+     * bucket on accepted Create Sessions (0 = disabled). Over-cap or
+     * PFCP-all-down requests are rejected immediately with GTP-C entity
+     * congestion so the MME can back UEs off (EMM #22 + T3346) instead
+     * of piling contexts onto a dead SGW-U.
+     */
+    int         admission_max_outstanding;
+    int         admission_rate_per_sec;
+    int         admission_outstanding;      /* current in-flight count */
+    int         admission_rate_tokens;
+    ogs_time_t  admission_rate_window;      /* 1s token refill window */
+
+    /*
      * Batched /admin/maintenance/drain bookkeeping (see sgwc-sm.c).
      * Sessions are drained in fixed-size UE batches paced by a timer so
      * a large drain cannot monopolise the main thread or burst-flood
@@ -320,6 +335,9 @@ typedef struct sgwc_sess_s {
 
     /* Monotonic start time for create-session latency logging */
     ogs_time_t      create_session_t0;
+
+    /* Counted in sgwc_context_t.admission_outstanding (exactly-once) */
+    unsigned        admission_counted : 1;
 
     unsigned        metrics_session_counted : 1;
     unsigned        metrics_rat_labeled : 1;
@@ -495,6 +513,17 @@ void sgwc_inbound_roam_teid_offset_apply(sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess);
 void sgwc_sess_sync_pfcp_pdr_nwi(sgwc_sess_t *sess);
 
 void sgwc_sess_select_sgwu(sgwc_sess_t *sess);
+
+/*
+ * Attach-storm admission control. sgwc_admission_check() returns 0 to
+ * accept or a GTP2 cause to reject (GTP-C entity congestion when all
+ * PFCP peers are down, over the in-flight cap, or over the rate limit).
+ * started/done bracket one in-flight PFCP Session Establishment;
+ * done is idempotent (sess->admission_counted).
+ */
+uint8_t sgwc_admission_check(void);
+void sgwc_admission_establish_started(sgwc_sess_t *sess);
+void sgwc_admission_establish_done(sgwc_sess_t *sess);
 
 void sgwc_sess_abort_create(sgwc_sess_t *sess);
 int sgwc_sess_remove(sgwc_sess_t *sess);

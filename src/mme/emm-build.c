@@ -336,6 +336,18 @@ ogs_pkbuf_t *emm_build_attach_reject(mme_ue_t *mme_ue,
 
     attach_reject->emm_cause = emm_cause;
 
+    if (mme_t3346_should_include(emm_cause)) {
+        if (ogs_nas_gprs_timer_from_sec(&attach_reject->t3346_value.t,
+                    mme_self()->time.t3346.value) == OGS_OK) {
+            attach_reject->t3346_value.length = 1;
+            attach_reject->presencemask |=
+                OGS_NAS_EPS_ATTACH_REJECT_T3346_VALUE_PRESENT;
+        } else {
+            ogs_error("Invalid T3346 value [%ld]",
+                    (long)mme_self()->time.t3346.value);
+        }
+    }
+
     if (esmbuf) {
         attach_reject->presencemask |=
             OGS_NAS_EPS_ATTACH_REJECT_ESM_MESSAGE_CONTAINER_PRESENT;

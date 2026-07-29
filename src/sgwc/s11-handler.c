@@ -746,6 +746,38 @@ void sgwc_s11_handle_create_session_request(
         return;
     }
 
+    /*
+     * Attach-storm admission: shed fast (GTP-C entity congestion) when
+     * every SGW-U PFCP association is down, the in-flight establish cap
+     * is reached, or the optional rate limit is exceeded. The MME maps
+     * this to EMM #22 Congestion (+T3346) so UEs back off.
+     */
+    cause_value = sgwc_admission_check();
+    if (cause_value) {
+        /* Rate-limit the log itself: one line/sec with shed count */
+        static ogs_time_t adm_last_warn = 0;
+        static unsigned long adm_shed_count = 0;
+        ogs_time_t now = ogs_time_now();
+
+        adm_shed_count++;
+        if (now - adm_last_warn >= ogs_time_from_sec(1)) {
+            ogs_warn("Create Session shed by admission control "
+                    "[GTP cause:%u outstanding:%d shed:%lu/s last IMSI:%s]",
+                    cause_value, sgwc_self()->admission_outstanding,
+                    adm_shed_count, sgwc_ue ? sgwc_ue->imsi_bcd : "-");
+            adm_last_warn = now;
+            adm_shed_count = 0;
+        }
+        if (sgwc_ue)
+            sgwc_metrics_create_session_fail(sgwc_ue, cause_value);
+        ogs_gtp_send_error_message(
+                s11_xact,
+                sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
+                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                cause_value);
+        return;
+    }
+
     if (sgwc_ue && req->sender_f_teid_for_control_plane.presence &&
             req->sender_f_teid_for_control_plane.data) {
         sgwc_ue_store_mme_f_teid(sgwc_ue,

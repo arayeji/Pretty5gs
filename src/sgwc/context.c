@@ -700,6 +700,12 @@ void sgwc_context_init(void)
     self.recovery_counter_file = SGWC_RECOVERY_COUNTER_FILE;
     self.pfcp_send_user_id = true;
 
+    self.admission_max_outstanding = 50000;
+    self.admission_rate_per_sec = 0;
+    self.admission_outstanding = 0;
+    self.admission_rate_tokens = 0;
+    self.admission_rate_window = 0;
+
     context_initialized = 1;
 }
 
@@ -1581,6 +1587,30 @@ int sgwc_context_parse_config(void)
                                 ogs_yaml_iter_bool(&pfcp_iter);
                         }
                     }
+                } else if (!strcmp(sgwc_key, "admission")) {
+                    ogs_yaml_iter_t adm_iter;
+                    ogs_yaml_iter_recurse(&sgwc_iter, &adm_iter);
+                    while (ogs_yaml_iter_next(&adm_iter)) {
+                        const char *adm_key = ogs_yaml_iter_key(&adm_iter);
+                        const char *v = NULL;
+                        ogs_assert(adm_key);
+                        if (!strcmp(adm_key, "max_outstanding")) {
+                            v = ogs_yaml_iter_value(&adm_iter);
+                            if (v)
+                                self.admission_max_outstanding = atoi(v);
+                        } else if (!strcmp(adm_key, "rate_per_sec")) {
+                            v = ogs_yaml_iter_value(&adm_iter);
+                            if (v)
+                                self.admission_rate_per_sec = atoi(v);
+                        } else {
+                            ogs_warn("unknown key `%s` in sgwc.admission",
+                                    adm_key);
+                        }
+                    }
+                    ogs_info("sgwc.admission: max_outstanding=%d "
+                            "rate_per_sec=%d",
+                            self.admission_max_outstanding,
+                            self.admission_rate_per_sec);
                 } else if (!strcmp(sgwc_key, "sgwu")) {
                     /* handle config in pfcp library */
                 } else if (!strcmp(sgwc_key, "trace_imsi")) {
@@ -2725,11 +2755,109 @@ void sgwc_orphan_timer_stop(void)
     }
 }
 
+static bool sgwc_admission_any_pfcp_peer_associated(void)
+{
+    ogs_pfcp_node_t *node = NULL;
+
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, node) {
+        if (OGS_FSM_CHECK(&node->sm, sgwc_pfcp_state_associated))
+            return true;
+    }
+    return false;
+}
+
+/*
+ * Create Session handling is sharded across worker threads, so the
+ * admission counters use __atomic builtins (same convention as
+ * num_of_sgwc_sess above). Slight over/under-admission at the exact
+ * cap boundary is acceptable; the point is stopping runaway pile-up.
+ */
+uint8_t sgwc_admission_check(void)
+{
+    int outstanding;
+
+    /* Circuit breaker: every SGW-U PFCP association is down */
+    if (!sgwc_admission_any_pfcp_peer_associated()) {
+        sgwc_metrics_admission_reject(SGWC_ADMISSION_REJECT_PFCP_DOWN);
+        return OGS_GTP2_CAUSE_GTP_C_ENTITY_CONGESTION;
+    }
+
+    /* In-flight Create Session cap (0 = unlimited) */
+    if (self.admission_max_outstanding > 0) {
+        outstanding = __atomic_load_n(
+                &self.admission_outstanding, __ATOMIC_RELAXED);
+        if (outstanding >= self.admission_max_outstanding) {
+            sgwc_metrics_admission_reject(SGWC_ADMISSION_REJECT_CAP);
+            return OGS_GTP2_CAUSE_GTP_C_ENTITY_CONGESTION;
+        }
+    }
+
+    /* Optional accepted-per-second token bucket (0 = disabled) */
+    if (self.admission_rate_per_sec > 0) {
+        ogs_time_t now = ogs_time_now();
+        ogs_time_t win = __atomic_load_n(
+                &self.admission_rate_window, __ATOMIC_RELAXED);
+
+        if (now - win >= ogs_time_from_sec(1)) {
+            /* One thread wins the refill for this window */
+            if (__atomic_compare_exchange_n(
+                        &self.admission_rate_window, &win, now, false,
+                        __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+                __atomic_store_n(&self.admission_rate_tokens,
+                        self.admission_rate_per_sec, __ATOMIC_RELAXED);
+        }
+
+        if (__atomic_sub_fetch(
+                    &self.admission_rate_tokens, 1, __ATOMIC_RELAXED) < 0) {
+            sgwc_metrics_admission_reject(SGWC_ADMISSION_REJECT_RATE);
+            return OGS_GTP2_CAUSE_GTP_C_ENTITY_CONGESTION;
+        }
+    }
+
+    return 0;
+}
+
+void sgwc_admission_establish_started(sgwc_sess_t *sess)
+{
+    int now;
+
+    ogs_assert(sess);
+
+    if (sess->admission_counted)
+        return;
+    sess->admission_counted = 1;
+    now = __atomic_add_fetch(&self.admission_outstanding, 1,
+            __ATOMIC_RELAXED);
+    sgwc_metrics_admission_outstanding_set(now);
+}
+
+void sgwc_admission_establish_done(sgwc_sess_t *sess)
+{
+    int now;
+
+    ogs_assert(sess);
+
+    if (!sess->admission_counted)
+        return;
+    sess->admission_counted = 0;
+    now = __atomic_sub_fetch(&self.admission_outstanding, 1,
+            __ATOMIC_RELAXED);
+    if (now < 0) {
+        /* Should not happen (admission_counted is exactly-once) */
+        __atomic_store_n(&self.admission_outstanding, 0, __ATOMIC_RELAXED);
+        now = 0;
+    }
+    sgwc_metrics_admission_outstanding_set(now);
+}
+
 int sgwc_sess_remove(sgwc_sess_t *sess)
 {
     sgwc_ue_t *sgwc_ue = NULL;
 
     ogs_assert(sess);
+
+    /* Catch-all: session freed while its PFCP establish was in flight */
+    sgwc_admission_establish_done(sess);
 
     sgwc_metrics_session_active_dec(sess);
 

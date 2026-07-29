@@ -419,6 +419,10 @@ void sgwc_sxa_handle_session_establishment_response(
     ogs_assert(pfcp_rsp);
     ogs_assert(recv_message);
 
+    /* Establish answered: release the admission in-flight slot */
+    if (sess)
+        sgwc_admission_establish_done(sess);
+
     create_session_request = &recv_message->create_session_request;
     ogs_assert(create_session_request);
 

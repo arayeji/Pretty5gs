@@ -331,6 +331,9 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
         sgwc_ue_t *sgwc_ue = NULL;
         ogs_gtp_xact_t *s11_xact = NULL;
 
+        /* Establish gave up: release the admission in-flight slot */
+        sgwc_admission_establish_done(sess);
+
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         if (sess->pfcp_node) {
             char sgwu_peer[OGS_ADDRSTRLEN];
@@ -618,6 +621,14 @@ int sgwc_pfcp_send_session_establishment_request(
 
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
+
+    /*
+     * Count toward the admission in-flight cap only for real Create
+     * Sessions (a GTP transaction is waiting); PFCP restoration
+     * re-establishes (no S11/Gn xact) must not starve new attaches.
+     */
+    if (rv == OGS_OK && gtp_xact_id != OGS_INVALID_POOL_ID)
+        sgwc_admission_establish_started(sess);
 
     return rv;
 }

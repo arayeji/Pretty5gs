@@ -311,22 +311,39 @@ static void mme_s11_create_session_fail(
 
     mme_metrics_s11_create_session_fail(mme_ue, fail_cause);
 
-    if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST) {
-        if (enb_ue) {
-            mme_sess_t *sess = mme_sess_first(mme_ue);
-            ogs_mme_trace_set(enb_ue, mme_ue,
-                    (sess && sess->session) ? sess->session->name : NULL, "attach-reject");
+    /*
+     * SGW congestion / SGW-U unreachable (SGWC admission shed or PFCP
+     * dead): reject with EMM #22 Congestion so mme.time.t3346 makes
+     * UEs back off instead of re-attacking every GTP timeout. Other
+     * failures keep #17 Network Failure.
+     */
+    {
+        uint8_t emm_cause = OGS_NAS_EMM_CAUSE_NETWORK_FAILURE;
+        uint8_t esm_cause = OGS_NAS_ESM_CAUSE_NETWORK_FAILURE;
+
+        if (fail_cause == OGS_GTP2_CAUSE_GTP_C_ENTITY_CONGESTION ||
+            fail_cause == OGS_GTP2_CAUSE_APN_CONGESTION ||
+            fail_cause == OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING) {
+            emm_cause = OGS_NAS_EMM_CAUSE_CONGESTION;
+            esm_cause = OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES;
         }
-        OGS_TLOG_INFO("Attach reject [GTPv2-Cause:%d EMM:17 ESM:17]",
-                fail_cause);
-        r = nas_eps_send_attach_reject(enb_ue, mme_ue,
-                OGS_NAS_EMM_CAUSE_NETWORK_FAILURE,
-                OGS_NAS_ESM_CAUSE_NETWORK_FAILURE);
-        ogs_expect(r == OGS_OK);
-    } else if (create_action == OGS_GTP_CREATE_IN_TRACKING_AREA_UPDATE) {
-        r = nas_eps_send_tau_reject(enb_ue, mme_ue,
-                OGS_NAS_EMM_CAUSE_NETWORK_FAILURE);
-        ogs_expect(r == OGS_OK);
+
+        if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST) {
+            if (enb_ue) {
+                mme_sess_t *sess = mme_sess_first(mme_ue);
+                ogs_mme_trace_set(enb_ue, mme_ue,
+                        (sess && sess->session) ?
+                        sess->session->name : NULL, "attach-reject");
+            }
+            OGS_TLOG_INFO("Attach reject [GTPv2-Cause:%d EMM:%d ESM:%d]",
+                    fail_cause, emm_cause, esm_cause);
+            r = nas_eps_send_attach_reject(enb_ue, mme_ue,
+                    emm_cause, esm_cause);
+            ogs_expect(r == OGS_OK);
+        } else if (create_action == OGS_GTP_CREATE_IN_TRACKING_AREA_UPDATE) {
+            r = nas_eps_send_tau_reject(enb_ue, mme_ue, emm_cause);
+            ogs_expect(r == OGS_OK);
+        }
     }
 
     mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);

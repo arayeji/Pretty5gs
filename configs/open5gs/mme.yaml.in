@@ -162,6 +162,10 @@ mme:
 #      implicit_detach_margin: 240    # added to t3412 or t3423 when set
 #    t3346:
 #      value: 7200   # optional GPRS timer 2 (congestion backoff, seconds)
+#                    # RECOMMENDED non-zero (e.g. 300-900) in production:
+#                    # attach/TAU rejected for SGW congestion / SGW-U PFCP
+#                    # down use EMM #22, and T3346 makes UEs back off
+#                    # instead of re-attaching every GTP timeout
 #      include_any_reject: false  # default: only EMM cause #22 (congestion)
 #    t3413:
 #      value: 6     # paging retransmit (default: 6 s)

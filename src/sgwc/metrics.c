@@ -92,7 +92,54 @@ sgwc_metrics_spec_def_t sgwc_metrics_spec_def_global[_SGWC_METR_GLOB_MAX] = {
     .name = "sgwc_pfcp_peers_active",
     .description = "Number of PFCP-associated SGW-U peers",
 },
+[SGWC_METR_GLOB_GAUGE_ADMISSION_OUTSTANDING] = {
+    .type = OGS_METRICS_METRIC_TYPE_GAUGE,
+    .name = "sgwc_admission_outstanding",
+    .description = "In-flight Create Sessions awaiting PFCP Session "
+        "Establishment Response (sgwc.admission.max_outstanding cap)",
+},
+[SGWC_METR_GLOB_CTR_ADMISSION_REJECT_CAP] = {
+    .type = OGS_METRICS_METRIC_TYPE_COUNTER,
+    .name = "sgwc_admission_reject_cap_total",
+    .description = "Create Sessions rejected: in-flight cap reached",
+},
+[SGWC_METR_GLOB_CTR_ADMISSION_REJECT_RATE] = {
+    .type = OGS_METRICS_METRIC_TYPE_COUNTER,
+    .name = "sgwc_admission_reject_rate_total",
+    .description = "Create Sessions rejected: rate limit exceeded",
+},
+[SGWC_METR_GLOB_CTR_ADMISSION_REJECT_PFCP_DOWN] = {
+    .type = OGS_METRICS_METRIC_TYPE_COUNTER,
+    .name = "sgwc_admission_reject_pfcp_down_total",
+    .description = "Create Sessions rejected: no PFCP-associated SGW-U",
+},
 };
+
+void sgwc_metrics_admission_reject(sgwc_admission_reject_reason_t reason)
+{
+    sgwc_metric_type_global_t t;
+
+    switch (reason) {
+    case SGWC_ADMISSION_REJECT_CAP:
+        t = SGWC_METR_GLOB_CTR_ADMISSION_REJECT_CAP;
+        break;
+    case SGWC_ADMISSION_REJECT_RATE:
+        t = SGWC_METR_GLOB_CTR_ADMISSION_REJECT_RATE;
+        break;
+    case SGWC_ADMISSION_REJECT_PFCP_DOWN:
+        t = SGWC_METR_GLOB_CTR_ADMISSION_REJECT_PFCP_DOWN;
+        break;
+    default:
+        return;
+    }
+
+    sgwc_metrics_inst_global_inc(t);
+}
+
+void sgwc_metrics_admission_outstanding_set(int val)
+{
+    sgwc_metrics_global_set(SGWC_METR_GLOB_GAUGE_ADMISSION_OUTSTANDING, val);
+}
 
 typedef struct sgwc_metric_key_by_pfcp_peer_s {
     char addr[OGS_ADDRSTRLEN];

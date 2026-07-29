@@ -737,6 +737,14 @@ void sgwc_gn_handle_create_pdp_context_request(
         return;
     }
 
+    /* Attach-storm admission control (same policy as S11 Create Session) */
+    if (sgwc_admission_check()) {
+        ogs_gtp1_send_error_message(gn_xact, 0,
+                OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE,
+                OGS_GTP1_CAUSE_NO_RESOURCES_AVAILABLE);
+        return;
+    }
+
     if (req->imsi.presence == 0) {
         ogs_gtp1_send_error_message(gn_xact, 0,
                 OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE,

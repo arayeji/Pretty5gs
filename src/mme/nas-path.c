@@ -317,6 +317,9 @@ int nas_eps_send_attach_reject(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     rv = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
     ogs_expect(rv == OGS_OK);
 
+    if (rv == OGS_OK)
+        mme_t3346_on_reject_sent(mme_ue, emm_cause);
+
     return rv;
 }
 
