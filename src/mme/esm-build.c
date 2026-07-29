@@ -519,7 +519,11 @@ ogs_pkbuf_t *esm_build_bearer_resource_allocation_reject(
             &message.esm.bearer_resource_allocation_reject;
 
     ogs_assert(mme_ue);
-    ogs_assert(pti != OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED);
+    if (pti == OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED) {
+        ogs_error("[%s] Bearer resource allocation reject: PTI unassigned",
+                mme_ue->imsi_bcd);
+        return NULL;
+    }
 
     ogs_debug("Bearer resource allocation reject");
     ogs_debug("    IMSI[%s] PTI[%d] Cause[%d]",
@@ -549,7 +553,11 @@ ogs_pkbuf_t *esm_build_bearer_resource_modification_reject(
             &message.esm.bearer_resource_modification_reject;
 
     ogs_assert(mme_ue);
-    ogs_assert(pti != OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED);
+    if (pti == OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED) {
+        ogs_error("[%s] Bearer resource modification reject: PTI unassigned",
+                mme_ue->imsi_bcd);
+        return NULL;
+    }
 
     ogs_debug("Bearer resource modification reject");
     ogs_debug("    IMSI[%s] PTI[%d] Cause[%d]",

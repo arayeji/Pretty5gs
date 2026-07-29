@@ -1082,7 +1082,11 @@ int nas_eps_send_bearer_resource_allocation_reject(
         return OGS_NOTFOUND;
     }
 
-    ogs_assert(pti != OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED);
+    if (pti == OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED) {
+        ogs_warn("[%s] Bearer resource allocation reject skipped: "
+                "PTI unassigned (cause=%u)", mme_ue->imsi_bcd, esm_cause);
+        return OGS_ERROR;
+    }
 
     esmbuf = esm_build_bearer_resource_allocation_reject(
             mme_ue, pti, esm_cause);
@@ -1115,7 +1119,16 @@ int nas_eps_send_bearer_resource_modification_reject(
         return OGS_NOTFOUND;
     }
 
-    ogs_assert(pti != OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED);
+    /*
+     * Update Bearer / Bearer Resource Failure can arrive with no PTI
+     * (sess->pti left UNASSIGNED). Reject without a PTI is invalid NAS;
+     * skip instead of aborting the MME.
+     */
+    if (pti == OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED) {
+        ogs_warn("[%s] Bearer resource modification reject skipped: "
+                "PTI unassigned (cause=%u)", mme_ue->imsi_bcd, esm_cause);
+        return OGS_ERROR;
+    }
 
     esmbuf = esm_build_bearer_resource_modification_reject(
             mme_ue, pti, esm_cause);
