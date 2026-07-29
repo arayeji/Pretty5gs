@@ -340,26 +340,46 @@ int mme_gn_handle_sgsn_context_response(
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
 
+    /*
+     * Map GTPv1 SGSN Context Response Cause → EMM cause for TAU Reject.
+     * TS 24.301 Annex A.1:
+     *  - #9 UE identity cannot be derived: no matching identity/context
+     *    from GUTI/P-TMSI+RAI (old SGSN has no MM context / unknown IMSI /
+     *    P-TMSI signature mismatch). Same as no-SGSN-route path in emm-sm.
+     *  - #10 Implicitly detached: MS was GPRS-detached at the old SGSN.
+     *  - #17 Network failure: residual protocol/system failures.
+     * UE action for #9/#10 is EMM-DEREGISTERED then Attach (TS 24.301
+     * 5.5.3.2.5) — correct recovery when IRAT context transfer fails.
+     */
     switch (resp->cause.u8) {
-     case OGS_GTP1_CAUSE_REQUEST_ACCEPTED:
+    case OGS_GTP1_CAUSE_REQUEST_ACCEPTED:
         break; /* Handle below */
     case OGS_GTP1_CAUSE_TGT_ACC_RESTRICTED_SUBSCRIBER:
         emm_cause = OGS_NAS_EMM_CAUSE_REQUESTED_SERVICE_OPTION_NOT_AUTHORIZED_IN_THIS_PLMN;
         break;
+    case OGS_GTP1_CAUSE_CONTEXT_NOT_FOUND:
     case OGS_GTP1_CAUSE_IMSI_IMEI_NOT_KNOWN:
+    case OGS_GTP1_CAUSE_P_TMSI_SIGNATURE_MISMATCH:
+    case OGS_GTP1_CAUSE_NON_EXISTENT:
+        emm_cause =
+            OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK;
+        break;
+    case OGS_GTP1_CAUSE_MS_GPRS_DETACHED:
+        emm_cause = OGS_NAS_EMM_CAUSE_IMPLICITLY_DETACHED;
+        break;
     case OGS_GTP1_CAUSE_SYSTEM_FAILURE:
     case OGS_GTP1_CAUSE_MANDATORY_IE_INCORRECT:
     case OGS_GTP1_CAUSE_MANDATORY_IE_MISSING:
     case OGS_GTP1_CAUSE_OPTIONAL_IE_INCORRECT:
     case OGS_GTP1_CAUSE_INVALID_MESSAGE_FORMAT:
-    case OGS_GTP1_CAUSE_P_TMSI_SIGNATURE_MISMATCH:
     default:
         emm_cause = OGS_NAS_EMM_CAUSE_NETWORK_FAILURE;
         break;
     }
 
     if (resp->cause.u8 != OGS_GTP1_CAUSE_REQUEST_ACCEPTED) {
-        ogs_warn("[Gn] Rx SGSN Context Response cause:%u", resp->cause.u8);
+        ogs_warn("[Gn] Rx SGSN Context Response GTP cause:%u -> TAU Reject "
+                "EMM cause:%d", resp->cause.u8, emm_cause);
         rv = nas_eps_send_tau_reject(enb_ue, mme_ue, emm_cause);
         return OGS_GTP1_CAUSE_SYSTEM_FAILURE;
     }
