@@ -1256,7 +1256,12 @@ void sgwc_sxa_handle_session_modification_response(
         /* Nothing */
 
     } else {
-        ogs_assert(bearer);
+        if (!bearer) {
+            ogs_error("PFCP Session Modification Response: bearer gone "
+                    "[flags=0x%llx]", (long long)flags);
+            ogs_pfcp_xact_commit(pfcp_xact);
+            return;
+        }
 
         dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
         ogs_assert(dl_tunnel);
@@ -1574,7 +1579,20 @@ void sgwc_sxa_handle_session_modification_response(
                             bearer_contexts[i].eps_bearer_id.presence);
                     bearer = sgwc_bearer_find_by_ue_ebi(sgwc_ue,
                                 gtp_req->bearer_contexts[i].eps_bearer_id.u8);
-                    ogs_assert(bearer);
+                    /*
+                     * HO Create-Indirect can complete after the UE bearer was
+                     * released/replaced. Do not abort SGW-C; fail the GTP
+                     * response instead.
+                     */
+                    if (!bearer) {
+                        ogs_error("[%s] Create Indirect: no bearer for "
+                                "EBI[%u] after PFCP Session Modification",
+                                sgwc_ue->imsi_bcd,
+                                gtp_req->bearer_contexts[i].
+                                        eps_bearer_id.u8);
+                        cause.value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+                        goto indirect_fail;
+                    }
 
                     ogs_list_for_each(&bearer->tunnel_list, tunnel) {
                         if (tunnel->interface_type ==
