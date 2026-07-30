@@ -244,6 +244,13 @@ ogs_app_local_conf_t *ogs_local_conf(void);
 int ogs_app_count_nf_conf_sections(const char *conf_section);
 int ogs_app_global_conf_prepare(void);
 int ogs_app_parse_global_conf(ogs_yaml_iter_t *parent);
+/*
+ * Hot-reload the scalar global.parameter flags that are safe to flip
+ * without restarting (currently fake_csfb and ignore_sgs). Keys absent
+ * from the new document keep their previous value. Returns how many of
+ * those keys were present and applied.
+ */
+int ogs_app_reload_parameter_scalars(void);
 int ogs_app_parse_local_conf(const char *local);
 
 int ogs_app_parse_sockopt_config(

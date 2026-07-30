@@ -1851,6 +1851,18 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
         ogs_reload_audit_note(" inbound_roam config replaced");
         return 0;
     }
+    if (!strcmp(mme_key, "sgsap")) {
+        /*
+         * Add/update only: VLRs keep their SCTP association, TAI-LAI maps
+         * are edited in place, and entries dropped from the file are
+         * retired rather than freed (attached UEs still point at them).
+         * A failed parse leaves the previous table alone.
+         */
+        if (mme_sgsap_config_parse(mme_iter, true) != OGS_OK)
+            ogs_reload_audit_warn(" sgsap parse failed; previous maps kept");
+        mme_reload_lists_changed++;
+        return 0;
+    }
     if (!strcmp(mme_key, "apn_correction")) {
         int n = mme_apn_policy_parse(mme_iter);
 

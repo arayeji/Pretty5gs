@@ -54,6 +54,19 @@ Top-level section in each NF YAML (`mme.yaml`, `smf.yaml`, `sgwc.yaml`).
 
 ---
 
+## Global parameters (`global.parameter` in MME YAML)
+
+Applied by the MME SIGHUP handler. Keys absent from the new document keep
+their previous value.
+
+| YAML path | SIGHUP | Notes |
+|-----------|--------|-------|
+| `global.parameter.fake_csfb` | yes | Attach Accept Combined when HSS NAM is packet-only |
+| `global.parameter.ignore_sgs` | yes | skip SGsAP Location Update (e.g. roamers); no VLR |
+| other `global.parameter.*` | **no** | restart required |
+
+---
+
 ## MME (`/etc/open5gs/mme.yaml` → `mme:`)
 
 ### Timers — `mme.time.*`
@@ -92,6 +105,28 @@ Top-level section in each NF YAML (`mme.yaml`, `smf.yaml`, `sgwc.yaml`).
 | `mme.gtpc.server` | **no** | bind address — restart required |
 
 Peer entry fields on add/sync: `address`, `port`, `family`, `tac`, `e_cell_id`, `apn`, `serving_plmn_id`, `plmn_id` (IMSI-PLMN rules).
+
+### SGs / VLR — `mme.sgsap.*`
+
+| YAML path | SIGHUP | Notes |
+|-----------|--------|-------|
+| `mme.sgsap.client[].map[]` | yes | TAI-LAI table: entries added, updated in place, or retired. A map entry is keyed by `tai.plmn_id` + `tac`/`tac_end` + `imsi_prefix`, so editing only `lai` updates the existing entry |
+| `mme.sgsap.client[]` (new address) | yes | new VLR is added and its SCTP association started |
+| `mme.sgsap.client[].address` (changed) | **no** | reads as "new VLR added, old one missing": the new one connects, the old association is kept — restart to drop it |
+| `mme.sgsap.client[]` (removed) | **no** | association kept, warned in the audit — restart required |
+| `mme.sgsap.client[].local_address` / `port` / `option` | **no** | bind/transport — restart required, change is ignored with an audit warning |
+| `mme.sgsap.max_csmap` | yes | parse-time cap only |
+
+Reload is add/update-only by design: rebinding a VLR would drop SGs for every
+CSFB subscriber on it and force them all to re-run Location Update.
+
+Map entries dropped from the file are unlinked from the lookup path
+immediately, but the objects are freed only once no attached UE still points
+at one (a UE holds its `csmap` until it detaches or runs another TAU). The
+audit line reports both counts, e.g.
+`sgsap vlr+0 map+3 map~11 map-2 (freed 1, 1 pinned by attached UEs)`.
+
+A malformed `mme.sgsap` block leaves the previous table in place.
 
 ### Lists — full replace when key present
 

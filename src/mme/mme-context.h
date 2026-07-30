@@ -125,6 +125,13 @@ typedef struct mme_context_s {
 
     ogs_list_t      vlr_list;       /* VLR SGsAP Client List */
     ogs_list_t      csmap_list;     /* TAI-LAI Map List */
+    /*
+     * TAI-LAI maps dropped by a SIGHUP reload. An attached UE keeps a raw
+     * mme_ue->csmap pointer for its whole lifetime, so a retired entry is
+     * unlinked from every lookup path but only freed once no UE refers to
+     * it (see mme_csmap_reclaim_retired()).
+     */
+    ogs_list_t      csmap_retired_list;
     ogs_list_t      hssmap_list;    /* PLMN HSS Map List */
 
     ogs_list_t      emerg_list;     /* Emergency number list */
@@ -560,6 +567,8 @@ typedef struct mme_vlr_s {
     ogs_sock_t      *sock;      /* VLR SGsAP Socket */
     ogs_sockopt_t   *option;    /* VLR SGsAP Socket Option */
     ogs_poll_t      *poll;      /* VLR SGsAP Poll */
+
+    bool            seen;       /* still present in the reloaded config */
 } mme_vlr_t;
 
 typedef struct mme_csmap_s {
@@ -570,6 +579,10 @@ typedef struct mme_csmap_s {
     uint16_t        tac_end;    /* inclusive; 0 = only tai.tac */
     ogs_nas_lai_t   lai;
     char            imsi_prefix[6];   /* optional; empty = any IMSI on this TAI */
+
+    bool            seen;       /* matched by the reload in progress */
+    bool            retired;    /* dropped from config, awaiting reclaim */
+    bool            referenced; /* scratch flag for the reclaim scan */
 
     mme_vlr_t       *vlr;
 } mme_csmap_t;
@@ -1817,10 +1830,29 @@ void mme_vlr_remove(mme_vlr_t *vlr);
 void mme_vlr_remove_all(void);
 void mme_vlr_close(mme_vlr_t *vlr);
 mme_vlr_t *mme_vlr_find_by_sock(const ogs_sock_t *sock);
+mme_vlr_t *mme_vlr_find_by_addr(const ogs_sockaddr_t *sa_list);
 
 mme_csmap_t *mme_csmap_add(mme_vlr_t *vlr);
 void mme_csmap_remove(mme_csmap_t *csmap);
 void mme_csmap_remove_all(void);
+/*
+ * Free retired maps that no attached UE points at any more. Cheap enough
+ * to run from the reload path: one pass over mme_ue_list, then one over
+ * the retired list.
+ */
+int mme_csmap_reclaim_retired(void);
+
+/*
+ * Parse 'mme.sgsap'. 'mme_iter' must sit on the sgsap key.
+ *
+ * At startup this builds the VLR and TAI-LAI map lists from scratch. On a
+ * SIGHUP reload it is add/update-only: VLRs are matched by address and
+ * their SCTP association is left untouched, map entries are updated in
+ * place, brand-new VLRs are connected, and entries no longer in the file
+ * are retired rather than freed. Changing or deleting an existing VLR
+ * address still needs a restart and is reported as such.
+ */
+int mme_sgsap_config_parse(ogs_yaml_iter_t *mme_iter, bool reload);
 
 mme_csmap_t *mme_csmap_find_by_tai(const ogs_eps_tai_t *tai);
 mme_csmap_t *mme_csmap_find_by_tai_and_imsi(

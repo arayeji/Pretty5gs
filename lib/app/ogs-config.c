@@ -479,6 +479,57 @@ int ogs_app_parse_global_conf(ogs_yaml_iter_t *parent)
     return OGS_OK;
 }
 
+int ogs_app_reload_parameter_scalars(void)
+{
+    yaml_document_t *document = NULL;
+    ogs_yaml_iter_t root_iter;
+    int applied = 0;
+
+    document = ogs_app()->document;
+    if (!document)
+        return 0;
+
+    ogs_yaml_iter_init(&root_iter, document);
+    while (ogs_yaml_iter_next(&root_iter)) {
+        const char *root_key = ogs_yaml_iter_key(&root_iter);
+        ogs_yaml_iter_t global_iter;
+
+        ogs_assert(root_key);
+        if (strcmp(root_key, "global") != 0)
+            continue;
+
+        ogs_yaml_iter_recurse(&root_iter, &global_iter);
+        while (ogs_yaml_iter_next(&global_iter)) {
+            const char *global_key = ogs_yaml_iter_key(&global_iter);
+            ogs_yaml_iter_t parameter_iter;
+
+            ogs_assert(global_key);
+            if (strcmp(global_key, "parameter") != 0)
+                continue;
+
+            ogs_yaml_iter_recurse(&global_iter, &parameter_iter);
+            while (ogs_yaml_iter_next(&parameter_iter)) {
+                const char *parameter_key =
+                    ogs_yaml_iter_key(&parameter_iter);
+
+                ogs_assert(parameter_key);
+                if (!strcmp(parameter_key, "fake_csfb")) {
+                    global_conf.parameter.fake_csfb =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                    applied++;
+                } else if (!strcmp(parameter_key, "ignore_sgs")) {
+                    global_conf.parameter.ignore_sgs =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                    applied++;
+                }
+                /* Other parameter keys stay restart-only. */
+            }
+        }
+    }
+
+    return applied;
+}
+
 static void regenerate_all_timer_duration(void)
 {
     ogs_assert(local_conf.time.message.duration);
