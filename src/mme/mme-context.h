@@ -1558,8 +1558,8 @@ typedef struct mme_sess_s {
     /*
      * True when the UE supplied a non-empty APN IE in PDN Connectivity
      * Request / ESM Information Response. False when APN was omitted or
-     * empty and the MME selected the HSS/S6a default - inbound_roam
-     * allowed_apn policy is then bypassed (subscription default wins).
+     * empty and the MME selected the HSS/S6a default. inbound_roam
+     * allowed_apn always applies to the resolved APN either way.
      */
     bool            ue_provided_apn;
 
