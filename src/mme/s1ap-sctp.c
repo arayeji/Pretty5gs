@@ -283,19 +283,30 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
             break;
 
         case SCTP_SEND_FAILED :
+            /*
+             * Kernel could not deliver a PDU on this assoc. Treat like
+             * peer loss for that eNB: drop S1 so we clear TX backlog and
+             * stop UE retry storms (mirrors IO-thread ETIMEDOUT path).
+             */
 #if HAVE_USRSCTP
             mme_ran_warn(s1ap_rx_safe_enb_lookup(&from), NULL, NULL, "s1ap", NULL,
-                    "SCTP_SEND_FAILED:[T:%d, F:0x%x, S:%d]",
+                    "SCTP_SEND_FAILED:[T:%d, F:0x%x, S:%d] — dropping S1",
                     not->sn_send_failed_event.ssfe_type,
                     not->sn_send_failed_event.ssfe_flags,
                     not->sn_send_failed_event.ssfe_error);
 #else
             mme_ran_warn(s1ap_rx_safe_enb_lookup(&from), NULL, NULL, "s1ap", NULL,
-                    "SCTP_SEND_FAILED:[T:%d, F:0x%x, S:%d]",
+                    "SCTP_SEND_FAILED:[T:%d, F:0x%x, S:%d] — dropping S1",
                     not->sn_send_failed.ssf_type,
                     not->sn_send_failed.ssf_flags,
                     not->sn_send_failed.ssf_error);
 #endif
+            addr = ogs_calloc(1, sizeof(ogs_sockaddr_t));
+            if (addr) {
+                s1ap_copy_peer_addr(addr, &from, sock);
+                s1ap_event_push(MME_EVENT_S1AP_LO_CONNREFUSED,
+                        sock, addr, NULL, 0, 0);
+            }
             break;
 
         case SCTP_PEER_ADDR_CHANGE:

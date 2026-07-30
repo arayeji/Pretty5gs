@@ -1949,6 +1949,17 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
         }
         return 0;
     }
+    if (!strcmp(mme_key, "s1ap_io_stall_teardown_sec")) {
+        const char *v = ogs_yaml_iter_value(mme_iter);
+
+        if (v) {
+            self->s1ap_io_stall_teardown_sec = atoi(v);
+            mme_reload_lists_changed++;
+            ogs_reload_audit_note(" s1ap_io_stall_teardown_sec=%d",
+                    self->s1ap_io_stall_teardown_sec);
+        }
+        return 0;
+    }
     if (!strcmp(mme_key, "equivalent_plmn_serving_only")) {
         self->attach_accept.equivalent_plmn_serving_only =
             ogs_yaml_iter_bool(mme_iter);

@@ -1369,6 +1369,11 @@ int mme_context_parse_config(void)
                         if (self.s1ap_io_write_queue_max < 0)
                             self.s1ap_io_write_queue_max = 0;
                     }
+                } else if (!strcmp(mme_key, "s1ap_io_stall_teardown_sec")) {
+                    /* full write-queue → CONNREFUSED after N seconds */
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+                    if (v)
+                        self.s1ap_io_stall_teardown_sec = atoi(v);
                 } else if (!strcmp(mme_key, "paging")) {
                     ogs_yaml_iter_t paging_iter;
 

@@ -225,6 +225,13 @@ mme:
   #                                 # IO thread (s1ap_io_thread: 1); PDUs
   #                                 # over the cap are dropped. SIGHUP
   #                                 # reloadable. 0/unset = default 10240.
+  # s1ap_io_stall_teardown_sec: 10  # if one eNB's write queue stays full
+  #                                 # this long, clear its TX queue and
+  #                                 # drop S1 (CONNREFUSED). Protects the
+  #                                 # shared IO/workers from a stuck cell.
+  #                                 # 0/unset = 10. Negative = disable.
+  #                                 # SIGHUP reloadable. ETIMEDOUT always
+  #                                 # tears that assoc down.
   # paging:
   #   first_wave: last_enb          # last_enb = smart paging: first wave
   #                                 # only to the UE's last eNB (from eCGI),

@@ -292,6 +292,13 @@ typedef struct mme_context_s {
      */
     int             s1ap_io_write_queue_max;
     /*
+     * Seconds the per-eNB write queue may stay full before we tear that
+     * S1 association down (clear TX queue + CONNREFUSED). 0 = default
+     * (10). Negative = disable stall teardown (ETIMEDOUT still tears
+     * down). SIGHUP reloadable.
+     */
+    int             s1ap_io_stall_teardown_sec;
+    /*
      * Smart paging: first S1 Paging wave goes only to the eNB the UE
      * last camped on (from stored eCGI); T3413 retries fan out to the
      * whole TA. Cuts paging PDU volume by ~1/fan-out. SIGHUP reloadable.
