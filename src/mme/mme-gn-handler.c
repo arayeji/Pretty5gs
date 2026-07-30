@@ -266,7 +266,11 @@ static mme_sess_t *mme_ue_session_from_gtp1_pdp_ctx(mme_ue_t *mme_ue, const ogs_
     sess = mme_sess_find_by_pti(mme_ue, pti);
     if (!sess) {
         sess = mme_sess_add(mme_ue, pti);
-        ogs_assert(sess);
+        if (!sess) {
+            ogs_error("[%s] mme_sess_add failed during Gn IRAT (PTI=%d)",
+                    mme_ue->imsi_bcd, pti);
+            return NULL;
+        }
     }
 
     sess->session = ogs_sess;

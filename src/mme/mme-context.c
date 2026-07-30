@@ -8691,7 +8691,11 @@ mme_sess_t *mme_sess_add(mme_ue_t *mme_ue, uint8_t pti)
     mme_ctx_lock();
     ogs_pool_id_calloc(&mme_sess_pool, &sess);
     mme_ctx_unlock();
-    ogs_assert(sess);
+    if (!sess) {
+        ogs_error("[%s] mme_sess_add: session pool exhausted",
+                mme_ue->imsi_bcd);
+        return NULL;
+    }
 
     ogs_list_init(&sess->bearer_list);
 
@@ -8699,7 +8703,19 @@ mme_sess_t *mme_sess_add(mme_ue_t *mme_ue, uint8_t pti)
     sess->pti = pti;
 
     bearer = mme_bearer_add(sess);
-    ogs_assert(bearer);
+    if (!bearer) {
+        /*
+         * Typical cause: EBI 5-15 all taken after UE context merge left
+         * too many bearers. Do not abort the MME — caller rejects the UE.
+         */
+        ogs_error("[%s] mme_sess_add: default bearer create failed "
+                "(EBI bitmap=0x%x)",
+                mme_ue->imsi_bcd, mme_ue->ebi_bitmap);
+        mme_ctx_lock();
+        ogs_pool_id_free(&mme_sess_pool, sess);
+        mme_ctx_unlock();
+        return NULL;
+    }
 
     /*
      * Guard sess_list mutation against the /ue-info dumper running
@@ -9339,8 +9355,50 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
         }
 
         if (!sess) {
+            if (!mme_ue_ebi_available(mme_ue)) {
+                mme_ue_sync_ebi_bitmap(mme_ue);
+                if (!mme_ue_ebi_available(mme_ue))
+                    mme_ue_reclaim_incomplete_sessions(mme_ue);
+            }
+            /*
+             * Attach must be able to create a default bearer. If OLD UE
+             * merge left every EBI taken, clear local sessions without an
+             * S1-U path; remaining stuck EBIs still fail soft below.
+             */
+            if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST &&
+                    !mme_ue_ebi_available(mme_ue)) {
+                mme_sess_t *old = NULL, *old_next = NULL;
+                ogs_warn("[%s] EBI exhausted on attach; clearing sessions "
+                        "without SGW-S1U path",
+                        mme_ue->imsi_bcd);
+                ogs_list_for_each_safe(&mme_ue->sess_list, old_next, old) {
+                    if (!MME_HAVE_SGW_S1U_PATH(old))
+                        MME_SESS_CLEAR(old);
+                }
+            }
+
             sess = mme_sess_add(mme_ue, pti);
-            ogs_assert(sess);
+            if (!sess) {
+                ogs_error("[%s] Cannot add session (PTI=%d create_action=%d)",
+                        mme_ue->imsi_bcd, pti, create_action);
+                if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST) {
+                    r = nas_eps_send_attach_reject(enb_ue, mme_ue,
+                            OGS_NAS_EMM_CAUSE_NETWORK_FAILURE,
+                            OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES);
+                    ogs_expect(r == OGS_OK);
+                    mme_send_s1_release_after_emm_failure(mme_ue);
+                } else {
+                    /* No sess yet — build a temporary reject via attach path
+                     * is wrong; send ESM status / attach-style is unavailable.
+                     * PDN connectivity reject needs a sess; fall back to
+                     * attach reject when enb_ue present. */
+                    r = nas_eps_send_attach_reject(enb_ue, mme_ue,
+                            OGS_NAS_EMM_CAUSE_NETWORK_FAILURE,
+                            OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES);
+                    ogs_expect(r == OGS_OK);
+                }
+                return NULL;
+            }
 
             ogs_debug("[%s:%p]", mme_ue->imsi_bcd, mme_ue);
             ogs_debug("[%s:%d:%d:%p]",
@@ -9807,6 +9865,72 @@ int mme_m_tmsi_free(mme_m_tmsi_t *m_tmsi)
  * Bitmap-based tracking avoids ownership issues with pool-internal
  * pointers (ebi_node) and supports safe EBI reservation.
  */
+/*
+ * Rebuild ebi_bitmap / ebi_to_bearer_id from live bearers. Context merge
+ * and raced removes can leave bits set with no bearer (or the reverse),
+ * which exhausts EBIs and used to SIGABRT in mme_sess_add.
+ */
+static void mme_ue_sync_ebi_bitmap(mme_ue_t *mme_ue)
+{
+    mme_sess_t *sess = NULL;
+    mme_bearer_t *bearer = NULL;
+    uint16_t bitmap = 0;
+    ogs_pool_id_t map[MAX_EPS_BEARER_ID + 1];
+    int ebi;
+
+    ogs_assert(mme_ue);
+
+    for (ebi = 0; ebi <= MAX_EPS_BEARER_ID; ebi++)
+        map[ebi] = OGS_INVALID_POOL_ID;
+
+    ogs_list_for_each(&mme_ue->sess_list, sess) {
+        ogs_list_for_each(&sess->bearer_list, bearer) {
+            if (bearer->ebi < MIN_EPS_BEARER_ID ||
+                    bearer->ebi > MAX_EPS_BEARER_ID)
+                continue;
+            bitmap |= (uint16_t)(1 << bearer->ebi);
+            map[bearer->ebi] = bearer->id;
+        }
+    }
+
+    if (bitmap != mme_ue->ebi_bitmap) {
+        ogs_warn("[%s] EBI bitmap desync repaired: was 0x%x now 0x%x",
+                mme_ue->imsi_bcd, mme_ue->ebi_bitmap, bitmap);
+        mme_ue->ebi_bitmap = bitmap;
+    }
+    for (ebi = MIN_EPS_BEARER_ID; ebi <= MAX_EPS_BEARER_ID; ebi++)
+        mme_ue->ebi_to_bearer_id[ebi] = map[ebi];
+}
+
+static bool mme_ue_ebi_available(mme_ue_t *mme_ue)
+{
+    uint8_t ebi;
+
+    ogs_assert(mme_ue);
+    for (ebi = MIN_EPS_BEARER_ID; ebi <= MAX_EPS_BEARER_ID; ebi++) {
+        if (!(mme_ue->ebi_bitmap & (1 << ebi)))
+            return true;
+    }
+    return false;
+}
+
+/* Drop incomplete sessions (no SGW/PGW path yet) to free EBIs. */
+static void mme_ue_reclaim_incomplete_sessions(mme_ue_t *mme_ue)
+{
+    mme_sess_t *sess = NULL, *next = NULL;
+
+    ogs_assert(mme_ue);
+    ogs_list_for_each_safe(&mme_ue->sess_list, next, sess) {
+        if (sess->pgw_s5c_teid)
+            continue;
+        ogs_warn("[%s] Reclaiming incomplete session PTI[%d] for free EBI",
+                mme_ue->imsi_bcd, sess->pti);
+        MME_SESS_CLEAR(sess);
+        if (mme_ue_ebi_available(mme_ue))
+            return;
+    }
+}
+
 uint8_t mme_ebi_alloc(mme_ue_t *mme_ue)
 {
     uint8_t ebi;
@@ -9818,6 +9942,17 @@ uint8_t mme_ebi_alloc(mme_ue_t *mme_ue)
         if (!(mme_ue->ebi_bitmap & (1 << ebi))) {
             mme_ue->ebi_bitmap |= (1 << ebi);
             ogs_debug("EBI allocated [%d]", ebi);
+            return ebi;
+        }
+    }
+
+    /* Repair leaked bits, then retry once. */
+    mme_ue_sync_ebi_bitmap(mme_ue);
+    for (ebi = MIN_EPS_BEARER_ID; ebi <= MAX_EPS_BEARER_ID; ebi++) {
+        if (!(mme_ue->ebi_bitmap & (1 << ebi))) {
+            mme_ue->ebi_bitmap |= (1 << ebi);
+            ogs_warn("[%s] EBI allocated [%d] after bitmap repair",
+                    mme_ue->imsi_bcd, ebi);
             return ebi;
         }
     }
