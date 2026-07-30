@@ -1229,6 +1229,7 @@ struct mme_ue_s {
         CLEAR_MME_UE_TIMER((__mME)->t_mobile_reachable); \
         CLEAR_MME_UE_TIMER((__mME)->t_implicit_detach); \
         (__mME)->sgs_lu_pending = false; \
+        (__mME)->sgs_cs_unavailable = false; \
         ogs_timer_stop((__mME)->t_sgs_ts6_1); \
         (__mME)->s6a_pending_cmd = 0; \
         ogs_timer_stop((__mME)->t_s6a); \
@@ -1354,6 +1355,8 @@ struct mme_ue_s {
 
     ogs_timer_t     *t_sgs_ts6_1;
     bool            sgs_lu_pending;
+    /* Set when SGs LU reject/timeout; Attach/TAU Accept forces EPS-only + #18 */
+    bool            sgs_cs_unavailable;
 
     ogs_timer_t     *t_s6a;
     /*

@@ -102,13 +102,26 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         goto error;
     }
 
-    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-    if (!enb_ue) {
-        ogs_error("!enb_ue");
-        goto error;
+    /*
+     * Late / duplicate LU Accept after Ts6-1, Service Request, or S1
+     * release must not drive Attach/TAU Accept again.
+     */
+    if (!mme_ue->sgs_lu_pending) {
+        ogs_warn("[%s] Ignoring stale SGsAP Location-Update-Accept "
+                "(EPS-Type[%d])",
+                mme_ue->imsi_bcd, mme_ue->nas_eps.type);
+        return;
     }
 
     mme_sgs_ts6_1_timer_stop(mme_ue);
+    mme_ue->sgs_cs_unavailable = false;
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (!enb_ue) {
+        ogs_warn("[%s] SGsAP LU Accept: S1 context already removed",
+                mme_ue->imsi_bcd);
+        return;
+    }
 
     ogs_info("[%s] SGSAP: Location-Update-Accept", mme_ue->imsi_bcd);
     if (lai) {
@@ -169,7 +182,7 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
             mme_send_tau_accept_and_check_release(enb_ue, mme_ue);
         }
     } else {
-        ogs_error("[%s] Invalid EPS-Type[%d]",
+        ogs_warn("[%s] SGsAP LU Accept ignored: unexpected EPS-Type[%d]",
                 mme_ue->imsi_bcd, mme_ue->nas_eps.type);
     }
 
@@ -279,13 +292,24 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         return;
     }
 
-    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-    if (!enb_ue) {
-        ogs_error("!enb_ue");
-        goto error;
+    if (!mme_ue->sgs_lu_pending) {
+        ogs_warn("[%s] Ignoring stale SGsAP Location-Update-Reject "
+                "(Cause:%d EPS-Type[%d])",
+                mme_ue->imsi_bcd, emm_cause, mme_ue->nas_eps.type);
+        return;
     }
 
     mme_sgs_ts6_1_timer_stop(mme_ue);
+    /* Combined attach/TAU continues as EPS-only with EMM #18 */
+    mme_ue->sgs_cs_unavailable = true;
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (!enb_ue) {
+        ogs_warn("[%s] SGsAP LU Reject: S1 context already removed "
+                "(Cause:%d)",
+                mme_ue->imsi_bcd, emm_cause);
+        return;
+    }
 
     ogs_info("[%s] SGSAP: Location-Update-Reject [Cause:%d]",
             mme_ue->imsi_bcd, emm_cause);
@@ -351,8 +375,9 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
             mme_send_release_access_bearer_or_ue_context_release(enb_ue);
         }
     } else {
-        ogs_error("[%s] Invalid EPS-Type[%d]",
-                mme_ue->imsi_bcd, mme_ue->nas_eps.type);
+        ogs_warn("[%s] SGsAP LU Reject ignored: unexpected EPS-Type[%d] "
+                "(Cause:%d)",
+                mme_ue->imsi_bcd, mme_ue->nas_eps.type, emm_cause);
     }
 
     return;

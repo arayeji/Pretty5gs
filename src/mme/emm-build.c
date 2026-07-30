@@ -112,11 +112,17 @@ ogs_pkbuf_t *emm_build_attach_accept(
     if (mme_ue->network_access_mode == OGS_NETWORK_ACCESS_MODE_ONLY_PACKET) {
         /* permit only EPS_ATTACH */
         eps_attach_result->result = OGS_NAS_ATTACH_TYPE_EPS_ATTACH;
-        if (ogs_global_conf()->parameter.fake_csfb == true)
+        if (ogs_global_conf()->parameter.fake_csfb == true &&
+            !mme_ue->sgs_cs_unavailable)
             eps_attach_result->result =
                 OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH;
         else
             eps_attach_result->result = OGS_NAS_ATTACH_TYPE_EPS_ATTACH;
+    } else if (mme_ue->sgs_cs_unavailable &&
+            mme_ue->nas_eps.attach.value ==
+                OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH) {
+        /* SGs LU reject/timeout: EPS-only + EMM #18 */
+        eps_attach_result->result = OGS_NAS_ATTACH_TYPE_EPS_ATTACH;
     } else {
         eps_attach_result->result = mme_ue->nas_eps.attach.value;
     }
@@ -620,15 +626,26 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
     message.emm.h.protocol_discriminator = OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM;
     message.emm.h.message_type = OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT;
 
-    if (mme_ue->nas_eps.update.value ==
+    if (!mme_ue->sgs_cs_unavailable &&
+        (mme_ue->nas_eps.update.value ==
             OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING ||
-        mme_ue->nas_eps.update.value ==
-            OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING_WITH_IMSI_ATTACH) {
+         mme_ue->nas_eps.update.value ==
+            OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING_WITH_IMSI_ATTACH)) {
         tau_accept->eps_update_result.result =
             OGS_NAS_EPS_UPDATE_RESULT_COMBINED_TA_LA_UPDATED;
     } else {
         tau_accept->eps_update_result.result =
             OGS_NAS_EPS_UPDATE_RESULT_TA_UPDATED;
+        if (mme_ue->sgs_cs_unavailable &&
+            (mme_ue->nas_eps.update.value ==
+                OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING ||
+             mme_ue->nas_eps.update.value ==
+                OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING_WITH_IMSI_ATTACH)) {
+            tau_accept->presencemask |=
+                OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_EMM_CAUSE_PRESENT;
+            tau_accept->emm_cause =
+                OGS_NAS_EMM_CAUSE_CS_DOMAIN_NOT_AVAILABLE;
+        }
     }
 
     if (mme_self()->time.t3412.value) {

@@ -187,10 +187,11 @@ static void emm_handle_sgs_ts6_1_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
 
     mme_ue->sgs_lu_pending = false;
     ogs_timer_stop(mme_ue->t_sgs_ts6_1);
+    mme_ue->sgs_cs_unavailable = true;
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
-        ogs_error("[%s] Ts6-1 expired but no S1 context",
+        ogs_warn("[%s] Ts6-1 expired but no S1 context",
                 mme_ue->imsi_bcd);
         return;
     }

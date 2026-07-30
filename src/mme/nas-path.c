@@ -150,10 +150,32 @@ int nas_eps_send_attach_accept(mme_ue_t *mme_ue)
         mme_ue_progress(mme_ue, "attach_accept_no_sess");
         return OGS_NOTFOUND;
     }
+    /*
+     * Re-attach can merge OLD UE sessions before Create Session adds the
+     * new default bearer. Prefer the newest session that has a default
+     * bearer + subscription APN rather than failing the whole attach
+     * (seen under SGs LU reject storms).
+     */
     if (mme_sess_next(sess)) {
-        ogs_error("[%s] There should only be one SESSION", mme_ue->imsi_bcd);
-        mme_ue_progress(mme_ue, "attach_accept_fail");
-        return OGS_ERROR;
+        mme_sess_t *s = NULL, *chosen = NULL;
+        int n = 0;
+
+        ogs_list_for_each(&mme_ue->sess_list, s) {
+            n++;
+            if (s->session && mme_default_bearer_in_sess(s))
+                chosen = s;
+        }
+        if (!chosen) {
+            ogs_error("[%s] Attach accept: %d sessions but none usable",
+                    mme_ue->imsi_bcd, n);
+            mme_ue_progress(mme_ue, "attach_accept_fail");
+            return OGS_ERROR;
+        }
+        ogs_warn("[%s] Attach accept with %d sessions; using APN[%s]",
+                mme_ue->imsi_bcd, n,
+                chosen->session && chosen->session->name ?
+                    chosen->session->name : "-");
+        sess = chosen;
     }
 
     ogs_mme_trace_set(enb_ue, mme_ue,
