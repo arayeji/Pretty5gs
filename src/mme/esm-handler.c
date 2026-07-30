@@ -414,6 +414,7 @@ int esm_handle_information_response(
             mme_ue->csmap = csmap;
 
             if (!csmap ||
+                ogs_global_conf()->parameter.ignore_sgs == true ||
                 mme_ue->network_access_mode ==
                     OGS_NETWORK_ACCESS_MODE_ONLY_PACKET ||
                 mme_ue->nas_eps.attach.value ==

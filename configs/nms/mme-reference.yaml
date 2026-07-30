@@ -22,6 +22,8 @@ global:
   parameter:
     use_upg_vpp: false
     prefer_ipv4: true
+    # ignore_sgs: true   # skip SGsAP Location-Update (e.g. roamers); no VLR
+    # fake_csfb: true    # Attach Accept Combined when HSS NAM is packet-only
   time:
     message:
       duration: 15000

@@ -1155,6 +1155,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             /* Update CSMAP from Tracking area update request */
             mme_ue->csmap = mme_csmap_find_for_ue(mme_ue);
             if (mme_ue->csmap &&
+                ogs_global_conf()->parameter.ignore_sgs == false &&
                 mme_ue->network_access_mode ==
                     OGS_NETWORK_ACCESS_MODE_PACKET_AND_CIRCUIT &&
                 (mme_ue->nas_eps.update.value ==

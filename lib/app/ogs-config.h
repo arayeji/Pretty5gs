@@ -70,6 +70,8 @@ typedef struct ogs_global_conf_s {
 
         int use_openair;
         int fake_csfb;
+        /* Skip SGsAP (no Location-Update to VLR); Attach/TAU go EPS path */
+        int ignore_sgs;
 	int no_ims;
         int use_upg_vpp;
         int no_ipv4v6_local_addr_in_packet_filter;
