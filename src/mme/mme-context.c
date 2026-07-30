@@ -264,6 +264,9 @@ static void mme_csmap_plmn_attach(mme_csmap_t *csmap);
 static void mme_csmap_plmn_detach(mme_csmap_t *csmap);
 static void mme_csmap_plmn_hash_clear(void);
 static void mme_ue_add_abort(mme_ue_t *mme_ue);
+static void mme_ue_sync_ebi_bitmap(mme_ue_t *mme_ue);
+static bool mme_ue_ebi_available(mme_ue_t *mme_ue);
+static void mme_ue_reclaim_incomplete_sessions(mme_ue_t *mme_ue);
 
 static uint16_t mme_yaml_parse_port(const char *v, uint16_t default_port)
 {
@@ -8687,8 +8690,6 @@ void sgw_ue_source_deassociate_target(sgw_ue_t *sgw_ue)
         target_ue->source_ue_id = OGS_INVALID_POOL_ID;
     }
 }
-
-static void mme_ue_sync_ebi_bitmap(mme_ue_t *mme_ue);
 
 mme_sess_t *mme_sess_add(mme_ue_t *mme_ue, uint8_t pti)
 {
