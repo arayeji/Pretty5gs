@@ -296,7 +296,11 @@ static mme_sess_t *mme_ue_session_from_gtp1_pdp_ctx(mme_ue_t *mme_ue, const ogs_
         bearer = mme_default_bearer_in_sess(sess);
         if (!bearer) {
             bearer = mme_bearer_add(sess);
-            ogs_assert(bearer);
+            if (!bearer) {
+                ogs_error("[%s] bearer add failed for Gn PDP NSAPI=%d",
+                        mme_ue->imsi_bcd, gtp1_pdp_ctx->nsapi);
+                return NULL;
+            }
         }
     }
     bearer->pgw_s5u_teid = gtp1_pdp_ctx->ul_teid;

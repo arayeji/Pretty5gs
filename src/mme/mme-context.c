@@ -8310,6 +8310,14 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
 
             /* Phase-3 : Clear Session Context in OLD MME-UE Context */
             memset(&old_mme_ue->sess_list, 0, sizeof(old_mme_ue->sess_list));
+            /*
+             * Bearers now live under NEW UE; wipe OLD EBI state so
+             * mme_ue_remove(OLD) cannot free EBIs it no longer owns, and
+             * rebuild NEW bitmap from the moved bearer list (covers
+             * failed mme_ebi_reserve during Phase-1).
+             */
+            CLEAR_EPS_BEARER_ID(old_mme_ue);
+            mme_ue_sync_ebi_bitmap(mme_ue);
 
             /* Phase-4 : Move sgw_ue->sgw_s11_teid
              *
@@ -8680,6 +8688,8 @@ void sgw_ue_source_deassociate_target(sgw_ue_t *sgw_ue)
     }
 }
 
+static void mme_ue_sync_ebi_bitmap(mme_ue_t *mme_ue);
+
 mme_sess_t *mme_sess_add(mme_ue_t *mme_ue, uint8_t pti)
 {
     mme_sess_t *sess = NULL;
@@ -8865,7 +8875,11 @@ mme_bearer_t *mme_bearer_add(mme_sess_t *sess)
     mme_ctx_lock();
     ogs_pool_id_calloc(&mme_bearer_pool, &bearer);
     mme_ctx_unlock();
-    ogs_assert(bearer);
+    if (!bearer) {
+        mme_ue_error(mme_ue, NULL, "bearer", NULL,
+                "Bearer add failed: bearer pool exhausted");
+        return NULL;
+    }
 
     bearer->update.num_of_xacts = 0;
     bearer->create.xact_id = OGS_INVALID_POOL_ID;
