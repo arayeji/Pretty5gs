@@ -62,9 +62,17 @@ bool s1ap_io_active(void);
  *  - ETIMEDOUT, or write-queue full for s1ap_io_stall_teardown_sec:
  *    clear that eNB's TX queue and raise CONNREFUSED so S1 is dropped.
  *    A stuck cell must not keep retry-flooding shared MME workers.
+ *
+ * Well before "full", a queue deeper than s1ap_io_congest_depth() is
+ * reported to main once a second as MME_EVENT_S1AP_IO_CONGESTED so
+ * overload control can stop admitting work from that eNB and ask it to
+ * throttle (see s1ap-overload.c).
  */
 int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
         const ogs_sockaddr_t *peer_addr, bool send_with_addr);
+
+/* Effective TX-congestion watermark (mme.s1ap_io_congest_depth) */
+int s1ap_io_congest_depth(void);
 
 /*
  * Socket close registry (mutex-protected; main registers, workers may

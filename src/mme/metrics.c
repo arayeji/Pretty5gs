@@ -1097,6 +1097,23 @@ mme_metrics_spec_def_t mme_metrics_spec_def_global[_MME_METR_GLOB_MAX] = {
     .name = "enb",
     .description = "eNodeBs",
 },
+[MME_METR_GLOB_GAUGE_ENB_OVERLOADED] = {
+    .type = OGS_METRICS_METRIC_TYPE_GAUGE,
+    .name = "enb_overloaded",
+    .description = "eNodeBs currently under S1AP overload control",
+},
+/* Global Counters: */
+[MME_METR_GLOB_CTR_S1AP_INITIAL_UE_SHED] = {
+    .type = OGS_METRICS_METRIC_TYPE_COUNTER,
+    .name = "s1ap_initial_ue_shed",
+    .description =
+        "InitialUEMessages dropped by ingress admission control",
+},
+[MME_METR_GLOB_CTR_S1AP_OVERLOAD_START] = {
+    .type = OGS_METRICS_METRIC_TYPE_COUNTER,
+    .name = "s1ap_overload_start",
+    .description = "S1AP OVERLOAD START messages sent to eNodeBs",
+},
 };
 int mme_metrics_init_inst_global(void)
 {

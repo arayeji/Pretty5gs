@@ -27,6 +27,7 @@
 #include "s1ap-path.h"
 #include "s1ap-tx.h"
 #include "s1ap-io.h"
+#include "s1ap-overload.h"
 #include "sgsap-path.h"
 #include "nas-security.h"
 #include "nas-path.h"
@@ -58,6 +59,7 @@ void mme_state_initial(ogs_fsm_t *s, mme_event_t *e)
     ogs_assert(s);
 
     mme_orphan_timer_start();
+    mme_overload_timer_start();
 
     OGS_FSM_TRAN(s, &mme_state_operational);
 }
@@ -132,6 +134,7 @@ void mme_state_final(ogs_fsm_t *s, mme_event_t *e)
     ogs_assert(s);
 
     mme_orphan_timer_stop();
+    mme_overload_timer_stop();
     mme_admin_drain_timer_stop();
     mme_gtp_pending_release_final();
 }
@@ -390,6 +393,15 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         /* the IO thread dropped its write queue / POLLOUT for e->sock */
         ogs_assert(e->sock);
         s1ap_sock_close_confirm(e->sock, S1AP_SOCK_CONFIRM_IO);
+        break;
+
+    case MME_EVENT_S1AP_IO_CONGESTED:
+        /* TX backlog heartbeat from the IO thread; a socket that has
+         * since been torn down simply has no eNB to throttle */
+        ogs_assert(e->sock);
+        enb = mme_enb_find_by_sock(e->sock);
+        if (enb)
+            mme_overload_enb_congested(enb, e->io_wq_depth);
         break;
 
     case MME_EVENT_S1AP_RX_WATCH_FAILED:

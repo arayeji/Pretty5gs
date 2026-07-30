@@ -48,6 +48,13 @@ typedef enum {
      * (write queue + POLLOUT). Main may destroy the socket once all
      * registered confirmations arrive (see s1ap-io.c close registry) */
     MME_EVENT_S1AP_IO_DRAINED,
+    /*
+     * IO thread heartbeat: e->sock's write queue is above the
+     * congestion watermark, depth in e->io_wq_depth. Repeated once a
+     * second while it lasts; main treats it as a short lease
+     * (s1ap-overload.c). Safe to drop — the next one arrives in 1 s.
+     */
+    MME_EVENT_S1AP_IO_CONGESTED,
 
     MME_EVENT_EMM_MESSAGE,
     MME_EVENT_EMM_TIMER,
@@ -186,6 +193,9 @@ typedef struct mme_event_s {
     /* MME_EVENT_S1AP_TX_READY: SCTP stream for the encoded pkbuf */
     uint16_t tx_stream_no;
 
+    /* MME_EVENT_S1AP_IO_CONGESTED: per-eNB write-queue depth */
+    int io_wq_depth;
+
     uint8_t nas_type;
     int create_action;
     ogs_nas_eps_message_t *nas_message;
@@ -295,6 +305,9 @@ void s1ap_event_push_decoded(void *sock, ogs_sockaddr_t *addr,
 void mme_sctp_event_push(mme_event_e id,
         void *sock, ogs_sockaddr_t *addr, ogs_pkbuf_t *pkbuf,
         uint16_t max_num_of_istreams, uint16_t max_num_of_ostreams);
+
+/* IO thread -> main: TX congestion heartbeat for sock (see s1ap-io.c) */
+void s1ap_io_congestion_event_push(void *sock, int wq_depth);
 
 #ifdef __cplusplus
 }

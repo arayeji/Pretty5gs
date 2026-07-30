@@ -278,6 +278,32 @@ size_t mme_dump_enb_info_paged(char *buf, size_t buflen,
             cJSON_Delete(e); oom = true; break;
         }
 
+        /*
+         * overload block (s1ap-overload.c). Written on the MME main
+         * thread, read here: same rationale as num_connected_ues —
+         * these are plain ints/counters, so a stale or torn diagnostic
+         * read is acceptable and no lock is taken.
+         */
+        {
+            cJSON *ovl = cJSON_CreateObject();
+            if (!ovl) { cJSON_Delete(e); oom = true; break; }
+
+            if (!cJSON_AddNumberToObject(ovl, "level",
+                        (double)enb->overload.level) ||
+                !cJSON_AddNumberToObject(ovl, "signalled_level",
+                        (double)enb->overload.signalled_level) ||
+                !cJSON_AddNumberToObject(ovl, "tx_queue",
+                        (double)enb->overload.congested_depth) ||
+                !cJSON_AddNumberToObject(ovl, "shed_total",
+                        (double)enb->overload.shed_total) ||
+                !cJSON_AddNumberToObject(ovl, "rate_shed_total",
+                        (double)enb->overload.rate_shed_total)) {
+                cJSON_Delete(ovl); cJSON_Delete(e); oom = true; break;
+            }
+
+            cJSON_AddItemToObjectCS(e, "overload", ovl);
+        }
+
         /* success -> append to items[] */
         cJSON_AddItemToArray(items, e);
         emitted++;

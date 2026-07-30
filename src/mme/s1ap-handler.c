@@ -31,6 +31,7 @@
 #include "mme-s11-build.h"
 #include "s1ap-build.h"
 #include "s1ap-handler.h"
+#include "s1ap-overload.h"
 
 #include "mme-path.h"
 #include "mme-sm.h"
@@ -614,6 +615,7 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
     S1AP_TAI_t *TAI = NULL;
     S1AP_EUTRAN_CGI_t *EUTRAN_CGI = NULL;
     S1AP_S_TMSI_t *S_TMSI = NULL;
+    S1AP_RRC_Establishment_Cause_t *RRC_Establishment_Cause = NULL;
 
     S1AP_PLMNidentity_t *pLMNidentity = NULL;
     S1AP_TAC_t *tAC = NULL;
@@ -650,6 +652,10 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
         case S1AP_ProtocolIE_ID_id_S_TMSI:
             S_TMSI = &ie->value.choice.S_TMSI;
             break;
+        case S1AP_ProtocolIE_ID_id_RRC_Establishment_Cause:
+            RRC_Establishment_Cause =
+                &ie->value.choice.RRC_Establishment_Cause;
+            break;
         default:
             break;
         }
@@ -657,6 +663,19 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
 
     ogs_debug("    IP[%s] ENB_ID[%d]",
             OGS_ADDR(enb->sctp.addr, buf), enb->enb_id);
+
+    /*
+     * Ingress admission (s1ap-overload.c). Shedding happens here,
+     * before any context exists and before the NAS decode: the point is
+     * to spend nothing on a UE we cannot serve. Nothing is sent back —
+     * an Error Indication or Attach Reject per shed message is more
+     * downlink load on an association that is already backing up, and
+     * the UE's own retry timer is the correct backoff.
+     */
+    if (!s1ap_admit_initial_ue(enb,
+                RRC_Establishment_Cause ? *RRC_Establishment_Cause : 0,
+                RRC_Establishment_Cause != NULL))
+        return;
 
     if (!ENB_UE_S1AP_ID) {
         ogs_error("No ENB_UE_S1AP_ID");

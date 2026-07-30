@@ -36,6 +36,7 @@
 #include "s1ap-path.h"
 #include "s1ap-rx.h"
 #include "s1ap-io.h"
+#include "s1ap-overload.h"
 #include "s1ap-handler.h"
 #include "mme-workers.h"
 #include "mme-sm.h"
@@ -906,6 +907,15 @@ static int mme_context_prepare(void)
 {
     self.relative_capacity = 0xff;
 
+    /*
+     * Overload control defaults to on: an MME that keeps admitting
+     * work from an eNB it cannot answer is the failure mode this
+     * protects against, and the shed set excludes emergency and MT
+     * access, so a healthy network never notices it.
+     */
+    self.overload.enabled = true;
+    self.overload.signal_enb = true;
+
     self.s1ap_port = OGS_S1AP_SCTP_PORT;
     self.sgsap_port = OGS_SGSAP_SCTP_PORT;
     self.diam_config->cnf_port = DIAMETER_PORT;
@@ -1374,6 +1384,26 @@ int mme_context_parse_config(void)
                     const char *v = ogs_yaml_iter_value(&mme_iter);
                     if (v)
                         self.s1ap_io_stall_teardown_sec = atoi(v);
+                } else if (!strcmp(mme_key, "s1ap_io_congest_depth")) {
+                    /* queue depth reported as TX-congested (0 = max/4) */
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+                    if (v) {
+                        self.s1ap_io_congest_depth = atoi(v);
+                        if (self.s1ap_io_congest_depth < 0)
+                            self.s1ap_io_congest_depth = 0;
+                    }
+                } else if (!strcmp(mme_key, "overload")) {
+                    ogs_yaml_iter_t overload_iter;
+
+                    ogs_yaml_iter_recurse(&mme_iter, &overload_iter);
+                    while (ogs_yaml_iter_next(&overload_iter)) {
+                        const char *ok = ogs_yaml_iter_key(&overload_iter);
+
+                        ogs_assert(ok);
+                        if (mme_overload_config_set(ok, &overload_iter) !=
+                                OGS_OK)
+                            ogs_warn("unknown key `%s` in mme.overload", ok);
+                    }
                 } else if (!strcmp(mme_key, "paging")) {
                     ogs_yaml_iter_t paging_iter;
 

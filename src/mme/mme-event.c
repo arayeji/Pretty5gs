@@ -283,6 +283,8 @@ const char *mme_event_get_name(mme_event_t *e)
         return "MME_EVENT_S1AP_RX_WATCH_FAILED";
     case MME_EVENT_S1AP_TX_READY:
         return "MME_EVENT_S1AP_TX_READY";
+    case MME_EVENT_S1AP_IO_CONGESTED:
+        return "MME_EVENT_S1AP_IO_CONGESTED";
 
     case MME_EVENT_EMM_MESSAGE:
         return "MME_EVENT_EMM_MESSAGE";
@@ -637,4 +639,33 @@ void mme_sctp_event_push(mme_event_e id,
         mme_event_discard_s1ap_push(e);
         return;
     }
+}
+
+void s1ap_io_congestion_event_push(void *sock, int wq_depth)
+{
+    mme_event_t *e = NULL;
+    int rv;
+
+    ogs_assert(sock);
+
+    e = mme_event_new(MME_EVENT_S1AP_IO_CONGESTED);
+    ogs_assert(e);
+    e->sock = sock;
+    e->io_wq_depth = wq_depth;
+
+    /*
+     * Best effort by design: this is a repeated heartbeat, so dropping
+     * one on a full queue costs at most a second of throttling. Silent
+     * on failure — a congestion report that logs an error on every
+     * drop would be loudest exactly when the MME is busiest.
+     */
+    rv = ogs_worker_self() ?
+        ogs_queue_trypush(ogs_app()->queue, e) : mme_queue_push_main(e);
+    if (rv != OGS_OK) {
+        mme_event_free(e);
+        return;
+    }
+
+    if (ogs_worker_self())
+        ogs_pollset_notify(ogs_app()->pollset);
 }

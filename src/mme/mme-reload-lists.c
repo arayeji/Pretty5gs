@@ -24,6 +24,7 @@
 #include "eplmn-config.h"
 #include "mme-reload-lists.h"
 #include "mme-inbound-roam-apn.h"
+#include "s1ap-overload.h"
 
 volatile int mme_reload_lists_changed = 0;
 
@@ -1958,6 +1959,37 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
             ogs_reload_audit_note(" s1ap_io_stall_teardown_sec=%d",
                     self->s1ap_io_stall_teardown_sec);
         }
+        return 0;
+    }
+    if (!strcmp(mme_key, "s1ap_io_congest_depth")) {
+        const char *v = ogs_yaml_iter_value(mme_iter);
+
+        if (v) {
+            int n = atoi(v);
+
+            self->s1ap_io_congest_depth = n > 0 ? n : 0;
+            mme_reload_lists_changed++;
+            ogs_reload_audit_note(" s1ap_io_congest_depth=%d", n);
+        }
+        return 0;
+    }
+    if (!strcmp(mme_key, "overload")) {
+        ogs_yaml_iter_t overload_iter;
+
+        ogs_yaml_iter_recurse(mme_iter, &overload_iter);
+        while (ogs_yaml_iter_next(&overload_iter)) {
+            const char *ok = ogs_yaml_iter_key(&overload_iter);
+
+            ogs_assert(ok);
+            if (mme_overload_config_set(ok, &overload_iter) != OGS_OK)
+                ogs_reload_audit_note(" overload unknown key %s", ok);
+        }
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" overload=%s signal_enb=%s "
+                "enb_initial_ue_rate=%d",
+                self->overload.enabled ? "on" : "off",
+                self->overload.signal_enb ? "on" : "off",
+                self->overload.enb_initial_ue_rate);
         return 0;
     }
     if (!strcmp(mme_key, "equivalent_plmn_serving_only")) {

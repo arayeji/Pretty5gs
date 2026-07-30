@@ -60,6 +60,7 @@ typedef struct io_sock_s {
     uint32_t        wq_dropped;     /* drops in current log window */
     ogs_time_t      wq_drop_window; /* start of current log window */
     ogs_time_t      wq_full_since;  /* when depth first hit max (0=ok) */
+    ogs_time_t      congest_report; /* last congestion heartbeat to main */
     ogs_poll_t      *poll_write;    /* POLLOUT on io_worker->pollset */
     bool            send_addr;      /* pass addr to sendmsg (SEQPACKET) */
     bool            has_peer;
@@ -83,6 +84,22 @@ static int io_write_queue_max(void)
     int v = mme_self()->s1ap_io_write_queue_max;
 
     return v > 0 ? v : IO_WRITE_QUEUE_MAX_DEFAULT;
+}
+
+/*
+ * Depth at which an association counts as TX-congested for overload
+ * control. A quarter of the cap by default: far enough below full that
+ * an OVERLOAD START still gets out, far enough above idle that normal
+ * attach bursts do not trip it.
+ */
+int s1ap_io_congest_depth(void)
+{
+    int v = mme_self()->s1ap_io_congest_depth;
+
+    if (v > 0)
+        return v;
+    v = io_write_queue_max() / 4;
+    return v > 0 ? v : 1;
 }
 
 /* 0/unset → default; negative → disabled */
@@ -182,6 +199,17 @@ static void io_sock_free(io_sock_t *ctx)
 
 static void io_write_cb(short when, ogs_socket_t fd, void *data);
 
+/*
+ * Timeout on send: the peer is not taking data even though RX may stay
+ * quiet, so the IO thread has to drive teardown itself. OGS_ETIMEDOUT
+ * is the portable spelling (WSAETIMEDOUT on Windows, ETIMEDOUT here);
+ * listing both is a duplicated test on POSIX.
+ */
+static bool io_errno_needs_teardown(ogs_err_t err)
+{
+    return err == OGS_ETIMEDOUT;
+}
+
 static bool io_errno_assoc_dead(ogs_err_t err)
 {
     return err == EPIPE ||
@@ -189,14 +217,7 @@ static bool io_errno_assoc_dead(ogs_err_t err)
            err == ENOTCONN ||
            err == ECONNABORTED ||
            err == OGS_EBADF ||
-           err == ETIMEDOUT ||
-           err == OGS_ETIMEDOUT;
-}
-
-/* ETIMEDOUT / prolonged TX stall: IO must drive teardown (RX may stay quiet). */
-static bool io_errno_needs_teardown(ogs_err_t err)
-{
-    return err == ETIMEDOUT || err == OGS_ETIMEDOUT;
+           io_errno_needs_teardown(err);
 }
 
 /*
@@ -287,6 +308,24 @@ static void io_request_teardown(io_sock_t *ctx, const char *why)
     /* addr may be NULL — handler falls back to sock lookup */
     mme_sctp_event_push(MME_EVENT_S1AP_LO_CONNREFUSED,
             ctx->sock, addr, NULL, 0, 0);
+}
+
+/*
+ * Tell main this association's downlink is backing up, at most once a
+ * second. Deliberately a repeated heartbeat rather than an edge event:
+ * main holds it as a short lease (mme.overload.congest_lease_sec), so a
+ * heartbeat lost to a full event queue can only clear the state early
+ * — it can never leave an eNB throttled forever. Also why this is not
+ * a "congestion cleared" event: there is nothing to lose.
+ */
+static void io_report_congestion(io_sock_t *ctx, ogs_time_t now)
+{
+    if (ctx->congest_report &&
+        (now - ctx->congest_report) < ogs_time_from_sec(1))
+        return;
+    ctx->congest_report = now;
+
+    s1ap_io_congestion_event_push(ctx->sock, ctx->wq_count);
 }
 
 /*
@@ -420,6 +459,9 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
             ogs_pkbuf_free(job->pkbuf);
             break;
         }
+
+        if (ctx->wq_count >= s1ap_io_congest_depth())
+            io_report_congestion(ctx, ogs_time_now());
 
         if (ctx->wq_count >= io_write_queue_max()) {
             /*

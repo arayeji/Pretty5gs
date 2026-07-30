@@ -17,6 +17,9 @@ typedef enum mme_metric_type_global_s {
     MME_METR_GLOB_GAUGE_ENB_UE,
     MME_METR_GLOB_GAUGE_MME_SESS,
     MME_METR_GLOB_GAUGE_ENB,
+    MME_METR_GLOB_GAUGE_ENB_OVERLOADED,
+    MME_METR_GLOB_CTR_S1AP_INITIAL_UE_SHED,
+    MME_METR_GLOB_CTR_S1AP_OVERLOAD_START,
     _MME_METR_GLOB_MAX,
 } mme_metric_type_global_t;
 extern ogs_metrics_inst_t *mme_metrics_inst_global[_MME_METR_GLOB_MAX];

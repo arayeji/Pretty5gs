@@ -32,6 +32,13 @@ ogs_pkbuf_t *s1ap_build_setup_rsp(mme_enb_t *enb);
 ogs_pkbuf_t *s1ap_build_setup_failure(
     S1AP_Cause_PR group, long cause, long time_to_wait);
 
+/*
+ * TS 36.413 8.9 Overload. action is S1AP_OverloadAction_*;
+ * traffic_reduction 1..99 percent, 0 = omit the IE.
+ */
+ogs_pkbuf_t *s1ap_build_overload_start(long action, int traffic_reduction);
+ogs_pkbuf_t *s1ap_build_overload_stop(void);
+
 ogs_pkbuf_t *s1ap_build_enb_configuration_update_ack(void);
 ogs_pkbuf_t *s1ap_build_enb_configuration_update_failure(
     S1AP_Cause_PR group, long cause, long time_to_wait);

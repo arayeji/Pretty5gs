@@ -418,6 +418,59 @@ int s1ap_send_s1_setup_failure(
     return rv;
 }
 
+int s1ap_send_overload_start(mme_enb_t *enb, int level, int traffic_reduction)
+{
+    int rv;
+    ogs_pkbuf_t *s1ap_buffer;
+    long action;
+
+    ogs_assert(enb);
+
+    if (level >= 2) {
+#define S1AP_OVERLOAD_ACTION_EMERGENCY_AND_MT_ONLY \
+    S1AP_OverloadAction_permit_emergency_sessions_and_mobile_terminated_services_only
+        action = S1AP_OVERLOAD_ACTION_EMERGENCY_AND_MT_ONLY;
+        /*
+         * The action already tells the eNB to admit nothing else, and
+         * TS 36.413 pairs the reduction percentage with the milder
+         * actions; sending both would be contradictory.
+         */
+        traffic_reduction = 0;
+    } else {
+        action = S1AP_OverloadAction_reject_non_emergency_mo_dt;
+    }
+
+    s1ap_buffer = s1ap_build_overload_start(action, traffic_reduction);
+    if (!s1ap_buffer) {
+        ogs_error("s1ap_build_overload_start() failed");
+        return OGS_ERROR;
+    }
+
+    rv = s1ap_send_to_enb(enb, s1ap_buffer, S1AP_NON_UE_SIGNALLING);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
+int s1ap_send_overload_stop(mme_enb_t *enb)
+{
+    int rv;
+    ogs_pkbuf_t *s1ap_buffer;
+
+    ogs_assert(enb);
+
+    s1ap_buffer = s1ap_build_overload_stop();
+    if (!s1ap_buffer) {
+        ogs_error("s1ap_build_overload_stop() failed");
+        return OGS_ERROR;
+    }
+
+    rv = s1ap_send_to_enb(enb, s1ap_buffer, S1AP_NON_UE_SIGNALLING);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
 int s1ap_send_enb_configuration_update_ack(mme_enb_t *enb)
 {
     int rv;

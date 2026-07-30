@@ -274,6 +274,87 @@ ogs_pkbuf_t *s1ap_build_setup_failure(
     return ogs_s1ap_encode(&pdu);
 }
 
+/*
+ * TS 36.413 8.9.1 Overload Start.
+ *
+ * The GUMMEIList IE is omitted on purpose: without it the eNB applies
+ * the overload action to every MME it serves through this association,
+ * which for a single-MME association (our case) is exactly right and
+ * avoids depending on the eNB honouring a GUMMEI filter correctly.
+ */
+ogs_pkbuf_t *s1ap_build_overload_start(long action, int traffic_reduction)
+{
+    S1AP_S1AP_PDU_t pdu;
+    S1AP_InitiatingMessage_t *initiatingMessage = NULL;
+    S1AP_OverloadStart_t *OverloadStart = NULL;
+
+    S1AP_OverloadStartIEs_t *ie = NULL;
+    S1AP_OverloadResponse_t *OverloadResponse = NULL;
+
+    ogs_debug("OverloadStart[action:%ld reduction:%d]",
+            action, traffic_reduction);
+
+    memset(&pdu, 0, sizeof (S1AP_S1AP_PDU_t));
+    pdu.present = S1AP_S1AP_PDU_PR_initiatingMessage;
+    pdu.choice.initiatingMessage = CALLOC(1, sizeof(S1AP_InitiatingMessage_t));
+
+    initiatingMessage = pdu.choice.initiatingMessage;
+    initiatingMessage->procedureCode = S1AP_ProcedureCode_id_OverloadStart;
+    initiatingMessage->criticality = S1AP_Criticality_ignore;
+    initiatingMessage->value.present =
+        S1AP_InitiatingMessage__value_PR_OverloadStart;
+
+    OverloadStart = &initiatingMessage->value.choice.OverloadStart;
+
+    ie = CALLOC(1, sizeof(S1AP_OverloadStartIEs_t));
+    ASN_SEQUENCE_ADD(&OverloadStart->protocolIEs, ie);
+
+    ie->id = S1AP_ProtocolIE_ID_id_OverloadResponse;
+    ie->criticality = S1AP_Criticality_reject;
+    ie->value.present = S1AP_OverloadStartIEs__value_PR_OverloadResponse;
+
+    OverloadResponse = &ie->value.choice.OverloadResponse;
+    OverloadResponse->present = S1AP_OverloadResponse_PR_overloadAction;
+    OverloadResponse->choice.overloadAction = action;
+
+    if (traffic_reduction > 0) {
+        if (traffic_reduction > 99)
+            traffic_reduction = 99;
+
+        ie = CALLOC(1, sizeof(S1AP_OverloadStartIEs_t));
+        ASN_SEQUENCE_ADD(&OverloadStart->protocolIEs, ie);
+
+        ie->id = S1AP_ProtocolIE_ID_id_TrafficLoadReductionIndication;
+        ie->criticality = S1AP_Criticality_ignore;
+        ie->value.present =
+            S1AP_OverloadStartIEs__value_PR_TrafficLoadReductionIndication;
+        ie->value.choice.TrafficLoadReductionIndication = traffic_reduction;
+    }
+
+    return ogs_s1ap_encode(&pdu);
+}
+
+/* TS 36.413 8.9.2 Overload Stop */
+ogs_pkbuf_t *s1ap_build_overload_stop(void)
+{
+    S1AP_S1AP_PDU_t pdu;
+    S1AP_InitiatingMessage_t *initiatingMessage = NULL;
+
+    ogs_debug("OverloadStop");
+
+    memset(&pdu, 0, sizeof (S1AP_S1AP_PDU_t));
+    pdu.present = S1AP_S1AP_PDU_PR_initiatingMessage;
+    pdu.choice.initiatingMessage = CALLOC(1, sizeof(S1AP_InitiatingMessage_t));
+
+    initiatingMessage = pdu.choice.initiatingMessage;
+    initiatingMessage->procedureCode = S1AP_ProcedureCode_id_OverloadStop;
+    initiatingMessage->criticality = S1AP_Criticality_reject;
+    initiatingMessage->value.present =
+        S1AP_InitiatingMessage__value_PR_OverloadStop;
+
+    return ogs_s1ap_encode(&pdu);
+}
+
 ogs_pkbuf_t *s1ap_build_enb_configuration_update_ack(void)
 {
     S1AP_S1AP_PDU_t pdu;

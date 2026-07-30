@@ -299,6 +299,66 @@ typedef struct mme_context_s {
      */
     int             s1ap_io_stall_teardown_sec;
     /*
+     * Per-eNB write-queue depth at which the IO thread reports the
+     * association as TX-congested to main (overload control). 0 =
+     * default (a quarter of s1ap_io_write_queue_max). Watched well
+     * below "full" on purpose: OVERLOAD START must reach the eNB
+     * while its queue can still carry a PDU. SIGHUP reloadable.
+     */
+    int             s1ap_io_congest_depth;
+
+    /*
+     * S1AP overload control / ingress admission (s1ap-overload.c).
+     *
+     * The MME's only real defence against one misbehaving cell is to
+     * stop accepting new work from it: SCTP congestion control is
+     * byte-level and says nothing about which eNB is wedged, and by
+     * the time a write queue is full the Attach Accepts we already
+     * produced are being dropped, so every UE retries and the cost is
+     * paid again on shared workers.
+     */
+    struct {
+        /* master switch (default on) */
+        bool        enabled;
+        /* send 3GPP TS 36.413 OVERLOAD START/STOP (default on) */
+        bool        signal_enb;
+        /*
+         * Max InitialUEMessage/s accepted per eNB (token bucket).
+         * 0 = unlimited. burst 0 = 2x rate (min 20).
+         */
+        int         enb_initial_ue_rate;
+        int         enb_initial_ue_burst;
+        /*
+         * How long one TX-congestion heartbeat from the IO thread
+         * keeps an eNB marked congested. Heartbeats repeat every
+         * second while congested, so this is a lease, not a timeout:
+         * a dropped heartbeat can only clear the state early, never
+         * latch it forever. 0 = default (3).
+         */
+        int         congest_lease_sec;
+        /*
+         * Event-queue lag (ms) marking the MME itself as overloaded:
+         * high = moderate (shed background access), critical = shed
+         * everything but emergency/MT. 0 = defaults (500 / 2000).
+         */
+        int         lag_high_ms;
+        int         lag_critical_ms;
+        /*
+         * Seconds a lag level must hold before it throttles anything.
+         * The lag metric is a peak-with-decay, so without this a single
+         * slow dispatch would broadcast OVERLOAD START network-wide.
+         * 0 = default (3).
+         */
+        int         global_sustain_sec;
+        /* TrafficLoadReductionIndication percent, 1..99. 0 = 50 */
+        int         traffic_reduction;
+        /* min seconds between OVERLOAD START re-sends. 0 = 10 */
+        int         resend_interval_sec;
+        /* seconds of calm before OVERLOAD STOP. 0 = 5 */
+        int         recovery_sec;
+    } overload;
+
+    /*
      * Smart paging: first S1 Paging wave goes only to the eNB the UE
      * last camped on (from stored eCGI); T3413 retries fan out to the
      * whole TA. Cuts paging PDU volume by ~1/fan-out. SIGHUP reloadable.
@@ -617,6 +677,42 @@ typedef struct mme_enb_s {
      * mme_enb_remove); never the reverse.
      */
     ogs_thread_mutex_t s1ap_tx_hold_lock;
+
+    /*
+     * Ingress admission + overload control state (s1ap-overload.c).
+     * Main-thread only: written from the S1AP FSM, the IO-congestion
+     * event handler and the 1 s overload tick, all of which run on
+     * mme_main. The /enb-info dumper reads it from the MHD thread —
+     * single ints/times, a torn diagnostic read is acceptable.
+     */
+    struct {
+        /* InitialUEMessage token bucket */
+        double      tokens;
+        ogs_time_t  tokens_at;
+
+        /*
+         * Last TX-congestion heartbeat from the IO thread and the
+         * write-queue depth it reported. congested_at is a lease
+         * (mme.overload.congest_lease_sec).
+         */
+        ogs_time_t  congested_at;
+        int         congested_depth;
+
+        /* current level driving this eNB: 0 none, 1 moderate, 2 severe */
+        int         level;
+        /* last time level was non-zero (drives OVERLOAD STOP hysteresis) */
+        ogs_time_t  hot_at;
+        /* level advertised by the last OVERLOAD START we sent (0 = none) */
+        int         signalled_level;
+        ogs_time_t  signalled_at;
+
+        /* rate-limited shed logging + lifetime totals for /enb-info */
+        uint32_t    shed_window_count;
+        ogs_time_t  shed_window;
+        uint64_t    shed_total;
+        uint64_t    rate_shed_total;
+        ogs_time_t  rate_shed_at;   /* last token-bucket rejection */
+    } overload;
 
 } mme_enb_t;
 

@@ -232,6 +232,33 @@ mme:
   #                                 # 0/unset = 10. Negative = disable.
   #                                 # SIGHUP reloadable. ETIMEDOUT always
   #                                 # tears that assoc down.
+  # s1ap_io_congest_depth: 2560     # per-eNB write-queue depth reported as
+  #                                 # TX-congested to overload control.
+  #                                 # 0/unset = s1ap_io_write_queue_max / 4.
+  #                                 # SIGHUP reloadable.
+  #
+  # Overload control / ingress admission (s1ap-overload.c). On by
+  # default; everything below is optional tuning. Two signals drive it:
+  # an eNB whose downlink is backing up (s1ap_io_congest_depth) and the
+  # MME's own event-queue lag. Response is OVERLOAD START to the eNB
+  # plus dropping new InitialUEMessage from it. Emergency,
+  # high-priority and mobile-terminated (paging response) access are
+  # never shed.
+  # overload:
+  #   enabled: true                 # master switch (default true)
+  #   signal_enb: true              # send S1AP OVERLOAD START/STOP
+  #   enb_initial_ue_rate: 0        # max InitialUEMessage/s per eNB
+  #                                 # (token bucket). 0 = unlimited.
+  #   enb_initial_ue_burst: 0       # bucket size. 0 = 2x rate (min 20).
+  #   congest_lease_sec: 3          # how long one IO congestion report
+  #                                 # keeps an eNB throttled (reports
+  #                                 # repeat every second while it lasts)
+  #   lag_high_ms: 1500             # event-queue lag = MME overloaded
+  #   lag_critical_ms: 4000         # ... severely (emergency/MT only)
+  #   global_sustain_sec: 3         # lag must hold this long to count
+  #   traffic_reduction: 50         # percent in OVERLOAD START
+  #   resend_interval_sec: 10       # min gap between START re-sends
+  #   recovery_sec: 5               # calm before OVERLOAD STOP
   # paging:
   #   first_wave: last_enb          # last_enb = smart paging: first wave
   #                                 # only to the UE's last eNB (from eCGI),
