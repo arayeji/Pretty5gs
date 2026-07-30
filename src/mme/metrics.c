@@ -1114,6 +1114,18 @@ mme_metrics_spec_def_t mme_metrics_spec_def_global[_MME_METR_GLOB_MAX] = {
     .name = "s1ap_overload_start",
     .description = "S1AP OVERLOAD START messages sent to eNodeBs",
 },
+[MME_METR_GLOB_CTR_ESM_APN_CORRECTED] = {
+    .type = OGS_METRICS_METRIC_TYPE_COUNTER,
+    .name = "esm_apn_corrected",
+    .description =
+        "Unknown UE APNs replaced by mme.apn_correction instead of ESM #27",
+},
+[MME_METR_GLOB_CTR_ESM_PDN_TYPE_CORRECTED] = {
+    .type = OGS_METRICS_METRIC_TYPE_COUNTER,
+    .name = "esm_pdn_type_corrected",
+    .description =
+        "PDN types corrected by mme.apn_correction instead of ESM #28",
+},
 };
 int mme_metrics_init_inst_global(void)
 {

@@ -33,6 +33,7 @@
 #include "nas-path.h"
 #include "mme-reload-lists.h"
 #include "mme-inbound-roam-apn.h"
+#include "mme-apn-policy.h"
 #include "s1ap-path.h"
 #include "s1ap-rx.h"
 #include "s1ap-io.h"
@@ -544,6 +545,7 @@ void mme_context_init(void)
     self.pgw_selection.force_yaml = false;
     self.pgw_selection.dns_enabled = false;
     ogs_list_init(&self.pgw_selection.rule_list);
+    ogs_list_init(&self.apn_policy_list);
 
     self.inbound_roam_gtp_apn_format = MME_INBOUND_ROAM_GTP_APN_FQDN;
     self.inbound_roam_gtp_apn_lowercase = false;
@@ -582,6 +584,7 @@ void mme_context_final(void)
     mme_sgw_remove_all();
     mme_pgw_remove_all();
     mme_pgw_sel_rule_remove_all();
+    mme_apn_policy_remove_all();
     mme_csmap_remove_all();
     if (mme_csmap_plmn_hash) {
         ogs_hash_destroy(mme_csmap_plmn_hash);
@@ -2738,6 +2741,9 @@ int mme_context_parse_config(void)
                             "enabled" : "disabled");
                 } else if (!strcmp(mme_key, "inbound_roam")) {
                     mme_inbound_roam_config_parse(&mme_iter);
+                } else if (!strcmp(mme_key, "apn_correction")) {
+                    int count = mme_apn_policy_parse(&mme_iter);
+                    ogs_info("APN correction: %d rule(s)", count);
                 } else if (!strcmp(mme_key, "ambr_limit")) {
                     ogs_yaml_iter_t ambr_iter;
                     ogs_yaml_iter_recurse(&mme_iter, &ambr_iter);

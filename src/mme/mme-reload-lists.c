@@ -24,6 +24,7 @@
 #include "eplmn-config.h"
 #include "mme-reload-lists.h"
 #include "mme-inbound-roam-apn.h"
+#include "mme-apn-policy.h"
 #include "s1ap-overload.h"
 
 volatile int mme_reload_lists_changed = 0;
@@ -1848,6 +1849,13 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
         mme_inbound_roam_config_parse(mme_iter);
         mme_reload_lists_changed++;
         ogs_reload_audit_note(" inbound_roam config replaced");
+        return 0;
+    }
+    if (!strcmp(mme_key, "apn_correction")) {
+        int n = mme_apn_policy_parse(mme_iter);
+
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" apn_correction rules=%d", n);
         return 0;
     }
     if (!strcmp(mme_key, "emergency"))

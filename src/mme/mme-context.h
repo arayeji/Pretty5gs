@@ -179,6 +179,14 @@ typedef struct mme_context_s {
     } pgw_selection;
 
     /*
+     * mme.apn_correction — per subscriber range / requested APN policy
+     * for what happens when the UE-requested APN or PDN type does not
+     * match the S6a subscription. Empty list = strict 3GPP behaviour.
+     * See mme_apn_policy_t. SIGHUP reloadable.
+     */
+    ogs_list_t      apn_policy_list;
+
+    /*
      * Inbound roam / home PGW: GTP APN on S11 (SGWC forwards on S5).
      * inbound_roam_gtp_apn_format: received = HSS/UE NI only;
      *   fqdn = NI + OI (home PLMN if MIP-Home-Agent set, else serving).
@@ -1541,6 +1549,15 @@ typedef struct mme_sess_s {
      * allowed_apn policy is then bypassed (subscription default wins).
      */
     bool            ue_provided_apn;
+
+    /*
+     * PDN type to put on the GTP Create Session Request: the UE request
+     * intersected with the subscription, then corrected/clamped by
+     * mme.apn_correction. 0 until resolved, in which case the raw UE
+     * request is used. ue_request_type keeps what the UE actually asked
+     * for, so Activate Default Bearer can still return ESM #50/#51.
+     */
+    uint8_t         policy_pdn_type;
 
     /* PDN Address Allocation (PAA) */
     ogs_paa_t       paa;

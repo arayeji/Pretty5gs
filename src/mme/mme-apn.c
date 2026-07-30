@@ -39,6 +39,19 @@ static void mme_apn_fqdn_tolower(char *fqdn)
     }
 }
 
+void mme_apn_normalize_ni(char *apn_ni, size_t buflen, const char *apn)
+{
+    char *oi = NULL;
+
+    ogs_assert(apn_ni);
+    ogs_assert(apn);
+
+    ogs_cpystrn(apn_ni, apn, buflen);
+    oi = ogs_dnn_oi_from_fqdn(apn_ni);
+    if (oi && oi > apn_ni && oi[-1] == '.')
+        oi[-1] = '\0';
+}
+
 void mme_apn_oi_plmn_id(
         mme_ue_t *mme_ue, ogs_session_t *session, ogs_plmn_id_t *oi_plmn_id)
 {

@@ -24,6 +24,7 @@
 #include "mme-path.h"
 #include "mme-trace.h"
 #include "mme-inbound-roam-apn.h"
+#include "mme-apn-policy.h"
 #include "metrics.h"
 
 #include "esm-build.h"
@@ -31,6 +32,41 @@
 
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __esm_log_domain
+
+/*
+ * Resolve the PDN type to use on the Create Session Request: the UE
+ * request intersected with the subscription, then corrected or clamped
+ * by mme.apn_correction. Returns OGS_ERROR when the request cannot be
+ * satisfied and the caller must reject with ESM #28.
+ */
+static int esm_resolve_pdn_type(mme_ue_t *mme_ue, mme_sess_t *sess)
+{
+    uint8_t derived;
+
+    ogs_assert(sess);
+    ogs_assert(sess->session);
+
+    if (sess->session->session_type != OGS_PDU_SESSION_TYPE_IPV4 &&
+        sess->session->session_type != OGS_PDU_SESSION_TYPE_IPV6 &&
+        sess->session->session_type != OGS_PDU_SESSION_TYPE_IPV4V6) {
+        ogs_error("[%s] Invalid PDN_TYPE[%d] in subscription for APN[%s]",
+                mme_ue->imsi_bcd, sess->session->session_type,
+                sess->session->name ? sess->session->name : "-");
+        return OGS_ERROR;
+    }
+
+    derived = mme_apn_policy_pdn_type(
+            mme_ue, sess->session, sess->ue_request_type.type);
+    if (derived == 0) {
+        ogs_error("[%s] Cannot derive PDN Type [UE:%d,HSS:%d]",
+                mme_ue->imsi_bcd, sess->ue_request_type.type,
+                sess->session->session_type);
+        return OGS_ERROR;
+    }
+
+    sess->policy_pdn_type = derived;
+    return OGS_OK;
+}
 
 int esm_handle_pdn_connectivity_request(
         enb_ue_t *enb_ue, mme_bearer_t *bearer,
@@ -41,6 +77,7 @@ int esm_handle_pdn_connectivity_request(
     mme_ue_t *mme_ue = NULL;
     mme_sess_t *sess = NULL;
     uint8_t security_protected_required = 0;
+    uint8_t no_apn_cause = OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN;
     const char *emergency_dnn = mme_self()->emergency.dnn;
     bool emergency;
 
@@ -99,6 +136,7 @@ int esm_handle_pdn_connectivity_request(
 
     memcpy(&sess->ue_request_type,
             &req->request_type, sizeof(sess->ue_request_type));
+    sess->policy_pdn_type = 0;
 
     security_protected_required = 0;
     if (req->presencemask &
@@ -169,32 +207,25 @@ int esm_handle_pdn_connectivity_request(
                 "PDN connectivity request APN[%s]", apn);
         sess->session = mme_session_find_by_apn(mme_ue, apn);
         if (!sess->session) {
-            r = nas_eps_send_pdn_connectivity_reject(
-                    sess, OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN,
-                    create_action);
-            ogs_expect(r == OGS_OK);
-            mme_ue_warn(mme_ue, NULL, "esm",
-                    apn, "Invalid APN requested[%s]", apn);
-            return OGS_ERROR;
-        }
+            uint8_t esm_cause = OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN;
 
-        if (sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
-            sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
-            sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
-            uint8_t derived_pdn_type =
-                (sess->session->session_type & sess->ue_request_type.type);
-            if (derived_pdn_type == 0) {
-                ogs_error("Cannot derived PDN Type [UE:%d,HSS:%d]",
-                    sess->ue_request_type.type, sess->session->session_type);
+            sess->session = mme_apn_policy_correct_apn(
+                    mme_ue, apn, &esm_cause);
+            if (!sess->session) {
                 r = nas_eps_send_pdn_connectivity_reject(
-                        sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE,
-                        create_action);
+                        sess, esm_cause, create_action);
                 ogs_expect(r == OGS_OK);
+                mme_ue_warn(mme_ue, NULL, "esm",
+                        apn, "Invalid APN requested[%s]", apn);
                 return OGS_ERROR;
             }
-        } else {
-            ogs_fatal("Invalid PDN_TYPE[%d]", sess->session->session_type);
-            ogs_assert_if_reached();
+        }
+
+        if (esm_resolve_pdn_type(mme_ue, sess) != OGS_OK) {
+            r = nas_eps_send_pdn_connectivity_reject(
+                    sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE, create_action);
+            ogs_expect(r == OGS_OK);
+            return OGS_ERROR;
         }
     }
 
@@ -231,6 +262,11 @@ int esm_handle_pdn_connectivity_request(
                     "PDN connectivity: using S6a default APN[%s] "
                     "(UE APN absent/empty)", sess->session->name);
     }
+    if (!sess->session) {
+        /* No default Context-Identifier: apn_correction may still pick one */
+        sess->session = mme_apn_policy_correct_apn(
+                mme_ue, NULL, &no_apn_cause);
+    }
 
     if (sess->session) {
         ogs_assert(sess->session->name);
@@ -253,6 +289,15 @@ int esm_handle_pdn_connectivity_request(
                 ogs_expect(r == OGS_OK);
                 return OGS_ERROR;
             }
+        }
+
+        /* Not yet done when the APN came from the S6a default */
+        if (!sess->policy_pdn_type &&
+                esm_resolve_pdn_type(mme_ue, sess) != OGS_OK) {
+            r = nas_eps_send_pdn_connectivity_reject(
+                    sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE, create_action);
+            ogs_expect(r == OGS_OK);
+            return OGS_ERROR;
         }
 
         mme_bearer_t *default_bearer = NULL;
@@ -288,7 +333,7 @@ int esm_handle_pdn_connectivity_request(
         ogs_error("[%s] No APN: UE omitted/empty APN and S6a has no "
                 "default Context-Identifier", mme_ue->imsi_bcd);
         r = nas_eps_send_pdn_connectivity_reject(
-                sess, OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN, create_action);
+                sess, no_apn_cause, create_action);
         ogs_expect(r == OGS_OK);
         return OGS_ERROR;
     }
@@ -302,6 +347,7 @@ int esm_handle_information_response(
 {
     int r;
     mme_ue_t *mme_ue = NULL;
+    uint8_t no_apn_cause = OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN;
 
     ogs_assert(rsp);
 
@@ -340,6 +386,9 @@ int esm_handle_information_response(
 
         sess->session = mme_session_find_by_apn(
                             mme_ue, rsp->access_point_name.apn);
+        if (!sess->session)
+            sess->session = mme_apn_policy_correct_apn(
+                    mme_ue, rsp->access_point_name.apn, &no_apn_cause);
     } else {
         sess->ue_provided_apn = false;
         if (!sess->session) {
@@ -349,6 +398,9 @@ int esm_handle_information_response(
                         "default APN[%s] (UE APN absent/empty)",
                         mme_ue->imsi_bcd, sess->session->name);
         }
+        if (!sess->session)
+            sess->session = mme_apn_policy_correct_apn(
+                    mme_ue, NULL, &no_apn_cause);
     }
 
     if (rsp->presencemask &
@@ -390,23 +442,12 @@ int esm_handle_information_response(
             }
         }
 
-        if (sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
-            sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
-            sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
-            uint8_t derived_pdn_type =
-                (sess->session->session_type & sess->ue_request_type.type);
-            if (derived_pdn_type == 0) {
-                ogs_error("Cannot derived PDN Type [UE:%d,HSS:%d]",
-                    sess->ue_request_type.type, sess->session->session_type);
-                r = nas_eps_send_pdn_connectivity_reject(
-                        sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE,
-                        OGS_GTP_CREATE_IN_ATTACH_REQUEST);
-                ogs_expect(r == OGS_OK);
-                return OGS_ERROR;
-            }
-        } else {
-            ogs_fatal("Invalid PDN_TYPE[%d]", sess->session->session_type);
-            ogs_assert_if_reached();
+        if (esm_resolve_pdn_type(mme_ue, sess) != OGS_OK) {
+            r = nas_eps_send_pdn_connectivity_reject(
+                    sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE,
+                    OGS_GTP_CREATE_IN_ATTACH_REQUEST);
+            ogs_expect(r == OGS_OK);
+            return OGS_ERROR;
         }
 
         if (SESSION_CONTEXT_IS_AVAILABLE(mme_ue)) {
@@ -464,8 +505,7 @@ int esm_handle_information_response(
                     "default Context-Identifier", mme_ue->imsi_bcd);
 
         r = nas_eps_send_pdn_connectivity_reject(
-                sess, OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN,
-                OGS_GTP_CREATE_IN_ATTACH_REQUEST);
+                sess, no_apn_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
         ogs_expect(r == OGS_OK);
         return OGS_ERROR;
     }

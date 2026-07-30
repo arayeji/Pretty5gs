@@ -15,6 +15,7 @@
 #include "ogs-proto.h"
 #include "mme-context.h"
 #include "mme-timer.h"
+#include "mme-apn-policy.h"
 
 #include "sbi/openapi/external/cJSON.h"
 
@@ -34,6 +35,60 @@ static cJSON *json_append_trace_imsi(void)
             continue;
         cJSON_AddItemToArray(arr, cJSON_CreateString(prefix));
     }
+    return arr;
+}
+
+static cJSON *json_append_apn_correction(void)
+{
+    cJSON *arr = cJSON_CreateArray();
+    mme_apn_policy_t *rule = NULL;
+
+    ogs_assert(arr);
+
+    ogs_list_for_each(&mme_self()->apn_policy_list, rule) {
+        cJSON *obj = cJSON_CreateObject();
+        cJSON *imsi = cJSON_CreateArray();
+        cJSON *apn = cJSON_CreateArray();
+        int i;
+
+        ogs_assert(obj);
+        ogs_assert(imsi);
+        ogs_assert(apn);
+
+        cJSON_AddStringToObject(obj, "name", rule->name ? rule->name : "");
+        for (i = 0; i < rule->num_of_imsi_prefix; i++)
+            cJSON_AddItemToArray(imsi,
+                    cJSON_CreateString(rule->imsi_prefix[i]));
+        cJSON_AddItemToObject(obj, "imsi_prefix", imsi);
+        for (i = 0; i < rule->num_of_apn; i++)
+            cJSON_AddItemToArray(apn, cJSON_CreateString(rule->apn[i]));
+        cJSON_AddItemToObject(obj, "requested_apn", apn);
+
+        cJSON_AddStringToObject(obj, "on_apn_mismatch",
+                rule->on_apn_mismatch == MME_APN_POLICY_MISMATCH_CORRECT ?
+                    "correct" : "reject");
+        cJSON_AddStringToObject(obj, "correct_to",
+                rule->target == MME_APN_POLICY_TARGET_NAMED ?
+                    (rule->target_apn ? rule->target_apn : "") :
+                    (rule->target == MME_APN_POLICY_TARGET_FIRST ?
+                        "first" : "default"));
+        cJSON_AddStringToObject(obj, "on_pdn_type_mismatch",
+                rule->correct_pdn_type ? "correct" : "reject");
+        cJSON_AddNumberToObject(obj, "pdn_type", rule->pdn_type);
+        cJSON_AddNumberToObject(obj, "reject_cause", rule->reject_cause);
+
+        cJSON_AddNumberToObject(obj, "apn_corrected",
+                (double)rule->apn_corrected);
+        cJSON_AddNumberToObject(obj, "apn_rejected",
+                (double)rule->apn_rejected);
+        cJSON_AddNumberToObject(obj, "pdn_type_corrected",
+                (double)rule->pdn_type_corrected);
+        cJSON_AddNumberToObject(obj, "pdn_type_clamped",
+                (double)rule->pdn_type_clamped);
+
+        cJSON_AddItemToArray(arr, obj);
+    }
+
     return arr;
 }
 
@@ -276,6 +331,9 @@ char *mme_runtime_config_dump(void)
         ogs_plmn_id_to_string(&ctx->eplmn[i], plmn);
         cJSON_AddItemToArray(eplmn, cJSON_CreateString(plmn));
     }
+
+    cJSON_AddItemToObject(runtime, "apn_correction",
+            json_append_apn_correction());
 
     json_append_peer_list(runtime, "sgw_list", &ctx->sgw_list, false);
     json_append_peer_list(runtime, "pgw_list", &ctx->pgw_list, true);

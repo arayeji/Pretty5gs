@@ -238,8 +238,15 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
         if (session->session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
             session->session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
             session->session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
-            req->pdn_type.u8 = mme_gtp2_pdn_type_for_sess(
-                    session, sess->ue_request_type.type);
+            /*
+             * policy_pdn_type is the ESM-resolved type (UE request
+             * intersected with the subscription, then corrected or
+             * clamped by mme.apn_correction). It is already a subset of
+             * the subscription, so the AND below is a no-op for it.
+             */
+            req->pdn_type.u8 = mme_gtp2_pdn_type_for_sess(session,
+                    sess->policy_pdn_type ?
+                        sess->policy_pdn_type : sess->ue_request_type.type);
         } else {
             ogs_error("Invalid PDN-TYPE[%d]", session->session_type);
             return NULL;

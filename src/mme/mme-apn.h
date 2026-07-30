@@ -29,6 +29,13 @@ extern "C" {
 typedef struct mme_ue_s mme_ue_t;
 typedef struct ogs_session_s ogs_session_t;
 
+/*
+ * APN Network Identifier: the APN with any trailing Operator Identifier
+ * ("...mncXXX.mccYYY.gprs") removed, so configured names can be compared
+ * against whatever form the UE or HSS used.
+ */
+void mme_apn_normalize_ni(char *apn_ni, size_t buflen, const char *apn);
+
 void mme_apn_oi_plmn_id(
         mme_ue_t *mme_ue, ogs_session_t *session,
         ogs_plmn_id_t *oi_plmn_id);

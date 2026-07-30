@@ -74,7 +74,18 @@ uint8_t mme_gtp2_pdn_type_for_sess(
     ogs_assert(session);
 
     derived = (session->session_type & ue_request_type);
-    ogs_assert(derived != 0);
+    if (derived == 0) {
+        /*
+         * Paths that build a CSR without the ESM reconciliation (TAU,
+         * handover, Gn) can land here. The subscribed type is the only
+         * defensible answer, and it beats aborting the MME.
+         */
+        ogs_error("No PDN type overlap [UE:%d,HSS:%d] for APN[%s]; "
+                "using subscribed type",
+                ue_request_type, session->session_type,
+                session->name ? session->name : "-");
+        derived = session->session_type;
+    }
 
     /*
      * Inbound roam to a home PGW (MIP6/SMF in ULA): use IPv4 on S5 CSR when

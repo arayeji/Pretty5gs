@@ -39,20 +39,6 @@ static void mme_inbound_roam_apn_policy_clear(mme_context_t *self)
             sizeof(self->inbound_roam_apn_rule));
 }
 
-static void mme_apn_normalize_ni(
-        char *apn_ni, size_t buflen, const char *apn)
-{
-    char *oi = NULL;
-
-    ogs_assert(apn_ni);
-    ogs_assert(apn);
-
-    ogs_cpystrn(apn_ni, apn, buflen);
-    oi = ogs_dnn_oi_from_fqdn(apn_ni);
-    if (oi && oi > apn_ni && oi[-1] == '.')
-        oi[-1] = '\0';
-}
-
 static bool mme_apn_in_list(const char *apn_ni,
         int count, const char list[][OGS_MAX_APN_LEN + 1])
 {
