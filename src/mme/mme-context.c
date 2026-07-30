@@ -8989,6 +8989,7 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
                     OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                     OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
             ogs_expect(r == OGS_OK);
+            mme_send_s1_release_after_emm_failure(mme_ue);
             return NULL;
         }
 
@@ -9002,6 +9003,7 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
                 OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                 OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
         ogs_expect(r == OGS_OK);
+        mme_send_s1_release_after_emm_failure(mme_ue);
         return NULL;
     }
 
@@ -9020,6 +9022,7 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
                     OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                     OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
             ogs_expect(r == OGS_OK);
+            mme_send_s1_release_after_emm_failure(mme_ue);
             return NULL;
         }
     } else if (message->esm.h.message_type ==
@@ -9149,6 +9152,7 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
                     OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                     OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
             ogs_expect(r == OGS_OK);
+            mme_send_s1_release_after_emm_failure(mme_ue);
             return NULL;
         }
     }

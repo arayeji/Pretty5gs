@@ -828,6 +828,38 @@ void mme_send_delete_session_or_mme_ue_context_release(
     }
 }
 
+void mme_send_s1_release_after_emm_failure(mme_ue_t *mme_ue)
+{
+    enb_ue_t *enb_ue = NULL;
+    int r;
+
+    ogs_assert(mme_ue);
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (!enb_ue)
+        return;
+    /* A release is already in flight (CLEAR_S1_CONTEXT, holding, ...) */
+    if (enb_ue->ue_ctx_rel_action != S1AP_UE_CTX_REL_INVALID_ACTION)
+        return;
+    /* GTP teardown in progress will release S1 on completion */
+    if (MME_SESSION_RELEASE_PENDING(mme_ue))
+        return;
+
+    /*
+     * S1_CONTEXT_REMOVE, not UE_CONTEXT_REMOVE: the UE may legitimately
+     * stay EMM-REGISTERED after a rejected TAU or Service Request, it
+     * just has no business holding an S1 connection. This drops it to
+     * ECM-IDLE, arms the mobile-reachable timer, and still reclaims the
+     * context when no ESM session is left.
+     */
+    r = s1ap_send_ue_context_release_command(enb_ue,
+            S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
+            S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
+    if (r != OGS_OK)
+        ogs_warn("[%s] UE Context Release Command not sent after EMM failure",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+}
+
 void mme_send_release_access_bearer_or_ue_context_release(enb_ue_t *enb_ue)
 {
     int r;

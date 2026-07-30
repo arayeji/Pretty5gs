@@ -50,6 +50,14 @@
         mme_ue_restore_memento((mme_ue), &((mme_ue)->memento));         \
         (mme_ue)->security_context_available = 1;                       \
         (mme_ue)->mac_failed = 0;                                       \
+        /*                                                              \
+         * EMM state is restored, but the procedure that owned this S1  \
+         * connection is over - usually because we just sent a NAS      \
+         * reject. Nothing else would take S1 down (the exception state \
+         * releases, this branch never did), so the eNB was left to     \
+         * time it out and Reset. Drop the UE to ECM-IDLE instead.      \
+         */                                                             \
+        mme_send_s1_release_after_emm_failure(mme_ue);                  \
         if (!OGS_FSM_CHECK(&mme_ue->sm, emm_state_registered))          \
             OGS_FSM_TRAN((s), &emm_state_registered);                   \
         ogs_warn("[%s] Failure in transaction; restoring context and "  \
@@ -1374,6 +1382,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                     r = nas_eps_send_service_reject(enb_ue, mme_ue,
                         OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK);
                     ogs_expect(r == OGS_OK);
+                    mme_send_s1_release_after_emm_failure(mme_ue);
                     break;
                 }
 
