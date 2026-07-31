@@ -36,8 +36,24 @@ extern "C" {
 #define ogs_error(...) ogs_log_message(OGS_LOG_ERROR, 0, __VA_ARGS__)
 #define ogs_warn(...) ogs_log_message(OGS_LOG_WARN, 0, __VA_ARGS__)
 #define ogs_info(...) ogs_log_message(OGS_LOG_INFO, 0, __VA_ARGS__)
-#define ogs_debug(...) ogs_log_message(OGS_LOG_DEBUG, 0, __VA_ARGS__)
-#define ogs_trace(...) ogs_log_message(OGS_LOG_TRACE, 0, __VA_ARGS__)
+/*
+ * DEBUG/TRACE are lazy: with the domain level at info (production),
+ * hot paths must not pay for argument evaluation (OGS_ADDR sockaddr
+ * conversion, PLMN/TEID formatting helpers) plus a varargs call per
+ * line just to have ogs_log_vprintf discard it. ogs_log_domain_prints
+ * keeps the per-IMSI trace-filter bypass working for DEBUG.
+ * Arguments must stay free of side effects.
+ */
+#define ogs_debug(...) \
+    do { \
+        if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG)) \
+            ogs_log_message(OGS_LOG_DEBUG, 0, __VA_ARGS__); \
+    } while (0)
+#define ogs_trace(...) \
+    do { \
+        if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_TRACE)) \
+            ogs_log_message(OGS_LOG_TRACE, 0, __VA_ARGS__); \
+    } while (0)
 
 #define ogs_log_message(level, err, ...) \
     ogs_log_printf(level, OGS_LOG_DOMAIN, \

@@ -220,12 +220,18 @@ static ogs_inline ogs_uint24_t ogs_htobe24(ogs_uint24_t x)
 
 #define ogs_uint64_to_uint32(x) ((x >= 0xffffffffUL) ? 0xffffffffU : x)
 
+/* Statement form: ogs_debug() is a lazy do/while macro and cannot be
+ * chained with the comma operator. All call sites use these as statements. */
 #define OGS_OBJECT_REF(__oBJ) \
-    ((__oBJ)->reference_count)++, \
-    ogs_debug("[REF] %d", ((__oBJ)->reference_count))
+    do { \
+        ((__oBJ)->reference_count)++; \
+        ogs_debug("[REF] %d", ((__oBJ)->reference_count)); \
+    } while (0)
 #define OGS_OBJECT_UNREF(__oBJ) \
-    ogs_debug("[UNREF] %d", ((__oBJ)->reference_count)), \
-    ((__oBJ)->reference_count)--
+    do { \
+        ogs_debug("[UNREF] %d", ((__oBJ)->reference_count)); \
+        ((__oBJ)->reference_count)--; \
+    } while (0)
 #define OGS_OBJECT_IS_REF(__oBJ) ((__oBJ)->reference_count > 1)
 
 #define OGS_POINTER_TO_UINT(u) ((uintptr_t)(u))
