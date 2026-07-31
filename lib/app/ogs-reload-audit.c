@@ -44,8 +44,11 @@ static void reload_audit_save_last(const char *nf, bool yaml_ok)
     reload_audit_last.finished_at = (time_t)ogs_time_to_sec(ogs_time_now());
     reload_audit_last.ok = yaml_ok;
     ogs_cpystrn(reload_audit_last.nf, nf, sizeof(reload_audit_last.nf));
+    /* Total notes attempted; may exceed the retained line_count. */
     reload_audit_last.change_count = reload_audit_count;
     reload_audit_last.line_count = shown;
+    reload_audit_last.truncated =
+            (reload_audit_count > OGS_RELOAD_AUDIT_MAX_LINES);
 
     for (i = 0; i < shown; i++) {
         ogs_cpystrn(reload_audit_last.lines[i], reload_audit_lines[i],

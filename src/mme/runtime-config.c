@@ -263,12 +263,14 @@ char *mme_runtime_config_dump(void)
     ogs_assert(time);
     cJSON_AddItemToObject(runtime, "time", time);
 
-    cJSON_AddNumberToObject(time, "t3412",
-            (double)ogs_time_to_sec(ctx->time.t3412.value));
-    cJSON_AddNumberToObject(time, "t3402",
-            (double)ogs_time_to_sec(ctx->time.t3402.value));
-    cJSON_AddNumberToObject(time, "t3423",
-            (double)ogs_time_to_sec(ctx->time.t3423.value));
+    /*
+     * mme.time.t34xx.value and idle.*_margin are stored as seconds in an
+     * ogs_time_t field (see mme-context.h). Do NOT run ogs_time_to_sec():
+     * that helper assumes microseconds and turns 600s into 1.
+     */
+    cJSON_AddNumberToObject(time, "t3412", (double)ctx->time.t3412.value);
+    cJSON_AddNumberToObject(time, "t3402", (double)ctx->time.t3402.value);
+    cJSON_AddNumberToObject(time, "t3423", (double)ctx->time.t3423.value);
 
     json_append_timer(time, "t3413", MME_TIMER_T3413);
     json_append_timer(time, "t3422", MME_TIMER_T3422);
@@ -277,9 +279,9 @@ char *mme_runtime_config_dump(void)
     ogs_assert(idle);
     cJSON_AddItemToObject(time, "idle", idle);
     cJSON_AddNumberToObject(idle, "mobile_reachable_margin",
-            (double)ogs_time_to_sec(ctx->time.idle.mobile_reachable_margin));
+            (double)ctx->time.idle.mobile_reachable_margin);
     cJSON_AddNumberToObject(idle, "implicit_detach_margin",
-            (double)ogs_time_to_sec(ctx->time.idle.implicit_detach_margin));
+            (double)ctx->time.idle.implicit_detach_margin);
 
     cJSON_AddNumberToObject(runtime, "gtpc_echo_interval",
             ctx->gtpc_echo_interval);

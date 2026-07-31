@@ -34,6 +34,7 @@ typedef struct ogs_reload_audit_snapshot_s {
     bool valid;
     time_t finished_at;
     bool ok;
+    bool truncated; /* true if change_count exceeded OGS_RELOAD_AUDIT_MAX_LINES */
     char nf[OGS_RELOAD_AUDIT_NF_LEN];
     int change_count;
     int line_count;

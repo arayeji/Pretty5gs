@@ -183,6 +183,140 @@ static void reload_gtpc_client_parse_plmn_id_key(
     }
 }
 
+/* Mirror of the anonymous served_tai element in mme_context_t */
+typedef struct reload_served_tai_entry_s {
+    ogs_eps_tai0_list_t *list0;
+    ogs_eps_tai1_list_t list1;
+    ogs_eps_tai2_list_t list2;
+} reload_served_tai_entry_t;
+
+typedef struct reload_tai_fp_s {
+    uint8_t plmn[OGS_PLMN_ID_LEN];
+    uint16_t tac;
+} reload_tai_fp_t;
+
+static int reload_tai_fp_cmp(const void *a, const void *b)
+{
+    const reload_tai_fp_t *x = a;
+    const reload_tai_fp_t *y = b;
+    int c = memcmp(x->plmn, y->plmn, OGS_PLMN_ID_LEN);
+
+    if (c)
+        return c;
+    return (x->tac > y->tac) - (x->tac < y->tac);
+}
+
+static void reload_tai_fp_push(reload_tai_fp_t **fps, int *n, int *cap,
+        const ogs_plmn_id_t *plmn_id, uint16_t tac)
+{
+    reload_tai_fp_t *slot;
+
+    ogs_assert(plmn_id && fps && n && cap);
+
+    if (*n >= *cap) {
+        *cap = *cap ? (*cap * 2) : 128;
+        *fps = ogs_realloc(*fps, sizeof(**fps) * (size_t)(*cap));
+        ogs_assert(*fps);
+    }
+
+    slot = &(*fps)[*n];
+    memcpy(slot->plmn, plmn_id, OGS_PLMN_ID_LEN);
+    slot->tac = tac;
+    (*n)++;
+}
+
+static void reload_tai_fp_collect(const reload_served_tai_entry_t *table,
+        int num, reload_tai_fp_t **out_fps, int *out_n)
+{
+    reload_tai_fp_t *fps = NULL;
+    int n = 0, cap = 0;
+    int i, j, k;
+
+    ogs_assert(out_fps && out_n);
+    *out_fps = NULL;
+    *out_n = 0;
+
+    if (!table || num <= 0)
+        return;
+
+    for (i = 0; i < num; i++) {
+        const ogs_eps_tai0_list_t *list0 = table[i].list0;
+        const ogs_eps_tai1_list_t *list1 = &table[i].list1;
+        const ogs_eps_tai2_list_t *list2 = &table[i].list2;
+
+        if (list0) {
+            for (j = 0; j < (int)ogs_app_max_eps_tai0_partial_list() &&
+                    list0->tai[j].num; j++) {
+                for (k = 0; k < list0->tai[j].num; k++)
+                    reload_tai_fp_push(&fps, &n, &cap,
+                            &list0->tai[j].plmn_id, list0->tai[j].tac[k]);
+            }
+        }
+
+        for (j = 0; list1->tai[j].num; j++) {
+            uint16_t base = list1->tai[j].tac;
+            uint16_t count = list1->tai[j].num;
+            uint16_t t;
+
+            for (t = 0; t < count; t++)
+                reload_tai_fp_push(&fps, &n, &cap,
+                        &list1->tai[j].plmn_id, (uint16_t)(base + t));
+        }
+
+        if (list2->num) {
+            for (j = 0; j < list2->num; j++)
+                reload_tai_fp_push(&fps, &n, &cap,
+                        &list2->tai[j].plmn_id, list2->tai[j].tac);
+        }
+    }
+
+    if (n > 1)
+        qsort(fps, (size_t)n, sizeof(*fps), reload_tai_fp_cmp);
+
+    /* Dedup after sort (list0+list2 can overlap during transitions). */
+    if (n > 1) {
+        int w = 1;
+
+        for (i = 1; i < n; i++) {
+            if (reload_tai_fp_cmp(&fps[i], &fps[w - 1]) != 0)
+                fps[w++] = fps[i];
+        }
+        n = w;
+    }
+
+    *out_fps = fps;
+    *out_n = n;
+}
+
+static void reload_tai_fp_diff(const reload_tai_fp_t *old_fps, int old_n,
+        const reload_tai_fp_t *new_fps, int new_n,
+        int *added, int *removed)
+{
+    int i = 0, j = 0;
+
+    ogs_assert(added && removed);
+    *added = 0;
+    *removed = 0;
+
+    while (i < old_n && j < new_n) {
+        int c = reload_tai_fp_cmp(&old_fps[i], &new_fps[j]);
+
+        if (c == 0) {
+            i++;
+            j++;
+        } else if (c < 0) {
+            (*removed)++;
+            i++;
+        } else {
+            (*added)++;
+            j++;
+        }
+    }
+
+    *removed += old_n - i;
+    *added += new_n - j;
+}
+
 static ogs_eps_tai0_list_t *reload_served_tai_list0(int index)
 {
     mme_context_t *self = mme_self();
@@ -252,9 +386,6 @@ static int reload_served_tai_add_one(
         /* the dedup lookup above rebuilds the map lazily, so every
          * mutation must dirty it again */
         mme_served_tai_map_invalidate();
-        mme_reload_lists_changed++;
-        ogs_reload_audit_note(" served TAI added PLMN=%06x TAC=0x%04x",
-                ogs_plmn_id_hexdump(plmn_id), tac);
         added = 1;
         goto out;
     }
@@ -274,9 +405,6 @@ static int reload_served_tai_add_one(
     list2->num = 1;
     self->num_of_served_tai++;
     mme_served_tai_map_invalidate();
-    mme_reload_lists_changed++;
-    ogs_reload_audit_note(" served TAI added PLMN=%06x TAC=0x%04x",
-            ogs_plmn_id_hexdump(plmn_id), tac);
     added = 1;
 
 out:
@@ -1084,15 +1212,12 @@ static int reload_served_tai_add_from_yaml(ogs_yaml_iter_t *mme_iter)
 
 static int reload_served_tai_replace(ogs_yaml_iter_t *mme_iter)
 {
-    /* Mirror of the anonymous served_tai element in mme_context_t,
-     * used to walk the detached backup copy */
-    struct served_tai_entry {
-        ogs_eps_tai0_list_t *list0;
-        ogs_eps_tai1_list_t list1;
-        ogs_eps_tai2_list_t list2;
-    } *backup = NULL;
+    reload_served_tai_entry_t *backup = NULL;
     mme_context_t *self = mme_self();
+    reload_tai_fp_t *old_fps = NULL, *new_fps = NULL;
     int backup_num, added, i;
+    int old_n = 0, new_n = 0;
+    int n_added = 0, n_removed = 0;
 
     ogs_assert(sizeof(backup[0]) == sizeof(self->served_tai[0]));
 
@@ -1132,16 +1257,33 @@ static int reload_served_tai_replace(ogs_yaml_iter_t *mme_iter)
         return 0;
     }
 
+    reload_tai_fp_collect(backup, backup_num, &old_fps, &old_n);
+    reload_tai_fp_collect((const reload_served_tai_entry_t *)self->served_tai,
+            self->num_of_served_tai, &new_fps, &new_n);
+    reload_tai_fp_diff(old_fps, old_n, new_fps, new_n, &n_added, &n_removed);
+
     for (i = 0; i < OGS_MAX_NUM_OF_SUPPORTED_TA; i++) {
         if (backup[i].list0)
             ogs_free(backup[i].list0);
     }
     mme_served_tai_map_invalidate();
-    mme_reload_lists_changed++;
+    if (n_added || n_removed)
+        mme_reload_lists_changed++;
     mme_ctx_unlock();
 
     ogs_free(backup);
-    ogs_reload_audit_note(" served TAI replaced (%d TAC entries)", added);
+    if (old_fps)
+        ogs_free(old_fps);
+    if (new_fps)
+        ogs_free(new_fps);
+
+    if (n_added == 0 && n_removed == 0) {
+        ogs_reload_audit_note(" served TAI unchanged (%d TAC entries)", new_n);
+    } else {
+        ogs_reload_audit_note(
+                " served TAI replaced (%d TAC entries, +%d -%d)",
+                new_n, n_added, n_removed);
+    }
 
     return added;
 }
