@@ -1017,8 +1017,11 @@ void mme_s11_handle_delete_session_response(
         mme_ue_warn(mme_ue, enb_ue, "s11",
                 sess->session ? sess->session->name : NULL,
                 "SGW-UE Context has already been removed "
-                "(late Delete Session Response, action=%d)",
+                "(late Delete Session Response, action=%d); "
+                "clear local session to free EBIs",
                 action);
+        /* SGW already tore down; keep local sess and EBI bits would leak. */
+        MME_SESS_CLEAR(sess);
         return;
     }
 
@@ -1033,8 +1036,10 @@ void mme_s11_handle_delete_session_response(
         mme_ue_warn(mme_ue, enb_ue, "s11",
                 sess->session ? sess->session->name : NULL,
                 "SGW-UE source context gone "
-                "(late Delete Session Response, action=%d)",
+                "(late Delete Session Response, action=%d); "
+                "clear local session to free EBIs",
                 action);
+        MME_SESS_CLEAR(sess);
         return;
     }
 

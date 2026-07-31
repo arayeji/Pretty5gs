@@ -277,9 +277,18 @@ static void emm_handle_s6a_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
          */
         ogs_error("[%s] S6a timeout but no S1 context (cmd=%u); releasing UE",
                 mme_ue->imsi_bcd, cmd);
-        if (ogs_list_empty(&mme_ue->sess_list) &&
-                !MME_SESSION_RELEASE_PENDING(mme_ue))
+        /*
+         * Previously only removed when sess_list was empty, so leftover
+         * sessions (CSR fail / half-attach) pinned all EBIs (bitmap 0xffe0)
+         * forever. Clear local sessions and drop the UE regardless.
+         */
+        if (!MME_SESSION_RELEASE_PENDING(mme_ue)) {
+            mme_sess_t *sess = NULL, *next_sess = NULL;
+
+            ogs_list_for_each_safe(&mme_ue->sess_list, next_sess, sess)
+                MME_SESS_CLEAR(sess);
             OGS_FSM_TRAN(s, &emm_state_ue_context_will_remove);
+        }
         return;
     }
 

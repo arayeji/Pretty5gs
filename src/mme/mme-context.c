@@ -9983,6 +9983,17 @@ uint8_t mme_ebi_alloc(mme_ue_t *mme_ue)
         }
     }
 
+    /* Drop incomplete PDNs (no PGW TEID yet) then retry. */
+    mme_ue_reclaim_incomplete_sessions(mme_ue);
+    for (ebi = MIN_EPS_BEARER_ID; ebi <= MAX_EPS_BEARER_ID; ebi++) {
+        if (!(mme_ue->ebi_bitmap & (1 << ebi))) {
+            mme_ue->ebi_bitmap |= (1 << ebi);
+            ogs_warn("[%s] EBI allocated [%d] after incomplete-session reclaim",
+                    mme_ue->imsi_bcd, ebi);
+            return ebi;
+        }
+    }
+
     ogs_error("No available EBI (range %d-%d)",
             MIN_EPS_BEARER_ID, MAX_EPS_BEARER_ID);
 
