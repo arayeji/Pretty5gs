@@ -281,6 +281,31 @@ int esm_handle_pdn_connectivity_request(
             }
         }
 
+        /*
+         * Duplicate-PDN guard on the RESOLVED APN. The earlier check in
+         * mme_bearer_find_or_add_by_message compares the raw UE-requested
+         * string, which misses requests that subscription matching or
+         * apn_correction rewrite to an APN that is already active: one UE
+         * stacked 11 PDNs to the same APN this way until EBI 5-15 was
+         * exhausted (2026-07-31). TS 24.301 cause #55. The rejected sess
+         * has no PGW TEID, so incomplete-session reclaim frees its EBI.
+         */
+        if (create_action != OGS_GTP_CREATE_IN_ATTACH_REQUEST) {
+            mme_sess_t *dup = mme_sess_find_by_apn(
+                    mme_ue, sess->session->name);
+            if (dup && dup != sess) {
+                ogs_warn("[%s] PDN connectivity: resolved APN[%s] already "
+                        "active%s; rejecting duplicate PDN (cause #55)",
+                        mme_ue->imsi_bcd, sess->session->name,
+                        sess->ue_provided_apn ? "" : " (S6a default)");
+                r = nas_eps_send_pdn_connectivity_reject(sess,
+                        OGS_NAS_ESM_CAUSE_MULTIPLE_PDN_CONNECTIONS_FOR_A_GIVEN_APN_NOT_ALLOWED,
+                        create_action);
+                ogs_expect(r == OGS_OK);
+                return OGS_ERROR;
+            }
+        }
+
         /* Not yet done when the APN came from the S6a default */
         if (!sess->policy_pdn_type &&
                 esm_resolve_pdn_type(mme_ue, sess) != OGS_OK) {
