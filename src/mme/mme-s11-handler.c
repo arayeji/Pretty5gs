@@ -982,7 +982,14 @@ void mme_s11_handle_delete_session_response(
      ********************/
     ogs_assert(xact);
     action = xact->delete_action;
-    ogs_assert(action);
+    if (!action) {
+        ogs_error("Delete Session Response: missing delete_action "
+                "(orphan/stale xact) - ignore");
+        rv = ogs_gtp_xact_commit(xact);
+        if (rv != OGS_OK)
+            ogs_error("ogs_gtp_xact_commit() failed");
+        return;
+    }
     sess = mme_sess_find_by_id(OGS_POINTER_TO_UINT(xact->data));
     if (sess)
         mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
@@ -1771,7 +1778,19 @@ void mme_s11_handle_release_access_bearers_response(
      ********************/
     ogs_assert(xact);
     action = xact->release_action;
-    ogs_assert(action);
+    /*
+     * Under S11 storms an orphan / mistagged RAB Response can arrive with
+     * release_action==0 (xact reuse, peer retry, or response after local
+     * skip). Aborting the MME here took production down; drop safely.
+     */
+    if (!action) {
+        ogs_error("Release Access Bearers Response: missing release_action "
+                "(orphan/stale xact) - ignore");
+        rv = ogs_gtp_xact_commit(xact);
+        if (rv != OGS_OK)
+            ogs_error("ogs_gtp_xact_commit() failed");
+        return;
+    }
 
     mme_ue = mme_ue_find_by_id(OGS_POINTER_TO_UINT(xact->data));
     enb_ue = enb_ue_find_by_id(xact->enb_ue_id);
@@ -1855,7 +1874,16 @@ void mme_s11_finish_release_access_bearers(
     mme_bearer_t *bearer = NULL;
 
     ogs_assert(mme_ue);
-    ogs_assert(action);
+    if (!action) {
+        ogs_error("[%s] finish Release Access Bearers: missing action - "
+                "clear S1-U paths only", mme_ue->imsi_bcd);
+        ogs_list_for_each(&mme_ue->sess_list, sess) {
+            ogs_list_for_each(&sess->bearer_list, bearer) {
+                CLEAR_ENB_S1U_PATH(bearer);
+            }
+        }
+        return;
+    }
 
     ogs_list_for_each(&mme_ue->sess_list, sess) {
         ogs_list_for_each(&sess->bearer_list, bearer) {
@@ -2347,7 +2375,14 @@ void mme_s11_handle_delete_indirect_data_forwarding_tunnel_response(
      ********************/
     ogs_assert(xact);
     action = xact->delete_indirect_action;
-    ogs_assert(action);
+    if (!action) {
+        ogs_error("Delete Indirect Data Forwarding Tunnel Response: "
+                "missing action (orphan/stale xact) - ignore");
+        rv = ogs_gtp_xact_commit(xact);
+        if (rv != OGS_OK)
+            ogs_error("ogs_gtp_xact_commit() failed");
+        return;
+    }
     mme_ue = mme_ue_find_by_id(OGS_POINTER_TO_UINT(xact->data));
     enb_ue = enb_ue_find_by_id(xact->enb_ue_id);
 
