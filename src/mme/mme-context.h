@@ -1615,14 +1615,16 @@ typedef struct mme_sess_s {
     } while(0)
 
 #define MME_HAVE_SGW_S1U_PATH(__sESS) \
-    ((__sESS) && (mme_bearer_first(__sESS)) && \
-     ((mme_default_bearer_in_sess(__sESS)->sgw_s1u_teid)))
+    ((__sESS) && mme_default_bearer_in_sess(__sESS) && \
+     (mme_default_bearer_in_sess(__sESS)->sgw_s1u_teid))
+/* Null-safe: bearer list may already be empty under teardown races. */
 #define CLEAR_SGW_S1U_PATH(__sESS) \
     do { \
         mme_bearer_t *__bEARER = NULL; \
         ogs_assert((__sESS)); \
         __bEARER = mme_default_bearer_in_sess(__sESS); \
-        __bEARER->sgw_s1u_teid = 0; \
+        if (__bEARER) \
+            __bEARER->sgw_s1u_teid = 0; \
     } while(0)
 
 #define MME_HAVE_ENB_DL_INDIRECT_TUNNEL(__bEARER) \
