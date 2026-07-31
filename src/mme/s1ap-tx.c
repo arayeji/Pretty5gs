@@ -210,6 +210,11 @@ int s1ap_tx_workers_start(int count)
                 64, 64, tx_dispatch, NULL);
         ogs_assert(tx_workers[i]);
         ogs_worker_hooks(tx_workers[i], tx_thread_init, NULL);
+        {
+            char tname[16];
+            ogs_snprintf(tname, sizeof(tname), "s1ap-tx%d", i);
+            ogs_worker_set_name(tx_workers[i], tname);
+        }
         ogs_worker_start(tx_workers[i]);
     }
 

@@ -541,6 +541,7 @@ int s1ap_io_start(void)
             io_dispatch, NULL);
     ogs_assert(io_worker);
     ogs_worker_hooks(io_worker, io_thread_init, io_thread_fini);
+    ogs_worker_set_name(io_worker, "s1ap-io");
     ogs_worker_start(io_worker);
 
     ogs_info("S1AP TX IO thread: on");

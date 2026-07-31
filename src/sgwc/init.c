@@ -136,7 +136,7 @@ int sgwc_initialize(void)
         if (rv != OGS_OK) return rv;
     }
 
-    thread = ogs_thread_create(sgwc_main, NULL);
+    thread = ogs_thread_create_named(sgwc_main, NULL, "sgwc-main");
     if (!thread) return OGS_ERROR;
 
     initialized = 1;

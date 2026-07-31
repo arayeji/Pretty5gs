@@ -718,6 +718,11 @@ int mme_workers_start(int count)
         ogs_assert(mme_workers[i]);
         ogs_worker_hooks(mme_workers[i],
                 mme_worker_thread_init, mme_worker_thread_fini);
+        {
+            char tname[16];
+            ogs_snprintf(tname, sizeof(tname), "mme-w%d", i);
+            ogs_worker_set_name(mme_workers[i], tname);
+        }
         ogs_worker_start(mme_workers[i]);
     }
 

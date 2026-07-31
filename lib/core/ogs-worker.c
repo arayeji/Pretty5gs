@@ -87,12 +87,25 @@ void ogs_worker_hooks(ogs_worker_t *worker,
     worker->thread_fini = thread_fini;
 }
 
+void ogs_worker_set_name(ogs_worker_t *worker, const char *name)
+{
+    ogs_assert(worker);
+    ogs_assert(!worker->thread);
+
+    if (!name || !name[0]) {
+        worker->name[0] = '\0';
+        return;
+    }
+    ogs_snprintf(worker->name, sizeof(worker->name), "%s", name);
+}
+
 void ogs_worker_start(ogs_worker_t *worker)
 {
     ogs_assert(worker);
     ogs_assert(!worker->thread);
 
-    worker->thread = ogs_thread_create(worker_main, worker);
+    worker->thread = ogs_thread_create_named(worker_main, worker,
+            worker->name[0] ? worker->name : NULL);
     ogs_assert(worker->thread);
 
     /* Block until thread_init finished: workers come up one at a time,

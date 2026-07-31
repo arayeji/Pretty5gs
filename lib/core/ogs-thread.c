@@ -49,12 +49,35 @@ typedef struct ogs_thread_s {
 
     void (*func)(void *);
     void *data;
+    char name[16];
 } ogs_thread_t;
+
+void ogs_thread_set_name(const char *name)
+{
+    char buf[16];
+
+    if (!name || !name[0])
+        return;
+
+    /* Linux pthread_setname_np limit is 15 chars + NUL */
+    ogs_snprintf(buf, sizeof(buf), "%s", name);
+
+#if defined(__APPLE__)
+    (void)pthread_setname_np(buf);
+#elif defined(__linux__)
+    (void)pthread_setname_np(pthread_self(), buf);
+#else
+    (void)buf;
+#endif
+}
 
 static void *thread_worker(void *arg)
 {
     ogs_thread_t *thread = arg;
     ogs_assert(thread);
+
+    if (thread->name[0])
+        ogs_thread_set_name(thread->name);
 
     ogs_thread_mutex_lock(&thread->mutex);
 
@@ -76,6 +99,12 @@ static void *thread_worker(void *arg)
 
 ogs_thread_t *ogs_thread_create(void (*func)(void *), void *data)
 {
+    return ogs_thread_create_named(func, data, NULL);
+}
+
+ogs_thread_t *ogs_thread_create_named(
+        void (*func)(void *), void *data, const char *name)
+{
     ogs_thread_t *thread = ogs_calloc(1, sizeof *thread);
     if (!thread) {
         ogs_error("ogs_calloc() failed");
@@ -91,6 +120,8 @@ ogs_thread_t *ogs_thread_create(void (*func)(void *), void *data)
 
     thread->func = func;
     thread->data = data;
+    if (name && name[0])
+        ogs_snprintf(thread->name, sizeof(thread->name), "%s", name);
 
 #if !defined(_WIN32)
     pthread_create(&thread->id, NULL, thread_worker, thread);
@@ -101,7 +132,8 @@ ogs_thread_t *ogs_thread_create(void (*func)(void *), void *data)
 
     ogs_thread_cond_wait(&thread->cond, &thread->mutex);
     ogs_thread_mutex_unlock(&thread->mutex);
-    ogs_debug("[%p] thread started", thread);
+    ogs_debug("[%p] thread started name[%s]", thread,
+            thread->name[0] ? thread->name : "-");
 
     return thread;
 }

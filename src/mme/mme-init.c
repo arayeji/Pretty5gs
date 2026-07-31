@@ -73,6 +73,9 @@ int mme_initialize(void)
 {
     int rv;
 
+    /* Bootstrap / accept thread — distinct from mme-main event loop */
+    ogs_thread_set_name("mme");
+
 #define APP_NAME "mme"
     rv = ogs_app_parse_local_conf(APP_NAME);
     if (rv != OGS_OK) return rv;
@@ -180,7 +183,7 @@ int mme_initialize(void)
     rv = s1ap_open();
     if (rv != OGS_OK) return OGS_ERROR;
 
-    thread = ogs_thread_create(mme_main, NULL);
+    thread = ogs_thread_create_named(mme_main, NULL, "mme-main");
     if (!thread) return OGS_ERROR;
 
 #ifdef OPEN5GS_ADMIN_WATCHER
