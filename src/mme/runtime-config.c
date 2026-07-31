@@ -293,6 +293,8 @@ char *mme_runtime_config_dump(void)
             ctx->attach_accept.equivalent_plmn);
     cJSON_AddBoolToObject(attach, "equivalent_plmn_serving_only",
             ctx->attach_accept.equivalent_plmn_serving_only);
+    cJSON_AddBoolToObject(attach, "equivalent_plmn_access_control_tac",
+            ctx->attach_accept.equivalent_plmn_access_control_tac);
     cJSON_AddBoolToObject(attach, "ims_voice_over_ps",
             ctx->attach_accept.ims_voice_over_ps);
     cJSON_AddBoolToObject(attach, "t3402", ctx->attach_accept.t3402);
@@ -325,12 +327,16 @@ char *mme_runtime_config_dump(void)
     cJSON_AddNumberToObject(runtime, "eplmn_count", ctx->num_of_eplmn);
     eplmn = cJSON_CreateArray();
     ogs_assert(eplmn);
+    /* Historical key name in /admin/config */
     cJSON_AddItemToObject(runtime, "eplmn", eplmn);
     for (i = 0; i < ctx->num_of_eplmn; i++) {
         char plmn[OGS_PLMNIDSTRLEN];
         ogs_plmn_id_to_string(&ctx->eplmn[i], plmn);
         cJSON_AddItemToArray(eplmn, cJSON_CreateString(plmn));
     }
+    /* YAML-aligned alias for NMS looking for equivalent_plmn */
+    cJSON_AddItemToObject(runtime, "equivalent_plmn",
+            cJSON_Duplicate(eplmn, 1));
 
     cJSON_AddItemToObject(runtime, "apn_correction",
             json_append_apn_correction());

@@ -931,23 +931,32 @@ static int reload_equivalent_plmn_replace(ogs_yaml_iter_t *mme_iter)
     ogs_plmn_id_t new_eplmn[OGS_NAS_MAX_PLMN];
     int new_count = 0;
     int rv;
+    bool changed;
 
     rv = mme_eplmn_parse_config(mme_iter, &new_count, new_eplmn);
     if (rv != OGS_OK) {
-        ogs_reload_audit_warn("equivalent_plmn YAML parse failed");
+        ogs_reload_audit_warn("equivalent_plmn YAML parse failed "
+                "(keep previous %d entries; use flat mme.equivalent_plmn: "
+                "[{mcc, mnc}, ...] max 15)",
+                self->num_of_eplmn);
         return 0;
     }
 
-    if (new_count != self->num_of_eplmn ||
+    changed = (new_count != self->num_of_eplmn) ||
             (new_count > 0 && memcmp(new_eplmn, self->eplmn,
              new_count * sizeof(new_eplmn[0])) != 0) ||
-            (new_count == 0 && self->num_of_eplmn > 0)) {
+            (new_count == 0 && self->num_of_eplmn > 0);
+
+    if (changed) {
         self->num_of_eplmn = new_count;
         if (new_count > 0)
             memcpy(self->eplmn, new_eplmn,
                     new_count * sizeof(self->eplmn[0]));
         mme_reload_lists_changed++;
         ogs_reload_audit_note(" equivalent_plmn replaced (%d entries)",
+                new_count);
+    } else {
+        ogs_reload_audit_note(" equivalent_plmn unchanged (%d entries)",
                 new_count);
     }
 
@@ -1803,6 +1812,19 @@ static void reload_attach_accept_scalars(ogs_yaml_iter_t *mme_iter)
 {
     mme_context_t *self = mme_self();
     ogs_yaml_iter_t aa_iter;
+    bool tai_list_serving_only;
+    bool equivalent_plmn;
+    bool equivalent_plmn_serving_only;
+    bool equivalent_plmn_access_control_tac;
+    bool ims_voice_over_ps;
+
+    tai_list_serving_only = self->attach_accept.tai_list_serving_only;
+    equivalent_plmn = self->attach_accept.equivalent_plmn;
+    equivalent_plmn_serving_only =
+            self->attach_accept.equivalent_plmn_serving_only;
+    equivalent_plmn_access_control_tac =
+            self->attach_accept.equivalent_plmn_access_control_tac;
+    ims_voice_over_ps = self->attach_accept.ims_voice_over_ps;
 
     ogs_yaml_iter_recurse(mme_iter, &aa_iter);
     while (ogs_yaml_iter_next(&aa_iter)) {
@@ -1815,6 +1837,20 @@ static void reload_attach_accept_scalars(ogs_yaml_iter_t *mme_iter)
                 self->attach_accept.tai_list_serving_only = true;
             else if (v && !strcmp(v, "all"))
                 self->attach_accept.tai_list_serving_only = false;
+        } else if (!strcmp(aa_key, "equivalent_plmn")) {
+            /*
+             * Nested attach_accept.equivalent_plmn is the boolean IE switch.
+             * The PLMN list must be flat mme.equivalent_plmn: [...].
+             */
+            if (ogs_yaml_iter_type(&aa_iter) == YAML_SEQUENCE_NODE ||
+                    ogs_yaml_iter_type(&aa_iter) == YAML_MAPPING_NODE) {
+                ogs_reload_audit_warn(
+                        "attach_accept.equivalent_plmn is a boolean; "
+                        "PLMN list belongs under mme.equivalent_plmn");
+            } else {
+                self->attach_accept.equivalent_plmn =
+                    ogs_yaml_iter_bool(&aa_iter);
+            }
         } else if (!strcmp(aa_key, "equivalent_plmn_serving_only")) {
             self->attach_accept.equivalent_plmn_serving_only =
                 ogs_yaml_iter_bool(&aa_iter);
@@ -1826,7 +1862,38 @@ static void reload_attach_accept_scalars(ogs_yaml_iter_t *mme_iter)
                 ogs_yaml_iter_bool(&aa_iter);
         }
     }
-    mme_reload_lists_changed++;
+
+    if (tai_list_serving_only != self->attach_accept.tai_list_serving_only) {
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" attach_accept.tai_list=%s",
+                self->attach_accept.tai_list_serving_only ?
+                "serving_only" : "all");
+    }
+    if (equivalent_plmn != self->attach_accept.equivalent_plmn) {
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" attach_accept.equivalent_plmn=%s",
+                self->attach_accept.equivalent_plmn ? "true" : "false");
+    }
+    if (equivalent_plmn_serving_only !=
+            self->attach_accept.equivalent_plmn_serving_only) {
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" attach_accept.equivalent_plmn_serving_only=%s",
+                self->attach_accept.equivalent_plmn_serving_only ?
+                "true" : "false");
+    }
+    if (equivalent_plmn_access_control_tac !=
+            self->attach_accept.equivalent_plmn_access_control_tac) {
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(
+                " attach_accept.equivalent_plmn_access_control_tac=%s",
+                self->attach_accept.equivalent_plmn_access_control_tac ?
+                "true" : "false");
+    }
+    if (ims_voice_over_ps != self->attach_accept.ims_voice_over_ps) {
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" attach_accept.ims_voice_over_ps=%s",
+                self->attach_accept.ims_voice_over_ps ? "true" : "false");
+    }
 }
 
 int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter)
@@ -2016,13 +2083,25 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
         return 0;
     }
     if (!strcmp(mme_key, "equivalent_plmn_serving_only")) {
+        bool prev = self->attach_accept.equivalent_plmn_serving_only;
         self->attach_accept.equivalent_plmn_serving_only =
             ogs_yaml_iter_bool(mme_iter);
-        mme_reload_lists_changed++;
+        if (prev != self->attach_accept.equivalent_plmn_serving_only) {
+            mme_reload_lists_changed++;
+            ogs_reload_audit_note(" equivalent_plmn_serving_only=%s",
+                    self->attach_accept.equivalent_plmn_serving_only ?
+                    "true" : "false");
+        }
     } else if (!strcmp(mme_key, "equivalent_plmn_access_control_tac")) {
+        bool prev = self->attach_accept.equivalent_plmn_access_control_tac;
         self->attach_accept.equivalent_plmn_access_control_tac =
             ogs_yaml_iter_bool(mme_iter);
-        mme_reload_lists_changed++;
+        if (prev != self->attach_accept.equivalent_plmn_access_control_tac) {
+            mme_reload_lists_changed++;
+            ogs_reload_audit_note(" equivalent_plmn_access_control_tac=%s",
+                    self->attach_accept.equivalent_plmn_access_control_tac ?
+                    "true" : "false");
+        }
     } else if (!strcmp(mme_key, "ims_voice_over_ps_in_s1_mode")) {
         self->attach_accept.ims_voice_over_ps =
             ogs_yaml_iter_bool(mme_iter);

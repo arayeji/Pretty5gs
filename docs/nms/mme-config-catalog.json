@@ -873,9 +873,9 @@
     "type": "boolean",
     "default": true,
     "group": "attach",
-    "reload": "restart",
+    "reload": "sighup",
     "description": "Include Equivalent PLMN list in Accept.",
-    "notes": "Parsed at startup; NOT in reload_attach_accept_scalars."
+    "notes": "Boolean IE switch only. PLMN list is flat mme.equivalent_plmn[]. /admin/config: runtime.eplmn + runtime.equivalent_plmn."
   },
   {
     "path": "mme.attach_accept.equivalent_plmn_serving_only",

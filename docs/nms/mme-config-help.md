@@ -1277,7 +1277,7 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 - **Type:** `object`
 - **Default when omitted:** `compiled-default: mme_attach_accept_set_defaults`
 - **Reload:** `unknown`
-- **Notes / quirks:** Partial SIGHUP: only tai_list, equivalent_plmn_serving_only, equivalent_plmn_access_control_tac, ims_voice_over_ps. equivalent_plmn/t3402/esm/legacy need restart.
+- **Notes / quirks:** SIGHUP: tai_list, equivalent_plmn (bool), equivalent_plmn_serving_only, equivalent_plmn_access_control_tac, ims_voice_over_ps. Nested `equivalent_plmn` must stay a boolean — the PLMN **list** is flat `mme.equivalent_plmn[]` (also SIGHUP). t3402/esm/legacy need restart. `/admin/config` exposes the list as `runtime.eplmn` and `runtime.equivalent_plmn`.
 - **Evidence:** `src/mme/mme-context.c:mme_attach_accept_parse_yaml / mme-reload-lists.c:reload_attach_accept_scalars`
 
 ### `mme.attach_accept.tai_list`
