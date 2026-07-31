@@ -985,6 +985,15 @@ int nas_eps_send_deactivate_bearer_context_request(
         return OGS_NOTFOUND;
     }
 
+    if (!mme_sess_find_by_id(bearer->sess_id)) {
+        /* Session torn down while this Deactivate was in flight; treat
+         * like the vanished-S1 race so callers answer SGW/SMF directly
+         * instead of stalling the bearer teardown until GTP timeout. */
+        ogs_warn("[%s] Session context has already been removed EBI[%d]",
+                mme_ue->imsi_bcd, bearer->ebi);
+        return OGS_NOTFOUND;
+    }
+
     esmbuf = esm_build_deactivate_bearer_context_request(
             bearer, esm_cause);
     if (!esmbuf) {

@@ -505,10 +505,24 @@ ogs_pkbuf_t *esm_build_deactivate_bearer_context_request(
             &message.esm.deactivate_eps_bearer_context_request;
     
     ogs_assert(bearer);
+    /*
+     * Teardown race: the session (or UE) can be removed while a
+     * Deactivate for one of its bearers is still queued/dispatching
+     * (e.g. Delete Bearer vs. Delete Session crossing). Aborting the
+     * MME here took production down (2026-07-31); drop safely instead.
+     */
     sess = mme_sess_find_by_id(bearer->sess_id);
-    ogs_assert(sess);
+    if (!sess) {
+        ogs_warn("esm_build_deactivate_bearer_context_request: "
+                "session has already been removed (EBI[%d])", bearer->ebi);
+        return NULL;
+    }
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
-    ogs_assert(mme_ue);
+    if (!mme_ue) {
+        ogs_warn("esm_build_deactivate_bearer_context_request: "
+                "UE context has already been removed (EBI[%d])", bearer->ebi);
+        return NULL;
+    }
 
     ogs_debug("Deactivate bearer context request");
     ogs_debug("    IMSI[%s] PTI[%d] EBI[%d]",
