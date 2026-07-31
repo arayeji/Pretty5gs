@@ -822,7 +822,7 @@ static void mme_attach_accept_log_config(void)
             "serving_only" : "all");
     ogs_info("  equivalent_plmn: %s",
             self.attach_accept.equivalent_plmn ? "enabled" : "disabled");
-    ogs_info("  equivalent_plmn_serving_only: %s",
+    ogs_info("  equivalent_plmn_serving_only: %s (filter by IMSI home PLMN)",
             self.attach_accept.equivalent_plmn_serving_only ?
             "enabled" : "disabled");
     ogs_info("  ims_voice_over_ps: %s",

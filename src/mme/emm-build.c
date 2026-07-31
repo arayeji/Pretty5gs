@@ -295,21 +295,21 @@ ogs_pkbuf_t *emm_build_attach_accept(
     }
 
     if (mme_self()->attach_accept.equivalent_plmn &&
-            mme_self()->num_of_eplmn) {
-        int num_eplmn = mme_eplmn_count_for_serving(&mme_ue->tai.plmn_id,
+            mme_self()->num_of_eplmn && MME_UE_HAVE_IMSI(mme_ue)) {
+        int num_eplmn = mme_eplmn_count_for_imsi(mme_ue->imsi_bcd,
                 mme_self()->attach_accept.equivalent_plmn_serving_only,
                 mme_self()->num_of_eplmn, mme_self()->eplmn);
 
-        ogs_assert(mme_eplmn_build_nas_list_for_serving(
-                    &attach_accept->equivalent_plmns, &mme_ue->tai.plmn_id,
+        ogs_assert(mme_eplmn_build_nas_list_for_imsi(
+                    &attach_accept->equivalent_plmns, mme_ue->imsi_bcd,
                     mme_self()->attach_accept.equivalent_plmn_serving_only,
                     mme_self()->num_of_eplmn, mme_self()->eplmn) == OGS_OK);
         attach_accept->presencemask |=
             OGS_NAS_EPS_ATTACH_ACCEPT_EQUIVALENT_PLMNS_PRESENT;
         ogs_debug("    Equivalent PLMNs[%d/%d] included in Attach Accept "
-                "(serving PLMN:%06x serving_only:%d)",
+                "(IMSI[%s] serving_only:%d)",
                 num_eplmn, mme_self()->num_of_eplmn,
-                ogs_plmn_id_hexdump(&mme_ue->tai.plmn_id),
+                mme_ue->imsi_bcd,
                 mme_self()->attach_accept.equivalent_plmn_serving_only);
     }
 
@@ -774,21 +774,21 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
         extended_protocol_configuration_options = 1;
 
     if (mme_self()->attach_accept.equivalent_plmn &&
-            mme_self()->num_of_eplmn) {
-        int num_eplmn = mme_eplmn_count_for_serving(&mme_ue->tai.plmn_id,
+            mme_self()->num_of_eplmn && MME_UE_HAVE_IMSI(mme_ue)) {
+        int num_eplmn = mme_eplmn_count_for_imsi(mme_ue->imsi_bcd,
                 mme_self()->attach_accept.equivalent_plmn_serving_only,
                 mme_self()->num_of_eplmn, mme_self()->eplmn);
 
-        ogs_assert(mme_eplmn_build_nas_list_for_serving(
-                    &tau_accept->equivalent_plmns, &mme_ue->tai.plmn_id,
+        ogs_assert(mme_eplmn_build_nas_list_for_imsi(
+                    &tau_accept->equivalent_plmns, mme_ue->imsi_bcd,
                     mme_self()->attach_accept.equivalent_plmn_serving_only,
                     mme_self()->num_of_eplmn, mme_self()->eplmn) == OGS_OK);
         tau_accept->presencemask |=
             OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_EQUIVALENT_PLMNS_PRESENT;
         ogs_debug("    Equivalent PLMNs[%d/%d] included in TAU Accept "
-                "(serving PLMN:%06x serving_only:%d)",
+                "(IMSI[%s] serving_only:%d)",
                 num_eplmn, mme_self()->num_of_eplmn,
-                ogs_plmn_id_hexdump(&mme_ue->tai.plmn_id),
+                mme_ue->imsi_bcd,
                 mme_self()->attach_accept.equivalent_plmn_serving_only);
     }
 

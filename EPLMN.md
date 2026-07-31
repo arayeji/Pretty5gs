@@ -20,7 +20,7 @@ mme:
     - { mcc: 999, mnc: 35 }
 ```
 
-When `attach_accept.equivalent_plmn_serving_only` is **enabled** (default), if the UE’s serving PLMN (TAI PLMN) matches one configured EPLMN entry, **only that PLMN** is sent in Attach/TAU Accept instead of the full list. If there is no match, the full list is sent.
+When `attach_accept.equivalent_plmn_serving_only` is **enabled** (default), the MME matches the UE’s **IMSI home PLMN** (not the visited/serving TAI PLMN) against the configured list. If the IMSI PLMN is listed (e.g. IMSI `43211…` and `{ mcc: 432, mnc: 11 }`), **only that PLMN** is sent in Attach/TAU Accept. If there is no match, the full list is sent.
 
 Set `attach_accept.equivalent_plmn: false` to omit the EPLMN IE even when `equivalent_plmn:` is configured.
 
@@ -44,7 +44,7 @@ Attach/TAU Accept NAS options:
 **MME on attach/TAU** (debug):
 
 ```
-    Equivalent PLMNs[1/2] included in Attach Accept (serving PLMN:99970 serving_only:1)
+    Equivalent PLMNs[1/2] included in Attach Accept (IMSI[43211…] serving_only:1)
 ```
 
 ## Wire verification (tshark)
