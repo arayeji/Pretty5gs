@@ -60,6 +60,7 @@ libmme_sources = files('''
     mme-inbound-roam-apn.h
     mme-apn-policy.h
     mme-roam-access.h
+    mme-access-control-match.h
     metrics.h
 
     mme-init.c
@@ -70,6 +71,7 @@ libmme_sources = files('''
     mme-inbound-roam-apn.c
     mme-apn-policy.c
     mme-roam-access.c
+    mme-access-control-match.c
     eplmn-config.c
     mme-apn.c
     mme-ambr.c

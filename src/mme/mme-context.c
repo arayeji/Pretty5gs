@@ -808,6 +808,7 @@ static void mme_attach_accept_set_defaults(void)
     self.attach_accept.tai_list_serving_only = true;
     self.attach_accept.equivalent_plmn = true;
     self.attach_accept.equivalent_plmn_serving_only = true;
+    self.attach_accept.equivalent_plmn_access_control_tac = false;
     self.attach_accept.ims_voice_over_ps = true;
     self.attach_accept.t3402 = false;
     self.attach_accept.esm_cause_pdn_type_mismatch = true;
@@ -824,6 +825,9 @@ static void mme_attach_accept_log_config(void)
             self.attach_accept.equivalent_plmn ? "enabled" : "disabled");
     ogs_info("  equivalent_plmn_serving_only: %s (filter by IMSI home PLMN)",
             self.attach_accept.equivalent_plmn_serving_only ?
+            "enabled" : "disabled");
+    ogs_info("  equivalent_plmn_access_control_tac: %s",
+            self.attach_accept.equivalent_plmn_access_control_tac ?
             "enabled" : "disabled");
     ogs_info("  ims_voice_over_ps: %s",
             self.attach_accept.ims_voice_over_ps ?
@@ -861,6 +865,9 @@ static void mme_attach_accept_parse_yaml(ogs_yaml_iter_t *parent)
             self.attach_accept.equivalent_plmn = ogs_yaml_iter_bool(&iter);
         } else if (!strcmp(key, "equivalent_plmn_serving_only")) {
             self.attach_accept.equivalent_plmn_serving_only =
+                ogs_yaml_iter_bool(&iter);
+        } else if (!strcmp(key, "equivalent_plmn_access_control_tac")) {
+            self.attach_accept.equivalent_plmn_access_control_tac =
                 ogs_yaml_iter_bool(&iter);
         } else if (!strcmp(key, "ims_voice_over_ps") ||
                 !strcmp(key, "ims_voice_over_ps_in_s1_mode")) {
@@ -2668,6 +2675,10 @@ int mme_context_parse_config(void)
                         return rv;
                 } else if (!strcmp(mme_key, "equivalent_plmn_serving_only")) {
                     self.attach_accept.equivalent_plmn_serving_only =
+                        ogs_yaml_iter_bool(&mme_iter);
+                } else if (!strcmp(mme_key,
+                            "equivalent_plmn_access_control_tac")) {
+                    self.attach_accept.equivalent_plmn_access_control_tac =
                         ogs_yaml_iter_bool(&mme_iter);
                 } else if (!strcmp(mme_key, "ims_voice_over_ps_in_s1_mode")) {
                     self.attach_accept.ims_voice_over_ps =

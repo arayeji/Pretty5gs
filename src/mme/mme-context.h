@@ -30,6 +30,7 @@
 #include "ogs-sctp.h"
 #include "metrics.h"
 #include "mme-inbound-roam-apn.h"
+#include "mme-access-control-match.h"
 
 /* S1AP */
 #include "S1AP_Cause.h"
@@ -76,16 +77,6 @@ typedef struct served_gummei_s {
     int             num_of_mme_code;
     uint8_t         mme_code[CODE_PER_MME];
 } served_gummei_t;
-
-typedef struct mme_access_control_s {
-    int reject_cause;
-    ogs_plmn_id_t plmn_id;
-    bool plmn_id_configured;
-    char imsi_prefix[OGS_MAX_IMSI_BCD_LEN + 1];
-    int selection_order;
-    ogs_hash_t *tac_hash;
-    ogs_hash_t *enb_id_hash;
-} mme_access_control_t;
 
 typedef struct mme_context_s {
     const char          *diam_conf_path;  /* MME Diameter conf path */
@@ -157,6 +148,9 @@ typedef struct mme_context_s {
         bool tai_list_serving_only;
         bool equivalent_plmn;
         bool equivalent_plmn_serving_only;
+        /* When true, send EPLMN only if UE matches access_control and TAC
+         * is allowed on that entry (see mme_access_control_eplmn_tac_allowed). */
+        bool equivalent_plmn_access_control_tac;
         bool ims_voice_over_ps;
         bool t3402;
         bool esm_cause_pdn_type_mismatch;

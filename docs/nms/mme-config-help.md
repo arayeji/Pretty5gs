@@ -1277,7 +1277,7 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 - **Type:** `object`
 - **Default when omitted:** `compiled-default: mme_attach_accept_set_defaults`
 - **Reload:** `unknown`
-- **Notes / quirks:** Partial SIGHUP: only tai_list, equivalent_plmn_serving_only, ims_voice_over_ps. equivalent_plmn/t3402/esm/legacy need restart.
+- **Notes / quirks:** Partial SIGHUP: only tai_list, equivalent_plmn_serving_only, equivalent_plmn_access_control_tac, ims_voice_over_ps. equivalent_plmn/t3402/esm/legacy need restart.
 - **Evidence:** `src/mme/mme-context.c:mme_attach_accept_parse_yaml / mme-reload-lists.c:reload_attach_accept_scalars`
 
 ### `mme.attach_accept.tai_list`
@@ -1306,6 +1306,16 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 - **Reload:** `sighup`
 - **Notes / quirks:** SIGHUP subset + flat alias. Name is historical; filter key is IMSI PLMN.
 - **Evidence:** `src/mme/eplmn-config.c:mme_eplmn_build_nas_list_for_imsi / emm-build.c`
+
+### `mme.attach_accept.equivalent_plmn_access_control_tac`
+
+- **What:** When true, include EPLMN only if the UE matches `access_control` (IMSI prefix/PLMN) and the current TAC is allowed on that entry (no tac list means all TACs allowed).
+- **Type:** `boolean`
+- **Default when omitted:** `False`
+- **Reload:** `sighup`
+- **Aliases:** `mme.equivalent_plmn_access_control_tac`
+- **Notes / quirks:** Reuses existing access_control TAC hashes; eNB-ID lists are ignored for this gate.
+- **Evidence:** `src/mme/mme-access-control-match.c / emm-build.c`
 
 ### `mme.attach_accept.ims_voice_over_ps`
 
@@ -1369,6 +1379,15 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 - **Default when omitted:** `True`
 - **Reload:** `sighup`
 - **Aliases:** `mme.attach_accept.equivalent_plmn_serving_only`
+- **Evidence:** `src/mme/mme-context.c`
+
+### `mme.equivalent_plmn_access_control_tac`
+
+- **What:** Flat alias of attach_accept.equivalent_plmn_access_control_tac.
+- **Type:** `boolean`
+- **Default when omitted:** `False`
+- **Reload:** `sighup`
+- **Aliases:** `mme.attach_accept.equivalent_plmn_access_control_tac`
 - **Evidence:** `src/mme/mme-context.c`
 
 ### `mme.ims_voice_over_ps_in_s1_mode`
@@ -2348,5 +2367,5 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 - Catalog gaps for reloadable keys: `apn_correction`, inbound_roam lists/scalars, `overload.*`, partial `attach_accept` fields, `sgsap.client[].map`, flat attach aliases, `require_hss_map`, `ambr_limit`, etc.
 - `gummei[].plmn_id` list-of-PLMNs shape is under-documented in the sparse catalog (parser accepts mapping or sequence).
 - `global.time` in samples is unused by MME; operators must configure `mme.time.*`.
-- Nested siblings differ on reload: `attach_accept.equivalent_plmn` / `t3402` / `esm_cause_pdn_type_mismatch` / `legacy_gprs_qos` are **restart**, while `tai_list`, `equivalent_plmn_serving_only`, and `ims_voice_over_ps` are **SIGHUP**.
+- Nested siblings differ on reload: `attach_accept.equivalent_plmn` / `t3402` / `esm_cause_pdn_type_mismatch` / `legacy_gprs_qos` are **restart**, while `tai_list`, `equivalent_plmn_serving_only`, `equivalent_plmn_access_control_tac`, and `ims_voice_over_ps` are **SIGHUP**.
 - **Key absent on SIGHUP keeps the old value** — deleting a scalar/list key does not reset defaults; clear lists with an empty sequence where supported (e.g. `trace_imsi: []`).

@@ -27,10 +27,12 @@ testunit_unit_sources = files('''
     nrf-discovery-test.c
     crash-test.c
     eplmn-test.c
+    access-control-eplmn-test.c
     tai-list-test.c
 '''.split())
 
 testunit_unit_sources += files('../../src/mme/eplmn-config.c')
+testunit_unit_sources += files('../../src/mme/mme-access-control-match.c')
 
 testunit_unit_exe = executable('unit',
     sources : testunit_unit_sources,

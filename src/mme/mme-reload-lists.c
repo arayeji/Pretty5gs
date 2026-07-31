@@ -1818,6 +1818,9 @@ static void reload_attach_accept_scalars(ogs_yaml_iter_t *mme_iter)
         } else if (!strcmp(aa_key, "equivalent_plmn_serving_only")) {
             self->attach_accept.equivalent_plmn_serving_only =
                 ogs_yaml_iter_bool(&aa_iter);
+        } else if (!strcmp(aa_key, "equivalent_plmn_access_control_tac")) {
+            self->attach_accept.equivalent_plmn_access_control_tac =
+                ogs_yaml_iter_bool(&aa_iter);
         } else if (!strcmp(aa_key, "ims_voice_over_ps")) {
             self->attach_accept.ims_voice_over_ps =
                 ogs_yaml_iter_bool(&aa_iter);
@@ -2014,6 +2017,10 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
     }
     if (!strcmp(mme_key, "equivalent_plmn_serving_only")) {
         self->attach_accept.equivalent_plmn_serving_only =
+            ogs_yaml_iter_bool(mme_iter);
+        mme_reload_lists_changed++;
+    } else if (!strcmp(mme_key, "equivalent_plmn_access_control_tac")) {
+        self->attach_accept.equivalent_plmn_access_control_tac =
             ogs_yaml_iter_bool(mme_iter);
         mme_reload_lists_changed++;
     } else if (!strcmp(mme_key, "ims_voice_over_ps_in_s1_mode")) {

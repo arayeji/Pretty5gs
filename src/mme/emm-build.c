@@ -22,6 +22,7 @@
 #include "mme-sm.h"
 #include "mme-path.h"
 #include "eplmn-config.h"
+#include "mme-roam-access.h"
 
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __emm_log_domain
@@ -295,7 +296,9 @@ ogs_pkbuf_t *emm_build_attach_accept(
     }
 
     if (mme_self()->attach_accept.equivalent_plmn &&
-            mme_self()->num_of_eplmn && MME_UE_HAVE_IMSI(mme_ue)) {
+            mme_self()->num_of_eplmn && MME_UE_HAVE_IMSI(mme_ue) &&
+            (!mme_self()->attach_accept.equivalent_plmn_access_control_tac ||
+             mme_access_control_eplmn_tac_allowed(mme_ue))) {
         int num_eplmn = mme_eplmn_count_for_imsi(mme_ue->imsi_bcd,
                 mme_self()->attach_accept.equivalent_plmn_serving_only,
                 mme_self()->num_of_eplmn, mme_self()->eplmn);
@@ -307,10 +310,18 @@ ogs_pkbuf_t *emm_build_attach_accept(
         attach_accept->presencemask |=
             OGS_NAS_EPS_ATTACH_ACCEPT_EQUIVALENT_PLMNS_PRESENT;
         ogs_debug("    Equivalent PLMNs[%d/%d] included in Attach Accept "
-                "(IMSI[%s] serving_only:%d)",
+                "(IMSI[%s] serving_only:%d ac_tac:%d)",
                 num_eplmn, mme_self()->num_of_eplmn,
                 mme_ue->imsi_bcd,
-                mme_self()->attach_accept.equivalent_plmn_serving_only);
+                mme_self()->attach_accept.equivalent_plmn_serving_only,
+                mme_self()->attach_accept.equivalent_plmn_access_control_tac);
+    } else if (mme_self()->attach_accept.equivalent_plmn &&
+            mme_self()->attach_accept.equivalent_plmn_access_control_tac &&
+            MME_UE_HAVE_IMSI(mme_ue) &&
+            !mme_access_control_eplmn_tac_allowed(mme_ue)) {
+        ogs_debug("    Equivalent PLMNs omitted (access_control TAC) "
+                "IMSI[%s] TAC[%u]",
+                mme_ue->imsi_bcd, mme_ue->tai.tac);
     }
 
     pkbuf = nas_eps_security_encode(mme_ue, &message);
@@ -774,7 +785,9 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
         extended_protocol_configuration_options = 1;
 
     if (mme_self()->attach_accept.equivalent_plmn &&
-            mme_self()->num_of_eplmn && MME_UE_HAVE_IMSI(mme_ue)) {
+            mme_self()->num_of_eplmn && MME_UE_HAVE_IMSI(mme_ue) &&
+            (!mme_self()->attach_accept.equivalent_plmn_access_control_tac ||
+             mme_access_control_eplmn_tac_allowed(mme_ue))) {
         int num_eplmn = mme_eplmn_count_for_imsi(mme_ue->imsi_bcd,
                 mme_self()->attach_accept.equivalent_plmn_serving_only,
                 mme_self()->num_of_eplmn, mme_self()->eplmn);
@@ -786,10 +799,18 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
         tau_accept->presencemask |=
             OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_EQUIVALENT_PLMNS_PRESENT;
         ogs_debug("    Equivalent PLMNs[%d/%d] included in TAU Accept "
-                "(IMSI[%s] serving_only:%d)",
+                "(IMSI[%s] serving_only:%d ac_tac:%d)",
                 num_eplmn, mme_self()->num_of_eplmn,
                 mme_ue->imsi_bcd,
-                mme_self()->attach_accept.equivalent_plmn_serving_only);
+                mme_self()->attach_accept.equivalent_plmn_serving_only,
+                mme_self()->attach_accept.equivalent_plmn_access_control_tac);
+    } else if (mme_self()->attach_accept.equivalent_plmn &&
+            mme_self()->attach_accept.equivalent_plmn_access_control_tac &&
+            MME_UE_HAVE_IMSI(mme_ue) &&
+            !mme_access_control_eplmn_tac_allowed(mme_ue)) {
+        ogs_debug("    Equivalent PLMNs omitted (access_control TAC) "
+                "IMSI[%s] TAC[%u]",
+                mme_ue->imsi_bcd, mme_ue->tai.tac);
     }
 
     return nas_eps_security_encode(mme_ue, &message);

@@ -15,12 +15,25 @@ mme:
   attach_accept:
     equivalent_plmn: true
     equivalent_plmn_serving_only: true   # default: true (Huawei-like)
+    # optional: send EPLMN only when UE matches access_control and TAC is allowed
+    equivalent_plmn_access_control_tac: false
   equivalent_plmn:
     - { mcc: 999, mnc: 71 }
     - { mcc: 999, mnc: 35 }
+  # used when equivalent_plmn_access_control_tac is true (existing ACL; no dedicated TAC list)
+  access_control:
+    - imsi_prefix: "43235"
+      tac: [1234, 1235]
 ```
 
 When `attach_accept.equivalent_plmn_serving_only` is **enabled** (default), the MME matches the UE’s **IMSI home PLMN** (not the visited/serving TAI PLMN) against the configured list. If the IMSI PLMN is listed (e.g. IMSI `43211…` and `{ mcc: 432, mnc: 11 }`), **only that PLMN** is sent in Attach/TAU Accept. If there is no match, the full list is sent.
+
+When `attach_accept.equivalent_plmn_access_control_tac` is **enabled** (default: **false**), the EPLMN IE is included only if:
+
+1. The UE matches an `access_control` entry (same IMSI-prefix / PLMN match as inbound roam), and
+2. That entry has **no** `tac` list, **or** the UE’s current TAC is in that entry’s `tac` list.
+
+No match → omit EPLMN. eNB-ID allow-lists are not used for this gate. Flat alias: `mme.equivalent_plmn_access_control_tac` (SIGHUP).
 
 Set `attach_accept.equivalent_plmn: false` to omit the EPLMN IE even when `equivalent_plmn:` is configured.
 
@@ -39,6 +52,7 @@ Equivalent PLMNs configured: 2
 Attach/TAU Accept NAS options:
   equivalent_plmn: enabled
   equivalent_plmn_serving_only: enabled
+  equivalent_plmn_access_control_tac: disabled
 ```
 
 **MME on attach/TAU** (debug):

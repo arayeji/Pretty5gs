@@ -146,8 +146,10 @@ A malformed `mme.sgsap` block leaves the previous table in place.
 |-----------|--------|
 | `mme.attach_accept.tai_list` (`serving_only` / `all`) | yes |
 | `mme.attach_accept.equivalent_plmn_serving_only` | yes |
+| `mme.attach_accept.equivalent_plmn_access_control_tac` | yes |
 | `mme.attach_accept.ims_voice_over_ps` | yes |
 | `mme.equivalent_plmn_serving_only` | yes |
+| `mme.equivalent_plmn_access_control_tac` | yes |
 | `mme.ims_voice_over_ps_in_s1_mode` | yes |
 | `mme.tai_list_in_accept` | yes |
 | `mme.require_hss_map` | yes |
