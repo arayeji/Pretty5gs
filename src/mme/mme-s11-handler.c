@@ -948,6 +948,15 @@ void mme_s11_handle_modify_bearer_response(
                     "S11 Modify Bearer Response accepted");
             mme_ue_service_progress(mme_ue, enb_ue, "mbr_ok");
         }
+        /*
+         * DDN held during Service Request (before ICS stored eNB TEID)
+         * is usually released from ICS completion. If DDN arrived after
+         * ICS but the hold was still pending, finish it here.
+         */
+        if (MME_PAGING_ONGOING(mme_ue) &&
+            mme_ue->paging.type ==
+                MME_PAGING_TYPE_DOWNLINK_DATA_NOTIFICATION)
+            mme_send_after_paging(mme_ue, false);
         break;
     }
 }
@@ -1745,15 +1754,13 @@ void mme_s11_handle_release_access_bearers_response(
         ogs_gtp_xact_t *xact, mme_ue_t *mme_ue_from_teid,
         ogs_gtp2_release_access_bearers_response_t *rsp)
 {
-    int r, rv;
+    int rv;
     uint8_t cause_value = OGS_GTP2_CAUSE_UNDEFINED_VALUE;
     int action = 0;
     enb_ue_t *enb_ue = NULL;
 
-    sgw_ue_t *sgw_ue = NULL;;
+    sgw_ue_t *sgw_ue = NULL;
     mme_ue_t *mme_ue = NULL;
-    mme_sess_t *sess = NULL;
-    mme_bearer_t *bearer = NULL;
 
     ogs_assert(rsp);
 
@@ -1798,8 +1805,22 @@ void mme_s11_handle_release_access_bearers_response(
 
         cause_value = cause->value;
         if (cause_value == OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND) {
-            ogs_debug("SGW CONTEXT_NOT_FOUND (TEID=0) [ACTION:%d]", action);
-            mme_s11_handle_sgw_context_lost(mme_ue, cause_value);
+            mme_sess_t *sess = NULL, *next_sess = NULL;
+
+            /*
+             * SGW already dropped this S11 TEID (prior Delete Session,
+             * failed attach cleanup, or restart). Do NOT implicit-detach
+             * via more Delete Sessions — that amplified Context-Not-Found
+             * storms. Drop local PDN state without S11 and finish the S1
+             * release as if RAB succeeded; UE re-attaches on next activity.
+             */
+            ogs_info("[%s] Release Access Bearers: SGW CONTEXT_NOT_FOUND "
+                    "(action=%d) - clear local sessions, finish S1 release",
+                    mme_ue->imsi_bcd, action);
+            CLEAR_SESSION_CONTEXT(mme_ue);
+            ogs_list_for_each_safe(&mme_ue->sess_list, next_sess, sess)
+                MME_SESS_CLEAR(sess);
+            mme_s11_finish_release_access_bearers(mme_ue, enb_ue, action);
             return;
         }
         if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
@@ -1822,6 +1843,19 @@ void mme_s11_handle_release_access_bearers_response(
 
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
             mme_ue->mme_s11_teid, sgw_ue->sgw_s11_teid);
+
+    mme_s11_finish_release_access_bearers(mme_ue, enb_ue, action);
+}
+
+void mme_s11_finish_release_access_bearers(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue, int action)
+{
+    int r;
+    mme_sess_t *sess = NULL;
+    mme_bearer_t *bearer = NULL;
+
+    ogs_assert(mme_ue);
+    ogs_assert(action);
 
     ogs_list_for_each(&mme_ue->sess_list, sess) {
         ogs_list_for_each(&sess->bearer_list, bearer) {
@@ -2057,7 +2091,12 @@ void mme_s11_handle_downlink_data_notification(
  * to the eNodeB and hence it triggers a Downlink Data Notification message.
  *
  * If the MME receives a Downlink Data Notification after step 2 and
- * before step 9, the MME shall not send S1 interface paging messages
+ * before step 9, the MME shall not send S1 interface paging messages.
+ *
+ * Previously we Ack'd cause 115 (UE already re-attached) as soon as the UE
+ * was ECM-CONNECTED. That races the Service Request / Modify Bearer path
+ * and drops buffered DL. Hold the DDN xact instead; ICS / MBR completion
+ * calls mme_send_after_paging() with Request accepted.
  */
     if (ECM_IDLE(mme_ue)) {
         MME_STORE_PAGING_INFO(mme_ue,
@@ -2065,12 +2104,15 @@ void mme_s11_handle_downlink_data_notification(
         r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
         ogs_expect(r == OGS_OK);
     } else if (ECM_CONNECTED(mme_ue)) {
-        MME_CLEAR_PAGING_INFO(mme_ue);
-        if (mme_gtp_send_downlink_data_notification_ack(
-                bearer, OGS_GTP2_CAUSE_UE_ALREADY_RE_ATTACHED) != OGS_OK)
-            ogs_error("[%s] DDN Ack not sent", mme_ue->imsi_bcd);
+        bool service_request_in_flight =
+            (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST ||
+             mme_ue->nas_eps.type == MME_EPS_TYPE_EXTENDED_SERVICE_REQUEST);
 
         if (cause_value == OGS_GTP2_CAUSE_ERROR_INDICATION_RECEIVED) {
+            MME_CLEAR_PAGING_INFO(mme_ue);
+            if (mme_gtp_send_downlink_data_notification_ack(
+                    bearer, OGS_GTP2_CAUSE_UE_ALREADY_RE_ATTACHED) != OGS_OK)
+                ogs_error("[%s] DDN Ack not sent", mme_ue->imsi_bcd);
 
 /*
  * TS23.007 22. Downlink Data Notification Handling at MME/S4 SGSN
@@ -2088,23 +2130,34 @@ void mme_s11_handle_downlink_data_notification(
  *   Notification message, the MME shall perform S1 Release procedure and
  *   perform Network Triggered Service Request procedure as specified
  *   in 3GPP TS 23.401 [15].
- * - If the UE is in CONNECTED state, upon receipt of the Downlink Data
- *   Notification message and Direct Tunnel is used, the S4-SGSN shall
- *   perform Iu Release procedure and perform Network Triggered Service
- *   Request procedure as specified in 3GPP TS 23.060 [5]
- *   if the cause value included in Downlink Data Notification is
- *   "Error Indication received from RNC/eNodeB/S4-SGSN",
- * - If the UE is in CONNECTED state, upon receipt of the Downlink Data
- *   Notification message and Direct Tunnel is not used, the S4-SGSN should
- *   re-establish all of the S4-U bearers of this UE if the cause value
- *   included in Downlink Data Notification is "Error Indication received
- *   from RNC/eNodeB/S4-SGSN"
  */
             r = s1ap_send_ue_context_release_command(
                     enb_ue_find_by_id(mme_ue->enb_ue_id),
                     S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                     S1AP_UE_CTX_REL_S1_PAGING, 0);
             ogs_expect(r == OGS_OK);
+        } else if (service_request_in_flight) {
+            if (bearer->enb_s1u_teid) {
+                /*
+                 * ICS already stored the new eNB TEID; MBR is in flight or
+                 * about to be. Ack accepted so SGW keeps buffering until MBR.
+                 */
+                MME_CLEAR_PAGING_INFO(mme_ue);
+                if (mme_gtp_send_downlink_data_notification_ack(
+                        bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+                    ogs_error("[%s] DDN Ack not sent", mme_ue->imsi_bcd);
+            } else {
+                MME_STORE_PAGING_INFO(mme_ue,
+                    MME_PAGING_TYPE_DOWNLINK_DATA_NOTIFICATION, bearer->id);
+                ogs_info("[%s] DDN during Service Request before user-plane "
+                        "ready: hold Ack (no page, no cause 115)",
+                        mme_ue->imsi_bcd);
+            }
+        } else {
+            MME_CLEAR_PAGING_INFO(mme_ue);
+            if (mme_gtp_send_downlink_data_notification_ack(
+                    bearer, OGS_GTP2_CAUSE_UE_ALREADY_RE_ATTACHED) != OGS_OK)
+                ogs_error("[%s] DDN Ack not sent", mme_ue->imsi_bcd);
         }
     }
 }

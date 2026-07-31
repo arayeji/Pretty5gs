@@ -682,6 +682,13 @@ int mme_gtp_send_delete_session_request(
     ogs_assert(mme_ue);
     ogs_assert(sgw_ue);
 
+    if (!sgw_ue->sgw_s11_teid) {
+        ogs_info("[%s] Delete Session skipped: no SGW S11 TEID - clear local",
+                mme_ue->imsi_bcd);
+        MME_SESS_CLEAR(sess);
+        return OGS_OK;
+    }
+
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
     h.type = OGS_GTP2_DELETE_SESSION_REQUEST_TYPE;
     h.teid = sgw_ue->sgw_s11_teid;
@@ -724,7 +731,7 @@ void mme_gtp_send_delete_all_sessions(
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     ogs_assert(action);
 
-    if (!sgw_ue) {
+    if (!sgw_ue || !sgw_ue->sgw_s11_teid) {
         ogs_list_for_each_safe(&mme_ue->sess_list, next_sess, sess)
             MME_SESS_CLEAR(sess);
         return;
@@ -972,10 +979,18 @@ int mme_gtp_send_release_access_bearers_request(
         return OGS_OK;
 
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    if (!sgw_ue) {
-        ogs_error("[%s] Release Access Bearers: SGW-UE gone (action=%d)",
+    if (!sgw_ue || !sgw_ue->sgw_s11_teid) {
+        /*
+         * No SGW session / ghost TEID already cleared. Sending RAB would
+         * only produce Context Not Found. Finish the S1 release locally.
+         */
+        enb_ue_t *enb_ue = enb_ue_find_by_id(enb_ue_id);
+
+        ogs_info("[%s] Release Access Bearers skipped: no SGW S11 TEID "
+                "(action=%d) - finish S1 locally",
                 mme_ue->imsi_bcd, action);
-        return OGS_ERROR;
+        mme_s11_finish_release_access_bearers(mme_ue, enb_ue, action);
+        return OGS_OK;
     }
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));

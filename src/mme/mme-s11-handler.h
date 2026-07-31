@@ -64,6 +64,9 @@ void mme_s11_handle_delete_bearer_request(
 void mme_s11_handle_release_access_bearers_response(
         ogs_gtp_xact_t *xact, mme_ue_t *mme_ue,
         ogs_gtp2_release_access_bearers_response_t *rsp);
+/* Complete S1-side Release Access Bearers actions without (or after) S11. */
+void mme_s11_finish_release_access_bearers(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue, int action);
 void mme_s11_handle_downlink_data_notification(
         ogs_gtp_xact_t *xact, mme_ue_t *mme_ue,
         ogs_gtp2_downlink_data_notification_t *noti);

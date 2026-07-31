@@ -1593,6 +1593,12 @@ void s1ap_handle_initial_context_setup_failure(
          */
         CLEAR_SERVICE_INDICATOR(mme_ue);
         CLEAR_MME_UE_ALL_TIMERS(mme_ue);
+
+        /* DDN held during Service Request: tell SGW paging/user-plane failed */
+        if (MME_PAGING_ONGOING(mme_ue) &&
+            mme_ue->paging.type ==
+                MME_PAGING_TYPE_DOWNLINK_DATA_NOTIFICATION)
+            mme_send_after_paging(mme_ue, true);
     }
 
     enb_ue->relcause.group = S1AP_Cause_PR_nas;

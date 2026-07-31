@@ -551,9 +551,15 @@ ogs_pkbuf_t *mme_s11_build_modify_bearer_request(
      * Data Notification for all UEs served by that MME
      * (see clause 5.3.4.2 of 3GPP TS 23.401 [3]).
      */
-    if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST) {
+    if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST ||
+        mme_ue->nas_eps.type == MME_EPS_TYPE_EXTENDED_SERVICE_REQUEST) {
+        /*
+         * TS 23.401 5.3.4.2 / TS 29.274: Delay Value is an integer multiple
+         * of 50 ms. Ask the SGW to wait ~100 ms for Modify Bearer before
+         * raising another DDN for this MME's UEs (was hard-coded 0).
+         */
         req->delay_downlink_packet_notification_request.presence = 1;
-        req->delay_downlink_packet_notification_request.u8 = 0;
+        req->delay_downlink_packet_notification_request.u8 = 2;
     }
 
     gtp_message.h.type = type;
