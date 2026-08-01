@@ -737,10 +737,24 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
                 mme_ctx_unlock();
                 return rv;
             }
+            sent = true;
         }
     }
 
     mme_ctx_unlock();
+
+    if (!sent) {
+        /*
+         * No eNB currently advertises this TAI (eNB down, wrong TAC,
+         * or UE last seen on a cell we never had S1 for). Starting
+         * T3413 anyway burned ~18s before callers got "unable to
+         * page", which is longer than typical peer GTP T3*N3 — so
+         * Delete Bearer / DDN peers saw unanswered requests.
+         */
+        ogs_warn("[%s] S1-Paging: no eNB serves TAI [TAC:%d]",
+                mme_ue->imsi_bcd, mme_ue->tai.tac);
+        return OGS_NOTFOUND;
+    }
 
     /* Start T3413 */
     ogs_timer_start(mme_ue->t3413.timer,
