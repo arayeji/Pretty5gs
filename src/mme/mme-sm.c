@@ -785,7 +785,17 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             }
 
         } else if (OGS_FSM_CHECK(&bearer->sm, esm_state_pdn_did_disconnect)) {
-            ogs_assert(default_bearer->ebi == bearer->ebi);
+            /*
+             * PDN disconnect completed. Clear the whole session even if
+             * bearer_list order makes mme_default_bearer_in_sess() disagree
+             * with the bearer that finished the procedure — asserting here
+             * aborted production MME (default_bearer->ebi == bearer->ebi).
+             */
+            if (default_bearer->ebi != bearer->ebi) {
+                ogs_error("[%s] PDN disconnect completed on EBI[%d] but "
+                        "list-default is EBI[%d]; clearing session anyway",
+                        mme_ue->imsi_bcd, bearer->ebi, default_bearer->ebi);
+            }
             MME_SESS_CLEAR(sess);
 
         } else if (OGS_FSM_CHECK(&bearer->sm, esm_state_exception)) {
