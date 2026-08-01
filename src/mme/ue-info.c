@@ -509,36 +509,59 @@ size_t mme_dump_ue_info_paged(char *buf, size_t buflen,
      */
     ogs_metrics_dump_lock();
 
-    mme_ue_t *ue = NULL;
-    ogs_list_for_each(&ctxt->mme_ue_list, ue) {
+    if (q && q->imsi && *q->imsi) {
         /*
-         * Filter BEFORE the pager so paging is over the filtered
-         * subset. enb_id matches the eNB this UE is currently
-         * connected to via its enb_ue, if any. imsi compares the
-         * 15-digit BCD string.
+         * Fast path for exact-IMSI queries (NMS IMSI watch / trace
+         * panel polls /ue-info?imsi= every few seconds). Walking the
+         * whole mme_ue_list under the global context lock stalls every
+         * worker thread on a loaded MME; resolve via the IMSI hash
+         * instead so the lock is held for one lookup + one JSON build.
          */
-        if (q && q->imsi && *q->imsi) {
-            if (!ue->imsi_bcd[0] || strcmp(ue->imsi_bcd, q->imsi) != 0)
-                continue;
-        }
-        if (q && q->has_enb_id) {
+        mme_ue_t *ue = mme_ue_find_by_imsi_bcd(q->imsi);
+        if (ue && q->has_enb_id) {
             enb_ue_t *ran = enb_ue_find_by_id(ue->enb_ue_id);
             mme_enb_t *e  = ran ? mme_enb_find_by_id(ran->enb_id) : NULL;
-            if (!e || e->enb_id != q->enb_id) continue;
+            if (!e || e->enb_id != q->enb_id) ue = NULL;
         }
-
-        total++;
-
-        int act = json_pager_advance(no_paging, idx, start_index, emitted, page_size, &has_next);
-        if (act == 1) { idx++; continue; }
-        if (act == 0) {
-            cJSON *one = ue_to_json(ue);
-            if (!one) { oom = true; break; }
-
-            cJSON_AddItemToArray(items, one);
-            emitted++;
+        if (ue) {
+            total = 1;
+            int act = json_pager_advance(no_paging, idx, start_index,
+                    emitted, page_size, &has_next);
+            if (act == 0) {
+                cJSON *one = ue_to_json(ue);
+                if (!one) oom = true;
+                else { cJSON_AddItemToArray(items, one); emitted++; }
+            }
+            idx++;
         }
-        idx++;
+    } else {
+        mme_ue_t *ue = NULL;
+        ogs_list_for_each(&ctxt->mme_ue_list, ue) {
+            /*
+             * Filter BEFORE the pager so paging is over the filtered
+             * subset. enb_id matches the eNB this UE is currently
+             * connected to via its enb_ue, if any.
+             */
+            if (q && q->has_enb_id) {
+                enb_ue_t *ran = enb_ue_find_by_id(ue->enb_ue_id);
+                mme_enb_t *e  = ran ? mme_enb_find_by_id(ran->enb_id) : NULL;
+                if (!e || e->enb_id != q->enb_id) continue;
+            }
+
+            total++;
+
+            int act = json_pager_advance(no_paging, idx, start_index,
+                    emitted, page_size, &has_next);
+            if (act == 1) { idx++; continue; }
+            if (act == 0) {
+                cJSON *one = ue_to_json(ue);
+                if (!one) { oom = true; break; }
+
+                cJSON_AddItemToArray(items, one);
+                emitted++;
+            }
+            idx++;
+        }
     }
 
     ogs_metrics_dump_unlock();
