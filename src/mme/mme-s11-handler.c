@@ -1728,61 +1728,117 @@ void mme_s11_handle_delete_bearer_request(
     ogs_assert(xact->id >= OGS_MIN_POOL_ID && xact->id <= OGS_MAX_POOL_ID);
     bearer->delete.xact_id = xact->id;
 
-    if (req->cause.presence && req->cause.data &&
-            req->linked_eps_bearer_id.presence) {
-        ogs_gtp2_cause_t *cause = req->cause.data;
-        if (cause->value == OGS_GTP2_CAUSE_REACTIVATION_REQUESTED)
-            esm_cause = OGS_NAS_ESM_CAUSE_REACTIVATION_REQUESTED;
-    }
+    {
+        uint8_t gtp_cause = 0;
+        bool reactivation = false;
+        bool default_bearer_delete =
+            (req->linked_eps_bearer_id.presence == 1);
+        bool last_pdn = false;
+        bool skip_idle_nas = false;
 
-    /*
-     * TS 23.401 §5.4.4 (PGW-initiated bearer deactivation):
-     *  - ECM-IDLE: page the UE, deliver NAS Deactivate EPS Bearer
-     *    Context Request, then Delete Bearer Response toward SGW.
-     *  - If the UE cannot be paged: Delete Bearer Response with
-     *    cause "Unable to page UE" (no silent GTP hold forever).
-     *  - ECM-CONNECTED: send NAS Deactivate; Response follows NAS
-     *    Accept (or the NAS-deactivate watchdog / S1-gone paths).
-     */
-    if (ECM_IDLE(mme_ue)) {
-        MME_STORE_PAGING_INFO(mme_ue,
-            MME_PAGING_TYPE_DELETE_BEARER, bearer->id);
-        mme_ue->paging.esm_cause = esm_cause;
-        r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
-        if (r != OGS_OK) {
-            /* No eNB for TAI / build-send failure: do not start T3413
-             * (s1ap_send_paging already avoided that). Answer now. */
-            ogs_warn("[%s] Delete Bearer: cannot page UE rv=%d EBI[%d]; "
-                    "Delete Bearer Response cause Unable to page UE",
-                    mme_ue->imsi_bcd, r, bearer->ebi);
-            MME_CLEAR_PAGING_INFO(mme_ue);
-            if (mme_gtp_send_delete_bearer_response(
-                    bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE) != OGS_OK)
-                ogs_error("[%s] Delete Bearer Response not sent EBI[%d]",
-                        mme_ue->imsi_bcd, bearer->ebi);
+        if (req->cause.presence && req->cause.data) {
+            ogs_gtp2_cause_t *cause = req->cause.data;
+
+            gtp_cause = cause->value;
+            if (gtp_cause == OGS_GTP2_CAUSE_REACTIVATION_REQUESTED) {
+                reactivation = true;
+                esm_cause = OGS_NAS_ESM_CAUSE_REACTIVATION_REQUESTED;
+            }
         }
-    } else {
-        MME_CLEAR_PAGING_INFO(mme_ue);
-        r = nas_eps_send_deactivate_bearer_context_request(bearer, esm_cause);
-        if (r == OGS_NOTFOUND) {
-            /* S1 released between the ECM check and the send; answer
-             * SGW/SMF directly so the teardown does not stall (the
-             * NAS-Deactivate watchdog is not armed on this path). */
-            ogs_warn("[%s] S1 released before NAS Deactivate could be "
-                    "sent EBI[%d]; answering SGW/SMF directly",
-                    mme_ue->imsi_bcd, bearer->ebi);
-            if (mme_gtp_send_delete_bearer_response(
-                    bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
-                ogs_error("[%s] Delete Bearer Response not sent EBI[%d]",
+
+        /*
+         * Default-bearer delete tears down the PDN. If this is the UE's
+         * only session, it is the last PDN connection (TS 23.401 4a/4b).
+         */
+        if (default_bearer_delete && mme_sess_count(mme_ue) <= 1)
+            last_pdn = true;
+
+        /*
+         * TS 23.401 §5.4.4.1 — PGW-initiated bearer deactivation:
+         *
+         * Steps 4-7 (page / S1+NAS Deactivate) are NOT performed when
+         * the UE is ECM-IDLE and any of:
+         *  (i)  last PDN is not being deleted AND cause is not
+         *       "reactivation requested";
+         *  (ii) last PDN deleted due to ISR deactivation;
+         *  (iii) last PDN deleted due to handover to non-3GPP.
+         * Bearer state is then synced at the next IDLE→CONNECTED
+         * transition. Delete Bearer Response is still required now.
+         *
+         * Otherwise (last PDN needing detach, or reactivation):
+         * page first, then NAS, then Delete Bearer Response; if the
+         * UE cannot be paged → cause Unable to page UE.
+         *
+         * ECM-CONNECTED: NAS Deactivate; Response follows Accept
+         * (or NAS-deactivate watchdog / S1-gone paths).
+         */
+        if (ECM_IDLE(mme_ue)) {
+            if (gtp_cause == OGS_GTP2_CAUSE_ISR_DEACTIVATION ||
+                gtp_cause ==
+                    OGS_GTP2_CAUSE_RAT_CHANGED_FROM_3GPP_TO_NON_3GPP) {
+                skip_idle_nas = true;
+            } else if (!last_pdn && !reactivation) {
+                skip_idle_nas = true;
+            }
+
+            if (skip_idle_nas) {
+                MME_CLEAR_PAGING_INFO(mme_ue);
+                ogs_info("[%s] Delete Bearer ECM-IDLE: skip page/NAS "
+                        "(TS 23.401 5.4.4.1); Delete Bearer Response "
+                        "Accepted EBI[%d]%s",
+                        mme_ue->imsi_bcd, bearer->ebi,
+                        default_bearer_delete ? " (PDN)" : "");
+                if (mme_gtp_send_delete_bearer_response(
+                        bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+                    ogs_error("[%s] Delete Bearer Response not sent EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
+                if (default_bearer_delete)
+                    MME_SESS_CLEAR(sess);
+                else
+                    mme_bearer_remove(bearer);
+                return;
+            }
+
+            MME_STORE_PAGING_INFO(mme_ue,
+                MME_PAGING_TYPE_DELETE_BEARER, bearer->id);
+            mme_ue->paging.esm_cause = esm_cause;
+            r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
+            if (r != OGS_OK) {
+                /* No eNB for TAI / build-send failure: do not start T3413
+                 * (s1ap_send_paging already avoided that). Answer now. */
+                ogs_warn("[%s] Delete Bearer: cannot page UE rv=%d EBI[%d]; "
+                        "Delete Bearer Response cause Unable to page UE",
+                        mme_ue->imsi_bcd, r, bearer->ebi);
+                MME_CLEAR_PAGING_INFO(mme_ue);
+                if (mme_gtp_send_delete_bearer_response(
+                        bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE) != OGS_OK)
+                    ogs_error("[%s] Delete Bearer Response not sent EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
+            }
+        } else {
+            MME_CLEAR_PAGING_INFO(mme_ue);
+            r = nas_eps_send_deactivate_bearer_context_request(
+                    bearer, esm_cause);
+            if (r == OGS_NOTFOUND) {
+                /* S1 released between the ECM check and the send; answer
+                 * SGW/SMF directly so the teardown does not stall (the
+                 * NAS-Deactivate watchdog is not armed on this path). */
+                ogs_warn("[%s] S1 released before NAS Deactivate could be "
+                        "sent EBI[%d]; answering SGW/SMF directly",
                         mme_ue->imsi_bcd, bearer->ebi);
-        } else if (r != OGS_OK) {
-            ogs_error("[%s] NAS Deactivate Bearer send failed rv=%d EBI[%d]; "
-                    "Delete Bearer Response cause System failure",
-                    mme_ue->imsi_bcd, r, bearer->ebi);
-            if (mme_gtp_send_delete_bearer_response(
-                    bearer, OGS_GTP2_CAUSE_SYSTEM_FAILURE) != OGS_OK)
-                ogs_error("[%s] Delete Bearer Response not sent EBI[%d]",
-                        mme_ue->imsi_bcd, bearer->ebi);
+                if (mme_gtp_send_delete_bearer_response(
+                        bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+                    ogs_error("[%s] Delete Bearer Response not sent EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
+            } else if (r != OGS_OK) {
+                ogs_error("[%s] NAS Deactivate Bearer send failed rv=%d "
+                        "EBI[%d]; Delete Bearer Response cause System failure",
+                        mme_ue->imsi_bcd, r, bearer->ebi);
+                if (mme_gtp_send_delete_bearer_response(
+                        bearer, OGS_GTP2_CAUSE_SYSTEM_FAILURE) != OGS_OK)
+                    ogs_error("[%s] Delete Bearer Response not sent EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
+            }
         }
     }
 }
