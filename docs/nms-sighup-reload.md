@@ -63,6 +63,7 @@ their previous value.
 |-----------|--------|-------|
 | `global.parameter.fake_csfb` | yes | retained; Attach Accept follows HSS NAM (EPS-only if packet-only) |
 | `global.parameter.ignore_sgs` | yes | skip SGsAP Location Update (e.g. roamers); no VLR |
+| `global.parameter.use_openair` | yes | legacy NAS: short ENFS + omit HashMME (all UEs) |
 | other `global.parameter.*` | **no** | restart required |
 
 ---

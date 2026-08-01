@@ -4333,9 +4333,12 @@ void mme_context_reload_runtime(void)
 
         if (param_updated > 0) {
             ogs_reload_audit_note(
-                    " global.parameter fake_csfb=%s ignore_sgs=%s",
+                    " global.parameter fake_csfb=%s ignore_sgs=%s "
+                    "use_openair=%s",
                     ogs_global_conf()->parameter.fake_csfb ? "true" : "false",
-                    ogs_global_conf()->parameter.ignore_sgs ? "true" : "false");
+                    ogs_global_conf()->parameter.ignore_sgs ? "true" : "false",
+                    ogs_global_conf()->parameter.use_openair ?
+                        "true" : "false");
             found = true;
         }
     }

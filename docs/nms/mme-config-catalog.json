@@ -412,9 +412,9 @@
     "type": "boolean",
     "default": false,
     "group": "global",
-    "reload": "restart",
-    "description": "App stack parameter use_openair",
-    "notes": ""
+    "reload": "sighup",
+    "description": "Legacy NAS: short ENFS + omit HashMME (all UEs)",
+    "notes": "ogs_app_reload_parameter_scalars"
   },
   {
     "path": "global.parameter.use_upg_vpp",

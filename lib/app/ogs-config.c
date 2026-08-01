@@ -521,6 +521,10 @@ int ogs_app_reload_parameter_scalars(void)
                     global_conf.parameter.ignore_sgs =
                         ogs_yaml_iter_bool(&parameter_iter);
                     applied++;
+                } else if (!strcmp(parameter_key, "use_openair")) {
+                    global_conf.parameter.use_openair =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                    applied++;
                 }
                 /* Other parameter keys stay restart-only. */
             }

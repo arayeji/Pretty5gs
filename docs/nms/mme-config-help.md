@@ -95,7 +95,7 @@ Parsed by `ogs_app_parse_global_conf` (`lib/app/ogs-config.c`). Full row list is
 | `global.max.gtp_peer` / sess / bearer / … | **0** → derived |
 | `global.parameter.*` bools | **false** |
 | `global.sockopt.no_delay` | **true** |
-| `global.parameter.fake_csfb` / `ignore_sgs` | **false**; **SIGHUP** via `ogs_app_reload_parameter_scalars` |
+| `global.parameter.fake_csfb` / `ignore_sgs` / `use_openair` | **false**; **SIGHUP** via `ogs_app_reload_parameter_scalars` |
 
 ### `global.time` — sample-only / unused
 
@@ -153,11 +153,11 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 - **Reload:** `restart`
 - **Evidence:** `lib/app/ogs-config.c:ogs_app_parse_global_conf`
 
-### `global.parameter.fake_csfb` / `global.parameter.ignore_sgs`
+### `global.parameter.fake_csfb` / `ignore_sgs` / `use_openair`
 
-- **What:** CSFB policy toggles read on every Attach/TAU path.
-- **Defaults:** `false` / `false`
-- **Reload:** `sighup` (only these two `global.parameter.*` keys)
+- **What:** Hot-reloadable `global.parameter` scalars (`fake_csfb`, `ignore_sgs`, `use_openair`).
+- **Defaults:** all `false`
+- **Reload:** `sighup` via `ogs_app_reload_parameter_scalars`
 - **Evidence:** `mme-context.c:mme_context_reload_runtime` → `ogs_app_reload_parameter_scalars`
 
 ## Identity
@@ -953,6 +953,15 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 - **Reload:** `sighup`
 - **Notes / quirks:** SIGHUP via ogs_app_reload_parameter_scalars; mme_context_reload_runtime.
 - **Evidence:** `src/mme/mme-context.c:mme_sgsap_config_parse / sgsap_config_parse_body`
+
+### `global.parameter.use_openair`
+
+- **What:** Legacy/OpenAir NAS quirks for all UEs: 1-byte EPS network feature support and omit HashMME on SMC.
+- **Type:** `boolean`
+- **Default when omitted:** `False`
+- **Reload:** `sighup`
+- **Notes / quirks:** Applies globally; leave false for commercial UEs.
+- **Evidence:** `lib/app/ogs-config.c:ogs_app_reload_parameter_scalars`, `src/mme/emm-build.c`
 
 ## Overload
 
