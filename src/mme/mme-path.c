@@ -990,24 +990,11 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         }
 
         if (failed == true) {
-            /*
-             * Idle Delete Bearer now answers GTP before paging; if that
-             * path already consumed bearer->delete.xact_id, there is
-             * nothing left to reject. Only send Unable-to-Page when the
-             * legacy "hold GTP for T3413" path still has a xact.
-             */
-            if (bearer->delete.xact_id >= OGS_MIN_POOL_ID &&
-                    bearer->delete.xact_id <= OGS_MAX_POOL_ID) {
-                if (mme_gtp_send_delete_bearer_response(
-                        bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE) != OGS_OK)
-                    mme_ue_error(mme_ue, NULL, "paging", NULL,
-                            "Delete Bearer Response not sent after "
-                            "paging fail");
-            } else {
-                mme_ue_info(mme_ue, NULL, "paging", NULL,
-                        "Delete Bearer paging failed; GTP already answered "
-                        "EBI[%d]", bearer->ebi);
-            }
+            /* TS 23.401 §5.4.4: UE unreachable after paging → Unable to page UE */
+            if (mme_gtp_send_delete_bearer_response(
+                    bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE) != OGS_OK)
+                mme_ue_error(mme_ue, NULL, "paging", NULL,
+                        "Delete Bearer Response not sent after paging fail");
         } else {
             r = nas_eps_send_deactivate_bearer_context_request(
                     bearer, mme_ue->paging.esm_cause);
@@ -1035,8 +1022,16 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
                             bearer->ebi);
             } else if (r != OGS_OK) {
                 mme_ue_error(mme_ue, NULL, "paging", NULL,
-                        "NAS Deactivate Bearer send failed rv=%d EBI[%d]",
+                        "NAS Deactivate Bearer send failed rv=%d EBI[%d]; "
+                        "Delete Bearer Response cause System failure",
                         r, bearer->ebi);
+                if (bearer->delete.xact_id >= OGS_MIN_POOL_ID &&
+                        bearer->delete.xact_id <= OGS_MAX_POOL_ID &&
+                        mme_gtp_send_delete_bearer_response(
+                            bearer, OGS_GTP2_CAUSE_SYSTEM_FAILURE) != OGS_OK)
+                    mme_ue_error(mme_ue, NULL, "paging", NULL,
+                            "Delete Bearer Response not sent EBI[%d]",
+                            bearer->ebi);
             }
         }
         break;

@@ -1735,29 +1735,31 @@ void mme_s11_handle_delete_bearer_request(
             esm_cause = OGS_NAS_ESM_CAUSE_REACTIVATION_REQUESTED;
     }
 
+    /*
+     * TS 23.401 §5.4.4 (PGW-initiated bearer deactivation):
+     *  - ECM-IDLE: page the UE, deliver NAS Deactivate EPS Bearer
+     *    Context Request, then Delete Bearer Response toward SGW.
+     *  - If the UE cannot be paged: Delete Bearer Response with
+     *    cause "Unable to page UE" (no silent GTP hold forever).
+     *  - ECM-CONNECTED: send NAS Deactivate; Response follows NAS
+     *    Accept (or the NAS-deactivate watchdog / S1-gone paths).
+     */
     if (ECM_IDLE(mme_ue)) {
-        /*
-         * Answer GTP-C immediately, then page for NAS deactivate as
-         * best-effort. Holding the Delete Bearer Response until T3413
-         * exhausts (default 6s × initial+2 retries ≈ 18s) exceeds
-         * typical peer T3×N3 budgets, so SGW/PGW see mass unanswered
-         * Delete Bearer Requests and retransmit up to N3 times. That
-         * is an MME interoperability bug, not "correct paging".
-         */
-        if (mme_gtp_send_delete_bearer_response(
-                bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
-            ogs_error("[%s] Delete Bearer Response not sent (idle) EBI[%d]",
-                    mme_ue->imsi_bcd, bearer->ebi);
-
         MME_STORE_PAGING_INFO(mme_ue,
             MME_PAGING_TYPE_DELETE_BEARER, bearer->id);
         mme_ue->paging.esm_cause = esm_cause;
         r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
         if (r != OGS_OK) {
-            ogs_warn("[%s] Delete Bearer: could not page UE rv=%d "
-                    "(GTP already answered) EBI[%d]",
+            /* No eNB for TAI / build-send failure: do not start T3413
+             * (s1ap_send_paging already avoided that). Answer now. */
+            ogs_warn("[%s] Delete Bearer: cannot page UE rv=%d EBI[%d]; "
+                    "Delete Bearer Response cause Unable to page UE",
                     mme_ue->imsi_bcd, r, bearer->ebi);
             MME_CLEAR_PAGING_INFO(mme_ue);
+            if (mme_gtp_send_delete_bearer_response(
+                    bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE) != OGS_OK)
+                ogs_error("[%s] Delete Bearer Response not sent EBI[%d]",
+                        mme_ue->imsi_bcd, bearer->ebi);
         }
     } else {
         MME_CLEAR_PAGING_INFO(mme_ue);
@@ -1775,10 +1777,10 @@ void mme_s11_handle_delete_bearer_request(
                         mme_ue->imsi_bcd, bearer->ebi);
         } else if (r != OGS_OK) {
             ogs_error("[%s] NAS Deactivate Bearer send failed rv=%d EBI[%d]; "
-                    "answering SGW/SMF directly",
+                    "Delete Bearer Response cause System failure",
                     mme_ue->imsi_bcd, r, bearer->ebi);
             if (mme_gtp_send_delete_bearer_response(
-                    bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+                    bearer, OGS_GTP2_CAUSE_SYSTEM_FAILURE) != OGS_OK)
                 ogs_error("[%s] Delete Bearer Response not sent EBI[%d]",
                         mme_ue->imsi_bcd, bearer->ebi);
         }

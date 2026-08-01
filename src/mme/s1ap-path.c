@@ -745,11 +745,9 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
 
     if (!sent) {
         /*
-         * No eNB currently advertises this TAI (eNB down, wrong TAC,
-         * or UE last seen on a cell we never had S1 for). Starting
-         * T3413 anyway burned ~18s before callers got "unable to
-         * page", which is longer than typical peer GTP T3*N3 — so
-         * Delete Bearer / DDN peers saw unanswered requests.
+         * No eNB advertises this TAI. Do not start T3413 — there is
+         * nothing to retransmit to. Callers (e.g. Delete Bearer per
+         * TS 23.401 §5.4.4) must answer with Unable to page UE now.
          */
         ogs_warn("[%s] S1-Paging: no eNB serves TAI [TAC:%d]",
                 mme_ue->imsi_bcd, mme_ue->tai.tac);
