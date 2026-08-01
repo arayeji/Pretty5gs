@@ -2093,9 +2093,14 @@ void mme_s11_handle_downlink_data_notification(
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+        /*
+         * Preserve the computed cause. Missing EBI is MANDATORY_IE_MISSING
+         * (70); hardcoding CONTEXT_NOT_FOUND (64) mislabelled malformed
+         * DDNs from some SGWs and led them to tear down working bearers.
+         */
         ogs_gtp2_send_error_message(xact, sgw_ue ? sgw_ue->sgw_s11_teid : 0,
                 OGS_GTP2_DOWNLINK_DATA_NOTIFICATION_ACKNOWLEDGE_TYPE,
-                OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
+                cause_value);
         return;
     }
 
