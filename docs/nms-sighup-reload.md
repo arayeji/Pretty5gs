@@ -61,7 +61,7 @@ their previous value.
 
 | YAML path | SIGHUP | Notes |
 |-----------|--------|-------|
-| `global.parameter.fake_csfb` | yes | Attach Accept Combined when HSS NAM is packet-only |
+| `global.parameter.fake_csfb` | yes | Combined Accept only if UE requested Combined + NAM packet-only |
 | `global.parameter.ignore_sgs` | yes | skip SGsAP Location Update (e.g. roamers); no VLR |
 | other `global.parameter.*` | **no** | restart required |
 

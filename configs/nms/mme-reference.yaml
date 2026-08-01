@@ -23,7 +23,7 @@ global:
     use_upg_vpp: false
     prefer_ipv4: true
     # ignore_sgs: true   # skip SGsAP Location-Update (e.g. roamers); no VLR (SIGHUP)
-    # fake_csfb: true    # Attach Accept Combined when HSS NAM is packet-only (SIGHUP)
+    # fake_csfb: true    # Combined Accept only if UE asked Combined + NAM packet-only (SIGHUP)
   time:
     message:
       duration: 15000

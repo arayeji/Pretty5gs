@@ -938,7 +938,7 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 
 ### `global.parameter.fake_csfb`
 
-- **What:** Advertise Combined attach when HSS NAM is packet-only (CSFB policy).
+- **What:** When HSS NAM is packet-only, advertise Combined only if the UE requested Combined EPS/IMSI Attach.
 - **Type:** `boolean`
 - **Default when omitted:** `False`
 - **Reload:** `sighup`
