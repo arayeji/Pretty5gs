@@ -2077,11 +2077,30 @@ void mme_s11_handle_downlink_data_notification(
             ogs_error("Downlink Data Notification: No SGW UE Context");
             cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
         } else if (noti->eps_bearer_id.presence == 0) {
-            mme_ue_warn(mme_ue, NULL, "s11", NULL, "No Bearer ID");
-            cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
-        }
+            /*
+             * TS 29.274 §7.2.11.1: EBI is Conditional-Optional, not
+             * Mandatory. Some SGWs omit it; rejecting with IE-missing /
+             * Context-Not-Found caused them to tear down live sessions.
+             * Match common MME behaviour: pick a default bearer and
+             * continue (page / Ack) so DL can be delivered.
+             */
+            mme_sess_t *sess = NULL;
 
-        if (cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+            ogs_list_for_each(&mme_ue->sess_list, sess) {
+                bearer = mme_default_bearer_in_sess(sess);
+                if (bearer)
+                    break;
+            }
+            if (!bearer) {
+                mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                        "DDN without EBI and no bearer context");
+                cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+            } else {
+                mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                        "DDN without EBI; using default EBI[%d]",
+                        bearer->ebi);
+            }
+        } else {
             bearer = mme_bearer_find_by_ue_ebi(mme_ue, noti->eps_bearer_id.u8);
             if (!bearer) {
                 mme_ue_warn(mme_ue, NULL, "s11", NULL,
@@ -2093,11 +2112,6 @@ void mme_s11_handle_downlink_data_notification(
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-        /*
-         * Preserve the computed cause. Missing EBI is MANDATORY_IE_MISSING
-         * (70); hardcoding CONTEXT_NOT_FOUND (64) mislabelled malformed
-         * DDNs from some SGWs and led them to tear down working bearers.
-         */
         ogs_gtp2_send_error_message(xact, sgw_ue ? sgw_ue->sgw_s11_teid : 0,
                 OGS_GTP2_DOWNLINK_DATA_NOTIFICATION_ACKNOWLEDGE_TYPE,
                 cause_value);
