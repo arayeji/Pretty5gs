@@ -534,20 +534,39 @@ size_t mme_dump_ue_info_paged(char *buf, size_t buflen,
             }
             idx++;
         }
+    } else if (q && q->has_enb_id) {
+        /*
+         * Fast path for per-eNB queries (NMS Live page fires one
+         * /ue-info?enb_id= per selected eNodeB on every poll). Walk
+         * only that eNB's enb_ue_list instead of every UE in the
+         * system; both lists are mutated under the same ctx lock we
+         * hold here.
+         */
+        mme_enb_t *enb = mme_enb_find_by_enb_id(q->enb_id);
+        enb_ue_t *ran = NULL;
+        if (enb) ogs_list_for_each(&enb->enb_ue_list, ran) {
+            mme_ue_t *ue = mme_ue_find_by_id(ran->mme_ue_id);
+            /* Skip stale associations: the UE must still point back
+             * at this enb_ue as its current RAN context. */
+            if (!ue || ue->enb_ue_id != ran->id) continue;
+
+            total++;
+
+            int act = json_pager_advance(no_paging, idx, start_index,
+                    emitted, page_size, &has_next);
+            if (act == 1) { idx++; continue; }
+            if (act == 0) {
+                cJSON *one = ue_to_json(ue);
+                if (!one) { oom = true; break; }
+
+                cJSON_AddItemToArray(items, one);
+                emitted++;
+            }
+            idx++;
+        }
     } else {
         mme_ue_t *ue = NULL;
         ogs_list_for_each(&ctxt->mme_ue_list, ue) {
-            /*
-             * Filter BEFORE the pager so paging is over the filtered
-             * subset. enb_id matches the eNB this UE is currently
-             * connected to via its enb_ue, if any.
-             */
-            if (q && q->has_enb_id) {
-                enb_ue_t *ran = enb_ue_find_by_id(ue->enb_ue_id);
-                mme_enb_t *e  = ran ? mme_enb_find_by_id(ran->enb_id) : NULL;
-                if (!e || e->enb_id != q->enb_id) continue;
-            }
-
             total++;
 
             int act = json_pager_advance(no_paging, idx, start_index,
