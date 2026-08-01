@@ -112,17 +112,12 @@ ogs_pkbuf_t *emm_build_attach_accept(
 
     if (mme_ue->network_access_mode == OGS_NETWORK_ACCESS_MODE_ONLY_PACKET) {
         /*
-         * HSS NAM is packet-only → EPS Attach by default.
-         * fake_csfb may advertise Combined only when the UE actually
-         * requested Combined EPS/IMSI Attach (do not upgrade EPS-only).
+         * HSS Network-Access-Mode = packet only → always EPS Attach
+         * Accept, even if the UE requested Combined. (fake_csfb must
+         * not override HSS NAM.) Combined + EPS-only mismatch sets
+         * EMM #18 below.
          */
         eps_attach_result->result = OGS_NAS_ATTACH_TYPE_EPS_ATTACH;
-        if (ogs_global_conf()->parameter.fake_csfb == true &&
-            !mme_ue->sgs_cs_unavailable &&
-            mme_ue->nas_eps.attach.value ==
-                OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH)
-            eps_attach_result->result =
-                OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH;
     } else if (mme_ue->sgs_cs_unavailable &&
             mme_ue->nas_eps.attach.value ==
                 OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH) {

@@ -938,7 +938,7 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 
 ### `global.parameter.fake_csfb`
 
-- **What:** When HSS NAM is packet-only, advertise Combined only if the UE requested Combined EPS/IMSI Attach.
+- **What:** Retained for SIGHUP/compat. Attach Accept follows HSS NAM: packet-only always yields EPS Attach (no Combined override).
 - **Type:** `boolean`
 - **Default when omitted:** `False`
 - **Reload:** `sighup`
