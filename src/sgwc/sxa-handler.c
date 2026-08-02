@@ -2151,18 +2151,13 @@ indirect_fail:
                 rv = ogs_gtp_xact_update_tx(s11_xact, &send_message.h, pkbuf);
                 if (rv != OGS_OK) {
                     /*
-                     * Xact may already be mid-commit/timeout. Fall back so
-                     * the MME still gets a RAB Response (pcap/log showed
-                     * RAB timeouts while SGW-C logged update_tx failures).
+                     * update_tx already freed pkbuf on failure. Do NOT
+                     * free again or call ogs_gtp_send_error_message() —
+                     * that double-freed and aborted with Bad talloc magic
+                     * (crash loop: RAB PFCP rsp after xact step advanced).
                      */
-                    ogs_error("ogs_gtp_xact_update_tx() failed — "
-                            "fallback RAB Response");
-                    ogs_pkbuf_free(pkbuf);
-                    ogs_gtp_send_error_message(
-                            s11_xact,
-                            sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
-                            OGS_GTP2_RELEASE_ACCESS_BEARERS_RESPONSE_TYPE,
-                            OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
+                    ogs_error("ogs_gtp_xact_update_tx() failed "
+                            "(RAB Response; pkbuf already freed)");
                     return;
                 }
 
