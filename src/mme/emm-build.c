@@ -200,11 +200,25 @@ ogs_pkbuf_t *emm_build_attach_accept(
                 OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH)
             eps_attach_result->result =
                 OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH;
-    } else if (mme_ue->sgs_cs_unavailable &&
-            mme_ue->nas_eps.attach.value ==
-                OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH) {
-        /* SGs LU reject/timeout: EPS-only + EMM #18 */
-        eps_attach_result->result = OGS_NAS_ATTACH_TYPE_EPS_ATTACH;
+    } else if (mme_ue->nas_eps.attach.value ==
+                OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH &&
+            (mme_ue->sgs_cs_unavailable ||
+             ogs_global_conf()->parameter.ignore_sgs == true ||
+             mme_ue->csmap == NULL)) {
+        /*
+         * Combined requested but CS cannot be registered:
+         *  - SGs LU reject/timeout (sgs_cs_unavailable), or
+         *  - ignore_sgs / no csmap (SGs LU never started, so
+         *    sgs_cs_unavailable stays false — historically this path
+         *    wrongly kept Combined without LAI).
+         * fake_csfb may still force Combined + synthetic LAI/P-TMSI.
+         */
+        if (ogs_global_conf()->parameter.fake_csfb == true &&
+            !mme_ue->sgs_cs_unavailable)
+            eps_attach_result->result =
+                OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH;
+        else
+            eps_attach_result->result = OGS_NAS_ATTACH_TYPE_EPS_ATTACH;
     } else {
         eps_attach_result->result = mme_ue->nas_eps.attach.value;
     }
