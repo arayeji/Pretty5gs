@@ -938,11 +938,11 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 
 ### `global.parameter.fake_csfb`
 
-- **What:** Retained for SIGHUP/compat. Attach Accept follows HSS NAM: packet-only always yields EPS Attach (no Combined override).
+- **What:** If UE requested Combined attach/TAU and CS is not refused, advertise Combined with LAI+P-TMSI. When no real VLR P-TMSI exists, synthesize LAI (csmap or serving TAI) and P-TMSI (from GUTI/M-TMSI) so the NAS message is well-formed.
 - **Type:** `boolean`
 - **Default when omitted:** `False`
 - **Reload:** `sighup`
-- **Notes / quirks:** Hot-reloaded by ogs_app_reload_parameter_scalars in mme_context_reload_runtime. Absent key keeps old value.
+- **Notes / quirks:** Does not upgrade EPS-only requests. Not a real CS registration; MO/MT CSFB via SGs still needs a VLR.
 - **Evidence:** `src/mme/mme-context.c:mme_sgsap_config_parse / sgsap_config_parse_body`
 
 ### `global.parameter.ignore_sgs`

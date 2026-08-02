@@ -61,7 +61,7 @@ their previous value.
 
 | YAML path | SIGHUP | Notes |
 |-----------|--------|-------|
-| `global.parameter.fake_csfb` | yes | retained; Attach Accept follows HSS NAM (EPS-only if packet-only) |
+| `global.parameter.fake_csfb` | yes | Combined Accept + synthetic LAI/P-TMSI when UE asked Combined |
 | `global.parameter.ignore_sgs` | yes | skip SGsAP Location Update (e.g. roamers); no VLR |
 | `global.parameter.use_openair` | yes | legacy NAS: short ENFS + omit HashMME (all UEs) |
 | other `global.parameter.*` | **no** | restart required |

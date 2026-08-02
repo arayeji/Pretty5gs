@@ -27,6 +27,82 @@
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __emm_log_domain
 
+/*
+ * Synthetic LAI + P-TMSI for fake_csfb Combined Accept/TAU.
+ * TS 24.301 requires LAI (and MS identity) when the EPS attach /
+ * update result is Combined; inventing them is non-standard CS
+ * registration but keeps the NAS message well-formed so CPEs that
+ * insist on Combined can complete attach.
+ */
+static mme_p_tmsi_t emm_fake_csfb_ptmsi(mme_ue_t *mme_ue)
+{
+    mme_p_tmsi_t ptmsi = INVALID_P_TMSI;
+
+    ogs_assert(mme_ue);
+
+    if (mme_ue->next.p_tmsi != INVALID_P_TMSI)
+        return mme_ue->next.p_tmsi;
+    if (mme_ue->current.p_tmsi != INVALID_P_TMSI)
+        return mme_ue->current.p_tmsi;
+    if (MME_NEXT_GUTI_IS_AVAILABLE(mme_ue))
+        ptmsi = mme_ue->next.guti.m_tmsi;
+    else if (MME_CURRENT_GUTI_IS_AVAILABLE(mme_ue))
+        ptmsi = mme_ue->current.guti.m_tmsi;
+    else if (mme_ue->mme_s11_teid)
+        ptmsi = mme_ue->mme_s11_teid;
+
+    if (ptmsi == INVALID_P_TMSI)
+        ptmsi = 0xc0000001;
+
+    return ptmsi;
+}
+
+static void emm_fill_fake_csfb_lai_ms_identity(
+        mme_ue_t *mme_ue,
+        ogs_nas_location_area_identification_t *lai,
+        ogs_nas_mobile_identity_t *ms_identity)
+{
+    mme_csmap_t *csmap = NULL;
+    ogs_nas_mobile_identity_tmsi_t *tmsi = NULL;
+    mme_p_tmsi_t ptmsi;
+
+    ogs_assert(mme_ue);
+    ogs_assert(lai);
+    ogs_assert(ms_identity);
+
+    tmsi = &ms_identity->tmsi;
+    csmap = mme_ue->csmap;
+    if (!csmap)
+        csmap = mme_csmap_find_for_ue(mme_ue);
+    if (!csmap)
+        csmap = ogs_list_first(&mme_self()->csmap_list);
+
+    if (csmap) {
+        mme_ue->csmap = csmap;
+        lai->nas_plmn_id = csmap->lai.nas_plmn_id;
+        lai->lac = csmap->lai.lac;
+    } else {
+        ogs_nas_from_plmn_id(&lai->nas_plmn_id, &mme_ue->tai.plmn_id);
+        lai->lac = mme_ue->tai.tac ? mme_ue->tai.tac : 1;
+    }
+
+    ptmsi = emm_fake_csfb_ptmsi(mme_ue);
+    mme_ue->next.p_tmsi = ptmsi;
+    mme_ue->current.p_tmsi = ptmsi;
+
+    ms_identity->length = 5;
+    tmsi->spare = 0xf;
+    tmsi->odd_even = 0;
+    tmsi->type = OGS_NAS_MOBILE_IDENTITY_TMSI;
+    tmsi->tmsi = ptmsi;
+
+    ogs_info("[%s] fake_csfb: Combined Accept LAI[PLMN:%06x,LAC:%d] "
+            "P-TMSI[0x%08x]%s",
+            mme_ue->imsi_bcd,
+            ogs_plmn_id_hexdump(&lai->nas_plmn_id), lai->lac, ptmsi,
+            csmap ? "" : " (from serving TAI)");
+}
+
 static int emm_tai_list_build_for_accept(
         ogs_nas_tracking_area_identity_list_t *target,
         mme_ue_t *mme_ue, int served_tai_index)
@@ -112,12 +188,18 @@ ogs_pkbuf_t *emm_build_attach_accept(
 
     if (mme_ue->network_access_mode == OGS_NETWORK_ACCESS_MODE_ONLY_PACKET) {
         /*
-         * HSS Network-Access-Mode = packet only → always EPS Attach
-         * Accept, even if the UE requested Combined. (fake_csfb must
-         * not override HSS NAM.) Combined + EPS-only mismatch sets
-         * EMM #18 below.
+         * HSS NAM = packet-only → EPS Attach by default.
+         * fake_csfb may still advertise Combined when the UE asked for
+         * Combined; emm_fill_fake_csfb_lai_ms_identity() then supplies
+         * LAI + P-TMSI so the Accept is NAS-well-formed (TS 24.301).
          */
         eps_attach_result->result = OGS_NAS_ATTACH_TYPE_EPS_ATTACH;
+        if (ogs_global_conf()->parameter.fake_csfb == true &&
+            !mme_ue->sgs_cs_unavailable &&
+            mme_ue->nas_eps.attach.value ==
+                OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH)
+            eps_attach_result->result =
+                OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH;
     } else if (mme_ue->sgs_cs_unavailable &&
             mme_ue->nas_eps.attach.value ==
                 OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH) {
@@ -125,6 +207,17 @@ ogs_pkbuf_t *emm_build_attach_accept(
         eps_attach_result->result = OGS_NAS_ATTACH_TYPE_EPS_ATTACH;
     } else {
         eps_attach_result->result = mme_ue->nas_eps.attach.value;
+    }
+
+    /*
+     * Combined without a real (or fake) LAI/P-TMSI is illegal NAS.
+     * If we cannot form those IEs and fake_csfb is off, refuse CS.
+     */
+    if (eps_attach_result->result ==
+            OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH &&
+        !MME_NEXT_P_TMSI_IS_AVAILABLE(mme_ue) &&
+        ogs_global_conf()->parameter.fake_csfb == false) {
+        eps_attach_result->result = OGS_NAS_ATTACH_TYPE_EPS_ATTACH;
     }
 
     if (mme_ue->nas_eps.attach.value != eps_attach_result->result) {
@@ -292,6 +385,15 @@ ogs_pkbuf_t *emm_build_attach_accept(
         tmsi->type = OGS_NAS_MOBILE_IDENTITY_TMSI;
         tmsi->tmsi = mme_ue->next.p_tmsi;
         ogs_debug("    P-TMSI: 0x%08x", tmsi->tmsi);
+    } else if (eps_attach_result->result ==
+                OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH &&
+            ogs_global_conf()->parameter.fake_csfb == true &&
+            !mme_ue->sgs_cs_unavailable) {
+        attach_accept->presencemask |=
+            OGS_NAS_EPS_ATTACH_ACCEPT_LOCATION_AREA_IDENTIFICATION_PRESENT;
+        attach_accept->presencemask |=
+            OGS_NAS_EPS_ATTACH_ACCEPT_MS_IDENTITY_PRESENT;
+        emm_fill_fake_csfb_lai_ms_identity(mme_ue, lai, ms_identity);
     }
 
     if (mme_self()->attach_accept.equivalent_plmn &&
@@ -640,14 +742,15 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
         (mme_ue->nas_eps.update.value ==
             OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING ||
          mme_ue->nas_eps.update.value ==
-            OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING_WITH_IMSI_ATTACH)) {
+            OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING_WITH_IMSI_ATTACH) &&
+        (MME_NEXT_P_TMSI_IS_AVAILABLE(mme_ue) ||
+         ogs_global_conf()->parameter.fake_csfb == true)) {
         tau_accept->eps_update_result.result =
             OGS_NAS_EPS_UPDATE_RESULT_COMBINED_TA_LA_UPDATED;
     } else {
         tau_accept->eps_update_result.result =
             OGS_NAS_EPS_UPDATE_RESULT_TA_UPDATED;
-        if (mme_ue->sgs_cs_unavailable &&
-            (mme_ue->nas_eps.update.value ==
+        if ((mme_ue->nas_eps.update.value ==
                 OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING ||
              mme_ue->nas_eps.update.value ==
                 OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING_WITH_IMSI_ATTACH)) {
@@ -748,6 +851,15 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
         tmsi->type = OGS_NAS_MOBILE_IDENTITY_TMSI;
         tmsi->tmsi = mme_ue->next.p_tmsi;
         ogs_debug("    P-TMSI: 0x%08x", tmsi->tmsi);
+    } else if (tau_accept->eps_update_result.result ==
+                OGS_NAS_EPS_UPDATE_RESULT_COMBINED_TA_LA_UPDATED &&
+            ogs_global_conf()->parameter.fake_csfb == true &&
+            !mme_ue->sgs_cs_unavailable) {
+        tau_accept->presencemask |=
+            OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_LOCATION_AREA_IDENTIFICATION_PRESENT;
+        tau_accept->presencemask |=
+            OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_MS_IDENTITY_PRESENT;
+        emm_fill_fake_csfb_lai_ms_identity(mme_ue, lai, ms_identity);
     }
 
     /* Set T3402 */
