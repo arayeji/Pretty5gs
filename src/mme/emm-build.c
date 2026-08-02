@@ -28,26 +28,39 @@
 #define OGS_LOG_DOMAIN __emm_log_domain
 
 /*
- * Synthetic LAI + P-TMSI for fake_csfb SMS-only Combined Accept/TAU.
- * TS 24.301 5.5.1.3.4.2: Combined/"SMS only" Accept must carry LAI
- * (and TMSI when allocated). fake_csfb only advertises Combined when
- * the UE requested Additional update type = SMS only and we can build
- * those IEs (fake_csfb_lai, default true).
+ * fake_csfb: advertise Combined Attach/TAU result when CS/SGs is not
+ * available (no real VLR registration).
+ *
+ * fake_csfb_lai: optionally also synthesize LAI + P-TMSI. When false,
+ * still return Combined — only omit the fake LAI/P-TMSI IEs.
  */
+static bool emm_fake_csfb_enabled(void)
+{
+    return ogs_global_conf()->parameter.fake_csfb == true;
+}
+
 static bool emm_fake_csfb_lai_enabled(void)
 {
-    return ogs_global_conf()->parameter.fake_csfb == true &&
+    return emm_fake_csfb_enabled() &&
            ogs_global_conf()->parameter.fake_csfb_lai == true;
 }
 
-/* Protocol-consistent fake Combined for SMS-only UEs (not full CSFB). */
-static bool emm_can_fake_sms_only_combined(mme_ue_t *mme_ue)
+/* Combined result without a real SGs/VLR registration. */
+static bool emm_can_fake_combined(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    return emm_fake_csfb_enabled() &&
+           mme_ue->network_access_mode !=
+                OGS_NETWORK_ACCESS_MODE_ONLY_PACKET;
+}
+
+/* Synthetic LAI + P-TMSI (subset of fake_csfb). */
+static bool emm_can_fake_lai_ptmsi(mme_ue_t *mme_ue)
 {
     ogs_assert(mme_ue);
 
     return emm_fake_csfb_lai_enabled() &&
-           mme_ue->nas_eps.sms_only == true &&
-           !mme_ue->sgs_cs_unavailable &&
            mme_ue->network_access_mode !=
                 OGS_NETWORK_ACCESS_MODE_ONLY_PACKET;
 }
@@ -148,7 +161,7 @@ static void emm_fill_fake_csfb_lai_ms_identity(
     tmsi->type = OGS_NAS_MOBILE_IDENTITY_TMSI;
     tmsi->tmsi = ptmsi;
 
-    ogs_info("[%s] fake_csfb SMS-only: LAI[PLMN:%06x,LAC:%d] "
+    ogs_info("[%s] fake_csfb_lai: LAI[PLMN:%06x,LAC:%d] "
             "P-TMSI[0x%08x] (%s)",
             mme_ue->imsi_bcd,
             ogs_plmn_id_hexdump(&lai->nas_plmn_id), lai->lac, ptmsi,
@@ -253,11 +266,10 @@ ogs_pkbuf_t *emm_build_attach_accept(
              mme_ue->csmap == NULL)) {
         /*
          * Combined requested but CS cannot be registered via SGs.
-         * fake_csfb may advertise Combined only for SMS-only UEs with
-         * a protocol-complete Accept (AUR=SMS only + LAI + P-TMSI).
+         * fake_csfb → still Combined (LAI/P-TMSI only if fake_csfb_lai).
          * Otherwise EPS-only + EMM cause 18.
          */
-        if (emm_can_fake_sms_only_combined(mme_ue))
+        if (emm_can_fake_combined(mme_ue))
             eps_attach_result->result =
                 OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH;
         else
@@ -267,15 +279,13 @@ ogs_pkbuf_t *emm_build_attach_accept(
     }
 
     /*
-     * Combined without a real VLR P-TMSI is illegal unless we synthesize
-     * LAI/P-TMSI for SMS-only (emm_can_fake_sms_only_combined).
-     * Bare Combined result (fake_csfb without SMS-only / without LAI)
-     * causes many UEs to reply EMM #101.
+     * Real Combined needs a VLR P-TMSI. fake_csfb may keep Combined
+     * without one (with or without synthetic LAI/P-TMSI).
      */
     if (eps_attach_result->result ==
             OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH &&
         !MME_NEXT_P_TMSI_IS_AVAILABLE(mme_ue) &&
-        !emm_can_fake_sms_only_combined(mme_ue)) {
+        !emm_can_fake_combined(mme_ue)) {
         eps_attach_result->result = OGS_NAS_ATTACH_TYPE_EPS_ATTACH;
     }
 
@@ -446,7 +456,7 @@ ogs_pkbuf_t *emm_build_attach_accept(
         ogs_debug("    P-TMSI: 0x%08x", tmsi->tmsi);
     } else if (eps_attach_result->result ==
                 OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH &&
-            emm_can_fake_sms_only_combined(mme_ue)) {
+            emm_can_fake_lai_ptmsi(mme_ue)) {
         attach_accept->presencemask |=
             OGS_NAS_EPS_ATTACH_ACCEPT_LOCATION_AREA_IDENTIFICATION_PRESENT;
         attach_accept->presencemask |=
@@ -455,15 +465,12 @@ ogs_pkbuf_t *emm_build_attach_accept(
     }
 
     /*
-     * TS 24.301 5.5.1.3.4.2: if the UE requested SMS only (or the network
-     * accepts Combined as SMS only), Additional update result shall be
-     * "SMS only". Omitting it after Combined Accept is a common cause of
-     * UE EMM Status #101.
+     * TS 24.301 5.5.1.3.4.2: if the UE requested SMS only, Additional
+     * update result shall be "SMS only".
      */
     if (eps_attach_result->result ==
             OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH &&
-        (mme_ue->nas_eps.sms_only ||
-         emm_can_fake_sms_only_combined(mme_ue))) {
+        mme_ue->nas_eps.sms_only) {
         attach_accept->presencemask |=
             OGS_NAS_EPS_ATTACH_ACCEPT_ADDITIONAL_UPDATE_RESULT_PRESENT;
         attach_accept->additional_update_result.
@@ -818,18 +825,17 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
     message.emm.h.message_type = OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT;
 
     if (mme_ue->network_access_mode != OGS_NETWORK_ACCESS_MODE_ONLY_PACKET &&
-        !mme_ue->sgs_cs_unavailable &&
         (mme_ue->nas_eps.update.value ==
             OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING ||
          mme_ue->nas_eps.update.value ==
             OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING_WITH_IMSI_ATTACH) &&
         (MME_NEXT_P_TMSI_IS_AVAILABLE(mme_ue) ||
-         emm_can_fake_sms_only_combined(mme_ue))) {
+         emm_can_fake_combined(mme_ue))) {
         tau_accept->eps_update_result.result =
             OGS_NAS_EPS_UPDATE_RESULT_COMBINED_TA_LA_UPDATED;
     } else {
         /*
-         * TA-updated only: CS unavailable, no real/fake SMS Combined, or
+         * TA-updated only: no real VLR P-TMSI, fake_csfb off, or
          * HSS NAM = packet-only (fake_csfb must not override NAM).
          */
         tau_accept->eps_update_result.result =
@@ -937,7 +943,7 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
         ogs_debug("    P-TMSI: 0x%08x", tmsi->tmsi);
     } else if (tau_accept->eps_update_result.result ==
                 OGS_NAS_EPS_UPDATE_RESULT_COMBINED_TA_LA_UPDATED &&
-            emm_can_fake_sms_only_combined(mme_ue)) {
+            emm_can_fake_lai_ptmsi(mme_ue)) {
         tau_accept->presencemask |=
             OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_LOCATION_AREA_IDENTIFICATION_PRESENT;
         tau_accept->presencemask |=
@@ -947,8 +953,7 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
 
     if (tau_accept->eps_update_result.result ==
             OGS_NAS_EPS_UPDATE_RESULT_COMBINED_TA_LA_UPDATED &&
-        (mme_ue->nas_eps.sms_only ||
-         emm_can_fake_sms_only_combined(mme_ue))) {
+        mme_ue->nas_eps.sms_only) {
         tau_accept->presencemask |=
             OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_ADDITIONAL_UPDATE_RESULT_PRESENT;
         tau_accept->additional_update_result.
