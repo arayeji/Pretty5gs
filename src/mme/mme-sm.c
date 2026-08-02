@@ -1578,6 +1578,11 @@ cleanup:
                     (int)e->mme_ue_id);
             break;
         }
+        if (mme_ue->being_removed) {
+            ogs_debug("purge ue: mme_ue pool-id %d already being removed",
+                    (int)e->mme_ue_id);
+            break;
+        }
 
         mme_ue_enter_ue_context_will_remove(mme_ue);
         break;

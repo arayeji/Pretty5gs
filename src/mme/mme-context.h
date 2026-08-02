@@ -932,6 +932,14 @@ struct mme_ue_s {
     ogs_pool_id_t   id;
     ogs_fsm_t       sm;     /* A state machine */
 
+    /*
+     * Set once inside mme_ue_remove() under mme_ctx_lock. Makes removal
+     * exactly-once: a second (racing or stale-pointer) mme_ue_remove()
+     * returns early instead of feeding freed TEID/IMSI/GUTI key pointers
+     * into ogs_hash_set (ogs_hash stores KEY POINTERS, not copies).
+     */
+    bool            being_removed;
+
     struct {
 #define MME_EPS_TYPE_ATTACH_REQUEST                 1
 #define MME_EPS_TYPE_TAU_REQUEST                    2
@@ -1518,12 +1526,15 @@ struct mme_ue_s {
 
 #define MME_UE_REMOVE_WITH_PAGING_FAIL(__mME) \
     do { \
-        if (MME_PAGING_ONGOING(__mME)) { \
+        mme_ue_t *__mME_ue = (__mME); \
+        if (!__mME_ue || __mME_ue->being_removed) \
+            break; \
+        if (MME_PAGING_ONGOING(__mME_ue)) { \
             /* expected when a UE is torn down mid-paging */ \
-            ogs_warn("Paging is ON-Going [%d]", (__mME)->paging.type); \
-            mme_send_after_paging(__mME, false); \
+            ogs_warn("Paging is ON-Going [%d]", (__mME_ue)->paging.type); \
+            mme_send_after_paging(__mME_ue, false); \
         } \
-        mme_ue_remove(__mME); \
+        mme_ue_remove(__mME_ue); \
     } while(0)
 
 #define SESSION_CONTEXT_IS_AVAILABLE(__mME) \

@@ -7806,17 +7806,49 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
 void mme_ue_remove(mme_ue_t *mme_ue)
 {
     sgw_ue_t *sgw_ue = NULL;
+    ogs_pool_id_t mme_ue_id;
+    uint32_t s11_teid = 0, gn_teid = 0;
+    bool s11_allocated = false, gn_allocated = false;
     ogs_assert(mme_ue);
 
+    mme_ue_id = mme_ue->id;
+
     /*
-     * Take the metrics dump lock for the duration of teardown.
-     * The /ue-info dumper may be walking mme_ue_list right now, and
-     * we are about to free this mme_ue plus its session/bearer
-     * sublists - racing the reader could segfault. The lock is
-     * released only after pool_id_free() so by the time the MHD
-     * thread re-acquires it, this mme_ue is gone from the list.
+     * Exactly-once removal. Multiple paths (emm_state_ue_context_will_remove,
+     * S1 UE-context-remove, S6a PUA, IMSI-merge of old UE, admin purge) can
+     * race or hold a stale pointer under mme.workers. A second remove used
+     * to feed freed TEID/IMSI key pointers into ogs_hash_set (ogs_hash
+     * stores KEY POINTERS), causing SIGSEGV on the worker dispatch path.
+     * Validate the pointer is still the live pool object AND claim the
+     * removal flag under the same lock (same pattern as enb_ue_remove).
+     *
+     * Take the metrics dump lock (= mme_ctx_lock, recursive) for the
+     * duration of teardown so /ue-info dumpers never walk a half-freed
+     * UE. Released only after pool_id_free().
      */
     ogs_metrics_dump_lock();
+    if (ogs_pool_find_by_id(&mme_ue_pool, mme_ue_id) != mme_ue ||
+            mme_ue->being_removed) {
+        ogs_metrics_dump_unlock();
+        ogs_error("mme_ue_remove() ignored: context already removed "
+                "or removal in progress (id:%d)", (int)mme_ue_id);
+        return;
+    }
+    mme_ue->being_removed = true;
+
+    /*
+     * Snapshot TEIDs while the object is still valid. Hash lookups compare
+     * key bytes, so a stack copy is a safe unset key; prefer
+     * ogs_hash_unset_if_owner so a recycled TEID already claimed by a
+     * newer UE is not cleared out from under it.
+     */
+    s11_allocated = (mme_ue->mme_s11_teid_node != NULL);
+    gn_allocated = (mme_ue->gn.mme_gn_teid_node != NULL);
+    if (s11_allocated)
+        s11_teid = mme_ue->mme_s11_teid;
+    if (gn_allocated)
+        gn_teid = mme_ue->gn.mme_gn_teid;
+
     mme_metrics_on_ue_remove(mme_ue);
     mme_li_report(mme_ue, OGS_LI_EVENT_EPS_DETACH, "ue-removed");
     ogs_list_remove(&self.mme_ue_list, mme_ue);
@@ -7828,15 +7860,18 @@ void mme_ue_remove(mme_ue_t *mme_ue)
      * already-freed) mme_ue — production abort at emm_state_de_registered.
      */
     CLEAR_MME_UE_ALL_TIMERS(mme_ue);
-    mme_event_purge_mme_ue(mme_ue->id);
+    mme_event_purge_mme_ue(mme_ue_id);
 
     mme_ue_fsm_fini(mme_ue);
 
+    /* Nested mme_ctx_lock is fine: dump lock is recursive. */
     mme_ctx_lock();
-    ogs_hash_set(self.mme_s11_teid_hash,
-            &mme_ue->mme_s11_teid, sizeof(mme_ue->mme_s11_teid), NULL);
-    ogs_hash_set(self.mme_gn_teid_hash,
-            &mme_ue->gn.mme_gn_teid, sizeof(mme_ue->gn.mme_gn_teid), NULL);
+    if (s11_allocated)
+        ogs_hash_unset_if_owner(self.mme_s11_teid_hash,
+                &s11_teid, sizeof(s11_teid), mme_ue);
+    if (gn_allocated)
+        ogs_hash_unset_if_owner(self.mme_gn_teid_hash,
+                &gn_teid, sizeof(gn_teid), mme_ue);
     if (mme_ue->imsi_len != 0)
         ogs_hash_unset_if_owner(self.imsi_ue_hash,
                 mme_ue->imsi, mme_ue->imsi_len, mme_ue);
@@ -7884,8 +7919,14 @@ void mme_ue_remove(mme_ue_t *mme_ue)
     mme_sess_remove_all(mme_ue);
     mme_session_remove_all(mme_ue);
 
-    ogs_pool_free(&mme_s11_teid_pool, mme_ue->mme_s11_teid_node);
-    ogs_pool_free(&mme_gn_teid_pool, mme_ue->gn.mme_gn_teid_node);
+    if (s11_allocated) {
+        ogs_pool_free(&mme_s11_teid_pool, mme_ue->mme_s11_teid_node);
+        mme_ue->mme_s11_teid_node = NULL;
+    }
+    if (gn_allocated) {
+        ogs_pool_free(&mme_gn_teid_pool, mme_ue->gn.mme_gn_teid_node);
+        mme_ue->gn.mme_gn_teid_node = NULL;
+    }
     ogs_pool_id_free(&mme_ue_pool, mme_ue);
     ogs_metrics_dump_unlock();
 
@@ -8289,6 +8330,15 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
      */
     mme_ctx_lock();
     old_mme_ue = mme_ue_find_by_imsi(mme_ue->imsi, mme_ue->imsi_len);
+    if (old_mme_ue && old_mme_ue->being_removed) {
+        /*
+         * Hash still briefly points at an OLD UE claimed for teardown.
+         * Do not merge sessions out of a mid-remove context.
+         */
+        ogs_warn("[%s] OLD UE already being removed; skip merge",
+                mme_ue->imsi_bcd);
+        old_mme_ue = NULL;
+    }
     if (old_mme_ue) {
         /* Check if OLD mme_ue_t is different with NEW mme_ue_t */
         if (ogs_pool_index(&mme_ue_pool, mme_ue) !=

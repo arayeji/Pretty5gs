@@ -35,6 +35,9 @@ void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue)
 
     ogs_assert(mme_ue);
 
+    /* Already mid-teardown or freed via another path — do not re-enter FSM. */
+    if (mme_ue->being_removed)
+        return;
     if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
         return;
 
