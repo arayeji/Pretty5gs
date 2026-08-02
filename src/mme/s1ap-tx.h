@@ -85,6 +85,15 @@ void s1ap_tx_ready_handle(mme_event_t *e);
  * otherwise black-holes that eNB's synchronous downlink until restart. */
 void s1ap_tx_hold_watchdog(void);
 
+/*
+ * Opportunistic self-heal on the send path (UE-shard safe). If THIS eNB's
+ * hold looks stalled (leaked pending / TX_READY starved behind a deep
+ * main queue), flush it now so Attach Accept / ICS is not parked forever
+ * waiting for an orphan-sweep event that itself cannot run while main
+ * never returns to poll.
+ */
+void s1ap_tx_hold_recover_stalled(mme_enb_t *enb);
+
 #ifdef __cplusplus
 }
 #endif

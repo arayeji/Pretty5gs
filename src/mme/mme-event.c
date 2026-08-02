@@ -34,11 +34,15 @@
  * early so mme_event_term() can terminate the queue on shutdown.
  */
 #define MME_S1AP_CONNREFUSED_QUEUE  8192
+#define MME_S1AP_TX_READY_QUEUE     65536
 
 static ogs_queue_t *s1ap_cr_queue = NULL;
 static ogs_hash_t *s1ap_cr_pending = NULL; /* key: &e->sock while queued */
 static ogs_thread_mutex_t s1ap_cr_lock;
 static bool s1ap_cr_ready = false;
+
+static ogs_queue_t *s1ap_tx_ready_queue = NULL;
+static bool s1ap_tx_ready_q_ready = false;
 
 static bool mme_event_belongs_to_mme_ue(
         mme_event_t *e, ogs_pool_id_t mme_ue_id)
@@ -190,6 +194,8 @@ void mme_event_term(void)
     ogs_queue_term(ogs_app()->queue);
     if (s1ap_cr_ready)
         ogs_queue_term(s1ap_cr_queue);
+    if (s1ap_tx_ready_q_ready)
+        ogs_queue_term(s1ap_tx_ready_queue);
     ogs_pollset_notify(ogs_app()->pollset);
 }
 
@@ -496,6 +502,54 @@ int mme_event_s1ap_connrefused_trypop(mme_event_t **e)
     }
     ogs_thread_mutex_unlock(&s1ap_cr_lock);
     return rv;
+}
+
+void mme_event_s1ap_tx_ready_init(void)
+{
+    ogs_assert(s1ap_tx_ready_queue == NULL);
+    s1ap_tx_ready_queue = ogs_queue_create(MME_S1AP_TX_READY_QUEUE);
+    ogs_assert(s1ap_tx_ready_queue);
+    s1ap_tx_ready_q_ready = true;
+}
+
+void mme_event_s1ap_tx_ready_final(void)
+{
+    if (!s1ap_tx_ready_q_ready)
+        return;
+    ogs_queue_destroy(s1ap_tx_ready_queue);
+    s1ap_tx_ready_queue = NULL;
+    s1ap_tx_ready_q_ready = false;
+}
+
+unsigned int mme_event_s1ap_tx_ready_depth(void)
+{
+    return s1ap_tx_ready_q_ready ? ogs_queue_size(s1ap_tx_ready_queue) : 0;
+}
+
+int mme_event_s1ap_tx_ready_trypop(mme_event_t **e)
+{
+    ogs_assert(e);
+    *e = NULL;
+    if (!s1ap_tx_ready_q_ready)
+        return OGS_RETRY;
+    return ogs_queue_trypop(s1ap_tx_ready_queue, (void **)e);
+}
+
+int mme_event_s1ap_tx_ready_push(mme_event_t *e)
+{
+    int rv;
+
+    ogs_assert(e);
+    if (!s1ap_tx_ready_q_ready)
+        return mme_queue_push_main(e);
+
+    rv = ogs_queue_trypush(s1ap_tx_ready_queue, e);
+    if (rv == OGS_OK) {
+        ogs_pollset_notify(ogs_app()->pollset);
+        return OGS_OK;
+    }
+    /* Side-queue full: fall back to main so pending still decrements. */
+    return mme_queue_push_main(e);
 }
 
 static void mme_sctp_connrefused_enqueue(mme_event_t *e)

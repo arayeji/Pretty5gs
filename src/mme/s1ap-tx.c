@@ -128,7 +128,9 @@ static void tx_post_ready(
     e->tx_stream_no = stream_no;
 
     for (;;) {
-        rv = mme_queue_push_main(e);
+        /* Priority side-queue so TX_READY is not buried under thousands
+         * of S1AP/GTP events (that burial keeps pending>0 and parks ICS). */
+        rv = mme_event_s1ap_tx_ready_push(e);
         if (rv == OGS_OK)
             return;
 
@@ -365,6 +367,105 @@ static void tx_send_raw(mme_enb_t *enb, ogs_pkbuf_t *pkbuf)
 #define S1AP_TX_HOLD_STALL_USEC     ogs_time_from_sec(15)
 /* No TX_READY for this eNB for this long → treat pending as leaked. */
 #define S1AP_TX_HOLD_NO_PROGRESS_USEC ogs_time_from_sec(5)
+/* Tighter thresholds on the send path: do not wait for orphan sweep. */
+#define S1AP_TX_HOLD_SEND_STALL_USEC        ogs_time_from_sec(3)
+#define S1AP_TX_HOLD_SEND_NO_PROGRESS_USEC  ogs_time_from_sec(2)
+#define S1AP_TX_HOLD_SEND_MAX_PARKED        128
+
+static int s1ap_tx_hold_try_flush_locked(
+        mme_enb_t *enb, ogs_time_t now,
+        ogs_time_t stall_usec, ogs_time_t no_progress_usec, int max_parked,
+        ogs_list_t *flush, int *out_pending, ogs_time_t *out_since,
+        ogs_time_t *out_last_ready)
+{
+    ogs_pkbuf_t *held = NULL, *next = NULL;
+    ogs_time_t since, last_ready;
+    int pending, count = 0;
+    bool stalled;
+
+    since = enb->s1ap_tx_hold_since;
+    last_ready = enb->s1ap_tx_last_ready;
+    pending = __atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE);
+
+    ogs_list_for_each(&enb->s1ap_tx_hold, held)
+        count++;
+
+    if (!count && pending <= 0)
+        return 0;
+
+    stalled = false;
+    /*
+     * Hold non-empty for stall_usec AND no TX_READY for no_progress_usec
+     * (genuine encode backlog still produces TX_READYs). Cap also trips
+     * when the park list grows without bound under a deep main queue.
+     */
+    if (count && since && (now - since) >= stall_usec &&
+            (!last_ready || (now - last_ready) >= no_progress_usec))
+        stalled = true;
+    if (max_parked > 0 && count >= max_parked)
+        stalled = true;
+    /* pending stuck with empty hold: still blocks every sync send */
+    if (!count && pending > 0 &&
+            (!last_ready || (now - last_ready) >= no_progress_usec))
+        stalled = true;
+
+    if (!stalled)
+        return 0;
+
+    ogs_list_for_each_safe(&enb->s1ap_tx_hold, next, held) {
+        ogs_list_remove(&enb->s1ap_tx_hold, held);
+        ogs_list_add(flush, held);
+    }
+    enb->s1ap_tx_hold_since = 0;
+    __atomic_store_n(&enb->s1ap_tx_pending, 0, __ATOMIC_RELEASE);
+
+    if (out_pending)
+        *out_pending = pending;
+    if (out_since)
+        *out_since = since;
+    if (out_last_ready)
+        *out_last_ready = last_ready;
+    return count > 0 ? count : -1; /* -1 = pending-only reset */
+}
+
+void s1ap_tx_hold_recover_stalled(mme_enb_t *enb)
+{
+    ogs_list_t flush;
+    ogs_pkbuf_t *held = NULL, *next = NULL;
+    ogs_time_t now, since = 0, last_ready = 0;
+    int pending = 0, count;
+
+    if (!enb || !s1ap_tx_active())
+        return;
+
+    ogs_list_init(&flush);
+    now = ogs_time_now();
+
+    ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
+    count = s1ap_tx_hold_try_flush_locked(enb, now,
+            S1AP_TX_HOLD_SEND_STALL_USEC,
+            S1AP_TX_HOLD_SEND_NO_PROGRESS_USEC,
+            S1AP_TX_HOLD_SEND_MAX_PARKED,
+            &flush, &pending, &since, &last_ready);
+    ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
+
+    if (!count)
+        return;
+
+    ogs_error("s1ap-tx: send-path recover eNB-id[0x%x] "
+            "(pending_was=%d, flushed=%d, hold_age=%llds, "
+            "no_TX_READY=%llds)",
+            enb->enb_id, pending, count > 0 ? count : 0,
+            since ? (long long)ogs_time_to_sec(now - since) : 0LL,
+            last_ready ? (long long)ogs_time_to_sec(now - last_ready)
+                       : (since ? (long long)ogs_time_to_sec(now - since)
+                                : 0LL));
+
+    ogs_list_for_each_safe(&flush, next, held) {
+        ogs_list_remove(&flush, held);
+        tx_send_raw(enb, held);
+    }
+}
 
 void s1ap_tx_hold_watchdog(void)
 {
@@ -391,41 +492,30 @@ void s1ap_tx_hold_watchdog(void)
     ogs_list_for_each(&mme_self()->enb_list, enb) {
         ogs_list_t flush;
         ogs_pkbuf_t *held = NULL, *next = NULL;
-        ogs_time_t since, last_ready;
-        int pending, count = 0;
+        ogs_time_t since = 0, last_ready = 0;
+        int pending = 0, count;
 
         ogs_list_init(&flush);
 
         ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
-        since = enb->s1ap_tx_hold_since;
-        last_ready = enb->s1ap_tx_last_ready;
-        if (!since || (now - since) < S1AP_TX_HOLD_STALL_USEC) {
-            ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
-            continue;
-        }
-        /* Genuine per-eNB encode backlog: TX_READYs still arriving. */
-        if (last_ready &&
-                (now - last_ready) < S1AP_TX_HOLD_NO_PROGRESS_USEC) {
-            ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
-            continue;
-        }
-        pending = __atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE);
-        ogs_list_for_each_safe(&enb->s1ap_tx_hold, next, held) {
-            ogs_list_remove(&enb->s1ap_tx_hold, held);
-            ogs_list_add(&flush, held);
-            count++;
-        }
-        enb->s1ap_tx_hold_since = 0;
-        __atomic_store_n(&enb->s1ap_tx_pending, 0, __ATOMIC_RELEASE);
+        count = s1ap_tx_hold_try_flush_locked(enb, now,
+                S1AP_TX_HOLD_STALL_USEC,
+                S1AP_TX_HOLD_NO_PROGRESS_USEC,
+                0,
+                &flush, &pending, &since, &last_ready);
         ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
+
+        if (!count)
+            continue;
 
         ogs_error("s1ap-tx: hold list WEDGED for eNB-id[0x%x] "
                 "(pending=%d, %d pkbuf(s) parked for %llds, "
                 "no TX_READY for %llds) — forced flush + pending reset",
-                enb->enb_id, pending, count,
-                (long long)ogs_time_to_sec(now - since),
+                enb->enb_id, pending, count > 0 ? count : 0,
+                since ? (long long)ogs_time_to_sec(now - since) : 0LL,
                 last_ready ? (long long)ogs_time_to_sec(now - last_ready)
-                           : (long long)ogs_time_to_sec(now - since));
+                           : (since ? (long long)ogs_time_to_sec(now - since)
+                                    : 0LL));
 
         ogs_list_for_each_safe(&flush, next, held) {
             ogs_list_remove(&flush, held);

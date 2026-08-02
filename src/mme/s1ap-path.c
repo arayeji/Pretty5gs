@@ -90,6 +90,12 @@ int s1ap_send_to_enb(mme_enb_t *enb, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
     if (s1ap_tx_active()) {
         bool parked = false;
 
+        /* Unwedge before parking: TX_READY can sit behind a deep main
+         * queue for seconds while ICS/Attach Accept pile onto the hold
+         * list. Recover here on the shard/send path so we do not depend
+         * on the orphan-sweep timer (starved when main never re-polls). */
+        s1ap_tx_hold_recover_stalled(enb);
+
         ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
         if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0) {
             if (!ogs_list_first(&enb->s1ap_tx_hold))

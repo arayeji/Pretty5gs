@@ -81,7 +81,7 @@ tools/admin-api/scripts/publish-linux.sh
 /wsl-build.sh
 
 # Agent scratch scripts / filter helpers (never commit)
-.tmp*.sh
+.tmp*
 .git-filter*
 .git-redact*
 .reportout.txt

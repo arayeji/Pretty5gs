@@ -157,14 +157,26 @@ int nas_eps_send_attach_accept(mme_ue_t *mme_ue)
      * (seen under SGs LU reject storms).
      */
     if (mme_sess_next(sess)) {
-        mme_sess_t *s = NULL, *chosen = NULL;
+        mme_sess_t *s = NULL, *chosen = NULL, *fallback = NULL;
         int n = 0;
 
         ogs_list_for_each(&mme_ue->sess_list, s) {
+            mme_bearer_t *db;
+
             n++;
-            if (s->session && mme_default_bearer_in_sess(s))
+            if (!s->session)
+                continue;
+            db = mme_default_bearer_in_sess(s);
+            if (!db)
+                continue;
+            if (!fallback)
+                fallback = s;
+            /* Prefer CSRSP-applied S1-U so ICS/ESM use the same session */
+            if (db->sgw_s1u_ip.ipv4 || db->sgw_s1u_ip.ipv6)
                 chosen = s;
         }
+        if (!chosen)
+            chosen = fallback;
         if (!chosen) {
             ogs_error("[%s] Attach accept: %d sessions but none usable",
                     mme_ue->imsi_bcd, n);

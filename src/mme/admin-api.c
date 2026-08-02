@@ -572,8 +572,10 @@ size_t mme_dump_queue_status(char *buf, size_t buflen,
 
     QSTAT_APPEND("{\"event_lag_ms\":%lld,"
             "\"main\":{\"depth\":%u,\"cap\":%u},"
-            "\"connrefused_depth\":%u,",
-            lag_ms, depth, cap, mme_event_s1ap_connrefused_depth());
+            "\"connrefused_depth\":%u,"
+            "\"tx_ready_depth\":%u,",
+            lag_ms, depth, cap, mme_event_s1ap_connrefused_depth(),
+            mme_event_s1ap_tx_ready_depth());
 
     /* UE shard workers (mme.workers) */
     QSTAT_APPEND("\"shards\":[");

@@ -289,6 +289,18 @@ int mme_event_s1ap_connrefused_trypop(mme_event_t **e);
 /* diagnostic for /admin/queues */
 unsigned int mme_event_s1ap_connrefused_depth(void);
 
+/*
+ * S1AP TX_READY side-channel: encode completions must not sit behind a
+ * multi-thousand S1AP/GTP event backlog. While TX_READY is delayed,
+ * s1ap_tx_pending stays > 0 and every sync downlink (ICS / Attach
+ * Accept) parks on the per-eNB hold list → cell-level wedge.
+ */
+void mme_event_s1ap_tx_ready_init(void);
+void mme_event_s1ap_tx_ready_final(void);
+int mme_event_s1ap_tx_ready_push(mme_event_t *e);
+int mme_event_s1ap_tx_ready_trypop(mme_event_t **e);
+unsigned int mme_event_s1ap_tx_ready_depth(void);
+
 mme_event_t *mme_event_new(mme_event_e id);
 void mme_event_free(mme_event_t *e);
 

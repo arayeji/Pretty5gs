@@ -18,6 +18,7 @@
  */
 
 #include "s1ap-path.h"
+#include "s1ap-tx.h"
 #include "nas-path.h"
 #include "emm-build.h"
 #include "sgsap-path.h"
@@ -162,6 +163,14 @@ static void orphan_sweep_timer_cb(void *data)
     int rv;
 
     (void)data;
+
+    /*
+     * Run TX-hold recovery on the timer path before queueing the rest of
+     * the sweep. When main is busy draining S1AP/GTP, the ORPHAN_SWEEP
+     * event can sit for seconds; hold recovery must not wait on that.
+     * Safe: only touches per-eNB hold locks + IO post (same as send path).
+     */
+    s1ap_tx_hold_watchdog();
 
     e = mme_event_new(MME_EVENT_ORPHAN_SWEEP);
     if (!e) {

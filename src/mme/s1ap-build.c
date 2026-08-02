@@ -509,11 +509,17 @@ ogs_pkbuf_t *s1ap_build_downlink_nas_transport(
     return ogs_s1ap_encode(&pdu);
 }
 
+static bool mme_bearer_has_sgw_s1u(mme_bearer_t *bearer)
+{
+    return bearer &&
+        (bearer->sgw_s1u_ip.ipv4 || bearer->sgw_s1u_ip.ipv6);
+}
+
 static bool mme_bearer_sgw_s1u_ready(mme_bearer_t *bearer)
 {
     ogs_assert(bearer);
 
-    if (bearer->sgw_s1u_ip.ipv4 || bearer->sgw_s1u_ip.ipv6)
+    if (mme_bearer_has_sgw_s1u(bearer))
         return true;
 
     {
@@ -721,36 +727,74 @@ ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
     S1AP_NAS_PDU_t *nasPdu = NULL;
 
     if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {
+        mme_sess_t *s = NULL;
+        mme_bearer_t *b = NULL;
+        mme_sess_t *chosen_sess = NULL;
+        mme_bearer_t *chosen_bearer = NULL;
+        mme_sess_t *fallback_sess = NULL;
+        mme_bearer_t *fallback_bearer = NULL;
+        int n_sess = 0;
+
         /*
-         * For Attach Request,
-         * Delete Session Request/Response removes ALL session/bearers.
+         * For Attach Request bearers are still INACTIVE — do not require
+         * esm_state_active. Pick the session whose default bearer has a
+         * usable SGW S1-U (Create Session Response applied).
          *
-         * Since all bearers are INACTIVE,
-         * we should not check the bearer activation.
+         * CRITICAL: do NOT use ogs_list_first() alone. Re-attach merges
+         * leave a stale/empty session at the head while CSRSP populated
+         * a later session; nas_eps_send_attach_accept() already chooses
+         * that later session for the ESM container, but ICS used to keep
+         * looking at the first → empty E-RAB list → Attach Accept never
+         * leaves the MME (Case A: CSRSP OK, no ICS on the wire) → UE
+         * storm → main-queue wedge.
          */
-        sess = ogs_list_first(&mme_ue->sess_list);
-        /*
-         * Issue #3072 : Only first Bearer should be included.
-         */
-        if (sess)
-            bearer = ogs_list_first(&sess->bearer_list);
+        ogs_list_for_each(&mme_ue->sess_list, s) {
+            n_sess++;
+            b = mme_default_bearer_in_sess(s);
+            if (!b)
+                b = ogs_list_first(&s->bearer_list);
+            if (!b)
+                continue;
+            if (!fallback_bearer) {
+                fallback_sess = s;
+                fallback_bearer = b;
+            }
+            if (mme_bearer_has_sgw_s1u(b)) {
+                chosen_sess = s;
+                chosen_bearer = b; /* last ready wins = newest CSR */
+            }
+        }
+
+        if (!chosen_bearer) {
+            chosen_sess = fallback_sess;
+            chosen_bearer = fallback_bearer;
+        }
+
+        sess = chosen_sess;
+        bearer = chosen_bearer;
 
         if (sess && bearer) {
-            if (!mme_bearer_sgw_s1u_ready(bearer)) {
+            if (!mme_bearer_has_sgw_s1u(bearer)) {
                 char pgw_peer[64];
                 sgw_ue_t *sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
 
                 mme_log_pgw_peer(pgw_peer, sizeof(pgw_peer), sess);
                 ogs_error("[%s] Cannot build ICS for attach: default bearer "
                         "EBI[%d] missing SGW S1-U APN[%s] PGW[%s] "
-                        "SGW_S11_TEID[0x%x]",
+                        "SGW_S11_TEID[0x%x] sess=%d",
                         mme_log_imsi(mme_ue), bearer->ebi,
                         sess->session ? sess->session->name : "-",
                         pgw_peer[0] ? pgw_peer : "-",
-                        sgw_ue ? sgw_ue->sgw_s11_teid : 0);
+                        sgw_ue ? sgw_ue->sgw_s11_teid : 0, n_sess);
                 ogs_s1ap_free(&pdu);
                 return NULL;
             }
+
+            if (n_sess > 1)
+                ogs_info("[%s] ICS attach: %d sessions, using APN[%s] EBI[%d]",
+                        mme_log_imsi(mme_ue), n_sess,
+                        sess->session ? sess->session->name : "-",
+                        bearer->ebi);
 
             item = CALLOC(1, sizeof(S1AP_E_RABToBeSetupItemCtxtSUReqIEs_t));
             ASN_SEQUENCE_ADD(&E_RABToBeSetupListCtxtSUReq->list, item);

@@ -150,6 +150,8 @@ int mme_initialize(void)
 
     /* CONNREFUSED side-queue before any S1AP worker can post teardowns */
     mme_event_s1ap_connrefused_init();
+    /* TX_READY side-queue before TX workers can complete encode jobs */
+    mme_event_s1ap_tx_ready_init();
 
     /* close registry lock/hash before any thread can register/confirm */
     s1ap_sock_close_init();
@@ -248,8 +250,9 @@ void mme_terminate(void)
     /* UE shards after helpers: no more S11/EMM posts from sockets */
     mme_workers_stop();
 
-    /* No more producers of CONNREFUSED */
+    /* No more producers of CONNREFUSED / TX_READY */
     mme_event_s1ap_connrefused_final();
+    mme_event_s1ap_tx_ready_final();
 
     /* every thread that could confirm is joined: reap sockets still
      * waiting in the close registry */
@@ -306,31 +309,46 @@ static void mme_main(void *data)
          */
         ogs_timer_mgr_expire(ogs_app()->timer_mgr);
 
-        for ( ;; ) {
-            mme_event_t *e = NULL;
+        /*
+         * Bound work per poll cycle. Under attach storm the main queue
+         * never empties; draining it to dry before re-polling starves
+         * timers (orphan sweep / TX-hold watchdog) and epoll — lag climbs
+         * while /admin/queues says "wedged". Cap so poll+timers run.
+         */
+        {
+            int batch = 0;
+            const int batch_max = 128;
 
-            /* Prefer CONNREFUSED: eNB teardown must not wait behind a
-             * saturated S1AP message queue. */
-            rv = mme_event_s1ap_connrefused_trypop(&e);
-            if (rv == OGS_RETRY) {
-                rv = ogs_queue_trypop(ogs_app()->queue, (void**)&e);
-                ogs_assert(rv != OGS_ERROR);
+            for ( ;; ) {
+                mme_event_t *e = NULL;
 
-                if (rv == OGS_DONE)
-                    goto done;
-
+                /* Prefer CONNREFUSED, then TX_READY, then the app queue. */
+                rv = mme_event_s1ap_connrefused_trypop(&e);
                 if (rv == OGS_RETRY)
-                    break;
-            } else {
-                ogs_assert(rv != OGS_ERROR);
-                if (rv == OGS_DONE)
-                    goto done;
-            }
+                    rv = mme_event_s1ap_tx_ready_trypop(&e);
+                if (rv == OGS_RETRY) {
+                    rv = ogs_queue_trypop(ogs_app()->queue, (void**)&e);
+                    ogs_assert(rv != OGS_ERROR);
 
-            ogs_assert(e);
-            mme_event_lag_observe(e);
-            ogs_fsm_dispatch(&mme_sm, e);
-            mme_event_free(e);
+                    if (rv == OGS_DONE)
+                        goto done;
+
+                    if (rv == OGS_RETRY)
+                        break;
+                } else {
+                    ogs_assert(rv != OGS_ERROR);
+                    if (rv == OGS_DONE)
+                        goto done;
+                }
+
+                ogs_assert(e);
+                mme_event_lag_observe(e);
+                ogs_fsm_dispatch(&mme_sm, e);
+                mme_event_free(e);
+
+                if (++batch >= batch_max)
+                    break;
+            }
         }
     }
 done:
