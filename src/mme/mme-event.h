@@ -109,6 +109,12 @@ typedef enum {
      */
     MME_EVENT_S1AP_HO_TAIL,
 
+    /*
+     * APN-FQDN PGW DNS finished on a DNS worker thread. Posted to the
+     * UE owner to resume Create Session (or reject). See mme-pgw-dns.c.
+     */
+    MME_EVENT_PGW_DNS_DONE,
+
     MAX_NUM_OF_MME_EVENT,
 
 } mme_event_e;
@@ -243,6 +249,11 @@ typedef struct mme_event_s {
     /* MME_HO_TAIL_UE_REL: S1AP_UE_CTX_REL_* action + MME_UE_REL_F_* */
     int rel_action;
     int rel_flags;
+
+    /* MME_EVENT_PGW_DNS_DONE */
+    ogs_pool_id_t sess_id;
+    int pgw_dns_rv;
+    ogs_ip_t pgw_dns_ip;
 
 } mme_event_t;
 

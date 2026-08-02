@@ -340,6 +340,8 @@ const char *mme_event_get_name(mme_event_t *e)
         return "MME_EVENT_ORPHAN_SWEEP";
     case MME_EVENT_S1AP_HO_TAIL:
         return "MME_EVENT_S1AP_HO_TAIL";
+    case MME_EVENT_PGW_DNS_DONE:
+        return "MME_EVENT_PGW_DNS_DONE";
     default:
        break;
     }

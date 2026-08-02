@@ -31,6 +31,7 @@
 #include "mme-s11-handler.h"
 #include "mme-sm.h"
 #include "mme-workers.h"
+#include "mme-pgw-select.h"
 #include "metrics.h"
 
 static const char *mme_gtp2_message_type_name(uint8_t type)
@@ -673,6 +674,16 @@ int mme_gtp_send_create_session_request(
                     "(path switch)", mme_ue->imsi_bcd);
             return OGS_ERROR;
         }
+    }
+
+    if (!(sess->pgw_s5c_ip.ipv4 || sess->pgw_s5c_ip.ipv6)) {
+        rv = mme_pgw_bind_for_csr(mme_ue, sess, enb_ue, create_action);
+        if (rv == OGS_RETRY) {
+            /* APN DNS queued; MME_EVENT_PGW_DNS_DONE resumes CSR */
+            return OGS_OK;
+        }
+        if (rv != OGS_OK)
+            return OGS_ERROR;
     }
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));

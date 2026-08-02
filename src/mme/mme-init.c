@@ -24,6 +24,7 @@
 #include "mme-sm.h"
 #include "mme-event.h"
 #include "mme-timer.h"
+#include "mme-pgw-dns.h"
 
 #include "mme-fd-path.h"
 #include "s1ap-path.h"
@@ -84,6 +85,9 @@ int mme_initialize(void)
 
     ogs_gtp_context_init(OGS_MAX_NUM_OF_GTPU_RESOURCE);
     mme_context_init();
+
+    /* APN-FQDN DNS off the UE shards / mme-main (getaddrinfo / NAPTR). */
+    mme_pgw_dns_workers_start();
 
     /* Operator can `kill -USR1 <mme-pid>` to dump live pool stats. */
     ogs_app_pool_dump_cb_set(mme_context_pool_dump);
@@ -254,6 +258,8 @@ void mme_terminate(void)
     ogs_metrics_context_close(ogs_metrics_self());
 
     mme_fd_final();
+
+    mme_pgw_dns_workers_stop();
 
     mme_context_final();
 

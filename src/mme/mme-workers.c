@@ -312,6 +312,7 @@ static int mme_event_resolve_wid(mme_event_t *e)
     case MME_EVENT_ADMIN_PAGE_UE:
     case MME_EVENT_ADMIN_PURGE_UE:
     case MME_EVENT_S1AP_HO_TAIL:
+    case MME_EVENT_PGW_DNS_DONE:
     case MME_EVENT_GN_TIMER:
         wid = mme_shard_from_mme_ue_id(e->mme_ue_id);
         break;
@@ -662,6 +663,7 @@ static bool mme_event_is_ue_scoped(int id)
     case MME_EVENT_ADMIN_PAGE_UE:
     case MME_EVENT_ADMIN_PURGE_UE:
     case MME_EVENT_S1AP_HO_TAIL:
+    case MME_EVENT_PGW_DNS_DONE:
     case MME_EVENT_GN_MESSAGE:
     case MME_EVENT_GN_TIMER:
     case MME_EVENT_SGSAP_MESSAGE:

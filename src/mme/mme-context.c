@@ -8858,6 +8858,8 @@ void mme_sess_remove(mme_sess_t *sess)
     ogs_metrics_dump_lock();
     ogs_list_remove(&mme_ue->sess_list, sess);
 
+    sess->pgw_dns_pending = false;
+
     mme_bearer_remove_all(sess);
 
     OGS_NAS_CLEAR_DATA(&sess->ue_pco);

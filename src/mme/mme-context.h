@@ -1567,6 +1567,9 @@ typedef struct mme_sess_s {
     uint32_t        pgw_s5c_teid;
     ogs_ip_t        pgw_s5c_ip;
 
+    /* Async APN-FQDN PGW DNS outstanding for Create Session */
+    bool            pgw_dns_pending;
+
     /* PDN Connectivity Request */
     ogs_nas_request_type_t ue_request_type;
 

@@ -45,6 +45,19 @@ int mme_pgw_select_for_sess(
         ogs_ip_t *out_ip, mme_pgw_t **out_pgw,
         mme_pgw_selection_source_t *out_source);
 
+typedef struct enb_ue_s enb_ue_t;
+
+/*
+ * Bind PGW into sess->pgw_s5c_ip for Create Session Request.
+ *
+ * Returns:
+ *   OGS_OK    — bound (sess->pgw_s5c_ip set)
+ *   OGS_RETRY — DNS async pending (sess->pgw_dns_pending=true)
+ *   OGS_ERROR — failed
+ */
+int mme_pgw_bind_for_csr(mme_ue_t *mme_ue, mme_sess_t *sess,
+        enb_ue_t *enb_ue, int create_action);
+
 #ifdef __cplusplus
 }
 #endif

@@ -39,6 +39,7 @@
 #include "mme-fd-path.h"
 #include "mme-s6a-handler.h"
 #include "mme-path.h"
+#include "mme-pgw-select.h"
 
 #ifdef OPEN5GS_ADMIN_WATCHER
 #include "mme-admin-watcher.h"
@@ -1621,6 +1622,100 @@ cleanup:
             MME_STORE_PAGING_INFO(mme_ue,
                     MME_PAGING_TYPE_UE_REACHABILITY, NULL);
             r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
+            ogs_expect(r == OGS_OK);
+        }
+        break;
+    }
+
+    case MME_EVENT_PGW_DNS_DONE:
+    {
+        mme_sess_t *dns_sess = NULL;
+        int r;
+
+        mme_ue = mme_ue_find_by_id(e->mme_ue_id);
+        dns_sess = mme_sess_find_by_id(e->sess_id);
+        enb_ue = enb_ue_find_by_id(e->enb_ue_id);
+
+        if (!mme_ue || !dns_sess) {
+            ogs_warn("PGW DNS done: context gone [mme_ue:%s sess:%s]",
+                    mme_ue ? "ok" : "gone", dns_sess ? "ok" : "gone");
+            break;
+        }
+        if (dns_sess->mme_ue_id != mme_ue->id) {
+            ogs_warn("PGW DNS done: sess/ue mismatch");
+            break;
+        }
+
+        dns_sess->pgw_dns_pending = false;
+
+        if (e->pgw_dns_rv != OGS_OK) {
+            /*
+             * Neg-cache is populated; re-bind applies HSS/YAML fallbacks
+             * for standard selection. dns-only rules without fallback
+             * still fail here.
+             */
+            r = mme_pgw_bind_for_csr(mme_ue, dns_sess, enb_ue,
+                    e->create_action);
+            if (r == OGS_OK) {
+                if (!enb_ue) {
+                    ogs_error("[%s] PGW DNS fail fallback bound but "
+                            "enb_ue gone", mme_ue->imsi_bcd);
+                    break;
+                }
+                r = mme_gtp_send_create_session_request(
+                        enb_ue, dns_sess, e->create_action);
+                if (r != OGS_OK) {
+                    ogs_warn("[%s] Create Session after DNS fallback failed",
+                            mme_ue->imsi_bcd);
+                    r = nas_eps_send_pdn_connectivity_reject(
+                            dns_sess,
+                            OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
+                            e->create_action);
+                    ogs_expect(r == OGS_OK);
+                }
+                break;
+            }
+            if (r == OGS_RETRY) {
+                /* Should not re-queue after neg-cache; treat as fail */
+                ogs_error("[%s] PGW DNS fail unexpectedly re-queued",
+                        mme_ue->imsi_bcd);
+            }
+            ogs_warn("[%s] PGW APN DNS failed; rejecting PDN",
+                    mme_ue->imsi_bcd);
+            r = nas_eps_send_pdn_connectivity_reject(
+                    dns_sess, OGS_NAS_ESM_CAUSE_NETWORK_FAILURE,
+                    e->create_action);
+            ogs_expect(r == OGS_OK);
+            break;
+        }
+
+        memcpy(&dns_sess->pgw_s5c_ip, &e->pgw_dns_ip,
+                sizeof(dns_sess->pgw_s5c_ip));
+        if (dns_sess->session &&
+                !(dns_sess->session->smf_ip.ipv4 ||
+                    dns_sess->session->smf_ip.ipv6)) {
+            memcpy(&dns_sess->session->smf_ip, &e->pgw_dns_ip,
+                    sizeof(dns_sess->session->smf_ip));
+        }
+
+        if (!enb_ue) {
+            ogs_error("[%s] PGW DNS done but enb_ue gone — cannot CSR",
+                    mme_ue->imsi_bcd);
+            r = nas_eps_send_pdn_connectivity_reject(
+                    dns_sess, OGS_NAS_ESM_CAUSE_NETWORK_FAILURE,
+                    e->create_action);
+            ogs_expect(r == OGS_OK);
+            break;
+        }
+
+        r = mme_gtp_send_create_session_request(
+                enb_ue, dns_sess, e->create_action);
+        if (r != OGS_OK) {
+            ogs_warn("[%s] Create Session after PGW DNS failed",
+                    mme_ue->imsi_bcd);
+            r = nas_eps_send_pdn_connectivity_reject(
+                    dns_sess, OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
+                    e->create_action);
             ogs_expect(r == OGS_OK);
         }
         break;
