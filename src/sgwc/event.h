@@ -78,6 +78,9 @@ typedef struct sgwc_event_s {
     int id;
     int timer_id;
 
+    /* monotonic creation time; dispatch measures queue lag from it */
+    ogs_time_t created_at;
+
     ogs_pkbuf_t *pkbuf;
 
     ogs_gtp_node_t *gnode;
@@ -115,6 +118,16 @@ void sgwc_event_free(sgwc_event_t *e);
 int sgwc_event_push_local(sgwc_event_t *e);
 
 const char *sgwc_event_get_name(sgwc_event_t *e);
+
+/*
+ * Event-queue lag: how long a dispatched event waited between creation
+ * and dispatch (worst-seen, geometric decay — same estimator as the
+ * MME). Registered with the GTP/PFCP transaction layers so response
+ * timers do not blame the peer for our own backlog. Observed by every
+ * dispatching thread, read from anywhere.
+ */
+void sgwc_event_lag_observe(const sgwc_event_t *e);
+ogs_time_t sgwc_event_lag(void);
 
 #ifdef __cplusplus
 }

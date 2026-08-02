@@ -65,6 +65,9 @@ typedef struct ogs_pfcp_xact_s {
 
     ogs_timer_t     *tm_response;   /**< Timer waiting for next message */
     uint8_t         response_rcount;
+    uint8_t         lag_defer_count; /**< response_timeout deferrals taken
+                                          because the OWN event queue lagged
+                                          (see ogs_pfcp_xact_set_lag_cb) */
     ogs_timer_t     *tm_holding;    /**< Timer waiting for holding message */
     uint8_t         holding_rcount;
 
@@ -141,6 +144,19 @@ typedef struct ogs_pfcp_xact_s {
 } ogs_pfcp_xact_t;
 
 int ogs_pfcp_xact_init(void);
+
+/*
+ * Own-backlog awareness for the response timer (same contract as
+ * ogs_gtp_xact_set_lag_cb): while the registered callback reports an
+ * event-dispatch lag at/above the threshold, a firing response timer is
+ * re-armed (bounded) instead of retransmitting or giving up — the reply
+ * is typically already queued locally. Register once at startup, before
+ * any worker thread exists.
+ */
+#define OGS_PFCP_XACT_LAG_DEFER_THRESHOLD   ogs_time_from_msec(1500)
+#define OGS_PFCP_XACT_LAG_DEFER_INTERVAL    ogs_time_from_msec(1000)
+#define OGS_PFCP_XACT_LAG_MAX_DEFER         8
+void ogs_pfcp_xact_set_lag_cb(ogs_time_t (*cb)(void));
 void ogs_pfcp_xact_final(void);
 
 ogs_pfcp_xact_t *ogs_pfcp_xact_local_create(ogs_pfcp_node_t *node,

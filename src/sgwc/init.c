@@ -88,6 +88,16 @@ int sgwc_initialize(void)
     rv = ogs_pfcp_xact_init();
     if (rv != OGS_OK) return rv;
 
+    /*
+     * Same lesson as the MME: when the event queue lags, replies that
+     * arrived in time are still waiting to be dispatched. Without this,
+     * a signaling storm turns S5 Create Session (PGW) and Sxa Session
+     * Establishment (SGW-U) into false "peer no response" give-ups, and
+     * the retransmissions amplify the very backlog that caused them.
+     */
+    ogs_gtp_xact_set_lag_cb(sgwc_event_lag);
+    ogs_pfcp_xact_set_lag_cb(sgwc_event_lag);
+
     rv = ogs_log_config_domain(
             ogs_app()->logger.domain, ogs_app()->logger.level);
     if (rv != OGS_OK) return rv;
@@ -228,6 +238,7 @@ static void sgwc_main(void *data)
                 break;
 
             ogs_assert(e);
+            sgwc_event_lag_observe(e);
             ogs_fsm_dispatch(&sgwc_sm, e);
             sgwc_event_free(e);
         }

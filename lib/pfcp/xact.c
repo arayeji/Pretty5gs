@@ -759,6 +759,54 @@ void ogs_pfcp_xact_delayed_commit(ogs_pfcp_xact_t *xact, ogs_time_t duration)
     ogs_timer_start(xact->tm_delayed_commit, duration);
 }
 
+/*
+ * Registered by the NF (e.g. SGW-C: sgwc_event_lag). Written once at
+ * startup before workers exist, read from every thread with PFCP timers.
+ */
+static ogs_time_t (*xact_lag_cb)(void) = NULL;
+
+void ogs_pfcp_xact_set_lag_cb(ogs_time_t (*cb)(void))
+{
+    xact_lag_cb = cb;
+}
+
+static bool xact_response_lag_defer(ogs_pfcp_xact_t *xact)
+{
+    ogs_time_t lag;
+
+    if (!xact_lag_cb || !xact->tm_response)
+        return false;
+
+    lag = xact_lag_cb();
+    if (lag < OGS_PFCP_XACT_LAG_DEFER_THRESHOLD)
+        return false;
+    if (xact->lag_defer_count >= OGS_PFCP_XACT_LAG_MAX_DEFER)
+        return false;
+
+    xact->lag_defer_count++;
+    ogs_timer_start(xact->tm_response, OGS_PFCP_XACT_LAG_DEFER_INTERVAL);
+
+    {
+        /* one line per second across all transactions, not one per xact */
+        static OGS_THREAD_LOCAL ogs_time_t last_log = 0;
+        static OGS_THREAD_LOCAL unsigned long suppressed = 0;
+        ogs_time_t now = ogs_get_monotonic_time();
+
+        suppressed++;
+        if (now - last_log >= ogs_time_from_sec(1)) {
+            ogs_warn("PFCP response timer deferred: event lag %dms - "
+                    "reply is likely queued locally, not lost by the peer "
+                    "(%lu deferral(s) in last window, this xact %d/%d)",
+                    (int)(lag / 1000), suppressed,
+                    xact->lag_defer_count, OGS_PFCP_XACT_LAG_MAX_DEFER);
+            last_log = now;
+            suppressed = 0;
+        }
+    }
+
+    return true;
+}
+
 static void response_timeout(void *data)
 {
     ogs_pool_id_t xact_id = OGS_INVALID_POOL_ID;
@@ -781,6 +829,14 @@ static void response_timeout(void *data)
             xact->org == OGS_PFCP_LOCAL_ORIGINATOR ? "LOCAL " : "REMOTE",
             xact->step, xact->seq[xact->step-1].type,
             ogs_sockaddr_to_string_static(xact->node->addr_list));
+
+    /*
+     * If OUR event queue is lagging, the reply may already be sitting in
+     * it: retransmitting duplicates peer work, and the final give-up
+     * turns our backlog into a false "peer no response".
+     */
+    if (xact_response_lag_defer(xact))
+        return;
 
     if (--xact->response_rcount > 0) {
         ogs_pkbuf_t *pkbuf = NULL;

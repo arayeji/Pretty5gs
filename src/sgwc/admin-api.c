@@ -567,12 +567,74 @@ static int sgwc_admin_purge_seid(const ogs_metrics_query_t *q,
     return ADMIN_HTTP_ACCEPTED;
 }
 
+/*
+ * /admin/queues — "is the SGW-C working or wedged?". Twin of the MME
+ * endpoint: main event queue + shard worker queue depths and the event
+ * dispatch lag. Diagnostic reads (torn values acceptable).
+ *
+ * verdict:
+ *   ok     - queues shallow, lag below the xact-defer threshold
+ *   behind - lag >= 1.5s or main queue > 75% full (overloaded but
+ *            draining; GTP/PFCP response timers already defer)
+ */
+size_t sgwc_dump_queue_status(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
+{
+    size_t off = 0;
+    int written, i, n;
+    unsigned int depth, cap;
+    long long lag_ms;
+    const char *verdict = "ok";
+
+    (void)page;
+    (void)page_size;
+    (void)q;
+
+    if (!buf || buflen == 0)
+        return 0;
+
+#define QSTAT_APPEND(...) do { \
+        written = snprintf(buf + off, buflen - off, __VA_ARGS__); \
+        if (written < 0) return off; \
+        off += (size_t)written; \
+        if (off >= buflen) return buflen - 1; \
+    } while (0)
+
+    lag_ms = (long long)(sgwc_event_lag() / 1000);
+
+    depth = ogs_queue_size(ogs_app()->queue);
+    cap = ogs_queue_capacity(ogs_app()->queue);
+
+    if (lag_ms >= 1500 || (cap && depth > cap - cap / 4))
+        verdict = "behind";
+
+    QSTAT_APPEND("{\"event_lag_ms\":%lld,"
+            "\"main\":{\"depth\":%u,\"cap\":%u},"
+            "\"shards\":[",
+            lag_ms, depth, cap);
+
+    n = sgwc_workers_count();
+    for (i = 0; i < n; i++) {
+        ogs_worker_t *w = sgwc_worker_by_id(i);
+        QSTAT_APPEND("%s{\"id\":%d,\"depth\":%u}", i ? "," : "",
+                i, w && w->queue ? ogs_queue_size(w->queue) : 0);
+    }
+
+    QSTAT_APPEND("],\"verdict\":\"%s\"}\n", verdict);
+
+#undef QSTAT_APPEND
+
+    return off < buflen ? off : buflen - 1;
+}
+
 void sgwc_admin_api_register(void)
 {
     ogs_metrics_register_custom_ep(sgwc_dump_runtime_config,
             "/admin/config");
     ogs_metrics_register_custom_ep(sgwc_dump_maintenance_status,
             "/admin/maintenance");
+    ogs_metrics_register_custom_ep(sgwc_dump_queue_status,
+            "/admin/queues");
     ogs_metrics_register_admin_ep(sgwc_admin_maintenance_enable,
             "/admin/maintenance/enable",
             OGS_METRICS_ADMIN_METHOD_POST);
