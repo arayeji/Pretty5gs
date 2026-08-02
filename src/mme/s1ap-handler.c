@@ -1411,7 +1411,7 @@ void s1ap_handle_initial_context_setup_response(
 void s1ap_initial_context_setup_response_complete(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue, mme_ics_rsp_tail_t *tail)
 {
-    int i, r;
+    int i;
 
     ogs_assert(enb_ue);
     ogs_assert(mme_ue);
@@ -1428,12 +1428,11 @@ void s1ap_initial_context_setup_response_complete(
 
             bearer = mme_bearer_find_by_ue_ebi(mme_ue, erab->ebi);
             if (!bearer) {
-                ogs_error("No Bearer [%d]", (int)erab->ebi);
-                r = s1ap_send_error_indication2(mme_ue,
-                        S1AP_Cause_PR_radioNetwork,
-                        S1AP_CauseRadioNetwork_unknown_E_RAB_ID);
-                ogs_expect(r == OGS_OK);
-                return;
+                /* Late ICS Response after local bearer cleanup
+                 * (common after SGW-C restart / attach abort). */
+                ogs_warn("No Bearer [%d] in InitialContextSetupResponse "
+                        "— skip", (int)erab->ebi);
+                continue;
             }
 
             bearer->enb_s1u_teid = erab->enb_s1u_teid;
@@ -2815,12 +2814,9 @@ void s1ap_handle_e_rab_modification_indication(
 
         bearer = mme_bearer_find_by_ue_ebi(mme_ue, e_rab->e_RAB_ID);
         if (!bearer) {
-            ogs_error("No Bearer [%d]", (int)e_rab->e_RAB_ID);
-            r = s1ap_send_error_indication2(mme_ue,
-                    S1AP_Cause_PR_radioNetwork,
-                    S1AP_CauseRadioNetwork_unknown_E_RAB_ID);
-            ogs_expect(r == OGS_OK);
-            return;
+            ogs_warn("No Bearer [%d] in E-RAB Modify Indication — skip",
+                    (int)e_rab->e_RAB_ID);
+            continue;
         }
 
         if (e_rab->dL_GTP_TEID.size != sizeof(bearer->enb_s1u_teid)) {
@@ -3431,12 +3427,10 @@ void s1ap_handle_path_switch_request(
 
         bearer = mme_bearer_find_by_ue_ebi(mme_ue, e_rab->e_RAB_ID);
         if (!bearer) {
-            ogs_error("No Bearer [%d]", (int)e_rab->e_RAB_ID);
-            r = s1ap_send_error_indication2(mme_ue,
-                    S1AP_Cause_PR_radioNetwork,
-                    S1AP_CauseRadioNetwork_unknown_E_RAB_ID);
-            ogs_expect(r == OGS_OK);
-            return;
+            /* Late Path Switch / HO admit after local bearer cleanup. */
+            ogs_warn("No Bearer [%d] in E-RAB switch/admit list — skip",
+                    (int)e_rab->e_RAB_ID);
+            continue;
         }
 
         if (e_rab->gTP_TEID.size != sizeof(bearer->enb_s1u_teid)) {
@@ -4140,12 +4134,9 @@ void s1ap_handle_handover_request_ack(
 
         bearer = mme_bearer_find_by_ue_ebi(mme_ue, e_rab->e_RAB_ID);
         if (!bearer) {
-            ogs_error("No Bearer [%d]", (int)e_rab->e_RAB_ID);
-            r = s1ap_send_error_indication2(mme_ue,
-                    S1AP_Cause_PR_radioNetwork,
-                    S1AP_CauseRadioNetwork_unknown_E_RAB_ID);
-            ogs_expect(r == OGS_OK);
-            return;
+            ogs_warn("No Bearer [%d] in E-RAB Admitted list — skip",
+                    (int)e_rab->e_RAB_ID);
+            continue;
         }
 
         if (e_rab->gTP_TEID.size != sizeof(bearer->enb_s1u_teid)) {
