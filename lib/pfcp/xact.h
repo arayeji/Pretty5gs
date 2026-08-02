@@ -126,6 +126,9 @@ typedef struct ogs_pfcp_xact_s {
 #define OGS_PFCP_MODIFY_URR_TIME_THRESH ((uint64_t)1<<34)
 /* Stop DL buffering (DROP); used after Unable-to-page / buffer-idle expiry */
 #define OGS_PFCP_MODIFY_DROP ((uint64_t)1<<35)
+/* Revert a DL FAR from DROP back to BUFF|NOCP (paging re-arm). Local-only
+ * like MODIFY_DROP: no associated GTP transaction, no peer response. */
+#define OGS_PFCP_MODIFY_REARM ((uint64_t)1<<36)
     uint64_t        modify_flags;
 
 #define OGS_PFCP_DELETE_TRIGGER_LOCAL_INITIATED 1

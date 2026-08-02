@@ -121,8 +121,23 @@ typedef struct sgwc_orphan_config_s {
  */
 typedef struct sgwc_buffer_idle_config_s {
     bool enabled;          /* default true */
+    /*
+     * Blanket idle BUFF→DROP conversion (default false). Idle BUFF|NOCP
+     * sessions consume no UPF buffer until DL traffic actually arrives,
+     * but DROP kills DDN/paging (MT reachability) until the UE itself
+     * wakes up. Unable-to-page still DROPs regardless of this flag.
+     */
+    bool idle_drop;
     uint32_t duration_s;   /* seconds in BUFF before DROP (default 180) */
     uint32_t interval_s;   /* sweep period (default 30) */
+    /*
+     * DROP→BUFF|NOCP re-arm: after rearm_s seconds in DROP, restore
+     * buffering so DDN/paging works again (default 600, 0 = never).
+     * Paced at rearm_batch sessions per sweep per shard to avoid a
+     * PFCP modification storm (default 1000).
+     */
+    uint32_t rearm_s;
+    uint32_t rearm_batch;
     ogs_timer_t *t_sweep;
 } sgwc_buffer_idle_config_t;
 
@@ -374,6 +389,13 @@ typedef struct sgwc_sess_s {
      * 0 = not buffering (FORW or DROP). Used by buffer_idle sweep.
      */
     ogs_time_t      dl_buff_since;
+
+    /*
+     * When DL FAR entered DROP (Unable-to-page / idle sweep / restore).
+     * 0 = not dropped. Used by buffer_idle sweep to re-arm BUFF|NOCP
+     * after buffer_idle.rearm seconds so paging reachability recovers.
+     */
+    ogs_time_t      dl_drop_since;
 } sgwc_sess_t;
 
 static inline void sgwc_create_session_phase(
@@ -567,6 +589,7 @@ void sgwc_sess_count_dl_far(sgwc_sess_t *sess,
         int *buff, int *forw, int *drop);
 void sgwc_sess_prepare_restoration_drop_idle(sgwc_sess_t *sess);
 int sgwc_sess_send_dl_far_drop(sgwc_sess_t *sess);
+int sgwc_sess_send_dl_far_rearm(sgwc_sess_t *sess);
 int sgwc_buffer_idle_sweep(int *out_dropped);
 void sgwc_buffer_idle_timer_start(void);
 void sgwc_buffer_idle_timer_stop(void);

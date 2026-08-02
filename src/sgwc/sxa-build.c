@@ -356,6 +356,22 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
                     } else
                         ogs_assert_if_reached();
 
+                } else if (modify_flags & OGS_PFCP_MODIFY_REARM) {
+
+                    /* DROP → BUFF|NOCP: restore DDN/paging reachability */
+                    far = tunnel->far;
+                    if (far) {
+                        ogs_pfcp_build_update_far_deactivate(
+                                &req->update_far[num_of_update_far],
+                                num_of_update_far, far);
+
+                        num_of_update_far++;
+                        if (tunnel->interface_type ==
+                                OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U)
+                            sgwc_sess_note_dl_buffering(sess);
+                    } else
+                        ogs_assert_if_reached();
+
                 } else if (modify_flags & OGS_PFCP_MODIFY_ACTIVATE) {
 
                     far = tunnel->far;

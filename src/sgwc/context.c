@@ -695,8 +695,11 @@ void sgwc_context_init(void)
     self.orphan.t_sweep = NULL;
 
     self.buffer_idle.enabled = true;
+    self.buffer_idle.idle_drop = false;
     self.buffer_idle.duration_s = 180;
     self.buffer_idle.interval_s = 30;
+    self.buffer_idle.rearm_s = 600;
+    self.buffer_idle.rearm_batch = 1000;
     self.buffer_idle.t_sweep = NULL;
     self.bar_suggested_buffering_packets_count = 8;
 
@@ -1864,6 +1867,9 @@ int sgwc_context_parse_config(void)
                         if (!strcmp(bk, "enabled")) {
                             self.buffer_idle.enabled =
                                 ogs_yaml_iter_bool(&b_iter);
+                        } else if (!strcmp(bk, "idle_drop")) {
+                            self.buffer_idle.idle_drop =
+                                ogs_yaml_iter_bool(&b_iter);
                         } else if (!strcmp(bk, "duration") ||
                                 !strcmp(bk, "duration_s")) {
                             if (bv) self.buffer_idle.duration_s =
@@ -1871,6 +1877,13 @@ int sgwc_context_parse_config(void)
                         } else if (!strcmp(bk, "interval") ||
                                 !strcmp(bk, "interval_s")) {
                             if (bv) self.buffer_idle.interval_s =
+                                (uint32_t)atoi(bv);
+                        } else if (!strcmp(bk, "rearm") ||
+                                !strcmp(bk, "rearm_s")) {
+                            if (bv) self.buffer_idle.rearm_s =
+                                (uint32_t)atoi(bv);
+                        } else if (!strcmp(bk, "rearm_batch")) {
+                            if (bv) self.buffer_idle.rearm_batch =
                                 (uint32_t)atoi(bv);
                         } else
                             ogs_warn("unknown key `%s` in sgwc.buffer_idle",
@@ -2882,8 +2895,10 @@ void sgwc_sess_prepare_restoration_drop_idle(sgwc_sess_t *sess)
         }
     }
 
-    if (converted)
+    if (converted) {
         sgwc_sess_clear_dl_buffering(sess);
+        sess->dl_drop_since = ogs_time_now();
+    }
 }
 
 int sgwc_sess_send_dl_far_drop(sgwc_sess_t *sess)
@@ -2911,6 +2926,56 @@ int sgwc_sess_send_dl_far_drop(sgwc_sess_t *sess)
     }
 
     sgwc_sess_clear_dl_buffering(sess);
+    sess->dl_drop_since = ogs_time_now();
+    return OGS_OK;
+}
+
+int sgwc_sess_send_dl_far_rearm(sgwc_sess_t *sess)
+{
+    int drop = 0;
+
+    ogs_assert(sess);
+
+    sgwc_sess_count_dl_far(sess, NULL, NULL, &drop);
+    if (!drop) {
+        sess->dl_drop_since = 0;
+        return OGS_OK;
+    }
+
+    if (!sess->pfcp_node || !sess->sgwu_sxa_seid) {
+        /* Local-only: flip CP state so the next establish installs BUFF. */
+        sgwc_bearer_t *bearer = NULL;
+        sgwc_tunnel_t *tunnel = NULL;
+
+        ogs_list_for_each(&sess->bearer_list, bearer) {
+            ogs_list_for_each(&bearer->tunnel_list, tunnel) {
+                ogs_pfcp_far_t *far = tunnel->far;
+
+                if (tunnel->interface_type !=
+                        OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U)
+                    continue;
+                if (!far)
+                    continue;
+                if (far->apply_action & OGS_PFCP_APPLY_ACTION_DROP)
+                    far->apply_action = OGS_PFCP_APPLY_ACTION_BUFF |
+                        OGS_PFCP_APPLY_ACTION_NOCP;
+            }
+        }
+        sgwc_sess_note_dl_buffering(sess);
+        sess->dl_drop_since = 0;
+        return OGS_OK;
+    }
+
+    if (sgwc_pfcp_send_session_modification_request(
+            sess, OGS_INVALID_POOL_ID, NULL,
+            OGS_PFCP_MODIFY_DL_ONLY | OGS_PFCP_MODIFY_REARM) != OGS_OK) {
+        ogs_error("DL FAR re-arm Session Modification failed sess_id[%d]",
+                sess->id);
+        return OGS_ERROR;
+    }
+
+    /* build path set BUFF|NOCP + noted dl_buff_since */
+    sess->dl_drop_since = 0;
     return OGS_OK;
 }
 
@@ -2942,10 +3007,11 @@ int sgwc_buffer_idle_sweep(int *out_dropped)
 {
     ogs_pool_id_t *ids = NULL;
     int count = 0, i;
-    int dropped = 0;
+    int dropped = 0, rearmed = 0;
     int buff_sessions = 0;
     ogs_time_t now = ogs_time_now();
     ogs_time_t max_age = ogs_time_from_sec(self.buffer_idle.duration_s);
+    ogs_time_t rearm_age = ogs_time_from_sec(self.buffer_idle.rearm_s);
 
     if (out_dropped)
         *out_dropped = 0;
@@ -2960,30 +3026,72 @@ int sgwc_buffer_idle_sweep(int *out_dropped)
             continue;
 
         ogs_list_for_each(&sgwc_ue->sess_list, sess) {
-            int buff = 0;
+            int buff = 0, drop = 0;
 
-            sgwc_sess_count_dl_far(sess, &buff, NULL, NULL);
-            if (buff)
+            sgwc_sess_count_dl_far(sess, &buff, NULL, &drop);
+
+            if (buff) {
                 buff_sessions++;
+                sess->dl_drop_since = 0;
 
-            if (!buff)
-                continue;
+                /*
+                 * Blanket idle→DROP is off by default: an idle BUFF|NOCP
+                 * session holds no UPF buffer until DL traffic arrives,
+                 * while DROP silences DDN/paging entirely — in a large
+                 * idle fleet this blackholes most MT traffic (seen as a
+                 * fleet-wide user-plane throughput collapse). DROP still
+                 * happens on DDN Ack Unable-to-page.
+                 */
+                if (!self.buffer_idle.idle_drop)
+                    continue;
 
-            /* Stamp first sighting if RAB path forgot to note. */
-            if (!sess->dl_buff_since)
-                sess->dl_buff_since = now;
+                /* Stamp first sighting if RAB path forgot to note. */
+                if (!sess->dl_buff_since)
+                    sess->dl_buff_since = now;
 
-            if ((now - sess->dl_buff_since) < max_age)
-                continue;
+                if ((now - sess->dl_buff_since) < max_age)
+                    continue;
 
-            ogs_info("[%s] buffer_idle: DL FAR BUFF for %llds → DROP APN[%s]",
-                    sgwc_ue->imsi_bcd,
-                    (long long)ogs_time_sec(now - sess->dl_buff_since),
-                    sess->session.name ? sess->session.name : "");
-            if (sgwc_sess_send_dl_far_drop(sess) == OGS_OK)
-                dropped++;
+                ogs_info("[%s] buffer_idle: DL FAR BUFF for %llds → DROP "
+                        "APN[%s]",
+                        sgwc_ue->imsi_bcd,
+                        (long long)ogs_time_sec(now - sess->dl_buff_since),
+                        sess->session.name ? sess->session.name : "");
+                if (sgwc_sess_send_dl_far_drop(sess) == OGS_OK)
+                    dropped++;
+
+            } else if (drop) {
+                if (!self.buffer_idle.rearm_s)
+                    continue;
+
+                /* Stamp first sighting (covers pre-existing DROP state). */
+                if (!sess->dl_drop_since) {
+                    sess->dl_drop_since = now;
+                    continue;
+                }
+
+                if ((now - sess->dl_drop_since) < rearm_age)
+                    continue;
+                if (rearmed >= (int)self.buffer_idle.rearm_batch)
+                    continue; /* pace PFCP modifies; next sweep resumes */
+
+                ogs_info("[%s] buffer_idle: DL FAR DROP for %llds → re-arm "
+                        "BUFF|NOCP APN[%s]",
+                        sgwc_ue->imsi_bcd,
+                        (long long)ogs_time_sec(now - sess->dl_drop_since),
+                        sess->session.name ? sess->session.name : "");
+                if (sgwc_sess_send_dl_far_rearm(sess) == OGS_OK)
+                    rearmed++;
+
+            } else {
+                sess->dl_drop_since = 0;
+            }
         }
     }
+
+    if (rearmed)
+        ogs_info("buffer_idle: re-armed %d DROP session(s) to BUFF|NOCP",
+                rearmed);
 
     if (ids)
         ogs_free(ids);
@@ -3034,9 +3142,11 @@ void sgwc_buffer_idle_timer_start(void)
 
     ogs_timer_start(self.buffer_idle.t_sweep, ogs_time_from_sec(interval_s));
 
-    ogs_info("SGWC buffer_idle sweep started: interval=%us duration=%us "
-            "bar_suggested=%u",
-            interval_s, self.buffer_idle.duration_s,
+    ogs_info("SGWC buffer_idle sweep started: interval=%us idle_drop=%s "
+            "duration=%us rearm=%us batch=%u bar_suggested=%u",
+            interval_s, self.buffer_idle.idle_drop ? "on" : "off",
+            self.buffer_idle.duration_s, self.buffer_idle.rearm_s,
+            self.buffer_idle.rearm_batch,
             self.bar_suggested_buffering_packets_count);
 }
 
