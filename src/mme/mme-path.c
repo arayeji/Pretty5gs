@@ -672,6 +672,18 @@ void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     int r, xact_count;
     ogs_assert(mme_ue);
 
+    /*
+     * SGsAP DETACH-ACK (and a few fallback paths) can arrive after
+     * detach_type was cleared or never set. Aborting the whole MME here
+     * previously caused mass session loss; treat unset/invalid as
+     * implicit detach instead.
+     */
+    if (mme_ue->detach_type == 0) {
+        ogs_warn("[%s] detach_type unset; treating as MME implicit detach",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+        mme_ue->detach_type = MME_DETACH_TYPE_MME_IMPLICIT;
+    }
+
     xact_count = mme_ue_xact_count(mme_ue, OGS_GTP_LOCAL_ORIGINATOR);
 
     switch (mme_ue->detach_type) {
@@ -773,8 +785,13 @@ void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
         break;
 
     default:
-        ogs_fatal("    Invalid OGS_NAS_EPS TYPE[%d]", mme_ue->detach_type);
-        ogs_assert_if_reached();
+        ogs_error("[%s] Invalid detach_type[%d]; "
+                "falling back to MME implicit detach",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
+                mme_ue->detach_type);
+        mme_ue->detach_type = MME_DETACH_TYPE_MME_IMPLICIT;
+        mme_send_delete_session_or_detach(enb_ue, mme_ue);
+        break;
     }
 }
 

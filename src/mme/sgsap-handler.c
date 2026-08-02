@@ -553,6 +553,16 @@ void sgsap_handle_detach_ack(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
 
     ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
 
+    /*
+     * DETACH-ACK can race with local cleanup that already cleared
+     * detach_type. Default to implicit so we never abort the MME.
+     */
+    if (mme_ue->detach_type == 0) {
+        ogs_warn("[%s] SGsAP DETACH-ACK with unset detach_type; "
+                "using MME implicit detach", mme_ue->imsi_bcd);
+        mme_ue->detach_type = MME_DETACH_TYPE_MME_IMPLICIT;
+    }
+
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (enb_ue)
         mme_send_delete_session_or_detach(enb_ue, mme_ue);
