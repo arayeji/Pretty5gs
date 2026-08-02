@@ -29,6 +29,8 @@
 #include "mme-path.h"    /* orphan-sweep heartbeat accessors */
 
 #include "admin-api.h"   /* pulls in ogs-metrics.h */
+#include "s1ap-tx.h"     /* TX offload queue depths (/admin/queues) */
+#include "s1ap-io.h"     /* IO command queue depth (/admin/queues) */
 #include "mme-li.h"
 #include "mme-pgw-host.h"
 #include "mme-pgw-dns.h"
@@ -512,12 +514,148 @@ int mme_admin_pgw_host_cache(const ogs_metrics_query_t *q,
     return 200;
 }
 
+/*
+ * /admin/queues — one-shot answer to "is the MME working or wedged?".
+ *
+ * Reports the depth of every internal queue (main event queue, UE shard
+ * workers, S1AP TX encode workers, S1AP IO command queue, CONNREFUSED
+ * side-queue), the event dispatch lag, and per-eNB TX hold state. All
+ * reads are diagnostic (torn reads acceptable, same convention as the
+ * other dumpers); the eNB list walk holds ogs_metrics_dump_lock() so
+ * main cannot free an eNB under us.
+ *
+ * verdict:
+ *   ok       - queues shallow, lag below the NAS-defer threshold
+ *   behind   - lag >= 1.5s or main queue > 75% full (overloaded but
+ *              draining; timers already defer, overload control active)
+ *   wedged   - an eNB's TX hold list has been non-empty > 15s (leaked
+ *              s1ap_tx_pending: that eNB's downlink is parked; the
+ *              watchdog will force-flush it on the next orphan sweep)
+ */
+#define QSTAT_HOLD_WEDGE_USEC   ogs_time_from_sec(15)
+
+size_t mme_dump_queue_status(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
+{
+    size_t off = 0;
+    int written, i, n;
+    unsigned int depth, cap;
+    long long lag_ms;
+    ogs_time_t now = ogs_time_now();
+    const char *verdict = "ok";
+
+    int enb_total = 0, enb_parked = 0, enb_wedged = 0;
+    mme_enb_t *enb = NULL;
+
+    (void)page;
+    (void)page_size;
+    (void)q;
+
+    if (!buf || buflen == 0)
+        return 0;
+
+#define QSTAT_APPEND(...) do { \
+        written = snprintf(buf + off, buflen - off, __VA_ARGS__); \
+        if (written < 0) return off; \
+        off += (size_t)written; \
+        if (off >= buflen) return buflen - 1; \
+    } while (0)
+
+    lag_ms = (long long)(mme_event_lag() / 1000);
+
+    depth = ogs_queue_size(ogs_app()->queue);
+    cap = ogs_queue_capacity(ogs_app()->queue);
+
+    if (lag_ms >= 1500 || (cap && depth > cap - cap / 4))
+        verdict = "behind";
+
+    QSTAT_APPEND("{\"event_lag_ms\":%lld,"
+            "\"main\":{\"depth\":%u,\"cap\":%u},"
+            "\"connrefused_depth\":%u,",
+            lag_ms, depth, cap, mme_event_s1ap_connrefused_depth());
+
+    /* UE shard workers (mme.workers) */
+    QSTAT_APPEND("\"shards\":[");
+    n = mme_workers_count();
+    for (i = 0; i < n; i++) {
+        ogs_worker_t *w = mme_worker_by_id(i);
+        QSTAT_APPEND("%s{\"id\":%d,\"depth\":%u}", i ? "," : "",
+                i, w && w->queue ? ogs_queue_size(w->queue) : 0);
+    }
+    QSTAT_APPEND("],");
+
+    /* S1AP TX encode workers (mme.s1ap_tx_workers) */
+    QSTAT_APPEND("\"tx\":[");
+    n = s1ap_tx_worker_count();
+    for (i = 0; i < n; i++)
+        QSTAT_APPEND("%s{\"id\":%d,\"depth\":%u}", i ? "," : "",
+                i, s1ap_tx_queue_depth(i));
+    QSTAT_APPEND("],");
+
+    QSTAT_APPEND("\"io_depth\":%u,", s1ap_io_queue_depth());
+
+    /*
+     * Per-eNB TX hold state: pending encode jobs + parked pkbufs.
+     * A hold list non-empty for >15s is the wedge signature.
+     */
+    QSTAT_APPEND("\"enb_hold\":[");
+    ogs_metrics_dump_lock();
+    ogs_list_for_each(&mme_self()->enb_list, enb) {
+        int pending, held = 0;
+        long long age_s = 0;
+        ogs_time_t since;
+        ogs_pkbuf_t *pk = NULL;
+        bool wedged;
+
+        enb_total++;
+
+        ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
+        pending = __atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE);
+        since = enb->s1ap_tx_hold_since;
+        ogs_list_for_each(&enb->s1ap_tx_hold, pk)
+            held++;
+        ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
+
+        if (!pending && !held)
+            continue;
+
+        enb_parked++;
+        if (since)
+            age_s = (long long)ogs_time_to_sec(now - since);
+        wedged = since && (now - since) >= QSTAT_HOLD_WEDGE_USEC;
+        if (wedged) {
+            enb_wedged++;
+            verdict = "wedged";
+        }
+
+        /* cap the detail list; counters above still cover the rest */
+        if (enb_parked <= 16)
+            QSTAT_APPEND("%s{\"enb_id\":\"0x%x\",\"pending\":%d,"
+                    "\"held\":%d,\"held_age_s\":%lld,\"wedged\":%s}",
+                    enb_parked > 1 ? "," : "",
+                    enb->enb_id, pending, held, age_s,
+                    wedged ? "true" : "false");
+    }
+    ogs_metrics_dump_unlock();
+    QSTAT_APPEND("],");
+
+    QSTAT_APPEND("\"enb\":{\"total\":%d,\"with_tx_backlog\":%d,"
+            "\"wedged\":%d},\"verdict\":\"%s\"}\n",
+            enb_total, enb_parked, enb_wedged, verdict);
+
+#undef QSTAT_APPEND
+
+    return off < buflen ? off : buflen - 1;
+}
+
 void mme_admin_api_register(void)
 {
     ogs_metrics_register_custom_ep(mme_dump_runtime_config,
             "/admin/config");
     ogs_metrics_register_custom_ep(mme_dump_maintenance_status,
             "/admin/maintenance");
+    ogs_metrics_register_custom_ep(mme_dump_queue_status,
+            "/admin/queues");
 
     ogs_metrics_register_admin_ep(mme_admin_enb_detach,
             "/admin/enb/detach",

@@ -257,6 +257,13 @@ unsigned int ogs_queue_size(ogs_queue_t *queue) {
 }
 
 /**
+ * not thread safe (diagnostic read; bounds is immutable after create)
+ */
+unsigned int ogs_queue_capacity(ogs_queue_t *queue) {
+    return queue->bounds;
+}
+
+/**
  * Retrieves the next item from the queue. If there are no
  * items available, it will either return OGS_RETRY (timeout = 0),
  * or block until one becomes available (infinitely with timeout < 0,

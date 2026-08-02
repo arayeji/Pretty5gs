@@ -562,6 +562,12 @@ bool s1ap_io_active(void)
     return io_worker != NULL;
 }
 
+/* diagnostic (torn read acceptable): depth of the IO command queue */
+unsigned int s1ap_io_queue_depth(void)
+{
+    return io_worker ? ogs_queue_size(io_worker->queue) : 0;
+}
+
 int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
         const ogs_sockaddr_t *peer_addr, bool send_with_addr)
 {

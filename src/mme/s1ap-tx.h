@@ -65,6 +65,10 @@ void s1ap_tx_workers_stop(void);
 
 bool s1ap_tx_active(void);
 
+/* diagnostics for /admin/queues */
+int s1ap_tx_worker_count(void);
+unsigned int s1ap_tx_queue_depth(int idx);
+
 /* Post a DownlinkNASTransport build+encode job. Main thread only.
  * Takes ownership of emmbuf ONLY on OGS_OK; on failure the caller
  * must fall back to the synchronous build+send path. */

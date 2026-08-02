@@ -471,6 +471,12 @@ void mme_event_s1ap_connrefused_final(void)
     s1ap_cr_ready = false;
 }
 
+/* diagnostic (torn read acceptable): CONNREFUSED side-queue depth */
+unsigned int mme_event_s1ap_connrefused_depth(void)
+{
+    return s1ap_cr_ready ? ogs_queue_size(s1ap_cr_queue) : 0;
+}
+
 int mme_event_s1ap_connrefused_trypop(mme_event_t **e)
 {
     int rv;

@@ -121,6 +121,11 @@ int mme_admin_trace_imsi(const ogs_metrics_query_t *q,
 size_t mme_dump_maintenance_status(char *buf, size_t buflen,
         size_t page, size_t page_size, const ogs_metrics_query_t *q);
 
+/* /admin/queues: queue depths + event lag + per-eNB TX hold state,
+ * with a one-word verdict (ok | behind | wedged). */
+size_t mme_dump_queue_status(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q);
+
 int mme_admin_maintenance_enable(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len);
 int mme_admin_maintenance_disable(const ogs_metrics_query_t *q,

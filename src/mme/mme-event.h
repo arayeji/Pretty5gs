@@ -275,6 +275,9 @@ void mme_event_s1ap_connrefused_init(void);
 void mme_event_s1ap_connrefused_final(void);
 int mme_event_s1ap_connrefused_trypop(mme_event_t **e);
 
+/* diagnostic for /admin/queues */
+unsigned int mme_event_s1ap_connrefused_depth(void);
+
 mme_event_t *mme_event_new(mme_event_e id);
 void mme_event_free(mme_event_t *e);
 

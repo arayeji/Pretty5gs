@@ -240,6 +240,19 @@ bool s1ap_tx_active(void)
     return tx_worker_count > 0;
 }
 
+int s1ap_tx_worker_count(void)
+{
+    return tx_worker_count;
+}
+
+/* diagnostic (torn read acceptable): depth of one TX worker's job queue */
+unsigned int s1ap_tx_queue_depth(int idx)
+{
+    if (idx < 0 || idx >= tx_worker_count || !tx_workers[idx])
+        return 0;
+    return ogs_queue_size(tx_workers[idx]->queue);
+}
+
 int s1ap_tx_post_dlnas(enb_ue_t *enb_ue, ogs_pkbuf_t *emmbuf)
 {
     tx_job_t *job = NULL;

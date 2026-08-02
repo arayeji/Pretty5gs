@@ -47,6 +47,9 @@ int s1ap_io_start(void);
 void s1ap_io_stop(void);
 bool s1ap_io_active(void);
 
+/* diagnostic for /admin/queues */
+unsigned int s1ap_io_queue_depth(void);
+
 /*
  * Queue one encoded S1AP PDU for transmission. ppid/stream_no must
  * already be set in the pkbuf metadata.
