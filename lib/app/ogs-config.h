@@ -70,6 +70,12 @@ typedef struct ogs_global_conf_s {
 
         int use_openair;
         int fake_csfb;
+        /*
+         * When fake_csfb is true: also synthesize LAI + P-TMSI on Combined
+         * Accept/TAU (default true). Set false for Combined result only,
+         * without fake LAI/P-TMSI (non-standard NAS; some UEs send EMM #101).
+         */
+        int fake_csfb_lai;
         /* Skip SGsAP (no Location-Update to VLR); Attach/TAU go EPS path */
         int ignore_sgs;
 	int no_ims;
@@ -246,9 +252,9 @@ int ogs_app_global_conf_prepare(void);
 int ogs_app_parse_global_conf(ogs_yaml_iter_t *parent);
 /*
  * Hot-reload the scalar global.parameter flags that are safe to flip
- * without restarting (currently fake_csfb and ignore_sgs). Keys absent
- * from the new document keep their previous value. Returns how many of
- * those keys were present and applied.
+ * without restarting (fake_csfb, fake_csfb_lai, ignore_sgs, use_openair).
+ * Keys absent from the new document keep their previous value. Returns
+ * how many of those keys were present and applied.
  */
 int ogs_app_reload_parameter_scalars(void);
 int ogs_app_parse_local_conf(const char *local);

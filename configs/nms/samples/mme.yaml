@@ -27,7 +27,9 @@ global:
     use_upg_vpp: false
     prefer_ipv4: true
     # ignore_sgs: true   # skip SGsAP Location-Update (e.g. roamers); no VLR (SIGHUP)
-    # fake_csfb: true    # Combined+fake LAI/P-TMSI if UE asked Combined (SIGHUP)
+    # fake_csfb: true       # Combined Accept if UE asked Combined (SIGHUP)
+    # fake_csfb_lai: true   # with fake_csfb: synthesize LAI+P-TMSI (default true; SIGHUP)
+    # fake_csfb_lai: false  # Combined result only, no fake LAI/P-TMSI (may EMM #101)
   time:
     message:
       duration: 15000

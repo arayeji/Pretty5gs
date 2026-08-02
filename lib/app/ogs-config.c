@@ -35,6 +35,10 @@ int ogs_app_config_init(void)
     memset(&global_conf, 0, sizeof(ogs_app_global_conf_t));
     memset(&local_conf, 0, sizeof(ogs_app_local_conf_t));
 
+    /* Preserve prior fake_csfb behaviour: synthesize LAI/P-TMSI unless
+     * the operator explicitly sets fake_csfb_lai: false. */
+    global_conf.parameter.fake_csfb_lai = true;
+
     ogs_pool_init(&policy_conf_pool, OGS_MAX_NUM_OF_PLMN);
     ogs_pool_init(&slice_conf_pool, OGS_MAX_NUM_OF_SLICE);
     ogs_pool_init(&session_conf_pool,
@@ -312,6 +316,11 @@ int ogs_app_parse_global_conf(ogs_yaml_iter_t *parent)
                 } else if (!strcmp(parameter_key, "fake_csfb")) {
                     global_conf.parameter.fake_csfb =
                         ogs_yaml_iter_bool(&parameter_iter);
+                } else if (!strcmp(parameter_key, "fake_csfb_lai") ||
+                        !strcmp(parameter_key, "fake_csfb_ptmsi")) {
+                    /* LAI + P-TMSI pair (alias fake_csfb_ptmsi). */
+                    global_conf.parameter.fake_csfb_lai =
+                        ogs_yaml_iter_bool(&parameter_iter);
                 } else if (!strcmp(parameter_key, "ignore_sgs")) {
                     global_conf.parameter.ignore_sgs =
                         ogs_yaml_iter_bool(&parameter_iter);
@@ -515,6 +524,11 @@ int ogs_app_reload_parameter_scalars(void)
                 ogs_assert(parameter_key);
                 if (!strcmp(parameter_key, "fake_csfb")) {
                     global_conf.parameter.fake_csfb =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                    applied++;
+                } else if (!strcmp(parameter_key, "fake_csfb_lai") ||
+                        !strcmp(parameter_key, "fake_csfb_ptmsi")) {
+                    global_conf.parameter.fake_csfb_lai =
                         ogs_yaml_iter_bool(&parameter_iter);
                     applied++;
                 } else if (!strcmp(parameter_key, "ignore_sgs")) {

@@ -95,7 +95,8 @@ Parsed by `ogs_app_parse_global_conf` (`lib/app/ogs-config.c`). Full row list is
 | `global.max.gtp_peer` / sess / bearer / … | **0** → derived |
 | `global.parameter.*` bools | **false** |
 | `global.sockopt.no_delay` | **true** |
-| `global.parameter.fake_csfb` / `ignore_sgs` / `use_openair` | **false**; **SIGHUP** via `ogs_app_reload_parameter_scalars` |
+| `global.parameter.fake_csfb` / `ignore_sgs` / `use_openair` | **false**; **SIGHUP** |
+| `global.parameter.fake_csfb_lai` | **true** (with fake_csfb); **SIGHUP** |
 
 ### `global.time` — sample-only / unused
 
@@ -153,10 +154,10 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 - **Reload:** `restart`
 - **Evidence:** `lib/app/ogs-config.c:ogs_app_parse_global_conf`
 
-### `global.parameter.fake_csfb` / `ignore_sgs` / `use_openair`
+### `global.parameter.fake_csfb` / `fake_csfb_lai` / `ignore_sgs` / `use_openair`
 
-- **What:** Hot-reloadable `global.parameter` scalars (`fake_csfb`, `ignore_sgs`, `use_openair`).
-- **Defaults:** all `false`
+- **What:** Hot-reloadable `global.parameter` scalars.
+- **Defaults:** `fake_csfb`/`ignore_sgs`/`use_openair` = `false`; `fake_csfb_lai` = `true`
 - **Reload:** `sighup` via `ogs_app_reload_parameter_scalars`
 - **Evidence:** `mme-context.c:mme_context_reload_runtime` → `ogs_app_reload_parameter_scalars`
 
@@ -938,12 +939,21 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 
 ### `global.parameter.fake_csfb`
 
-- **What:** If UE requested Combined attach/TAU and CS is not refused, advertise Combined with LAI+P-TMSI. When no real VLR P-TMSI exists, synthesize LAI (csmap or serving TAI) and P-TMSI (from GUTI/M-TMSI) so the NAS message is well-formed.
+- **What:** If UE requested Combined attach/TAU and CS is not refused, advertise Combined EPS/IMSI result (or Combined TAU).
 - **Type:** `boolean`
 - **Default when omitted:** `False`
 - **Reload:** `sighup`
-- **Notes / quirks:** Does not upgrade EPS-only requests. Not a real CS registration; MO/MT CSFB via SGs still needs a VLR.
-- **Evidence:** `src/mme/mme-context.c:mme_sgsap_config_parse / sgsap_config_parse_body`
+- **Notes / quirks:** Does not upgrade EPS-only requests. Pair with `fake_csfb_lai` for synthetic LAI/P-TMSI. Not a real CS registration.
+- **Evidence:** `src/mme/emm-build.c`
+
+### `global.parameter.fake_csfb_lai`
+
+- **What:** When `fake_csfb` is true and no real VLR P-TMSI exists, synthesize LAI (csmap or serving TAC as LAC) and P-TMSI (from GUTI/M-TMSI) on Combined Accept/TAU. Alias: `fake_csfb_ptmsi`.
+- **Type:** `boolean`
+- **Default when omitted:** `True`
+- **Reload:** `sighup`
+- **Notes / quirks:** Set `false` for Combined result without LAI/P-TMSI IEs (illegal NAS per TS 24.301; many UEs reply EMM #101).
+- **Evidence:** `src/mme/emm-build.c`
 
 ### `global.parameter.ignore_sgs`
 

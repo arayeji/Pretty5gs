@@ -33,7 +33,14 @@
  * update result is Combined; inventing them is non-standard CS
  * registration but keeps the NAS message well-formed so CPEs that
  * insist on Combined can complete attach.
+ * Gated by global.parameter.fake_csfb_lai (default true).
  */
+static bool emm_fake_csfb_lai_enabled(void)
+{
+    return ogs_global_conf()->parameter.fake_csfb == true &&
+           ogs_global_conf()->parameter.fake_csfb_lai == true;
+}
+
 static mme_p_tmsi_t emm_fake_csfb_ptmsi(mme_ue_t *mme_ue)
 {
     mme_p_tmsi_t ptmsi = INVALID_P_TMSI;
@@ -224,8 +231,10 @@ ogs_pkbuf_t *emm_build_attach_accept(
     }
 
     /*
-     * Combined without a real (or fake) LAI/P-TMSI is illegal NAS.
-     * If we cannot form those IEs and fake_csfb is off, refuse CS.
+     * Combined without a real LAI/P-TMSI is illegal NAS (TS 24.301).
+     * If we cannot form those IEs and are not going to synthesize them
+     * (fake_csfb_lai), refuse CS — unless the operator explicitly asked
+     * for Combined-without-identity (fake_csfb && !fake_csfb_lai).
      */
     if (eps_attach_result->result ==
             OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH &&
@@ -401,7 +410,7 @@ ogs_pkbuf_t *emm_build_attach_accept(
         ogs_debug("    P-TMSI: 0x%08x", tmsi->tmsi);
     } else if (eps_attach_result->result ==
                 OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH &&
-            ogs_global_conf()->parameter.fake_csfb == true &&
+            emm_fake_csfb_lai_enabled() &&
             !mme_ue->sgs_cs_unavailable) {
         attach_accept->presencemask |=
             OGS_NAS_EPS_ATTACH_ACCEPT_LOCATION_AREA_IDENTIFICATION_PRESENT;
@@ -867,7 +876,7 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
         ogs_debug("    P-TMSI: 0x%08x", tmsi->tmsi);
     } else if (tau_accept->eps_update_result.result ==
                 OGS_NAS_EPS_UPDATE_RESULT_COMBINED_TA_LA_UPDATED &&
-            ogs_global_conf()->parameter.fake_csfb == true &&
+            emm_fake_csfb_lai_enabled() &&
             !mme_ue->sgs_cs_unavailable) {
         tau_accept->presencemask |=
             OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_LOCATION_AREA_IDENTIFICATION_PRESENT;
