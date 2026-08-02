@@ -2108,12 +2108,12 @@ void sgwc_s11_handle_release_access_bearers_request(
          * abort the entire SGW-C. Skip such sessions instead.
          */
         if (ogs_list_count(&sess->bearer_list) == 0) {
-            ogs_error("[%s] Release Access Bearers: session has no bearers, "
+            ogs_warn("[%s] Release Access Bearers: session has no bearers, "
                     "skipping", sgwc_ue->imsi_bcd);
             continue;
         }
         if (!sess->pfcp_node) {
-            ogs_error("[%s] Release Access Bearers: session has no PFCP node, "
+            ogs_warn("[%s] Release Access Bearers: session has no PFCP node, "
                     "skipping", sgwc_ue->imsi_bcd);
             continue;
         }

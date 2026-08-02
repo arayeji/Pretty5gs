@@ -115,18 +115,17 @@ int mme_initialize(void)
 
     /*
      * TS 24.301: LAI is conditional-mandatory in a Combined Attach/TAU
-     * Accept. fake_csfb grants Combined; only fake_csfb_lai adds the
-     * synthetic LAI/P-TMSI. The on/off combination therefore emits
-     * Combined WITHOUT LAI — many UEs answer EMM Status #101 and loop
-     * re-attaching (seen with BandLuxe CPEs). Run both on or both off.
+     * Accept. fake_csfb grants Combined; without LAI/P-TMSI many UEs
+     * answer EMM Status #101 and re-attach in a loop (BandLuxe + the
+     * 21:00 wedge attach storm). Force LAI synthesis rather than emit
+     * spec-invalid NAS.
      */
     if (ogs_global_conf()->parameter.fake_csfb &&
-            !ogs_global_conf()->parameter.fake_csfb_lai)
-        ogs_error("CONFIG: fake_csfb=1 with fake_csfb_lai=0 sends Combined "
-                "Accept without the (conditional-mandatory) LAI - "
-                "spec-invalid NAS; some UEs reply EMM Status #101 and "
-                "re-attach in a loop. Enable fake_csfb_lai or disable "
-                "fake_csfb.");
+            !ogs_global_conf()->parameter.fake_csfb_lai) {
+        ogs_warn("CONFIG: fake_csfb=1 with fake_csfb_lai=0 — forcing "
+                "fake_csfb_lai=1 (Combined Accept requires LAI/P-TMSI)");
+        ogs_global_conf()->parameter.fake_csfb_lai = 1;
+    }
 
     ogs_app_sighup_handler_set(mme_sighup_handler);
 

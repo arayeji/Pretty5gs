@@ -701,6 +701,14 @@ typedef struct mme_enb_s {
     ogs_time_t      s1ap_tx_hold_since;
 
     /*
+     * Last TX_READY handled for this eNB (main thread). Watchdog uses
+     * this to tell a leaked pending (no progress) from a real encode
+     * backlog on THIS association — a global TX-worker queue check
+     * wrongly blocked all eNBs while any other cell stayed busy.
+     */
+    ogs_time_t      s1ap_tx_last_ready;
+
+    /*
      * Guards s1ap_tx_hold. This was the global mme_ctx_lock(), which put a
      * process-wide mutex on main's hot path: main takes it per downlink
      * message to flush the hold list, contending with every worker and the

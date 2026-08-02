@@ -363,6 +363,8 @@ static void tx_send_raw(mme_enb_t *enb, ogs_pkbuf_t *pkbuf)
  * In-flight jobs' TX_READYs then hit the pending>0 guard and are no-ops.
  */
 #define S1AP_TX_HOLD_STALL_USEC     ogs_time_from_sec(15)
+/* No TX_READY for this eNB for this long → treat pending as leaked. */
+#define S1AP_TX_HOLD_NO_PROGRESS_USEC ogs_time_from_sec(5)
 
 void s1ap_tx_hold_watchdog(void)
 {
@@ -373,35 +375,37 @@ void s1ap_tx_hold_watchdog(void)
         return;
 
     /*
-     * Distinguish a LEAKED pending count from a genuine sustained
-     * encode backlog: if any TX worker still has queued jobs, TX_READYs
-     * are still coming and will decrement pending / flush the hold list
-     * in order. Force-flushing now would send parked PDUs out of order
-     * relative to those in-flight jobs (NAS reordering on the
-     * association). Only when the workers are idle can a >15s hold mean
-     * the counter leaked.
+     * Per-eNB progress, not a global TX-worker queue check.
+     *
+     * The previous "if any TX worker has jobs, skip all eNBs" veto left
+     * a leaked s1ap_tx_pending on one cell wedged forever during mass
+     * attach — other cells kept the workers busy, so this association's
+     * hold list (SMC / Attach Accept / ICS) never flushed. Capture
+     * 21:00-21:05 showed Attach Complete collapse to ~22% with CSR
+     * still flowing: classic per-eNB downlink black-hole.
+     *
+     * Force-flush only when THIS eNB's hold is old AND it has had no
+     * TX_READY for S1AP_TX_HOLD_NO_PROGRESS_USEC (encode backlog on
+     * this association still produces TX_READYs).
      */
-    {
-        int i, n = s1ap_tx_worker_count();
-        unsigned int queued = 0;
-
-        for (i = 0; i < n; i++)
-            queued += s1ap_tx_queue_depth(i);
-        if (queued > 0)
-            return; /* genuine backlog; re-check at the next sweep */
-    }
-
     ogs_list_for_each(&mme_self()->enb_list, enb) {
         ogs_list_t flush;
         ogs_pkbuf_t *held = NULL, *next = NULL;
-        ogs_time_t since;
+        ogs_time_t since, last_ready;
         int pending, count = 0;
 
         ogs_list_init(&flush);
 
         ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
         since = enb->s1ap_tx_hold_since;
+        last_ready = enb->s1ap_tx_last_ready;
         if (!since || (now - since) < S1AP_TX_HOLD_STALL_USEC) {
+            ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
+            continue;
+        }
+        /* Genuine per-eNB encode backlog: TX_READYs still arriving. */
+        if (last_ready &&
+                (now - last_ready) < S1AP_TX_HOLD_NO_PROGRESS_USEC) {
             ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
             continue;
         }
@@ -416,10 +420,12 @@ void s1ap_tx_hold_watchdog(void)
         ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
 
         ogs_error("s1ap-tx: hold list WEDGED for eNB-id[0x%x] "
-                "(pending=%d, %d pkbuf(s) parked for %llds) — "
-                "forced flush + pending reset (leaked TX_READY)",
+                "(pending=%d, %d pkbuf(s) parked for %llds, "
+                "no TX_READY for %llds) — forced flush + pending reset",
                 enb->enb_id, pending, count,
-                (long long)ogs_time_to_sec(now - since));
+                (long long)ogs_time_to_sec(now - since),
+                last_ready ? (long long)ogs_time_to_sec(now - last_ready)
+                           : (long long)ogs_time_to_sec(now - since));
 
         ogs_list_for_each_safe(&flush, next, held) {
             ogs_list_remove(&flush, held);
@@ -445,6 +451,8 @@ void s1ap_tx_ready_handle(mme_event_t *e)
 
     if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0)
         __atomic_sub_fetch(&enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
+
+    enb->s1ap_tx_last_ready = ogs_time_now();
 
     if (e->pkbuf) {
         ogs_sctp_ppid_in_pkbuf(e->pkbuf) = OGS_SCTP_S1AP_PPID;

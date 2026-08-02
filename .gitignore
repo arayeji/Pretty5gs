@@ -79,3 +79,9 @@ tools/admin-api/scripts/publish-linux.sh
 
 # Local WSL2 pre-push compile-check helper (kept local, not tracked)
 /wsl-build.sh
+
+# Agent scratch scripts / filter helpers (never commit)
+.tmp*.sh
+.git-filter*
+.git-redact*
+.reportout.txt

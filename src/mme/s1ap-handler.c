@@ -1905,12 +1905,10 @@ void s1ap_handle_e_rab_setup_response(
 
             bearer = mme_bearer_find_by_ue_ebi(mme_ue, e_rab->e_RAB_ID);
             if (!bearer) {
-                ogs_error("No Bearer [%d]", (int)e_rab->e_RAB_ID);
-                r = s1ap_send_error_indication2(mme_ue,
-                        S1AP_Cause_PR_radioNetwork,
-                        S1AP_CauseRadioNetwork_unknown_E_RAB_ID);
-                ogs_expect(r == OGS_OK);
-                return;
+                /* Late E-RAB Setup Response after local bearer cleanup. */
+                ogs_warn("No Bearer [%d] in E-RAB Setup Response — skip",
+                        (int)e_rab->e_RAB_ID);
+                continue;
             }
 
             if (e_rab->gTP_TEID.size != sizeof(bearer->enb_s1u_teid)) {
@@ -1999,12 +1997,9 @@ void s1ap_handle_e_rab_setup_response(
 
             bearer = mme_bearer_find_by_ue_ebi(mme_ue, e_rab->e_RAB_ID);
             if (!bearer) {
-                ogs_error("No Bearer [%d]", (int)e_rab->e_RAB_ID);
-                r = s1ap_send_error_indication2(mme_ue,
-                        S1AP_Cause_PR_radioNetwork,
-                        S1AP_CauseRadioNetwork_unknown_E_RAB_ID);
-                ogs_expect(r == OGS_OK);
-                return;
+                ogs_warn("No Bearer [%d] in E-RAB Setup Failure list — skip",
+                        (int)e_rab->e_RAB_ID);
+                continue;
             }
 
             {

@@ -2125,7 +2125,13 @@ void mme_s11_handle_downlink_data_notification(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!mme_ue) {
-        ogs_error("No UE Context");
+        /*
+         * Stale DDN after UE removed (attach fail / detach race). Still
+         * Ack so SGW-C stops retransmitting; use Sender F-TEID when
+         * present so the Ack TEID is not 0 (pcap showed thousands of
+         * unanswered DDNs under churn).
+         */
+        ogs_warn("DDN: No UE Context — Ack CONTEXT_NOT_FOUND");
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
@@ -2168,7 +2174,19 @@ void mme_s11_handle_downlink_data_notification(
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-        ogs_gtp2_send_error_message(xact, sgw_ue ? sgw_ue->sgw_s11_teid : 0,
+        uint32_t peer_teid = 0;
+
+        if (sgw_ue)
+            peer_teid = sgw_ue->sgw_s11_teid;
+        else if (noti->sender_f_teid_for_control_plane.presence &&
+                noti->sender_f_teid_for_control_plane.data &&
+                noti->sender_f_teid_for_control_plane.len >= 5) {
+            ogs_gtp2_f_teid_t *f =
+                noti->sender_f_teid_for_control_plane.data;
+            peer_teid = be32toh(f->teid);
+        }
+
+        ogs_gtp2_send_error_message(xact, peer_teid,
                 OGS_GTP2_DOWNLINK_DATA_NOTIFICATION_ACKNOWLEDGE_TYPE,
                 cause_value);
         return;
