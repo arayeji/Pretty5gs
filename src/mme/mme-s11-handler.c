@@ -2235,7 +2235,22 @@ void mme_s11_handle_downlink_data_notification(
         MME_STORE_PAGING_INFO(mme_ue,
             MME_PAGING_TYPE_DOWNLINK_DATA_NOTIFICATION, bearer->id);
         r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
-        ogs_expect(r == OGS_OK);
+        if (r != OGS_OK) {
+            /*
+             * Paging could not even be sent (e.g. no eNB serves the
+             * UE's TAI). Without an answer the SGW's DDN transaction
+             * would only die by timeout and retransmit into a loaded
+             * S11 socket. Tell it we cannot page (TS 23.401 5.3.4.3),
+             * which now discards buffered packets (DROBU) while
+             * keeping the session pageable for the next DL packet.
+             */
+            ogs_warn("[%s] paging send failed: DDN Ack Unable-to-page",
+                    mme_ue->imsi_bcd);
+            MME_CLEAR_PAGING_INFO(mme_ue);
+            if (mme_gtp_send_downlink_data_notification_ack(
+                    bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE) != OGS_OK)
+                ogs_error("[%s] DDN Ack not sent", mme_ue->imsi_bcd);
+        }
     } else if (ECM_CONNECTED(mme_ue)) {
         bool service_request_in_flight =
             (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST ||

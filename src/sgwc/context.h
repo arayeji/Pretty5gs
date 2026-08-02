@@ -155,6 +155,13 @@ typedef struct sgwc_context_s {
     /* Create BAR Suggested Buffering Packets Count (0 = omit IE). Default 8. */
     uint8_t bar_suggested_buffering_packets_count;
 
+    /*
+     * Seconds to suppress further DDNs toward the MME after a DDN Ack
+     * with Unable-to-page (cause 90/102). 0 disables the holddown
+     * (every buffered-packet report immediately re-pages). Default 60.
+     */
+    uint32_t ddn_holddown_s;
+
     ogs_hash_t *imsi_ue_hash;   /* hash table (IMSI : SGW_UE) */
     ogs_hash_t *sgw_s11_teid_hash;  /* hash table (SGW-S11-TEID : SGW_UE) */
     ogs_hash_t *sgwc_sxa_seid_hash; /* hash table (SGWC-SXA-SEID : Session) */
@@ -391,6 +398,20 @@ typedef struct sgwc_sess_s {
     ogs_time_t      dl_buff_since;
 
     /*
+     * DDN holddown (TS 23.401 5.3.4.3 NOTE on repeated paging): after an
+     * Unable-to-page DDN Ack, suppress further Downlink Data
+     * Notifications until this time so the MME is not re-paged every
+     * few seconds by a chatty DL stream toward an unreachable UE. The
+     * FAR stays BUFF|NOCP the whole time (no DROP). ddn_suppressed
+     * records that a Downlink Data Report arrived during the holddown;
+     * the buffer_idle sweep then sends a DROBU once the holddown ends
+     * so the (report-suppressing) non-empty UP buffer is cleared and
+     * the next DL packet can raise a fresh report -> DDN -> paging.
+     */
+    ogs_time_t      ddn_holddown_until;
+    bool            ddn_suppressed;
+
+    /*
      * When DL FAR entered DROP (Unable-to-page / idle sweep / restore).
      * 0 = not dropped. Used by buffer_idle sweep to re-arm BUFF|NOCP
      * after buffer_idle.rearm seconds so paging reachability recovers.
@@ -590,7 +611,28 @@ void sgwc_sess_count_dl_far(sgwc_sess_t *sess,
 void sgwc_sess_prepare_restoration_drop_idle(sgwc_sess_t *sess);
 int sgwc_sess_send_dl_far_drop(sgwc_sess_t *sess);
 int sgwc_sess_send_dl_far_rearm(sgwc_sess_t *sess);
+/* PFCPSMReq-Flags DROBU=1: discard UP-buffered DL packets, FAR untouched */
+int sgwc_sess_send_dl_drobu(sgwc_sess_t *sess);
 int sgwc_buffer_idle_sweep(int *out_dropped);
+
+/*
+ * Operational counters for the DL buffering / paging state machine.
+ * Incremented from shard workers as well as main, hence the atomics.
+ * Exposed via GET /admin/far-stats.
+ */
+typedef struct sgwc_dl_stats_s {
+    uint64_t ddn_sent;           /* Downlink Data Notifications sent */
+    uint64_t ddn_unable_to_page; /* DDN Acks with cause 90/102 */
+    uint64_t ddn_suppressed;     /* DDNs withheld during holddown */
+    uint64_t drobu_sent;         /* PFCP modifies with DROBU flag */
+    uint64_t far_dropped;        /* DL FARs set to DROP */
+    uint64_t far_rearmed;        /* DL FARs restored DROP->BUFF|NOCP */
+} sgwc_dl_stats_t;
+extern sgwc_dl_stats_t sgwc_dl_stats;
+#define SGWC_DL_STAT_INC(field) \
+    __atomic_fetch_add(&sgwc_dl_stats.field, 1, __ATOMIC_RELAXED)
+#define SGWC_DL_STAT_GET(field) \
+    __atomic_load_n(&sgwc_dl_stats.field, __ATOMIC_RELAXED)
 void sgwc_buffer_idle_timer_start(void);
 void sgwc_buffer_idle_timer_stop(void);
 

@@ -434,9 +434,34 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
         }
     }
 
+    if (modify_flags & OGS_PFCP_MODIFY_DROBU) {
+        /*
+         * Message-level PFCPSMReq-Flags DROBU=1: drop the packets the
+         * UP function currently buffers for this session, keep the FAR
+         * in BUFF|NOCP (TS 29.244 5.2.4.3). Deliberately builds NO
+         * Update FAR - the whole point is not to change forwarding.
+         */
+        ogs_pfcp_smreq_flags_t smreq_flags;
+
+        memset(&smreq_flags, 0, sizeof(smreq_flags));
+        smreq_flags.drop_buffered_packets = 1;
+
+        req->pfcpsmreq_flags.presence = 1;
+        req->pfcpsmreq_flags.u8 = smreq_flags.value;
+    }
+
     total = num_of_remove_pdr + num_of_remove_far + num_of_create_pdr +
             num_of_create_far + num_of_create_urr + num_of_update_pdr +
             num_of_update_far;
+
+    /* A DROBU-only modification legitimately carries no rule IEs. */
+    if (!total && (modify_flags & OGS_PFCP_MODIFY_DROBU)) {
+        pfcp_message->h.type = type;
+        pkbuf = ogs_pfcp_build_msg(pfcp_message);
+        ogs_expect(pkbuf);
+        ogs_free(pfcp_message);
+        return pkbuf;
+    }
 
     if (!total) {
         ogs_error("PFCP Session Modification build invalid state: "

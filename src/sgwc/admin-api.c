@@ -419,8 +419,20 @@ static size_t sgwc_admin_far_stats(char *buf, size_t buflen,
             "{\"sessions\":%d,"
             "\"dl_far_buff\":%d,"
             "\"dl_far_forw\":%d,"
-            "\"dl_far_drop\":%d}\n",
-            sessions, buff, forw, drop);
+            "\"dl_far_drop\":%d,"
+            "\"ddn_sent\":%llu,"
+            "\"ddn_unable_to_page\":%llu,"
+            "\"ddn_suppressed\":%llu,"
+            "\"drobu_sent\":%llu,"
+            "\"far_dropped\":%llu,"
+            "\"far_rearmed\":%llu}\n",
+            sessions, buff, forw, drop,
+            (unsigned long long)SGWC_DL_STAT_GET(ddn_sent),
+            (unsigned long long)SGWC_DL_STAT_GET(ddn_unable_to_page),
+            (unsigned long long)SGWC_DL_STAT_GET(ddn_suppressed),
+            (unsigned long long)SGWC_DL_STAT_GET(drobu_sent),
+            (unsigned long long)SGWC_DL_STAT_GET(far_dropped),
+            (unsigned long long)SGWC_DL_STAT_GET(far_rearmed));
     return n > 0 ? (size_t)n : 0;
 }
 

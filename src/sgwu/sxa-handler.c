@@ -368,6 +368,27 @@ void sgwu_sxa_handle_session_modification_request(
         }
     }
 
+    /*
+     * TS 29.244 5.2.4.3 / 8.2.31: message-level PFCPSMReq-Flags DROBU
+     * instructs the UP function to discard the packets currently
+     * buffered for this session WITHOUT changing the Apply Action.
+     * Must run before the buffered-packet flush below, so a modify
+     * that both sets DROBU and activates FORW only forwards new data.
+     */
+    if (req->pfcpsmreq_flags.presence) {
+        ogs_pfcp_smreq_flags_t smreq_flags;
+
+        smreq_flags.value = req->pfcpsmreq_flags.u8;
+        if (smreq_flags.drop_buffered_packets) {
+            int dropped = ogs_pfcp_sess_drop_buffered_gtpu(&sess->pfcp);
+            if (dropped)
+                ogs_debug("DROBU: dropped %d buffered DL packet(s) "
+                        "SEID[CP:0x%lx UP:0x%lx]", dropped,
+                        (unsigned long)sess->sgwc_sxa_f_seid.seid,
+                        (unsigned long)sess->sgwu_sxa_seid);
+        }
+    }
+
     /* Send Buffered Packet to gNB */
     ogs_list_for_each(&sess->pfcp.pdr_list, pdr) {
         if (pdr->src_if == OGS_PFCP_INTERFACE_CORE) { /* Downlink */
@@ -466,5 +487,23 @@ void sgwu_sxa_handle_session_report_response(
             ogs_error("Session Report Response cause not accepted[%d]",
                     cause_value);
         return;
+    }
+
+    /*
+     * TS 29.244 8.2.32: PFCPSRRsp-Flags DROBU (bit 1) in a Session
+     * Report Response tells the UP function to drop the packets it is
+     * currently buffering (e.g. the CP learned paging failed). The
+     * Apply Action is untouched: the next DL packet buffers again and,
+     * with the buffer now empty, generates a fresh Downlink Data Report.
+     */
+    if (rsp->pfcpsrrsp_flags.presence &&
+            (rsp->pfcpsrrsp_flags.u8 &
+             OGS_PFCP_SRRSP_FLAGS_DROP_BUFFERED_PACKETS)) {
+        int dropped = ogs_pfcp_sess_drop_buffered_gtpu(&sess->pfcp);
+        if (dropped)
+            ogs_debug("SRRsp DROBU: dropped %d buffered DL packet(s) "
+                    "SEID[CP:0x%lx UP:0x%lx]", dropped,
+                    (unsigned long)sess->sgwc_sxa_f_seid.seid,
+                    (unsigned long)sess->sgwu_sxa_seid);
     }
 }

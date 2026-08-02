@@ -2211,20 +2211,31 @@ out:
     }
 
     /*
-     * Unable to page: stop UPF DL buffering (DROP). Leaving BUFF|NOCP
-     * forever fills SGW-U buffers until the next Service Request.
-     * Next Modify Bearer / activate restores FORW.
+     * Paging failed (TS 23.401 5.3.4.3): "the Serving GW deletes the
+     * buffered packet(s)". Realized with PFCPSMReq-Flags DROBU=1
+     * (TS 29.244 5.2.4.3): discard what is buffered NOW, but keep the
+     * FAR in BUFF|NOCP so a later DL packet buffers again, raises a
+     * fresh Downlink Data Report and triggers a new paging attempt.
+     * (The old behavior - flipping the FAR to persistent DROP - made
+     * the UE unreachable for MT traffic until it woke up by itself.)
+     * The ddn_holddown suppresses immediate re-paging by a chatty DL
+     * stream; the buffer_idle sweep DROBUs again when it ends.
      */
     if (sess &&
         (cause_value == OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE ||
          cause_value ==
             OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE_DUE_TO_SUSPENSION)) {
-        ogs_info("[%s] DDN Ack Unable-to-page → DL FAR DROP APN[%s] EBI[%d]",
+        SGWC_DL_STAT_INC(ddn_unable_to_page);
+        ogs_info("[%s] DDN Ack Unable-to-page → DROBU (keep BUFF|NOCP) "
+                "APN[%s] EBI[%d]",
                 sgwc_ue ? sgwc_ue->imsi_bcd : "unknown",
                 sess->session.name ? sess->session.name : "",
                 bearer ? bearer->ebi : 0);
-        if (sgwc_sess_send_dl_far_drop(sess) != OGS_OK)
-            ogs_error("DL FAR DROP after Unable-to-page failed");
+        if (sgwc_self()->ddn_holddown_s)
+            sess->ddn_holddown_until = ogs_time_now() +
+                ogs_time_from_sec(sgwc_self()->ddn_holddown_s);
+        if (sgwc_sess_send_dl_drobu(sess) != OGS_OK)
+            ogs_error("DROBU after Unable-to-page failed");
     }
 
     ogs_info("Downlink Data Notification Acknowledge%s%s",

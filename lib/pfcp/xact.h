@@ -129,6 +129,15 @@ typedef struct ogs_pfcp_xact_s {
 /* Revert a DL FAR from DROP back to BUFF|NOCP (paging re-arm). Local-only
  * like MODIFY_DROP: no associated GTP transaction, no peer response. */
 #define OGS_PFCP_MODIFY_REARM ((uint64_t)1<<36)
+/*
+ * TS 29.244 5.2.4.3 / 8.2.31: send message-level PFCPSMReq-Flags with
+ * DROBU=1 - the UP function discards the packets currently buffered for
+ * the session but the FAR Apply Action (BUFF|NOCP) is NOT changed, so a
+ * later DL packet still buffers and raises a new Downlink Data Report.
+ * This is the standards-compliant "paging failed: delete buffered
+ * packets" action (TS 23.401 5.3.4.3). Local-only: no GTP peer wait.
+ */
+#define OGS_PFCP_MODIFY_DROBU ((uint64_t)1<<37)
     uint64_t        modify_flags;
 
 #define OGS_PFCP_DELETE_TRIGGER_LOCAL_INITIATED 1

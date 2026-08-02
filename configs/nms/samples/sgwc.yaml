@@ -82,13 +82,21 @@ sgwc:
     replace: internet.mnc070.mcc999.gprs
   trace_imsi:
   - '999700000000001'
-  # DL FAR DROP policy. Unable-to-page always installs DROP; idle_drop
-  # additionally converts ANY session in BUFF for `duration` seconds
-  # (default off: idle BUFF holds no UPF buffer until DL traffic arrives,
-  # while DROP kills DDN/paging and blackholes MT traffic fleet-wide).
-  # rearm restores DROP → BUFF|NOCP after that many seconds so paging
-  # reachability self-recovers (0 = never), paced at rearm_batch
-  # PFCP modifies per sweep per shard.
+  # DL buffering / paging policy (TS 23.401 5.3.4.3, TS 29.244 5.2.4.3).
+  # Standard behavior: an ECM-IDLE session keeps its DL FAR at BUFF|NOCP;
+  # on paging failure the SGW-C sends PFCPSMReq-Flags DROBU=1 which
+  # discards the buffered packets WITHOUT changing the FAR, so the next
+  # DL packet raises a new Downlink Data Report -> DDN -> paging.
+  #
+  # idle_drop is a NON-STANDARD compatibility fallback: it converts ANY
+  # session in BUFF for `duration` seconds to persistent DROP, which
+  # silences DDN/paging and blackholes MT traffic fleet-wide. Keep it
+  # off unless the SGW-U cannot bound its buffers (this fork's SGW-U
+  # enforces bar.suggested_buffering_packets_count, so it can).
+  # rearm restores legacy/incorrect DROP sessions to BUFF|NOCP after
+  # that many seconds (0 = never), paced at rearm_batch PFCP modifies
+  # per sweep per shard. Only DL S5/S8 access FARs of live attached
+  # sessions are re-armed.
   buffer_idle:
     enabled: true
     idle_drop: false
@@ -96,7 +104,13 @@ sgwc:
     interval: 30    # sweep period
     rearm: 600      # seconds in DROP before re-arming BUFF|NOCP
     rearm_batch: 1000
-  # Create BAR Suggested Buffering Packets Count (TS 29.244)
+  # Seconds to suppress further DDNs after a DDN Ack Unable-to-page
+  # (cause 90/102). The FAR stays BUFF|NOCP; when the holddown ends the
+  # sweep sends DROBU so the next DL packet can page again. 0 = off.
+  ddn_holddown: 60
+  # Create BAR Suggested Buffering Packets Count (TS 29.244 8.2.104).
+  # This fork's SGW-U enforces it as the per-FAR DL buffer cap
+  # (upper bound 64 packets); 0 omits the IE (SGW-U then uses 64).
   bar:
     suggested_buffering_packets_count: 8
 

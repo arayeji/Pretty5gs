@@ -392,7 +392,13 @@ bool ogs_pfcp_up_handle_pdr(
         ogs_trace("ENCAP GTP-U[%d], TEID[0x%x]", sendhdr.type, sendhdr.teid);
     }
 
-    if (!far->gnode) {
+    if (far->apply_action & OGS_PFCP_APPLY_ACTION_DROP) {
+
+        /* TS 29.244 5.2.3.1: DROP discards the packet. Deliberately
+         * silent - this is a provisioned state, not an error. */
+        ogs_pkbuf_free(sendbuf);
+
+    } else if (!far->gnode) {
 
         buffering = true;
 
@@ -412,6 +418,18 @@ bool ogs_pfcp_up_handle_pdr(
     }
 
     if (buffering == true) {
+        uint32_t buffer_cap = OGS_MAX_NUM_OF_GTPU_BUFFER;
+
+        /*
+         * TS 29.244 8.2.104 DL Buffering Suggested Packet Count /
+         * Create BAR Suggested Buffering Packets Count: honor the CP's
+         * requested per-FAR buffering cap when one was provisioned.
+         */
+        if (far->sess && far->sess->bar &&
+                far->sess->bar->suggested_buffering_packets_count &&
+                far->sess->bar->suggested_buffering_packets_count <
+                    buffer_cap)
+            buffer_cap = far->sess->bar->suggested_buffering_packets_count;
 
         if (far->num_of_buffered_gtpu == 0) {
             /* Only the first time a packet is buffered,
@@ -419,7 +437,7 @@ bool ogs_pfcp_up_handle_pdr(
             report->type.downlink_data_report = 1;
         }
 
-        if (far->num_of_buffered_gtpu < OGS_MAX_NUM_OF_GTPU_BUFFER) {
+        if (far->num_of_buffered_gtpu < buffer_cap) {
             far->buffered_gtpu[far->num_of_buffered_gtpu++] = sendbuf;
         } else {
             ogs_pkbuf_free(sendbuf);
@@ -1308,8 +1326,17 @@ ogs_pfcp_far_t *ogs_pfcp_handle_update_far(ogs_pfcp_sess_t *sess,
         return NULL;
     }
 
-    if (message->apply_action.presence)
+    if (message->apply_action.presence) {
         far->apply_action = message->apply_action.u16;
+        /*
+         * A FAR switched to DROP must not keep (or later flush) stale
+         * buffered packets: TS 29.244 5.2.3.1 buffering only applies
+         * to the BUFF action, and delivering minutes-old packets after
+         * a subsequent BUFF->FORW transition is never wanted.
+         */
+        if (far->apply_action & OGS_PFCP_APPLY_ACTION_DROP)
+            ogs_pfcp_far_drop_buffered_gtpu(far);
+    }
 
     if (message->update_forwarding_parameters.presence) {
         if (message->update_forwarding_parameters.
@@ -1572,6 +1599,18 @@ ogs_pfcp_bar_t *ogs_pfcp_handle_create_bar(ogs_pfcp_sess_t *sess,
     ogs_assert(sess->bar);
 
     sess->bar->id = message->bar_id.u8;
+
+    /*
+     * TS 29.244 8.2.104: Suggested Buffering Packets Count. Stored so
+     * ogs_pfcp_up_handle_pdr() enforces it as the per-FAR buffer cap
+     * (bounded by OGS_MAX_NUM_OF_GTPU_BUFFER). Previously this IE was
+     * accepted and silently ignored by the UP function.
+     */
+    if (message->suggested_buffering_packets_count.presence &&
+            message->suggested_buffering_packets_count.len >= 1 &&
+            message->suggested_buffering_packets_count.data)
+        sess->bar->suggested_buffering_packets_count =
+            ((uint8_t *)message->suggested_buffering_packets_count.data)[0];
 
     return sess->bar;
 }

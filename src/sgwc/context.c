@@ -701,6 +701,7 @@ void sgwc_context_init(void)
     self.buffer_idle.rearm_s = 600;
     self.buffer_idle.rearm_batch = 1000;
     self.buffer_idle.t_sweep = NULL;
+    self.ddn_holddown_s = 60;
     self.bar_suggested_buffering_packets_count = 8;
 
     self.gtpc_recovery = 0;
@@ -1889,6 +1890,9 @@ int sgwc_context_parse_config(void)
                             ogs_warn("unknown key `%s` in sgwc.buffer_idle",
                                     bk);
                     }
+                } else if (!strcmp(sgwc_key, "ddn_holddown")) {
+                    const char *v = ogs_yaml_iter_value(&sgwc_iter);
+                    if (v) self.ddn_holddown_s = (uint32_t)atoi(v);
                 } else if (!strcmp(sgwc_key, "bar")) {
                     ogs_yaml_iter_t b_iter;
                     ogs_yaml_iter_recurse(&sgwc_iter, &b_iter);
@@ -2826,6 +2830,8 @@ void sgwc_orphan_timer_stop(void)
     }
 }
 
+sgwc_dl_stats_t sgwc_dl_stats;
+
 void sgwc_sess_note_dl_buffering(sgwc_sess_t *sess)
 {
     if (!sess)
@@ -2838,6 +2844,9 @@ void sgwc_sess_clear_dl_buffering(sgwc_sess_t *sess)
     if (!sess)
         return;
     sess->dl_buff_since = 0;
+    /* Buffering ended (activate or drop): the DDN holddown is moot. */
+    sess->ddn_holddown_until = 0;
+    sess->ddn_suppressed = false;
 }
 
 void sgwc_sess_count_dl_far(sgwc_sess_t *sess,
@@ -2979,6 +2988,43 @@ int sgwc_sess_send_dl_far_rearm(sgwc_sess_t *sess)
     return OGS_OK;
 }
 
+/*
+ * TS 23.401 5.3.4.3 (paging failure: "the Serving GW deletes the
+ * buffered packet(s)") realized per TS 29.244 5.2.4.3 with
+ * PFCPSMReq-Flags DROBU=1. Unlike sgwc_sess_send_dl_far_drop(), the
+ * FAR Apply Action is NOT touched: the session stays BUFF|NOCP, so a
+ * later DL packet buffers again and raises a fresh Downlink Data
+ * Report -> DDN -> paging attempt.
+ */
+int sgwc_sess_send_dl_drobu(sgwc_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    if (!sess->pfcp_node || !sess->sgwu_sxa_seid) {
+        /* No UP session: nothing is buffered anywhere. */
+        return OGS_OK;
+    }
+
+    if (sgwc_pfcp_send_session_modification_request(
+            sess, OGS_INVALID_POOL_ID, NULL,
+            OGS_PFCP_MODIFY_DL_ONLY | OGS_PFCP_MODIFY_DROBU) != OGS_OK) {
+        ogs_error("DROBU Session Modification failed sess_id[%d]",
+                sess->id);
+        return OGS_ERROR;
+    }
+
+    SGWC_DL_STAT_INC(drobu_sent);
+
+    /*
+     * The UP buffer is empty again: restart the idle clock so a
+     * buffer_idle.idle_drop deployment measures from this point.
+     */
+    if (sess->dl_buff_since)
+        sess->dl_buff_since = ogs_time_now();
+
+    return OGS_OK;
+}
+
 static void buffer_idle_timer_cb(void *data)
 {
     sgwc_event_t *e = NULL;
@@ -3035,6 +3081,27 @@ int sgwc_buffer_idle_sweep(int *out_dropped)
                 sess->dl_drop_since = 0;
 
                 /*
+                 * DDN holddown ended with a suppressed notification:
+                 * the UP function still holds the failed paging
+                 * attempt's packets and (buffer non-empty) will not
+                 * raise another Downlink Data Report. Send DROBU to
+                 * discard them (TS 23.401 5.3.4.3) which re-arms the
+                 * first-packet report -> next DL packet pages again.
+                 */
+                if (sess->ddn_suppressed &&
+                        now >= sess->ddn_holddown_until) {
+                    sess->ddn_suppressed = false;
+                    sess->ddn_holddown_until = 0;
+                    ogs_debug("[%s] ddn_holddown expired: DROBU APN[%s]",
+                            sgwc_ue->imsi_bcd,
+                            sess->session.name ? sess->session.name : "");
+                    if (sgwc_sess_send_dl_drobu(sess) != OGS_OK)
+                        ogs_error("holddown DROBU failed sess_id[%d]",
+                                sess->id);
+                    continue;
+                }
+
+                /*
                  * Blanket idle→DROP is off by default: an idle BUFF|NOCP
                  * session holds no UPF buffer until DL traffic arrives,
                  * while DROP silences DDN/paging entirely — in a large
@@ -3057,10 +3124,21 @@ int sgwc_buffer_idle_sweep(int *out_dropped)
                         sgwc_ue->imsi_bcd,
                         (long long)ogs_time_sec(now - sess->dl_buff_since),
                         sess->session.name ? sess->session.name : "");
-                if (sgwc_sess_send_dl_far_drop(sess) == OGS_OK)
+                if (sgwc_sess_send_dl_far_drop(sess) == OGS_OK) {
                     dropped++;
+                    SGWC_DL_STAT_INC(far_dropped);
+                }
 
             } else if (drop) {
+                /*
+                 * Re-arm classification (safety): only sessions reached
+                 * through a live, shard-owned sgwc_ue's sess_list with a
+                 * DL S5/S8 access FAR are considered - deleted/deleting
+                 * sessions and detached UEs are no longer linked there,
+                 * and non-access FARs are filtered by
+                 * sgwc_sess_count_dl_far(). Uplink/indirect FARs are
+                 * never touched.
+                 */
                 if (!self.buffer_idle.rearm_s)
                     continue;
 
@@ -3080,8 +3158,10 @@ int sgwc_buffer_idle_sweep(int *out_dropped)
                         sgwc_ue->imsi_bcd,
                         (long long)ogs_time_sec(now - sess->dl_drop_since),
                         sess->session.name ? sess->session.name : "");
-                if (sgwc_sess_send_dl_far_rearm(sess) == OGS_OK)
+                if (sgwc_sess_send_dl_far_rearm(sess) == OGS_OK) {
                     rearmed++;
+                    SGWC_DL_STAT_INC(far_rearmed);
+                }
 
             } else {
                 sess->dl_drop_since = 0;
@@ -3143,11 +3223,13 @@ void sgwc_buffer_idle_timer_start(void)
     ogs_timer_start(self.buffer_idle.t_sweep, ogs_time_from_sec(interval_s));
 
     ogs_info("SGWC buffer_idle sweep started: interval=%us idle_drop=%s "
-            "duration=%us rearm=%us batch=%u bar_suggested=%u",
+            "duration=%us rearm=%us batch=%u bar_suggested=%u "
+            "ddn_holddown=%us",
             interval_s, self.buffer_idle.idle_drop ? "on" : "off",
             self.buffer_idle.duration_s, self.buffer_idle.rearm_s,
             self.buffer_idle.rearm_batch,
-            self.bar_suggested_buffering_packets_count);
+            self.bar_suggested_buffering_packets_count,
+            self.ddn_holddown_s);
 }
 
 void sgwc_buffer_idle_timer_stop(void)
