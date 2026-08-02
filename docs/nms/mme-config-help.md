@@ -939,20 +939,20 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 
 ### `global.parameter.fake_csfb`
 
-- **What:** If UE requested Combined attach/TAU and CS is not refused, advertise Combined EPS/IMSI result (or Combined TAU).
+- **What:** Fake SMS-only Combined Attach/TAU when the UE requested Combined **and** Additional update type = SMS only, and no real SGs/VLR registration is available.
 - **Type:** `boolean`
 - **Default when omitted:** `False`
 - **Reload:** `sighup`
-- **Notes / quirks:** Does not upgrade EPS-only requests. Does **not** override HSS `Network-Access-Mode=ONLY_PACKET` (subscriber stays EPS-only / TA-updated with EMM cause 18). Pair with `fake_csfb_lai` for synthetic LAI/P-TMSI. Not a real CS registration.
+- **Notes / quirks:** Builds a protocol-complete Accept: Combined result + `Additional update result=SMS only` + LAI + P-TMSI. Combined without SMS-only falls back to EPS-only / TA-updated with EMM cause 18. Does **not** override HSS `Network-Access-Mode=ONLY_PACKET`. Not a real CS registration.
 - **Evidence:** `src/mme/emm-build.c`
 
 ### `global.parameter.fake_csfb_lai`
 
-- **What:** When `fake_csfb` is true and no real VLR P-TMSI exists, synthesize LAI (csmap or serving TAC as LAC) and P-TMSI (from GUTI/M-TMSI) on Combined Accept/TAU. Alias: `fake_csfb_ptmsi`.
+- **What:** Required for fake SMS-only Combined: synthesize LAI (TAI-matched csmap, else LAI with serving PLMN from LA list, else serving PLMN + TAC as LAC) and P-TMSI (from GUTI/M-TMSI). Alias: `fake_csfb_ptmsi`.
 - **Type:** `boolean`
 - **Default when omitted:** `True`
 - **Reload:** `sighup`
-- **Notes / quirks:** Set `false` for Combined result without LAI/P-TMSI IEs (illegal NAS per TS 24.301; many UEs reply EMM #101).
+- **Notes / quirks:** If false, `fake_csfb` cannot form a legal Combined Accept and falls back to EPS-only + cause 18 (avoids UE EMM #101).
 - **Evidence:** `src/mme/emm-build.c`
 
 ### `global.parameter.ignore_sgs`

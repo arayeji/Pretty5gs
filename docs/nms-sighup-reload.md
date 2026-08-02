@@ -61,7 +61,7 @@ their previous value.
 
 | YAML path | SIGHUP | Notes |
 |-----------|--------|-------|
-| `global.parameter.fake_csfb` | yes | Combined Accept when UE asked Combined |
+| `global.parameter.fake_csfb` | yes | SMS-only Combined Accept when UE asked Combined+SMS only |
 | `global.parameter.fake_csfb_lai` | yes | with fake_csfb: synthesize LAI+P-TMSI (default true; alias `fake_csfb_ptmsi`) |
 | `global.parameter.ignore_sgs` | yes | skip SGsAP Location Update (e.g. roamers); no VLR |
 | `global.parameter.use_openair` | yes | umbrella: short ENFS + omit HashMME (all UEs) |

@@ -152,8 +152,8 @@
     "default": false,
     "group": "global",
     "reload": "sighup",
-    "description": "Combined Accept + synthetic LAI/P-TMSI when UE asked Combined",
-    "notes": "ogs_app_reload_parameter_scalars"
+    "description": "Fake SMS-only Combined Accept (AUR=SMS only + LAI/P-TMSI) when UE asked Combined+SMS only",
+    "notes": "ogs_app_reload_parameter_scalars; requires fake_csfb_lai"
   },
   {
     "path": "global.parameter.ignore_sgs",

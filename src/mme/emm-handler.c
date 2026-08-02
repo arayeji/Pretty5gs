@@ -110,6 +110,13 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     memcpy(&mme_ue->nas_eps.attach, eps_attach_type,
             sizeof(ogs_nas_eps_attach_type_t));
     mme_ue->nas_eps.type = MME_EPS_TYPE_ATTACH_REQUEST;
+    mme_ue->nas_eps.sms_only = false;
+    if (attach_request->presencemask &
+            OGS_NAS_EPS_ATTACH_REQUEST_ADDITIONAL_UPDATE_TYPE_PRESENT &&
+        attach_request->additional_update_type.additional_update_type_value) {
+        mme_ue->nas_eps.sms_only = true;
+        ogs_debug("    Additional update type: SMS only");
+    }
 
     ogs_debug("    ATTACH TYPE[%d] TSC[%d] KSI[%d] VALUE[%d]",
             mme_ue->nas_eps.type,
@@ -851,6 +858,13 @@ int emm_handle_tau_request(
     memcpy(&mme_ue->nas_eps.update, eps_update_type,
             sizeof(ogs_nas_eps_update_type_t));
     mme_ue->nas_eps.type = MME_EPS_TYPE_TAU_REQUEST;
+    mme_ue->nas_eps.sms_only = false;
+    if (tau_request->presencemask &
+            OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_ADDITIONAL_UPDATE_TYPE_PRESENT &&
+        tau_request->additional_update_type.additional_update_type_value) {
+        mme_ue->nas_eps.sms_only = true;
+        ogs_debug("    Additional update type: SMS only");
+    }
     ogs_debug("    UPDATE TYPE[%d] TSC[%d] KSI[%d] Active-flag[%d] VALUE[%d]",
             mme_ue->nas_eps.type,
             mme_ue->nas_eps.update.tsc,

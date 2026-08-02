@@ -924,6 +924,8 @@ struct mme_ue_s {
         ogs_nas_eps_update_type_t update;
         ogs_nas_service_type_t service;
         ogs_nas_detach_type_t detach;
+        /* Additional update type: SMS only (TS 24.301 9.9.3.0B) */
+        bool sms_only;
     } nas_eps;
 
     uint64_t tracking_area_update_request_presencemask;
