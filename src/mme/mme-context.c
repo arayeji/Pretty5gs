@@ -7064,26 +7064,55 @@ sgw_relocation_e sgw_ue_check_if_relocated(
 void mme_ue_new_guti(mme_ue_t *mme_ue)
 {
     served_gummei_t *served_gummei = NULL;
+    const ogs_plmn_id_t *guti_plmn = NULL;
+    int i, j;
 
     ogs_assert(mme_ue);
     ogs_assert(mme_self()->num_of_served_gummei > 0);
-
-    served_gummei = &mme_self()->served_gummei[0];
-
-    ogs_assert(served_gummei->num_of_plmn_id > 0);
-    ogs_assert(served_gummei->num_of_mme_gid > 0);
-    ogs_assert(served_gummei->num_of_mme_code > 0);
 
     if (MME_NEXT_GUTI_IS_AVAILABLE(mme_ue)) {
         ogs_warn("GUTI has already been allocated");
         return;
     }
 
+    /*
+     * Prefer a served GUMMEI PLMN that matches the UE's serving TAI.
+     * Fall back to the first configured PLMN if none match (e.g. empty
+     * TAI or multi-PLMN gummei ordered with a non-serving PLMN first).
+     */
+    for (i = 0; i < mme_self()->num_of_served_gummei && !guti_plmn; i++) {
+        served_gummei_t *sg = &mme_self()->served_gummei[i];
+
+        for (j = 0; j < sg->num_of_plmn_id; j++) {
+            if (memcmp(&sg->plmn_id[j], &mme_ue->tai.plmn_id,
+                        sizeof(ogs_plmn_id_t)) == 0) {
+                served_gummei = sg;
+                guti_plmn = &sg->plmn_id[j];
+                break;
+            }
+        }
+    }
+
+    if (!served_gummei || !guti_plmn) {
+        served_gummei = &mme_self()->served_gummei[0];
+        ogs_assert(served_gummei->num_of_plmn_id > 0);
+        guti_plmn = &served_gummei->plmn_id[0];
+        ogs_debug("[%s] GUTI PLMN: no served-GUMMEI match for "
+                "serving TAI PLMN[%06x]; using first gummei PLMN[%06x]",
+                mme_ue->imsi_bcd,
+                ogs_plmn_id_hexdump(&mme_ue->tai.plmn_id),
+                ogs_plmn_id_hexdump(guti_plmn));
+    } else {
+        ogs_debug("[%s] GUTI PLMN from serving TAI [%06x]",
+                mme_ue->imsi_bcd, ogs_plmn_id_hexdump(guti_plmn));
+    }
+
+    ogs_assert(served_gummei->num_of_mme_gid > 0);
+    ogs_assert(served_gummei->num_of_mme_code > 0);
+
     memset(&mme_ue->next.guti, 0, sizeof(ogs_nas_eps_guti_t));
 
-    /* Use the first configured plmn_id and mme group id */
-    ogs_nas_from_plmn_id(
-            &mme_ue->next.guti.nas_plmn_id, &served_gummei->plmn_id[0]);
+    ogs_nas_from_plmn_id(&mme_ue->next.guti.nas_plmn_id, guti_plmn);
     mme_ue->next.guti.mme_gid = served_gummei->mme_gid[0];
     mme_ue->next.guti.mme_code = served_gummei->mme_code[0];
 
@@ -8113,18 +8142,32 @@ mme_ue_t *mme_ue_find_by_message(const ogs_nas_eps_message_t *message)
         }
 
         switch (mobile_identity->tmsi.type) {
-        case OGS_NAS_MOBILE_IDENTITY_TMSI:
+        case OGS_NAS_MOBILE_IDENTITY_TMSI: {
+            int gi, pj;
+
             mobile_identity_tmsi = &mobile_identity->tmsi;
-            served_gummei = &mme_self()->served_gummei[0];
-
-            /* Use the first configured plmn_id and mme group id */
-            ogs_nas_from_plmn_id(
-                    &ogs_nas_guti.nas_plmn_id, &served_gummei->plmn_id[0]);
-            ogs_nas_guti.mme_gid = served_gummei->mme_gid[0];
-            ogs_nas_guti.mme_code = served_gummei->mme_code[0];
-            ogs_nas_guti.m_tmsi = mobile_identity_tmsi->tmsi;
-
-            mme_ue = mme_ue_find_by_guti(&ogs_nas_guti);
+            /*
+             * M-TMSI-only: try every served GUMMEI PLMN (GUTI may have
+             * been allocated from serving TAI PLMN, not gummei[0]).
+             */
+            for (gi = 0; gi < mme_self()->num_of_served_gummei && !mme_ue;
+                    gi++) {
+                served_gummei = &mme_self()->served_gummei[gi];
+                if (served_gummei->num_of_mme_gid == 0 ||
+                    served_gummei->num_of_mme_code == 0)
+                    continue;
+                for (pj = 0; pj < served_gummei->num_of_plmn_id; pj++) {
+                    memset(&ogs_nas_guti, 0, sizeof(ogs_nas_guti));
+                    ogs_nas_from_plmn_id(&ogs_nas_guti.nas_plmn_id,
+                            &served_gummei->plmn_id[pj]);
+                    ogs_nas_guti.mme_gid = served_gummei->mme_gid[0];
+                    ogs_nas_guti.mme_code = served_gummei->mme_code[0];
+                    ogs_nas_guti.m_tmsi = mobile_identity_tmsi->tmsi;
+                    mme_ue = mme_ue_find_by_guti(&ogs_nas_guti);
+                    if (mme_ue)
+                        break;
+                }
+            }
             if (mme_ue) {
                 ogs_info("[%s] Known UE by GUTI[G:%d,C:%d,M_TMSI:0x%x]",
                         mme_ue->imsi_bcd,
@@ -8132,12 +8175,12 @@ mme_ue_t *mme_ue_find_by_message(const ogs_nas_eps_message_t *message)
                         ogs_nas_guti.mme_code,
                         ogs_nas_guti.m_tmsi);
             } else {
-                ogs_info("Unknown UE by GUTI[G:%d,C:%d,M_TMSI:0x%x]",
-                        ogs_nas_guti.mme_gid,
-                        ogs_nas_guti.mme_code,
-                        ogs_nas_guti.m_tmsi);
+                ogs_info("Unknown UE by M-TMSI[0x%x] "
+                        "(tried all served GUMMEI PLMNs)",
+                        mobile_identity_tmsi->tmsi);
             }
             break;
+        }
         case OGS_NAS_MOBILE_IDENTITY_NONE:
             ogs_debug("Mobile identity type NONE (0) [service-req]");
             break;
