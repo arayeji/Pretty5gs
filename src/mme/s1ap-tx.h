@@ -75,6 +75,12 @@ int s1ap_tx_post_dlnas(enb_ue_t *enb_ue, ogs_pkbuf_t *emmbuf);
  * Main thread only. */
 void s1ap_tx_ready_handle(mme_event_t *e);
 
+/* Periodic self-heal (orphan sweep, main thread): force-flush any eNB
+ * whose hold list has been non-empty for far longer than an encode job
+ * can take — the signature of a leaked s1ap_tx_pending count, which
+ * otherwise black-holes that eNB's synchronous downlink until restart. */
+void s1ap_tx_hold_watchdog(void);
+
 #ifdef __cplusplus
 }
 #endif

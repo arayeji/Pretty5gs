@@ -1717,6 +1717,9 @@ cleanup:
             enb_ue_remaining =
                     mme_orphan_enb_ue_sweep(true, grace, &enb_ue_purged);
 
+            /* un-wedge any eNB whose TX hold list leaked (s1ap-tx.c) */
+            s1ap_tx_hold_watchdog();
+
             /* Heartbeat for /admin/maintenance/status (visible at any log level). */
             mme_orphan_sweep_record(ue_purged, ue_remaining);
 

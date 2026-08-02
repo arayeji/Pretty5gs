@@ -682,6 +682,15 @@ typedef struct mme_enb_s {
     ogs_list_t      s1ap_tx_hold;
 
     /*
+     * When s1ap_tx_hold went empty -> non-empty (0 = empty). Guarded by
+     * s1ap_tx_hold_lock. The orphan-sweep watchdog force-flushes the
+     * hold list if it has stayed non-empty far longer than any encode
+     * job can take — i.e. s1ap_tx_pending leaked and this eNB's
+     * synchronous downlink is wedged (s1ap_tx_hold_watchdog()).
+     */
+    ogs_time_t      s1ap_tx_hold_since;
+
+    /*
      * Guards s1ap_tx_hold. This was the global mme_ctx_lock(), which put a
      * process-wide mutex on main's hot path: main takes it per downlink
      * message to flush the hold list, contending with every worker and the

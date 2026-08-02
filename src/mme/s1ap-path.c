@@ -92,6 +92,8 @@ int s1ap_send_to_enb(mme_enb_t *enb, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
 
         ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
         if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0) {
+            if (!ogs_list_first(&enb->s1ap_tx_hold))
+                enb->s1ap_tx_hold_since = ogs_time_now();
             ogs_list_add(&enb->s1ap_tx_hold, pkbuf);
             parked = true;
         }

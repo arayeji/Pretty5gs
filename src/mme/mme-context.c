@@ -6370,6 +6370,7 @@ mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
     ogs_list_init(&enb->enb_ue_list);
     enb->s1ap_tx_pending = 0;
     ogs_list_init(&enb->s1ap_tx_hold);
+    enb->s1ap_tx_hold_since = 0;
     ogs_thread_mutex_init(&enb->s1ap_tx_hold_lock);
     enb->context_created = ogs_time_now();
     enb->enb_ue_hash = ogs_hash_make();
