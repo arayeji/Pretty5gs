@@ -1249,6 +1249,11 @@ void sgwc_sxa_handle_session_modification_response(
                            (long long)flags, pfcp_xact->assoc_xact_id);
                 }
             }
+        } else if (flags & OGS_PFCP_MODIFY_DROP) {
+            /* Local DROP (Unable-to-page / buffer_idle): no GTP peer wait. */
+            ogs_warn("PFCP DL FAR DROP failed cause[%d] IMSI[%s]",
+                    cause_value,
+                    sgwc_ue ? sgwc_ue->imsi_bcd : "unknown");
         }
 
         ogs_pfcp_xact_commit(pfcp_xact);
@@ -2047,10 +2052,20 @@ indirect_fail:
                     ogs_expect(rv == OGS_OK);
                 }
             }
+        } else if (flags & OGS_PFCP_MODIFY_DROP) {
+            ogs_pfcp_xact_commit(pfcp_xact);
+            ogs_debug("PFCP DL FAR DROP accepted IMSI[%s]",
+                    sgwc_ue ? sgwc_ue->imsi_bcd : "unknown");
+            return;
         } else {
             ogs_error("Invalid modify_flags[0x%llx]", (long long)flags);
             return;
         }
+    } else if (flags & OGS_PFCP_MODIFY_DROP) {
+        ogs_pfcp_xact_commit(pfcp_xact);
+        ogs_debug("PFCP DL FAR DROP accepted IMSI[%s]",
+                sgwc_ue ? sgwc_ue->imsi_bcd : "unknown");
+        return;
     } else if (flags & OGS_PFCP_MODIFY_DEACTIVATE) {
         if (flags & OGS_PFCP_MODIFY_ERROR_INDICATION) {
             /* It's faked method for receiving `bearer` context */

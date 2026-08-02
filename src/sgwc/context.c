@@ -694,6 +694,12 @@ void sgwc_context_init(void)
     self.orphan.grace_s = 30;
     self.orphan.t_sweep = NULL;
 
+    self.buffer_idle.enabled = true;
+    self.buffer_idle.duration_s = 180;
+    self.buffer_idle.interval_s = 30;
+    self.buffer_idle.t_sweep = NULL;
+    self.bar_suggested_buffering_packets_count = 8;
+
     self.gtpc_recovery = 0;
     self.gtpc_echo_interval = 0;
     self.gn_gtpc_recovery = 0;
@@ -908,6 +914,13 @@ void sgwc_pfcp_restoration_owned(ogs_pfcp_node_t *node)
         ogs_list_for_each(&sgwc_ue->sess_list, sess) {
             if (node != sess->pfcp_node)
                 continue;
+
+            /*
+             * Idle DL FARs were BUFF|NOCP; reinstalling that after SGW-U
+             * restart floods the UPF buffer pool before UEs are reachable.
+             * Reinstall DROP until Modify Bearer / activate restores FORW.
+             */
+            sgwc_sess_prepare_restoration_drop_idle(sess);
 
             ogs_info("PFCP restoration UE IMSI[%s] APN[%s]",
                     sgwc_ue->imsi_bcd, sess->session.name);
@@ -1841,6 +1854,47 @@ int sgwc_context_parse_config(void)
                         } else
                             ogs_warn("unknown key `%s` in sgwc.orphan", ok);
                     }
+                } else if (!strcmp(sgwc_key, "buffer_idle")) {
+                    ogs_yaml_iter_t b_iter;
+                    ogs_yaml_iter_recurse(&sgwc_iter, &b_iter);
+                    while (ogs_yaml_iter_next(&b_iter)) {
+                        const char *bk = ogs_yaml_iter_key(&b_iter);
+                        const char *bv = ogs_yaml_iter_value(&b_iter);
+                        ogs_assert(bk);
+                        if (!strcmp(bk, "enabled")) {
+                            self.buffer_idle.enabled =
+                                ogs_yaml_iter_bool(&b_iter);
+                        } else if (!strcmp(bk, "duration") ||
+                                !strcmp(bk, "duration_s")) {
+                            if (bv) self.buffer_idle.duration_s =
+                                (uint32_t)atoi(bv);
+                        } else if (!strcmp(bk, "interval") ||
+                                !strcmp(bk, "interval_s")) {
+                            if (bv) self.buffer_idle.interval_s =
+                                (uint32_t)atoi(bv);
+                        } else
+                            ogs_warn("unknown key `%s` in sgwc.buffer_idle",
+                                    bk);
+                    }
+                } else if (!strcmp(sgwc_key, "bar")) {
+                    ogs_yaml_iter_t b_iter;
+                    ogs_yaml_iter_recurse(&sgwc_iter, &b_iter);
+                    while (ogs_yaml_iter_next(&b_iter)) {
+                        const char *bk = ogs_yaml_iter_key(&b_iter);
+                        const char *bv = ogs_yaml_iter_value(&b_iter);
+                        ogs_assert(bk);
+                        if (!strcmp(bk, "suggested_buffering_packets_count") ||
+                                !strcmp(bk, "suggested_buffering")) {
+                            if (bv) {
+                                int v = atoi(bv);
+                                if (v < 0) v = 0;
+                                if (v > 255) v = 255;
+                                self.bar_suggested_buffering_packets_count =
+                                    (uint8_t)v;
+                            }
+                        } else
+                            ogs_warn("unknown key `%s` in sgwc.bar", bk);
+                    }
                 } else
                     ogs_warn("unknown key `%s`", sgwc_key);
             }
@@ -2389,6 +2443,9 @@ sgwc_sess_t *sgwc_sess_add(sgwc_ue_t *sgwc_ue, char *apn)
 
     /* Create BAR in PFCP Session */
     ogs_pfcp_bar_new(&sess->pfcp);
+    if (sess->pfcp.bar)
+        sess->pfcp.bar->suggested_buffering_packets_count =
+            self.bar_suggested_buffering_packets_count;
 
     /* Set APN */
     sess->session.name = ogs_strdup(apn);
@@ -2566,6 +2623,7 @@ void sgwc_sess_abort_create(sgwc_sess_t *sess)
  * the process-wide orphan gauges are the sum over all shard slots.
  */
 static int orphan_sess_remaining_by_shard[OGS_MAX_WORKERS];
+static int buff_sess_remaining_by_shard[OGS_MAX_WORKERS];
 static int orphan_ue_lingering_by_shard[OGS_MAX_WORKERS];
 
 static void sgwc_orphan_publish_gauges(void)
@@ -2752,6 +2810,241 @@ void sgwc_orphan_timer_stop(void)
     if (self.orphan.t_sweep) {
         ogs_timer_delete(self.orphan.t_sweep);
         self.orphan.t_sweep = NULL;
+    }
+}
+
+void sgwc_sess_note_dl_buffering(sgwc_sess_t *sess)
+{
+    if (!sess)
+        return;
+    sess->dl_buff_since = ogs_time_now();
+}
+
+void sgwc_sess_clear_dl_buffering(sgwc_sess_t *sess)
+{
+    if (!sess)
+        return;
+    sess->dl_buff_since = 0;
+}
+
+void sgwc_sess_count_dl_far(sgwc_sess_t *sess,
+        int *buff, int *forw, int *drop)
+{
+    sgwc_bearer_t *bearer = NULL;
+    sgwc_tunnel_t *tunnel = NULL;
+    int b = 0, f = 0, d = 0;
+
+    ogs_assert(sess);
+
+    ogs_list_for_each(&sess->bearer_list, bearer) {
+        ogs_list_for_each(&bearer->tunnel_list, tunnel) {
+            ogs_pfcp_far_t *far;
+
+            if (tunnel->interface_type != OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U)
+                continue;
+            far = tunnel->far;
+            if (!far)
+                continue;
+            if (far->apply_action & OGS_PFCP_APPLY_ACTION_BUFF)
+                b++;
+            else if (far->apply_action & OGS_PFCP_APPLY_ACTION_FORW)
+                f++;
+            else if (far->apply_action & OGS_PFCP_APPLY_ACTION_DROP)
+                d++;
+        }
+    }
+
+    if (buff) *buff = b;
+    if (forw) *forw = f;
+    if (drop) *drop = d;
+}
+
+void sgwc_sess_prepare_restoration_drop_idle(sgwc_sess_t *sess)
+{
+    sgwc_bearer_t *bearer = NULL;
+    sgwc_tunnel_t *tunnel = NULL;
+    int converted = 0;
+
+    ogs_assert(sess);
+
+    ogs_list_for_each(&sess->bearer_list, bearer) {
+        ogs_list_for_each(&bearer->tunnel_list, tunnel) {
+            ogs_pfcp_far_t *far = tunnel->far;
+
+            if (tunnel->interface_type != OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U)
+                continue;
+            if (!far)
+                continue;
+            if (far->apply_action & OGS_PFCP_APPLY_ACTION_BUFF) {
+                far->apply_action = OGS_PFCP_APPLY_ACTION_DROP;
+                converted++;
+            }
+        }
+    }
+
+    if (converted)
+        sgwc_sess_clear_dl_buffering(sess);
+}
+
+int sgwc_sess_send_dl_far_drop(sgwc_sess_t *sess)
+{
+    int buff = 0;
+
+    ogs_assert(sess);
+
+    sgwc_sess_count_dl_far(sess, &buff, NULL, NULL);
+    if (!buff)
+        return OGS_OK;
+
+    if (!sess->pfcp_node || !sess->sgwu_sxa_seid) {
+        /* Local-only: mark DROP in CP state for next establish/restore. */
+        sgwc_sess_prepare_restoration_drop_idle(sess);
+        return OGS_OK;
+    }
+
+    if (sgwc_pfcp_send_session_modification_request(
+            sess, OGS_INVALID_POOL_ID, NULL,
+            OGS_PFCP_MODIFY_DL_ONLY | OGS_PFCP_MODIFY_DROP) != OGS_OK) {
+        ogs_error("DL FAR DROP Session Modification failed sess_id[%d]",
+                sess->id);
+        return OGS_ERROR;
+    }
+
+    sgwc_sess_clear_dl_buffering(sess);
+    return OGS_OK;
+}
+
+static void buffer_idle_timer_cb(void *data)
+{
+    sgwc_event_t *e = NULL;
+    int rv;
+
+    (void)data;
+
+    e = sgwc_event_new(SGWC_EVT_BUFFER_IDLE_SWEEP);
+    if (!e) {
+        ogs_error("sgwc_event_new() failed for buffer_idle sweep");
+        return;
+    }
+    e->timer_id = SGWC_TIMER_BUFFER_IDLE_SWEEP;
+
+    rv = ogs_queue_trypush(ogs_app()->queue, e);
+    if (rv == OGS_OK) {
+        ogs_pollset_notify(ogs_app()->pollset);
+    } else {
+        ogs_error("ogs_queue_trypush() failed [%d] for buffer_idle sweep",
+                (int)rv);
+        sgwc_event_free(e);
+    }
+}
+
+int sgwc_buffer_idle_sweep(int *out_dropped)
+{
+    ogs_pool_id_t *ids = NULL;
+    int count = 0, i;
+    int dropped = 0;
+    int buff_sessions = 0;
+    ogs_time_t now = ogs_time_now();
+    ogs_time_t max_age = ogs_time_from_sec(self.buffer_idle.duration_s);
+
+    if (out_dropped)
+        *out_dropped = 0;
+
+    ids = sgwc_ue_ids_collect_owned(&count);
+
+    for (i = 0; i < count; i++) {
+        sgwc_ue_t *sgwc_ue = sgwc_ue_find_by_id(ids[i]);
+        sgwc_sess_t *sess = NULL;
+
+        if (!sgwc_ue || !sgwc_ue_owned_by_self(sgwc_ue))
+            continue;
+
+        ogs_list_for_each(&sgwc_ue->sess_list, sess) {
+            int buff = 0;
+
+            sgwc_sess_count_dl_far(sess, &buff, NULL, NULL);
+            if (buff)
+                buff_sessions++;
+
+            if (!buff)
+                continue;
+
+            /* Stamp first sighting if RAB path forgot to note. */
+            if (!sess->dl_buff_since)
+                sess->dl_buff_since = now;
+
+            if ((now - sess->dl_buff_since) < max_age)
+                continue;
+
+            ogs_info("[%s] buffer_idle: DL FAR BUFF for %llds → DROP APN[%s]",
+                    sgwc_ue->imsi_bcd,
+                    (long long)ogs_time_sec(now - sess->dl_buff_since),
+                    sess->session.name ? sess->session.name : "");
+            if (sgwc_sess_send_dl_far_drop(sess) == OGS_OK)
+                dropped++;
+        }
+    }
+
+    if (ids)
+        ogs_free(ids);
+
+    __atomic_store_n(&buff_sess_remaining_by_shard[ogs_worker_self_id()],
+            buff_sessions, __ATOMIC_RELAXED);
+    {
+        int i, total = 0;
+        for (i = 0; i < OGS_MAX_WORKERS; i++)
+            total += __atomic_load_n(
+                    &buff_sess_remaining_by_shard[i], __ATOMIC_RELAXED);
+        sgwc_metrics_global_set(SGWC_METR_GLOB_GAUGE_SESSIONS_DL_FAR_BUFF,
+                total);
+    }
+
+    if (out_dropped)
+        *out_dropped = dropped;
+
+    return buff_sessions;
+}
+
+void sgwc_buffer_idle_timer_start(void)
+{
+    uint32_t interval_s;
+
+    if (!self.buffer_idle.enabled) {
+        ogs_info("SGWC buffer_idle sweep disabled by config");
+        return;
+    }
+
+    interval_s = self.buffer_idle.interval_s;
+    if (interval_s < 5) {
+        ogs_warn("sgwc.buffer_idle.interval %u too low; using 5s", interval_s);
+        interval_s = 5;
+        self.buffer_idle.interval_s = interval_s;
+    }
+    if (self.buffer_idle.duration_s < 30) {
+        ogs_warn("sgwc.buffer_idle.duration %u too low; using 30s",
+                self.buffer_idle.duration_s);
+        self.buffer_idle.duration_s = 30;
+    }
+
+    if (!self.buffer_idle.t_sweep) {
+        self.buffer_idle.t_sweep = ogs_timer_add(
+                ogs_app()->timer_mgr, buffer_idle_timer_cb, NULL);
+        ogs_assert(self.buffer_idle.t_sweep);
+    }
+
+    ogs_timer_start(self.buffer_idle.t_sweep, ogs_time_from_sec(interval_s));
+
+    ogs_info("SGWC buffer_idle sweep started: interval=%us duration=%us "
+            "bar_suggested=%u",
+            interval_s, self.buffer_idle.duration_s,
+            self.bar_suggested_buffering_packets_count);
+}
+
+void sgwc_buffer_idle_timer_stop(void)
+{
+    if (self.buffer_idle.t_sweep) {
+        ogs_timer_delete(self.buffer_idle.t_sweep);
+        self.buffer_idle.t_sweep = NULL;
     }
 }
 

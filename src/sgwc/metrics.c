@@ -113,6 +113,12 @@ sgwc_metrics_spec_def_t sgwc_metrics_spec_def_global[_SGWC_METR_GLOB_MAX] = {
     .name = "sgwc_admission_reject_pfcp_down_total",
     .description = "Create Sessions rejected: no PFCP-associated SGW-U",
 },
+[SGWC_METR_GLOB_GAUGE_SESSIONS_DL_FAR_BUFF] = {
+    .type = OGS_METRICS_METRIC_TYPE_GAUGE,
+    .name = "sgwc_sessions_dl_far_buff",
+    .description = "SGWC sessions with at least one DL FAR in BUFF|NOCP "
+        "(idle buffering toward UPF)",
+},
 };
 
 void sgwc_metrics_admission_reject(sgwc_admission_reject_reason_t reason)

@@ -2196,17 +2196,35 @@ out:
     /************************
      * Check SGWC-UE Context
      ************************/
+    cause_value = OGS_GTP2_CAUSE_UNDEFINED_VALUE;
     if (ack->cause.presence) {
         ogs_gtp2_cause_t *cause = ack->cause.data;
         ogs_assert(cause);
 
         cause_value = cause->value;
-        if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED && 
+        if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED &&
             cause_value != OGS_GTP2_CAUSE_UE_ALREADY_RE_ATTACHED)
             ogs_warn("GTP Cause [Value:%d] - PFCP_CAUSE[%d]",
                     cause_value, pfcp_cause_from_gtp(cause_value));
     } else {
         ogs_error("No Cause");
+    }
+
+    /*
+     * Unable to page: stop UPF DL buffering (DROP). Leaving BUFF|NOCP
+     * forever fills SGW-U buffers until the next Service Request.
+     * Next Modify Bearer / activate restores FORW.
+     */
+    if (sess &&
+        (cause_value == OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE ||
+         cause_value ==
+            OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE_DUE_TO_SUSPENSION)) {
+        ogs_info("[%s] DDN Ack Unable-to-page → DL FAR DROP APN[%s] EBI[%d]",
+                sgwc_ue ? sgwc_ue->imsi_bcd : "unknown",
+                sess->session.name ? sess->session.name : "",
+                bearer ? bearer->ebi : 0);
+        if (sgwc_sess_send_dl_far_drop(sess) != OGS_OK)
+            ogs_error("DL FAR DROP after Unable-to-page failed");
     }
 
     ogs_info("Downlink Data Notification Acknowledge%s%s",

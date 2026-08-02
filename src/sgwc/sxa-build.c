@@ -335,6 +335,24 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
                                 num_of_update_far, far);
 
                         num_of_update_far++;
+                        if (tunnel->interface_type ==
+                                OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U)
+                            sgwc_sess_note_dl_buffering(sess);
+                    } else
+                        ogs_assert_if_reached();
+
+                } else if (modify_flags & OGS_PFCP_MODIFY_DROP) {
+
+                    far = tunnel->far;
+                    if (far) {
+                        ogs_pfcp_build_update_far_drop(
+                                &req->update_far[num_of_update_far],
+                                num_of_update_far, far);
+
+                        num_of_update_far++;
+                        if (tunnel->interface_type ==
+                                OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U)
+                            sgwc_sess_clear_dl_buffering(sess);
                     } else
                         ogs_assert_if_reached();
 
@@ -354,6 +372,9 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
 
                         /* Clear all FAR flags */
                         tunnel->far->smreq_flags.value = 0;
+                        if (tunnel->interface_type ==
+                                OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U)
+                            sgwc_sess_clear_dl_buffering(sess);
                     } else
                         ogs_assert_if_reached();
 

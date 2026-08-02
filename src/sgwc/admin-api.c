@@ -355,6 +355,10 @@ static size_t sgwc_admin_list_sessions(char *buf, size_t buflen,
                               sess->sgwu_sxa_seid == 0 || no_bearer);
             if (orphan_only && !is_orphan) continue;
 
+            int dl_buff = 0, dl_forw = 0, dl_drop = 0;
+
+            sgwc_sess_count_dl_far(sess, &dl_buff, &dl_forw, &dl_drop);
+
             if (!first) APPEND(",");
             first = 0;
             APPEND("{\"imsi\":\"%s\","
@@ -362,13 +366,17 @@ static size_t sgwc_admin_list_sessions(char *buf, size_t buflen,
                    "\"orphan\":%s,"
                    "\"bearers\":%d,"
                    "\"pfcp_seid\":\"0x%"PRIx64"\","
-                   "\"smf_connected\":%s}",
+                   "\"smf_connected\":%s,"
+                   "\"dl_far_buff\":%d,"
+                   "\"dl_far_forw\":%d,"
+                   "\"dl_far_drop\":%d}",
                    ue->imsi_bcd,
                    sess->session.name ? sess->session.name : "",
                    is_orphan ? "true" : "false",
                    ogs_list_count(&sess->bearer_list),
                    sess->sgwu_sxa_seid,
-                   sess->gnode ? "true" : "false");
+                   sess->gnode ? "true" : "false",
+                   dl_buff, dl_forw, dl_drop);
         }
     }
     ogs_metrics_dump_unlock();
@@ -377,6 +385,43 @@ static size_t sgwc_admin_list_sessions(char *buf, size_t buflen,
 #undef APPEND
 
     return pos;
+}
+
+/*
+ * GET /admin/far-stats
+ *
+ * Process-wide DL FAR apply-action counters (BUFF / FORW / DROP).
+ */
+static size_t sgwc_admin_far_stats(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
+{
+    sgwc_ue_t *ue = NULL;
+    sgwc_sess_t *sess = NULL;
+    int buff = 0, forw = 0, drop = 0, sessions = 0;
+    int n;
+
+    (void)page; (void)page_size; (void)q;
+
+    ogs_metrics_dump_lock();
+    ogs_list_for_each(&sgwc_self()->sgw_ue_list, ue) {
+        ogs_list_for_each(&ue->sess_list, sess) {
+            int b = 0, f = 0, d = 0;
+            sgwc_sess_count_dl_far(sess, &b, &f, &d);
+            buff += b;
+            forw += f;
+            drop += d;
+            sessions++;
+        }
+    }
+    ogs_metrics_dump_unlock();
+
+    n = snprintf(buf, buflen,
+            "{\"sessions\":%d,"
+            "\"dl_far_buff\":%d,"
+            "\"dl_far_forw\":%d,"
+            "\"dl_far_drop\":%d}\n",
+            sessions, buff, forw, drop);
+    return n > 0 ? (size_t)n : 0;
 }
 
 /*
@@ -560,6 +605,10 @@ void sgwc_admin_api_register(void)
     /* Session list: GET /admin/sessions[?imsi=<IMSI>][?orphan=1] */
     ogs_metrics_register_custom_ep(sgwc_admin_list_sessions,
             "/admin/sessions");
+
+    /* DL FAR apply-action totals: GET /admin/far-stats */
+    ogs_metrics_register_custom_ep(sgwc_admin_far_stats,
+            "/admin/far-stats");
 
     /* Orphan purge: POST /admin/sessions/purge-orphans
      * Removes all sessions that never completed attach or have no SGW-U path.

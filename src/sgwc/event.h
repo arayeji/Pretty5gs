@@ -57,6 +57,7 @@ typedef enum {
     SGWC_EVT_ADMIN_PURGE_SEID,        /* delete one stale SGW-U SEID (NMS audit)    */
 
     SGWC_EVT_ORPHAN_SWEEP,            /* periodic orphan metric + optional purge    */
+    SGWC_EVT_BUFFER_IDLE_SWEEP,       /* DL FAR BUFF too long → DROP                 */
 
     /* Worker deferred: create GTP peer echo timer on main timer_mgr (e->gnode). */
     SGWC_EVT_PEER_ECHO_SETUP,

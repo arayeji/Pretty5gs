@@ -115,6 +115,17 @@ typedef struct sgwc_orphan_config_s {
     ogs_timer_t *t_sweep;  /* main-thread periodic timer                     */
 } sgwc_orphan_config_t;
 
+/*
+ * DL FAR BUFFER idle policy (TS 29.244 apply-action DROP after page fail /
+ * long idle). Stops UPF buffering forever when the UE never returns.
+ */
+typedef struct sgwc_buffer_idle_config_s {
+    bool enabled;          /* default true */
+    uint32_t duration_s;   /* seconds in BUFF before DROP (default 180) */
+    uint32_t interval_s;   /* sweep period (default 30) */
+    ogs_timer_t *t_sweep;
+} sgwc_buffer_idle_config_t;
+
 typedef struct sgwc_context_s {
     ogs_list_t mme_s11_list;    /* MME GTPC Node List */
     ogs_list_t pgw_s5c_list;    /* PGW GTPC Node List */
@@ -124,6 +135,10 @@ typedef struct sgwc_context_s {
     uint32_t cdr_local_seq;
 
     sgwc_orphan_config_t orphan;
+    sgwc_buffer_idle_config_t buffer_idle;
+
+    /* Create BAR Suggested Buffering Packets Count (0 = omit IE). Default 8. */
+    uint8_t bar_suggested_buffering_packets_count;
 
     ogs_hash_t *imsi_ue_hash;   /* hash table (IMSI : SGW_UE) */
     ogs_hash_t *sgw_s11_teid_hash;  /* hash table (SGW-S11-TEID : SGW_UE) */
@@ -353,6 +368,12 @@ typedef struct sgwc_sess_s {
     uint8_t         apn_fqdn[OGS_MAX_APN_LEN + 2];
     uint8_t         apn_fqdn_len;
     ogs_gtp1_qos_profile_decoded_t gn_qos_pdec;
+
+    /*
+     * When DL FAR last entered BUFF|NOCP (RAB / Error-Ind deactivate).
+     * 0 = not buffering (FORW or DROP). Used by buffer_idle sweep.
+     */
+    ogs_time_t      dl_buff_since;
 } sgwc_sess_t;
 
 static inline void sgwc_create_session_phase(
@@ -539,6 +560,16 @@ void sgwc_sess_remove_all(sgwc_ue_t *sgwc_ue);
  * sum over all shards.
  */
 int sgwc_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
+
+void sgwc_sess_note_dl_buffering(sgwc_sess_t *sess);
+void sgwc_sess_clear_dl_buffering(sgwc_sess_t *sess);
+void sgwc_sess_count_dl_far(sgwc_sess_t *sess,
+        int *buff, int *forw, int *drop);
+void sgwc_sess_prepare_restoration_drop_idle(sgwc_sess_t *sess);
+int sgwc_sess_send_dl_far_drop(sgwc_sess_t *sess);
+int sgwc_buffer_idle_sweep(int *out_dropped);
+void sgwc_buffer_idle_timer_start(void);
+void sgwc_buffer_idle_timer_stop(void);
 
 /* Periodic orphan sweep timer (no-op when sgwc.orphan.enabled is false). */
 void sgwc_orphan_timer_start(void);

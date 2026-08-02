@@ -331,6 +331,12 @@ typedef struct ogs_pfcp_bar_s {
     uint8_t                 *id_node;      /* Pool-Node for ID */
     ogs_pfcp_bar_id_t       id;
 
+    /*
+     * TS 29.244 Suggested Buffering Packets Count (Create/Update BAR).
+     * 0 = omit the IE (UPF default / hard cap applies).
+     */
+    uint8_t                 suggested_buffering_packets_count;
+
     ogs_pfcp_sess_t         *sess;
 } ogs_pfcp_bar_t;
 

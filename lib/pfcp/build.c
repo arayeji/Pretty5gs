@@ -670,6 +670,23 @@ void ogs_pfcp_build_update_far_deactivate(
     message->bar_id.u8 = sess->bar->id;
 }
 
+void ogs_pfcp_build_update_far_drop(
+        ogs_pfcp_tlv_update_far_t *message, int i, ogs_pfcp_far_t *far)
+{
+    ogs_assert(message);
+    ogs_assert(far);
+    (void)i;
+
+    message->presence = 1;
+    message->far_id.presence = 1;
+    message->far_id.u32 = far->id;
+
+    /* Stop buffering / CP notify; discard further DL until FORW again. */
+    far->apply_action = OGS_PFCP_APPLY_ACTION_DROP;
+    message->apply_action.presence = 1;
+    message->apply_action.u16 = far->apply_action;
+}
+
 void ogs_pfcp_build_update_far_activate(
         ogs_pfcp_tlv_update_far_t *message, int i, ogs_pfcp_far_t *far)
 {
@@ -962,12 +979,21 @@ void ogs_pfcp_build_update_qer(
 void ogs_pfcp_build_create_bar(
     ogs_pfcp_tlv_create_bar_t *message, ogs_pfcp_bar_t *bar)
 {
+    static OGS_THREAD_LOCAL uint8_t suggested_buf;
+
     ogs_assert(message);
     ogs_assert(bar);
 
     message->presence = 1;
     message->bar_id.presence = 1;
     message->bar_id.u8 = bar->id;
+
+    if (bar->suggested_buffering_packets_count) {
+        suggested_buf = bar->suggested_buffering_packets_count;
+        message->suggested_buffering_packets_count.presence = 1;
+        message->suggested_buffering_packets_count.data = &suggested_buf;
+        message->suggested_buffering_packets_count.len = 1;
+    }
 }
 
 static OGS_THREAD_LOCAL struct {
