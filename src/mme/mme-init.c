@@ -91,6 +91,15 @@ int mme_initialize(void)
     rv = ogs_gtp_xact_init();
     if (rv != OGS_OK) return rv;
 
+    /*
+     * Teach the GTP response timers the same lesson the NAS timers
+     * already know: when the event queue lags, replies that arrived in
+     * time are still waiting to be dispatched. Without this, an attach
+     * storm turned S11 Create Session into false "SGW not responding"
+     * (cause 100) -> Attach Reject #22 -> instant re-attach feedback loop.
+     */
+    ogs_gtp_xact_set_lag_cb(mme_event_lag);
+
     rv = ogs_log_config_domain(
             ogs_app()->logger.domain, ogs_app()->logger.level);
     if (rv != OGS_OK) return rv;

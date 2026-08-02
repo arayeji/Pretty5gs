@@ -1107,6 +1107,54 @@ int ogs_gtp_xact_commit(ogs_gtp_xact_t *xact)
     return OGS_OK;
 }
 
+/*
+ * Registered by the NF (e.g. MME: mme_event_lag). Written once at startup
+ * before workers exist, read from every thread that runs GTP timers.
+ */
+static ogs_time_t (*xact_lag_cb)(void) = NULL;
+
+void ogs_gtp_xact_set_lag_cb(ogs_time_t (*cb)(void))
+{
+    xact_lag_cb = cb;
+}
+
+static bool xact_response_lag_defer(ogs_gtp_xact_t *xact)
+{
+    ogs_time_t lag;
+
+    if (!xact_lag_cb || !xact->tm_response)
+        return false;
+
+    lag = xact_lag_cb();
+    if (lag < OGS_GTP_XACT_LAG_DEFER_THRESHOLD)
+        return false;
+    if (xact->lag_defer_count >= OGS_GTP_XACT_LAG_MAX_DEFER)
+        return false;
+
+    xact->lag_defer_count++;
+    ogs_timer_start(xact->tm_response, OGS_GTP_XACT_LAG_DEFER_INTERVAL);
+
+    {
+        /* one line per second across all transactions, not one per xact */
+        static OGS_THREAD_LOCAL ogs_time_t last_log = 0;
+        static OGS_THREAD_LOCAL unsigned long suppressed = 0;
+        ogs_time_t now = ogs_get_monotonic_time();
+
+        suppressed++;
+        if (now - last_log >= ogs_time_from_sec(1)) {
+            ogs_warn("GTP response timer deferred: event lag %dms - "
+                    "reply is likely queued locally, not lost by the peer "
+                    "(%lu deferral(s) in last window, this xact %d/%d)",
+                    (int)(lag / 1000), suppressed,
+                    xact->lag_defer_count, OGS_GTP_XACT_LAG_MAX_DEFER);
+            last_log = now;
+            suppressed = 0;
+        }
+    }
+
+    return true;
+}
+
 static void response_timeout(void *data)
 {
     char buf[OGS_ADDRSTRLEN];
@@ -1131,6 +1179,15 @@ static void response_timeout(void *data)
             xact->step, xact->seq[xact->step-1].type,
             OGS_ADDR(&xact->gnode->addr, buf),
             OGS_PORT(&xact->gnode->addr));
+
+    /*
+     * If OUR event queue is lagging, the reply may already be sitting in
+     * it. Retransmitting now duplicates peer work and, on the last rcount,
+     * turns our backlog into a false "peer not responding" (cause 100 ->
+     * Attach Reject #22 -> immediate UE re-attach -> more backlog).
+     */
+    if (xact_response_lag_defer(xact))
+        return;
 
     if (--xact->response_rcount > 0) {
         ogs_pkbuf_t *pkbuf = NULL;

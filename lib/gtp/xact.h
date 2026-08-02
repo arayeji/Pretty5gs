@@ -110,6 +110,9 @@ typedef struct ogs_gtp_xact_s {
 
     ogs_timer_t     *tm_response;   /**< Timer waiting for next message */
     uint8_t         response_rcount;
+    uint8_t         lag_defer_count; /**< response_timeout deferrals taken
+                                          because the OWN event queue lagged
+                                          (see ogs_gtp_xact_set_lag_cb) */
     ogs_timer_t     *tm_holding;    /**< Timer waiting for holding message */
     uint8_t         holding_rcount;
 
@@ -163,6 +166,20 @@ typedef struct ogs_gtp_xact_s {
 } ogs_gtp_xact_t;
 
 int ogs_gtp_xact_init(void);
+
+/*
+ * Own-backlog awareness for the response timer. When the registered
+ * callback reports an event-dispatch lag at/above the threshold, a firing
+ * response timer is re-armed (bounded) instead of retransmitting: the
+ * reply has typically already arrived and is waiting in the event queue,
+ * so retransmitting makes the peer do duplicate work and giving up
+ * ("peer not responding", GTP cause 100) blames the peer for our own
+ * backlog. Register once at startup, before any worker thread exists.
+ */
+#define OGS_GTP_XACT_LAG_DEFER_THRESHOLD    ogs_time_from_msec(1500)
+#define OGS_GTP_XACT_LAG_DEFER_INTERVAL     ogs_time_from_msec(1000)
+#define OGS_GTP_XACT_LAG_MAX_DEFER          8
+void ogs_gtp_xact_set_lag_cb(ogs_time_t (*cb)(void));
 
 /* O(1) length of this shard's local/remote transaction list on gnode
  * (maintained by the xact index; replaces linear ogs_list_count) */
