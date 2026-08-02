@@ -63,7 +63,11 @@ static const char *mme_gtp2_message_type_name(uint8_t type)
     }
 }
 
-static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
+/*
+ * Read ONE datagram; returns 1 if a datagram was consumed (keep draining),
+ * 0 when the socket is empty or on a receive error (stop for this wakeup).
+ */
+static int mme_gtpc_recv_one(ogs_socket_t fd)
 {
     int rv;
     char buf[OGS_ADDRSTRLEN];
@@ -84,10 +88,11 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
 
     size = ogs_recvfrom(fd, pkbuf->data, pkbuf->len, 0, &from);
     if (size <= 0) {
-        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
-                "ogs_recvfrom() failed");
         ogs_pkbuf_free(pkbuf);
-        return;
+        if (size < 0 && !ogs_socket_errno_would_block())
+            ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
+                    "ogs_recvfrom() failed");
+        return 0;
     }
 
     ogs_pkbuf_trim(pkbuf, size);
@@ -99,7 +104,7 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
         if (!sgsn) {
             ogs_error("Unknown SGSN : %s", OGS_ADDR(&from, buf));
             ogs_pkbuf_free(pkbuf);
-            return;
+            return 1;
         }
         ogs_assert(sgsn);
         e = mme_event_new(MME_EVENT_GN_MESSAGE);
@@ -130,7 +135,7 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
                     OGS_ADDR(&from, buf), OGS_PORT(&from), imsi,
                     gtp_type, mme_gtp2_message_type_name(gtp_type), teid);
             ogs_pkbuf_free(pkbuf);
-            return;
+            return 1;
         }
         ogs_assert(sgw);
         e = mme_event_new(MME_EVENT_S11_MESSAGE);
@@ -140,7 +145,7 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
     default:
         ogs_warn("Rx unexpected GTP version %u", gtp_ver);
         ogs_pkbuf_free(pkbuf);
-        return;
+        return 1;
     }
 
     e->pkbuf = pkbuf;
@@ -159,13 +164,36 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
                 ogs_pkbuf_free(e->pkbuf);
                 mme_event_free(e);
             }
-            return;
+            return 1;
         }
     }
 
     rv = mme_event_push_to_ue_owner(e);
     if (rv != OGS_OK)
         ogs_error("S11 event push failed:%d", (int)rv);
+
+    return 1;
+}
+
+/*
+ * Drain the GTP-C socket per poll wakeup instead of reading a single
+ * datagram. The main loop runs one poll iteration and then dispatches
+ * the WHOLE event queue before polling again, so one-datagram-per-wakeup
+ * caps GTP-C RX at one packet per main-loop iteration. During an attach
+ * storm the SGW answers faster than that: the kernel socket buffer fills
+ * (seen at 12MB Recv-Q), responses get dropped, transaction timers fire
+ * ("GTP timeout" / cause 100) and the retransmit storm feeds itself.
+ * The budget keeps a flooded socket from starving S1AP/timers; leftover
+ * datagrams re-trigger the (level-triggered) pollset immediately.
+ */
+#define MME_GTPC_RECV_BUDGET    512
+
+static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
+{
+    int budget = MME_GTPC_RECV_BUDGET;
+
+    while (budget-- > 0 && mme_gtpc_recv_one(fd) > 0)
+        ;
 }
 
 static void timeout(ogs_gtp_xact_t *xact, void *data)

@@ -59,7 +59,11 @@ static void pfcp_node_fsm_fini(ogs_pfcp_node_t *node)
         ogs_timer_delete(node->t_association);
 }
 
-static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
+/*
+ * Read ONE PFCP datagram; returns 1 if a datagram was consumed (keep
+ * draining), 0 when the socket is empty / on error (stop for this wakeup).
+ */
+static int sgwc_pfcp_recv_one(ogs_socket_t fd)
 {
     int rv;
 
@@ -76,8 +80,9 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
 
     pkbuf = ogs_pfcp_recvfrom(fd, &from);
     if (!pkbuf) {
-        ogs_error("ogs_pfcp_recvfrom() failed");
-        return;
+        /* empty socket (EAGAIN) or receive/parse error; either way stop —
+         * a level-triggered pollset re-fires if datagrams remain */
+        return 0;
     }
 
     e = sgwc_event_new(SGWC_EVT_SXA_MESSAGE);
@@ -94,7 +99,7 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
         ogs_error("ogs_pfcp_parse_msg() failed");
         ogs_pkbuf_free(pkbuf);
         sgwc_event_free(e);
-        return;
+        return 1;
     }
 
     pfcp_status = ogs_pfcp_extract_node_id(message, &node_id);
@@ -177,7 +182,7 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
             ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
             goto cleanup;
         }
-        return;
+        return 1;
     }
 
     /*
@@ -233,18 +238,36 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
                 ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
                 goto cleanup;
             }
-            return;
+            return 1;
         }
 
         if (sgwc_event_push_to_worker(wid, e) != OGS_OK)
-            return; /* push_to_worker already freed e + buffers */
-        return;
+            return 1; /* push_to_worker already freed e + buffers */
+        return 1;
     }
 
 cleanup:
     ogs_pkbuf_free(pkbuf);
     ogs_pfcp_message_free(message);
     sgwc_event_free(e);
+    return 1;
+}
+
+/*
+ * Drain the PFCP socket per poll wakeup (bounded) instead of reading one
+ * datagram per main-loop iteration — same fix as the MME GTP-C RX path:
+ * under a Session Establishment/Modification storm SGW-U answers faster
+ * than one-datagram-per-iteration, the kernel socket buffer fills and
+ * dropped replies become false PFCP timeouts.
+ */
+#define SGWC_PFCP_RECV_BUDGET   512
+
+static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
+{
+    int budget = SGWC_PFCP_RECV_BUDGET;
+
+    while (budget-- > 0 && sgwc_pfcp_recv_one(fd) > 0)
+        ;
 }
 
 int sgwc_pfcp_open(void)

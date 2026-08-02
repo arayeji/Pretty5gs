@@ -72,8 +72,11 @@ ogs_pkbuf_t *ogs_pfcp_recvfrom(ogs_socket_t fd, ogs_sockaddr_t *from)
 
     size = ogs_recvfrom(fd, pkbuf->data, pkbuf->len, 0, from);
     if (size <= 0) {
-        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
-            "ogs_recvfrom() failed");
+        /* EAGAIN is normal loop termination for callers that drain the
+         * (non-blocking) socket until empty — not an error. */
+        if (size < 0 && !ogs_socket_errno_would_block())
+            ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
+                "ogs_recvfrom() failed");
         ogs_pkbuf_free(pkbuf);
         return NULL;
     }

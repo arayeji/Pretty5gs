@@ -222,3 +222,25 @@ int ogs_bind_to_device(ogs_socket_t fd, const char *device)
 
     return OGS_OK;
 }
+
+uint64_t ogs_socket_rx_backlog(ogs_socket_t fd)
+{
+#if defined(SO_MEMINFO) && !defined(_WIN32)
+    /* SK_MEMINFO_RMEM_ALLOC is index 0 of the SO_MEMINFO array
+     * (linux/sock_diag.h); avoid the uapi include for portability. */
+    uint32_t mem[16];
+    socklen_t len = sizeof(mem);
+
+    if (fd == INVALID_SOCKET)
+        return 0;
+
+    memset(mem, 0, sizeof(mem));
+    if (getsockopt(fd, SOL_SOCKET, SO_MEMINFO, mem, &len) != 0)
+        return 0;
+
+    return mem[0];
+#else
+    (void)fd;
+    return 0;
+#endif
+}

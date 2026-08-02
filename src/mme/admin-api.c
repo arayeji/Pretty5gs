@@ -595,6 +595,27 @@ size_t mme_dump_queue_status(char *buf, size_t buflen,
     QSTAT_APPEND("\"io_depth\":%u,", s1ap_io_queue_depth());
 
     /*
+     * Kernel RX backlog of the GTP-C socket. The internal queues can all
+     * look healthy while S11 replies rot unread in the kernel buffer
+     * (seen at 12MB Recv-Q during an attach storm) — this is the
+     * blind spot that made "GTP timeout" look like an SGW problem.
+     */
+    {
+        uint64_t rx4 = 0, rx6 = 0;
+
+        if (ogs_gtp_self()->gtpc_sock)
+            rx4 = ogs_socket_rx_backlog(ogs_gtp_self()->gtpc_sock->fd);
+        if (ogs_gtp_self()->gtpc_sock6)
+            rx6 = ogs_socket_rx_backlog(ogs_gtp_self()->gtpc_sock6->fd);
+
+        if (rx4 + rx6 >= 1024 * 1024)   /* >=1MB unread: falling behind */
+            verdict = "behind";
+
+        QSTAT_APPEND("\"gtpc_rx_backlog_bytes\":%llu,",
+                (unsigned long long)(rx4 + rx6));
+    }
+
+    /*
      * Per-eNB TX hold state: pending encode jobs + parked pkbufs.
      * A hold list non-empty for >15s is the wedge signature.
      */

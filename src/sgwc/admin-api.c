@@ -619,8 +619,34 @@ size_t sgwc_dump_queue_status(char *buf, size_t buflen,
         QSTAT_APPEND("%s{\"id\":%d,\"depth\":%u}", i ? "," : "",
                 i, w && w->queue ? ogs_queue_size(w->queue) : 0);
     }
+    QSTAT_APPEND("],");
 
-    QSTAT_APPEND("],\"verdict\":\"%s\"}\n", verdict);
+    /*
+     * Kernel RX backlog of the GTP-C and PFCP sockets: internal queues
+     * can look healthy while replies rot unread in the kernel buffer
+     * (the MME blind spot; same failure mode applies here).
+     */
+    {
+        uint64_t gtpc = 0, pfcp = 0;
+
+        if (ogs_gtp_self()->gtpc_sock)
+            gtpc += ogs_socket_rx_backlog(ogs_gtp_self()->gtpc_sock->fd);
+        if (ogs_gtp_self()->gtpc_sock6)
+            gtpc += ogs_socket_rx_backlog(ogs_gtp_self()->gtpc_sock6->fd);
+        if (ogs_pfcp_self()->pfcp_sock)
+            pfcp += ogs_socket_rx_backlog(ogs_pfcp_self()->pfcp_sock->fd);
+        if (ogs_pfcp_self()->pfcp_sock6)
+            pfcp += ogs_socket_rx_backlog(ogs_pfcp_self()->pfcp_sock6->fd);
+
+        if (gtpc >= 1024 * 1024 || pfcp >= 1024 * 1024)
+            verdict = "behind";  /* >=1MB unread: not draining fast enough */
+
+        QSTAT_APPEND("\"gtpc_rx_backlog_bytes\":%llu,"
+                "\"pfcp_rx_backlog_bytes\":%llu,",
+                (unsigned long long)gtpc, (unsigned long long)pfcp);
+    }
+
+    QSTAT_APPEND("\"verdict\":\"%s\"}\n", verdict);
 
 #undef QSTAT_APPEND
 
