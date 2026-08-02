@@ -372,6 +372,25 @@ void s1ap_tx_hold_watchdog(void)
     if (!s1ap_tx_active())
         return;
 
+    /*
+     * Distinguish a LEAKED pending count from a genuine sustained
+     * encode backlog: if any TX worker still has queued jobs, TX_READYs
+     * are still coming and will decrement pending / flush the hold list
+     * in order. Force-flushing now would send parked PDUs out of order
+     * relative to those in-flight jobs (NAS reordering on the
+     * association). Only when the workers are idle can a >15s hold mean
+     * the counter leaked.
+     */
+    {
+        int i, n = s1ap_tx_worker_count();
+        unsigned int queued = 0;
+
+        for (i = 0; i < n; i++)
+            queued += s1ap_tx_queue_depth(i);
+        if (queued > 0)
+            return; /* genuine backlog; re-check at the next sweep */
+    }
+
     ogs_list_for_each(&mme_self()->enb_list, enb) {
         ogs_list_t flush;
         ogs_pkbuf_t *held = NULL, *next = NULL;

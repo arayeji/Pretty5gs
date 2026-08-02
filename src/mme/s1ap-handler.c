@@ -2469,8 +2469,33 @@ void s1ap_ue_context_release_tail(mme_ue_t *mme_ue, int rel_action,
                 !mme_ue->ue_context_will_remove &&
                 enb_ue_find_by_id(mme_ue->enb_ue_id) == NULL)
             mme_ue_enter_ue_context_will_remove(mme_ue);
+        else if (mme_ue->paging.type ==
+                    MME_PAGING_TYPE_DOWNLINK_DATA_NOTIFICATION &&
+                enb_ue_find_by_id(mme_ue->enb_ue_id) == NULL) {
+            /*
+             * A DDN was held (no Ack) while a Service Request was in
+             * flight, and that S1 died before Modify Bearer completed.
+             * Without this, nothing ever answers the DDN: the SGW's
+             * transaction times out and retransmits into a loaded
+             * socket. The UE is ECM-IDLE now — page it immediately;
+             * mme_send_after_paging() then acks the held DDN.
+             */
+            ogs_info("[%s] S1 released with DDN held: paging now",
+                    mme_ue->imsi_bcd);
+            r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
+            ogs_expect(r == OGS_OK);
+        }
         break;
     case S1AP_UE_CTX_REL_S1_REMOVE_AND_UNLINK:
+        /* same held-DDN gap as above, for the normal-release action */
+        if (mme_ue->paging.type ==
+                    MME_PAGING_TYPE_DOWNLINK_DATA_NOTIFICATION &&
+                enb_ue_find_by_id(mme_ue->enb_ue_id) == NULL) {
+            ogs_info("[%s] S1 released with DDN held: paging now",
+                    mme_ue->imsi_bcd);
+            r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
+            ogs_expect(r == OGS_OK);
+        }
         break;
     case S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE:
         mme_ue_remove(mme_ue);
