@@ -292,7 +292,12 @@ int s1ap_tx_post_dlnas(enb_ue_t *enb_ue, ogs_pkbuf_t *emmbuf)
      * failure nothing was enqueued, so the decrement below exactly
      * undoes it.
      */
-    __atomic_add_fetch(&enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
+    {
+        int prev = __atomic_fetch_add(
+                &enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
+        if (prev == 0)
+            enb->s1ap_tx_pending_since = ogs_time_now();
+    }
 
     /* sticky per eNB: all of one association's jobs share one FIFO.
      * Cast id to unsigned so a corrupt/negative pool id cannot yield a
@@ -304,7 +309,9 @@ int s1ap_tx_post_dlnas(enb_ue_t *enb_ue, ogs_pkbuf_t *emmbuf)
             ogs_error("s1ap-tx: worker[%u] missing (count=%d) — sync fallback",
                     (unsigned)((uint32_t)enb->id % (uint32_t)tx_worker_count),
                     tx_worker_count);
-            __atomic_sub_fetch(&enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
+            if (__atomic_sub_fetch(&enb->s1ap_tx_pending, 1,
+                        __ATOMIC_ACQ_REL) == 0)
+                enb->s1ap_tx_pending_since = 0;
             ogs_free(job);
             return OGS_ERROR;
         }
@@ -314,7 +321,9 @@ int s1ap_tx_post_dlnas(enb_ue_t *enb_ue, ogs_pkbuf_t *emmbuf)
         /* worker queue full / gone: caller falls back to sync build+send.
          * Safe only because nothing was enqueued here; earlier
          * in-flight jobs still hold sync sends back via pending. */
-        __atomic_sub_fetch(&enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
+        if (__atomic_sub_fetch(&enb->s1ap_tx_pending, 1,
+                    __ATOMIC_ACQ_REL) == 0)
+            enb->s1ap_tx_pending_since = 0;
         ogs_free(job);
         return rv;
     }
@@ -371,20 +380,25 @@ static void tx_send_raw(mme_enb_t *enb, ogs_pkbuf_t *pkbuf)
 #define S1AP_TX_HOLD_SEND_STALL_USEC        ogs_time_from_sec(3)
 #define S1AP_TX_HOLD_SEND_NO_PROGRESS_USEC  ogs_time_from_sec(2)
 #define S1AP_TX_HOLD_SEND_MAX_PARKED        128
+/* Empty-hold pending leak: must outlive a slow-but-real encode+TX_READY. */
+#define S1AP_TX_HOLD_SEND_PENDING_LEAK_USEC ogs_time_from_sec(10)
+#define S1AP_TX_HOLD_PENDING_LEAK_USEC      ogs_time_from_sec(15)
 
 static int s1ap_tx_hold_try_flush_locked(
         mme_enb_t *enb, ogs_time_t now,
-        ogs_time_t stall_usec, ogs_time_t no_progress_usec, int max_parked,
+        ogs_time_t stall_usec, ogs_time_t no_progress_usec,
+        ogs_time_t pending_leak_usec, int max_parked,
         ogs_list_t *flush, int *out_pending, ogs_time_t *out_since,
         ogs_time_t *out_last_ready)
 {
     ogs_pkbuf_t *held = NULL, *next = NULL;
-    ogs_time_t since, last_ready;
+    ogs_time_t since, last_ready, pending_since;
     int pending, count = 0;
     bool stalled;
 
     since = enb->s1ap_tx_hold_since;
     last_ready = enb->s1ap_tx_last_ready;
+    pending_since = enb->s1ap_tx_pending_since;
     pending = __atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE);
 
     ogs_list_for_each(&enb->s1ap_tx_hold, held)
@@ -404,9 +418,14 @@ static int s1ap_tx_hold_try_flush_locked(
         stalled = true;
     if (max_parked > 0 && count >= max_parked)
         stalled = true;
-    /* pending stuck with empty hold: still blocks every sync send */
-    if (!count && pending > 0 &&
-            (!last_ready || (now - last_ready) >= no_progress_usec))
+    /*
+     * pending>0 with empty hold is NORMAL while an encode job is in
+     * flight. Only treat as leak if pending_since is old (TX_READY
+     * never came). Using last_ready alone false-fired on quiet cells
+     * that just posted a new job after seconds of silence.
+     */
+    if (!count && pending > 0 && pending_since &&
+            (now - pending_since) >= pending_leak_usec)
         stalled = true;
 
     if (!stalled)
@@ -417,12 +436,13 @@ static int s1ap_tx_hold_try_flush_locked(
         ogs_list_add(flush, held);
     }
     enb->s1ap_tx_hold_since = 0;
+    enb->s1ap_tx_pending_since = 0;
     __atomic_store_n(&enb->s1ap_tx_pending, 0, __ATOMIC_RELEASE);
 
     if (out_pending)
         *out_pending = pending;
     if (out_since)
-        *out_since = since;
+        *out_since = since ? since : pending_since;
     if (out_last_ready)
         *out_last_ready = last_ready;
     return count > 0 ? count : -1; /* -1 = pending-only reset */
@@ -445,6 +465,7 @@ void s1ap_tx_hold_recover_stalled(mme_enb_t *enb)
     count = s1ap_tx_hold_try_flush_locked(enb, now,
             S1AP_TX_HOLD_SEND_STALL_USEC,
             S1AP_TX_HOLD_SEND_NO_PROGRESS_USEC,
+            S1AP_TX_HOLD_SEND_PENDING_LEAK_USEC,
             S1AP_TX_HOLD_SEND_MAX_PARKED,
             &flush, &pending, &since, &last_ready);
     ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
@@ -452,14 +473,20 @@ void s1ap_tx_hold_recover_stalled(mme_enb_t *enb)
     if (!count)
         return;
 
-    ogs_error("s1ap-tx: send-path recover eNB-id[0x%x] "
-            "(pending_was=%d, flushed=%d, hold_age=%llds, "
-            "no_TX_READY=%llds)",
-            enb->enb_id, pending, count > 0 ? count : 0,
-            since ? (long long)ogs_time_to_sec(now - since) : 0LL,
-            last_ready ? (long long)ogs_time_to_sec(now - last_ready)
-                       : (since ? (long long)ogs_time_to_sec(now - since)
-                                : 0LL));
+    /* ERROR only when we actually unparked downlink; pending-only is rarer */
+    if (count > 0)
+        ogs_error("s1ap-tx: send-path recover eNB-id[0x%x] "
+                "(pending_was=%d, flushed=%d, hold_age=%llds, "
+                "no_TX_READY=%llds)",
+                enb->enb_id, pending, count,
+                since ? (long long)ogs_time_to_sec(now - since) : 0LL,
+                last_ready ? (long long)ogs_time_to_sec(now - last_ready)
+                           : 0LL);
+    else
+        ogs_warn("s1ap-tx: cleared leaked pending on eNB-id[0x%x] "
+                "(pending_was=%d, pending_age=%llds)",
+                enb->enb_id, pending,
+                since ? (long long)ogs_time_to_sec(now - since) : 0LL);
 
     ogs_list_for_each_safe(&flush, next, held) {
         ogs_list_remove(&flush, held);
@@ -501,6 +528,7 @@ void s1ap_tx_hold_watchdog(void)
         count = s1ap_tx_hold_try_flush_locked(enb, now,
                 S1AP_TX_HOLD_STALL_USEC,
                 S1AP_TX_HOLD_NO_PROGRESS_USEC,
+                S1AP_TX_HOLD_PENDING_LEAK_USEC,
                 0,
                 &flush, &pending, &since, &last_ready);
         ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
@@ -539,8 +567,11 @@ void s1ap_tx_ready_handle(mme_event_t *e)
         return;
     }
 
-    if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0)
-        __atomic_sub_fetch(&enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
+    if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0) {
+        if (__atomic_sub_fetch(&enb->s1ap_tx_pending, 1,
+                    __ATOMIC_ACQ_REL) == 0)
+            enb->s1ap_tx_pending_since = 0;
+    }
 
     enb->s1ap_tx_last_ready = ogs_time_now();
 
@@ -570,6 +601,7 @@ void s1ap_tx_ready_handle(mme_event_t *e)
                 ogs_list_add(&flush, held);
             }
             enb->s1ap_tx_hold_since = 0;
+            enb->s1ap_tx_pending_since = 0;
         }
         ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
 

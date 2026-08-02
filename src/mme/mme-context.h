@@ -701,6 +701,14 @@ typedef struct mme_enb_s {
     ogs_time_t      s1ap_tx_hold_since;
 
     /*
+     * When s1ap_tx_pending went 0 -> >0 (0 = idle). Distinguishes a
+     * legitimate in-flight encode (pending=1, hold empty, last_ready
+     * old because the cell was quiet) from a leaked pending that has
+     * blocked sync sends for many seconds with no TX_READY.
+     */
+    ogs_time_t      s1ap_tx_pending_since;
+
+    /*
      * Last TX_READY handled for this eNB (main thread). Watchdog uses
      * this to tell a leaked pending (no progress) from a real encode
      * backlog on THIS association — a global TX-worker queue check
