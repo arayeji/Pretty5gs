@@ -252,6 +252,12 @@ mme:
   #                                 # this long, clear its TX queue and
   #                                 # drop S1 (CONNREFUSED). Protects the
   #                                 # shared IO/workers from a stuck cell.
+  # gtpc_rx_thread: 1               # dedicated GTP-C (S11/Gn) RX thread.
+  #                                 # Keeps S11 replies from rotting in the
+  #                                 # kernel socket buffer when the main
+  #                                 # poll loop is busy with eNB SCTP fds
+  #                                 # (false "GTP timeout" under attach
+  #                                 # storms). Default 0 = read on main.
   #                                 # 0/unset = 10. Negative = disable.
   #                                 # SIGHUP reloadable. ETIMEDOUT always
   #                                 # tears that assoc down.

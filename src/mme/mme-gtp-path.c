@@ -97,11 +97,21 @@ static int mme_gtpc_recv_one(ogs_socket_t fd)
 
     ogs_pkbuf_trim(pkbuf, size);
 
+    /*
+     * Held from peer lookup through event push: with the dedicated GTP-C
+     * RX thread (mme.gtpc_rx_thread) a SIGHUP reload on main may
+     * add/remove/resort sgw_list concurrently, and releasing earlier
+     * would let the reload free the peer while e->gnode still points
+     * into it. Without the RX thread this lock is uncontended.
+     */
+    mme_sgw_list_lock();
+
     gtp_ver = ((ogs_gtp2_header_t *)pkbuf->data)->version;
     switch (gtp_ver) {
     case 1:
         sgsn = mme_sgsn_find_by_addr(&from);
         if (!sgsn) {
+            mme_sgw_list_unlock();
             ogs_error("Unknown SGSN : %s", OGS_ADDR(&from, buf));
             ogs_pkbuf_free(pkbuf);
             return 1;
@@ -119,12 +129,16 @@ static int mme_gtpc_recv_one(ogs_socket_t fd)
             mme_ue_t *hint_ue = NULL;
             const char *imsi = "-";
 
+            mme_sgw_list_unlock();
+
             if (pkbuf->len >= sizeof(ogs_gtp2_header_t)) {
                 ogs_gtp2_header_t *h = (ogs_gtp2_header_t *)pkbuf->data;
 
                 gtp_type = h->type;
                 teid = be32toh(h->teid);
-                if (teid)
+                /* diagnostic only: the UE pointer is not safe to hold
+                 * off the main thread (gtpc_rx_thread mode) */
+                if (teid && mme_event_on_main_thread())
                     hint_ue = mme_ue_find_by_s11_local_teid(teid);
             }
             if (hint_ue)
@@ -143,6 +157,7 @@ static int mme_gtpc_recv_one(ogs_socket_t fd)
         e->gnode = &sgw->gnode;
         break;
     default:
+        mme_sgw_list_unlock();
         ogs_warn("Rx unexpected GTP version %u", gtp_ver);
         ogs_pkbuf_free(pkbuf);
         return 1;
@@ -159,6 +174,7 @@ static int mme_gtpc_recv_one(ogs_socket_t fd)
         if (type == OGS_GTP2_ECHO_REQUEST_TYPE ||
                 type == OGS_GTP2_ECHO_RESPONSE_TYPE) {
             rv = mme_queue_push_main(e);
+            mme_sgw_list_unlock();
             if (rv != OGS_OK) {
                 ogs_error("GTP echo event dropped:%d", (int)rv);
                 ogs_pkbuf_free(e->pkbuf);
@@ -169,6 +185,7 @@ static int mme_gtpc_recv_one(ogs_socket_t fd)
     }
 
     rv = mme_event_push_to_ue_owner(e);
+    mme_sgw_list_unlock();
     if (rv != OGS_OK)
         ogs_error("S11 event push failed:%d", (int)rv);
 
@@ -194,6 +211,72 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
 
     while (budget-- > 0 && mme_gtpc_recv_one(fd) > 0)
         ;
+}
+
+/*
+ * Dedicated GTP-C RX thread (mme.gtpc_rx_thread: 1, default off).
+ *
+ * On main, the GTP-C socket shares one poll loop with every eNB SCTP
+ * association and the whole event-queue drain, so under an attach storm
+ * S11 replies sit unread in the kernel buffer (12MB Recv-Q observed)
+ * until the transaction timers declare the SGW dead. This thread does
+ * ONLY what the main-loop callback did — recvfrom, classify the peer,
+ * push an event to the owner shard/main — so message handling, xact
+ * state and timers all stay exactly where they were.
+ *
+ * It is a helper worker like the S1AP RX decoders: it never allocates
+ * TEIDs/xids, so it must NOT be counted as a protocol shard (no
+ * ogs_worker_shards_enable() here).
+ */
+static ogs_worker_t *gtpc_rx_worker = NULL;
+
+static void gtpc_rx_dispatch(ogs_worker_t *worker, void *data)
+{
+    /* nothing is ever posted to this worker's queue */
+    (void)worker;
+    (void)data;
+}
+
+static void gtpc_rx_thread_init(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    mme_pkbuf_thread_pool_attach();
+
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, _gtpv1v2_c_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list6, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, _gtpv1v2_c_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+
+    ogs_info("GTP-C RX thread started");
+}
+
+static void gtpc_rx_thread_fini(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    /* Detach polls while the worker pollset is still alive; otherwise
+     * ogs_socknode_free() would remove them from freed memory. */
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list6, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
 }
 
 static void timeout(ogs_gtp_xact_t *xact, void *data)
@@ -425,17 +508,21 @@ int mme_gtp_open(void)
         sock = ogs_gtp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, _gtpv1v2_c_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!mme_self()->gtpc_rx_thread) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, _gtpv1v2_c_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
     ogs_list_for_each(&ogs_gtp_self()->gtpc_list6, node) {
         sock = ogs_gtp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, _gtpv1v2_c_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!mme_self()->gtpc_rx_thread) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, _gtpv1v2_c_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
 
     OGS_SETUP_GTPC_SERVER;
@@ -476,8 +563,48 @@ int mme_gtp_open(void)
     return OGS_OK;
 }
 
+/*
+ * Start the dedicated GTP-C RX thread (no-op unless mme.gtpc_rx_thread).
+ * Called from mme-init.c AFTER mme_workers_start(): shard workers call
+ * ogs_worker_shards_enable(), which must run before ANY worker exists,
+ * so this helper cannot be created inside mme_gtp_open(). The GTP-C
+ * sockets already exist by then; datagrams arriving in the gap simply
+ * wait in the kernel buffer until the thread registers them.
+ */
+int mme_gtpc_rx_start(void)
+{
+    if (!mme_self()->gtpc_rx_thread)
+        return OGS_OK;
+
+    ogs_assert(!gtpc_rx_worker);
+
+    /* Registers the sockets on its own pollset in thread_init;
+     * ogs_worker_start() blocks until that has completed. */
+    gtpc_rx_worker = ogs_worker_create(0, 64, 8, 64,
+            gtpc_rx_dispatch, NULL);
+    ogs_assert(gtpc_rx_worker);
+    ogs_worker_hooks(gtpc_rx_worker,
+            gtpc_rx_thread_init, gtpc_rx_thread_fini);
+    ogs_worker_set_name(gtpc_rx_worker, "gtpc-rx");
+    ogs_worker_start(gtpc_rx_worker);
+
+    return OGS_OK;
+}
+
+bool mme_gtpc_rx_active(void)
+{
+    return gtpc_rx_worker != NULL;
+}
+
 void mme_gtp_close(void)
 {
+    /* Stop the RX thread BEFORE closing the sockets it polls; its
+     * thread_fini detaches the socknode polls from the worker pollset. */
+    if (gtpc_rx_worker) {
+        ogs_worker_destroy(gtpc_rx_worker);
+        gtpc_rx_worker = NULL;
+    }
+
     ogs_socknode_remove_all(&ogs_gtp_self()->gtpc_list);
     ogs_socknode_remove_all(&ogs_gtp_self()->gtpc_list6);
 }

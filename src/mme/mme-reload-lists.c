@@ -68,11 +68,15 @@ static void reload_gtpc_resort_sgw_list(void)
 
     qsort(nodes, n, sizeof(nodes[0]), reload_gtpc_sgw_order_cmp);
 
+    /* relink under the sgw_list lock: the GTP-C RX thread may be
+     * walking this list in mme_sgw_find_by_addr() right now */
+    mme_sgw_list_lock();
     while ((sgw = ogs_list_first(&mme_self()->sgw_list)) != NULL)
         ogs_list_remove(&mme_self()->sgw_list, sgw);
 
     for (i = 0; i < n; i++)
         ogs_list_add(&mme_self()->sgw_list, nodes[i]);
+    mme_sgw_list_unlock();
 }
 
 static void reload_gtpc_resort_pgw_list(void)

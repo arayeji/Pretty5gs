@@ -31,6 +31,7 @@
 #include "admin-api.h"   /* pulls in ogs-metrics.h */
 #include "s1ap-tx.h"     /* TX offload queue depths (/admin/queues) */
 #include "s1ap-io.h"     /* IO command queue depth (/admin/queues) */
+#include "mme-gtp-path.h" /* GTP-C RX thread state (/admin/queues) */
 #include "mme-li.h"
 #include "mme-pgw-host.h"
 #include "mme-pgw-dns.h"
@@ -614,6 +615,9 @@ size_t mme_dump_queue_status(char *buf, size_t buflen,
         QSTAT_APPEND("\"gtpc_rx_backlog_bytes\":%llu,",
                 (unsigned long long)(rx4 + rx6));
     }
+
+    QSTAT_APPEND("\"gtpc_rx_thread\":%s,",
+            mme_gtpc_rx_active() ? "true" : "false");
 
     /*
      * Per-eNB TX hold state: pending encode jobs + parked pkbufs.

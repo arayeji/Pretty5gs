@@ -28,6 +28,11 @@ extern "C" {
 
 int mme_gtp_open(void);
 void mme_gtp_close(void);
+
+/* Dedicated GTP-C RX thread (mme.gtpc_rx_thread, default off). Start
+ * AFTER mme_workers_start() — see the comment at the definition. */
+int mme_gtpc_rx_start(void);
+bool mme_gtpc_rx_active(void);
 void mme_timer_sgw_echo(void *data);
 void mme_gtp_send_sgw_echo(mme_sgw_t *sgw);
 

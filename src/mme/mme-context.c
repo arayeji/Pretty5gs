@@ -86,6 +86,19 @@ static ogs_thread_mutex_t pkbuf_tp_mutex;
 static ogs_pkbuf_pool_t *pkbuf_tp[MME_MAX_PKBUF_THREAD_POOLS];
 static int num_pkbuf_tp = 0;
 
+/* sgw_list guard: GTP-C RX thread vs SIGHUP reload (see mme-context.h) */
+static ogs_thread_mutex_t sgw_list_mutex;
+
+void mme_sgw_list_lock(void)
+{
+    ogs_thread_mutex_lock(&sgw_list_mutex);
+}
+
+void mme_sgw_list_unlock(void)
+{
+    ogs_thread_mutex_unlock(&sgw_list_mutex);
+}
+
 void mme_pkbuf_thread_pool_attach(void)
 {
     ogs_pkbuf_config_t config;
@@ -455,6 +468,7 @@ void mme_context_init(void)
     ogs_metrics_dump_lock_init();
 
     ogs_thread_mutex_init(&pkbuf_tp_mutex);
+    ogs_thread_mutex_init(&sgw_list_mutex);
 
     /* Initial FreeDiameter Config */
     memset(&g_diam_conf, 0, sizeof(ogs_diam_config_t));
@@ -1384,6 +1398,12 @@ int mme_context_parse_config(void)
                     const char *v = ogs_yaml_iter_value(&mme_iter);
                     if (v) {
                         self.s1ap_io_thread = atoi(v) ? 1 : 0;
+                    }
+                } else if (!strcmp(mme_key, "gtpc_rx_thread")) {
+                    /* dedicated GTP-C RX thread (0/1, default 0) */
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+                    if (v) {
+                        self.gtpc_rx_thread = atoi(v) ? 1 : 0;
                     }
                 } else if (!strcmp(mme_key, "s1ap_io_write_queue_max")) {
                     /* per-eNB outbound PDU cap (0 = default 10240) */
@@ -3961,7 +3981,9 @@ mme_sgw_t *mme_sgw_add(ogs_sockaddr_t *addr)
         return NULL;
     }
 
+    mme_sgw_list_lock();
     ogs_list_add(&self.sgw_list, sgw);
+    mme_sgw_list_unlock();
 
     return sgw;
 }
@@ -3970,7 +3992,9 @@ void mme_sgw_remove(mme_sgw_t *sgw)
 {
     ogs_assert(sgw);
 
+    mme_sgw_list_lock();
     ogs_list_remove(&self.sgw_list, sgw);
+    mme_sgw_list_unlock();
 
     if (sgw->t_echo) {
         ogs_timer_delete(sgw->t_echo);

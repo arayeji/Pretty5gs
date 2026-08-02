@@ -189,6 +189,12 @@ int mme_initialize(void)
         if (rv != OGS_OK) return OGS_ERROR;
     }
 
+    /* dedicated GTP-C RX thread (mme.gtpc_rx_thread, default off):
+     * must come after mme_workers_start()/shards_enable(), and before
+     * mme-main starts driving S11 transactions */
+    rv = mme_gtpc_rx_start();
+    if (rv != OGS_OK) return OGS_ERROR;
+
     rv = s1ap_open();
     if (rv != OGS_OK) return OGS_ERROR;
 

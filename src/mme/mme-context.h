@@ -296,6 +296,16 @@ typedef struct mme_context_s {
     /* dedicated S1AP SCTP send thread (0/1, default 0) — s1ap-io.c */
     int             s1ap_io_thread;
     /*
+     * Dedicated GTP-C RX thread (0/1, default 0) — mme-gtp-path.c.
+     * On main, GTP-C reads compete with 1000s of eNB SCTP fds and the
+     * event-queue drain: under an attach storm S11 replies rot in the
+     * kernel socket buffer (12MB Recv-Q seen) and become false "GTP
+     * timeout" despite the SGW answering in ms. The RX thread only
+     * recvfroms + classifies + pushes events; all handling stays on
+     * the owner shard / main exactly as before.
+     */
+    int             gtpc_rx_thread;
+    /*
      * Per-eNB-association outbound PDU cap on the S1AP IO thread.
      * PDUs beyond this are dropped (soft backpressure). 0 = default.
      */
@@ -1807,6 +1817,16 @@ void mme_sgw_remove(mme_sgw_t *sgw);
 void mme_sgw_remove_all(void);
 bool mme_sgw_in_use(const mme_sgw_t *sgw);
 mme_sgw_t *mme_sgw_find_by_addr(const ogs_sockaddr_t *addr);
+/*
+ * Guards sgw_list link/unlink against concurrent readers. Needed only
+ * because the GTP-C RX thread (mme.gtpc_rx_thread) walks the list per
+ * datagram while a SIGHUP reload on main may add/remove/resort peers.
+ * Lock discipline: reload holds it around list mutations; the RX path
+ * holds it from lookup through event push (so the peer cannot be freed
+ * while e->gnode still points into it). find() itself does NOT lock.
+ */
+void mme_sgw_list_lock(void);
+void mme_sgw_list_unlock(void);
 bool mme_sgw_recovery_update(mme_sgw_t *sgw, uint8_t recovery);
 void mme_sgw_echo_schedule(mme_sgw_t *sgw);
 
