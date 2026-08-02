@@ -578,6 +578,34 @@ ogs_pkbuf_t *esm_build_bearer_resource_allocation_reject(
     return nas_eps_security_encode(mme_ue, &message);
 }
 
+ogs_pkbuf_t *esm_build_status(
+        mme_ue_t *mme_ue, uint8_t ebi, uint8_t pti,
+        ogs_nas_esm_cause_t esm_cause)
+{
+    ogs_nas_eps_message_t message;
+    ogs_nas_eps_esm_status_t *esm_status = &message.esm.esm_status;
+
+    ogs_assert(mme_ue);
+
+    ogs_debug("ESM status");
+    ogs_debug("    IMSI[%s] EBI[%d] PTI[%d] Cause[%d]",
+            mme_ue->imsi_bcd, ebi, pti, esm_cause);
+
+    memset(&message, 0, sizeof(message));
+    message.h.security_header_type =
+       OGS_NAS_SECURITY_HEADER_INTEGRITY_PROTECTED_AND_CIPHERED;
+    message.h.protocol_discriminator = OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM;
+
+    message.esm.h.eps_bearer_identity = ebi;
+    message.esm.h.protocol_discriminator = OGS_NAS_PROTOCOL_DISCRIMINATOR_ESM;
+    message.esm.h.procedure_transaction_identity = pti;
+    message.esm.h.message_type = OGS_NAS_EPS_ESM_STATUS;
+
+    esm_status->esm_cause = esm_cause;
+
+    return nas_eps_security_encode(mme_ue, &message);
+}
+
 ogs_pkbuf_t *esm_build_bearer_resource_modification_reject(
         mme_ue_t *mme_ue, uint8_t pti, ogs_nas_esm_cause_t esm_cause)
 {

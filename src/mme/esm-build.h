@@ -41,6 +41,15 @@ ogs_pkbuf_t *esm_build_bearer_resource_allocation_reject(
         mme_ue_t *mme_ue, uint8_t pti, ogs_nas_esm_cause_t esm_cause);
 ogs_pkbuf_t *esm_build_bearer_resource_modification_reject(
         mme_ue_t *mme_ue, uint8_t pti, ogs_nas_esm_cause_t esm_cause);
+/*
+ * TS 24.301 7.3.2: response to an ESM message referencing an unknown
+ * EPS bearer identity (cause #43) or other ESM protocol errors. The UE
+ * locally deactivates the offending bearer only - unlike an EMM reject,
+ * which would tear down the whole registration.
+ */
+ogs_pkbuf_t *esm_build_status(
+        mme_ue_t *mme_ue, uint8_t ebi, uint8_t pti,
+        ogs_nas_esm_cause_t esm_cause);
 
 #ifdef __cplusplus
 }

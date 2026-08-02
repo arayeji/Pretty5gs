@@ -954,7 +954,15 @@ static int mme_context_prepare(void)
     self.time.t3412.value = 600;  /* 10 minutes */
     self.time.idle.mobile_reachable_margin = 240; /* TS 24.301 +4 min */
     self.time.idle.implicit_detach_margin = 240;
-    self.time.t3346.value = 0;
+    /*
+     * T3346 back-off in Attach/TAU/Service Reject with cause #22
+     * (congestion). Since NAS rejects now also release S1 immediately
+     * (no ~30s dangling-connection pause before the eNB Reset), a
+     * congestion-rejected UE would otherwise retry instantly and feed
+     * the very storm that caused the reject. 60s spreads the retries.
+     * Set mme.time.t3346.value: 0 to disable.
+     */
+    self.time.t3346.value = 60;
     self.time.t3346.include_any_reject = false;
 
     self.gtpc_recovery = 0;
@@ -9321,17 +9329,23 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
     if (ebi != OGS_NAS_EPS_BEARER_IDENTITY_UNASSIGNED) {
         bearer = mme_bearer_find_by_ue_ebi(mme_ue, ebi);
         if (!bearer) {
-            /* UE referenced a bearer the MME no longer has (state
-             * mismatch, e.g. after MME restart); reject so the UE
-             * re-attaches with fresh state. */
+            /*
+             * UE referenced a bearer the MME no longer has - typically a
+             * PDN deleted while the UE was ECM-IDLE (the TS 23.401
+             * 5.4.4.1 skip-path answers Delete Bearer without paging and
+             * syncs at the next contact) or a stale Deactivate Accept
+             * racing the removal. This used to Attach-Reject + release
+             * S1, tearing down the WHOLE registration (all PDNs) and
+             * feeding the re-attach churn. TS 24.301 7.3.2 case (b):
+             * answer with ESM Status cause #43 so the UE locally
+             * deactivates just that bearer.
+             */
             ogs_warn("[%s] No Bearer : EBI[%d] ESM message type[%d]; "
-                    "rejecting", mme_ue->imsi_bcd, ebi,
+                    "sending ESM Status #43", mme_ue->imsi_bcd, ebi,
                     message->esm.h.message_type);
-            r = nas_eps_send_attach_reject(enb_ue, mme_ue,
-                    OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
-                    OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
+            r = nas_eps_send_esm_status(mme_ue, ebi, pti,
+                    OGS_NAS_ESM_CAUSE_INVALID_EPS_BEARER_IDENTITY);
             ogs_expect(r == OGS_OK);
-            mme_send_s1_release_after_emm_failure(mme_ue);
             return NULL;
         }
 
@@ -9358,13 +9372,19 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
         bearer = mme_bearer_find_by_ue_ebi(mme_ue,
                 linked_eps_bearer_identity->eps_bearer_identity);
         if (!bearer) {
-            ogs_error("No Bearer : Linked-EBI[%d]",
+            /*
+             * PDN Disconnect for a PDN already deleted MME-side (idle
+             * Delete Bearer skip-path). Same rationale as the unknown-EBI
+             * case above: ESM Status #43 clears the UE's phantom PDN
+             * without nuking the registration.
+             */
+            ogs_warn("[%s] No Bearer : Linked-EBI[%d] in PDN Disconnect; "
+                    "sending ESM Status #43", mme_ue->imsi_bcd,
                     linked_eps_bearer_identity->eps_bearer_identity);
-            r = nas_eps_send_attach_reject(enb_ue, mme_ue,
-                    OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
-                    OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
+            r = nas_eps_send_esm_status(mme_ue,
+                    linked_eps_bearer_identity->eps_bearer_identity, pti,
+                    OGS_NAS_ESM_CAUSE_INVALID_EPS_BEARER_IDENTITY);
             ogs_expect(r == OGS_OK);
-            mme_send_s1_release_after_emm_failure(mme_ue);
             return NULL;
         }
     } else if (message->esm.h.message_type ==

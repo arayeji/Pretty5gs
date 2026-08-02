@@ -459,7 +459,11 @@ mme:
 #      mobile_reachable_margin: 240  # seconds added to t3412 (TS 24.301 +4min)
 #      implicit_detach_margin: 240    # added to t3412 or t3423 when set
 #    t3346:
-#      value: 7200   # optional GPRS timer 2 (congestion backoff, seconds)
+#      value: 60     # GPRS timer 2 congestion backoff, seconds (default 60;
+#                    # 0 disables). Included in Attach/TAU/Service Reject
+#                    # cause #22 so rejected UEs back off instead of
+#                    # retrying instantly (S1 is released right after a
+#                    # NAS reject, so nothing else slows the retry loop).
 #      include_any_reject: false  # default: only EMM cause #22 (congestion)
 #    t3413:
 #      value: 6     # paging retransmit (default: 6 s)
