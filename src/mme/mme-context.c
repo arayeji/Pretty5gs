@@ -4334,12 +4334,17 @@ void mme_context_reload_runtime(void)
         if (param_updated > 0) {
             ogs_reload_audit_note(
                     " global.parameter fake_csfb=%s fake_csfb_lai=%s "
-                    "ignore_sgs=%s use_openair=%s",
+                    "ignore_sgs=%s use_openair=%s openair_short_enfs=%s "
+                    "openair_omit_hashmme=%s",
                     ogs_global_conf()->parameter.fake_csfb ? "true" : "false",
                     ogs_global_conf()->parameter.fake_csfb_lai ?
                         "true" : "false",
                     ogs_global_conf()->parameter.ignore_sgs ? "true" : "false",
                     ogs_global_conf()->parameter.use_openair ?
+                        "true" : "false",
+                    ogs_global_conf()->parameter.openair_short_enfs ?
+                        "true" : "false",
+                    ogs_global_conf()->parameter.openair_omit_hashmme ?
                         "true" : "false");
             found = true;
         }

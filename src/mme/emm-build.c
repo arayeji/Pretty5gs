@@ -41,6 +41,19 @@ static bool emm_fake_csfb_lai_enabled(void)
            ogs_global_conf()->parameter.fake_csfb_lai == true;
 }
 
+/* use_openair keeps both quirks on for backward compatibility. */
+static bool emm_openair_short_enfs(void)
+{
+    return ogs_global_conf()->parameter.use_openair == true ||
+           ogs_global_conf()->parameter.openair_short_enfs == true;
+}
+
+static bool emm_openair_omit_hashmme(void)
+{
+    return ogs_global_conf()->parameter.use_openair == true ||
+           ogs_global_conf()->parameter.openair_omit_hashmme == true;
+}
+
 static mme_p_tmsi_t emm_fake_csfb_ptmsi(mme_ue_t *mme_ue)
 {
     mme_p_tmsi_t ptmsi = INVALID_P_TMSI;
@@ -195,18 +208,12 @@ ogs_pkbuf_t *emm_build_attach_accept(
 
     if (mme_ue->network_access_mode == OGS_NETWORK_ACCESS_MODE_ONLY_PACKET) {
         /*
-         * HSS NAM = packet-only → EPS Attach by default.
-         * fake_csfb may still advertise Combined when the UE asked for
-         * Combined; emm_fill_fake_csfb_lai_ms_identity() then supplies
-         * LAI + P-TMSI so the Accept is NAS-well-formed (TS 24.301).
+         * HSS NAM = packet-only → always EPS Attach.
+         * fake_csfb must not override this subscriber restriction
+         * (TS 23.401 / TS 29.272 Network-Access-Mode). Combined request
+         * then gets EMM cause 18 below.
          */
         eps_attach_result->result = OGS_NAS_ATTACH_TYPE_EPS_ATTACH;
-        if (ogs_global_conf()->parameter.fake_csfb == true &&
-            !mme_ue->sgs_cs_unavailable &&
-            mme_ue->nas_eps.attach.value ==
-                OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH)
-            eps_attach_result->result =
-                OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH;
     } else if (mme_ue->nas_eps.attach.value ==
                 OGS_NAS_ATTACH_TYPE_COMBINED_EPS_IMSI_ATTACH &&
             (mme_ue->sgs_cs_unavailable ||
@@ -218,7 +225,8 @@ ogs_pkbuf_t *emm_build_attach_accept(
          *  - ignore_sgs / no csmap (SGs LU never started, so
          *    sgs_cs_unavailable stays false — historically this path
          *    wrongly kept Combined without LAI).
-         * fake_csfb may still force Combined + synthetic LAI/P-TMSI.
+         * fake_csfb may still force Combined + synthetic LAI/P-TMSI
+         * when the HSS allows CS (NAM != ONLY_PACKET).
          */
         if (ogs_global_conf()->parameter.fake_csfb == true &&
             !mme_ue->sgs_cs_unavailable)
@@ -378,7 +386,7 @@ ogs_pkbuf_t *emm_build_attach_accept(
 
     attach_accept->presencemask |=
         OGS_NAS_EPS_ATTACH_ACCEPT_EPS_NETWORK_FEATURE_SUPPORT_PRESENT;
-    if (ogs_global_conf()->parameter.use_openair == false) {
+    if (emm_openair_short_enfs() == false) {
         eps_network_feature_support->length = 2;
     } else {
         eps_network_feature_support->length = 1;
@@ -669,9 +677,11 @@ ogs_pkbuf_t *emm_build_security_mode_command(mme_ue_t *mme_ue)
      * in the SECURITY MODE COMMAND message
      *
      * However, Openair UE does not support HashMME. For user convenience,
-     * we added a way not to include HashMME through the configuration file.
+     * omit HashMME via openair_omit_hashmme (or use_openair umbrella).
+     * Prefer openair_short_enfs alone when only ENFS length is needed —
+     * omitting HashMME weakens bidding-down protection (TS 33.401).
      */
-    if (ogs_global_conf()->parameter.use_openair == false) {
+    if (emm_openair_omit_hashmme() == false) {
         security_mode_command->presencemask |=
             OGS_NAS_EPS_SECURITY_MODE_COMMAND_HASHMME_PRESENT;
         hashmme->length = OGS_HASH_MME_LEN;
@@ -761,7 +771,8 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
     message.emm.h.protocol_discriminator = OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM;
     message.emm.h.message_type = OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT;
 
-    if (!mme_ue->sgs_cs_unavailable &&
+    if (mme_ue->network_access_mode != OGS_NETWORK_ACCESS_MODE_ONLY_PACKET &&
+        !mme_ue->sgs_cs_unavailable &&
         (mme_ue->nas_eps.update.value ==
             OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING ||
          mme_ue->nas_eps.update.value ==
@@ -771,6 +782,10 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
         tau_accept->eps_update_result.result =
             OGS_NAS_EPS_UPDATE_RESULT_COMBINED_TA_LA_UPDATED;
     } else {
+        /*
+         * TA-updated only: CS unavailable, no P-TMSI/fake_csfb, or
+         * HSS NAM = packet-only (fake_csfb must not override NAM).
+         */
         tau_accept->eps_update_result.result =
             OGS_NAS_EPS_UPDATE_RESULT_TA_UPDATED;
         if ((mme_ue->nas_eps.update.value ==
@@ -907,7 +922,7 @@ ogs_pkbuf_t *emm_build_tau_accept(mme_ue_t *mme_ue)
     /* Set EPS network feature support */
     tau_accept->presencemask |=
         OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_EPS_NETWORK_FEATURE_SUPPORT_PRESENT;
-    if (ogs_global_conf()->parameter.use_openair == false) {
+    if (emm_openair_short_enfs() == false) {
         tau_accept->eps_network_feature_support.length = 2;
     } else {
         tau_accept->eps_network_feature_support.length = 1;

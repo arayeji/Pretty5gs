@@ -310,6 +310,12 @@ int ogs_app_parse_global_conf(ogs_yaml_iter_t *parent)
                 } else if (!strcmp(parameter_key, "use_openair")) {
                     global_conf.parameter.use_openair =
                         ogs_yaml_iter_bool(&parameter_iter);
+                } else if (!strcmp(parameter_key, "openair_short_enfs")) {
+                    global_conf.parameter.openair_short_enfs =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                } else if (!strcmp(parameter_key, "openair_omit_hashmme")) {
+                    global_conf.parameter.openair_omit_hashmme =
+                        ogs_yaml_iter_bool(&parameter_iter);
                 } else if (!strcmp(parameter_key, "use_upg_vpp")) {
                     global_conf.parameter.use_upg_vpp =
                         ogs_yaml_iter_bool(&parameter_iter);
@@ -537,6 +543,14 @@ int ogs_app_reload_parameter_scalars(void)
                     applied++;
                 } else if (!strcmp(parameter_key, "use_openair")) {
                     global_conf.parameter.use_openair =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                    applied++;
+                } else if (!strcmp(parameter_key, "openair_short_enfs")) {
+                    global_conf.parameter.openair_short_enfs =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                    applied++;
+                } else if (!strcmp(parameter_key, "openair_omit_hashmme")) {
+                    global_conf.parameter.openair_omit_hashmme =
                         ogs_yaml_iter_bool(&parameter_iter);
                     applied++;
                 }

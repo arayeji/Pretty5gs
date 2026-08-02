@@ -68,7 +68,14 @@ typedef struct ogs_global_conf_s {
         int prefer_ipv4;
         int multicast;
 
+        /*
+         * OpenAir / legacy NAS quirks (all UEs when set).
+         * use_openair enables both behaviours below (backward compatible).
+         * Prefer the split flags so HashMME can stay on while shortening ENFS.
+         */
         int use_openair;
+        int openair_short_enfs;      /* Attach/TAU ENFS length 1 instead of 2 */
+        int openair_omit_hashmme;    /* omit HashMME IE from SMC (security tradeoff) */
         int fake_csfb;
         /*
          * When fake_csfb is true: also synthesize LAI + P-TMSI on Combined
@@ -252,7 +259,8 @@ int ogs_app_global_conf_prepare(void);
 int ogs_app_parse_global_conf(ogs_yaml_iter_t *parent);
 /*
  * Hot-reload the scalar global.parameter flags that are safe to flip
- * without restarting (fake_csfb, fake_csfb_lai, ignore_sgs, use_openair).
+ * without restarting (fake_csfb, fake_csfb_lai, ignore_sgs, use_openair,
+ * openair_short_enfs, openair_omit_hashmme).
  * Keys absent from the new document keep their previous value. Returns
  * how many of those keys were present and applied.
  */

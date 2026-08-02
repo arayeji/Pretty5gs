@@ -413,8 +413,26 @@
     "default": false,
     "group": "global",
     "reload": "sighup",
-    "description": "Legacy NAS: short ENFS + omit HashMME (all UEs)",
+    "description": "Umbrella: short ENFS + omit HashMME (all UEs); prefer split flags",
     "notes": "ogs_app_reload_parameter_scalars"
+  },
+  {
+    "path": "global.parameter.openair_short_enfs",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "sighup",
+    "description": "1-byte EPS Network Feature Support on Attach/TAU Accept",
+    "notes": "ogs_app_reload_parameter_scalars; also on when use_openair"
+  },
+  {
+    "path": "global.parameter.openair_omit_hashmme",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "sighup",
+    "description": "Omit HashMME from SMC (security tradeoff)",
+    "notes": "ogs_app_reload_parameter_scalars; also on when use_openair"
   },
   {
     "path": "global.parameter.use_upg_vpp",

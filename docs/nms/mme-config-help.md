@@ -95,7 +95,7 @@ Parsed by `ogs_app_parse_global_conf` (`lib/app/ogs-config.c`). Full row list is
 | `global.max.gtp_peer` / sess / bearer / … | **0** → derived |
 | `global.parameter.*` bools | **false** |
 | `global.sockopt.no_delay` | **true** |
-| `global.parameter.fake_csfb` / `ignore_sgs` / `use_openair` | **false**; **SIGHUP** |
+| `global.parameter.fake_csfb` / `ignore_sgs` / `use_openair` / `openair_short_enfs` / `openair_omit_hashmme` | **false**; **SIGHUP** |
 | `global.parameter.fake_csfb_lai` | **true** (with fake_csfb); **SIGHUP** |
 
 ### `global.time` — sample-only / unused
@@ -154,10 +154,10 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 - **Reload:** `restart`
 - **Evidence:** `lib/app/ogs-config.c:ogs_app_parse_global_conf`
 
-### `global.parameter.fake_csfb` / `fake_csfb_lai` / `ignore_sgs` / `use_openair`
+### `global.parameter.fake_csfb` / `fake_csfb_lai` / `ignore_sgs` / `use_openair` / `openair_short_enfs` / `openair_omit_hashmme`
 
 - **What:** Hot-reloadable `global.parameter` scalars.
-- **Defaults:** `fake_csfb`/`ignore_sgs`/`use_openair` = `false`; `fake_csfb_lai` = `true`
+- **Defaults:** `fake_csfb`/`ignore_sgs`/`use_openair`/`openair_short_enfs`/`openair_omit_hashmme` = `false`; `fake_csfb_lai` = `true`
 - **Reload:** `sighup` via `ogs_app_reload_parameter_scalars`
 - **Evidence:** `mme-context.c:mme_context_reload_runtime` → `ogs_app_reload_parameter_scalars`
 
@@ -943,7 +943,7 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 - **Type:** `boolean`
 - **Default when omitted:** `False`
 - **Reload:** `sighup`
-- **Notes / quirks:** Does not upgrade EPS-only requests. Pair with `fake_csfb_lai` for synthetic LAI/P-TMSI. Not a real CS registration.
+- **Notes / quirks:** Does not upgrade EPS-only requests. Does **not** override HSS `Network-Access-Mode=ONLY_PACKET` (subscriber stays EPS-only / TA-updated with EMM cause 18). Pair with `fake_csfb_lai` for synthetic LAI/P-TMSI. Not a real CS registration.
 - **Evidence:** `src/mme/emm-build.c`
 
 ### `global.parameter.fake_csfb_lai`
@@ -966,12 +966,30 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 
 ### `global.parameter.use_openair`
 
-- **What:** Legacy/OpenAir NAS quirks for all UEs: 1-byte EPS network feature support and omit HashMME on SMC.
+- **What:** Umbrella for both OpenAir quirks below (short ENFS + omit HashMME). Kept for backward compatibility.
 - **Type:** `boolean`
 - **Default when omitted:** `False`
 - **Reload:** `sighup`
-- **Notes / quirks:** Applies globally; leave false for commercial UEs.
+- **Notes / quirks:** Prefer the split flags. Applies to all UEs when true.
 - **Evidence:** `lib/app/ogs-config.c:ogs_app_reload_parameter_scalars`, `src/mme/emm-build.c`
+
+### `global.parameter.openair_short_enfs`
+
+- **What:** Emit 1-byte EPS Network Feature Support on Attach/TAU Accept (OpenAir compatibility). Does not omit HashMME.
+- **Type:** `boolean`
+- **Default when omitted:** `False`
+- **Reload:** `sighup`
+- **Notes / quirks:** Also enabled when `use_openair` is true. Safe compatibility quirk vs commercial UEs that expect 2-byte ENFS.
+- **Evidence:** `src/mme/emm-build.c`
+
+### `global.parameter.openair_omit_hashmme`
+
+- **What:** Omit HashMME IE from Security Mode Command (OpenAir UEs that reject HashMME).
+- **Type:** `boolean`
+- **Default when omitted:** `False`
+- **Reload:** `sighup`
+- **Notes / quirks:** Also enabled when `use_openair` is true. Security tradeoff: weakens bidding-down protection on unprotected Attach/TAU (TS 33.401). Prefer leaving false and using `openair_short_enfs` alone when possible.
+- **Evidence:** `src/mme/emm-build.c`
 
 ## Overload
 

@@ -64,7 +64,9 @@ their previous value.
 | `global.parameter.fake_csfb` | yes | Combined Accept when UE asked Combined |
 | `global.parameter.fake_csfb_lai` | yes | with fake_csfb: synthesize LAI+P-TMSI (default true; alias `fake_csfb_ptmsi`) |
 | `global.parameter.ignore_sgs` | yes | skip SGsAP Location Update (e.g. roamers); no VLR |
-| `global.parameter.use_openair` | yes | legacy NAS: short ENFS + omit HashMME (all UEs) |
+| `global.parameter.use_openair` | yes | umbrella: short ENFS + omit HashMME (all UEs) |
+| `global.parameter.openair_short_enfs` | yes | 1-byte ENFS on Attach/TAU Accept |
+| `global.parameter.openair_omit_hashmme` | yes | omit HashMME on SMC (security tradeoff) |
 | other `global.parameter.*` | **no** | restart required |
 
 ---
