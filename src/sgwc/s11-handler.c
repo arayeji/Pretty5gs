@@ -1153,6 +1153,12 @@ void sgwc_s11_handle_modify_bearer_request(
                 sess->id, current_xact,
                 (unsigned long long)current_xact->modify_flags, bearer->ebi);
 
+        /*
+         * Also covers in-flight DROP/REARM/DROBU xacts that
+         * sgwc_pfcp_find_session_modify_xact() would miss (exact flag
+         * match). Single embedded to_modify_node — must unlink first.
+         */
+        sgwc_bearer_unlink_to_modify(bearer, sess->pfcp_node);
         ogs_list_add(&current_xact->bearer_to_modify_list,
                         &bearer->to_modify_node);
 next_bearer:
@@ -2234,8 +2240,19 @@ out:
         if (sgwc_self()->ddn_holddown_s)
             sess->ddn_holddown_until = ogs_time_now() +
                 ogs_time_from_sec(sgwc_self()->ddn_holddown_s);
-        if (sgwc_sess_send_dl_drobu(sess) != OGS_OK)
-            ogs_error("DROBU after Unable-to-page failed");
+        {
+            int drv = sgwc_sess_send_dl_drobu(sess);
+            if (drv == OGS_RETRY) {
+                /* Modify in flight (e.g. MBR ACTIVATE). Holddown sweep
+                 * will DROBU when the race clears. */
+                sess->ddn_suppressed = true;
+                ogs_info("[%s] DROBU deferred (modify in flight); "
+                        "holddown will retry",
+                        sgwc_ue ? sgwc_ue->imsi_bcd : "unknown");
+            } else if (drv != OGS_OK) {
+                ogs_error("DROBU after Unable-to-page failed");
+            }
+        }
     }
 
     ogs_info("Downlink Data Notification Acknowledge%s%s",

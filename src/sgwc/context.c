@@ -2926,12 +2926,17 @@ int sgwc_sess_send_dl_far_drop(sgwc_sess_t *sess)
         return OGS_OK;
     }
 
-    if (sgwc_pfcp_send_session_modification_request(
-            sess, OGS_INVALID_POOL_ID, NULL,
-            OGS_PFCP_MODIFY_DL_ONLY | OGS_PFCP_MODIFY_DROP) != OGS_OK) {
-        ogs_error("DL FAR DROP Session Modification failed sess_id[%d]",
-                sess->id);
-        return OGS_ERROR;
+    {
+        int rv = sgwc_pfcp_send_session_modification_request(
+                sess, OGS_INVALID_POOL_ID, NULL,
+                OGS_PFCP_MODIFY_DL_ONLY | OGS_PFCP_MODIFY_DROP);
+        if (rv == OGS_RETRY)
+            return OGS_RETRY; /* modify in flight; leave CP state */
+        if (rv != OGS_OK) {
+            ogs_error("DL FAR DROP Session Modification failed sess_id[%d]",
+                    sess->id);
+            return OGS_ERROR;
+        }
     }
 
     sgwc_sess_clear_dl_buffering(sess);
@@ -2975,12 +2980,17 @@ int sgwc_sess_send_dl_far_rearm(sgwc_sess_t *sess)
         return OGS_OK;
     }
 
-    if (sgwc_pfcp_send_session_modification_request(
-            sess, OGS_INVALID_POOL_ID, NULL,
-            OGS_PFCP_MODIFY_DL_ONLY | OGS_PFCP_MODIFY_REARM) != OGS_OK) {
-        ogs_error("DL FAR re-arm Session Modification failed sess_id[%d]",
-                sess->id);
-        return OGS_ERROR;
+    {
+        int rv = sgwc_pfcp_send_session_modification_request(
+                sess, OGS_INVALID_POOL_ID, NULL,
+                OGS_PFCP_MODIFY_DL_ONLY | OGS_PFCP_MODIFY_REARM);
+        if (rv == OGS_RETRY)
+            return OGS_RETRY; /* modify in flight; leave CP state */
+        if (rv != OGS_OK) {
+            ogs_error("DL FAR re-arm Session Modification failed sess_id[%d]",
+                    sess->id);
+            return OGS_ERROR;
+        }
     }
 
     /* build path set BUFF|NOCP + noted dl_buff_since */
@@ -3005,12 +3015,17 @@ int sgwc_sess_send_dl_drobu(sgwc_sess_t *sess)
         return OGS_OK;
     }
 
-    if (sgwc_pfcp_send_session_modification_request(
-            sess, OGS_INVALID_POOL_ID, NULL,
-            OGS_PFCP_MODIFY_DL_ONLY | OGS_PFCP_MODIFY_DROBU) != OGS_OK) {
-        ogs_error("DROBU Session Modification failed sess_id[%d]",
-                sess->id);
-        return OGS_ERROR;
+    {
+        int rv = sgwc_pfcp_send_session_modification_request(
+                sess, OGS_INVALID_POOL_ID, NULL,
+                OGS_PFCP_MODIFY_DL_ONLY | OGS_PFCP_MODIFY_DROBU);
+        if (rv == OGS_RETRY)
+            return OGS_RETRY; /* modify in flight; caller may retry */
+        if (rv != OGS_OK) {
+            ogs_error("DROBU Session Modification failed sess_id[%d]",
+                    sess->id);
+            return OGS_ERROR;
+        }
     }
 
     SGWC_DL_STAT_INC(drobu_sent);
@@ -3090,14 +3105,25 @@ int sgwc_buffer_idle_sweep(int *out_dropped)
                  */
                 if (sess->ddn_suppressed &&
                         now >= sess->ddn_holddown_until) {
-                    sess->ddn_suppressed = false;
-                    sess->ddn_holddown_until = 0;
+                    int drv;
+
                     ogs_debug("[%s] ddn_holddown expired: DROBU APN[%s]",
                             sgwc_ue->imsi_bcd,
                             sess->session.name ? sess->session.name : "");
-                    if (sgwc_sess_send_dl_drobu(sess) != OGS_OK)
+                    drv = sgwc_sess_send_dl_drobu(sess);
+                    if (drv == OGS_OK) {
+                        sess->ddn_suppressed = false;
+                        sess->ddn_holddown_until = 0;
+                    } else if (drv == OGS_RETRY) {
+                        /* Keep suppressed; next sweep retries DROBU. */
+                        ogs_debug("holddown DROBU deferred sess_id[%d]",
+                                sess->id);
+                    } else {
                         ogs_error("holddown DROBU failed sess_id[%d]",
                                 sess->id);
+                        sess->ddn_suppressed = false;
+                        sess->ddn_holddown_until = 0;
+                    }
                     continue;
                 }
 
