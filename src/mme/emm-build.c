@@ -41,8 +41,15 @@ static bool emm_fake_csfb_enabled(void)
 
 static bool emm_fake_csfb_lai_enabled(void)
 {
-    return emm_fake_csfb_enabled() &&
-           ogs_global_conf()->parameter.fake_csfb_lai == true;
+    /*
+     * TS 24.301: LAI (+ MS identity) is conditional-mandatory when the
+     * Attach/TAU result is Combined. If fake_csfb selects Combined, we
+     * must synthesize LAI/P-TMSI — Combined without them is invalid NAS
+     * (some UEs EMM Status #101 / re-attach). The old fake_csfb_lai=0
+     * mode is therefore ignored; EPS-only remains available by turning
+     * fake_csfb off.
+     */
+    return emm_fake_csfb_enabled();
 }
 
 /* Combined result without a real SGs/VLR registration. */

@@ -3628,8 +3628,19 @@ int ogs_nas_eps_decode_access_point_name(ogs_nas_access_point_name_t *access_poi
         apn_len = ogs_fqdn_parse(apn, access_point_name->apn,
                 ogs_min(access_point_name->length, OGS_MAX_APN_LEN));
         if (apn_len <= 0) {
-            /* Malformed / empty APN from UE — not an MME fault. */
-            ogs_warn("UE not APN setting");
+            /*
+             * ogs_fqdn_parse() returns 0 for empty IE length, or
+             * -EINVAL for non-DNS-label encoding. Log length + hex so
+             * we can see whether the UE sent empty APN, plain ASCII
+             * (no label lengths), or truncated labels — "UE not APN
+             * setting" alone is useless for root-cause.
+             */
+            ogs_error("APN decode failed: ie_len=%d parse_rv=%d",
+                    access_point_name->length, apn_len);
+            if (access_point_name->length > 0)
+                ogs_log_hexdump(OGS_LOG_ERROR,
+                        (unsigned char *)access_point_name->apn,
+                        ogs_min(access_point_name->length, OGS_MAX_APN_LEN));
         } else {
             access_point_name->length = apn_len;
             ogs_cpystrn(access_point_name->apn, apn,

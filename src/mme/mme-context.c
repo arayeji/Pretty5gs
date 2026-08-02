@@ -4363,14 +4363,6 @@ void mme_context_reload_runtime(void)
     {
         int param_updated = ogs_app_reload_parameter_scalars();
 
-        if (ogs_global_conf()->parameter.fake_csfb &&
-                !ogs_global_conf()->parameter.fake_csfb_lai) {
-            ogs_warn("CONFIG reload: fake_csfb=1 with fake_csfb_lai=0 — "
-                    "forcing fake_csfb_lai=1");
-            ogs_global_conf()->parameter.fake_csfb_lai = 1;
-            param_updated++;
-        }
-
         if (param_updated > 0) {
             ogs_reload_audit_note(
                     " global.parameter fake_csfb=%s fake_csfb_lai=%s "
