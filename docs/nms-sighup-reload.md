@@ -54,6 +54,23 @@ Top-level section in each NF YAML (`mme.yaml`, `smf.yaml`, `sgwc.yaml`).
 
 ---
 
+## Global parameters (`global.parameter` in MME YAML)
+
+Applied by the MME SIGHUP handler. Keys absent from the new document keep
+their previous value.
+
+| YAML path | SIGHUP | Notes |
+|-----------|--------|-------|
+| `global.parameter.fake_csfb` | yes | SMS-only Combined Accept when UE asked Combined+SMS only |
+| `global.parameter.fake_csfb_lai` | yes | with fake_csfb: synthesize LAI+P-TMSI (default true; alias `fake_csfb_ptmsi`) |
+| `global.parameter.ignore_sgs` | yes | skip SGsAP Location Update (e.g. roamers); no VLR |
+| `global.parameter.use_openair` | yes | umbrella: short ENFS + omit HashMME (all UEs) |
+| `global.parameter.openair_short_enfs` | yes | 1-byte ENFS on Attach/TAU Accept |
+| `global.parameter.openair_omit_hashmme` | yes | omit HashMME on SMC (security tradeoff) |
+| other `global.parameter.*` | **no** | restart required |
+
+---
+
 ## MME (`/etc/open5gs/mme.yaml` → `mme:`)
 
 ### Timers — `mme.time.*`
@@ -93,6 +110,28 @@ Top-level section in each NF YAML (`mme.yaml`, `smf.yaml`, `sgwc.yaml`).
 
 Peer entry fields on add/sync: `address`, `port`, `family`, `tac`, `e_cell_id`, `apn`, `serving_plmn_id`, `plmn_id` (IMSI-PLMN rules).
 
+### SGs / VLR — `mme.sgsap.*`
+
+| YAML path | SIGHUP | Notes |
+|-----------|--------|-------|
+| `mme.sgsap.client[].map[]` | yes | TAI-LAI table: entries added, updated in place, or retired. A map entry is keyed by `tai.plmn_id` + `tac`/`tac_end` + `imsi_prefix`, so editing only `lai` updates the existing entry |
+| `mme.sgsap.client[]` (new address) | yes | new VLR is added and its SCTP association started |
+| `mme.sgsap.client[].address` (changed) | **no** | reads as "new VLR added, old one missing": the new one connects, the old association is kept — restart to drop it |
+| `mme.sgsap.client[]` (removed) | **no** | association kept, warned in the audit — restart required |
+| `mme.sgsap.client[].local_address` / `port` / `option` | **no** | bind/transport — restart required, change is ignored with an audit warning |
+| `mme.sgsap.max_csmap` | yes | parse-time cap only |
+
+Reload is add/update-only by design: rebinding a VLR would drop SGs for every
+CSFB subscriber on it and force them all to re-run Location Update.
+
+Map entries dropped from the file are unlinked from the lookup path
+immediately, but the objects are freed only once no attached UE still points
+at one (a UE holds its `csmap` until it detaches or runs another TAU). The
+audit line reports both counts, e.g.
+`sgsap vlr+0 map+3 map~11 map-2 (freed 1, 1 pinned by attached UEs)`.
+
+A malformed `mme.sgsap` block leaves the previous table in place.
+
 ### Lists — full replace when key present
 
 | YAML path | SIGHUP | Notes |
@@ -110,9 +149,12 @@ Peer entry fields on add/sync: `address`, `port`, `family`, `tac`, `e_cell_id`, 
 | YAML path | SIGHUP |
 |-----------|--------|
 | `mme.attach_accept.tai_list` (`serving_only` / `all`) | yes |
+| `mme.attach_accept.equivalent_plmn` (boolean IE switch) | yes |
 | `mme.attach_accept.equivalent_plmn_serving_only` | yes |
+| `mme.attach_accept.equivalent_plmn_access_control_tac` | yes |
 | `mme.attach_accept.ims_voice_over_ps` | yes |
 | `mme.equivalent_plmn_serving_only` | yes |
+| `mme.equivalent_plmn_access_control_tac` | yes |
 | `mme.ims_voice_over_ps_in_s1_mode` | yes |
 | `mme.tai_list_in_accept` | yes |
 | `mme.require_hss_map` | yes |

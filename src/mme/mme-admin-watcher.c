@@ -140,9 +140,9 @@ static void on_tac_add(
     ogs_cpystrn(e->admin_mnc, mnc, sizeof(e->admin_mnc));
     e->admin_tac = tac;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
-        ogs_error("admin-watcher: ogs_queue_push() failed:%d", rv);
+        ogs_error("admin-watcher: event dropped:%d", rv);
         mme_event_free(e);
     }
 }

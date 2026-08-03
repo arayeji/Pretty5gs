@@ -29,6 +29,9 @@
 #include "mme-path.h"    /* orphan-sweep heartbeat accessors */
 
 #include "admin-api.h"   /* pulls in ogs-metrics.h */
+#include "s1ap-tx.h"     /* TX offload queue depths (/admin/queues) */
+#include "s1ap-io.h"     /* IO command queue depth (/admin/queues) */
+#include "mme-gtp-path.h" /* GTP-C RX thread state (/admin/queues) */
 #include "mme-li.h"
 #include "mme-pgw-host.h"
 #include "mme-pgw-dns.h"
@@ -140,7 +143,7 @@ int mme_admin_enb_detach(const ogs_metrics_query_t *q,
     e->enb_id = enb_pool_id;
     e->admin_force = q->force ? 1 : 0;
 
-    int rv = ogs_queue_push(ogs_app()->queue, e);
+    int rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
         mme_event_free(e);
         *body_len = fmt_json_status(body, body_cap,
@@ -294,7 +297,7 @@ static int mme_admin_maintenance_queue(mme_event_e id, int force,
     }
     e->admin_force = force;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
         mme_event_free(e);
         *body_len = fmt_json_status(body, body_cap,
@@ -309,16 +312,33 @@ static int mme_admin_maintenance_queue(mme_event_e id, int force,
     return ADMIN_HTTP_ACCEPTED;
 }
 
+/*
+ * Counting these means walking every mme_ue under mme_ctx_lock(), which is
+ * the one global mutex every mme_ue_find_by_id() on every worker also needs.
+ * At a few hundred thousand contexts that walk starves the whole MME - a
+ * capture during a production stall showed this function holding the mutex
+ * with 17 of 75 threads blocked on it and the S11 receive queue overflowing.
+ * Nothing here is worth stalling call processing for, so the counts are
+ * computed at most once per TTL and served from cache in between. Callers
+ * see how stale they are via counts_age_s.
+ */
+#define MME_MAINT_COUNTS_TTL ogs_time_from_sec(10)
+
+static ogs_time_t maint_counts_time;
+static int maint_ue_count, maint_sessionless, maint_idle;
+static int maint_will_remove, maint_orphan_candidates;
+
 size_t mme_dump_maintenance_status(char *buf, size_t buflen,
         size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
-    int ue_count = 0;
-    int sessionless = 0, idle = 0, will_remove = 0, orphan_candidates = 0;
+    int ue_count, sessionless, idle, will_remove, orphan_candidates;
     bool maintenance = false;
     bool drain_active = false;
     unsigned drain_processed = 0;
     int written;
     mme_ue_t *mme_ue = NULL;
+    ogs_time_t now;
+    long long counts_age_s;
 
     ogs_time_t sweep_last_run = 0;
     int sweep_last_purged = 0, sweep_last_remaining = 0;
@@ -332,26 +352,49 @@ size_t mme_dump_maintenance_status(char *buf, size_t buflen,
     if (!buf || buflen == 0)
         return 0;
 
+    now = ogs_time_now();
+
     ogs_metrics_dump_lock();
     maintenance = mme_self()->maintenance_mode;
     drain_active = mme_self()->drain_active;
     drain_processed = mme_self()->drain_processed;
-    ogs_list_for_each(&mme_self()->mme_ue_list, mme_ue) {
-        bool no_sess = ogs_list_empty(&mme_ue->sess_list);
-        bool is_idle = !ECM_CONNECTED(mme_ue);
 
-        ue_count++;
-        if (no_sess) sessionless++;
-        if (is_idle) idle++;
-        if (mme_ue->ue_context_will_remove) will_remove++;
-        /*
-         * What the orphan sweep is meant to reclaim: a session-less context
-         * that is not actively mid-removal. Tracks the leak directly.
-         */
-        if (no_sess &&
-                !OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
-            orphan_candidates++;
+    if (!maint_counts_time || now - maint_counts_time >= MME_MAINT_COUNTS_TTL) {
+        int n_ue = 0, n_sessionless = 0, n_idle = 0;
+        int n_will_remove = 0, n_orphan = 0;
+
+        ogs_list_for_each(&mme_self()->mme_ue_list, mme_ue) {
+            bool no_sess = ogs_list_empty(&mme_ue->sess_list);
+            bool is_idle = !ECM_CONNECTED(mme_ue);
+
+            n_ue++;
+            if (no_sess) n_sessionless++;
+            if (is_idle) n_idle++;
+            if (mme_ue->ue_context_will_remove) n_will_remove++;
+            /*
+             * What the orphan sweep is meant to reclaim: a session-less
+             * context that is not actively mid-removal. Tracks the leak
+             * directly.
+             */
+            if (no_sess && !OGS_FSM_CHECK(&mme_ue->sm,
+                        emm_state_ue_context_will_remove))
+                n_orphan++;
+        }
+
+        maint_ue_count = n_ue;
+        maint_sessionless = n_sessionless;
+        maint_idle = n_idle;
+        maint_will_remove = n_will_remove;
+        maint_orphan_candidates = n_orphan;
+        maint_counts_time = now;
     }
+
+    ue_count = maint_ue_count;
+    sessionless = maint_sessionless;
+    idle = maint_idle;
+    will_remove = maint_will_remove;
+    orphan_candidates = maint_orphan_candidates;
+    counts_age_s = (long long)ogs_time_to_sec(now - maint_counts_time);
     ogs_metrics_dump_unlock();
 
     mme_orphan_sweep_get_stats(&sweep_last_run, &sweep_last_purged,
@@ -363,12 +406,12 @@ size_t mme_dump_maintenance_status(char *buf, size_t buflen,
     written = snprintf(buf, buflen,
             "{\"maintenance\":%s,\"ue_count\":%d,"
             "\"sessionless\":%d,\"idle\":%d,\"will_remove\":%d,"
-            "\"orphan_candidates\":%d,"
+            "\"orphan_candidates\":%d,\"counts_age_s\":%lld,"
             "\"drain\":{\"active\":%s,\"processed\":%u},"
             "\"sweep\":{\"age_s\":%lld,\"last_purged\":%d,"
             "\"last_remaining\":%d,\"total_purged\":%llu}}\n",
             maintenance ? "true" : "false", ue_count,
-            sessionless, idle, will_remove, orphan_candidates,
+            sessionless, idle, will_remove, orphan_candidates, counts_age_s,
             drain_active ? "true" : "false", drain_processed,
             sweep_age_s, sweep_last_purged, sweep_last_remaining,
             (unsigned long long)sweep_total_purged);
@@ -472,12 +515,174 @@ int mme_admin_pgw_host_cache(const ogs_metrics_query_t *q,
     return 200;
 }
 
+/*
+ * /admin/queues — one-shot answer to "is the MME working or wedged?".
+ *
+ * Reports the depth of every internal queue (main event queue, UE shard
+ * workers, S1AP TX encode workers, S1AP IO command queue, CONNREFUSED
+ * side-queue), the event dispatch lag, and per-eNB TX hold state. All
+ * reads are diagnostic (torn reads acceptable, same convention as the
+ * other dumpers); the eNB list walk holds ogs_metrics_dump_lock() so
+ * main cannot free an eNB under us.
+ *
+ * verdict:
+ *   ok       - queues shallow, lag below the NAS-defer threshold
+ *   behind   - lag >= 1.5s or main queue > 75% full (overloaded but
+ *              draining; timers already defer, overload control active)
+ *   wedged   - an eNB's TX hold list has been non-empty > 15s (leaked
+ *              s1ap_tx_pending: that eNB's downlink is parked; the
+ *              watchdog will force-flush it on the next orphan sweep)
+ */
+#define QSTAT_HOLD_WEDGE_USEC   ogs_time_from_sec(15)
+
+size_t mme_dump_queue_status(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
+{
+    size_t off = 0;
+    int written, i, n;
+    unsigned int depth, cap;
+    long long lag_ms;
+    ogs_time_t now = ogs_time_now();
+    const char *verdict = "ok";
+
+    int enb_total = 0, enb_parked = 0, enb_wedged = 0;
+    mme_enb_t *enb = NULL;
+
+    (void)page;
+    (void)page_size;
+    (void)q;
+
+    if (!buf || buflen == 0)
+        return 0;
+
+#define QSTAT_APPEND(...) do { \
+        written = snprintf(buf + off, buflen - off, __VA_ARGS__); \
+        if (written < 0) return off; \
+        off += (size_t)written; \
+        if (off >= buflen) return buflen - 1; \
+    } while (0)
+
+    lag_ms = (long long)(mme_event_lag() / 1000);
+
+    depth = ogs_queue_size(ogs_app()->queue);
+    cap = ogs_queue_capacity(ogs_app()->queue);
+
+    if (lag_ms >= 1500 || (cap && depth > cap - cap / 4))
+        verdict = "behind";
+
+    QSTAT_APPEND("{\"event_lag_ms\":%lld,"
+            "\"main\":{\"depth\":%u,\"cap\":%u},"
+            "\"connrefused_depth\":%u,"
+            "\"tx_ready_depth\":%u,",
+            lag_ms, depth, cap, mme_event_s1ap_connrefused_depth(),
+            mme_event_s1ap_tx_ready_depth());
+
+    /* UE shard workers (mme.workers) */
+    QSTAT_APPEND("\"shards\":[");
+    n = mme_workers_count();
+    for (i = 0; i < n; i++) {
+        ogs_worker_t *w = mme_worker_by_id(i);
+        QSTAT_APPEND("%s{\"id\":%d,\"depth\":%u}", i ? "," : "",
+                i, w && w->queue ? ogs_queue_size(w->queue) : 0);
+    }
+    QSTAT_APPEND("],");
+
+    /* S1AP TX encode workers (mme.s1ap_tx_workers) */
+    QSTAT_APPEND("\"tx\":[");
+    n = s1ap_tx_worker_count();
+    for (i = 0; i < n; i++)
+        QSTAT_APPEND("%s{\"id\":%d,\"depth\":%u}", i ? "," : "",
+                i, s1ap_tx_queue_depth(i));
+    QSTAT_APPEND("],");
+
+    QSTAT_APPEND("\"io_depth\":%u,", s1ap_io_queue_depth());
+
+    /*
+     * Kernel RX backlog of the GTP-C socket. The internal queues can all
+     * look healthy while S11 replies rot unread in the kernel buffer
+     * (seen at 12MB Recv-Q during an attach storm) — this is the
+     * blind spot that made "GTP timeout" look like an SGW problem.
+     */
+    {
+        uint64_t rx4 = 0, rx6 = 0;
+
+        if (ogs_gtp_self()->gtpc_sock)
+            rx4 = ogs_socket_rx_backlog(ogs_gtp_self()->gtpc_sock->fd);
+        if (ogs_gtp_self()->gtpc_sock6)
+            rx6 = ogs_socket_rx_backlog(ogs_gtp_self()->gtpc_sock6->fd);
+
+        if (rx4 + rx6 >= 1024 * 1024)   /* >=1MB unread: falling behind */
+            verdict = "behind";
+
+        QSTAT_APPEND("\"gtpc_rx_backlog_bytes\":%llu,",
+                (unsigned long long)(rx4 + rx6));
+    }
+
+    QSTAT_APPEND("\"gtpc_rx_thread\":%s,",
+            mme_gtpc_rx_active() ? "true" : "false");
+
+    /*
+     * Per-eNB TX hold state: pending encode jobs + parked pkbufs.
+     * A hold list non-empty for >15s is the wedge signature.
+     */
+    QSTAT_APPEND("\"enb_hold\":[");
+    ogs_metrics_dump_lock();
+    ogs_list_for_each(&mme_self()->enb_list, enb) {
+        int pending, held = 0;
+        long long age_s = 0;
+        ogs_time_t since;
+        ogs_pkbuf_t *pk = NULL;
+        bool wedged;
+
+        enb_total++;
+
+        ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
+        pending = __atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE);
+        since = enb->s1ap_tx_hold_since;
+        ogs_list_for_each(&enb->s1ap_tx_hold, pk)
+            held++;
+        ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
+
+        if (!pending && !held)
+            continue;
+
+        enb_parked++;
+        if (since)
+            age_s = (long long)ogs_time_to_sec(now - since);
+        wedged = since && (now - since) >= QSTAT_HOLD_WEDGE_USEC;
+        if (wedged) {
+            enb_wedged++;
+            verdict = "wedged";
+        }
+
+        /* cap the detail list; counters above still cover the rest */
+        if (enb_parked <= 16)
+            QSTAT_APPEND("%s{\"enb_id\":\"0x%x\",\"pending\":%d,"
+                    "\"held\":%d,\"held_age_s\":%lld,\"wedged\":%s}",
+                    enb_parked > 1 ? "," : "",
+                    enb->enb_id, pending, held, age_s,
+                    wedged ? "true" : "false");
+    }
+    ogs_metrics_dump_unlock();
+    QSTAT_APPEND("],");
+
+    QSTAT_APPEND("\"enb\":{\"total\":%d,\"with_tx_backlog\":%d,"
+            "\"wedged\":%d},\"verdict\":\"%s\"}\n",
+            enb_total, enb_parked, enb_wedged, verdict);
+
+#undef QSTAT_APPEND
+
+    return off < buflen ? off : buflen - 1;
+}
+
 void mme_admin_api_register(void)
 {
     ogs_metrics_register_custom_ep(mme_dump_runtime_config,
             "/admin/config");
     ogs_metrics_register_custom_ep(mme_dump_maintenance_status,
             "/admin/maintenance");
+    ogs_metrics_register_custom_ep(mme_dump_queue_status,
+            "/admin/queues");
 
     ogs_metrics_register_admin_ep(mme_admin_enb_detach,
             "/admin/enb/detach",

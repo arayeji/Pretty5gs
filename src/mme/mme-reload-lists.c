@@ -24,6 +24,8 @@
 #include "eplmn-config.h"
 #include "mme-reload-lists.h"
 #include "mme-inbound-roam-apn.h"
+#include "mme-apn-policy.h"
+#include "s1ap-overload.h"
 
 volatile int mme_reload_lists_changed = 0;
 
@@ -66,11 +68,15 @@ static void reload_gtpc_resort_sgw_list(void)
 
     qsort(nodes, n, sizeof(nodes[0]), reload_gtpc_sgw_order_cmp);
 
+    /* relink under the sgw_list lock: the GTP-C RX thread may be
+     * walking this list in mme_sgw_find_by_addr() right now */
+    mme_sgw_list_lock();
     while ((sgw = ogs_list_first(&mme_self()->sgw_list)) != NULL)
         ogs_list_remove(&mme_self()->sgw_list, sgw);
 
     for (i = 0; i < n; i++)
         ogs_list_add(&mme_self()->sgw_list, nodes[i]);
+    mme_sgw_list_unlock();
 }
 
 static void reload_gtpc_resort_pgw_list(void)
@@ -181,6 +187,140 @@ static void reload_gtpc_client_parse_plmn_id_key(
     }
 }
 
+/* Mirror of the anonymous served_tai element in mme_context_t */
+typedef struct reload_served_tai_entry_s {
+    ogs_eps_tai0_list_t *list0;
+    ogs_eps_tai1_list_t list1;
+    ogs_eps_tai2_list_t list2;
+} reload_served_tai_entry_t;
+
+typedef struct reload_tai_fp_s {
+    uint8_t plmn[OGS_PLMN_ID_LEN];
+    uint16_t tac;
+} reload_tai_fp_t;
+
+static int reload_tai_fp_cmp(const void *a, const void *b)
+{
+    const reload_tai_fp_t *x = a;
+    const reload_tai_fp_t *y = b;
+    int c = memcmp(x->plmn, y->plmn, OGS_PLMN_ID_LEN);
+
+    if (c)
+        return c;
+    return (x->tac > y->tac) - (x->tac < y->tac);
+}
+
+static void reload_tai_fp_push(reload_tai_fp_t **fps, int *n, int *cap,
+        const ogs_plmn_id_t *plmn_id, uint16_t tac)
+{
+    reload_tai_fp_t *slot;
+
+    ogs_assert(plmn_id && fps && n && cap);
+
+    if (*n >= *cap) {
+        *cap = *cap ? (*cap * 2) : 128;
+        *fps = ogs_realloc(*fps, sizeof(**fps) * (size_t)(*cap));
+        ogs_assert(*fps);
+    }
+
+    slot = &(*fps)[*n];
+    memcpy(slot->plmn, plmn_id, OGS_PLMN_ID_LEN);
+    slot->tac = tac;
+    (*n)++;
+}
+
+static void reload_tai_fp_collect(const reload_served_tai_entry_t *table,
+        int num, reload_tai_fp_t **out_fps, int *out_n)
+{
+    reload_tai_fp_t *fps = NULL;
+    int n = 0, cap = 0;
+    int i, j, k;
+
+    ogs_assert(out_fps && out_n);
+    *out_fps = NULL;
+    *out_n = 0;
+
+    if (!table || num <= 0)
+        return;
+
+    for (i = 0; i < num; i++) {
+        const ogs_eps_tai0_list_t *list0 = table[i].list0;
+        const ogs_eps_tai1_list_t *list1 = &table[i].list1;
+        const ogs_eps_tai2_list_t *list2 = &table[i].list2;
+
+        if (list0) {
+            for (j = 0; j < (int)ogs_app_max_eps_tai0_partial_list() &&
+                    list0->tai[j].num; j++) {
+                for (k = 0; k < list0->tai[j].num; k++)
+                    reload_tai_fp_push(&fps, &n, &cap,
+                            &list0->tai[j].plmn_id, list0->tai[j].tac[k]);
+            }
+        }
+
+        for (j = 0; list1->tai[j].num; j++) {
+            uint16_t base = list1->tai[j].tac;
+            uint16_t count = list1->tai[j].num;
+            uint16_t t;
+
+            for (t = 0; t < count; t++)
+                reload_tai_fp_push(&fps, &n, &cap,
+                        &list1->tai[j].plmn_id, (uint16_t)(base + t));
+        }
+
+        if (list2->num) {
+            for (j = 0; j < list2->num; j++)
+                reload_tai_fp_push(&fps, &n, &cap,
+                        &list2->tai[j].plmn_id, list2->tai[j].tac);
+        }
+    }
+
+    if (n > 1)
+        qsort(fps, (size_t)n, sizeof(*fps), reload_tai_fp_cmp);
+
+    /* Dedup after sort (list0+list2 can overlap during transitions). */
+    if (n > 1) {
+        int w = 1;
+
+        for (i = 1; i < n; i++) {
+            if (reload_tai_fp_cmp(&fps[i], &fps[w - 1]) != 0)
+                fps[w++] = fps[i];
+        }
+        n = w;
+    }
+
+    *out_fps = fps;
+    *out_n = n;
+}
+
+static void reload_tai_fp_diff(const reload_tai_fp_t *old_fps, int old_n,
+        const reload_tai_fp_t *new_fps, int new_n,
+        int *added, int *removed)
+{
+    int i = 0, j = 0;
+
+    ogs_assert(added && removed);
+    *added = 0;
+    *removed = 0;
+
+    while (i < old_n && j < new_n) {
+        int c = reload_tai_fp_cmp(&old_fps[i], &new_fps[j]);
+
+        if (c == 0) {
+            i++;
+            j++;
+        } else if (c < 0) {
+            (*removed)++;
+            i++;
+        } else {
+            (*added)++;
+            j++;
+        }
+    }
+
+    *removed += old_n - i;
+    *added += new_n - j;
+}
+
 static ogs_eps_tai0_list_t *reload_served_tai_list0(int index)
 {
     mme_context_t *self = mme_self();
@@ -250,9 +390,6 @@ static int reload_served_tai_add_one(
         /* the dedup lookup above rebuilds the map lazily, so every
          * mutation must dirty it again */
         mme_served_tai_map_invalidate();
-        mme_reload_lists_changed++;
-        ogs_reload_audit_note(" served TAI added PLMN=%06x TAC=0x%04x",
-                ogs_plmn_id_hexdump(plmn_id), tac);
         added = 1;
         goto out;
     }
@@ -272,9 +409,6 @@ static int reload_served_tai_add_one(
     list2->num = 1;
     self->num_of_served_tai++;
     mme_served_tai_map_invalidate();
-    mme_reload_lists_changed++;
-    ogs_reload_audit_note(" served TAI added PLMN=%06x TAC=0x%04x",
-            ogs_plmn_id_hexdump(plmn_id), tac);
     added = 1;
 
 out:
@@ -443,6 +577,61 @@ static void reload_sgw_ecell_add(mme_sgw_t *sgw, uint32_t e_cell_id)
 
     sgw->e_cell_id[sgw->num_of_e_cell_id++] = e_cell_id;
     mme_reload_lists_changed++;
+}
+
+/*
+ * The gtpc client reload merges YAML into the existing peers, so deleting a
+ * selection rule (tac / e_cell_id / plmn_id / imsi_prefix) from an entry used
+ * to have no effect: the peer kept matching on the rule that was no longer in
+ * the file. Wipe the rules on every peer before the entries are re-applied so
+ * a reload is a replace, not an append. Duplicate YAML entries for the same
+ * address still accumulate, because the wipe happens once per reload pass and
+ * not per entry.
+ */
+static void reload_sgw_clear_all_rules(void)
+{
+    mme_sgw_t *sgw = NULL;
+
+    ogs_list_for_each(&mme_self()->sgw_list, sgw) {
+        if (sgw->num_of_tac || sgw->num_of_e_cell_id ||
+            sgw->serving_plmn_present || sgw->imsi_plmn_present ||
+            sgw->imsi_prefix[0])
+            mme_reload_lists_changed++;
+
+        sgw->num_of_tac = 0;
+        sgw->num_of_e_cell_id = 0;
+        sgw->serving_plmn_present = false;
+        sgw->imsi_plmn_present = false;
+        sgw->imsi_prefix[0] = '\0';
+    }
+}
+
+static void reload_pgw_clear_all_rules(void)
+{
+    mme_pgw_t *pgw = NULL;
+    int i;
+
+    ogs_list_for_each(&mme_self()->pgw_list, pgw) {
+        if (pgw->num_of_apn || pgw->num_of_tac || pgw->num_of_e_cell_id ||
+            pgw->serving_plmn_present || pgw->imsi_plmn_present ||
+            pgw->imsi_prefix[0] || pgw->force)
+            mme_reload_lists_changed++;
+
+        pgw->force = false;
+
+        for (i = 0; i < pgw->num_of_apn; i++) {
+            if (pgw->apn[i]) {
+                ogs_free((void *)pgw->apn[i]);
+                pgw->apn[i] = NULL;
+            }
+        }
+        pgw->num_of_apn = 0;
+        pgw->num_of_tac = 0;
+        pgw->num_of_e_cell_id = 0;
+        pgw->serving_plmn_present = false;
+        pgw->imsi_plmn_present = false;
+        pgw->imsi_prefix[0] = '\0';
+    }
 }
 
 static bool reload_pgw_tac_has(mme_pgw_t *pgw, uint16_t tac)
@@ -874,23 +1063,32 @@ static int reload_equivalent_plmn_replace(ogs_yaml_iter_t *mme_iter)
     ogs_plmn_id_t new_eplmn[OGS_NAS_MAX_PLMN];
     int new_count = 0;
     int rv;
+    bool changed;
 
     rv = mme_eplmn_parse_config(mme_iter, &new_count, new_eplmn);
     if (rv != OGS_OK) {
-        ogs_reload_audit_warn("equivalent_plmn YAML parse failed");
+        ogs_reload_audit_warn("equivalent_plmn YAML parse failed "
+                "(keep previous %d entries; use flat mme.equivalent_plmn: "
+                "[{mcc, mnc}, ...] max 15)",
+                self->num_of_eplmn);
         return 0;
     }
 
-    if (new_count != self->num_of_eplmn ||
+    changed = (new_count != self->num_of_eplmn) ||
             (new_count > 0 && memcmp(new_eplmn, self->eplmn,
              new_count * sizeof(new_eplmn[0])) != 0) ||
-            (new_count == 0 && self->num_of_eplmn > 0)) {
+            (new_count == 0 && self->num_of_eplmn > 0);
+
+    if (changed) {
         self->num_of_eplmn = new_count;
         if (new_count > 0)
             memcpy(self->eplmn, new_eplmn,
                     new_count * sizeof(self->eplmn[0]));
         mme_reload_lists_changed++;
         ogs_reload_audit_note(" equivalent_plmn replaced (%d entries)",
+                new_count);
+    } else {
+        ogs_reload_audit_note(" equivalent_plmn unchanged (%d entries)",
                 new_count);
     }
 
@@ -1018,15 +1216,12 @@ static int reload_served_tai_add_from_yaml(ogs_yaml_iter_t *mme_iter)
 
 static int reload_served_tai_replace(ogs_yaml_iter_t *mme_iter)
 {
-    /* Mirror of the anonymous served_tai element in mme_context_t,
-     * used to walk the detached backup copy */
-    struct served_tai_entry {
-        ogs_eps_tai0_list_t *list0;
-        ogs_eps_tai1_list_t list1;
-        ogs_eps_tai2_list_t list2;
-    } *backup = NULL;
+    reload_served_tai_entry_t *backup = NULL;
     mme_context_t *self = mme_self();
+    reload_tai_fp_t *old_fps = NULL, *new_fps = NULL;
     int backup_num, added, i;
+    int old_n = 0, new_n = 0;
+    int n_added = 0, n_removed = 0;
 
     ogs_assert(sizeof(backup[0]) == sizeof(self->served_tai[0]));
 
@@ -1066,16 +1261,33 @@ static int reload_served_tai_replace(ogs_yaml_iter_t *mme_iter)
         return 0;
     }
 
+    reload_tai_fp_collect(backup, backup_num, &old_fps, &old_n);
+    reload_tai_fp_collect((const reload_served_tai_entry_t *)self->served_tai,
+            self->num_of_served_tai, &new_fps, &new_n);
+    reload_tai_fp_diff(old_fps, old_n, new_fps, new_n, &n_added, &n_removed);
+
     for (i = 0; i < OGS_MAX_NUM_OF_SUPPORTED_TA; i++) {
         if (backup[i].list0)
             ogs_free(backup[i].list0);
     }
     mme_served_tai_map_invalidate();
-    mme_reload_lists_changed++;
+    if (n_added || n_removed)
+        mme_reload_lists_changed++;
     mme_ctx_unlock();
 
     ogs_free(backup);
-    ogs_reload_audit_note(" served TAI replaced (%d TAC entries)", added);
+    if (old_fps)
+        ogs_free(old_fps);
+    if (new_fps)
+        ogs_free(new_fps);
+
+    if (n_added == 0 && n_removed == 0) {
+        ogs_reload_audit_note(" served TAI unchanged (%d TAC entries)", new_n);
+    } else {
+        ogs_reload_audit_note(
+                " served TAI replaced (%d TAC entries, +%d -%d)",
+                new_n, n_added, n_removed);
+    }
 
     return added;
 }
@@ -1719,6 +1931,7 @@ int mme_reload_gtpc_client_add_only(ogs_yaml_iter_t *gtpc_iter)
                     int entry_idx = 0;
 
                     ogs_yaml_iter_recurse(&client_iter, &sgwc_array);
+                    reload_sgw_clear_all_rules();
                     added += reload_gtpc_client_entry_add_only(
                             &sgwc_array, false, &entry_idx);
                     reload_gtpc_resort_sgw_list();
@@ -1727,6 +1940,7 @@ int mme_reload_gtpc_client_add_only(ogs_yaml_iter_t *gtpc_iter)
                     int entry_idx = 0;
 
                     ogs_yaml_iter_recurse(&client_iter, &smf_array);
+                    reload_pgw_clear_all_rules();
                     added += reload_gtpc_client_entry_add_only(
                             &smf_array, true, &entry_idx);
                     reload_gtpc_resort_pgw_list();
@@ -1744,6 +1958,19 @@ static void reload_attach_accept_scalars(ogs_yaml_iter_t *mme_iter)
 {
     mme_context_t *self = mme_self();
     ogs_yaml_iter_t aa_iter;
+    bool tai_list_serving_only;
+    bool equivalent_plmn;
+    bool equivalent_plmn_serving_only;
+    bool equivalent_plmn_access_control_tac;
+    bool ims_voice_over_ps;
+
+    tai_list_serving_only = self->attach_accept.tai_list_serving_only;
+    equivalent_plmn = self->attach_accept.equivalent_plmn;
+    equivalent_plmn_serving_only =
+            self->attach_accept.equivalent_plmn_serving_only;
+    equivalent_plmn_access_control_tac =
+            self->attach_accept.equivalent_plmn_access_control_tac;
+    ims_voice_over_ps = self->attach_accept.ims_voice_over_ps;
 
     ogs_yaml_iter_recurse(mme_iter, &aa_iter);
     while (ogs_yaml_iter_next(&aa_iter)) {
@@ -1756,15 +1983,63 @@ static void reload_attach_accept_scalars(ogs_yaml_iter_t *mme_iter)
                 self->attach_accept.tai_list_serving_only = true;
             else if (v && !strcmp(v, "all"))
                 self->attach_accept.tai_list_serving_only = false;
+        } else if (!strcmp(aa_key, "equivalent_plmn")) {
+            /*
+             * Nested attach_accept.equivalent_plmn is the boolean IE switch.
+             * The PLMN list must be flat mme.equivalent_plmn: [...].
+             */
+            if (ogs_yaml_iter_type(&aa_iter) == YAML_SEQUENCE_NODE ||
+                    ogs_yaml_iter_type(&aa_iter) == YAML_MAPPING_NODE) {
+                ogs_reload_audit_warn(
+                        "attach_accept.equivalent_plmn is a boolean; "
+                        "PLMN list belongs under mme.equivalent_plmn");
+            } else {
+                self->attach_accept.equivalent_plmn =
+                    ogs_yaml_iter_bool(&aa_iter);
+            }
         } else if (!strcmp(aa_key, "equivalent_plmn_serving_only")) {
             self->attach_accept.equivalent_plmn_serving_only =
+                ogs_yaml_iter_bool(&aa_iter);
+        } else if (!strcmp(aa_key, "equivalent_plmn_access_control_tac")) {
+            self->attach_accept.equivalent_plmn_access_control_tac =
                 ogs_yaml_iter_bool(&aa_iter);
         } else if (!strcmp(aa_key, "ims_voice_over_ps")) {
             self->attach_accept.ims_voice_over_ps =
                 ogs_yaml_iter_bool(&aa_iter);
         }
     }
-    mme_reload_lists_changed++;
+
+    if (tai_list_serving_only != self->attach_accept.tai_list_serving_only) {
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" attach_accept.tai_list=%s",
+                self->attach_accept.tai_list_serving_only ?
+                "serving_only" : "all");
+    }
+    if (equivalent_plmn != self->attach_accept.equivalent_plmn) {
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" attach_accept.equivalent_plmn=%s",
+                self->attach_accept.equivalent_plmn ? "true" : "false");
+    }
+    if (equivalent_plmn_serving_only !=
+            self->attach_accept.equivalent_plmn_serving_only) {
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" attach_accept.equivalent_plmn_serving_only=%s",
+                self->attach_accept.equivalent_plmn_serving_only ?
+                "true" : "false");
+    }
+    if (equivalent_plmn_access_control_tac !=
+            self->attach_accept.equivalent_plmn_access_control_tac) {
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(
+                " attach_accept.equivalent_plmn_access_control_tac=%s",
+                self->attach_accept.equivalent_plmn_access_control_tac ?
+                "true" : "false");
+    }
+    if (ims_voice_over_ps != self->attach_accept.ims_voice_over_ps) {
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" attach_accept.ims_voice_over_ps=%s",
+                self->attach_accept.ims_voice_over_ps ? "true" : "false");
+    }
 }
 
 int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter)
@@ -1792,6 +2067,25 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
         ogs_reload_audit_note(" inbound_roam config replaced");
         return 0;
     }
+    if (!strcmp(mme_key, "sgsap")) {
+        /*
+         * Add/update only: VLRs keep their SCTP association, TAI-LAI maps
+         * are edited in place, and entries dropped from the file are
+         * retired rather than freed (attached UEs still point at them).
+         * A failed parse leaves the previous table alone.
+         */
+        if (mme_sgsap_config_parse(mme_iter, true) != OGS_OK)
+            ogs_reload_audit_warn(" sgsap parse failed; previous maps kept");
+        mme_reload_lists_changed++;
+        return 0;
+    }
+    if (!strcmp(mme_key, "apn_correction")) {
+        int n = mme_apn_policy_parse(mme_iter);
+
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" apn_correction rules=%d", n);
+        return 0;
+    }
     if (!strcmp(mme_key, "emergency"))
         return reload_emergency_replace(mme_iter);
     if (!strcmp(mme_key, "attach_accept")) {
@@ -1800,6 +2094,7 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
     }
     if (!strcmp(mme_key, "pgw_selection")) {
         ogs_yaml_iter_t pgw_sel_iter;
+        bool rules_seen = false;
 
         ogs_yaml_iter_recurse(mme_iter, &pgw_sel_iter);
         while (ogs_yaml_iter_next(&pgw_sel_iter)) {
@@ -1834,9 +2129,22 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
             } else if (!strcmp(psk, "rules")) {
                 int n = mme_pgw_sel_rules_parse(&pgw_sel_iter);
 
+                rules_seen = true;
                 ogs_reload_audit_note(" pgw_selection rules=%d", n);
             }
         }
+
+        /*
+         * mme_pgw_sel_rules_parse() replaces the list, but it only runs
+         * when the key is still in the file. Deleting the whole `rules:`
+         * block otherwise left the previous rules live.
+         */
+        if (!rules_seen &&
+                ogs_list_first(&self->pgw_selection.rule_list) != NULL) {
+            mme_pgw_sel_rule_remove_all();
+            ogs_reload_audit_note(" pgw_selection rules removed");
+        }
+
         mme_reload_lists_changed++;
         ogs_reload_audit_note(" pgw_selection mode=%s apn_dns=%s",
                 self->pgw_selection.force_yaml ? "force" : "standard",
@@ -1878,10 +2186,68 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
         }
         return 0;
     }
+    if (!strcmp(mme_key, "s1ap_io_stall_teardown_sec")) {
+        const char *v = ogs_yaml_iter_value(mme_iter);
+
+        if (v) {
+            self->s1ap_io_stall_teardown_sec = atoi(v);
+            mme_reload_lists_changed++;
+            ogs_reload_audit_note(" s1ap_io_stall_teardown_sec=%d",
+                    self->s1ap_io_stall_teardown_sec);
+        }
+        return 0;
+    }
+    if (!strcmp(mme_key, "s1ap_io_congest_depth")) {
+        const char *v = ogs_yaml_iter_value(mme_iter);
+
+        if (v) {
+            int n = atoi(v);
+
+            self->s1ap_io_congest_depth = n > 0 ? n : 0;
+            mme_reload_lists_changed++;
+            ogs_reload_audit_note(" s1ap_io_congest_depth=%d", n);
+        }
+        return 0;
+    }
+    if (!strcmp(mme_key, "overload")) {
+        ogs_yaml_iter_t overload_iter;
+
+        ogs_yaml_iter_recurse(mme_iter, &overload_iter);
+        while (ogs_yaml_iter_next(&overload_iter)) {
+            const char *ok = ogs_yaml_iter_key(&overload_iter);
+
+            ogs_assert(ok);
+            if (mme_overload_config_set(ok, &overload_iter) != OGS_OK)
+                ogs_reload_audit_note(" overload unknown key %s", ok);
+        }
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" overload=%s signal_enb=%s "
+                "enb_initial_ue_rate=%d",
+                self->overload.enabled ? "on" : "off",
+                self->overload.signal_enb ? "on" : "off",
+                self->overload.enb_initial_ue_rate);
+        return 0;
+    }
     if (!strcmp(mme_key, "equivalent_plmn_serving_only")) {
+        bool prev = self->attach_accept.equivalent_plmn_serving_only;
         self->attach_accept.equivalent_plmn_serving_only =
             ogs_yaml_iter_bool(mme_iter);
-        mme_reload_lists_changed++;
+        if (prev != self->attach_accept.equivalent_plmn_serving_only) {
+            mme_reload_lists_changed++;
+            ogs_reload_audit_note(" equivalent_plmn_serving_only=%s",
+                    self->attach_accept.equivalent_plmn_serving_only ?
+                    "true" : "false");
+        }
+    } else if (!strcmp(mme_key, "equivalent_plmn_access_control_tac")) {
+        bool prev = self->attach_accept.equivalent_plmn_access_control_tac;
+        self->attach_accept.equivalent_plmn_access_control_tac =
+            ogs_yaml_iter_bool(mme_iter);
+        if (prev != self->attach_accept.equivalent_plmn_access_control_tac) {
+            mme_reload_lists_changed++;
+            ogs_reload_audit_note(" equivalent_plmn_access_control_tac=%s",
+                    self->attach_accept.equivalent_plmn_access_control_tac ?
+                    "true" : "false");
+        }
     } else if (!strcmp(mme_key, "ims_voice_over_ps_in_s1_mode")) {
         self->attach_accept.ims_voice_over_ps =
             ogs_yaml_iter_bool(mme_iter);

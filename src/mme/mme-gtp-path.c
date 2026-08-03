@@ -28,8 +28,10 @@
 #include "mme-inbound-roam-apn.h"
 #include "s1ap-path.h"
 #include "mme-s11-build.h"
+#include "mme-s11-handler.h"
 #include "mme-sm.h"
 #include "mme-workers.h"
+#include "mme-pgw-select.h"
 #include "metrics.h"
 
 static const char *mme_gtp2_message_type_name(uint8_t type)
@@ -62,7 +64,11 @@ static const char *mme_gtp2_message_type_name(uint8_t type)
     }
 }
 
-static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
+/*
+ * Read ONE datagram; returns 1 if a datagram was consumed (keep draining),
+ * 0 when the socket is empty or on a receive error (stop for this wakeup).
+ */
+static int mme_gtpc_recv_one(ogs_socket_t fd)
 {
     int rv;
     char buf[OGS_ADDRSTRLEN];
@@ -83,22 +89,33 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
 
     size = ogs_recvfrom(fd, pkbuf->data, pkbuf->len, 0, &from);
     if (size <= 0) {
-        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
-                "ogs_recvfrom() failed");
         ogs_pkbuf_free(pkbuf);
-        return;
+        if (size < 0 && !ogs_socket_errno_would_block())
+            ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
+                    "ogs_recvfrom() failed");
+        return 0;
     }
 
     ogs_pkbuf_trim(pkbuf, size);
+
+    /*
+     * Held from peer lookup through event push: with the dedicated GTP-C
+     * RX thread (mme.gtpc_rx_thread) a SIGHUP reload on main may
+     * add/remove/resort sgw_list concurrently, and releasing earlier
+     * would let the reload free the peer while e->gnode still points
+     * into it. Without the RX thread this lock is uncontended.
+     */
+    mme_sgw_list_lock();
 
     gtp_ver = ((ogs_gtp2_header_t *)pkbuf->data)->version;
     switch (gtp_ver) {
     case 1:
         sgsn = mme_sgsn_find_by_addr(&from);
         if (!sgsn) {
+            mme_sgw_list_unlock();
             ogs_error("Unknown SGSN : %s", OGS_ADDR(&from, buf));
             ogs_pkbuf_free(pkbuf);
-            return;
+            return 1;
         }
         ogs_assert(sgsn);
         e = mme_event_new(MME_EVENT_GN_MESSAGE);
@@ -113,12 +130,16 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
             mme_ue_t *hint_ue = NULL;
             const char *imsi = "-";
 
+            mme_sgw_list_unlock();
+
             if (pkbuf->len >= sizeof(ogs_gtp2_header_t)) {
                 ogs_gtp2_header_t *h = (ogs_gtp2_header_t *)pkbuf->data;
 
                 gtp_type = h->type;
                 teid = be32toh(h->teid);
-                if (teid)
+                /* diagnostic only: the UE pointer is not safe to hold
+                 * off the main thread (gtpc_rx_thread mode) */
+                if (teid && mme_event_on_main_thread())
                     hint_ue = mme_ue_find_by_s11_local_teid(teid);
             }
             if (hint_ue)
@@ -129,7 +150,7 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
                     OGS_ADDR(&from, buf), OGS_PORT(&from), imsi,
                     gtp_type, mme_gtp2_message_type_name(gtp_type), teid);
             ogs_pkbuf_free(pkbuf);
-            return;
+            return 1;
         }
         ogs_assert(sgw);
         e = mme_event_new(MME_EVENT_S11_MESSAGE);
@@ -137,9 +158,10 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
         e->gnode = &sgw->gnode;
         break;
     default:
+        mme_sgw_list_unlock();
         ogs_warn("Rx unexpected GTP version %u", gtp_ver);
         ogs_pkbuf_free(pkbuf);
-        return;
+        return 1;
     }
 
     e->pkbuf = pkbuf;
@@ -152,21 +174,110 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
         uint8_t type = ((ogs_gtp2_header_t *)pkbuf->data)->type;
         if (type == OGS_GTP2_ECHO_REQUEST_TYPE ||
                 type == OGS_GTP2_ECHO_RESPONSE_TYPE) {
-            rv = ogs_queue_push(ogs_app()->queue, e);
+            rv = mme_queue_push_main(e);
+            mme_sgw_list_unlock();
             if (rv != OGS_OK) {
-                ogs_error("ogs_queue_push() failed:%d", (int)rv);
+                ogs_error("GTP echo event dropped:%d", (int)rv);
                 ogs_pkbuf_free(e->pkbuf);
                 mme_event_free(e);
-            } else {
-                ogs_pollset_notify(ogs_app()->pollset);
             }
-            return;
+            return 1;
         }
     }
 
     rv = mme_event_push_to_ue_owner(e);
+    mme_sgw_list_unlock();
     if (rv != OGS_OK)
         ogs_error("S11 event push failed:%d", (int)rv);
+
+    return 1;
+}
+
+/*
+ * Drain the GTP-C socket per poll wakeup instead of reading a single
+ * datagram. The main loop runs one poll iteration and then dispatches
+ * the WHOLE event queue before polling again, so one-datagram-per-wakeup
+ * caps GTP-C RX at one packet per main-loop iteration. During an attach
+ * storm the SGW answers faster than that: the kernel socket buffer fills
+ * (seen at 12MB Recv-Q), responses get dropped, transaction timers fire
+ * ("GTP timeout" / cause 100) and the retransmit storm feeds itself.
+ * The budget keeps a flooded socket from starving S1AP/timers; leftover
+ * datagrams re-trigger the (level-triggered) pollset immediately.
+ */
+#define MME_GTPC_RECV_BUDGET    512
+
+static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
+{
+    int budget = MME_GTPC_RECV_BUDGET;
+
+    while (budget-- > 0 && mme_gtpc_recv_one(fd) > 0)
+        ;
+}
+
+/*
+ * Dedicated GTP-C RX thread (mme.gtpc_rx_thread: 1, default off).
+ *
+ * On main, the GTP-C socket shares one poll loop with every eNB SCTP
+ * association and the whole event-queue drain, so under an attach storm
+ * S11 replies sit unread in the kernel buffer (12MB Recv-Q observed)
+ * until the transaction timers declare the SGW dead. This thread does
+ * ONLY what the main-loop callback did — recvfrom, classify the peer,
+ * push an event to the owner shard/main — so message handling, xact
+ * state and timers all stay exactly where they were.
+ *
+ * It is a helper worker like the S1AP RX decoders: it never allocates
+ * TEIDs/xids, so it must NOT be counted as a protocol shard (no
+ * ogs_worker_shards_enable() here).
+ */
+static ogs_worker_t *gtpc_rx_worker = NULL;
+
+static void gtpc_rx_dispatch(ogs_worker_t *worker, void *data)
+{
+    /* nothing is ever posted to this worker's queue */
+    (void)worker;
+    (void)data;
+}
+
+static void gtpc_rx_thread_init(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    mme_pkbuf_thread_pool_attach();
+
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, _gtpv1v2_c_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list6, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, _gtpv1v2_c_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+
+    ogs_info("GTP-C RX thread started");
+}
+
+static void gtpc_rx_thread_fini(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    /* Detach polls while the worker pollset is still alive; otherwise
+     * ogs_socknode_free() would remove them from freed memory. */
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list6, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
 }
 
 static void timeout(ogs_gtp_xact_t *xact, void *data)
@@ -194,13 +305,26 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
                 mme_ue_id <= OGS_MAX_POOL_ID);
         mme_ue = mme_ue_find_by_id(mme_ue_id);
         if (!mme_ue) {
+            /* Storm-safe: when the SGW dies, thousands of these fire per
+             * second. Log one line/sec with the suppressed count. */
+            static ogs_time_t last_log = 0;
+            static unsigned long suppressed = 0;
+            ogs_time_t log_now = ogs_time_now();
             char peer[OGS_ADDRSTRLEN];
 
-            ogs_error("GTP timeout: MME-UE[%u] removed type[%u:%s] SGW[%s]:%d",
-                    mme_ue_id, type, mme_gtp2_message_type_name(type),
-                    xact && xact->gnode ?
-                        OGS_ADDR(&xact->gnode->addr, peer) : "-",
-                    xact && xact->gnode ? OGS_PORT(&xact->gnode->addr) : 0);
+            suppressed++;
+            if (log_now - last_log >= ogs_time_from_sec(1)) {
+                ogs_error("GTP timeout: MME-UE[%u] removed type[%u:%s] "
+                        "SGW[%s]:%d (%lu in last window)",
+                        mme_ue_id, type, mme_gtp2_message_type_name(type),
+                        xact && xact->gnode ?
+                            OGS_ADDR(&xact->gnode->addr, peer) : "-",
+                        xact && xact->gnode ?
+                            OGS_PORT(&xact->gnode->addr) : 0,
+                        suppressed);
+                last_log = log_now;
+                suppressed = 0;
+            }
             return;
         }
         break;
@@ -269,8 +393,9 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
             r = s1ap_send_ue_context_release_command(enb_ue,
                     S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                     S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
+            if (r != OGS_OK)
+                ogs_warn("[%s] GTP timeout: UE Context Release Command "
+                        "not sent", mme_log_imsi(mme_ue));
         } else {
             uint16_t tac = 0;
             uint32_t cell_id = 0, enb_id = 0;
@@ -284,6 +409,18 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
         break;
     case OGS_GTP2_BEARER_RESOURCE_COMMAND_TYPE:
         /* Nothing to do */
+        break;
+    case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
+        /*
+         * SGW dead or overloaded: previously this fell into the default
+         * branch (silent context release), so UEs re-attached immediately
+         * and piled up. Treat the timeout like a congestion reject:
+         * attach/TAU reject EMM #22 (+T3346 backoff) then release.
+         */
+        mme_s11_create_session_fail(enb_ue, mme_ue,
+                xact->create_action,
+                OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING,
+                "GTP timeout (SGW not responding)");
         break;
     default:
         if (enb_ue)
@@ -372,17 +509,21 @@ int mme_gtp_open(void)
         sock = ogs_gtp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, _gtpv1v2_c_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!mme_self()->gtpc_rx_thread) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, _gtpv1v2_c_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
     ogs_list_for_each(&ogs_gtp_self()->gtpc_list6, node) {
         sock = ogs_gtp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, _gtpv1v2_c_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!mme_self()->gtpc_rx_thread) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, _gtpv1v2_c_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
 
     OGS_SETUP_GTPC_SERVER;
@@ -423,8 +564,48 @@ int mme_gtp_open(void)
     return OGS_OK;
 }
 
+/*
+ * Start the dedicated GTP-C RX thread (no-op unless mme.gtpc_rx_thread).
+ * Called from mme-init.c AFTER mme_workers_start(): shard workers call
+ * ogs_worker_shards_enable(), which must run before ANY worker exists,
+ * so this helper cannot be created inside mme_gtp_open(). The GTP-C
+ * sockets already exist by then; datagrams arriving in the gap simply
+ * wait in the kernel buffer until the thread registers them.
+ */
+int mme_gtpc_rx_start(void)
+{
+    if (!mme_self()->gtpc_rx_thread)
+        return OGS_OK;
+
+    ogs_assert(!gtpc_rx_worker);
+
+    /* Registers the sockets on its own pollset in thread_init;
+     * ogs_worker_start() blocks until that has completed. */
+    gtpc_rx_worker = ogs_worker_create(0, 64, 8, 64,
+            gtpc_rx_dispatch, NULL);
+    ogs_assert(gtpc_rx_worker);
+    ogs_worker_hooks(gtpc_rx_worker,
+            gtpc_rx_thread_init, gtpc_rx_thread_fini);
+    ogs_worker_set_name(gtpc_rx_worker, "gtpc-rx");
+    ogs_worker_start(gtpc_rx_worker);
+
+    return OGS_OK;
+}
+
+bool mme_gtpc_rx_active(void)
+{
+    return gtpc_rx_worker != NULL;
+}
+
 void mme_gtp_close(void)
 {
+    /* Stop the RX thread BEFORE closing the sockets it polls; its
+     * thread_fini detaches the socknode polls from the worker pollset. */
+    if (gtpc_rx_worker) {
+        ogs_worker_destroy(gtpc_rx_worker);
+        gtpc_rx_worker = NULL;
+    }
+
     ogs_socknode_remove_all(&ogs_gtp_self()->gtpc_list);
     ogs_socknode_remove_all(&ogs_gtp_self()->gtpc_list6);
 }
@@ -458,7 +639,8 @@ int mme_gtp_send_create_session_request(
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     ogs_assert(mme_ue);
 
-    if (sess->session && sess->session->name &&
+    /* Skip allow-list when APN came from S6a default (UE APN absent/empty) */
+    if (sess->ue_provided_apn && sess->session && sess->session->name &&
             !mme_inbound_roam_apn_allowed(mme_ue, sess->session->name)) {
         ogs_warn("[%s] inbound roam APN policy: block Create Session APN[%s] "
                 "esm_cause=%u create_action=%d",
@@ -492,6 +674,16 @@ int mme_gtp_send_create_session_request(
                     "(path switch)", mme_ue->imsi_bcd);
             return OGS_ERROR;
         }
+    }
+
+    if (!(sess->pgw_s5c_ip.ipv4 || sess->pgw_s5c_ip.ipv6)) {
+        rv = mme_pgw_bind_for_csr(mme_ue, sess, enb_ue, create_action);
+        if (rv == OGS_RETRY) {
+            /* APN DNS queued; MME_EVENT_PGW_DNS_DONE resumes CSR */
+            return OGS_OK;
+        }
+        if (rv != OGS_OK)
+            return OGS_ERROR;
     }
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
@@ -656,6 +848,13 @@ int mme_gtp_send_delete_session_request(
     ogs_assert(mme_ue);
     ogs_assert(sgw_ue);
 
+    if (!sgw_ue->sgw_s11_teid) {
+        ogs_info("[%s] Delete Session skipped: no SGW S11 TEID - clear local",
+                mme_ue->imsi_bcd);
+        MME_SESS_CLEAR(sess);
+        return OGS_OK;
+    }
+
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
     h.type = OGS_GTP2_DELETE_SESSION_REQUEST_TYPE;
     h.teid = sgw_ue->sgw_s11_teid;
@@ -698,7 +897,7 @@ void mme_gtp_send_delete_all_sessions(
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     ogs_assert(action);
 
-    if (!sgw_ue) {
+    if (!sgw_ue || !sgw_ue->sgw_s11_teid) {
         ogs_list_for_each_safe(&mme_ue->sess_list, next_sess, sess)
             MME_SESS_CLEAR(sess);
         return;
@@ -726,18 +925,37 @@ int mme_gtp_send_create_bearer_response(
     ogs_pkbuf_t *pkbuf = NULL;
 
     ogs_assert(bearer);
-    ogs_assert(bearer->create.xact_id >= OGS_MIN_POOL_ID &&
-            bearer->create.xact_id <= OGS_MAX_POOL_ID);
-    xact = ogs_gtp_xact_find_by_id(bearer->create.xact_id);
-    if (!xact) {
-        ogs_warn("GTP transaction(CREATE) has already been removed");
+    mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
+    ogs_assert(mme_ue);
+
+    if (bearer->create.xact_id < OGS_MIN_POOL_ID ||
+            bearer->create.xact_id > OGS_MAX_POOL_ID) {
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                "Create Bearer Response: no saved GTP transaction");
         return OGS_OK;
     }
 
-    mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
-    ogs_assert(mme_ue);
+    xact = ogs_gtp_xact_find_by_id(bearer->create.xact_id);
+    bearer->create.xact_id = OGS_INVALID_POOL_ID;
+    if (!xact) {
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                "GTP transaction(CREATE) has already been removed");
+        return OGS_OK;
+    }
+    if (xact->org != OGS_GTP_REMOTE_ORIGINATOR ||
+            xact->seq[0].type != OGS_GTP2_CREATE_BEARER_REQUEST_TYPE) {
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                "Create Bearer Response: saved xact id now belongs to "
+                "another transaction (org=%d type=%d); dropping",
+                xact->org, xact->seq[0].type);
+        return OGS_OK;
+    }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        ogs_error("[%s] Create Bearer Response: SGW UE context gone",
+                mme_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
     h.type = OGS_GTP2_CREATE_BEARER_RESPONSE_TYPE;
@@ -843,19 +1061,44 @@ int mme_gtp_send_delete_bearer_response(
     ogs_pkbuf_t *pkbuf = NULL;
 
     ogs_assert(bearer);
-    ogs_assert(bearer->delete.xact_id >= OGS_MIN_POOL_ID &&
-            bearer->delete.xact_id <= OGS_MAX_POOL_ID);
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     ogs_assert(mme_ue);
 
+    /*
+     * Deactivate Accept can arrive with no pending Delete Bearer
+     * Request (e.g. UE-initiated PDN disconnect after Delete Session,
+     * duplicate Accept, or xact already consumed). Asserting here
+     * previously crashed the MME at 03:07.
+     */
+    if (bearer->delete.xact_id < OGS_MIN_POOL_ID ||
+            bearer->delete.xact_id > OGS_MAX_POOL_ID) {
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                "Delete Bearer Response: no saved GTP transaction "
+                "(UE-initiated or already acknowledged)");
+        return OGS_OK;
+    }
+
     xact = ogs_gtp_xact_find_by_id(bearer->delete.xact_id);
+    bearer->delete.xact_id = OGS_INVALID_POOL_ID;
     if (!xact) {
         mme_ue_warn(mme_ue, NULL, "s11", NULL,
                 "GTP transaction(DELETE) has already been removed");
         return OGS_OK;
     }
+    if (xact->org != OGS_GTP_REMOTE_ORIGINATOR ||
+            xact->seq[0].type != OGS_GTP2_DELETE_BEARER_REQUEST_TYPE) {
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                "Delete Bearer Response: saved xact id now belongs to "
+                "another transaction (org=%d type=%d); dropping",
+                xact->org, xact->seq[0].type);
+        return OGS_OK;
+    }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        ogs_error("[%s] Delete Bearer Response: SGW UE context gone",
+                mme_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
     h.type = OGS_GTP2_DELETE_BEARER_RESPONSE_TYPE;
@@ -902,10 +1145,18 @@ int mme_gtp_send_release_access_bearers_request(
         return OGS_OK;
 
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    if (!sgw_ue) {
-        ogs_error("[%s] Release Access Bearers: SGW-UE gone (action=%d)",
+    if (!sgw_ue || !sgw_ue->sgw_s11_teid) {
+        /*
+         * No SGW session / ghost TEID already cleared. Sending RAB would
+         * only produce Context Not Found. Finish the S1 release locally.
+         */
+        enb_ue_t *enb_ue = enb_ue_find_by_id(enb_ue_id);
+
+        ogs_info("[%s] Release Access Bearers skipped: no SGW S11 TEID "
+                "(action=%d) - finish S1 locally",
                 mme_ue->imsi_bcd, action);
-        return OGS_ERROR;
+        mme_s11_finish_release_access_bearers(mme_ue, enb_ue, action);
+        return OGS_OK;
     }
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
@@ -1143,19 +1394,40 @@ int mme_gtp_send_downlink_data_notification_ack(
     ogs_pkbuf_t *s11buf = NULL;
 
     ogs_assert(bearer);
-    ogs_assert(bearer->notify.xact_id >= OGS_MIN_POOL_ID &&
-            bearer->notify.xact_id <= OGS_MAX_POOL_ID);
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     ogs_assert(mme_ue);
 
+    if (bearer->notify.xact_id < OGS_MIN_POOL_ID ||
+            bearer->notify.xact_id > OGS_MAX_POOL_ID) {
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                "DDN Ack: no saved GTP transaction (already acknowledged?)");
+        return OGS_OK;
+    }
+
     xact = ogs_gtp_xact_find_by_id(bearer->notify.xact_id);
+    /* One ack per DDN: never reuse a stale id - after the holding
+     * timer frees the transaction the pool slot can be recycled by an
+     * unrelated transaction, and update_tx on it would fail (this
+     * previously crashed the MME via ogs_assert in the callers). */
+    bearer->notify.xact_id = OGS_INVALID_POOL_ID;
     if (!xact) {
         mme_ue_warn(mme_ue, NULL, "s11", NULL,
                 "GTP transaction(NOTIFY) has already been removed");
         return OGS_OK;
     }
+    if (xact->org != OGS_GTP_REMOTE_ORIGINATOR ||
+            xact->seq[0].type != OGS_GTP2_DOWNLINK_DATA_NOTIFICATION_TYPE) {
+        mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                "DDN Ack: saved xact id now belongs to another "
+                "transaction (org=%d type=%d); dropping ack",
+                xact->org, xact->seq[0].type);
+        return OGS_OK;
+    }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        ogs_error("[%s] DDN Ack: SGW UE context gone", mme_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
 
     /* Build Downlink data notification ack */
     memset(&h, 0, sizeof(ogs_gtp2_header_t));

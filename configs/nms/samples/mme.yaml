@@ -26,6 +26,10 @@ global:
   parameter:
     use_upg_vpp: false
     prefer_ipv4: true
+    # ignore_sgs: true   # skip SGsAP Location-Update (e.g. roamers); no VLR (SIGHUP)
+    # fake_csfb: true       # Combined Accept if UE asked Combined (SIGHUP)
+    # fake_csfb_lai: true   # with fake_csfb: synthesize LAI+P-TMSI (default true; SIGHUP)
+    # fake_csfb_lai: false  # Combined result only, no fake LAI/P-TMSI (may EMM #101)
   time:
     message:
       duration: 15000
@@ -152,6 +156,27 @@ mme:
     # - plmn_id: { mcc: 999, mnc: 70 }
     #   allowed_apn: [internet]
     #   denied_apn: [ims]
+  # APN correction policy: what to do when the UE-requested APN or PDN
+  # type does not match the S6a subscription. Rules are evaluated in
+  # order, first match wins; no match = strict 3GPP (reject #27 / #28).
+  # SIGHUP reloadable.
+  #
+  # apn_correction:
+  # - name: no-correction-for-ims       # label for logs only
+  #   imsi_prefix: ['43212995']         # absent = every subscriber
+  #   requested_apn: [ims, ngn]         # absent = any APN, '*' = any
+  #   on_apn_mismatch: reject           # reject (default) | correct
+  #   reject_cause: 27                  # ESM cause when rejecting
+  # - name: all-users
+  #   on_apn_mismatch: correct          # swap the unknown APN for a
+  #                                     # subscribed one instead of #27
+  #   correct_to: default               # default (HSS Context-Identifier)
+  #                                     # | first | <apn name>
+  #   on_pdn_type_mismatch: correct     # correct | reject (default):
+  #                                     # UE and subscription PDN types
+  #                                     # do not overlap at all
+  #   pdn_type: ipv4                    # clamp to ipv4 | ipv6 | ipv4v6
+  #                                     # when the subscription allows it
   ambr_limit:
     enabled: false
     downlink: 100
@@ -223,6 +248,46 @@ mme:
   #                                 # IO thread (s1ap_io_thread: 1); PDUs
   #                                 # over the cap are dropped. SIGHUP
   #                                 # reloadable. 0/unset = default 10240.
+  # s1ap_io_stall_teardown_sec: 10  # if one eNB's write queue stays full
+  #                                 # this long, clear its TX queue and
+  #                                 # drop S1 (CONNREFUSED). Protects the
+  #                                 # shared IO/workers from a stuck cell.
+  # gtpc_rx_thread: 1               # dedicated GTP-C (S11/Gn) RX thread.
+  #                                 # Keeps S11 replies from rotting in the
+  #                                 # kernel socket buffer when the main
+  #                                 # poll loop is busy with eNB SCTP fds
+  #                                 # (false "GTP timeout" under attach
+  #                                 # storms). Default 0 = read on main.
+  #                                 # 0/unset = 10. Negative = disable.
+  #                                 # SIGHUP reloadable. ETIMEDOUT always
+  #                                 # tears that assoc down.
+  # s1ap_io_congest_depth: 2560     # per-eNB write-queue depth reported as
+  #                                 # TX-congested to overload control.
+  #                                 # 0/unset = s1ap_io_write_queue_max / 4.
+  #                                 # SIGHUP reloadable.
+  #
+  # Overload control / ingress admission (s1ap-overload.c). On by
+  # default; everything below is optional tuning. Two signals drive it:
+  # an eNB whose downlink is backing up (s1ap_io_congest_depth) and the
+  # MME's own event-queue lag. Response is OVERLOAD START to the eNB
+  # plus dropping new InitialUEMessage from it. Emergency,
+  # high-priority and mobile-terminated (paging response) access are
+  # never shed.
+  # overload:
+  #   enabled: true                 # master switch (default true)
+  #   signal_enb: true              # send S1AP OVERLOAD START/STOP
+  #   enb_initial_ue_rate: 0        # max InitialUEMessage/s per eNB
+  #                                 # (token bucket). 0 = unlimited.
+  #   enb_initial_ue_burst: 0       # bucket size. 0 = 2x rate (min 20).
+  #   congest_lease_sec: 3          # how long one IO congestion report
+  #                                 # keeps an eNB throttled (reports
+  #                                 # repeat every second while it lasts)
+  #   lag_high_ms: 1500             # event-queue lag = MME overloaded
+  #   lag_critical_ms: 4000         # ... severely (emergency/MT only)
+  #   global_sustain_sec: 3         # lag must hold this long to count
+  #   traffic_reduction: 50         # percent in OVERLOAD START
+  #   resend_interval_sec: 10       # min gap between START re-sends
+  #   recovery_sec: 5               # calm before OVERLOAD STOP
   # paging:
   #   first_wave: last_enb          # last_enb = smart paging: first wave
   #                                 # only to the UE's last eNB (from eCGI),
@@ -409,7 +474,11 @@ mme:
 #      mobile_reachable_margin: 240  # seconds added to t3412 (TS 24.301 +4min)
 #      implicit_detach_margin: 240    # added to t3412 or t3423 when set
 #    t3346:
-#      value: 7200   # optional GPRS timer 2 (congestion backoff, seconds)
+#      value: 60     # GPRS timer 2 congestion backoff, seconds (default 60;
+#                    # 0 disables). Included in Attach/TAU/Service Reject
+#                    # cause #22 so rejected UEs back off instead of
+#                    # retrying instantly (S1 is released right after a
+#                    # NAS reject, so nothing else slows the retry loop).
 #      include_any_reject: false  # default: only EMM cause #22 (congestion)
 #    t3413:
 #      value: 6     # paging retransmit (default: 6 s)

@@ -36,6 +36,14 @@ extern "C" {
 
 #define OGS_TLV_MAX_CHILD_DESC 128
 
+/*
+ * PFCP IE types with bit 15 set are vendor-specific (TS 29.244 8.1.1) and
+ * must be ignored silently when unknown. Protocols carried over this parser
+ * with 8-bit types (GTPv1/GTPv2 IEs) can never reach this value, so the
+ * check is inert for them.
+ */
+#define OGS_TLV_VENDOR_SPECIFIC_TYPE_MIN 32768
+
 typedef enum {
     OGS_TLV_UINT8,
     OGS_TLV_UINT16,

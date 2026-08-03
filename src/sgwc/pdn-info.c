@@ -217,6 +217,11 @@ static bool ue_matches_ran_ip(const sgwc_ue_t *ue, const char *ran_ip)
     return false;
 }
 
+/* Non-IMSI UE-level filters (ue_ip / ran ip / rat), shared by the
+ * full-list walk and the exact-IMSI fast path. */
+static bool sgwc_ue_matches_secondary_filters(const sgwc_ue_t *ue,
+        const ogs_metrics_query_t *q);
+
 static bool sess_matches_ue_ip(const sgwc_sess_t *sess, const char *ue_ip)
 {
     ogs_ip_t ip;
@@ -244,6 +249,37 @@ static bool sess_matches_ue_ip(const sgwc_sess_t *sess, const char *ue_ip)
     }
 
     return false;
+}
+
+static bool sgwc_ue_matches_secondary_filters(const sgwc_ue_t *ue,
+        const ogs_metrics_query_t *q)
+{
+    if (!q)
+        return true;
+
+    if (q->ue_ip && *q->ue_ip) {
+        bool match = false;
+        sgwc_sess_t *sess = NULL;
+
+        ogs_list_for_each(&ue->sess_list, sess) {
+            if (sess_matches_ue_ip(sess, q->ue_ip)) {
+                match = true;
+                break;
+            }
+        }
+        if (!match)
+            return false;
+    }
+    if (q->ip && *q->ip) {
+        if (!ue_matches_ran_ip(ue, q->ip))
+            return false;
+    }
+    if (q->rat && *q->rat) {
+        if (!sgwc_ue_has_matching_pdn(ue, q))
+            return false;
+    }
+
+    return true;
 }
 
 static cJSON *build_qos_flows_array(const sgwc_sess_t *sess)
@@ -559,32 +595,31 @@ size_t sgwc_dump_pdn_info(char *buf, size_t buflen,
 
     ogs_metrics_dump_lock();
 
-    ogs_list_for_each(&ctx->sgw_ue_list, ue) {
-        if (q && q->imsi && *q->imsi) {
-            if (!ue->imsi_bcd[0] || strcmp(ue->imsi_bcd, q->imsi) != 0)
-                continue;
-        }
-        if (q && q->ue_ip && *q->ue_ip) {
-            bool match = false;
-            sgwc_sess_t *sess = NULL;
-
-            ogs_list_for_each(&ue->sess_list, sess) {
-                if (sess_matches_ue_ip(sess, q->ue_ip)) {
-                    match = true;
-                    break;
-                }
+    if (q && q->imsi && *q->imsi) {
+        /*
+         * Fast path for exact-IMSI queries (NMS IMSI watch / trace
+         * panel polls /pdn-info?imsi= every few seconds). Walking the
+         * whole sgw_ue_list under the dump lock scales with total
+         * subscribers; resolve via the IMSI hash instead.
+         */
+        ue = sgwc_ue_find_by_imsi_bcd(q->imsi);
+        if (ue && sgwc_ue_matches_secondary_filters(ue, q)) {
+            total = 1;
+            int act = json_pager_advance(no_paging, idx, start_index,
+                    emitted, page_size, &has_next);
+            if (act == 0) {
+                cJSON *ueo = build_ue_object(ue);
+                if (!ueo) oom = true;
+                else { cJSON_AddItemToArray(items, ueo); emitted++; }
             }
-            if (!match)
-                continue;
+            idx++;
         }
-        if (q && q->ip && *q->ip) {
-            if (!ue_matches_ran_ip(ue, q->ip))
-                continue;
-        }
-        if (q && q->rat && *q->rat) {
-            if (!sgwc_ue_has_matching_pdn(ue, q))
-                continue;
-        }
+        goto done;
+    }
+
+    ogs_list_for_each(&ctx->sgw_ue_list, ue) {
+        if (!sgwc_ue_matches_secondary_filters(ue, q))
+            continue;
 
         total++;
 
@@ -608,6 +643,7 @@ size_t sgwc_dump_pdn_info(char *buf, size_t buflen,
         idx++;
     }
 
+done:
     ogs_metrics_dump_unlock();
 
     cJSON_AddItemToObjectCS(root, "items", items);

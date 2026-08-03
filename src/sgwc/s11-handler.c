@@ -746,6 +746,38 @@ void sgwc_s11_handle_create_session_request(
         return;
     }
 
+    /*
+     * Attach-storm admission: shed fast (GTP-C entity congestion) when
+     * every SGW-U PFCP association is down, the in-flight establish cap
+     * is reached, or the optional rate limit is exceeded. The MME maps
+     * this to EMM #22 Congestion (+T3346) so UEs back off.
+     */
+    cause_value = sgwc_admission_check();
+    if (cause_value) {
+        /* Rate-limit the log itself: one line/sec with shed count */
+        static ogs_time_t adm_last_warn = 0;
+        static unsigned long adm_shed_count = 0;
+        ogs_time_t now = ogs_time_now();
+
+        adm_shed_count++;
+        if (now - adm_last_warn >= ogs_time_from_sec(1)) {
+            ogs_warn("Create Session shed by admission control "
+                    "[GTP cause:%u outstanding:%d shed:%lu/s last IMSI:%s]",
+                    cause_value, sgwc_self()->admission_outstanding,
+                    adm_shed_count, sgwc_ue ? sgwc_ue->imsi_bcd : "-");
+            adm_last_warn = now;
+            adm_shed_count = 0;
+        }
+        if (sgwc_ue)
+            sgwc_metrics_create_session_fail(sgwc_ue, cause_value);
+        ogs_gtp_send_error_message(
+                s11_xact,
+                sgwc_ue ? sgwc_ue->mme_s11_teid : 0,
+                OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                cause_value);
+        return;
+    }
+
     if (sgwc_ue && req->sender_f_teid_for_control_plane.presence &&
             req->sender_f_teid_for_control_plane.data) {
         sgwc_ue_store_mme_f_teid(sgwc_ue,
@@ -878,6 +910,7 @@ void sgwc_s11_handle_modify_bearer_request(
         ogs_pkbuf_t *gtpbuf, ogs_gtp2_message_t *message)
 {
     int rv, i = 0;
+    int num_of_modified = 0, num_of_unknown = 0;
     uint16_t decoded;
     uint8_t cause_value = 0;
 
@@ -941,11 +974,23 @@ void sgwc_s11_handle_modify_bearer_request(
         bearer = sgwc_bearer_find_by_ue_ebi(sgwc_ue,
                     req->bearer_contexts_to_be_modified[i].eps_bearer_id.u8);
         if (!bearer) {
-            ogs_error("Unknown EPS Bearer ID[%d]",
+            /*
+             * Rejecting the whole message here black-holed downlink for
+             * every *known* bearer in the same Modify Bearer Request: the
+             * MME keeps a bearer the SGW never created (or already
+             * deleted), and the SGW-U FAR for the other bearers stayed on
+             * the previous, dead eNB TEID. Skip the unknown bearer and
+             * still program the ones we do know.
+             */
+            ogs_warn("[%s] Unknown EPS Bearer ID[%d] in Modify Bearer "
+                    "Request; skipping this bearer context",
+                    sgwc_ue->imsi_bcd,
                     req->bearer_contexts_to_be_modified[i].eps_bearer_id.u8);
-            cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
-            break;
+            num_of_unknown++;
+            goto next_bearer;
         }
+
+        num_of_modified++;
 
         sess = sgwc_sess_find_by_id(bearer->sess_id);
         ogs_assert(sess);
@@ -1108,6 +1153,12 @@ void sgwc_s11_handle_modify_bearer_request(
                 sess->id, current_xact,
                 (unsigned long long)current_xact->modify_flags, bearer->ebi);
 
+        /*
+         * Also covers in-flight DROP/REARM/DROBU xacts that
+         * sgwc_pfcp_find_session_modify_xact() would miss (exact flag
+         * match). Single embedded to_modify_node — must unlink first.
+         */
+        sgwc_bearer_unlink_to_modify(bearer, sess->pfcp_node);
         ogs_list_add(&current_xact->bearer_to_modify_list,
                         &bearer->to_modify_node);
 next_bearer:
@@ -1116,6 +1167,14 @@ next_bearer:
 
     if (i == 0) {
         ogs_error("No Bearer");
+        goto cleanup;
+    }
+
+    if (num_of_modified == 0) {
+        ogs_error("[%s] Modify Bearer Request: none of the %d bearer "
+                "context(s) is known to the SGW",
+                sgwc_ue->imsi_bcd, num_of_unknown);
+        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
         goto cleanup;
     }
 
@@ -2055,12 +2114,12 @@ void sgwc_s11_handle_release_access_bearers_request(
          * abort the entire SGW-C. Skip such sessions instead.
          */
         if (ogs_list_count(&sess->bearer_list) == 0) {
-            ogs_error("[%s] Release Access Bearers: session has no bearers, "
+            ogs_warn("[%s] Release Access Bearers: session has no bearers, "
                     "skipping", sgwc_ue->imsi_bcd);
             continue;
         }
         if (!sess->pfcp_node) {
-            ogs_error("[%s] Release Access Bearers: session has no PFCP node, "
+            ogs_warn("[%s] Release Access Bearers: session has no PFCP node, "
                     "skipping", sgwc_ue->imsi_bcd);
             continue;
         }
@@ -2143,17 +2202,57 @@ out:
     /************************
      * Check SGWC-UE Context
      ************************/
+    cause_value = OGS_GTP2_CAUSE_UNDEFINED_VALUE;
     if (ack->cause.presence) {
         ogs_gtp2_cause_t *cause = ack->cause.data;
         ogs_assert(cause);
 
         cause_value = cause->value;
-        if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED && 
+        if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED &&
             cause_value != OGS_GTP2_CAUSE_UE_ALREADY_RE_ATTACHED)
             ogs_warn("GTP Cause [Value:%d] - PFCP_CAUSE[%d]",
                     cause_value, pfcp_cause_from_gtp(cause_value));
     } else {
         ogs_error("No Cause");
+    }
+
+    /*
+     * Paging failed (TS 23.401 5.3.4.3): "the Serving GW deletes the
+     * buffered packet(s)". Realized with PFCPSMReq-Flags DROBU=1
+     * (TS 29.244 5.2.4.3): discard what is buffered NOW, but keep the
+     * FAR in BUFF|NOCP so a later DL packet buffers again, raises a
+     * fresh Downlink Data Report and triggers a new paging attempt.
+     * (The old behavior - flipping the FAR to persistent DROP - made
+     * the UE unreachable for MT traffic until it woke up by itself.)
+     * The ddn_holddown suppresses immediate re-paging by a chatty DL
+     * stream; the buffer_idle sweep DROBUs again when it ends.
+     */
+    if (sess &&
+        (cause_value == OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE ||
+         cause_value ==
+            OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE_DUE_TO_SUSPENSION)) {
+        SGWC_DL_STAT_INC(ddn_unable_to_page);
+        ogs_info("[%s] DDN Ack Unable-to-page → DROBU (keep BUFF|NOCP) "
+                "APN[%s] EBI[%d]",
+                sgwc_ue ? sgwc_ue->imsi_bcd : "unknown",
+                sess->session.name ? sess->session.name : "",
+                bearer ? bearer->ebi : 0);
+        if (sgwc_self()->ddn_holddown_s)
+            sess->ddn_holddown_until = ogs_time_now() +
+                ogs_time_from_sec(sgwc_self()->ddn_holddown_s);
+        {
+            int drv = sgwc_sess_send_dl_drobu(sess);
+            if (drv == OGS_RETRY) {
+                /* Modify in flight (e.g. MBR ACTIVATE). Holddown sweep
+                 * will DROBU when the race clears. */
+                sess->ddn_suppressed = true;
+                ogs_info("[%s] DROBU deferred (modify in flight); "
+                        "holddown will retry",
+                        sgwc_ue ? sgwc_ue->imsi_bcd : "unknown");
+            } else if (drv != OGS_OK) {
+                ogs_error("DROBU after Unable-to-page failed");
+            }
+        }
     }
 
     ogs_info("Downlink Data Notification Acknowledge%s%s",
@@ -2232,8 +2331,26 @@ void sgwc_s11_handle_create_indirect_data_forwarding_tunnel_request(
             req_teid = req->bearer_contexts[i].s1_u_enodeb_f_teid.data;
             ogs_assert(req_teid);
 
-            tunnel = sgwc_tunnel_add(bearer,
+            /*
+             * Repeated S1 handover attempt: the previous indirect tunnel
+             * was never deleted (HO failed or was abandoned without a
+             * Delete Indirect request). Reuse it - the PDR/FAR pair is
+             * updated in place and the SGW-U side create is idempotent
+             * (ogs_pfcp_pdr_find_or_add), so forwarding simply repoints
+             * to the new target eNB. Allocating a fresh tunnel per
+             * attempt leaked PDRs until the session's 16-PDR budget was
+             * exhausted ("PDR ID pool exhausted [PDR:16/16]"), breaking
+             * the bearer for good.
+             */
+            tunnel = sgwc_tunnel_find_by_interface_type(bearer,
                     OGS_GTP2_F_TEID_SGW_GTP_U_FOR_DL_DATA_FORWARDING);
+            if (tunnel)
+                ogs_warn("[%s] Reusing stale DL indirect tunnel "
+                        "EBI[%d] TEID[0x%x]", sgwc_log_imsi(sgwc_ue),
+                        bearer->ebi, tunnel->local_teid);
+            else
+                tunnel = sgwc_tunnel_add(bearer,
+                        OGS_GTP2_F_TEID_SGW_GTP_U_FOR_DL_DATA_FORWARDING);
             if (!tunnel) {
                 ogs_error("sgwc_tunnel_add() failed");
                 cause_value = OGS_GTP2_CAUSE_SYSTEM_FAILURE;
@@ -2280,8 +2397,16 @@ void sgwc_s11_handle_create_indirect_data_forwarding_tunnel_request(
             req_teid = req->bearer_contexts[i].s12_rnc_f_teid.data;
             ogs_assert(req_teid);
 
-            tunnel = sgwc_tunnel_add(bearer,
+            /* Same reuse-in-place as the DL forwarding tunnel above. */
+            tunnel = sgwc_tunnel_find_by_interface_type(bearer,
                     OGS_GTP2_F_TEID_SGW_GTP_U_FOR_UL_DATA_FORWARDING);
+            if (tunnel)
+                ogs_warn("[%s] Reusing stale UL indirect tunnel "
+                        "EBI[%d] TEID[0x%x]", sgwc_log_imsi(sgwc_ue),
+                        bearer->ebi, tunnel->local_teid);
+            else
+                tunnel = sgwc_tunnel_add(bearer,
+                        OGS_GTP2_F_TEID_SGW_GTP_U_FOR_UL_DATA_FORWARDING);
             if (!tunnel) {
                 ogs_error("sgwc_tunnel_add() failed");
                 cause_value = OGS_GTP2_CAUSE_SYSTEM_FAILURE;

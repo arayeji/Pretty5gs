@@ -74,6 +74,21 @@ void mme_send_delete_session_or_mme_ue_context_release(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 void mme_send_release_access_bearer_or_ue_context_release(enb_ue_t *enb_ue);
 
+/*
+ * Release the S1 UE-associated logical connection after a NAS reject or
+ * a failed EMM transaction, leaving the UE context itself alone.
+ *
+ * The reject helpers only transmit the NAS PDU, so a procedure that ends
+ * in a reject used to leave S1 up with nothing scheduled to take it down:
+ * the eNB then dangles the UE-associated connection until its own guard
+ * timer (~30 s) fires an S1AP Reset partOfS1-Interface, and only then does
+ * the MME release. Measured in production at ~7 such Resets per second.
+ *
+ * No-op when there is no S1 context, when a release is already in flight,
+ * or when a pending GTP teardown will drive the release itself.
+ */
+void mme_send_s1_release_after_emm_failure(mme_ue_t *mme_ue);
+
 void mme_send_after_paging(mme_ue_t *mme_ue, bool failed);
 
 void mme_send_delete_session_or_tau_accept(enb_ue_t *enb_ue, mme_ue_t *mme_ue);

@@ -1,0 +1,3428 @@
+[
+  {
+    "path": "db_uri",
+    "type": "string",
+    "default": null,
+    "group": "global",
+    "reload": "restart",
+    "description": "Mongo URI (app stack; MME typically unused)",
+    "notes": ""
+  },
+  {
+    "path": "global.max.bearer",
+    "type": "integer",
+    "default": 0,
+    "group": "global",
+    "reload": "restart",
+    "description": "Max bearer pool override (0=derived)",
+    "notes": ""
+  },
+  {
+    "path": "global.max.bearer_per_sess",
+    "type": "integer",
+    "default": 0,
+    "group": "global",
+    "reload": "restart",
+    "description": "Bearers per session factor",
+    "notes": ""
+  },
+  {
+    "path": "global.max.eps_tai0_partial_list",
+    "type": "integer",
+    "default": 20000,
+    "group": "global",
+    "reload": "restart",
+    "description": "Max type-0 TAI partial lists",
+    "notes": ""
+  },
+  {
+    "path": "global.max.gtp_peer",
+    "type": "integer",
+    "default": 0,
+    "group": "global",
+    "reload": "restart",
+    "description": "Max GTP peer pool (0=derived)",
+    "notes": ""
+  },
+  {
+    "path": "global.max.gtpu_buf_per_ue",
+    "type": "integer",
+    "default": 0,
+    "group": "global",
+    "reload": "restart",
+    "description": "GTPU buf per UE factor",
+    "notes": ""
+  },
+  {
+    "path": "global.max.peer",
+    "type": "integer",
+    "default": 64,
+    "group": "global",
+    "reload": "restart",
+    "description": "Max peer (eNB) contexts",
+    "notes": "ogs_app_parse_global_conf default 64",
+    "aliases": [
+      "enb"
+    ]
+  },
+  {
+    "path": "global.max.pool_per_ue",
+    "type": "integer",
+    "default": 0,
+    "group": "global",
+    "reload": "restart",
+    "description": "Generic pool-per-UE factor",
+    "notes": ""
+  },
+  {
+    "path": "global.max.sess",
+    "type": "integer",
+    "default": 0,
+    "group": "global",
+    "reload": "restart",
+    "description": "Max sessions pool override (0=derived)",
+    "notes": ""
+  },
+  {
+    "path": "global.max.sess_per_ue",
+    "type": "integer",
+    "default": 0,
+    "group": "global",
+    "reload": "restart",
+    "description": "Sessions per UE factor",
+    "notes": ""
+  },
+  {
+    "path": "global.max.tai",
+    "type": "integer",
+    "default": 4096,
+    "group": "global",
+    "reload": "restart",
+    "description": "Max TAC entries per GTP-C client filter lists",
+    "notes": ""
+  },
+  {
+    "path": "global.max.tunnel_per_bearer",
+    "type": "integer",
+    "default": 0,
+    "group": "global",
+    "reload": "restart",
+    "description": "Tunnels per bearer factor",
+    "notes": ""
+  },
+  {
+    "path": "global.max.ue",
+    "type": "integer",
+    "default": 1024,
+    "group": "global",
+    "reload": "restart",
+    "description": "Max UE contexts",
+    "notes": ""
+  },
+  {
+    "path": "global.milenage.enabled",
+    "type": "boolean",
+    "default": null,
+    "group": "global",
+    "reload": "restart",
+    "description": "Enable milenage K4 override",
+    "notes": ""
+  },
+  {
+    "path": "global.milenage.k4",
+    "type": "string",
+    "default": null,
+    "group": "global",
+    "reload": "restart",
+    "description": "Milenage K4 hex",
+    "notes": ""
+  },
+  {
+    "path": "global.milenage.k4_file",
+    "type": "string",
+    "default": null,
+    "group": "global",
+    "reload": "restart",
+    "description": "Milenage K4 file path",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.fake_csfb",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "sighup",
+    "description": "Fake SMS-only Combined Accept (AUR=SMS only + LAI/P-TMSI) when UE asked Combined+SMS only",
+    "notes": "ogs_app_reload_parameter_scalars; requires fake_csfb_lai"
+  },
+  {
+    "path": "global.parameter.ignore_sgs",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "sighup",
+    "description": "Skip SGsAP Location Update (no VLR)",
+    "notes": "ogs_app_reload_parameter_scalars"
+  },
+  {
+    "path": "global.parameter.multicast",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter multicast",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_amf",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_amf",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_ausf",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_ausf",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_bsf",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_bsf",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_hss",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_hss",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_ims",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_ims",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_ipv4",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_ipv4",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_ipv4v6_local_addr_in_packet_filter",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_ipv4v6_local_addr_in_packet_filter",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_ipv6",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_ipv6",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_mme",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_mme",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_nrf",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_nrf",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_nssf",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_nssf",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_pcf",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_pcf",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_pcrf",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_pcrf",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_pfcp_rr_select",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_pfcp_rr_select",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_pgw",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_pgw",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_scp",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_scp",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_sepp",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_sepp",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_sgw",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_sgw",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_sgwc",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_sgwc",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_sgwu",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_sgwu",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_smf",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_smf",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_time_zone_information",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_time_zone_information",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_udm",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_udm",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_udr",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_udr",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.no_upf",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "App stack parameter no_upf",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.prefer_ipv4",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "Prefer IPv4 when dual-stack peers",
+    "notes": ""
+  },
+  {
+    "path": "global.parameter.use_openair",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "sighup",
+    "description": "Umbrella: short ENFS + omit HashMME (all UEs); prefer split flags",
+    "notes": "ogs_app_reload_parameter_scalars"
+  },
+  {
+    "path": "global.parameter.openair_short_enfs",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "sighup",
+    "description": "1-byte EPS Network Feature Support on Attach/TAU Accept",
+    "notes": "ogs_app_reload_parameter_scalars; also on when use_openair"
+  },
+  {
+    "path": "global.parameter.openair_omit_hashmme",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "sighup",
+    "description": "Omit HashMME from SMC (security tradeoff)",
+    "notes": "ogs_app_reload_parameter_scalars; also on when use_openair"
+  },
+  {
+    "path": "global.parameter.use_upg_vpp",
+    "type": "boolean",
+    "default": false,
+    "group": "global",
+    "reload": "restart",
+    "description": "UPG/VPP integration flag",
+    "notes": ""
+  },
+  {
+    "path": "global.pool.1024",
+    "type": "integer",
+    "default": null,
+    "group": "global",
+    "reload": "restart",
+    "description": "pkbuf cluster count size 1024",
+    "notes": ""
+  },
+  {
+    "path": "global.pool.128",
+    "type": "integer",
+    "default": null,
+    "group": "global",
+    "reload": "restart",
+    "description": "pkbuf cluster count size 128",
+    "notes": ""
+  },
+  {
+    "path": "global.pool.2048",
+    "type": "integer",
+    "default": null,
+    "group": "global",
+    "reload": "restart",
+    "description": "pkbuf cluster count size 2048",
+    "notes": ""
+  },
+  {
+    "path": "global.pool.256",
+    "type": "integer",
+    "default": null,
+    "group": "global",
+    "reload": "restart",
+    "description": "pkbuf cluster count size 256",
+    "notes": ""
+  },
+  {
+    "path": "global.pool.32768",
+    "type": "integer",
+    "default": null,
+    "group": "global",
+    "reload": "restart",
+    "description": "pkbuf cluster count size 32768",
+    "notes": ""
+  },
+  {
+    "path": "global.pool.512",
+    "type": "integer",
+    "default": null,
+    "group": "global",
+    "reload": "restart",
+    "description": "pkbuf cluster count size 512",
+    "notes": ""
+  },
+  {
+    "path": "global.pool.8192",
+    "type": "integer",
+    "default": null,
+    "group": "global",
+    "reload": "restart",
+    "description": "pkbuf cluster count size 8192",
+    "notes": ""
+  },
+  {
+    "path": "global.pool.big",
+    "type": "integer",
+    "default": null,
+    "group": "global",
+    "reload": "restart",
+    "description": "pkbuf cluster count size big",
+    "notes": ""
+  },
+  {
+    "path": "global.sockopt.linger",
+    "type": "integer",
+    "default": null,
+    "group": "global",
+    "reload": "restart",
+    "description": "SO_LINGER seconds (sets l_onoff)",
+    "notes": ""
+  },
+  {
+    "path": "global.sockopt.no_delay",
+    "type": "boolean",
+    "default": true,
+    "group": "global",
+    "reload": "restart",
+    "description": "Default TCP/SCTP nodelay",
+    "notes": ""
+  },
+  {
+    "path": "global.time",
+    "type": "object",
+    "default": null,
+    "group": "timers",
+    "reload": "unknown",
+    "description": "Sample/docs-only global.time tree; MME uses mme.time.* instead.",
+    "notes": "Present in some sample YAMLs; MME parser does not apply global.time. Use mme.time.*.",
+    "sample_only": true
+  },
+  {
+    "path": "global.time.message.duration",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "unknown",
+    "description": "Sample-only message duration under global.time.",
+    "notes": "Not read by MME context parser; timers live under mme.time.",
+    "sample_only": true
+  },
+  {
+    "path": "logger.default.timestamp",
+    "type": "boolean",
+    "default": null,
+    "group": "logger",
+    "reload": "sighup",
+    "description": "Default timestamp flag for logger.",
+    "notes": ""
+  },
+  {
+    "path": "logger.domain",
+    "type": "object",
+    "default": null,
+    "group": "logger",
+    "reload": "sighup",
+    "description": "Per-subsystem log levels (mme, s1ap, gtp, s6a, nas, …).",
+    "notes": "Keys are domain names; values are level enums."
+  },
+  {
+    "path": "logger.file",
+    "type": "string",
+    "default": null,
+    "group": "logger",
+    "reload": "sighup",
+    "description": "Legacy scalar file path (prefer logger.file.path).",
+    "notes": "Legacy shape still accepted by common logger parser."
+  },
+  {
+    "path": "logger.file.path",
+    "type": "string",
+    "default": null,
+    "group": "logger",
+    "reload": "sighup",
+    "description": "Log file path when file logging is enabled.",
+    "notes": "",
+    "example": "/var/log/open5gs/mme.log"
+  },
+  {
+    "path": "logger.file.timestamp",
+    "type": "boolean",
+    "default": null,
+    "group": "logger",
+    "reload": "sighup",
+    "description": "Include timestamps in file logger output.",
+    "notes": ""
+  },
+  {
+    "path": "logger.level",
+    "type": "enum",
+    "default": null,
+    "group": "logger",
+    "reload": "sighup",
+    "description": "Global log severity for this NF process.",
+    "notes": "No compiled default forced by MME; commonly set in YAML. Absent on SIGHUP keeps previous.",
+    "enum": [
+      "fatal",
+      "error",
+      "warn",
+      "info",
+      "debug",
+      "trace"
+    ]
+  },
+  {
+    "path": "mme.access_control[]",
+    "type": "list",
+    "default": null,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "IMSI/PLMN/TAC/eNB access control entries.",
+    "notes": "SIGHUP list reload."
+  },
+  {
+    "path": "mme.access_control[].default_reject_cause",
+    "type": "integer",
+    "default": null,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "Default reject cause for access_control.",
+    "notes": ""
+  },
+  {
+    "path": "mme.access_control[].enb_id",
+    "type": "list",
+    "default": null,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "eNB ID filter for ACL entry.",
+    "notes": ""
+  },
+  {
+    "path": "mme.access_control[].imsi_prefix",
+    "type": "string",
+    "default": null,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "IMSI prefix for ACL entry.",
+    "notes": ""
+  },
+  {
+    "path": "mme.access_control[].order",
+    "type": "integer",
+    "default": null,
+    "group": "security",
+    "reload": "sighup",
+    "description": "Evaluation order",
+    "notes": ""
+  },
+  {
+    "path": "mme.access_control[].plmn_id",
+    "type": "object",
+    "default": null,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "PLMN allow entry.",
+    "notes": ""
+  },
+  {
+    "path": "mme.access_control[].plmn_id.mcc",
+    "type": "string",
+    "default": null,
+    "group": "security",
+    "reload": "sighup",
+    "description": "HPLMN MCC",
+    "notes": ""
+  },
+  {
+    "path": "mme.access_control[].plmn_id.mnc",
+    "type": "string",
+    "default": null,
+    "group": "security",
+    "reload": "sighup",
+    "description": "HPLMN MNC",
+    "notes": ""
+  },
+  {
+    "path": "mme.access_control[].reject_cause",
+    "type": "integer",
+    "default": null,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "Reject cause for matched ACL entry.",
+    "notes": ""
+  },
+  {
+    "path": "mme.access_control[].tac",
+    "type": "list",
+    "default": null,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "TAC filter for ACL entry.",
+    "notes": ""
+  },
+  {
+    "path": "mme.ambr_limit",
+    "type": "object",
+    "default": null,
+    "group": "qos",
+    "reload": "sighup",
+    "description": "UE AMBR clamp policy.",
+    "notes": ""
+  },
+  {
+    "path": "mme.ambr_limit.downlink",
+    "type": "integer",
+    "default": "compiled-default: 200",
+    "group": "qos",
+    "reload": "sighup",
+    "description": "Downlink AMBR cap in Mbps.",
+    "notes": "Stored as bps (mbps*1e6); prepare default 200 Mbps.",
+    "aliases": [
+      "mme.ambr_limit.downlink_mbps"
+    ]
+  },
+  {
+    "path": "mme.ambr_limit.downlink_mbps",
+    "type": "integer",
+    "default": "compiled-default: 200",
+    "group": "qos",
+    "reload": "sighup",
+    "description": "Alias of downlink (Mbps).",
+    "notes": ""
+  },
+  {
+    "path": "mme.ambr_limit.enabled",
+    "type": "boolean",
+    "default": false,
+    "group": "qos",
+    "reload": "sighup",
+    "description": "Enable AMBR limiting.",
+    "notes": ""
+  },
+  {
+    "path": "mme.ambr_limit.force",
+    "type": "boolean",
+    "default": false,
+    "group": "qos",
+    "reload": "sighup",
+    "description": "Force AMBR even when subscription higher.",
+    "notes": ""
+  },
+  {
+    "path": "mme.ambr_limit.uplink",
+    "type": "integer",
+    "default": "compiled-default: 200",
+    "group": "qos",
+    "reload": "sighup",
+    "description": "Uplink AMBR cap in Mbps.",
+    "notes": "",
+    "aliases": [
+      "mme.ambr_limit.uplink_mbps"
+    ]
+  },
+  {
+    "path": "mme.ambr_limit.uplink_mbps",
+    "type": "integer",
+    "default": "compiled-default: 200",
+    "group": "qos",
+    "reload": "sighup",
+    "description": "Alias of uplink (Mbps).",
+    "notes": ""
+  },
+  {
+    "path": "mme.apn_correction[]",
+    "type": "list",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "APN correction / PDN-type policy rules.",
+    "notes": "mme_apn_policy_parse; SIGHUP."
+  },
+  {
+    "path": "mme.apn_correction[].apn",
+    "type": "string",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Alias of requested_apn.",
+    "notes": ""
+  },
+  {
+    "path": "mme.apn_correction[].correct_to",
+    "type": "string",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Corrected APN to use.",
+    "notes": ""
+  },
+  {
+    "path": "mme.apn_correction[].dnn",
+    "type": "string",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Alias of requested_apn",
+    "notes": "alias"
+  },
+  {
+    "path": "mme.apn_correction[].imsi_prefix",
+    "type": "string",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "IMSI prefix for APN correction rule.",
+    "notes": ""
+  },
+  {
+    "path": "mme.apn_correction[].name",
+    "type": "string",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Optional rule name.",
+    "notes": ""
+  },
+  {
+    "path": "mme.apn_correction[].on_apn_mismatch",
+    "type": "string",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Action when APN mismatches.",
+    "notes": ""
+  },
+  {
+    "path": "mme.apn_correction[].on_pdn_type_mismatch",
+    "type": "string",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Action when PDN type mismatches.",
+    "notes": ""
+  },
+  {
+    "path": "mme.apn_correction[].pdn_type",
+    "type": "string",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Forced/expected PDN type.",
+    "notes": ""
+  },
+  {
+    "path": "mme.apn_correction[].reject_cause",
+    "type": "integer",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Reject cause for correction policy.",
+    "notes": ""
+  },
+  {
+    "path": "mme.apn_correction[].requested_apn",
+    "type": "string",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Requested APN match.",
+    "notes": "",
+    "aliases": [
+      "mme.apn_correction[].apn"
+    ]
+  },
+  {
+    "path": "mme.attach_accept",
+    "type": "object",
+    "default": "compiled-default: mme_attach_accept_set_defaults",
+    "group": "attach",
+    "reload": "unknown",
+    "description": "Nested Attach/TAU Accept NAS options object.",
+    "notes": "Partial SIGHUP: only tai_list, equivalent_plmn_serving_only, equivalent_plmn_access_control_tac, ims_voice_over_ps. equivalent_plmn/t3402/esm/legacy need restart."
+  },
+  {
+    "path": "mme.attach_accept.equivalent_plmn",
+    "type": "boolean",
+    "default": true,
+    "group": "attach",
+    "reload": "sighup",
+    "description": "Include Equivalent PLMN list in Accept.",
+    "notes": "Boolean IE switch only. PLMN list is flat mme.equivalent_plmn[]. /admin/config: runtime.eplmn + runtime.equivalent_plmn."
+  },
+  {
+    "path": "mme.attach_accept.equivalent_plmn_serving_only",
+    "type": "boolean",
+    "default": true,
+    "group": "attach",
+    "reload": "sighup",
+    "description": "Limit EPLMN list to serving-related PLMNs.",
+    "notes": "SIGHUP subset + flat alias."
+  },
+  {
+    "path": "mme.attach_accept.equivalent_plmn_access_control_tac",
+    "type": "boolean",
+    "default": false,
+    "group": "attach",
+    "reload": "sighup",
+    "description": "Send EPLMN only when UE matches access_control and TAC is on that entry allow-list.",
+    "notes": "Reuses access_control TAC hashes; eNB-ID ignored for this gate.",
+    "aliases": [
+      "mme.equivalent_plmn_access_control_tac"
+    ]
+  },
+  {
+    "path": "mme.attach_accept.esm_cause_pdn_type_mismatch",
+    "type": "boolean",
+    "default": true,
+    "group": "attach",
+    "reload": "restart",
+    "description": "Include ESM cause on PDN type mismatch.",
+    "notes": "Not in SIGHUP subset."
+  },
+  {
+    "path": "mme.attach_accept.ims_voice_over_ps",
+    "type": "boolean",
+    "default": true,
+    "group": "attach",
+    "reload": "sighup",
+    "description": "IMS voice over PS indicator in S1 mode.",
+    "notes": "Nested alias ims_voice_over_ps_in_s1_mode accepted in parse.",
+    "aliases": [
+      "mme.attach_accept.ims_voice_over_ps_in_s1_mode"
+    ]
+  },
+  {
+    "path": "mme.attach_accept.ims_voice_over_ps_in_s1_mode",
+    "type": "boolean",
+    "default": true,
+    "group": "attach",
+    "reload": "sighup",
+    "description": "Alias of attach_accept.ims_voice_over_ps.",
+    "notes": "",
+    "aliases": [
+      "mme.attach_accept.ims_voice_over_ps"
+    ]
+  },
+  {
+    "path": "mme.attach_accept.legacy_gprs_qos",
+    "type": "boolean",
+    "default": true,
+    "group": "attach",
+    "reload": "restart",
+    "description": "Emit legacy GPRS QoS IE behaviour.",
+    "notes": "Not in SIGHUP subset."
+  },
+  {
+    "path": "mme.attach_accept.t3402",
+    "type": "boolean",
+    "default": false,
+    "group": "attach",
+    "reload": "restart",
+    "description": "Include T3402 IE in Attach/TAU Accept when timer configured.",
+    "notes": "Not in SIGHUP subset."
+  },
+  {
+    "path": "mme.attach_accept.tai_list",
+    "type": "enum",
+    "default": "serving_only",
+    "group": "attach",
+    "reload": "sighup",
+    "description": "TAI list in Attach/TAU Accept: serving_only or all.",
+    "notes": "reload_attach_accept_scalars; flat alias tai_list_in_accept.",
+    "enum": [
+      "serving_only",
+      "all"
+    ]
+  },
+  {
+    "path": "mme.emergency",
+    "type": "object",
+    "default": null,
+    "group": "emergency",
+    "reload": "sighup",
+    "description": "Emergency DNN / number configuration.",
+    "notes": ""
+  },
+  {
+    "path": "mme.emergency.dnn",
+    "type": "string",
+    "default": null,
+    "group": "emergency",
+    "reload": "sighup",
+    "description": "Emergency DNN/APN.",
+    "notes": "",
+    "example": "sos"
+  },
+  {
+    "path": "mme.emergency.number",
+    "type": "list",
+    "default": null,
+    "group": "emergency",
+    "reload": "sighup",
+    "description": "Emergency number list with categories.",
+    "notes": ""
+  },
+  {
+    "path": "mme.emergency.number[].categories",
+    "type": "list",
+    "default": null,
+    "group": "emergency",
+    "reload": "sighup",
+    "description": "Categories: police|ambulance|fire|marine|mountain or bitmask.",
+    "notes": "",
+    "example": [
+      "police",
+      "ambulance",
+      "fire"
+    ]
+  },
+  {
+    "path": "mme.emergency.number[].digits",
+    "type": "string",
+    "default": null,
+    "group": "emergency",
+    "reload": "sighup",
+    "description": "Emergency number digits.",
+    "notes": "",
+    "example": "112"
+  },
+  {
+    "path": "mme.equivalent_plmn[]",
+    "type": "list",
+    "default": null,
+    "group": "attach",
+    "reload": "sighup",
+    "description": "Configured Equivalent PLMN list (MCC/MNC entries).",
+    "notes": "eplmn-config / mme_reload_lists_key_add_only."
+  },
+  {
+    "path": "mme.equivalent_plmn[].mcc",
+    "type": "string",
+    "default": null,
+    "group": "attach",
+    "reload": "sighup",
+    "description": "EPLMN MCC.",
+    "notes": "",
+    "example": "999"
+  },
+  {
+    "path": "mme.equivalent_plmn[].mnc",
+    "type": "string",
+    "default": null,
+    "group": "attach",
+    "reload": "sighup",
+    "description": "EPLMN MNC.",
+    "notes": "",
+    "example": "71"
+  },
+  {
+    "path": "mme.equivalent_plmn_serving_only",
+    "type": "boolean",
+    "default": true,
+    "group": "attach",
+    "reload": "sighup",
+    "description": "Flat alias of attach_accept.equivalent_plmn_serving_only.",
+    "notes": "",
+    "aliases": [
+      "mme.attach_accept.equivalent_plmn_serving_only"
+    ]
+  },
+  {
+    "path": "mme.equivalent_plmn_access_control_tac",
+    "type": "boolean",
+    "default": false,
+    "group": "attach",
+    "reload": "sighup",
+    "description": "Flat alias of attach_accept.equivalent_plmn_access_control_tac.",
+    "notes": "",
+    "aliases": [
+      "mme.attach_accept.equivalent_plmn_access_control_tac"
+    ]
+  },
+  {
+    "path": "mme.freeDiameter",
+    "type": "string",
+    "default": null,
+    "group": "diameter",
+    "reload": "restart",
+    "description": "Path to freeDiameter config file (scalar form).",
+    "notes": "",
+    "example": "/etc/open5gs/freeDiameter/mme.conf"
+  },
+  {
+    "path": "mme.freeDiameter.connect",
+    "type": "list",
+    "default": null,
+    "group": "diameter",
+    "reload": "restart",
+    "description": "Diameter peer connect list (identity/address).",
+    "notes": ""
+  },
+  {
+    "path": "mme.freeDiameter.connect[].address",
+    "type": "string",
+    "default": null,
+    "group": "diameter",
+    "reload": "restart",
+    "description": "Peer Diameter address/hostname.",
+    "notes": ""
+  },
+  {
+    "path": "mme.freeDiameter.connect[].identity",
+    "type": "string",
+    "default": null,
+    "group": "diameter",
+    "reload": "restart",
+    "description": "Peer Diameter identity.",
+    "notes": "",
+    "example": "hss.localdomain"
+  },
+  {
+    "path": "mme.freeDiameter.connect[].port",
+    "type": "integer",
+    "default": null,
+    "group": "diameter",
+    "reload": "restart",
+    "description": "Peer port",
+    "notes": ""
+  },
+  {
+    "path": "mme.freeDiameter.connect[].tc_timer",
+    "type": "integer",
+    "default": null,
+    "group": "diameter",
+    "reload": "restart",
+    "description": "Peer TC timer",
+    "notes": ""
+  },
+  {
+    "path": "mme.freeDiameter.identity",
+    "type": "string",
+    "default": null,
+    "group": "diameter",
+    "reload": "restart",
+    "description": "Diameter identity when embedding freeDiameter mapping.",
+    "notes": ""
+  },
+  {
+    "path": "mme.freeDiameter.listen_on",
+    "type": "string",
+    "default": null,
+    "group": "diameter",
+    "reload": "restart",
+    "description": "Local Diameter listen address.",
+    "notes": ""
+  },
+  {
+    "path": "mme.freeDiameter.load_extension[].conf",
+    "type": "string",
+    "default": null,
+    "group": "diameter",
+    "reload": "restart",
+    "description": "Extension conf",
+    "notes": ""
+  },
+  {
+    "path": "mme.freeDiameter.load_extension[].module",
+    "type": "string",
+    "default": null,
+    "group": "diameter",
+    "reload": "restart",
+    "description": "Extension module",
+    "notes": ""
+  },
+  {
+    "path": "mme.freeDiameter.no_fwd",
+    "type": "boolean",
+    "default": null,
+    "group": "diameter",
+    "reload": "restart",
+    "description": "Disable Diameter forwarding",
+    "notes": ""
+  },
+  {
+    "path": "mme.freeDiameter.port",
+    "type": "integer",
+    "default": "compiled-default: DIAMETER_PORT",
+    "group": "diameter",
+    "reload": "restart",
+    "description": "Diameter port",
+    "notes": ""
+  },
+  {
+    "path": "mme.freeDiameter.realm",
+    "type": "string",
+    "default": null,
+    "group": "diameter",
+    "reload": "restart",
+    "description": "Diameter realm for embedded freeDiameter mapping.",
+    "notes": ""
+  },
+  {
+    "path": "mme.freeDiameter.sec_port",
+    "type": "integer",
+    "default": "compiled-default: DIAMETER_SECURE_PORT",
+    "group": "diameter",
+    "reload": "restart",
+    "description": "Diameter TLS port",
+    "notes": ""
+  },
+  {
+    "path": "mme.freeDiameter.tc_timer",
+    "type": "integer",
+    "default": null,
+    "group": "diameter",
+    "reload": "restart",
+    "description": "TC timer",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgsn[]",
+    "type": "list",
+    "default": null,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "Gn/Gp SGSN peer list (not hot-reloaded).",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgsn[].address",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "SGSN address (scalar or list).",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgsn[].default_route",
+    "type": "boolean",
+    "default": false,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "Mark SGSN as default route.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgsn[].family",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "Address family for SGSN resolution.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgsn[].name",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "unknown",
+    "description": "Not a parsed SGSN key; sample YAML only (warns unknown).",
+    "notes": "Parser accepts address/port/family/routes/default_route; name is unknown key.",
+    "sample_only": true
+  },
+  {
+    "path": "mme.gtpc.client.sgsn[].port",
+    "type": "integer",
+    "default": null,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "SGSN GTP-C port.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgsn[].routes",
+    "type": "list",
+    "default": null,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "RAI/CI route list for SGSN.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgsn[].routes[].ci",
+    "type": "integer",
+    "default": null,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "Cell Identity for SGSN route.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgsn[].routes[].rai",
+    "type": "object",
+    "default": null,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "Route Area Identity under SGSN route.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgsn[].routes[].rai.lai.lac",
+    "type": "integer",
+    "default": null,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "Route LAC",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgsn[].routes[].rai.lai.plmn_id.mcc",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "Route RAI LAI MCC",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgsn[].routes[].rai.lai.plmn_id.mnc",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "Route RAI LAI MNC",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgsn[].routes[].rai.rac",
+    "type": "integer",
+    "default": null,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "Route RAC",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgwc",
+    "type": "list",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "SGW-C / S11 peer list (add/sync on SIGHUP).",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgwc[].address",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "SGWC peer address or hostname.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgwc[].e_cell_id",
+    "type": "list",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "E-UTRAN Cell Identity match list.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgwc[].family",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "Address family hint for peer resolution.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgwc[].imsi_plmn_id",
+    "type": "object",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "IMSI-home PLMN match for SGWC selection.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgwc[].imsi_prefix",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "IMSI prefix match for SGWC peer.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgwc[].order",
+    "type": "integer",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "Selection order weight for this SGWC entry.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgwc[].plmn_id",
+    "type": "object",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "PLMN match; meaning depends on inbound_roam.gtpc_plmn_id_is_imsi_plmn.",
+    "notes": "Parsed via mme_gtpc_client_parse_plmn_id_key."
+  },
+  {
+    "path": "mme.gtpc.client.sgwc[].plmn_id.mcc",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "MCC for sgwc plmn_id.",
+    "notes": "",
+    "example": "999"
+  },
+  {
+    "path": "mme.gtpc.client.sgwc[].plmn_id.mnc",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "MNC for sgwc plmn_id.",
+    "notes": "",
+    "example": "70"
+  },
+  {
+    "path": "mme.gtpc.client.sgwc[].port",
+    "type": "integer",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "SGWC peer GTP-C port.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgwc[].serving_plmn_id",
+    "type": "object",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "Serving PLMN match for SGWC selection.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgwc[].serving_plmn_id.mcc",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "Serving PLMN MCC.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgwc[].serving_plmn_id.mnc",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "Serving PLMN MNC.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.sgwc[].tac",
+    "type": "list",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "TAC match list for SGWC selection.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.smf",
+    "type": "list",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "SMF/PGW-C peer list for S5/S8 selection (SIGHUP sync).",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.smf[].address",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "SMF/PGW address or hostname.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.smf[].apn",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "APN/DNN match for this SMF entry (scalar or list in parser).",
+    "notes": "",
+    "example": "internet"
+  },
+  {
+    "path": "mme.gtpc.client.smf[].force",
+    "type": "boolean",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "Force this YAML SMF entry in selection.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.smf[].imsi_plmn_id",
+    "type": "object",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "IMSI PLMN match for SMF.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.smf[].imsi_prefix",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "IMSI prefix match for SMF.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.smf[].order",
+    "type": "integer",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "Selection order for SMF entry.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.smf[].plmn_id",
+    "type": "object",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "PLMN match (IMSI vs serving per inbound_roam flag).",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.smf[].port",
+    "type": "integer",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "SMF GTP-C port.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.smf[].serving_plmn_id",
+    "type": "object",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "Serving PLMN match for SMF.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.client.smf[].tac",
+    "type": "list",
+    "default": null,
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "TAC match for SMF selection.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.echo_interval",
+    "type": "integer",
+    "default": "compiled-default: 0 → schedule uses 60s",
+    "group": "gtpc",
+    "reload": "sighup",
+    "description": "S11 GTP Echo interval seconds; 0 means use 60s at schedule time.",
+    "notes": "Stored 0 in prepare; mme_sgw_echo_schedule uses 60 when 0. SIGHUP reschedules."
+  },
+  {
+    "path": "mme.gtpc.recovery",
+    "type": "integer",
+    "default": 0,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "GTP recovery counter; ignored on SIGHUP.",
+    "notes": "mme_context_reload_runtime warns restart required."
+  },
+  {
+    "path": "mme.gtpc.recovery_counter_file",
+    "type": "string",
+    "default": "compiled-default: MME_RECOVERY_COUNTER_FILE",
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "Path for persisted GTP recovery counter.",
+    "notes": "SIGHUP ignored with audit warning."
+  },
+  {
+    "path": "mme.gtpc.server",
+    "type": "list",
+    "default": null,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "GTP-C server bind list.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.server[].address",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "GTP-C listen address.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.server[].advertise",
+    "type": "string",
+    "default": null,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "Advertised address",
+    "notes": ""
+  },
+  {
+    "path": "mme.gtpc.server[].port",
+    "type": "integer",
+    "default": 2123,
+    "group": "gtpc",
+    "reload": "restart",
+    "description": "GTP-C port (typically 2123).",
+    "notes": ""
+  },
+  {
+    "path": "mme.gummei[]",
+    "type": "list",
+    "default": null,
+    "group": "gummei",
+    "reload": "restart",
+    "description": "Served GUMMEI list (required).",
+    "notes": ""
+  },
+  {
+    "path": "mme.gummei[].mme_code",
+    "type": "integer",
+    "default": null,
+    "group": "gummei",
+    "reload": "restart",
+    "description": "MME Code (scalar or list).",
+    "notes": "",
+    "example": 1
+  },
+  {
+    "path": "mme.gummei[].mme_gid",
+    "type": "integer",
+    "default": null,
+    "group": "gummei",
+    "reload": "restart",
+    "description": "MME Group ID (scalar or list).",
+    "notes": "",
+    "example": 2
+  },
+  {
+    "path": "mme.gummei[].plmn_id",
+    "type": "list",
+    "default": null,
+    "group": "gummei",
+    "reload": "restart",
+    "description": "One PLMN mapping or a SEQUENCE of PLMNs per GUMMEI.",
+    "notes": "Parser accepts mapping or sequence (mme-context.c gummei.plmn_id). Under-documented in sparse NMS catalog."
+  },
+  {
+    "path": "mme.gummei[].plmn_id.mcc",
+    "type": "string",
+    "default": null,
+    "group": "gummei",
+    "reload": "restart",
+    "description": "MCC when plmn_id is a single mapping.",
+    "notes": "",
+    "example": "999"
+  },
+  {
+    "path": "mme.gummei[].plmn_id.mnc",
+    "type": "string",
+    "default": null,
+    "group": "gummei",
+    "reload": "restart",
+    "description": "MNC when plmn_id is a single mapping.",
+    "notes": "",
+    "example": "70"
+  },
+  {
+    "path": "mme.gummei[].plmn_id[].mcc",
+    "type": "string",
+    "default": null,
+    "group": "gummei",
+    "reload": "restart",
+    "description": "MCC for each PLMN when plmn_id is a list.",
+    "notes": ""
+  },
+  {
+    "path": "mme.gummei[].plmn_id[].mnc",
+    "type": "string",
+    "default": null,
+    "group": "gummei",
+    "reload": "restart",
+    "description": "MNC for each PLMN when plmn_id is a list.",
+    "notes": ""
+  },
+  {
+    "path": "mme.hss_map[]",
+    "type": "list",
+    "default": null,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "IMSI-PLMN to HSS realm/host map.",
+    "notes": ""
+  },
+  {
+    "path": "mme.hss_map[].host",
+    "type": "string",
+    "default": null,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "Diameter host for HSS.",
+    "notes": ""
+  },
+  {
+    "path": "mme.hss_map[].order",
+    "type": "integer",
+    "default": null,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "Selection order among HSS map entries.",
+    "notes": ""
+  },
+  {
+    "path": "mme.hss_map[].plmn_id",
+    "type": "object",
+    "default": null,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "PLMN for HSS map entry.",
+    "notes": ""
+  },
+  {
+    "path": "mme.hss_map[].plmn_id.mcc",
+    "type": "string",
+    "default": null,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "HSS map MCC.",
+    "notes": ""
+  },
+  {
+    "path": "mme.hss_map[].plmn_id.mnc",
+    "type": "string",
+    "default": null,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "HSS map MNC.",
+    "notes": ""
+  },
+  {
+    "path": "mme.hss_map[].realm",
+    "type": "string",
+    "default": null,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "Diameter realm for HSS.",
+    "notes": ""
+  },
+  {
+    "path": "mme.ims_voice_over_ps_in_s1_mode",
+    "type": "boolean",
+    "default": true,
+    "group": "attach",
+    "reload": "sighup",
+    "description": "Flat alias of attach_accept.ims_voice_over_ps.",
+    "notes": "",
+    "aliases": [
+      "mme.attach_accept.ims_voice_over_ps"
+    ]
+  },
+  {
+    "path": "mme.imsi_acl[]",
+    "type": "list",
+    "default": null,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "IMSI prefix allow-list.",
+    "notes": ""
+  },
+  {
+    "path": "mme.inbound_roam",
+    "type": "object",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Inbound roaming / GTP APN policy object.",
+    "notes": "mme_inbound_roam_config_parse; SIGHUP."
+  },
+  {
+    "path": "mme.inbound_roam.allow_apn",
+    "type": "list",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Allowed APN list for inbound roam.",
+    "notes": "",
+    "aliases": [
+      "mme.inbound_roam.allowed_apn"
+    ]
+  },
+  {
+    "path": "mme.inbound_roam.allowed_apn",
+    "type": "list",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Alias of allow_apn.",
+    "notes": ""
+  },
+  {
+    "path": "mme.inbound_roam.apn_lowercase",
+    "type": "boolean",
+    "default": false,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Alias of gtp_apn_lowercase.",
+    "notes": ""
+  },
+  {
+    "path": "mme.inbound_roam.apn_reject_cause",
+    "type": "integer",
+    "default": "compiled-default: missing_or_unknown_apn",
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "NAS/ESM reject cause for denied APN.",
+    "notes": ""
+  },
+  {
+    "path": "mme.inbound_roam.apn_rule[]",
+    "type": "list",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Structured APN allow/deny rules with PLMN/IMSI match.",
+    "notes": " Wrong key; use rules[].",
+    "sample_only": true
+  },
+  {
+    "path": "mme.inbound_roam.apn_rule[].allowed_apn",
+    "type": "string",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Allow APNs for PLMN",
+    "notes": "aliases allow_apn"
+  },
+  {
+    "path": "mme.inbound_roam.apn_rule[].denied_apn",
+    "type": "string",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Deny APNs for PLMN",
+    "notes": "aliases deny_apn"
+  },
+  {
+    "path": "mme.inbound_roam.apn_rule[].plmn_id.mcc",
+    "type": "string",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Per-PLMN APN rule MCC",
+    "notes": "required"
+  },
+  {
+    "path": "mme.inbound_roam.apn_rule[].plmn_id.mnc",
+    "type": "string",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Per-PLMN APN rule MNC",
+    "notes": ""
+  },
+  {
+    "path": "mme.inbound_roam.denied_apn",
+    "type": "list",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Alias of deny_apn.",
+    "notes": ""
+  },
+  {
+    "path": "mme.inbound_roam.deny_apn",
+    "type": "list",
+    "default": null,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Denied APN list for inbound roam.",
+    "notes": "",
+    "aliases": [
+      "mme.inbound_roam.denied_apn"
+    ]
+  },
+  {
+    "path": "mme.inbound_roam.force_ipv4_pdn",
+    "type": "boolean",
+    "default": false,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Alias of force_ipv4_pdn_on_home_pgw.",
+    "notes": ""
+  },
+  {
+    "path": "mme.inbound_roam.force_ipv4_pdn_on_home_pgw",
+    "type": "boolean",
+    "default": false,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Force IPv4 PDN toward home PGW.",
+    "notes": "",
+    "aliases": [
+      "mme.inbound_roam.force_ipv4_pdn"
+    ]
+  },
+  {
+    "path": "mme.inbound_roam.gtp_apn_format",
+    "type": "enum",
+    "default": "fqdn",
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "How APN is encoded toward GTP.",
+    "notes": "aliases as_received/received in mme-inbound-roam-apn.c",
+    "enum": [
+      "fqdn",
+      "as_received",
+      "received"
+    ]
+  },
+  {
+    "path": "mme.inbound_roam.gtp_apn_lowercase",
+    "type": "boolean",
+    "default": false,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Force lowercase GTP APN.",
+    "notes": "",
+    "aliases": [
+      "mme.inbound_roam.apn_lowercase"
+    ]
+  },
+  {
+    "path": "mme.inbound_roam.gtpc_plmn_id_is_imsi_plmn",
+    "type": "boolean",
+    "default": true,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Treat bare plmn_id on GTP-C clients as IMSI PLMN (default true).",
+    "notes": "",
+    "aliases": [
+      "mme.inbound_roam.plmn_id_is_imsi_plmn"
+    ]
+  },
+  {
+    "path": "mme.inbound_roam.non_gbr_zero_bearer_mbr",
+    "type": "boolean",
+    "default": false,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Alias of zero_bearer_mbr_for_non_gbr.",
+    "notes": ""
+  },
+  {
+    "path": "mme.inbound_roam.omit_indication_on_gtp_csr",
+    "type": "boolean",
+    "default": false,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Roam-scoped omit Indication (also top-level aliases exist).",
+    "notes": "",
+    "aliases": [
+      "mme.inbound_roam.omit_gtp_indication"
+    ]
+  },
+  {
+    "path": "mme.inbound_roam.plmn_id_is_imsi_plmn",
+    "type": "boolean",
+    "default": true,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Alias of gtpc_plmn_id_is_imsi_plmn.",
+    "notes": ""
+  },
+  {
+    "path": "mme.inbound_roam.strip_pap_from_gtp_pco",
+    "type": "boolean",
+    "default": false,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Strip PAP from GTP PCO for roamers.",
+    "notes": "",
+    "aliases": [
+      "mme.inbound_roam.strip_pap_from_pco"
+    ]
+  },
+  {
+    "path": "mme.inbound_roam.strip_pap_from_pco",
+    "type": "boolean",
+    "default": false,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Alias of strip_pap_from_gtp_pco.",
+    "notes": ""
+  },
+  {
+    "path": "mme.inbound_roam.zero_bearer_mbr_for_non_gbr",
+    "type": "boolean",
+    "default": false,
+    "group": "roaming",
+    "reload": "sighup",
+    "description": "Zero bearer MBR for non-GBR on roam path.",
+    "notes": "",
+    "aliases": [
+      "mme.inbound_roam.non_gbr_zero_bearer_mbr"
+    ]
+  },
+  {
+    "path": "mme.li",
+    "type": "object",
+    "default": null,
+    "group": "li",
+    "reload": "restart",
+    "description": "Lawful Intercept MDF client config.",
+    "notes": "mme_li_parse_config; restart."
+  },
+  {
+    "path": "mme.li.enabled",
+    "type": "boolean",
+    "default": false,
+    "group": "li",
+    "reload": "restart",
+    "description": "Enable MME LI reporting.",
+    "notes": ""
+  },
+  {
+    "path": "mme.li.mdf.addr",
+    "type": "string",
+    "default": null,
+    "group": "li",
+    "reload": "restart",
+    "description": "MDF address/hostname.",
+    "notes": "",
+    "aliases": [
+      "mme.li.mdf.address"
+    ]
+  },
+  {
+    "path": "mme.li.mdf.address",
+    "type": "string",
+    "default": null,
+    "group": "li",
+    "reload": "restart",
+    "description": "Alias of mdf.addr.",
+    "notes": ""
+  },
+  {
+    "path": "mme.li.mdf.port",
+    "type": "integer",
+    "default": "compiled-default: 9051",
+    "group": "li",
+    "reload": "restart",
+    "description": "MDF HTTP port.",
+    "notes": ""
+  },
+  {
+    "path": "mme.metrics.server",
+    "type": "list",
+    "default": null,
+    "group": "metrics",
+    "reload": "restart",
+    "description": "Prometheus/metrics HTTP bind list.",
+    "notes": ""
+  },
+  {
+    "path": "mme.metrics.server[].address",
+    "type": "string",
+    "default": null,
+    "group": "metrics",
+    "reload": "restart",
+    "description": "Metrics listen address.",
+    "notes": ""
+  },
+  {
+    "path": "mme.metrics.server[].port",
+    "type": "integer",
+    "default": null,
+    "group": "metrics",
+    "reload": "restart",
+    "description": "Metrics listen port.",
+    "notes": "",
+    "example": 9090
+  },
+  {
+    "path": "mme.mip_home_agent_host_dns",
+    "type": "boolean",
+    "default": true,
+    "group": "pgw",
+    "reload": "restart",
+    "description": "Resolve HSS MIP Home-Agent-Host via DNS.",
+    "notes": "Not in SIGHUP path; restart."
+  },
+  {
+    "path": "mme.mme_name",
+    "type": "string",
+    "default": null,
+    "group": "identity",
+    "reload": "restart",
+    "description": "MME name used in S1AP (PrintableString).",
+    "notes": "Copied with ogs_strdup; not applied on SIGHUP. Restart required.",
+    "example": "open5gs-mme0"
+  },
+  {
+    "path": "mme.network_name.full",
+    "type": "string",
+    "default": null,
+    "group": "identity",
+    "reload": "restart",
+    "description": "Full network name for NAS EMM information.",
+    "notes": ""
+  },
+  {
+    "path": "mme.network_name.short",
+    "type": "string",
+    "default": null,
+    "group": "identity",
+    "reload": "restart",
+    "description": "Short network name for NAS EMM information.",
+    "notes": ""
+  },
+  {
+    "path": "mme.omit_gtp_indication",
+    "type": "boolean",
+    "default": false,
+    "group": "pgw",
+    "reload": "restart",
+    "description": "Alias of omit_indication_on_gtp_csr.",
+    "notes": "",
+    "aliases": [
+      "mme.omit_indication_on_gtp_csr"
+    ]
+  },
+  {
+    "path": "mme.omit_indication_on_gtp_csr",
+    "type": "boolean",
+    "default": false,
+    "group": "pgw",
+    "reload": "restart",
+    "description": "Omit Indication IE on GTP Create Session Request.",
+    "notes": "",
+    "aliases": [
+      "mme.omit_gtp_indication"
+    ]
+  },
+  {
+    "path": "mme.overload",
+    "type": "object",
+    "default": "compiled-default: enabled",
+    "group": "overload",
+    "reload": "sighup",
+    "description": "S1AP overload control and ingress admission.",
+    "notes": "mme_overload_config_set; SIGHUP in mme_reload_lists_key_add_only."
+  },
+  {
+    "path": "mme.overload.congest_lease_sec",
+    "type": "integer",
+    "default": "compiled-default: 3",
+    "group": "overload",
+    "reload": "sighup",
+    "description": "Congestion lease seconds.",
+    "notes": ""
+  },
+  {
+    "path": "mme.overload.enabled",
+    "type": "boolean",
+    "default": true,
+    "group": "overload",
+    "reload": "sighup",
+    "description": "Enable overload control (default on).",
+    "notes": "mme_context_prepare / s1ap-overload.c"
+  },
+  {
+    "path": "mme.overload.enb_initial_ue_burst",
+    "type": "integer",
+    "default": 0,
+    "group": "overload",
+    "reload": "sighup",
+    "description": "Token bucket burst (0=2x rate).",
+    "notes": ""
+  },
+  {
+    "path": "mme.overload.enb_initial_ue_rate",
+    "type": "integer",
+    "default": 0,
+    "group": "overload",
+    "reload": "sighup",
+    "description": "Max new Initial UE messages/s per eNB (0=off).",
+    "notes": ""
+  },
+  {
+    "path": "mme.overload.global_sustain_sec",
+    "type": "integer",
+    "default": "compiled-default: 3",
+    "group": "overload",
+    "reload": "sighup",
+    "description": "Seconds lag must sustain before global overload.",
+    "notes": ""
+  },
+  {
+    "path": "mme.overload.lag_critical_ms",
+    "type": "integer",
+    "default": "compiled-default: 4000",
+    "group": "overload",
+    "reload": "sighup",
+    "description": "Event-lag critical watermark (ms).",
+    "notes": ""
+  },
+  {
+    "path": "mme.overload.lag_high_ms",
+    "type": "integer",
+    "default": "compiled-default: 1500",
+    "group": "overload",
+    "reload": "sighup",
+    "description": "Event-lag high watermark (ms).",
+    "notes": ""
+  },
+  {
+    "path": "mme.overload.recovery_sec",
+    "type": "integer",
+    "default": "compiled-default: 5",
+    "group": "overload",
+    "reload": "sighup",
+    "description": "Recovery dwell before OVERLOAD STOP.",
+    "notes": ""
+  },
+  {
+    "path": "mme.overload.resend_interval_sec",
+    "type": "integer",
+    "default": "compiled-default: 10",
+    "group": "overload",
+    "reload": "sighup",
+    "description": "Resend OVERLOAD START interval.",
+    "notes": ""
+  },
+  {
+    "path": "mme.overload.signal_enb",
+    "type": "boolean",
+    "default": true,
+    "group": "overload",
+    "reload": "sighup",
+    "description": "Send S1AP OVERLOAD START/STOP to eNB.",
+    "notes": ""
+  },
+  {
+    "path": "mme.overload.traffic_load_reduction",
+    "type": "integer",
+    "default": null,
+    "group": "overload",
+    "reload": "unknown",
+    "description": "Wrong name; parser does not accept this key.",
+    "notes": "Misconfig trap: use mme.overload.traffic_reduction.",
+    "sample_only": true
+  },
+  {
+    "path": "mme.overload.traffic_reduction",
+    "type": "integer",
+    "default": "compiled-default: 50",
+    "group": "overload",
+    "reload": "sighup",
+    "description": "Percent traffic reduction sent to eNB in OVERLOAD START.",
+    "notes": "Real key is traffic_reduction (s1ap-overload.c). NOT traffic_load_reduction."
+  },
+  {
+    "path": "mme.paging",
+    "type": "object",
+    "default": null,
+    "group": "paging",
+    "reload": "sighup",
+    "description": "Paging policy object.",
+    "notes": ""
+  },
+  {
+    "path": "mme.paging.first_wave",
+    "type": "enum",
+    "default": "tai",
+    "group": "paging",
+    "reload": "sighup",
+    "description": "First paging wave strategy.",
+    "notes": "String enum tai|last_enb (not integer). mme-context.c + mme-reload-lists.c.",
+    "enum": [
+      "tai",
+      "last_enb"
+    ]
+  },
+  {
+    "path": "mme.pgw_selection",
+    "type": "object",
+    "default": null,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "PGW selection policy (mode/dns/rules).",
+    "notes": "Fully reloaded on SIGHUP including rules list replace."
+  },
+  {
+    "path": "mme.pgw_selection.dns",
+    "type": "object",
+    "default": null,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Nested DNS APN resolution object (not a bare bool).",
+    "notes": "Must use dns.enabled; bare dns: true is wrong shape."
+  },
+  {
+    "path": "mme.pgw_selection.dns.enabled",
+    "type": "boolean",
+    "default": false,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Enable APN DNS for PGW selection.",
+    "notes": ""
+  },
+  {
+    "path": "mme.pgw_selection.force",
+    "type": "boolean",
+    "default": false,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Alias of force_yaml.",
+    "notes": "",
+    "aliases": [
+      "mme.pgw_selection.force_yaml"
+    ]
+  },
+  {
+    "path": "mme.pgw_selection.force_yaml",
+    "type": "boolean",
+    "default": false,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Force YAML SMF list (alias keys force/force_yaml).",
+    "notes": "",
+    "aliases": [
+      "mme.pgw_selection.force"
+    ]
+  },
+  {
+    "path": "mme.pgw_selection.mode",
+    "type": "enum",
+    "default": "standard",
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Selection mode: standard vs force YAML/static.",
+    "notes": "",
+    "enum": [
+      "standard",
+      "standard-with-dns",
+      "force",
+      "force_yaml",
+      "static-only",
+      "static_only"
+    ]
+  },
+  {
+    "path": "mme.pgw_selection.rule[]",
+    "type": "list",
+    "default": null,
+    "group": "pgw",
+    "reload": "unknown",
+    "description": "Wrong key name; parser expects rules[].",
+    "notes": "Trap: use pgw_selection.rules not rule. Wrong key; use rules[].",
+    "sample_only": true
+  },
+  {
+    "path": "mme.pgw_selection.rules[]",
+    "type": "list",
+    "default": [],
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Ordered PGW selection rules (key name rules, not rule).",
+    "notes": "mme_pgw_sel_rules_parse; replaces whole list on reload."
+  },
+  {
+    "path": "mme.pgw_selection.rules[].address",
+    "type": "string",
+    "default": null,
+    "group": "pgw",
+    "reload": "unknown",
+    "description": "Not a rules field; peers live under gtpc.client.smf.",
+    "notes": "",
+    "sample_only": true
+  },
+  {
+    "path": "mme.pgw_selection.rules[].apn",
+    "type": "string",
+    "default": null,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "APN/DNN match (scalar or list); alias dnn.",
+    "notes": "",
+    "aliases": [
+      "mme.pgw_selection.rules[].dnn"
+    ]
+  },
+  {
+    "path": "mme.pgw_selection.rules[].dnn",
+    "type": "string",
+    "default": null,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Alias of rules[].apn.",
+    "notes": "",
+    "aliases": [
+      "mme.pgw_selection.rules[].apn"
+    ]
+  },
+  {
+    "path": "mme.pgw_selection.rules[].fallback",
+    "type": "enum",
+    "default": "none",
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Fallback when DNS rule misses.",
+    "notes": "yaml and static are aliases in parser.",
+    "enum": [
+      "none",
+      "hss",
+      "yaml",
+      "static"
+    ]
+  },
+  {
+    "path": "mme.pgw_selection.rules[].imsi_plmn_id",
+    "type": "object",
+    "default": null,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "IMSI PLMN match for rule.",
+    "notes": ""
+  },
+  {
+    "path": "mme.pgw_selection.rules[].imsi_plmn_id.mcc",
+    "type": "string",
+    "default": null,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Rule IMSI PLMN MCC",
+    "notes": ""
+  },
+  {
+    "path": "mme.pgw_selection.rules[].imsi_plmn_id.mnc",
+    "type": "string",
+    "default": null,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Rule IMSI PLMN MNC",
+    "notes": ""
+  },
+  {
+    "path": "mme.pgw_selection.rules[].imsi_prefix",
+    "type": "string",
+    "default": null,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "IMSI prefix match for rule.",
+    "notes": ""
+  },
+  {
+    "path": "mme.pgw_selection.rules[].mode",
+    "type": "enum",
+    "default": "dns",
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Rule mode; only dns is accepted.",
+    "notes": "",
+    "enum": [
+      "dns"
+    ]
+  },
+  {
+    "path": "mme.pgw_selection.rules[].order",
+    "type": "integer",
+    "default": null,
+    "group": "pgw",
+    "reload": "unknown",
+    "description": "Not a rules field (order is for gtpc client peers).",
+    "notes": "",
+    "sample_only": true
+  },
+  {
+    "path": "mme.pgw_selection.rules[].plmn_id",
+    "type": "object",
+    "default": null,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "PLMN match; serving vs IMSI depends on inbound_roam.gtpc_plmn_id_is_imsi_plmn.",
+    "notes": ""
+  },
+  {
+    "path": "mme.pgw_selection.rules[].plmn_id.mcc",
+    "type": "string",
+    "default": null,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Rule PLMN MCC",
+    "notes": ""
+  },
+  {
+    "path": "mme.pgw_selection.rules[].plmn_id.mnc",
+    "type": "string",
+    "default": null,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Rule PLMN MNC",
+    "notes": ""
+  },
+  {
+    "path": "mme.pgw_selection.rules[].serving_plmn_id",
+    "type": "object",
+    "default": null,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Serving PLMN match for rule.",
+    "notes": ""
+  },
+  {
+    "path": "mme.pgw_selection.rules[].serving_plmn_id.mcc",
+    "type": "string",
+    "default": null,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Rule serving PLMN MCC",
+    "notes": ""
+  },
+  {
+    "path": "mme.pgw_selection.rules[].serving_plmn_id.mnc",
+    "type": "string",
+    "default": null,
+    "group": "pgw",
+    "reload": "sighup",
+    "description": "Rule serving PLMN MNC",
+    "notes": ""
+  },
+  {
+    "path": "mme.pkbuf_thread_pool",
+    "type": "integer",
+    "default": 0,
+    "group": "performance",
+    "reload": "restart",
+    "description": "Packet buffer thread pool size.",
+    "notes": "Per-thread pkbuf pools; 0=off; ~13MB/thread at 2048; NOT SIGHUP"
+  },
+  {
+    "path": "mme.relative_capacity",
+    "type": "integer",
+    "default": "compiled-default: 0xff (255)",
+    "group": "identity",
+    "reload": "restart",
+    "description": "Relative MME capacity advertised to eNB.",
+    "notes": "mme_context_prepare sets 0xff. Not in mme_reload_lists_key_add_only."
+  },
+  {
+    "path": "mme.require_hss_map",
+    "type": "boolean",
+    "default": false,
+    "group": "hss",
+    "reload": "sighup",
+    "description": "Require hss_map match for attach.",
+    "notes": "Auto-true if hss_map present and not explicit false."
+  },
+  {
+    "path": "mme.s1ap.server",
+    "type": "list",
+    "default": null,
+    "group": "s1ap",
+    "reload": "restart",
+    "description": "S1AP SCTP server bind list.",
+    "notes": ""
+  },
+  {
+    "path": "mme.s1ap.server[].address",
+    "type": "string",
+    "default": null,
+    "group": "s1ap",
+    "reload": "restart",
+    "description": "S1-MME listen address.",
+    "notes": "",
+    "example": "127.0.0.2"
+  },
+  {
+    "path": "mme.s1ap.server[].dev",
+    "type": "string",
+    "default": null,
+    "group": "s1ap",
+    "reload": "restart",
+    "description": "Bind to device name",
+    "notes": ""
+  },
+  {
+    "path": "mme.s1ap.server[].family",
+    "type": "integer",
+    "default": 0,
+    "group": "s1ap",
+    "reload": "restart",
+    "description": "Address family 0/2/10",
+    "notes": ""
+  },
+  {
+    "path": "mme.s1ap.server[].option.sctp.sinit_max_instreams",
+    "type": "integer",
+    "default": null,
+    "group": "s1ap",
+    "reload": "restart",
+    "description": "SCTP max in streams",
+    "notes": ""
+  },
+  {
+    "path": "mme.s1ap.server[].option.sctp.sinit_num_ostreams",
+    "type": "integer",
+    "default": null,
+    "group": "s1ap",
+    "reload": "restart",
+    "description": "SCTP init outbound streams for S1AP.",
+    "notes": ""
+  },
+  {
+    "path": "mme.s1ap.server[].option.sctp.spp_hbinterval",
+    "type": "integer",
+    "default": null,
+    "group": "s1ap",
+    "reload": "restart",
+    "description": "SCTP heartbeat interval",
+    "notes": ""
+  },
+  {
+    "path": "mme.s1ap.server[].option.sctp.srto_initial",
+    "type": "integer",
+    "default": null,
+    "group": "s1ap",
+    "reload": "restart",
+    "description": "SCTP RTO initial",
+    "notes": ""
+  },
+  {
+    "path": "mme.s1ap.server[].option.sctp.srto_max",
+    "type": "integer",
+    "default": null,
+    "group": "s1ap",
+    "reload": "restart",
+    "description": "SCTP RTO max",
+    "notes": ""
+  },
+  {
+    "path": "mme.s1ap.server[].option.sctp.srto_min",
+    "type": "integer",
+    "default": null,
+    "group": "s1ap",
+    "reload": "restart",
+    "description": "SCTP RTO min",
+    "notes": ""
+  },
+  {
+    "path": "mme.s1ap.server[].option.sctp_nodelay",
+    "type": "boolean",
+    "default": null,
+    "group": "s1ap",
+    "reload": "restart",
+    "description": "SCTP nodelay option for S1AP server.",
+    "notes": ""
+  },
+  {
+    "path": "mme.s1ap.server[].option.so_rcvbuf",
+    "type": "integer",
+    "default": null,
+    "group": "s1ap",
+    "reload": "restart",
+    "description": "SO_RCVBUF bytes",
+    "notes": ""
+  },
+  {
+    "path": "mme.s1ap.server[].option.so_sndbuf",
+    "type": "integer",
+    "default": null,
+    "group": "s1ap",
+    "reload": "restart",
+    "description": "SO_SNDBUF bytes",
+    "notes": ""
+  },
+  {
+    "path": "mme.s1ap.server[].port",
+    "type": "integer",
+    "default": "compiled-default: 36412",
+    "group": "s1ap",
+    "reload": "restart",
+    "description": "S1AP SCTP port.",
+    "notes": "OGS_S1AP_SCTP_PORT=36412 in lib/sctp/ogs-sctp.h; mme_context_prepare."
+  },
+  {
+    "path": "mme.s1ap_io_congest_depth",
+    "type": "integer",
+    "default": 0,
+    "group": "performance",
+    "reload": "sighup",
+    "description": "Queue depth reported as TX-congested (0=max/4).",
+    "notes": "SIGHUP via mme_reload_lists_key_add_only."
+  },
+  {
+    "path": "mme.s1ap_io_stall_teardown_sec",
+    "type": "integer",
+    "default": "compiled-default: 0 → runtime 10",
+    "group": "performance",
+    "reload": "sighup",
+    "description": "Seconds with full write-queue before CONNREFUSED teardown.",
+    "notes": "SIGHUP via mme_reload_lists_key_add_only."
+  },
+  {
+    "path": "mme.s1ap_io_thread",
+    "type": "integer",
+    "default": 0,
+    "group": "performance",
+    "reload": "restart",
+    "description": "Dedicated S1AP SCTP send thread (0/1).",
+    "notes": ""
+  },
+  {
+    "path": "mme.s1ap_io_write_queue_max",
+    "type": "integer",
+    "default": "compiled-default: 0 → runtime 10240",
+    "group": "performance",
+    "reload": "sighup",
+    "description": "Per-eNB outbound PDU queue cap (0=default 10240).",
+    "notes": "Reloaded in mme_reload_lists_key_add_only."
+  },
+  {
+    "path": "mme.s1ap_rx_workers",
+    "type": "integer",
+    "default": 0,
+    "group": "performance",
+    "reload": "restart",
+    "description": "S1AP RX decode offload threads (0=off).",
+    "notes": ""
+  },
+  {
+    "path": "mme.s1ap_tx_workers",
+    "type": "integer",
+    "default": 0,
+    "group": "performance",
+    "reload": "restart",
+    "description": "S1AP TX encode offload threads (0=off).",
+    "notes": ""
+  },
+  {
+    "path": "mme.security.ciphering_order",
+    "type": "list",
+    "default": null,
+    "group": "security",
+    "reload": "restart",
+    "description": "NAS ciphering algorithm preference order.",
+    "notes": "",
+    "example": [
+      "EEA0",
+      "EEA1",
+      "EEA2"
+    ]
+  },
+  {
+    "path": "mme.security.integrity_order",
+    "type": "list",
+    "default": null,
+    "group": "security",
+    "reload": "restart",
+    "description": "NAS integrity algorithm preference order.",
+    "notes": "Required at validation; restart.",
+    "example": [
+      "EIA2",
+      "EIA1",
+      "EIA0"
+    ]
+  },
+  {
+    "path": "mme.serving[].plmn_id.mcc",
+    "type": "string",
+    "default": null,
+    "group": "identity",
+    "reload": "restart",
+    "description": "Local serving PLMN MCC",
+    "notes": "ogs_app_parse_local_conf"
+  },
+  {
+    "path": "mme.serving[].plmn_id.mnc",
+    "type": "string",
+    "default": null,
+    "group": "identity",
+    "reload": "restart",
+    "description": "Local serving PLMN MNC",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap",
+    "type": "object",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "SGsAP / VLR client configuration (CSFB).",
+    "notes": "Maps add/update on SIGHUP; VLR bind changes need restart."
+  },
+  {
+    "path": "mme.sgsap.client[]",
+    "type": "list",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "VLR client list; new addresses added on SIGHUP.",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap.client[].address",
+    "type": "string",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "VLR address/hostname (rebind of existing needs restart).",
+    "notes": "",
+    "example": "msc.example.net"
+  },
+  {
+    "path": "mme.sgsap.client[].lai",
+    "type": "object",
+    "default": null,
+    "group": "sgsap",
+    "reload": "unknown",
+    "description": "Rejected flat key; must be map.lai.",
+    "notes": "",
+    "sample_only": true
+  },
+  {
+    "path": "mme.sgsap.client[].local_address",
+    "type": "string",
+    "default": null,
+    "group": "sgsap",
+    "reload": "restart",
+    "description": "Local SCTP bind for SGsAP client.",
+    "notes": "Ignored on SIGHUP with audit warning."
+  },
+  {
+    "path": "mme.sgsap.client[].map",
+    "type": "list",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "TAI-LAI / IMSI map entries under client (required shape).",
+    "notes": "Flat client.tai/lai rejected with hard error."
+  },
+  {
+    "path": "mme.sgsap.client[].map[].imsi_prefix",
+    "type": "string",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "Optional IMSI prefix for map entry.",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap.client[].map[].lai",
+    "type": "object",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "LAI mapped for CSFB.",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap.client[].map[].lai.lac",
+    "type": "integer",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "Location Area Code.",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap.client[].map[].lai.plmn_id",
+    "type": "object",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "LAI PLMN.",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap.client[].map[].lai.plmn_id.mcc",
+    "type": "string",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "Map LAI MCC",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap.client[].map[].lai.plmn_id.mnc",
+    "type": "string",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "Map LAI MNC",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap.client[].map[].tai",
+    "type": "object",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "TAI key for CS map entry.",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap.client[].map[].tai.plmn_id",
+    "type": "object",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "TAI PLMN.",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap.client[].map[].tai.plmn_id.mcc",
+    "type": "string",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "Map TAI MCC",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap.client[].map[].tai.plmn_id.mnc",
+    "type": "string",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "Map TAI MNC",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap.client[].map[].tai.tac",
+    "type": "integer",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "TAI TAC (start).",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap.client[].map[].tai.tac_end",
+    "type": "integer",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "Optional TAC range end.",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap.client[].option",
+    "type": "object",
+    "default": null,
+    "group": "sgsap",
+    "reload": "restart",
+    "description": "SCTP options for SGsAP client.",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap.client[].port",
+    "type": "integer",
+    "default": null,
+    "group": "sgsap",
+    "reload": "restart",
+    "description": "SGsAP SCTP port.",
+    "notes": ""
+  },
+  {
+    "path": "mme.sgsap.client[].tai",
+    "type": "object",
+    "default": null,
+    "group": "sgsap",
+    "reload": "unknown",
+    "description": "Rejected flat key; must be map.tai.",
+    "notes": "ogs_error: tai/lai configuration changed to map.tai/map.lai",
+    "sample_only": true
+  },
+  {
+    "path": "mme.sgsap.max_csmap",
+    "type": "integer",
+    "default": "compiled-default: 8000",
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "Maximum TAI-LAI map entries.",
+    "notes": "MAX_NUM_OF_CSMAP 8000 in mme-context.c"
+  },
+  {
+    "path": "mme.tai[]",
+    "type": "list",
+    "default": null,
+    "group": "tai",
+    "reload": "sighup",
+    "description": "Served TAI list; empty/unparsable keeps previous on reload.",
+    "notes": "mme_reload_lists_key_add_only(\"tai\")."
+  },
+  {
+    "path": "mme.tai[].plmn_id",
+    "type": "object",
+    "default": null,
+    "group": "tai",
+    "reload": "sighup",
+    "description": "PLMN for served TAI entry.",
+    "notes": ""
+  },
+  {
+    "path": "mme.tai[].plmn_id.mcc",
+    "type": "string",
+    "default": null,
+    "group": "tai",
+    "reload": "sighup",
+    "description": "Served TAI MCC.",
+    "notes": ""
+  },
+  {
+    "path": "mme.tai[].plmn_id.mnc",
+    "type": "string",
+    "default": null,
+    "group": "tai",
+    "reload": "sighup",
+    "description": "Served TAI MNC.",
+    "notes": ""
+  },
+  {
+    "path": "mme.tai[].tac",
+    "type": "list",
+    "default": null,
+    "group": "tai",
+    "reload": "sighup",
+    "description": "TAC values or ranges (e.g. 10-20).",
+    "notes": "",
+    "example": [
+      1,
+      2,
+      "10-20"
+    ]
+  },
+  {
+    "path": "mme.tai_list_in_accept",
+    "type": "enum",
+    "default": "serving_only",
+    "group": "attach",
+    "reload": "sighup",
+    "description": "Flat alias of attach_accept.tai_list.",
+    "notes": "",
+    "enum": [
+      "serving_only",
+      "all"
+    ],
+    "aliases": [
+      "mme.attach_accept.tai_list"
+    ]
+  },
+  {
+    "path": "mme.time.bearer_setup.max_count",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "Bearer setup max count.",
+    "notes": "",
+    "aliases": [
+      "mme.time.sae_bearer_setup.max_count"
+    ]
+  },
+  {
+    "path": "mme.time.bearer_setup.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "Bearer setup / T3450 shared value.",
+    "notes": "",
+    "aliases": [
+      "mme.time.sae_bearer_setup.value"
+    ]
+  },
+  {
+    "path": "mme.time.idle.implicit_detach_margin",
+    "type": "integer",
+    "default": "compiled-default: 240",
+    "group": "timers",
+    "reload": "sighup",
+    "description": "Implicit detach margin seconds.",
+    "notes": "mme.time.* reloaded in mme_context_reload_runtime; applies to new timer starts."
+  },
+  {
+    "path": "mme.time.idle.mobile_reachable_margin",
+    "type": "integer",
+    "default": "compiled-default: 240",
+    "group": "timers",
+    "reload": "sighup",
+    "description": "Mobile reachable = T3412 + margin (seconds).",
+    "notes": "mme.time.* reloaded in mme_context_reload_runtime; applies to new timer starts."
+  },
+  {
+    "path": "mme.time.nas_deactivate_bearer.max_count",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "Alias of t3495.max_count.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.nas_deactivate_bearer.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "Alias of t3495.value.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.s11_holding.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "S11 holding timer value.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.s6a.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "S6a transaction timeout value.",
+    "notes": "",
+    "aliases": [
+      "mme.time.s6a_timeout.value"
+    ]
+  },
+  {
+    "path": "mme.time.s6a_timeout.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "Alias of s6a.value.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.sae_bearer_setup.max_count",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "Alias of bearer_setup.max_count.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.sae_bearer_setup.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "Alias of bearer_setup.value.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.sgs_ts6_1.max_count",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "SGs TS6-1 max count.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.sgs_ts6_1.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "SGs TS6-1 timer value.",
+    "notes": "",
+    "aliases": [
+      "mme.time.ts6_1.value"
+    ]
+  },
+  {
+    "path": "mme.time.t3346.include_any_reject",
+    "type": "boolean",
+    "default": false,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "Include T3346 on any reject.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.t3346.value",
+    "type": "integer",
+    "default": "compiled-default: 0",
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3346 seconds (0=disabled).",
+    "notes": "mme.time.* reloaded in mme_context_reload_runtime; applies to new timer starts."
+  },
+  {
+    "path": "mme.time.t3396.value",
+    "type": "integer",
+    "default": "compiled-default: 720",
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3396 seconds (ESM).",
+    "notes": "mme.time.* reloaded in mme_context_reload_runtime; applies to new timer starts."
+  },
+  {
+    "path": "mme.time.t3402.value",
+    "type": "integer",
+    "default": "compiled-default: 720",
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3402 seconds (NAS).",
+    "notes": "mme.time.* reloaded in mme_context_reload_runtime; applies to new timer starts."
+  },
+  {
+    "path": "mme.time.t3412.value",
+    "type": "integer",
+    "default": "compiled-default: 600",
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3412 periodic TAU seconds.",
+    "notes": "mme.time.* reloaded in mme_context_reload_runtime; applies to new timer starts."
+  },
+  {
+    "path": "mme.time.t3413.max_count",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3413 max retransmissions.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.t3413.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3413 paging timer value seconds.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.t3422.max_count",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3422 max count.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.t3422.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3422 value seconds.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.t3423.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3423 seconds.",
+    "notes": "mme.time.* reloaded in mme_context_reload_runtime; applies to new timer starts."
+  },
+  {
+    "path": "mme.time.t3450.max_count",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3450 max count.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.t3450.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3450 value seconds.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.t3460.max_count",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3460 max count.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.t3460.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3460 value seconds.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.t3470.max_count",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3470 max count.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.t3470.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3470 value seconds.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.t3489.max_count",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3489 max count.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.t3489.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3489 value seconds.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.t3495.max_count",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3495 max count.",
+    "notes": ""
+  },
+  {
+    "path": "mme.time.t3495.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "T3495 / NAS deactivate bearer value.",
+    "notes": "",
+    "aliases": [
+      "mme.time.nas_deactivate_bearer.value"
+    ]
+  },
+  {
+    "path": "mme.time.ts6_1.value",
+    "type": "integer",
+    "default": null,
+    "group": "timers",
+    "reload": "sighup",
+    "description": "Alias of sgs_ts6_1.value.",
+    "notes": ""
+  },
+  {
+    "path": "mme.trace_imsi[]",
+    "type": "list",
+    "default": [],
+    "group": "diagnostics",
+    "reload": "sighup",
+    "description": "IMSI prefix list enabling focused tracing.",
+    "notes": "Empty sequence clears filter. SIGHUP list reload.",
+    "example": [
+      "999700000000001"
+    ]
+  },
+  {
+    "path": "mme.workers",
+    "type": "integer",
+    "default": 0,
+    "group": "performance",
+    "reload": "restart",
+    "description": "UE-shard bounce worker threads (0=off).",
+    "notes": "Bounds 0..OGS_MAX_WORKERS-1; restart."
+  }
+]

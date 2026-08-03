@@ -710,13 +710,26 @@ mhd_server_access_handler(void *cls, struct MHD_Connection *connection,
         ogs_time_t t0 = ogs_time_now();
 
         /*
-         * prom_collector_registry_bridge() can return NULL if an
+         * The bridge walks every collector's prom_map of label samples.
+         * NFs create new labelled instances (ogs_metrics_inst_new() +
+         * hash insert) from their worker threads under
+         * ogs_metrics_dump_lock(), and an insert can rehash the very map
+         * being traversed here - libprom takes no lock that covers both
+         * sides, so the scrape walked freed buckets and died with SIGSEGV
+         * inside prom_map_get_index_internal(). New label values appear
+         * constantly in production (each new PLMN, cause, TAC or APN), so
+         * this fires whenever a scrape overlaps a first-seen label.
+         *
+         * Hold the same mutex the writers use for the whole traversal.
+         *
+         * prom_collector_registry_bridge() can also return NULL if an
          * internal allocation fails. Calling strlen(NULL) here would
          * crash the MHD worker thread and present client-side as
-         * "connection reset" / "empty response" - exactly the
-         * symptom we have been chasing. Guard it.
+         * "connection reset" / "empty response" - guard it too.
          */
+        ogs_metrics_dump_lock();
         buf = prom_collector_registry_bridge(PROM_COLLECTOR_REGISTRY_DEFAULT);
+        ogs_metrics_dump_unlock();
         if (!buf) {
             ogs_error("/metrics: prom_collector_registry_bridge returned NULL");
             return reply_text(connection,

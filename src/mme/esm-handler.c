@@ -24,6 +24,7 @@
 #include "mme-path.h"
 #include "mme-trace.h"
 #include "mme-inbound-roam-apn.h"
+#include "mme-apn-policy.h"
 #include "metrics.h"
 
 #include "esm-build.h"
@@ -31,6 +32,41 @@
 
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __esm_log_domain
+
+/*
+ * Resolve the PDN type to use on the Create Session Request: the UE
+ * request intersected with the subscription, then corrected or clamped
+ * by mme.apn_correction. Returns OGS_ERROR when the request cannot be
+ * satisfied and the caller must reject with ESM #28.
+ */
+static int esm_resolve_pdn_type(mme_ue_t *mme_ue, mme_sess_t *sess)
+{
+    uint8_t derived;
+
+    ogs_assert(sess);
+    ogs_assert(sess->session);
+
+    if (sess->session->session_type != OGS_PDU_SESSION_TYPE_IPV4 &&
+        sess->session->session_type != OGS_PDU_SESSION_TYPE_IPV6 &&
+        sess->session->session_type != OGS_PDU_SESSION_TYPE_IPV4V6) {
+        ogs_error("[%s] Invalid PDN_TYPE[%d] in subscription for APN[%s]",
+                mme_ue->imsi_bcd, sess->session->session_type,
+                sess->session->name ? sess->session->name : "-");
+        return OGS_ERROR;
+    }
+
+    derived = mme_apn_policy_pdn_type(
+            mme_ue, sess->session, sess->ue_request_type.type);
+    if (derived == 0) {
+        ogs_error("[%s] Cannot derive PDN Type [UE:%d,HSS:%d]",
+                mme_ue->imsi_bcd, sess->ue_request_type.type,
+                sess->session->session_type);
+        return OGS_ERROR;
+    }
+
+    sess->policy_pdn_type = derived;
+    return OGS_OK;
+}
 
 int esm_handle_pdn_connectivity_request(
         enb_ue_t *enb_ue, mme_bearer_t *bearer,
@@ -41,6 +77,7 @@ int esm_handle_pdn_connectivity_request(
     mme_ue_t *mme_ue = NULL;
     mme_sess_t *sess = NULL;
     uint8_t security_protected_required = 0;
+    uint8_t no_apn_cause = OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN;
     const char *emergency_dnn = mme_self()->emergency.dnn;
     bool emergency;
 
@@ -72,7 +109,6 @@ int esm_handle_pdn_connectivity_request(
                 sess, OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
                 create_action);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -82,7 +118,6 @@ int esm_handle_pdn_connectivity_request(
                 sess, OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                 create_action);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -96,12 +131,12 @@ int esm_handle_pdn_connectivity_request(
                 sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE,
                 create_action);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
     memcpy(&sess->ue_request_type,
             &req->request_type, sizeof(sess->ue_request_type));
+    sess->policy_pdn_type = 0;
 
     security_protected_required = 0;
     if (req->presencemask &
@@ -120,72 +155,67 @@ int esm_handle_pdn_connectivity_request(
         r = nas_eps_send_pdn_connectivity_reject(
                 sess, OGS_NAS_ESM_CAUSE_REQUEST_REJECTED_UNSPECIFIED, create_action);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         ogs_warn("[%s] Emergency call, but no emergency APN defined",
                 mme_ue->imsi_bcd);
         return OGS_ERROR;
     }
-    if ((req->presencemask &
-            OGS_NAS_EPS_PDN_CONNECTIVITY_REQUEST_ACCESS_POINT_NAME_PRESENT) ||
-        emergency) {
-        const char *apn;
-        if (emergency) {
-            apn = emergency_dnn;
-            sess->ue_request_type.value = 1;
-        } else {
-            apn = req->access_point_name.apn;
-        }
-        {
-            uint8_t roam_cause =
-                    mme_inbound_roam_apn_esm_cause(mme_ue, apn);
-
-            if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
-                ogs_warn("[%s] inbound roam APN policy: reject PDN APN[%s] "
-                        "esm_cause=%u",
-                        mme_ue->imsi_bcd, apn, roam_cause);
-                r = nas_eps_send_pdn_connectivity_reject(
-                        sess, roam_cause, create_action);
-                if (r != OGS_OK)
-                    /* S1 usually gone by now; reject is best-effort */
-                    ogs_warn("[%s] PDN connectivity reject not sent",
-                            mme_ue->imsi_bcd);
-                ogs_assert(r != OGS_ERROR);
-                return OGS_ERROR;
-            }
-        }
+    /*
+     * TS 23.401 / 24.301: APN IE absent or empty → select the default APN
+     * from the S6a subscription (mme_default_session). inbound_roam
+     * allowed_apn is enforced only on the RESOLVED APN (after subscription
+     * match / apn_correction), so SMACTCTRL can rewrite a disallowed
+     * request before the allow-list runs.
+     */
+    sess->ue_provided_apn = false;
+    if (emergency) {
+        const char *apn = emergency_dnn;
+        sess->ue_request_type.value = 1;
+        sess->ue_provided_apn = true;
         mme_ue_info(mme_ue, NULL, "esm", apn,
-                "PDN connectivity request APN[%s]", apn);
+                "PDN connectivity request APN[%s] (emergency)", apn);
         sess->session = mme_session_find_by_apn(mme_ue, apn);
         if (!sess->session) {
-            /* Invalid APN */
             r = nas_eps_send_pdn_connectivity_reject(
                     sess, OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN,
                     create_action);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             mme_ue_warn(mme_ue, NULL, "esm",
-                    apn, "Invalid APN requested[%s]", apn);
+                    apn, "Invalid emergency APN[%s]", apn);
             return OGS_ERROR;
         }
+    } else if ((req->presencemask &
+            OGS_NAS_EPS_PDN_CONNECTIVITY_REQUEST_ACCESS_POINT_NAME_PRESENT) &&
+            req->access_point_name.length > 0 &&
+            req->access_point_name.apn[0] != '\0') {
+        const char *apn = req->access_point_name.apn;
 
-        if (sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
-            sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
-            sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
-            uint8_t derived_pdn_type =
-                (sess->session->session_type & sess->ue_request_type.type);
-            if (derived_pdn_type == 0) {
-                ogs_error("Cannot derived PDN Type [UE:%d,HSS:%d]",
-                    sess->ue_request_type.type, sess->session->session_type);
+        /* inbound_roam allow/deny is applied only after APN resolution
+         * (subscription match or apn_correction) below — not on the raw
+         * UE-requested string, so SMACTCTRL can rewrite first. */
+        sess->ue_provided_apn = true;
+        mme_ue_info(mme_ue, NULL, "esm", apn,
+                "PDN connectivity request APN[%s]", apn);
+        sess->session = mme_session_find_by_apn(mme_ue, apn);
+        if (!sess->session) {
+            uint8_t esm_cause = OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN;
+
+            sess->session = mme_apn_policy_correct_apn(
+                    mme_ue, apn, &esm_cause);
+            if (!sess->session) {
                 r = nas_eps_send_pdn_connectivity_reject(
-                        sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE,
-                        create_action);
+                        sess, esm_cause, create_action);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
+                mme_ue_warn(mme_ue, NULL, "esm",
+                        apn, "Invalid APN requested[%s]", apn);
                 return OGS_ERROR;
             }
-        } else {
-            ogs_fatal("Invalid PDN_TYPE[%d]", sess->session->session_type);
-            ogs_assert_if_reached();
+        }
+
+        if (esm_resolve_pdn_type(mme_ue, sess) != OGS_OK) {
+            r = nas_eps_send_pdn_connectivity_reject(
+                    sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE, create_action);
+            ogs_expect(r == OGS_OK);
+            return OGS_ERROR;
         }
     }
 
@@ -210,31 +240,78 @@ int esm_handle_pdn_connectivity_request(
         CLEAR_BEARER_TIMER(bearer->t3489);
         r = nas_eps_send_esm_information_request(bearer);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         return OGS_OK;
     }
 
     if (!sess->session) {
-        /* Default APN */
+        /* Default APN from S6a (UE omitted or sent empty APN IE) */
         sess->session = mme_default_session(mme_ue);
+        if (sess->session && sess->session->name)
+            mme_ue_info(mme_ue, NULL, "esm", sess->session->name,
+                    "PDN connectivity: using S6a default APN[%s] "
+                    "(UE APN absent/empty)", sess->session->name);
+    }
+    if (!sess->session) {
+        /* No default Context-Identifier: apn_correction may still pick one */
+        sess->session = mme_apn_policy_correct_apn(
+                mme_ue, NULL, &no_apn_cause);
     }
 
     if (sess->session) {
-        uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(
-                mme_ue, sess->session->name);
-
         ogs_assert(sess->session->name);
         ogs_debug("    APN[%s]", sess->session->name);
 
-        if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
-            ogs_warn("[%s] inbound roam APN policy: reject PDN APN[%s] "
-                    "esm_cause=%u",
-                    mme_ue->imsi_bcd, sess->session->name, roam_cause);
+        /* Enforce allow-list on the resolved APN (UE-provided OR the
+         * S6a default) so disallowed APNs never reach the SGW */
+        {
+            uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(
+                    mme_ue, sess->session->name);
+
+            if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
+                ogs_warn("[%s] inbound roam APN policy: reject PDN APN[%s]%s "
+                        "esm_cause=%u",
+                        mme_ue->imsi_bcd, sess->session->name,
+                        sess->ue_provided_apn ? "" : " (S6a default)",
+                        roam_cause);
+                r = nas_eps_send_pdn_connectivity_reject(
+                        sess, roam_cause, create_action);
+                ogs_expect(r == OGS_OK);
+                return OGS_ERROR;
+            }
+        }
+
+        /*
+         * Duplicate-PDN guard on the RESOLVED APN. The earlier check in
+         * mme_bearer_find_or_add_by_message compares the raw UE-requested
+         * string, which misses requests that subscription matching or
+         * apn_correction rewrite to an APN that is already active: one UE
+         * stacked 11 PDNs to the same APN this way until EBI 5-15 was
+         * exhausted (2026-07-31). TS 24.301 cause #55. The rejected sess
+         * has no PGW TEID, so incomplete-session reclaim frees its EBI.
+         */
+        if (create_action != OGS_GTP_CREATE_IN_ATTACH_REQUEST) {
+            mme_sess_t *dup = mme_sess_find_by_apn(
+                    mme_ue, sess->session->name);
+            if (dup && dup != sess) {
+                ogs_warn("[%s] PDN connectivity: resolved APN[%s] already "
+                        "active%s; rejecting duplicate PDN (cause #55)",
+                        mme_ue->imsi_bcd, sess->session->name,
+                        sess->ue_provided_apn ? "" : " (S6a default)");
+                r = nas_eps_send_pdn_connectivity_reject(sess,
+                        OGS_NAS_ESM_CAUSE_MULTIPLE_PDN_CONNECTIONS_FOR_A_GIVEN_APN_NOT_ALLOWED,
+                        create_action);
+                ogs_expect(r == OGS_OK);
+                return OGS_ERROR;
+            }
+        }
+
+        /* Not yet done when the APN came from the S6a default */
+        if (!sess->policy_pdn_type &&
+                esm_resolve_pdn_type(mme_ue, sess) != OGS_OK) {
             r = nas_eps_send_pdn_connectivity_reject(
-                    sess, roam_cause, create_action);
+                    sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE, create_action);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return OGS_ERROR;
         }
 
@@ -265,15 +342,14 @@ int esm_handle_pdn_connectivity_request(
                     sess, OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
                     create_action);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return OGS_ERROR;
         }
     } else {
-        ogs_error("[%s] No APN", mme_ue->imsi_bcd);
+        ogs_error("[%s] No APN: UE omitted/empty APN and S6a has no "
+                "default Context-Identifier", mme_ue->imsi_bcd);
         r = nas_eps_send_pdn_connectivity_reject(
-                sess, OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN, create_action);
+                sess, no_apn_cause, create_action);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -286,6 +362,7 @@ int esm_handle_information_response(
 {
     int r;
     mme_ue_t *mme_ue = NULL;
+    uint8_t no_apn_cause = OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN;
 
     ogs_assert(rsp);
 
@@ -299,24 +376,34 @@ int esm_handle_information_response(
         return OGS_NOTFOUND;
     }
 
-    if (rsp->presencemask &
-            OGS_NAS_EPS_ESM_INFORMATION_RESPONSE_ACCESS_POINT_NAME_PRESENT) {
-        uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(
-                mme_ue, rsp->access_point_name.apn);
-
-        if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
-            ogs_warn("[%s] inbound roam APN policy: reject attach APN[%s] "
-                    "esm_cause=%u",
-                    mme_ue->imsi_bcd, rsp->access_point_name.apn, roam_cause);
-            r = nas_eps_send_pdn_connectivity_reject(
-                    sess, roam_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
-            return OGS_ERROR;
-        }
+    /*
+     * Non-empty UE APN → subscription match, then apn_correction.
+     * Absent/empty APN → S6a default (TS 23.401). inbound_roam allow/deny
+     * runs only on the resolved APN below either way.
+     */
+    if ((rsp->presencemask &
+            OGS_NAS_EPS_ESM_INFORMATION_RESPONSE_ACCESS_POINT_NAME_PRESENT) &&
+            rsp->access_point_name.length > 0 &&
+            rsp->access_point_name.apn[0] != '\0') {
+        sess->ue_provided_apn = true;
 
         sess->session = mme_session_find_by_apn(
                             mme_ue, rsp->access_point_name.apn);
+        if (!sess->session)
+            sess->session = mme_apn_policy_correct_apn(
+                    mme_ue, rsp->access_point_name.apn, &no_apn_cause);
+    } else {
+        sess->ue_provided_apn = false;
+        if (!sess->session) {
+            sess->session = mme_default_session(mme_ue);
+            if (sess->session && sess->session->name)
+                ogs_info("[%s] ESM Information Response: using S6a "
+                        "default APN[%s] (UE APN absent/empty)",
+                        mme_ue->imsi_bcd, sess->session->name);
+        }
+        if (!sess->session)
+            sess->session = mme_apn_policy_correct_apn(
+                    mme_ue, NULL, &no_apn_cause);
     }
 
     if (rsp->presencemask &
@@ -336,41 +423,34 @@ int esm_handle_information_response(
     }
 
     if (sess->session) {
-        uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(
-                mme_ue, sess->session->name);
-
         ogs_assert(sess->session->name);
         ogs_debug("    APN[%s]", sess->session->name);
 
-        if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
-            ogs_warn("[%s] inbound roam APN policy: reject attach APN[%s] "
-                    "esm_cause=%u",
-                    mme_ue->imsi_bcd, sess->session->name, roam_cause);
-            r = nas_eps_send_pdn_connectivity_reject(
-                    sess, roam_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
-            return OGS_ERROR;
-        }
+        /* Enforce allow-list on the resolved APN (UE-provided OR the
+         * S6a default) so disallowed APNs never reach the SGW */
+        {
+            uint8_t roam_cause = mme_inbound_roam_apn_esm_cause(
+                    mme_ue, sess->session->name);
 
-        if (sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
-            sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
-            sess->session->session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
-            uint8_t derived_pdn_type =
-                (sess->session->session_type & sess->ue_request_type.type);
-            if (derived_pdn_type == 0) {
-                ogs_error("Cannot derived PDN Type [UE:%d,HSS:%d]",
-                    sess->ue_request_type.type, sess->session->session_type);
+            if (roam_cause != MME_INBOUND_ROAM_APN_ESM_ACCEPT) {
+                ogs_warn("[%s] inbound roam APN policy: reject attach "
+                        "APN[%s]%s esm_cause=%u",
+                        mme_ue->imsi_bcd, sess->session->name,
+                        sess->ue_provided_apn ? "" : " (S6a default)",
+                        roam_cause);
                 r = nas_eps_send_pdn_connectivity_reject(
-                        sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE,
-                        OGS_GTP_CREATE_IN_ATTACH_REQUEST);
+                        sess, roam_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return OGS_ERROR;
             }
-        } else {
-            ogs_fatal("Invalid PDN_TYPE[%d]", sess->session->session_type);
-            ogs_assert_if_reached();
+        }
+
+        if (esm_resolve_pdn_type(mme_ue, sess) != OGS_OK) {
+            r = nas_eps_send_pdn_connectivity_reject(
+                    sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE,
+                    OGS_GTP_CREATE_IN_ATTACH_REQUEST);
+            ogs_expect(r == OGS_OK);
+            return OGS_ERROR;
         }
 
         if (SESSION_CONTEXT_IS_AVAILABLE(mme_ue)) {
@@ -378,6 +458,7 @@ int esm_handle_information_response(
             mme_ue->csmap = csmap;
 
             if (!csmap ||
+                ogs_global_conf()->parameter.ignore_sgs == true ||
                 mme_ue->network_access_mode ==
                     OGS_NETWORK_ACCESS_MODE_ONLY_PACKET ||
                 mme_ue->nas_eps.attach.value ==
@@ -403,7 +484,6 @@ int esm_handle_information_response(
                         sess, OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
                         OGS_GTP_CREATE_IN_ATTACH_REQUEST);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return OGS_ERROR;
             }
 
@@ -416,22 +496,20 @@ int esm_handle_information_response(
                         sess, OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
                         OGS_GTP_CREATE_IN_ATTACH_REQUEST);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return OGS_ERROR;
             }
         }
     } else {
-        if (rsp->access_point_name.length)
-            ogs_warn("[%s] Invalid APN[%s]", mme_ue->imsi_bcd,
-                    rsp->access_point_name.apn);
+        if (sess->ue_provided_apn && rsp->access_point_name.length)
+            ogs_warn("[%s] Invalid APN[%s] (not in S6a subscription)",
+                    mme_ue->imsi_bcd, rsp->access_point_name.apn);
         else
-            ogs_warn("[%s] No APN", mme_ue->imsi_bcd);
+            ogs_warn("[%s] No APN: UE omitted APN and S6a has no "
+                    "default Context-Identifier", mme_ue->imsi_bcd);
 
         r = nas_eps_send_pdn_connectivity_reject(
-                sess, OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN,
-                OGS_GTP_CREATE_IN_ATTACH_REQUEST);
+                sess, no_apn_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -463,7 +541,6 @@ int esm_handle_bearer_resource_allocation_request(
     r = nas_eps_send_bearer_resource_allocation_reject(
             mme_ue, sess->pti, OGS_NAS_ESM_CAUSE_NETWORK_FAILURE);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 
     return OGS_OK;
 }
@@ -483,8 +560,11 @@ int esm_handle_bearer_resource_modification_request(
         return OGS_NOTFOUND;
     }
 
-    ogs_assert(OGS_OK ==
-        mme_gtp_send_bearer_resource_command(bearer, message));
+    if (mme_gtp_send_bearer_resource_command(bearer, message) != OGS_OK) {
+        ogs_error("[%s] Bearer Resource Command failed EBI[%d]",
+                mme_ue->imsi_bcd, bearer->ebi);
+        return OGS_ERROR;
+    }
 
     return OGS_OK;
 }

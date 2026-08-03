@@ -331,6 +331,12 @@ typedef struct ogs_pfcp_bar_s {
     uint8_t                 *id_node;      /* Pool-Node for ID */
     ogs_pfcp_bar_id_t       id;
 
+    /*
+     * TS 29.244 Suggested Buffering Packets Count (Create/Update BAR).
+     * 0 = omit the IE (UPF default / hard cap applies).
+     */
+    uint8_t                 suggested_buffering_packets_count;
+
     ogs_pfcp_sess_t         *sess;
 } ogs_pfcp_bar_t;
 
@@ -497,6 +503,14 @@ ogs_pfcp_far_t *ogs_pfcp_far_find_by_teid(uint32_t teid);
 
 void ogs_pfcp_far_remove(ogs_pfcp_far_t *far);
 void ogs_pfcp_far_remove_all(ogs_pfcp_sess_t *sess);
+
+/*
+ * DROBU (TS 29.244 5.2.4.3): discard the packets currently buffered,
+ * WITHOUT changing the FAR Apply Action. Returns packets dropped.
+ * Re-arms the first-packet Downlink Data Report.
+ */
+void ogs_pfcp_far_drop_buffered_gtpu(ogs_pfcp_far_t *far);
+int ogs_pfcp_sess_drop_buffered_gtpu(ogs_pfcp_sess_t *sess);
 
 ogs_pfcp_urr_t *ogs_pfcp_urr_add(ogs_pfcp_sess_t *sess);
 ogs_pfcp_urr_t *ogs_pfcp_urr_find(

@@ -72,6 +72,10 @@ void s1ap_tx_workers_stop(void);
 
 bool s1ap_tx_active(void);
 
+/* diagnostics for /admin/queues */
+int s1ap_tx_worker_count(void);
+unsigned int s1ap_tx_queue_depth(int idx);
+
 /* Post a DownlinkNASTransport build+encode job. Main thread only.
  * Takes ownership of emmbuf ONLY on OGS_OK; on failure the caller
  * must fall back to the synchronous build+send path. */
@@ -81,6 +85,21 @@ int s1ap_tx_post_dlnas(enb_ue_t *enb_ue, ogs_pkbuf_t *emmbuf);
  * (or free it if the eNB is gone) and flush that eNB's hold list.
  * Main thread only. */
 void s1ap_tx_ready_handle(mme_event_t *e);
+
+/* Periodic self-heal (orphan sweep, main thread): force-flush any eNB
+ * whose hold list has been non-empty for far longer than an encode job
+ * can take — the signature of a leaked s1ap_tx_pending count, which
+ * otherwise black-holes that eNB's synchronous downlink until restart. */
+void s1ap_tx_hold_watchdog(void);
+
+/*
+ * Opportunistic self-heal on the send path (UE-shard safe). If THIS eNB's
+ * hold looks stalled (leaked pending / TX_READY starved behind a deep
+ * main queue), flush it now so Attach Accept / ICS is not parked forever
+ * waiting for an orphan-sweep event that itself cannot run while main
+ * never returns to poll.
+ */
+void s1ap_tx_hold_recover_stalled(mme_enb_t *enb);
 
 #ifdef __cplusplus
 }

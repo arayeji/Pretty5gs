@@ -313,6 +313,7 @@ static int mme_event_resolve_wid(mme_event_t *e)
     case MME_EVENT_ADMIN_PAGE_UE:
     case MME_EVENT_ADMIN_PURGE_UE:
     case MME_EVENT_S1AP_HO_TAIL:
+    case MME_EVENT_PGW_DNS_DONE:
     case MME_EVENT_GN_TIMER:
         wid = mme_shard_from_mme_ue_id(e->mme_ue_id);
         break;
@@ -355,28 +356,28 @@ int mme_event_push_to_ue_owner(mme_event_t *e)
     ogs_assert(e);
 
     if (!mme_workers_active()) {
-        rv = ogs_queue_push(ogs_app()->queue, e);
+        rv = mme_queue_push_main(e);
         if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
+            ogs_error("event id=%d dropped on main queue:%d",
+                    (int)e->id, (int)rv);
             mme_event_discard_payload(e);
             mme_event_free(e);
             return OGS_ERROR;
         }
-        ogs_pollset_notify(ogs_app()->pollset);
         return OGS_OK;
     }
 
     wid = mme_event_resolve_wid(e);
     if (wid < 0) {
         /* Owner not known yet (e.g. first attach before mme_ue): main. */
-        rv = ogs_queue_push(ogs_app()->queue, e);
+        rv = mme_queue_push_main(e);
         if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
+            ogs_error("unowned event id=%d dropped on main queue:%d",
+                    (int)e->id, (int)rv);
             mme_event_discard_payload(e);
             mme_event_free(e);
             return OGS_ERROR;
         }
-        ogs_pollset_notify(ogs_app()->pollset);
         return OGS_OK;
     }
 
@@ -663,6 +664,7 @@ static bool mme_event_is_ue_scoped(int id)
     case MME_EVENT_ADMIN_PAGE_UE:
     case MME_EVENT_ADMIN_PURGE_UE:
     case MME_EVENT_S1AP_HO_TAIL:
+    case MME_EVENT_PGW_DNS_DONE:
     case MME_EVENT_GN_MESSAGE:
     case MME_EVENT_GN_TIMER:
     case MME_EVENT_SGSAP_MESSAGE:
@@ -701,6 +703,7 @@ static void mme_worker_dispatch(ogs_worker_t *worker, void *data)
         return;
     }
 
+    mme_event_lag_observe(e);
     ogs_fsm_dispatch(&worker_fsm, e);
     mme_event_free(e);
 }
@@ -730,6 +733,11 @@ int mme_workers_start(int count)
         ogs_assert(mme_workers[i]);
         ogs_worker_hooks(mme_workers[i],
                 mme_worker_thread_init, mme_worker_thread_fini);
+        {
+            char tname[16];
+            ogs_snprintf(tname, sizeof(tname), "mme-w%d", i);
+            ogs_worker_set_name(mme_workers[i], tname);
+        }
         ogs_worker_start(mme_workers[i]);
     }
 

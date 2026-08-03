@@ -952,11 +952,11 @@ static bool mme_metrics_sgw_plmn_from_ue(
         return false;
 
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    if (!sgw_ue || !sgw_ue->sgw || !sgw_ue->sgw->gnode.sa_list)
+    if (!sgw_ue || !sgw_ue->sgw || !sgw_ue->sgw->addr_str[0])
         return false;
 
-    OGS_ADDR(sgw_ue->sgw->gnode.sa_list, sgw_addr);
-    return sgw_addr[0] != '\0';
+    ogs_cpystrn(sgw_addr, sgw_ue->sgw->addr_str, sgw_addr_len);
+    return true;
 }
 
 /*
@@ -1032,10 +1032,10 @@ void mme_metrics_sess_active_update(mme_sess_t *sess)
         return;
 
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    if (!sgw_ue || !sgw_ue->sgw || !sgw_ue->sgw->gnode.sa_list)
+    if (!sgw_ue || !sgw_ue->sgw || !sgw_ue->sgw->addr_str[0])
         return;
 
-    OGS_ADDR(sgw_ue->sgw->gnode.sa_list, sgw_addr);
+    ogs_cpystrn(sgw_addr, sgw_ue->sgw->addr_str, sizeof(sgw_addr));
 
     apn = (sess->session && sess->session->name) ?
             sess->session->name : "unknown";
@@ -1096,6 +1096,35 @@ mme_metrics_spec_def_t mme_metrics_spec_def_global[_MME_METR_GLOB_MAX] = {
     .type = OGS_METRICS_METRIC_TYPE_GAUGE,
     .name = "enb",
     .description = "eNodeBs",
+},
+[MME_METR_GLOB_GAUGE_ENB_OVERLOADED] = {
+    .type = OGS_METRICS_METRIC_TYPE_GAUGE,
+    .name = "enb_overloaded",
+    .description = "eNodeBs currently under S1AP overload control",
+},
+/* Global Counters: */
+[MME_METR_GLOB_CTR_S1AP_INITIAL_UE_SHED] = {
+    .type = OGS_METRICS_METRIC_TYPE_COUNTER,
+    .name = "s1ap_initial_ue_shed",
+    .description =
+        "InitialUEMessages dropped by ingress admission control",
+},
+[MME_METR_GLOB_CTR_S1AP_OVERLOAD_START] = {
+    .type = OGS_METRICS_METRIC_TYPE_COUNTER,
+    .name = "s1ap_overload_start",
+    .description = "S1AP OVERLOAD START messages sent to eNodeBs",
+},
+[MME_METR_GLOB_CTR_ESM_APN_CORRECTED] = {
+    .type = OGS_METRICS_METRIC_TYPE_COUNTER,
+    .name = "esm_apn_corrected",
+    .description =
+        "Unknown UE APNs replaced by mme.apn_correction instead of ESM #27",
+},
+[MME_METR_GLOB_CTR_ESM_PDN_TYPE_CORRECTED] = {
+    .type = OGS_METRICS_METRIC_TYPE_COUNTER,
+    .name = "esm_pdn_type_corrected",
+    .description =
+        "PDN types corrected by mme.apn_correction instead of ESM #28",
 },
 };
 int mme_metrics_init_inst_global(void)

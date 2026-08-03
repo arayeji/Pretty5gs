@@ -238,8 +238,15 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
         if (session->session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
             session->session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
             session->session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
-            req->pdn_type.u8 = mme_gtp2_pdn_type_for_sess(
-                    session, sess->ue_request_type.type);
+            /*
+             * policy_pdn_type is the ESM-resolved type (UE request
+             * intersected with the subscription, then corrected or
+             * clamped by mme.apn_correction). It is already a subset of
+             * the subscription, so the AND below is a no-op for it.
+             */
+            req->pdn_type.u8 = mme_gtp2_pdn_type_for_sess(session,
+                    sess->policy_pdn_type ?
+                        sess->policy_pdn_type : sess->ue_request_type.type);
         } else {
             ogs_error("Invalid PDN-TYPE[%d]", session->session_type);
             return NULL;
@@ -494,7 +501,18 @@ ogs_pkbuf_t *mme_s11_build_modify_bearer_request(
     ogs_list_for_each_entry(
             &mme_ue->bearer_to_modify_list, bearer, to_modify_node) {
         mme_sess_t *sess = mme_sess_find_by_id(bearer->sess_id);
-        ogs_assert(sess);
+
+        /*
+         * Session can already be gone (PDN disconnect / race) while the
+         * bearer is still on bearer_to_modify_list. Do not abort the MME;
+         * skip HO-indication check for that bearer.
+         */
+        if (!sess) {
+            ogs_warn("[%s] Modify Bearer: session gone for EBI[%d] "
+                    "sess_id[%d]; skip handover indication check",
+                    mme_ue->imsi_bcd, bearer->ebi, bearer->sess_id);
+            continue;
+        }
 
         if (sess->ue_request_type.value == OGS_NAS_EPS_REQUEST_TYPE_HANDOVER) {
             indication.handover_indication = 1;
@@ -533,9 +551,15 @@ ogs_pkbuf_t *mme_s11_build_modify_bearer_request(
      * Data Notification for all UEs served by that MME
      * (see clause 5.3.4.2 of 3GPP TS 23.401 [3]).
      */
-    if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST) {
+    if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST ||
+        mme_ue->nas_eps.type == MME_EPS_TYPE_EXTENDED_SERVICE_REQUEST) {
+        /*
+         * TS 23.401 5.3.4.2 / TS 29.274: Delay Value is an integer multiple
+         * of 50 ms. Ask the SGW to wait ~100 ms for Modify Bearer before
+         * raising another DDN for this MME's UEs (was hard-coded 0).
+         */
         req->delay_downlink_packet_notification_request.presence = 1;
-        req->delay_downlink_packet_notification_request.u8 = 0;
+        req->delay_downlink_packet_notification_request.u8 = 2;
     }
 
     gtp_message.h.type = type;

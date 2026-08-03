@@ -1331,29 +1331,35 @@ static bool smf_ue_matches_query(const smf_ue_t *ue, const ogs_metrics_query_t *
     return true;
 }
 
+static void collect_pdu_by_rat_for_ue(cJSON *summary, const smf_ue_t *ue,
+        const ogs_metrics_query_t *q)
+{
+    smf_sess_t *sess = NULL;
+
+    ogs_list_for_each(&ue->sess_list, sess) {
+        const char *rat_name = NULL;
+
+        if (!smf_sess_matches_pdu_filters(sess, q))
+            continue;
+
+        rat_name = smf_sess_rat_name(sess);
+        if (!rat_name)
+            rat_name = "UNKNOWN";
+
+        pdu_by_rat_count_inc(summary, rat_name);
+    }
+}
+
 static void collect_pdu_by_rat_summary(cJSON *summary, const ogs_metrics_query_t *q)
 {
     smf_context_t *smf = smf_self();
     smf_ue_t *ue = NULL;
 
     ogs_list_for_each(&smf->smf_ue_list, ue) {
-        smf_sess_t *sess = NULL;
-
         if (!smf_ue_matches_query(ue, q))
             continue;
 
-        ogs_list_for_each(&ue->sess_list, sess) {
-            const char *rat_name = NULL;
-
-            if (!smf_sess_matches_pdu_filters(sess, q))
-                continue;
-
-            rat_name = smf_sess_rat_name(sess);
-            if (!rat_name)
-                rat_name = "UNKNOWN";
-
-            pdu_by_rat_count_inc(summary, rat_name);
-        }
+        collect_pdu_by_rat_for_ue(summary, ue, q);
     }
 }
 
@@ -1395,6 +1401,34 @@ size_t smf_dump_pdu_info_paged(char *buf, size_t buflen,
      */
     ogs_metrics_dump_lock();
 
+    if (q && ((q->imsi && *q->imsi) || (q->supi && *q->supi))) {
+        /*
+         * Fast path for exact-subscriber queries (NMS IMSI watch /
+         * trace panel polls /pdu-info?imsi= every few seconds).
+         * Walking the whole smf_ue_list under the dump lock scales
+         * with total subscribers; resolve via the IMSI/SUPI hash and
+         * keep the remaining filters via smf_ue_matches_query().
+         */
+        ue = (q->imsi && *q->imsi) ?
+                smf_ue_find_by_imsi_bcd(q->imsi) :
+                smf_ue_find_by_supi((char *)q->supi);
+        if (ue && smf_ue_matches_query(ue, q) &&
+            (!((q->rat && *q->rat) || q->has_lac || q->has_enb_id) ||
+             smf_ue_has_matching_pdu(ue, q))) {
+            collect_pdu_by_rat_for_ue(summary, ue, q);
+            total = 1;
+            int act = json_pager_advance(no_paging, idx, start_index,
+                    emitted, page_size, &has_next);
+            if (act == 0) {
+                cJSON *ueo = build_ue_object(ue, q);
+                if (!ueo) oom = true;
+                else { cJSON_AddItemToArray(items, ueo); emitted++; }
+            }
+            idx++;
+        }
+        goto done;
+    }
+
     collect_pdu_by_rat_summary(summary, q);
 
     ogs_list_for_each(&smf->smf_ue_list, ue) {
@@ -1426,6 +1460,7 @@ size_t smf_dump_pdu_info_paged(char *buf, size_t buflen,
         idx++;
     }
 
+done:
     ogs_metrics_dump_unlock();
 
     cJSON_AddItemToObjectCS(root, "items", items);

@@ -150,10 +150,44 @@ int nas_eps_send_attach_accept(mme_ue_t *mme_ue)
         mme_ue_progress(mme_ue, "attach_accept_no_sess");
         return OGS_NOTFOUND;
     }
+    /*
+     * Re-attach can merge OLD UE sessions before Create Session adds the
+     * new default bearer. Prefer the newest session that has a default
+     * bearer + subscription APN rather than failing the whole attach
+     * (seen under SGs LU reject storms).
+     */
     if (mme_sess_next(sess)) {
-        ogs_error("[%s] There should only be one SESSION", mme_ue->imsi_bcd);
-        mme_ue_progress(mme_ue, "attach_accept_fail");
-        return OGS_ERROR;
+        mme_sess_t *s = NULL, *chosen = NULL, *fallback = NULL;
+        int n = 0;
+
+        ogs_list_for_each(&mme_ue->sess_list, s) {
+            mme_bearer_t *db;
+
+            n++;
+            if (!s->session)
+                continue;
+            db = mme_default_bearer_in_sess(s);
+            if (!db)
+                continue;
+            if (!fallback)
+                fallback = s;
+            /* Prefer CSRSP-applied S1-U so ICS/ESM use the same session */
+            if (db->sgw_s1u_ip.ipv4 || db->sgw_s1u_ip.ipv6)
+                chosen = s;
+        }
+        if (!chosen)
+            chosen = fallback;
+        if (!chosen) {
+            ogs_error("[%s] Attach accept: %d sessions but none usable",
+                    mme_ue->imsi_bcd, n);
+            mme_ue_progress(mme_ue, "attach_accept_fail");
+            return OGS_ERROR;
+        }
+        ogs_warn("[%s] Attach accept with %d sessions; using APN[%s]",
+                mme_ue->imsi_bcd, n,
+                chosen->session && chosen->session->name ?
+                    chosen->session->name : "-");
+        sess = chosen;
     }
 
     ogs_mme_trace_set(enb_ue, mme_ue,
@@ -316,6 +350,9 @@ int nas_eps_send_attach_reject(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     }
     rv = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
     ogs_expect(rv == OGS_OK);
+
+    if (rv == OGS_OK)
+        mme_t3346_on_reject_sent(mme_ue, emm_cause);
 
     return rv;
 }
@@ -877,7 +914,6 @@ void nas_eps_send_activate_all_dedicated_bearers(mme_bearer_t *default_bearer)
         r = nas_eps_send_activate_dedicated_bearer_context_request(
                 dedicated_bearer);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         dedicated_bearer = mme_bearer_next(dedicated_bearer);
     }
 }
@@ -958,6 +994,15 @@ int nas_eps_send_deactivate_bearer_context_request(
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
         ogs_warn("S1 context has already been removed");
+        return OGS_NOTFOUND;
+    }
+
+    if (!mme_sess_find_by_id(bearer->sess_id)) {
+        /* Session torn down while this Deactivate was in flight; treat
+         * like the vanished-S1 race so callers answer SGW/SMF directly
+         * instead of stalling the bearer teardown until GTP timeout. */
+        ogs_warn("[%s] Session context has already been removed EBI[%d]",
+                mme_ue->imsi_bcd, bearer->ebi);
         return OGS_NOTFOUND;
     }
 
@@ -1083,7 +1128,11 @@ int nas_eps_send_bearer_resource_allocation_reject(
         return OGS_NOTFOUND;
     }
 
-    ogs_assert(pti != OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED);
+    if (pti == OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED) {
+        ogs_warn("[%s] Bearer resource allocation reject skipped: "
+                "PTI unassigned (cause=%u)", mme_ue->imsi_bcd, esm_cause);
+        return OGS_ERROR;
+    }
 
     esmbuf = esm_build_bearer_resource_allocation_reject(
             mme_ue, pti, esm_cause);
@@ -1116,12 +1165,52 @@ int nas_eps_send_bearer_resource_modification_reject(
         return OGS_NOTFOUND;
     }
 
-    ogs_assert(pti != OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED);
+    /*
+     * Update Bearer / Bearer Resource Failure can arrive with no PTI
+     * (sess->pti left UNASSIGNED). Reject without a PTI is invalid NAS;
+     * skip instead of aborting the MME.
+     */
+    if (pti == OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED) {
+        ogs_warn("[%s] Bearer resource modification reject skipped: "
+                "PTI unassigned (cause=%u)", mme_ue->imsi_bcd, esm_cause);
+        return OGS_ERROR;
+    }
 
     esmbuf = esm_build_bearer_resource_modification_reject(
             mme_ue, pti, esm_cause);
     if (!esmbuf) {
         ogs_error("esm_build_bearer_resource_modification_reject() failed");
+        return OGS_ERROR;
+    }
+
+    rv = nas_eps_send_to_downlink_nas_transport(enb_ue, esmbuf);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
+int nas_eps_send_esm_status(
+        mme_ue_t *mme_ue, uint8_t ebi, uint8_t pti,
+        ogs_nas_esm_cause_t esm_cause)
+{
+    int rv;
+    enb_ue_t *enb_ue = NULL;
+    ogs_pkbuf_t *esmbuf = NULL;
+
+    if (!mme_ue) {
+        ogs_warn("UE(mme-ue) context has already been removed");
+        return OGS_NOTFOUND;
+    }
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (!enb_ue) {
+        ogs_warn("S1 context has already been removed");
+        return OGS_NOTFOUND;
+    }
+
+    esmbuf = esm_build_status(mme_ue, ebi, pti, esm_cause);
+    if (!esmbuf) {
+        ogs_error("esm_build_status() failed");
         return OGS_ERROR;
     }
 

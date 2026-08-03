@@ -33,6 +33,7 @@ libmme_sources = files('''
     s1ap-tx.h
     s1ap-io.h
     s1ap-shard.h
+    s1ap-overload.h
     mme-workers.h
     sgsap-build.h
     sgsap-handler.h
@@ -58,7 +59,9 @@ libmme_sources = files('''
     mme-trace.h
     mme-li.h
     mme-inbound-roam-apn.h
+    mme-apn-policy.h
     mme-roam-access.h
+    mme-access-control-match.h
     metrics.h
 
     mme-init.c
@@ -67,7 +70,9 @@ libmme_sources = files('''
     mme-context.c
     mme-reload-lists.c
     mme-inbound-roam-apn.c
+    mme-apn-policy.c
     mme-roam-access.c
+    mme-access-control-match.c
     eplmn-config.c
     mme-apn.c
     mme-ambr.c
@@ -81,6 +86,7 @@ libmme_sources = files('''
     s1ap-tx.c
     s1ap-io.c
     s1ap-shard.c
+    s1ap-overload.c
     mme-workers.c
     s1ap-sctp.c
     s1ap-path.c

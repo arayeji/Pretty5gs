@@ -269,8 +269,10 @@ void sgwc_state_initial(ogs_fsm_t *s, sgwc_event_t *e)
      * thread; when it fires, main fans the sweep event to every worker
      * and each shard (main included) sweeps only the UEs it owns.
      */
-    if (!ogs_worker_self())
+    if (!ogs_worker_self()) {
         sgwc_orphan_timer_start();
+        sgwc_buffer_idle_timer_start();
+    }
 
     OGS_FSM_TRAN(s, &sgwc_state_operational);
 }
@@ -282,6 +284,7 @@ void sgwc_state_final(ogs_fsm_t *s, sgwc_event_t *e)
     ogs_assert(s);
 
     sgwc_orphan_timer_stop();
+    sgwc_buffer_idle_timer_stop();
     sgwc_admin_drain_timer_stop();
 }
 
@@ -816,6 +819,28 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
                 sgwc_self()->orphan.enabled && sgwc_self()->orphan.t_sweep)
             ogs_timer_start(sgwc_self()->orphan.t_sweep,
                     ogs_time_from_sec(sgwc_self()->orphan.interval_s));
+        break;
+    }
+
+    case SGWC_EVT_BUFFER_IDLE_SWEEP: {
+        int dropped = 0, remaining;
+
+        if (!ogs_worker_self() && sgwc_workers_active())
+            sgwc_event_fanout_workers(SGWC_EVT_BUFFER_IDLE_SWEEP, 0);
+
+        remaining = sgwc_buffer_idle_sweep(&dropped);
+        if (dropped)
+            ogs_warn("buffer_idle sweep: DROPped %d session(s), "
+                    "%d still buffering on this shard",
+                    dropped, remaining);
+        else
+            ogs_debug("buffer_idle sweep: %d session(s) buffering", remaining);
+
+        if (!ogs_worker_self() &&
+                sgwc_self()->buffer_idle.enabled &&
+                sgwc_self()->buffer_idle.t_sweep)
+            ogs_timer_start(sgwc_self()->buffer_idle.t_sweep,
+                    ogs_time_from_sec(sgwc_self()->buffer_idle.interval_s));
         break;
     }
 

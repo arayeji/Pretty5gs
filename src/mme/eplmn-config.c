@@ -154,6 +154,72 @@ int mme_eplmn_build_nas_list(ogs_nas_plmn_list_t *nas_list,
     return OGS_OK;
 }
 
+/*
+ * Longest IMSI-prefix match against configured EPLMNs (so 432-11 wins
+ * over a hypothetical 432 when both are listed). Returns index or -1.
+ */
+static int mme_eplmn_index_for_imsi(const char *imsi_bcd,
+        int num_of_eplmn, ogs_plmn_id_t *eplmn)
+{
+    int i, best = -1, best_digits = -1;
+
+    if (!imsi_bcd || !imsi_bcd[0] || num_of_eplmn <= 0)
+        return -1;
+
+    for (i = 0; i < num_of_eplmn; i++) {
+        char plmn_str[OGS_PLMNIDSTRLEN];
+        int digits;
+
+        if (!ogs_plmn_id_imsi_prefix_match(imsi_bcd, &eplmn[i]))
+            continue;
+
+        ogs_plmn_id_to_string(&eplmn[i], plmn_str);
+        digits = (int)strlen(plmn_str);
+        if (digits > best_digits) {
+            best_digits = digits;
+            best = i;
+        }
+    }
+
+    return best;
+}
+
+int mme_eplmn_count_for_imsi(const char *imsi_bcd, bool imsi_plmn_only,
+        int num_of_eplmn, ogs_plmn_id_t *eplmn)
+{
+    ogs_assert(eplmn);
+
+    if (num_of_eplmn <= 0)
+        return 0;
+
+    if (imsi_plmn_only &&
+            mme_eplmn_index_for_imsi(imsi_bcd, num_of_eplmn, eplmn) >= 0)
+        return 1;
+
+    return num_of_eplmn;
+}
+
+int mme_eplmn_build_nas_list_for_imsi(ogs_nas_plmn_list_t *nas_list,
+        const char *imsi_bcd, bool imsi_plmn_only,
+        int num_of_eplmn, ogs_plmn_id_t *eplmn)
+{
+    int idx;
+
+    ogs_assert(nas_list);
+    ogs_assert(eplmn);
+
+    if (num_of_eplmn <= 0)
+        return OGS_OK;
+
+    if (imsi_plmn_only) {
+        idx = mme_eplmn_index_for_imsi(imsi_bcd, num_of_eplmn, eplmn);
+        if (idx >= 0)
+            return mme_eplmn_build_nas_list(nas_list, 1, &eplmn[idx]);
+    }
+
+    return mme_eplmn_build_nas_list(nas_list, num_of_eplmn, eplmn);
+}
+
 int mme_eplmn_count_for_serving(const ogs_plmn_id_t *serving_plmn,
         bool serving_only, int num_of_eplmn, ogs_plmn_id_t *eplmn)
 {

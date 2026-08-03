@@ -205,6 +205,7 @@ uint8_t mme_s6a_handle_ula(
         /* Update CSMAP from Tracking area update request */
         mme_ue->csmap = mme_csmap_find_for_ue(mme_ue);
         if (mme_ue->csmap &&
+            ogs_global_conf()->parameter.ignore_sgs == false &&
             mme_ue->network_access_mode ==
                 OGS_NETWORK_ACCESS_MODE_PACKET_AND_CIRCUIT &&
             (mme_ue->nas_eps.update.value ==
@@ -229,7 +230,6 @@ uint8_t mme_s6a_handle_ula(
             r = nas_eps_send_tau_accept(mme_ue,
                     mme_ue->tracking_area_update_accept_proc);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
     } else {
         ogs_error("Invalid Type[%d]", mme_ue->nas_eps.type);
@@ -438,12 +438,10 @@ void mme_s6a_handle_clr(mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
                 MME_PAGING_TYPE_DETACH_TO_UE, NULL);
             r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         } else {
             MME_CLEAR_PAGING_INFO(mme_ue);
             r = nas_eps_send_detach_request(mme_ue);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
                 if (sgsap_send_detach_indication(mme_ue) != OGS_OK) {
                     enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
@@ -525,12 +523,12 @@ static uint8_t mme_ue_session_from_slice_data(mme_ue_t *mme_ue,
             break;
         }
 
-        if (src->name &&
-                !mme_inbound_roam_apn_allowed(mme_ue, src->name)) {
-            ogs_info("[%s] inbound roam APN policy: skip HSS session APN[%s]",
-                    mme_ue->imsi_bcd, src->name);
-            continue;
-        }
+        /*
+         * Keep all HSS APNs in the subscription. inbound_roam allowed_apn
+         * is enforced only when the UE supplies a non-empty APN IE
+         * (PDN Connectivity / ESM Information). Absent/empty APN uses the
+         * S6a default and must not have that default stripped here.
+         */
 
         if (src->name) {
             mme_ue->session[dst].name = ogs_strdup(src->name);

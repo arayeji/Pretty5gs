@@ -355,6 +355,10 @@ static size_t sgwc_admin_list_sessions(char *buf, size_t buflen,
                               sess->sgwu_sxa_seid == 0 || no_bearer);
             if (orphan_only && !is_orphan) continue;
 
+            int dl_buff = 0, dl_forw = 0, dl_drop = 0;
+
+            sgwc_sess_count_dl_far(sess, &dl_buff, &dl_forw, &dl_drop);
+
             if (!first) APPEND(",");
             first = 0;
             APPEND("{\"imsi\":\"%s\","
@@ -362,13 +366,17 @@ static size_t sgwc_admin_list_sessions(char *buf, size_t buflen,
                    "\"orphan\":%s,"
                    "\"bearers\":%d,"
                    "\"pfcp_seid\":\"0x%"PRIx64"\","
-                   "\"smf_connected\":%s}",
+                   "\"smf_connected\":%s,"
+                   "\"dl_far_buff\":%d,"
+                   "\"dl_far_forw\":%d,"
+                   "\"dl_far_drop\":%d}",
                    ue->imsi_bcd,
                    sess->session.name ? sess->session.name : "",
                    is_orphan ? "true" : "false",
                    ogs_list_count(&sess->bearer_list),
                    sess->sgwu_sxa_seid,
-                   sess->gnode ? "true" : "false");
+                   sess->gnode ? "true" : "false",
+                   dl_buff, dl_forw, dl_drop);
         }
     }
     ogs_metrics_dump_unlock();
@@ -377,6 +385,55 @@ static size_t sgwc_admin_list_sessions(char *buf, size_t buflen,
 #undef APPEND
 
     return pos;
+}
+
+/*
+ * GET /admin/far-stats
+ *
+ * Process-wide DL FAR apply-action counters (BUFF / FORW / DROP).
+ */
+static size_t sgwc_admin_far_stats(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
+{
+    sgwc_ue_t *ue = NULL;
+    sgwc_sess_t *sess = NULL;
+    int buff = 0, forw = 0, drop = 0, sessions = 0;
+    int n;
+
+    (void)page; (void)page_size; (void)q;
+
+    ogs_metrics_dump_lock();
+    ogs_list_for_each(&sgwc_self()->sgw_ue_list, ue) {
+        ogs_list_for_each(&ue->sess_list, sess) {
+            int b = 0, f = 0, d = 0;
+            sgwc_sess_count_dl_far(sess, &b, &f, &d);
+            buff += b;
+            forw += f;
+            drop += d;
+            sessions++;
+        }
+    }
+    ogs_metrics_dump_unlock();
+
+    n = snprintf(buf, buflen,
+            "{\"sessions\":%d,"
+            "\"dl_far_buff\":%d,"
+            "\"dl_far_forw\":%d,"
+            "\"dl_far_drop\":%d,"
+            "\"ddn_sent\":%llu,"
+            "\"ddn_unable_to_page\":%llu,"
+            "\"ddn_suppressed\":%llu,"
+            "\"drobu_sent\":%llu,"
+            "\"far_dropped\":%llu,"
+            "\"far_rearmed\":%llu}\n",
+            sessions, buff, forw, drop,
+            (unsigned long long)SGWC_DL_STAT_GET(ddn_sent),
+            (unsigned long long)SGWC_DL_STAT_GET(ddn_unable_to_page),
+            (unsigned long long)SGWC_DL_STAT_GET(ddn_suppressed),
+            (unsigned long long)SGWC_DL_STAT_GET(drobu_sent),
+            (unsigned long long)SGWC_DL_STAT_GET(far_dropped),
+            (unsigned long long)SGWC_DL_STAT_GET(far_rearmed));
+    return n > 0 ? (size_t)n : 0;
 }
 
 /*
@@ -522,12 +579,100 @@ static int sgwc_admin_purge_seid(const ogs_metrics_query_t *q,
     return ADMIN_HTTP_ACCEPTED;
 }
 
+/*
+ * /admin/queues — "is the SGW-C working or wedged?". Twin of the MME
+ * endpoint: main event queue + shard worker queue depths and the event
+ * dispatch lag. Diagnostic reads (torn values acceptable).
+ *
+ * verdict:
+ *   ok     - queues shallow, lag below the xact-defer threshold
+ *   behind - lag >= 1.5s or main queue > 75% full (overloaded but
+ *            draining; GTP/PFCP response timers already defer)
+ */
+size_t sgwc_dump_queue_status(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
+{
+    size_t off = 0;
+    int written, i, n;
+    unsigned int depth, cap;
+    long long lag_ms;
+    const char *verdict = "ok";
+
+    (void)page;
+    (void)page_size;
+    (void)q;
+
+    if (!buf || buflen == 0)
+        return 0;
+
+#define QSTAT_APPEND(...) do { \
+        written = snprintf(buf + off, buflen - off, __VA_ARGS__); \
+        if (written < 0) return off; \
+        off += (size_t)written; \
+        if (off >= buflen) return buflen - 1; \
+    } while (0)
+
+    lag_ms = (long long)(sgwc_event_lag() / 1000);
+
+    depth = ogs_queue_size(ogs_app()->queue);
+    cap = ogs_queue_capacity(ogs_app()->queue);
+
+    if (lag_ms >= 1500 || (cap && depth > cap - cap / 4))
+        verdict = "behind";
+
+    QSTAT_APPEND("{\"event_lag_ms\":%lld,"
+            "\"main\":{\"depth\":%u,\"cap\":%u},"
+            "\"shards\":[",
+            lag_ms, depth, cap);
+
+    n = sgwc_workers_count();
+    for (i = 0; i < n; i++) {
+        ogs_worker_t *w = sgwc_worker_by_id(i);
+        QSTAT_APPEND("%s{\"id\":%d,\"depth\":%u}", i ? "," : "",
+                i, w && w->queue ? ogs_queue_size(w->queue) : 0);
+    }
+    QSTAT_APPEND("],");
+
+    /*
+     * Kernel RX backlog of the GTP-C and PFCP sockets: internal queues
+     * can look healthy while replies rot unread in the kernel buffer
+     * (the MME blind spot; same failure mode applies here).
+     */
+    {
+        uint64_t gtpc = 0, pfcp = 0;
+
+        if (ogs_gtp_self()->gtpc_sock)
+            gtpc += ogs_socket_rx_backlog(ogs_gtp_self()->gtpc_sock->fd);
+        if (ogs_gtp_self()->gtpc_sock6)
+            gtpc += ogs_socket_rx_backlog(ogs_gtp_self()->gtpc_sock6->fd);
+        if (ogs_pfcp_self()->pfcp_sock)
+            pfcp += ogs_socket_rx_backlog(ogs_pfcp_self()->pfcp_sock->fd);
+        if (ogs_pfcp_self()->pfcp_sock6)
+            pfcp += ogs_socket_rx_backlog(ogs_pfcp_self()->pfcp_sock6->fd);
+
+        if (gtpc >= 1024 * 1024 || pfcp >= 1024 * 1024)
+            verdict = "behind";  /* >=1MB unread: not draining fast enough */
+
+        QSTAT_APPEND("\"gtpc_rx_backlog_bytes\":%llu,"
+                "\"pfcp_rx_backlog_bytes\":%llu,",
+                (unsigned long long)gtpc, (unsigned long long)pfcp);
+    }
+
+    QSTAT_APPEND("\"verdict\":\"%s\"}\n", verdict);
+
+#undef QSTAT_APPEND
+
+    return off < buflen ? off : buflen - 1;
+}
+
 void sgwc_admin_api_register(void)
 {
     ogs_metrics_register_custom_ep(sgwc_dump_runtime_config,
             "/admin/config");
     ogs_metrics_register_custom_ep(sgwc_dump_maintenance_status,
             "/admin/maintenance");
+    ogs_metrics_register_custom_ep(sgwc_dump_queue_status,
+            "/admin/queues");
     ogs_metrics_register_admin_ep(sgwc_admin_maintenance_enable,
             "/admin/maintenance/enable",
             OGS_METRICS_ADMIN_METHOD_POST);
@@ -560,6 +705,10 @@ void sgwc_admin_api_register(void)
     /* Session list: GET /admin/sessions[?imsi=<IMSI>][?orphan=1] */
     ogs_metrics_register_custom_ep(sgwc_admin_list_sessions,
             "/admin/sessions");
+
+    /* DL FAR apply-action totals: GET /admin/far-stats */
+    ogs_metrics_register_custom_ep(sgwc_admin_far_stats,
+            "/admin/far-stats");
 
     /* Orphan purge: POST /admin/sessions/purge-orphans
      * Removes all sessions that never completed attach or have no SGW-U path.

@@ -123,6 +123,7 @@ static void tx_post_ready(
 {
     mme_event_t *e = NULL;
     int rv;
+    int tries = 0;
 
     e = mme_event_new(MME_EVENT_S1AP_TX_READY);
     ogs_assert(e);
@@ -130,17 +131,47 @@ static void tx_post_ready(
     e->pkbuf = pkbuf;
     e->tx_stream_no = stream_no;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        /* queue is being terminated (shutdown) */
-        ogs_error("s1ap-tx: queue_push failed:%d", (int)rv);
-        if (pkbuf)
-            ogs_pkbuf_free(pkbuf);
-        mme_event_free(e);
-        return;
+    for (;;) {
+        /* Priority side-queue so TX_READY is not buried under thousands
+         * of S1AP/GTP events (that burial keeps pending>0 and parks ICS). */
+        rv = mme_event_s1ap_tx_ready_push(e);
+        if (rv == OGS_OK)
+            return;
+
+        /* Shutdown: queue will never accept again. */
+        if (rv == OGS_DONE)
+            break;
+
+        /*
+         * OGS_ERROR used to be treated as fatal here (and the comment
+         * claimed "shutdown"), which dropped TX_READY, leaked
+         * s1ap_tx_pending, and wedged that eNB's hold list — so Attach /
+         * Auth / SMC after a Service-Reject storm never left the MME.
+         * Retry until the main queue accepts us.
+         */
+        /*
+         * Every 50 tries (5 ms) x 8 TX workers was ~1,600 flushed log
+         * lines/sec, precisely while the main queue was already full -
+         * logging that amplifies the congestion it reports. Every 5000
+         * tries = one line per worker per 0.5 s.
+         */
+        if (++tries == 1 || (tries % 5000) == 0)
+            ogs_error("s1ap-tx: main queue full:%d — retrying (try %d)",
+                    (int)rv, tries);
+        ogs_usleep(100);
     }
 
-    ogs_pollset_notify(ogs_app()->pollset);
+    if (pkbuf)
+        ogs_pkbuf_free(pkbuf);
+    mme_event_free(e);
+
+    /* Best-effort pending repair on shutdown only (main is stopping). */
+    {
+        mme_enb_t *enb = mme_enb_find_by_id(enb_id);
+        if (enb &&
+            __atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0)
+            __atomic_sub_fetch(&enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
+    }
 }
 
 /*
@@ -258,6 +289,11 @@ int s1ap_tx_workers_start(int count, bool direct)
                 64, 64, tx_dispatch, NULL);
         ogs_assert(tx_workers[i]);
         ogs_worker_hooks(tx_workers[i], tx_thread_init, NULL);
+        {
+            char tname[16];
+            ogs_snprintf(tname, sizeof(tname), "s1ap-tx%d", i);
+            ogs_worker_set_name(tx_workers[i], tname);
+        }
         ogs_worker_start(tx_workers[i]);
     }
 
@@ -284,6 +320,19 @@ bool s1ap_tx_active(void)
     return tx_worker_count > 0;
 }
 
+int s1ap_tx_worker_count(void)
+{
+    return tx_worker_count;
+}
+
+/* diagnostic (torn read acceptable): depth of one TX worker's job queue */
+unsigned int s1ap_tx_queue_depth(int idx)
+{
+    if (idx < 0 || idx >= tx_worker_count || !tx_workers[idx])
+        return 0;
+    return ogs_queue_size(tx_workers[idx]->queue);
+}
+
 int s1ap_tx_post_dlnas(enb_ue_t *enb_ue, ogs_pkbuf_t *emmbuf)
 {
     tx_job_t *job = NULL;
@@ -308,6 +357,26 @@ int s1ap_tx_post_dlnas(enb_ue_t *enb_ue, ogs_pkbuf_t *emmbuf)
     job->stream_no = enb_ue->enb_ostream_id;
     job->emmbuf = emmbuf;
 
+    /*
+     * Count BEFORE posting. The increment used to sit after the post,
+     * which left a window where the TX worker encoded the job and main
+     * processed its TX_READY (guarded decrement: pending==0, skipped)
+     * before the increment landed — pending then stuck at +1 FOREVER.
+     * From that moment every synchronous S1AP message to this eNB
+     * (InitialContextSetup/Attach Accept, UE Context Release, paging)
+     * parked on s1ap_tx_hold "until pending reaches 0", i.e. never:
+     * a silently half-dead eNB (uplink fine, downlink black hole)
+     * until MME restart. Increment-first closes the window; on post
+     * failure nothing was enqueued, so the decrement below exactly
+     * undoes it.
+     */
+    {
+        int prev = __atomic_fetch_add(
+                &enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
+        if (prev == 0)
+            enb->s1ap_tx_pending_since = ogs_time_now();
+    }
+
     /* sticky per eNB: all of one association's jobs share one FIFO.
      * Cast id to unsigned so a corrupt/negative pool id cannot yield a
      * negative subscript and a NULL worker pointer. */
@@ -318,6 +387,9 @@ int s1ap_tx_post_dlnas(enb_ue_t *enb_ue, ogs_pkbuf_t *emmbuf)
             ogs_error("s1ap-tx: worker[%u] missing (count=%d) — sync fallback",
                     (unsigned)((uint32_t)enb->id % (uint32_t)tx_worker_count),
                     tx_worker_count);
+            if (__atomic_sub_fetch(&enb->s1ap_tx_pending, 1,
+                        __ATOMIC_ACQ_REL) == 0)
+                enb->s1ap_tx_pending_since = 0;
             ogs_free(job);
             return OGS_ERROR;
         }
@@ -327,13 +399,13 @@ int s1ap_tx_post_dlnas(enb_ue_t *enb_ue, ogs_pkbuf_t *emmbuf)
         /* worker queue full / gone: caller falls back to sync build+send.
          * Safe only because nothing was enqueued here; earlier
          * in-flight jobs still hold sync sends back via pending. */
+        if (__atomic_sub_fetch(&enb->s1ap_tx_pending, 1,
+                    __ATOMIC_ACQ_REL) == 0)
+            enb->s1ap_tx_pending_since = 0;
         ogs_free(job);
         return rv;
     }
 
-    /* atomic: with mme.workers this runs on a UE-shard worker while
-     * TX_READY decrements on main */
-    __atomic_add_fetch(&enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
     return OGS_OK;
 }
 
@@ -365,6 +437,199 @@ static void tx_send_raw(mme_enb_t *enb, ogs_pkbuf_t *pkbuf)
         ogs_sctp_senddata(enb->sctp.sock, pkbuf, enb->sctp.addr);
 }
 
+/*
+ * Self-healing watchdog (main thread, called from the orphan sweep).
+ *
+ * Encode jobs take microseconds; even under a full-queue storm a
+ * TX_READY per job comes back within seconds, and every time pending
+ * reaches 0 the hold list is flushed. A hold list that stays non-empty
+ * for this long means s1ap_tx_pending leaked (a decrement was lost) and
+ * this eNB's entire synchronous downlink — Attach Accept via
+ * InitialContextSetup, UE Context Release, paging — is silently parked
+ * forever while uplink still flows. That wedge used to persist until an
+ * MME restart. Force-flush and reset the counter instead: a one-off
+ * ordering hiccup on one association beats a permanently dead cell.
+ * In-flight jobs' TX_READYs then hit the pending>0 guard and are no-ops.
+ */
+#define S1AP_TX_HOLD_STALL_USEC     ogs_time_from_sec(15)
+/* No TX_READY for this eNB for this long → treat pending as leaked. */
+#define S1AP_TX_HOLD_NO_PROGRESS_USEC ogs_time_from_sec(5)
+/* Tighter thresholds on the send path: do not wait for orphan sweep. */
+#define S1AP_TX_HOLD_SEND_STALL_USEC        ogs_time_from_sec(3)
+#define S1AP_TX_HOLD_SEND_NO_PROGRESS_USEC  ogs_time_from_sec(2)
+#define S1AP_TX_HOLD_SEND_MAX_PARKED        128
+/* Empty-hold pending leak: must outlive a slow-but-real encode+TX_READY. */
+#define S1AP_TX_HOLD_SEND_PENDING_LEAK_USEC ogs_time_from_sec(10)
+#define S1AP_TX_HOLD_PENDING_LEAK_USEC      ogs_time_from_sec(15)
+
+static int s1ap_tx_hold_try_flush_locked(
+        mme_enb_t *enb, ogs_time_t now,
+        ogs_time_t stall_usec, ogs_time_t no_progress_usec,
+        ogs_time_t pending_leak_usec, int max_parked,
+        ogs_list_t *flush, int *out_pending, ogs_time_t *out_since,
+        ogs_time_t *out_last_ready)
+{
+    ogs_pkbuf_t *held = NULL, *next = NULL;
+    ogs_time_t since, last_ready, pending_since;
+    int pending, count = 0;
+    bool stalled;
+
+    since = enb->s1ap_tx_hold_since;
+    last_ready = enb->s1ap_tx_last_ready;
+    pending_since = enb->s1ap_tx_pending_since;
+    pending = __atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE);
+
+    ogs_list_for_each(&enb->s1ap_tx_hold, held)
+        count++;
+
+    if (!count && pending <= 0)
+        return 0;
+
+    stalled = false;
+    /*
+     * Hold non-empty for stall_usec AND no TX_READY for no_progress_usec
+     * (genuine encode backlog still produces TX_READYs). Cap also trips
+     * when the park list grows without bound under a deep main queue.
+     */
+    if (count && since && (now - since) >= stall_usec &&
+            (!last_ready || (now - last_ready) >= no_progress_usec))
+        stalled = true;
+    if (max_parked > 0 && count >= max_parked)
+        stalled = true;
+    /*
+     * pending>0 with empty hold is NORMAL while an encode job is in
+     * flight. Only treat as leak if pending_since is old (TX_READY
+     * never came). Using last_ready alone false-fired on quiet cells
+     * that just posted a new job after seconds of silence.
+     */
+    if (!count && pending > 0 && pending_since &&
+            (now - pending_since) >= pending_leak_usec)
+        stalled = true;
+
+    if (!stalled)
+        return 0;
+
+    ogs_list_for_each_safe(&enb->s1ap_tx_hold, next, held) {
+        ogs_list_remove(&enb->s1ap_tx_hold, held);
+        ogs_list_add(flush, held);
+    }
+    enb->s1ap_tx_hold_since = 0;
+    enb->s1ap_tx_pending_since = 0;
+    __atomic_store_n(&enb->s1ap_tx_pending, 0, __ATOMIC_RELEASE);
+
+    if (out_pending)
+        *out_pending = pending;
+    if (out_since)
+        *out_since = since ? since : pending_since;
+    if (out_last_ready)
+        *out_last_ready = last_ready;
+    return count > 0 ? count : -1; /* -1 = pending-only reset */
+}
+
+void s1ap_tx_hold_recover_stalled(mme_enb_t *enb)
+{
+    ogs_list_t flush;
+    ogs_pkbuf_t *held = NULL, *next = NULL;
+    ogs_time_t now, since = 0, last_ready = 0;
+    int pending = 0, count;
+
+    if (!enb || !s1ap_tx_active())
+        return;
+
+    ogs_list_init(&flush);
+    now = ogs_time_now();
+
+    ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
+    count = s1ap_tx_hold_try_flush_locked(enb, now,
+            S1AP_TX_HOLD_SEND_STALL_USEC,
+            S1AP_TX_HOLD_SEND_NO_PROGRESS_USEC,
+            S1AP_TX_HOLD_SEND_PENDING_LEAK_USEC,
+            S1AP_TX_HOLD_SEND_MAX_PARKED,
+            &flush, &pending, &since, &last_ready);
+    ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
+
+    if (!count)
+        return;
+
+    /* ERROR only when we actually unparked downlink; pending-only is rarer */
+    if (count > 0)
+        ogs_error("s1ap-tx: send-path recover eNB-id[0x%x] "
+                "(pending_was=%d, flushed=%d, hold_age=%llds, "
+                "no_TX_READY=%llds)",
+                enb->enb_id, pending, count,
+                since ? (long long)ogs_time_to_sec(now - since) : 0LL,
+                last_ready ? (long long)ogs_time_to_sec(now - last_ready)
+                           : 0LL);
+    else
+        ogs_warn("s1ap-tx: cleared leaked pending on eNB-id[0x%x] "
+                "(pending_was=%d, pending_age=%llds)",
+                enb->enb_id, pending,
+                since ? (long long)ogs_time_to_sec(now - since) : 0LL);
+
+    ogs_list_for_each_safe(&flush, next, held) {
+        ogs_list_remove(&flush, held);
+        tx_send_raw(enb, held);
+    }
+}
+
+void s1ap_tx_hold_watchdog(void)
+{
+    mme_enb_t *enb = NULL;
+    ogs_time_t now = ogs_time_now();
+
+    if (!s1ap_tx_active())
+        return;
+
+    /*
+     * Per-eNB progress, not a global TX-worker queue check.
+     *
+     * The previous "if any TX worker has jobs, skip all eNBs" veto left
+     * a leaked s1ap_tx_pending on one cell wedged forever during mass
+     * attach — other cells kept the workers busy, so this association's
+     * hold list (SMC / Attach Accept / ICS) never flushed. Capture
+     * 21:00-21:05 showed Attach Complete collapse to ~22% with CSR
+     * still flowing: classic per-eNB downlink black-hole.
+     *
+     * Force-flush only when THIS eNB's hold is old AND it has had no
+     * TX_READY for S1AP_TX_HOLD_NO_PROGRESS_USEC (encode backlog on
+     * this association still produces TX_READYs).
+     */
+    ogs_list_for_each(&mme_self()->enb_list, enb) {
+        ogs_list_t flush;
+        ogs_pkbuf_t *held = NULL, *next = NULL;
+        ogs_time_t since = 0, last_ready = 0;
+        int pending = 0, count;
+
+        ogs_list_init(&flush);
+
+        ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
+        count = s1ap_tx_hold_try_flush_locked(enb, now,
+                S1AP_TX_HOLD_STALL_USEC,
+                S1AP_TX_HOLD_NO_PROGRESS_USEC,
+                S1AP_TX_HOLD_PENDING_LEAK_USEC,
+                0,
+                &flush, &pending, &since, &last_ready);
+        ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
+
+        if (!count)
+            continue;
+
+        ogs_error("s1ap-tx: hold list WEDGED for eNB-id[0x%x] "
+                "(pending=%d, %d pkbuf(s) parked for %llds, "
+                "no TX_READY for %llds) — forced flush + pending reset",
+                enb->enb_id, pending, count > 0 ? count : 0,
+                since ? (long long)ogs_time_to_sec(now - since) : 0LL,
+                last_ready ? (long long)ogs_time_to_sec(now - last_ready)
+                           : (since ? (long long)ogs_time_to_sec(now - since)
+                                    : 0LL));
+
+        ogs_list_for_each_safe(&flush, next, held) {
+            ogs_list_remove(&flush, held);
+            tx_send_raw(enb, held);
+        }
+    }
+}
+
 void s1ap_tx_ready_handle(mme_event_t *e)
 {
     mme_enb_t *enb = NULL;
@@ -380,8 +645,13 @@ void s1ap_tx_ready_handle(mme_event_t *e)
         return;
     }
 
-    if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0)
-        __atomic_sub_fetch(&enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
+    if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0) {
+        if (__atomic_sub_fetch(&enb->s1ap_tx_pending, 1,
+                    __ATOMIC_ACQ_REL) == 0)
+            enb->s1ap_tx_pending_since = 0;
+    }
+
+    enb->s1ap_tx_last_ready = ogs_time_now();
 
     if (e->pkbuf) {
         ogs_sctp_ppid_in_pkbuf(e->pkbuf) = OGS_SCTP_S1AP_PPID;
@@ -402,14 +672,16 @@ void s1ap_tx_ready_handle(mme_event_t *e)
 
         ogs_list_init(&flush);
 
-        mme_ctx_lock();
+        ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
         if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) == 0) {
             ogs_list_for_each_safe(&enb->s1ap_tx_hold, next, held) {
                 ogs_list_remove(&enb->s1ap_tx_hold, held);
                 ogs_list_add(&flush, held);
             }
+            enb->s1ap_tx_hold_since = 0;
+            enb->s1ap_tx_pending_since = 0;
         }
-        mme_ctx_unlock();
+        ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
 
         ogs_list_for_each_safe(&flush, next, held) {
             ogs_list_remove(&flush, held);

@@ -171,9 +171,19 @@ void mme_ue_log(
             !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
         return;
 
-    /* storm guard: skip formatting entirely when over budget;
-     * filter-matched DEBUG capture is never suppressed */
+    /* storm guard: skip formatting entirely when over budget */
     if (level != OGS_LOG_DEBUG && !ogs_log_guard())
+        return;
+
+    /*
+     * Filter-matched DEBUG is capped by the process-wide trace budget
+     * instead of ogs_log_guard. Peek (not consume - ogs_log_vprintf
+     * consumes) before the enrichment below: mme_ue_resolve_enb +
+     * ogs_mme_trace_set cost ~4 global-mutex lookups per line, which a
+     * whole-population trace prefix multiplied into meltdown.
+     */
+    if (ogs_log_get_domain_level(OGS_LOG_DOMAIN) < (ogs_log_level_e)level &&
+            !ogs_log_trace_budget(false))
         return;
 
     enb_ue = mme_ue_resolve_enb(mme_ue, enb_ue);
@@ -231,8 +241,17 @@ void mme_ue_service_info(
 {
     va_list ap;
     char msg[OGS_HUGE_LEN];
+    const char *imsi = mme_ue_log_id(mme_ue);
 
     ogs_assert(fmt);
+
+    /*
+     * Same early gate as mme_ue_log: do not ogs_vsnprintf for every
+     * service-request when the enriched line will be discarded.
+     */
+    if (!ogs_trace_filter_match(imsi) &&
+            !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+        return;
 
     va_start(ap, fmt);
     ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
@@ -246,8 +265,13 @@ void mme_ue_service_error(
 {
     va_list ap;
     char msg[OGS_HUGE_LEN];
+    const char *imsi = mme_ue_log_id(mme_ue);
 
     ogs_assert(fmt);
+
+    if (!ogs_trace_filter_match(imsi) &&
+            !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+        return;
 
     va_start(ap, fmt);
     ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
@@ -278,10 +302,19 @@ static void mme_ran_log(
     ogs_assert(fmt);
 
     if (mme_ue || enb_ue) {
+        const char *imsi = mme_ue_log_id(mme_ue);
+
+        if (!ogs_trace_filter_match(imsi) &&
+                !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+            return;
+
         ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
         mme_ue_log(mme_ue, enb_ue, proc, apn, level, "%s", msg);
         return;
     }
+
+    if (!ogs_log_domain_prints(OGS_LOG_DOMAIN, (ogs_log_level_e)level))
+        return;
 
     if (!ogs_log_guard())
         return;

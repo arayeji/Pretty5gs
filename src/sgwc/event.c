@@ -48,8 +48,54 @@ sgwc_event_t *sgwc_event_new(sgwc_event_e id)
     ogs_assert(e);
 
     e->id = id;
+    e->created_at = ogs_get_monotonic_time();
 
     return e;
+}
+
+/*
+ * Rises immediately to the worst lag seen and decays geometrically, so a
+ * backlog is reported the moment it appears and clears only once dispatch
+ * has actually caught up (same estimator as the MME's mme_event_lag).
+ */
+static int64_t event_lag_usec = 0;
+
+#define SGWC_EVENT_LAG_WARN_THRESHOLD ogs_time_from_msec(1500)
+
+void sgwc_event_lag_observe(const sgwc_event_t *e)
+{
+    ogs_time_t lag;
+    int64_t prev, next;
+
+    if (!e || !e->created_at)
+        return;
+
+    lag = ogs_get_monotonic_time() - e->created_at;
+    if (lag < 0)
+        lag = 0;
+
+    prev = __atomic_load_n(&event_lag_usec, __ATOMIC_RELAXED);
+    next = ((int64_t)lag > prev) ?
+        (int64_t)lag : prev - (prev - (int64_t)lag) / 8;
+    __atomic_store_n(&event_lag_usec, next, __ATOMIC_RELAXED);
+
+    if (next >= SGWC_EVENT_LAG_WARN_THRESHOLD) {
+        static int64_t last_warn = 0;
+        ogs_time_t now = ogs_get_monotonic_time();
+        int64_t seen = __atomic_load_n(&last_warn, __ATOMIC_RELAXED);
+
+        if (now - seen >= ogs_time_from_sec(10) &&
+            __atomic_compare_exchange_n(&last_warn, &seen, (int64_t)now,
+                false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            ogs_warn("Event queue lag %dms - GTP/PFCP response timers "
+                    "deferred (SGW-C is behind, peers are not)",
+                    (int)(next / 1000));
+    }
+}
+
+ogs_time_t sgwc_event_lag(void)
+{
+    return (ogs_time_t)__atomic_load_n(&event_lag_usec, __ATOMIC_RELAXED);
 }
 
 void sgwc_event_free(sgwc_event_t *e)
@@ -130,6 +176,8 @@ const char *sgwc_event_get_name(sgwc_event_t *e)
 
     case SGWC_EVT_ORPHAN_SWEEP:
         return "SGWC_EVT_ORPHAN_SWEEP";
+    case SGWC_EVT_BUFFER_IDLE_SWEEP:
+        return "SGWC_EVT_BUFFER_IDLE_SWEEP";
     case SGWC_EVT_PEER_ECHO_SETUP:
         return "SGWC_EVT_PEER_ECHO_SETUP";
     case SGWC_EVT_PEER_RESTART_PURGE:

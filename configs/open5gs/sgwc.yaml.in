@@ -98,6 +98,13 @@ sgwc:
       sgwu:
         - address: 127.0.0.6
 #    send_user_id: true   # PFCP User ID (IMSI/MSISDN) to SGW-U (default: true)
+#  admission:             # attach-storm protection (reject, never queue)
+#    max_outstanding: 50000  # max in-flight Create Session -> PFCP establish
+#                            # (0 = unlimited); over cap or all SGW-U PFCP
+#                            # down -> GTP-C entity congestion (cause 120);
+#                            # MME maps this to EMM #22 + T3346 backoff
+#    rate_per_sec: 0         # optional accepted Create Sessions/sec
+#                            # token bucket (0 = disabled)
 #  trace_imsi:          # IMSI prefix list (also GET /admin/trace/imsi on :9090)
 #    - "999700000000001"
 

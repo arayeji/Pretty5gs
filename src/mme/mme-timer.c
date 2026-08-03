@@ -159,9 +159,9 @@ void mme_timer_s1_delayed_send(void *data)
 
     e->timer_id = MME_TIMER_S1_DELAYED_SEND;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        ogs_error("S1 delayed send event dropped:%d", (int)rv);
         ogs_timer_delete(e->timer);
         mme_event_free(e);
     }
@@ -265,9 +265,9 @@ void mme_timer_sgs_cli_conn_to_srv(void *data)
     e->timer_id = MME_TIMER_SGS_CLI_CONN_TO_SRV;
     e->vlr = data;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        ogs_error("SGsAP timer event dropped:%d", (int)rv);
         mme_event_free(e);
     }
 }

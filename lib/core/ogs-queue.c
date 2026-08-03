@@ -57,6 +57,12 @@ typedef struct ogs_queue_s {
  */
 #define ogs_queue_full(queue) ((queue)->nelts == (queue)->bounds)
 
+/*
+ * Upper bound on how long ogs_queue_push() (nominally an infinite wait)
+ * will block on a full queue before returning OGS_RETRY. See queue_push().
+ */
+#define OGS_QUEUE_PUSH_MAX_WAIT ogs_time_from_msec(20)
+
 /**
  * Detects when the ogs_queue_t is empty. This utility function is expected
  * to be called from within critical sections, and is not threadsafe.
@@ -121,6 +127,7 @@ void ogs_queue_destroy(ogs_queue_t *queue)
 static int queue_push(ogs_queue_t *queue, void *data, ogs_time_t timeout,
         bool *was_empty)
 {
+    ogs_time_t deadline = 0;
     int rv;
 
     ogs_thread_mutex_lock(&queue->one_big_mutex);
@@ -132,39 +139,61 @@ static int queue_push(ogs_queue_t *queue, void *data, ogs_time_t timeout,
         return OGS_DONE; /* no more elements ever again */
     }
 
-    if (ogs_queue_full(queue)) {
+    /*
+     * Wait until there is room. Infinite waiters LOOP on a still-full queue
+     * after a cond wake — spurious wakes and multi-waiter races are normal,
+     * and returning immediately used to drop the push (fatal for MME S1AP
+     * TX_READY: s1ap_tx_pending leaks and the eNB hold list wedges).
+     *
+     * The loop is bounded, though. Every NF pushes onto ogs_app()->queue
+     * from inside its main-thread poll and timer callbacks, and the main
+     * thread is that queue's only consumer: an unbounded wait there is a
+     * self-deadlock. The main loop stops polling, sockets it owns are never
+     * read again, and the NF goes silently dead with full kernel Recv-Qs.
+     * Give up after OGS_QUEUE_PUSH_MAX_WAIT so callers (all of which drop
+     * and free on != OGS_OK, or retry from a thread where that is safe) can
+     * make progress. Timed / try paths keep their old semantics.
+     */
+    while (ogs_queue_full(queue)) {
         if (!timeout) {
             ogs_thread_mutex_unlock(&queue->one_big_mutex);
             return OGS_RETRY;
         }
-        if (!queue->terminated) {
-            queue->full_waiters++;
-            if (timeout > 0) {
-                rv = ogs_thread_cond_timedwait(&queue->not_full,
-                                               &queue->one_big_mutex,
-                                               timeout);
-            }
-            else {
-                rv = ogs_thread_cond_wait(&queue->not_full,
-                                          &queue->one_big_mutex);
-            }
-            queue->full_waiters--;
-            if (rv != OGS_OK) {
-                ogs_thread_mutex_unlock(&queue->one_big_mutex);
-                return rv;
-            }
-        }
-        /* If we wake up and it's still empty, then we were interrupted */
-        if (ogs_queue_full(queue)) {
-            int terminated = queue->terminated;
-            ogs_warn("queue full (intr)");
+        if (queue->terminated) {
             ogs_thread_mutex_unlock(&queue->one_big_mutex);
-            if (terminated) {
-                return OGS_DONE; /* no more elements ever again */
+            return OGS_DONE;
+        }
+
+        if (timeout < 0 && !deadline)
+            deadline = ogs_time_now() + OGS_QUEUE_PUSH_MAX_WAIT;
+
+        queue->full_waiters++;
+        rv = ogs_thread_cond_timedwait(&queue->not_full,
+                                       &queue->one_big_mutex,
+                                       timeout > 0 ?
+                                           timeout : OGS_QUEUE_PUSH_MAX_WAIT);
+        queue->full_waiters--;
+        if (rv != OGS_OK) {
+            ogs_thread_mutex_unlock(&queue->one_big_mutex);
+            return timeout > 0 ? rv : OGS_RETRY;
+        }
+
+        if (ogs_queue_full(queue)) {
+            if (queue->terminated) {
+                ogs_thread_mutex_unlock(&queue->one_big_mutex);
+                return OGS_DONE;
             }
-            else {
+            if (timeout > 0) {
+                ogs_warn("queue full (intr)");
+                ogs_thread_mutex_unlock(&queue->one_big_mutex);
                 return OGS_ERROR;
             }
+            /* Infinite wait: spuriously woken or lost the free slot. */
+            if (ogs_time_now() >= deadline) {
+                ogs_thread_mutex_unlock(&queue->one_big_mutex);
+                return OGS_RETRY;
+            }
+            continue;
         }
     }
 
@@ -228,6 +257,13 @@ unsigned int ogs_queue_size(ogs_queue_t *queue) {
 }
 
 /**
+ * not thread safe (diagnostic read; bounds is immutable after create)
+ */
+unsigned int ogs_queue_capacity(ogs_queue_t *queue) {
+    return queue->bounds;
+}
+
+/**
  * Retrieves the next item from the queue. If there are no
  * items available, it will either return OGS_RETRY (timeout = 0),
  * or block until one becomes available (infinitely with timeout < 0,
@@ -246,38 +282,42 @@ static int queue_pop(ogs_queue_t *queue, void **data, ogs_time_t timeout)
     }
 
     /* Keep waiting until we wake up and find that the queue is not empty. */
-    if (ogs_queue_empty(queue)) {
+    while (ogs_queue_empty(queue)) {
         if (!timeout) {
             ogs_thread_mutex_unlock(&queue->one_big_mutex);
             return OGS_RETRY;
         }
-        if (!queue->terminated) {
-            queue->empty_waiters++;
-            if (timeout > 0) {
-                rv = ogs_thread_cond_timedwait(&queue->not_empty,
-                                               &queue->one_big_mutex,
-                                               timeout);
-            }
-            else {
-                rv = ogs_thread_cond_wait(&queue->not_empty,
-                                          &queue->one_big_mutex);
-            }
-            queue->empty_waiters--;
-            if (rv != OGS_OK) {
-                ogs_thread_mutex_unlock(&queue->one_big_mutex);
-                return rv;
-            }
-        }
-        /* If we wake up and it's still empty, then we were interrupted */
-        if (ogs_queue_empty(queue)) {
-            int terminated = queue->terminated;
-            ogs_warn("queue empty (intr)");
+        if (queue->terminated) {
             ogs_thread_mutex_unlock(&queue->one_big_mutex);
-            if (terminated) {
-                return OGS_DONE; /* no more elements ever again */
-            } else {
+            return OGS_DONE;
+        }
+
+        queue->empty_waiters++;
+        if (timeout > 0) {
+            rv = ogs_thread_cond_timedwait(&queue->not_empty,
+                                           &queue->one_big_mutex,
+                                           timeout);
+        } else {
+            rv = ogs_thread_cond_wait(&queue->not_empty,
+                                      &queue->one_big_mutex);
+        }
+        queue->empty_waiters--;
+        if (rv != OGS_OK) {
+            ogs_thread_mutex_unlock(&queue->one_big_mutex);
+            return rv;
+        }
+
+        if (ogs_queue_empty(queue)) {
+            if (queue->terminated) {
+                ogs_thread_mutex_unlock(&queue->one_big_mutex);
+                return OGS_DONE;
+            }
+            if (timeout > 0) {
+                ogs_warn("queue empty (intr)");
+                ogs_thread_mutex_unlock(&queue->one_big_mutex);
                 return OGS_ERROR;
             }
+            continue;
         }
     } 
 

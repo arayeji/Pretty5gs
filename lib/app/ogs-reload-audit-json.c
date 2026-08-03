@@ -37,8 +37,10 @@ void ogs_reload_audit_snapshot_to_json(cJSON *parent)
 
     cJSON_AddNumberToObject(obj, "finished_at", (double)snap->finished_at);
     cJSON_AddBoolToObject(obj, "ok", snap->ok ? 1 : 0);
+    cJSON_AddBoolToObject(obj, "truncated", snap->truncated ? 1 : 0);
     cJSON_AddStringToObject(obj, "nf", snap->nf);
     cJSON_AddNumberToObject(obj, "change_count", snap->change_count);
+    cJSON_AddNumberToObject(obj, "line_count", snap->line_count);
 
     changes = cJSON_CreateArray();
     ogs_assert(changes);

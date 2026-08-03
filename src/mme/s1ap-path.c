@@ -90,12 +90,20 @@ int s1ap_send_to_enb(mme_enb_t *enb, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
     if (s1ap_tx_active()) {
         bool parked = false;
 
-        mme_ctx_lock();
+        /* Unwedge before parking: TX_READY can sit behind a deep main
+         * queue for seconds while ICS/Attach Accept pile onto the hold
+         * list. Recover here on the shard/send path so we do not depend
+         * on the orphan-sweep timer (starved when main never re-polls). */
+        s1ap_tx_hold_recover_stalled(enb);
+
+        ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
         if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0) {
+            if (!ogs_list_first(&enb->s1ap_tx_hold))
+                enb->s1ap_tx_hold_since = ogs_time_now();
             ogs_list_add(&enb->s1ap_tx_hold, pkbuf);
             parked = true;
         }
-        mme_ctx_unlock();
+        ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
 
         if (parked)
             return OGS_OK;
@@ -418,6 +426,59 @@ int s1ap_send_s1_setup_failure(
     return rv;
 }
 
+int s1ap_send_overload_start(mme_enb_t *enb, int level, int traffic_reduction)
+{
+    int rv;
+    ogs_pkbuf_t *s1ap_buffer;
+    long action;
+
+    ogs_assert(enb);
+
+    if (level >= 2) {
+#define S1AP_OVERLOAD_ACTION_EMERGENCY_AND_MT_ONLY \
+    S1AP_OverloadAction_permit_emergency_sessions_and_mobile_terminated_services_only
+        action = S1AP_OVERLOAD_ACTION_EMERGENCY_AND_MT_ONLY;
+        /*
+         * The action already tells the eNB to admit nothing else, and
+         * TS 36.413 pairs the reduction percentage with the milder
+         * actions; sending both would be contradictory.
+         */
+        traffic_reduction = 0;
+    } else {
+        action = S1AP_OverloadAction_reject_non_emergency_mo_dt;
+    }
+
+    s1ap_buffer = s1ap_build_overload_start(action, traffic_reduction);
+    if (!s1ap_buffer) {
+        ogs_error("s1ap_build_overload_start() failed");
+        return OGS_ERROR;
+    }
+
+    rv = s1ap_send_to_enb(enb, s1ap_buffer, S1AP_NON_UE_SIGNALLING);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
+int s1ap_send_overload_stop(mme_enb_t *enb)
+{
+    int rv;
+    ogs_pkbuf_t *s1ap_buffer;
+
+    ogs_assert(enb);
+
+    s1ap_buffer = s1ap_build_overload_stop();
+    if (!s1ap_buffer) {
+        ogs_error("s1ap_build_overload_stop() failed");
+        return OGS_ERROR;
+    }
+
+    rv = s1ap_send_to_enb(enb, s1ap_buffer, S1AP_NON_UE_SIGNALLING);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
 int s1ap_send_enb_configuration_update_ack(mme_enb_t *enb)
 {
     int rv;
@@ -684,10 +745,22 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
                 mme_ctx_unlock();
                 return rv;
             }
+            sent = true;
         }
     }
 
     mme_ctx_unlock();
+
+    if (!sent) {
+        /*
+         * No eNB advertises this TAI. Do not start T3413 — there is
+         * nothing to retransmit to. Callers (e.g. Delete Bearer per
+         * TS 23.401 §5.4.4) must answer with Unable to page UE now.
+         */
+        ogs_warn("[%s] S1-Paging: no eNB serves TAI [TAC:%d]",
+                mme_ue->imsi_bcd, mme_ue->tai.tac);
+        return OGS_NOTFOUND;
+    }
 
     /* Start T3413 */
     ogs_timer_start(mme_ue->t3413.timer,

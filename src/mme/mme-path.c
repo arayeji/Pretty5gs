@@ -18,6 +18,7 @@
  */
 
 #include "s1ap-path.h"
+#include "s1ap-tx.h"
 #include "nas-path.h"
 #include "emm-build.h"
 #include "sgsap-path.h"
@@ -35,6 +36,9 @@ void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue)
 
     ogs_assert(mme_ue);
 
+    /* Already mid-teardown or freed via another path — do not re-enter FSM. */
+    if (mme_ue->being_removed)
+        return;
     if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
         return;
 
@@ -160,18 +164,24 @@ static void orphan_sweep_timer_cb(void *data)
 
     (void)data;
 
+    /*
+     * Run TX-hold recovery on the timer path before queueing the rest of
+     * the sweep. When main is busy draining S1AP/GTP, the ORPHAN_SWEEP
+     * event can sit for seconds; hold recovery must not wait on that.
+     * Safe: only touches per-eNB hold locks + IO post (same as send path).
+     */
+    s1ap_tx_hold_watchdog();
+
     e = mme_event_new(MME_EVENT_ORPHAN_SWEEP);
     if (!e) {
         ogs_error("mme_event_new() failed for orphan sweep");
         return;
     }
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed [%d] for orphan sweep", rv);
+        ogs_error("orphan sweep event dropped [%d]", rv);
         mme_event_free(e);
-    } else {
-        ogs_pollset_notify(ogs_app()->pollset);
     }
 }
 
@@ -645,14 +655,12 @@ void mme_admin_detach_ue(mme_ue_t *mme_ue, bool force)
                 MME_PAGING_TYPE_DETACH_TO_UE, NULL);
         r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
     MME_CLEAR_PAGING_INFO(mme_ue);
     r = nas_eps_send_detach_request(mme_ue);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 
     if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
         if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
@@ -676,6 +684,18 @@ void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     int r, xact_count;
     ogs_assert(mme_ue);
 
+    /*
+     * SGsAP DETACH-ACK (and a few fallback paths) can arrive after
+     * detach_type was cleared or never set. Aborting the whole MME here
+     * previously caused mass session loss; treat unset/invalid as
+     * implicit detach instead.
+     */
+    if (mme_ue->detach_type == 0) {
+        ogs_warn("[%s] detach_type unset; treating as MME implicit detach",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+        mme_ue->detach_type = MME_DETACH_TYPE_MME_IMPLICIT;
+    }
+
     xact_count = mme_ue_xact_count(mme_ue, OGS_GTP_LOCAL_ORIGINATOR);
 
     switch (mme_ue->detach_type) {
@@ -689,7 +709,6 @@ void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
                 xact_count) {
             r = nas_eps_send_detach_accept(mme_ue);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
         break;
 
@@ -733,10 +752,11 @@ void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
             enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
             if (enb_ue) {
                 ogs_warn("[%s] UEContextReleaseCommand Sent", mme_ue->imsi_bcd);
-                ogs_assert(OGS_OK ==
-                    s1ap_send_ue_context_release_command(enb_ue,
-                        S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
-                        S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0));
+                if (s1ap_send_ue_context_release_command(enb_ue,
+                            S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
+                            S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0) != OGS_OK)
+                    ogs_error("[%s] UEContextReleaseCommand failed",
+                            mme_ue->imsi_bcd);
             } else {
             /*
              * No S1 context exists (eNB UE context already gone).
@@ -777,8 +797,13 @@ void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
         break;
 
     default:
-        ogs_fatal("    Invalid OGS_NAS_EPS TYPE[%d]", mme_ue->detach_type);
-        ogs_assert_if_reached();
+        ogs_error("[%s] Invalid detach_type[%d]; "
+                "falling back to MME implicit detach",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
+                mme_ue->detach_type);
+        mme_ue->detach_type = MME_DETACH_TYPE_MME_IMPLICIT;
+        mme_send_delete_session_or_detach(enb_ue, mme_ue);
+        break;
     }
 }
 
@@ -816,8 +841,9 @@ void mme_send_delete_session_or_mme_ue_context_release(
             r = s1ap_send_ue_context_release_command(enb_ue,
                     S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                     S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
+            if (r != OGS_OK)
+                ogs_warn("[%s] UE Context Release Command not sent",
+                        mme_ue->imsi_bcd);
         } else {
             /*
              * No S1 context exists (eNB UE context already gone).
@@ -829,6 +855,38 @@ void mme_send_delete_session_or_mme_ue_context_release(
             mme_ue_enter_ue_context_will_remove(mme_ue);
         }
     }
+}
+
+void mme_send_s1_release_after_emm_failure(mme_ue_t *mme_ue)
+{
+    enb_ue_t *enb_ue = NULL;
+    int r;
+
+    ogs_assert(mme_ue);
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (!enb_ue)
+        return;
+    /* A release is already in flight (CLEAR_S1_CONTEXT, holding, ...) */
+    if (enb_ue->ue_ctx_rel_action != S1AP_UE_CTX_REL_INVALID_ACTION)
+        return;
+    /* GTP teardown in progress will release S1 on completion */
+    if (MME_SESSION_RELEASE_PENDING(mme_ue))
+        return;
+
+    /*
+     * S1_CONTEXT_REMOVE, not UE_CONTEXT_REMOVE: the UE may legitimately
+     * stay EMM-REGISTERED after a rejected TAU or Service Request, it
+     * just has no business holding an S1 connection. This drops it to
+     * ECM-IDLE, arms the mobile-reachable timer, and still reclaims the
+     * context when no ESM session is left.
+     */
+    r = s1ap_send_ue_context_release_command(enb_ue,
+            S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
+            S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
+    if (r != OGS_OK)
+        ogs_warn("[%s] UE Context Release Command not sent after EMM failure",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
 }
 
 void mme_send_release_access_bearer_or_ue_context_release(enb_ue_t *enb_ue)
@@ -847,12 +905,17 @@ void mme_send_release_access_bearer_or_ue_context_release(enb_ue_t *enb_ue)
                     mme_ue->imsi_bcd);
     } else {
         ogs_debug("No UE Context");
-        ogs_assert(enb_ue->relcause.group);
+        if (!enb_ue->relcause.group) {
+            ogs_error("Release with no cause set; "
+                    "using eutran-generated-reason");
+            enb_ue->relcause.group = S1AP_Cause_PR_radioNetwork;
+            enb_ue->relcause.cause =
+                S1AP_CauseRadioNetwork_release_due_to_eutran_generated_reason;
+        }
         r = s1ap_send_ue_context_release_command(enb_ue,
                 enb_ue->relcause.group, enb_ue->relcause.cause,
                 S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     }
 }
 
@@ -873,15 +936,13 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
             goto cleanup;
         }
 
-        if (failed == true) {
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_downlink_data_notification_ack(
-                    bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE));
-        } else {
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_downlink_data_notification_ack(
-                    bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED));
-        }
+        /* A failed ack must not abort the MME: the SGW retransmits the
+         * DDN anyway, and aborting here caused a crash loop. */
+        if (mme_gtp_send_downlink_data_notification_ack(bearer,
+                failed == true ? OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE :
+                    OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+            mme_ue_error(mme_ue, NULL, "paging", NULL,
+                    "DDN Ack not sent [failed=%d]", failed);
         break;
     case MME_PAGING_TYPE_CREATE_BEARER:
         bearer = mme_bearer_find_by_id(
@@ -893,9 +954,10 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         }
 
         if (failed == true) {
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_create_bearer_response(
-                    bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE));
+            if (mme_gtp_send_create_bearer_response(
+                        bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE) != OGS_OK)
+                ogs_error("[%s] Create Bearer Response (unable to page) "
+                        "failed EBI[%d]", mme_ue->imsi_bcd, bearer->ebi);
             /*
              * The Create Bearer Response (failure) was sent back to SGW/SMF,
              * so the network side will tear down the bearer on its end.
@@ -907,7 +969,6 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         } else {
             r = nas_eps_send_activate_dedicated_bearer_context_request(bearer);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
         break;
     case MME_PAGING_TYPE_UPDATE_BEARER:
@@ -920,9 +981,10 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         }
 
         if (failed == true) {
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_update_bearer_response(
-                    bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE));
+            if (mme_gtp_send_update_bearer_response(
+                        bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE) != OGS_OK)
+                ogs_error("[%s] Update Bearer Response (unable to page) "
+                        "failed EBI[%d]", mme_ue->imsi_bcd, bearer->ebi);
         } else {
             ogs_gtp_xact_t *xact = mme_bearer_update_xact_first(bearer);
 
@@ -945,7 +1007,6 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
                     (xact->update_flags &
                         OGS_GTP_MODIFY_TFT_UPDATE) ? 1 : 0);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
         break;
     case MME_PAGING_TYPE_DELETE_BEARER:
@@ -958,14 +1019,49 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         }
 
         if (failed == true) {
-            ogs_assert(OGS_OK ==
-                mme_gtp_send_delete_bearer_response(
-                    bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE));
+            /* TS 23.401 §5.4.4: UE unreachable after paging → Unable to page UE */
+            if (mme_gtp_send_delete_bearer_response(
+                    bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE) != OGS_OK)
+                mme_ue_error(mme_ue, NULL, "paging", NULL,
+                        "Delete Bearer Response not sent after paging fail");
         } else {
             r = nas_eps_send_deactivate_bearer_context_request(
                     bearer, mme_ue->paging.esm_cause);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
+            if (r == OGS_NOTFOUND) {
+                /*
+                 * The S1 context vanished between the paging success
+                 * and this dispatch (immediate re-release race). The
+                 * NAS-Deactivate watchdog was never armed in this
+                 * case, so without a synthetic answer the
+                 * PGW-initiated bearer deactivation stalls at the
+                 * SGW/SMF until GTP timeout. Answer it now; the core
+                 * side is tearing the bearer down regardless.
+                 */
+                mme_ue_warn(mme_ue, NULL, "paging", NULL,
+                        "S1 released before NAS Deactivate could be "
+                        "sent EBI[%d]; answering SGW/SMF directly",
+                        bearer->ebi);
+                if (bearer->delete.xact_id >= OGS_MIN_POOL_ID &&
+                        bearer->delete.xact_id <= OGS_MAX_POOL_ID &&
+                        mme_gtp_send_delete_bearer_response(
+                            bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
+                                != OGS_OK)
+                    mme_ue_error(mme_ue, NULL, "paging", NULL,
+                            "Delete Bearer Response not sent EBI[%d]",
+                            bearer->ebi);
+            } else if (r != OGS_OK) {
+                mme_ue_error(mme_ue, NULL, "paging", NULL,
+                        "NAS Deactivate Bearer send failed rv=%d EBI[%d]; "
+                        "Delete Bearer Response cause System failure",
+                        r, bearer->ebi);
+                if (bearer->delete.xact_id >= OGS_MIN_POOL_ID &&
+                        bearer->delete.xact_id <= OGS_MAX_POOL_ID &&
+                        mme_gtp_send_delete_bearer_response(
+                            bearer, OGS_GTP2_CAUSE_SYSTEM_FAILURE) != OGS_OK)
+                    mme_ue_error(mme_ue, NULL, "paging", NULL,
+                            "Delete Bearer Response not sent EBI[%d]",
+                            bearer->ebi);
+            }
         }
         break;
     case MME_PAGING_TYPE_CS_CALL_SERVICE:
@@ -1001,7 +1097,6 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
                 /* UE dropped the connection right after paging response */
                 ogs_warn("[%s] Detach request after paging not sent",
                         mme_ue->imsi_bcd);
-            ogs_assert(r != OGS_ERROR);
             if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
                 if (sgsap_send_detach_indication(mme_ue) != OGS_OK) {
                     enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
@@ -1167,7 +1262,6 @@ void mme_send_tau_accept_and_check_release(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     r = nas_eps_send_tau_accept(mme_ue,
             mme_ue->tracking_area_update_accept_proc);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 
     /*
      * TS 24.301 Ch5.5.3.3

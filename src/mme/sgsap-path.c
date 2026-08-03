@@ -32,6 +32,7 @@ void mme_sgs_ts6_1_timer_start(mme_ue_t *mme_ue)
     ogs_assert(mme_ue->t_sgs_ts6_1);
 
     mme_ue->sgs_lu_pending = true;
+    mme_ue->sgs_cs_unavailable = false;
     ogs_timer_start(mme_ue->t_sgs_ts6_1,
             mme_timer_cfg(MME_TIMER_SGS_TS6_1)->duration);
 }

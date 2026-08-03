@@ -107,7 +107,15 @@ static ogs_inline int ogs_thread_cond_destroy(ogs_thread_cond_t *_ignored)
 
 typedef struct ogs_thread_s ogs_thread_t;
 
+/*
+ * pthread / task name visible in top -H, ps -T, gdb "info threads".
+ * Linux truncates to 15 characters (not including NUL).
+ */
+void ogs_thread_set_name(const char *name);
+
 ogs_thread_t *ogs_thread_create(void (*func)(void *), void *data);
+ogs_thread_t *ogs_thread_create_named(
+        void (*func)(void *), void *data, const char *name);
 void ogs_thread_destroy(ogs_thread_t *thread);
 
 #ifdef __cplusplus

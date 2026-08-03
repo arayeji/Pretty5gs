@@ -42,6 +42,13 @@ bool mme_access_control_enb_add(mme_access_control_t *ac, uint32_t enb_id);
 uint8_t mme_inbound_roam_access_emm_cause(
         mme_ue_t *mme_ue, enb_ue_t *enb_ue);
 
+/*
+ * When attach_accept.equivalent_plmn_access_control_tac is enabled, call this
+ * before including the EPLMN IE. Uses the UE's matched access_control entry
+ * and that entry's TAC allow-list (see mme_access_control_eplmn_tac_allowed_for).
+ */
+bool mme_access_control_eplmn_tac_allowed(mme_ue_t *mme_ue);
+
 #ifdef __cplusplus
 }
 #endif

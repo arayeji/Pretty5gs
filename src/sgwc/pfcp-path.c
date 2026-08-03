@@ -59,7 +59,11 @@ static void pfcp_node_fsm_fini(ogs_pfcp_node_t *node)
         ogs_timer_delete(node->t_association);
 }
 
-static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
+/*
+ * Read ONE PFCP datagram; returns 1 if a datagram was consumed (keep
+ * draining), 0 when the socket is empty / on error (stop for this wakeup).
+ */
+static int sgwc_pfcp_recv_one(ogs_socket_t fd)
 {
     int rv;
 
@@ -76,8 +80,9 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
 
     pkbuf = ogs_pfcp_recvfrom(fd, &from);
     if (!pkbuf) {
-        ogs_error("ogs_pfcp_recvfrom() failed");
-        return;
+        /* empty socket (EAGAIN) or receive/parse error; either way stop —
+         * a level-triggered pollset re-fires if datagrams remain */
+        return 0;
     }
 
     e = sgwc_event_new(SGWC_EVT_SXA_MESSAGE);
@@ -94,7 +99,7 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
         ogs_error("ogs_pfcp_parse_msg() failed");
         ogs_pkbuf_free(pkbuf);
         sgwc_event_free(e);
-        return;
+        return 1;
     }
 
     pfcp_status = ogs_pfcp_extract_node_id(message, &node_id);
@@ -177,7 +182,7 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
             ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
             goto cleanup;
         }
-        return;
+        return 1;
     }
 
     /*
@@ -233,18 +238,36 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
                 ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
                 goto cleanup;
             }
-            return;
+            return 1;
         }
 
         if (sgwc_event_push_to_worker(wid, e) != OGS_OK)
-            return; /* push_to_worker already freed e + buffers */
-        return;
+            return 1; /* push_to_worker already freed e + buffers */
+        return 1;
     }
 
 cleanup:
     ogs_pkbuf_free(pkbuf);
     ogs_pfcp_message_free(message);
     sgwc_event_free(e);
+    return 1;
+}
+
+/*
+ * Drain the PFCP socket per poll wakeup (bounded) instead of reading one
+ * datagram per main-loop iteration — same fix as the MME GTP-C RX path:
+ * under a Session Establishment/Modification storm SGW-U answers faster
+ * than one-datagram-per-iteration, the kernel socket buffer fills and
+ * dropped replies become false PFCP timeouts.
+ */
+#define SGWC_PFCP_RECV_BUDGET   512
+
+static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
+{
+    int budget = SGWC_PFCP_RECV_BUDGET;
+
+    while (budget-- > 0 && sgwc_pfcp_recv_one(fd) > 0)
+        ;
 }
 
 int sgwc_pfcp_open(void)
@@ -330,6 +353,9 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
     case OGS_PFCP_SESSION_ESTABLISHMENT_REQUEST_TYPE: {
         sgwc_ue_t *sgwc_ue = NULL;
         ogs_gtp_xact_t *s11_xact = NULL;
+
+        /* Establish gave up: release the admission in-flight slot */
+        sgwc_admission_establish_done(sess);
 
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         if (sess->pfcp_node) {
@@ -498,6 +524,72 @@ static void bearer_timeout(ogs_pfcp_xact_t *xact, void *data)
     }
 }
 
+void sgwc_bearer_unlink_to_modify(
+        sgwc_bearer_t *bearer, ogs_pfcp_node_t *node)
+{
+    ogs_pfcp_xact_t *xact = NULL;
+
+    ogs_assert(bearer);
+    if (!node)
+        return;
+
+    ogs_list_for_each(&node->local_list[ogs_worker_self_id()], xact) {
+        if (ogs_list_exists(&xact->bearer_to_modify_list,
+                    &bearer->to_modify_node)) {
+            ogs_list_remove(&xact->bearer_to_modify_list,
+                    &bearer->to_modify_node);
+            ogs_warn("Unlinked bearer_id[%d] EBI[%d] from in-flight PFCP "
+                    "modify xid=%u flags=0x%llx before new link",
+                    bearer->id, bearer->ebi, xact->xid,
+                    (unsigned long long)xact->modify_flags);
+            return; /* single embedded lnode: at most one list */
+        }
+    }
+}
+
+/*
+ * True when this session already has a Session Modification in flight
+ * on the owning shard (session-scoped or bearer-scoped). Used to defer
+ * background DROP/REARM/DROBU so they do not steal to_modify_node from
+ * an ACTIVATE/DEACTIVATE that a GTP peer is waiting on.
+ */
+static bool sgwc_sess_pfcp_modify_in_flight(sgwc_sess_t *sess)
+{
+    ogs_pfcp_xact_t *xact = NULL;
+
+    ogs_assert(sess);
+    if (!sess->pfcp_node)
+        return false;
+
+    ogs_list_for_each(&sess->pfcp_node->local_list[ogs_worker_self_id()],
+            xact) {
+        sgwc_bearer_t *bearer = NULL;
+
+        if (xact->seq[0].type !=
+                OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE)
+            continue;
+
+        if (xact->modify_flags & OGS_PFCP_MODIFY_SESSION) {
+            ogs_pool_id_t sess_id = OGS_POINTER_TO_UINT(xact->data);
+
+            if (sess_id == sess->id)
+                return true;
+            continue;
+        }
+
+        ogs_list_for_each(&sess->bearer_list, bearer) {
+            if (ogs_list_exists(&xact->bearer_to_modify_list,
+                        &bearer->to_modify_node))
+                return true;
+        }
+    }
+
+    return false;
+}
+
+#define SGWC_PFCP_MODIFY_SOFT \
+    (OGS_PFCP_MODIFY_DROP|OGS_PFCP_MODIFY_REARM|OGS_PFCP_MODIFY_DROBU)
+
 int sgwc_pfcp_send_bearer_to_modify_list(
         sgwc_sess_t *sess, ogs_pfcp_xact_t *xact)
 {
@@ -619,6 +711,14 @@ int sgwc_pfcp_send_session_establishment_request(
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
+    /*
+     * Count toward the admission in-flight cap only for real Create
+     * Sessions (a GTP transaction is waiting); PFCP restoration
+     * re-establishes (no S11/Gn xact) must not starve new attaches.
+     */
+    if (rv == OGS_OK && gtp_xact_id != OGS_INVALID_POOL_ID)
+        sgwc_admission_establish_started(sess);
+
     return rv;
 }
 
@@ -634,6 +734,20 @@ int sgwc_pfcp_send_session_modification_request(
     ogs_debug("PFCP Session Modification from session: "
             "sess_id=%d gtp_xact_id=%d flags=0x%llx",
             sess->id, gtp_xact_id, (unsigned long long)flags);
+
+    /*
+     * Background FAR maintenance (DROP / REARM / DROBU) must not race an
+     * in-flight GTP-driven modify: both paths share bearer->to_modify_node.
+     * Return OGS_RETRY so callers leave CP state alone; buffer_idle /
+     * holddown sweep will try again.
+     */
+    if ((flags & SGWC_PFCP_MODIFY_SOFT) &&
+            sgwc_sess_pfcp_modify_in_flight(sess)) {
+        ogs_info("Defer PFCP soft-modify flags=0x%llx sess_id[%d]: "
+                "modify already in flight",
+                (unsigned long long)flags, sess->id);
+        return OGS_RETRY;
+    }
 
     xact = ogs_pfcp_xact_local_create(
             sess->pfcp_node, sess_timeout, OGS_UINT_TO_POINTER(sess->id));
@@ -654,8 +768,10 @@ int sgwc_pfcp_send_session_modification_request(
     }
     xact->local_seid = sess->sgwc_sxa_seid;
 
-    ogs_list_for_each(&sess->bearer_list, bearer)
+    ogs_list_for_each(&sess->bearer_list, bearer) {
+        sgwc_bearer_unlink_to_modify(bearer, sess->pfcp_node);
         ogs_list_add(&xact->bearer_to_modify_list, &bearer->to_modify_node);
+    }
 
     return sgwc_pfcp_send_bearer_to_modify_list(sess, xact);
 }
@@ -696,6 +812,7 @@ int sgwc_pfcp_send_bearer_modification_request(
     }
     xact->local_seid = sess->sgwc_sxa_seid;
 
+    sgwc_bearer_unlink_to_modify(bearer, sess->pfcp_node);
     ogs_list_add(&xact->bearer_to_modify_list, &bearer->to_modify_node);
 
     sgwc_sess_sync_pfcp_pdr_nwi(sess);

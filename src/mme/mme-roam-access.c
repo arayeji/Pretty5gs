@@ -19,8 +19,7 @@
 
 #include "mme-roam-access.h"
 
-#include <limits.h>
-
+#include "mme-access-control-match.h"
 #include "mme-apn.h"
 #include "mme-context.h"
 
@@ -45,53 +44,6 @@ static void mme_access_control_entry_types(bool *has_prefix, bool *has_plmn)
     }
 }
 
-static mme_access_control_t *mme_access_control_find_inbound(
-        const char *imsi_bcd)
-{
-    mme_context_t *self = mme_self();
-    int i, best = -1, best_prefix_len = -1, best_order = INT_MAX;
-
-    ogs_assert(imsi_bcd);
-
-    for (i = 0; i < self->num_of_access_control; i++) {
-        mme_access_control_t *ac = &self->access_control[i];
-        size_t prefix_len;
-
-        if (ac->imsi_prefix[0]) {
-            prefix_len = strlen(ac->imsi_prefix);
-            if (prefix_len == 0)
-                continue;
-            if (strncmp(imsi_bcd, ac->imsi_prefix, prefix_len) != 0)
-                continue;
-            if ((int)prefix_len > best_prefix_len ||
-                    ((int)prefix_len == best_prefix_len &&
-                     ac->selection_order < best_order)) {
-                best_prefix_len = (int)prefix_len;
-                best_order = ac->selection_order;
-                best = i;
-            }
-            continue;
-        }
-
-        if (ac->plmn_id_configured &&
-                ogs_plmn_id_imsi_prefix_match(imsi_bcd, &ac->plmn_id)) {
-            if (best_prefix_len < 5 ||
-                    (best_prefix_len == 5 &&
-                     ac->selection_order < best_order)) {
-                if (best_prefix_len < 5)
-                    best_prefix_len = 5;
-                best_order = ac->selection_order;
-                best = i;
-            }
-        }
-    }
-
-    if (best < 0)
-        return NULL;
-
-    return &self->access_control[best];
-}
-
 static uint8_t mme_access_control_inbound_reject_cause(
         mme_access_control_t *ac, uint8_t default_cause)
 {
@@ -103,8 +55,6 @@ static uint8_t mme_access_control_inbound_reject_cause(
         return self->default_reject_cause;
     return default_cause;
 }
-
-#include "mme-context.h"
 
 bool mme_access_control_tac_add(mme_access_control_t *ac, uint16_t tac)
 {
@@ -215,7 +165,9 @@ uint8_t mme_inbound_roam_access_emm_cause(
             enb_id = enb->enb_id;
     }
 
-    ac = mme_access_control_find_inbound(mme_ue->imsi_bcd);
+    ac = mme_access_control_find_for_imsi(
+            self->access_control, self->num_of_access_control,
+            mme_ue->imsi_bcd);
     if (!ac) {
         if (has_prefix_acl || has_plmn_acl) {
             uint8_t emm_cause = mme_access_control_inbound_reject_cause(
@@ -274,4 +226,18 @@ uint8_t mme_inbound_roam_access_emm_cause(
     }
 
     return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
+}
+
+bool mme_access_control_eplmn_tac_allowed(mme_ue_t *mme_ue)
+{
+    mme_context_t *self = mme_self();
+
+    ogs_assert(mme_ue);
+
+    if (!MME_UE_HAVE_IMSI(mme_ue))
+        return false;
+
+    return mme_access_control_eplmn_tac_allowed_for(
+            self->access_control, self->num_of_access_control,
+            mme_ue->imsi_bcd, mme_ue->tai.tac);
 }

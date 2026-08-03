@@ -154,6 +154,11 @@ int s1ap_rx_workers_start(int count)
                 rx_dispatch, NULL);
         ogs_assert(rx_workers[i]);
         ogs_worker_hooks(rx_workers[i], rx_thread_init, rx_thread_fini);
+        {
+            char tname[16];
+            ogs_snprintf(tname, sizeof(tname), "s1ap-rx%d", i);
+            ogs_worker_set_name(rx_workers[i], tname);
+        }
         ogs_worker_start(rx_workers[i]);
     }
 

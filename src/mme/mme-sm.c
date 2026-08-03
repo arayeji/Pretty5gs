@@ -27,6 +27,7 @@
 #include "s1ap-path.h"
 #include "s1ap-tx.h"
 #include "s1ap-io.h"
+#include "s1ap-overload.h"
 #include "sgsap-path.h"
 #include "nas-security.h"
 #include "nas-path.h"
@@ -38,6 +39,7 @@
 #include "mme-fd-path.h"
 #include "mme-s6a-handler.h"
 #include "mme-path.h"
+#include "mme-pgw-select.h"
 
 #ifdef OPEN5GS_ADMIN_WATCHER
 #include "mme-admin-watcher.h"
@@ -58,6 +60,7 @@ void mme_state_initial(ogs_fsm_t *s, mme_event_t *e)
     ogs_assert(s);
 
     mme_orphan_timer_start();
+    mme_overload_timer_start();
 
     OGS_FSM_TRAN(s, &mme_state_operational);
 }
@@ -78,9 +81,9 @@ static void admin_detach_enb_finalize(void *data)
 
     ogs_assert(e);
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
-        ogs_error("admin_detach_enb_finalize: ogs_queue_push failed: %d", rv);
+        ogs_error("admin_detach_enb_finalize: event dropped: %d", rv);
         if (e->timer) ogs_timer_delete(e->timer);
         mme_event_free(e);
     }
@@ -132,6 +135,7 @@ void mme_state_final(ogs_fsm_t *s, mme_event_t *e)
     ogs_assert(s);
 
     mme_orphan_timer_stop();
+    mme_overload_timer_stop();
     mme_admin_drain_timer_stop();
     mme_gtp_pending_release_final();
 }
@@ -371,7 +375,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                     enb, NULL, NULL, S1AP_Cause_PR_protocol,
                     S1AP_CauseProtocol_abstract_syntax_error_falsely_constructed_message);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
 
         ogs_s1ap_free(&s1ap_message);
@@ -391,6 +394,15 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         /* the IO thread dropped its write queue / POLLOUT for e->sock */
         ogs_assert(e->sock);
         s1ap_sock_close_confirm(e->sock, S1AP_SOCK_CONFIRM_IO);
+        break;
+
+    case MME_EVENT_S1AP_IO_CONGESTED:
+        /* TX backlog heartbeat from the IO thread; a socket that has
+         * since been torn down simply has no eNB to throttle */
+        ogs_assert(e->sock);
+        enb = mme_enb_find_by_sock(e->sock);
+        if (enb)
+            mme_overload_enb_congested(enb, e->io_wq_depth);
         break;
 
     case MME_EVENT_S1AP_RX_WATCH_FAILED:
@@ -441,7 +453,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
             r = s1ap_send_to_enb_ue(enb_ue, pkbuf);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             ogs_timer_delete(e->timer);
             break;
         case MME_TIMER_S1_HOLDING:
@@ -514,7 +525,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                             S1AP_CauseMisc_control_processing_overload,
                             S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                     ogs_pkbuf_free(pkbuf);
                     return;
                 }
@@ -776,7 +786,17 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             }
 
         } else if (OGS_FSM_CHECK(&bearer->sm, esm_state_pdn_did_disconnect)) {
-            ogs_assert(default_bearer->ebi == bearer->ebi);
+            /*
+             * PDN disconnect completed. Clear the whole session even if
+             * bearer_list order makes mme_default_bearer_in_sess() disagree
+             * with the bearer that finished the procedure — asserting here
+             * aborted production MME (default_bearer->ebi == bearer->ebi).
+             */
+            if (default_bearer->ebi != bearer->ebi) {
+                ogs_error("[%s] PDN disconnect completed on EBI[%d] but "
+                        "list-default is EBI[%d]; clearing session anyway",
+                        mme_ue->imsi_bcd, bearer->ebi, default_bearer->ebi);
+            }
             MME_SESS_CLEAR(sess);
 
         } else if (OGS_FSM_CHECK(&bearer->sm, esm_state_exception)) {
@@ -915,7 +935,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                             enb_ue, mme_ue, emm_cause,
                             OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
                     /* This is usually an UE coming from 2G (Cell reselection),
                      * which we decided to re-authenticate */
@@ -924,7 +943,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                     r = nas_eps_send_tau_reject(
                             enb_ue, mme_ue, emm_cause);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 } else
                     ogs_error("Invalid Type[%d]", mme_ue->nas_eps.type);
 
@@ -932,7 +950,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                         S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                         S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 break;
             }
 
@@ -944,8 +961,15 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
             /* Auth-Info accepted from HSS, now authenticate the UE: */
             r = nas_eps_send_authentication_request(mme_ue);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
+            if (r != OGS_OK)
+                /*
+                 * Do NOT assert: under overload the NAS build/send can
+                 * fail for one UE (pkbuf exhaustion, S1 race) - this
+                 * crashed the whole MME. T3460 retransmission recovers
+                 * the send-failure case; otherwise the UE re-attaches.
+                 */
+                ogs_error("[%s] Authentication request not sent (r=%d)",
+                        mme_ue->imsi_bcd, r);
 
             break;
         case OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION:
@@ -958,14 +982,12 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                             enb_ue, mme_ue, emm_cause,
                             OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
                     ogs_info("[%s] TAU reject [OGS_NAS_EMM_CAUSE:%d]",
                             mme_ue->imsi_bcd, emm_cause);
                     r = nas_eps_send_tau_reject(
                             enb_ue, mme_ue, emm_cause);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 } else
                     ogs_error("Invalid Type[%d]", mme_ue->nas_eps.type);
 
@@ -985,7 +1007,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                                 S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE :
                                 S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 } else {
                     ogs_warn("[%s] ULA reject with no S1 context; "
                             "removing UE", mme_ue->imsi_bcd);
@@ -1231,13 +1252,13 @@ cleanup:
                     mme_ue, GTP_COUNTER_DELETE_SESSION_BY_PATH_SWITCH);
 
                 enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-                if (enb_ue) {
-                    ogs_assert(OGS_OK ==
-                        mme_gtp_send_delete_session_request(
-                            enb_ue, sgw_ue, sess,
-                            OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST));
-                } else
+                if (!enb_ue)
                     ogs_warn("ENB-S1 Context has already been removed");
+                else if (mme_gtp_send_delete_session_request(
+                            enb_ue, sgw_ue, sess,
+                            OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST) != OGS_OK)
+                    ogs_error("[%s] Delete Session Request failed in "
+                            "Path Switch Request", mme_ue->imsi_bcd);
 
             }
             break;
@@ -1438,13 +1459,13 @@ cleanup:
                     mme_ue, GTP_COUNTER_DELETE_SESSION_BY_PATH_SWITCH);
 
                 enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-                if (enb_ue) {
-                    ogs_assert(OGS_OK ==
-                        mme_gtp_send_delete_session_request(
-                            enb_ue, sgw_ue, sess,
-                            OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST));
-                } else
+                if (!enb_ue)
                     ogs_warn("ENB-S1 Context has already been removed");
+                else if (mme_gtp_send_delete_session_request(
+                            enb_ue, sgw_ue, sess,
+                            OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST) != OGS_OK)
+                    ogs_error("[%s] Delete Session Request failed in "
+                            "Path Switch Request", mme_ue->imsi_bcd);
             }
             break;
 
@@ -1557,6 +1578,11 @@ cleanup:
                     (int)e->mme_ue_id);
             break;
         }
+        if (mme_ue->being_removed) {
+            ogs_debug("purge ue: mme_ue pool-id %d already being removed",
+                    (int)e->mme_ue_id);
+            break;
+        }
 
         mme_ue_enter_ue_context_will_remove(mme_ue);
         break;
@@ -1602,7 +1628,100 @@ cleanup:
                     MME_PAGING_TYPE_UE_REACHABILITY, NULL);
             r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
+        }
+        break;
+    }
+
+    case MME_EVENT_PGW_DNS_DONE:
+    {
+        mme_sess_t *dns_sess = NULL;
+        int r;
+
+        mme_ue = mme_ue_find_by_id(e->mme_ue_id);
+        dns_sess = mme_sess_find_by_id(e->sess_id);
+        enb_ue = enb_ue_find_by_id(e->enb_ue_id);
+
+        if (!mme_ue || !dns_sess) {
+            ogs_warn("PGW DNS done: context gone [mme_ue:%s sess:%s]",
+                    mme_ue ? "ok" : "gone", dns_sess ? "ok" : "gone");
+            break;
+        }
+        if (dns_sess->mme_ue_id != mme_ue->id) {
+            ogs_warn("PGW DNS done: sess/ue mismatch");
+            break;
+        }
+
+        dns_sess->pgw_dns_pending = false;
+
+        if (e->pgw_dns_rv != OGS_OK) {
+            /*
+             * Neg-cache is populated; re-bind applies HSS/YAML fallbacks
+             * for standard selection. dns-only rules without fallback
+             * still fail here.
+             */
+            r = mme_pgw_bind_for_csr(mme_ue, dns_sess, enb_ue,
+                    e->create_action);
+            if (r == OGS_OK) {
+                if (!enb_ue) {
+                    ogs_error("[%s] PGW DNS fail fallback bound but "
+                            "enb_ue gone", mme_ue->imsi_bcd);
+                    break;
+                }
+                r = mme_gtp_send_create_session_request(
+                        enb_ue, dns_sess, e->create_action);
+                if (r != OGS_OK) {
+                    ogs_warn("[%s] Create Session after DNS fallback failed",
+                            mme_ue->imsi_bcd);
+                    r = nas_eps_send_pdn_connectivity_reject(
+                            dns_sess,
+                            OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
+                            e->create_action);
+                    ogs_expect(r == OGS_OK);
+                }
+                break;
+            }
+            if (r == OGS_RETRY) {
+                /* Should not re-queue after neg-cache; treat as fail */
+                ogs_error("[%s] PGW DNS fail unexpectedly re-queued",
+                        mme_ue->imsi_bcd);
+            }
+            ogs_warn("[%s] PGW APN DNS failed; rejecting PDN",
+                    mme_ue->imsi_bcd);
+            r = nas_eps_send_pdn_connectivity_reject(
+                    dns_sess, OGS_NAS_ESM_CAUSE_NETWORK_FAILURE,
+                    e->create_action);
+            ogs_expect(r == OGS_OK);
+            break;
+        }
+
+        memcpy(&dns_sess->pgw_s5c_ip, &e->pgw_dns_ip,
+                sizeof(dns_sess->pgw_s5c_ip));
+        if (dns_sess->session &&
+                !(dns_sess->session->smf_ip.ipv4 ||
+                    dns_sess->session->smf_ip.ipv6)) {
+            memcpy(&dns_sess->session->smf_ip, &e->pgw_dns_ip,
+                    sizeof(dns_sess->session->smf_ip));
+        }
+
+        if (!enb_ue) {
+            ogs_error("[%s] PGW DNS done but enb_ue gone — cannot CSR",
+                    mme_ue->imsi_bcd);
+            r = nas_eps_send_pdn_connectivity_reject(
+                    dns_sess, OGS_NAS_ESM_CAUSE_NETWORK_FAILURE,
+                    e->create_action);
+            ogs_expect(r == OGS_OK);
+            break;
+        }
+
+        r = mme_gtp_send_create_session_request(
+                enb_ue, dns_sess, e->create_action);
+        if (r != OGS_OK) {
+            ogs_warn("[%s] Create Session after PGW DNS failed",
+                    mme_ue->imsi_bcd);
+            r = nas_eps_send_pdn_connectivity_reject(
+                    dns_sess, OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
+                    e->create_action);
+            ogs_expect(r == OGS_OK);
         }
         break;
     }
@@ -1697,6 +1816,9 @@ cleanup:
             enb_remaining = mme_orphan_enb_sweep(true, grace, &enb_purged);
             enb_ue_remaining =
                     mme_orphan_enb_ue_sweep(true, grace, &enb_ue_purged);
+
+            /* un-wedge any eNB whose TX hold list leaked (s1ap-tx.c) */
+            s1ap_tx_hold_watchdog();
 
             /* Heartbeat for /admin/maintenance/status (visible at any log level). */
             mme_orphan_sweep_record(ue_purged, ue_remaining);

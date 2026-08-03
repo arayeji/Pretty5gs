@@ -24,6 +24,7 @@
 #include "mme-sm.h"
 #include "mme-event.h"
 #include "mme-timer.h"
+#include "mme-pgw-dns.h"
 
 #include "mme-fd-path.h"
 #include "s1ap-path.h"
@@ -56,14 +57,12 @@ static void mme_sighup_handler(void)
         return;
     }
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        ogs_error("SIGHUP: config reload event dropped:%d", (int)rv);
         mme_event_free(e);
         return;
     }
-
-    ogs_pollset_notify(ogs_app()->pollset);
 }
 
 static ogs_thread_t *thread;
@@ -75,6 +74,9 @@ int mme_initialize(void)
 {
     int rv;
 
+    /* Bootstrap / accept thread — distinct from mme-main event loop */
+    ogs_thread_set_name("mme");
+
 #define APP_NAME "mme"
     rv = ogs_app_parse_local_conf(APP_NAME);
     if (rv != OGS_OK) return rv;
@@ -84,11 +86,23 @@ int mme_initialize(void)
     ogs_gtp_context_init(OGS_MAX_NUM_OF_GTPU_RESOURCE);
     mme_context_init();
 
+    /* APN-FQDN DNS off the UE shards / mme-main (getaddrinfo / NAPTR). */
+    mme_pgw_dns_workers_start();
+
     /* Operator can `kill -USR1 <mme-pid>` to dump live pool stats. */
     ogs_app_pool_dump_cb_set(mme_context_pool_dump);
 
     rv = ogs_gtp_xact_init();
     if (rv != OGS_OK) return rv;
+
+    /*
+     * Teach the GTP response timers the same lesson the NAS timers
+     * already know: when the event queue lags, replies that arrived in
+     * time are still waiting to be dispatched. Without this, an attach
+     * storm turned S11 Create Session into false "SGW not responding"
+     * (cause 100) -> Attach Reject #22 -> instant re-attach feedback loop.
+     */
+    ogs_gtp_xact_set_lag_cb(mme_event_lag);
 
     rv = ogs_log_config_domain(
             ogs_app()->logger.domain, ogs_app()->logger.level);
@@ -102,6 +116,12 @@ int mme_initialize(void)
 
     rv = mme_context_parse_config();
     if (rv != OGS_OK) return rv;
+
+    /*
+     * fake_csfb_lai=0 with fake_csfb=1 used to emit Combined Accept
+     * without LAI (invalid NAS). That mode is rejected in emm-build:
+     * Combined via fake_csfb always carries synthetic LAI/P-TMSI.
+     */
 
     ogs_app_sighup_handler_set(mme_sighup_handler);
 
@@ -130,6 +150,8 @@ int mme_initialize(void)
 
     /* CONNREFUSED side-queue before any S1AP worker can post teardowns */
     mme_event_s1ap_connrefused_init();
+    /* TX_READY side-queue before TX workers can complete encode jobs */
+    mme_event_s1ap_tx_ready_init();
 
     /* close registry lock/hash before any thread can register/confirm */
     s1ap_sock_close_init();
@@ -195,10 +217,16 @@ int mme_initialize(void)
         if (rv != OGS_OK) return OGS_ERROR;
     }
 
+    /* dedicated GTP-C RX thread (mme.gtpc_rx_thread, default off):
+     * must come after mme_workers_start()/shards_enable(), and before
+     * mme-main starts driving S11 transactions */
+    rv = mme_gtpc_rx_start();
+    if (rv != OGS_OK) return OGS_ERROR;
+
     rv = s1ap_open();
     if (rv != OGS_OK) return OGS_ERROR;
 
-    thread = ogs_thread_create(mme_main, NULL);
+    thread = ogs_thread_create_named(mme_main, NULL, "mme-main");
     if (!thread) return OGS_ERROR;
 
 #ifdef OPEN5GS_ADMIN_WATCHER
@@ -238,8 +266,9 @@ void mme_terminate(void)
     /* UE shards after helpers: no more S11/EMM posts from sockets */
     mme_workers_stop();
 
-    /* No more producers of CONNREFUSED */
+    /* No more producers of CONNREFUSED / TX_READY */
     mme_event_s1ap_connrefused_final();
+    mme_event_s1ap_tx_ready_final();
 
     /* every thread that could confirm is joined: reap sockets still
      * waiting in the close registry */
@@ -248,6 +277,8 @@ void mme_terminate(void)
     ogs_metrics_context_close(ogs_metrics_self());
 
     mme_fd_final();
+
+    mme_pgw_dns_workers_stop();
 
     mme_context_final();
 
@@ -268,6 +299,9 @@ static void mme_main(void *data)
 {
     ogs_fsm_t mme_sm;
     int rv;
+
+    /* Sole consumer of ogs_app()->queue: must never block pushing to it. */
+    mme_event_mark_main_thread();
 
     /* private pkbuf pool for the main loop (mme.pkbuf_thread_pool) */
     mme_pkbuf_thread_pool_attach();
@@ -291,30 +325,46 @@ static void mme_main(void *data)
          */
         ogs_timer_mgr_expire(ogs_app()->timer_mgr);
 
-        for ( ;; ) {
-            mme_event_t *e = NULL;
+        /*
+         * Bound work per poll cycle. Under attach storm the main queue
+         * never empties; draining it to dry before re-polling starves
+         * timers (orphan sweep / TX-hold watchdog) and epoll — lag climbs
+         * while /admin/queues says "wedged". Cap so poll+timers run.
+         */
+        {
+            int batch = 0;
+            const int batch_max = 128;
 
-            /* Prefer CONNREFUSED: eNB teardown must not wait behind a
-             * saturated S1AP message queue. */
-            rv = mme_event_s1ap_connrefused_trypop(&e);
-            if (rv == OGS_RETRY) {
-                rv = ogs_queue_trypop(ogs_app()->queue, (void**)&e);
-                ogs_assert(rv != OGS_ERROR);
+            for ( ;; ) {
+                mme_event_t *e = NULL;
 
-                if (rv == OGS_DONE)
-                    goto done;
-
+                /* Prefer CONNREFUSED, then TX_READY, then the app queue. */
+                rv = mme_event_s1ap_connrefused_trypop(&e);
                 if (rv == OGS_RETRY)
-                    break;
-            } else {
-                ogs_assert(rv != OGS_ERROR);
-                if (rv == OGS_DONE)
-                    goto done;
-            }
+                    rv = mme_event_s1ap_tx_ready_trypop(&e);
+                if (rv == OGS_RETRY) {
+                    rv = ogs_queue_trypop(ogs_app()->queue, (void**)&e);
+                    ogs_assert(rv != OGS_ERROR);
 
-            ogs_assert(e);
-            ogs_fsm_dispatch(&mme_sm, e);
-            mme_event_free(e);
+                    if (rv == OGS_DONE)
+                        goto done;
+
+                    if (rv == OGS_RETRY)
+                        break;
+                } else {
+                    ogs_assert(rv != OGS_ERROR);
+                    if (rv == OGS_DONE)
+                        goto done;
+                }
+
+                ogs_assert(e);
+                mme_event_lag_observe(e);
+                ogs_fsm_dispatch(&mme_sm, e);
+                mme_event_free(e);
+
+                if (++batch >= batch_max)
+                    break;
+            }
         }
     }
 done:
