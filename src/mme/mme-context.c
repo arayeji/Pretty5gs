@@ -3967,6 +3967,7 @@ mme_sgw_t *mme_sgw_add(ogs_sockaddr_t *addr)
     ogs_assert(sgw->tac);
 
     sgw->gnode.sa_list = addr;
+    OGS_ADDR(addr, sgw->addr_str);
 
     {
         int w;
@@ -4696,6 +4697,10 @@ void mme_pgw_log_pick(mme_ue_t *mme_ue, const mme_pgw_t *pgw, const char *apn)
     ogs_assert(pgw);
 
     if (!pgw->sa_list)
+        return;
+
+    /* Format only when INFO would emit (ogs_info is lazy; this is not). */
+    if (!ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_INFO))
         return;
 
     if (mme_ue && MME_UE_HAVE_IMSI(mme_ue))
@@ -7380,6 +7385,8 @@ static void mme_sgw_log_pick(
     char from_addr[OGS_ADDRSTRLEN];
     char rule[128];
     const char *imsi = "-";
+    bool need_info;
+    bool need_progress;
 
     ogs_assert(sgw);
     ogs_assert(when);
@@ -7390,18 +7397,33 @@ static void mme_sgw_log_pick(
     if (mme_ue && MME_UE_HAVE_IMSI(mme_ue))
         imsi = mme_ue->imsi_bcd;
 
-    mme_sgw_format_rule(sgw, rule, sizeof(rule));
+    need_info = ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_INFO);
+    /*
+     * mme_ue_progress is filter/debug-gated; skip OGS_ADDR + snprintf
+     * unless that path can actually emit.
+     */
+    need_progress = (mme_ue && strcmp(imsi, "-") != 0 &&
+            (ogs_trace_filter_match(imsi) ||
+             ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG)));
+
+    if (!need_info && !need_progress)
+        return;
+
     OGS_ADDR(sgw->gnode.sa_list, addr);
 
-    if (from_sgw && from_sgw->gnode.sa_list) {
-        OGS_ADDR(from_sgw->gnode.sa_list, from_addr);
-        ogs_info("[%s] SGW %s: %s -> %s [%s]",
-                imsi, when, from_addr, addr, rule);
-    } else {
-        ogs_info("[%s] SGW %s: %s [%s]", imsi, when, addr, rule);
+    if (need_info) {
+        mme_sgw_format_rule(sgw, rule, sizeof(rule));
+
+        if (from_sgw && from_sgw->gnode.sa_list) {
+            OGS_ADDR(from_sgw->gnode.sa_list, from_addr);
+            ogs_info("[%s] SGW %s: %s -> %s [%s]",
+                    imsi, when, from_addr, addr, rule);
+        } else {
+            ogs_info("[%s] SGW %s: %s [%s]", imsi, when, addr, rule);
+        }
     }
 
-    if (mme_ue && strcmp(imsi, "-") != 0) {
+    if (need_progress) {
         char step[128];
 
         ogs_snprintf(step, sizeof(step), "sgw_%s %s", when, addr);

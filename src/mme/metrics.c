@@ -952,11 +952,11 @@ static bool mme_metrics_sgw_plmn_from_ue(
         return false;
 
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    if (!sgw_ue || !sgw_ue->sgw || !sgw_ue->sgw->gnode.sa_list)
+    if (!sgw_ue || !sgw_ue->sgw || !sgw_ue->sgw->addr_str[0])
         return false;
 
-    OGS_ADDR(sgw_ue->sgw->gnode.sa_list, sgw_addr);
-    return sgw_addr[0] != '\0';
+    ogs_cpystrn(sgw_addr, sgw_ue->sgw->addr_str, sgw_addr_len);
+    return true;
 }
 
 /*
@@ -1032,10 +1032,10 @@ void mme_metrics_sess_active_update(mme_sess_t *sess)
         return;
 
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    if (!sgw_ue || !sgw_ue->sgw || !sgw_ue->sgw->gnode.sa_list)
+    if (!sgw_ue || !sgw_ue->sgw || !sgw_ue->sgw->addr_str[0])
         return;
 
-    OGS_ADDR(sgw_ue->sgw->gnode.sa_list, sgw_addr);
+    ogs_cpystrn(sgw_addr, sgw_ue->sgw->addr_str, sizeof(sgw_addr));
 
     apn = (sess->session && sess->session->name) ?
             sess->session->name : "unknown";

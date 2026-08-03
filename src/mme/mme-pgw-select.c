@@ -142,6 +142,10 @@ static void mme_pgw_bind_log(
 {
     char addr[OGS_ADDRSTRLEN] = "-";
 
+    /* Format only when INFO would emit (ogs_info is lazy; this is not). */
+    if (!ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_INFO))
+        return;
+
     if (ip->ipv4)
         OGS_INET_NTOP(&ip->addr, addr);
     else if (ip->ipv6)
@@ -300,7 +304,7 @@ done:
     if (out_source)
         *out_source = source;
 
-    {
+    if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_INFO)) {
         char addr[OGS_ADDRSTRLEN] = "-";
 
         if (out_ip->ipv4)

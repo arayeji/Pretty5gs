@@ -482,6 +482,12 @@ typedef struct mme_sgw_s {
     char            imsi_prefix[OGS_MAX_IMSI_BCD_LEN + 1];
     int             selection_order;
 
+    /*
+     * Cached OGS_ADDR(sa_list) for metrics labels. Formatted once at
+     * mme_sgw_add so gauge updates avoid sockaddr conversion per bump.
+     */
+    char            addr_str[OGS_ADDRSTRLEN];
+
     ogs_list_t      sgw_ue_list;
 
     /* TS 29.274 Recovery: peer restart detection on S11 */

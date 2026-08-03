@@ -34,16 +34,25 @@ extern "C" {
 
 #define ogs_fatal(...) ogs_log_message(OGS_LOG_FATAL, 0, __VA_ARGS__)
 #define ogs_error(...) ogs_log_message(OGS_LOG_ERROR, 0, __VA_ARGS__)
-#define ogs_warn(...) ogs_log_message(OGS_LOG_WARN, 0, __VA_ARGS__)
-#define ogs_info(...) ogs_log_message(OGS_LOG_INFO, 0, __VA_ARGS__)
 /*
- * DEBUG/TRACE are lazy: with the domain level at info (production),
- * hot paths must not pay for argument evaluation (OGS_ADDR sockaddr
- * conversion, PLMN/TEID formatting helpers) plus a varargs call per
- * line just to have ogs_log_vprintf discard it. ogs_log_domain_prints
+ * INFO/WARN/DEBUG/TRACE are lazy: when the domain level would discard
+ * the line, hot paths must not pay for argument evaluation (OGS_ADDR
+ * sockaddr conversion, PLMN/TEID formatting helpers) plus a varargs
+ * call just to have ogs_log_vprintf discard it. ogs_log_domain_prints
  * keeps the per-IMSI trace-filter bypass working for DEBUG.
- * Arguments must stay free of side effects.
+ * Arguments must stay free of side effects. FATAL/ERROR stay eager so
+ * always-on diagnostics keep their formatting cost.
  */
+#define ogs_warn(...) \
+    do { \
+        if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_WARN)) \
+            ogs_log_message(OGS_LOG_WARN, 0, __VA_ARGS__); \
+    } while (0)
+#define ogs_info(...) \
+    do { \
+        if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_INFO)) \
+            ogs_log_message(OGS_LOG_INFO, 0, __VA_ARGS__); \
+    } while (0)
 #define ogs_debug(...) \
     do { \
         if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG)) \
