@@ -155,9 +155,14 @@ production; volte/csfb/handover/transfer suites still need TSAN soak.
 
 Known remaining (accepted / TODO):
 
-- [ ] Main thread still *reads* shard-owned `mme_ue` state in S1AP
-      handlers (e.g. S-TMSI lookup + `mme_ue_is_valid_for_s1` in
-      InitialUEMessage). Read-mostly; needs Stage B/C ownership handoff.
+- [x] Main thread read/mutated shard-owned `mme_ue` state in the
+      InitialUEMessage S-TMSI path (`mme_ue_is_valid_for_s1`,
+      `HOLDING_S1_CONTEXT`, `enb_ue_associate_mme_ue`, mobile-reachable
+      timer). Fix (Stage C-full): with workers on, main only does the
+      GUTI-hash lookup and posts `MME_HO_TAIL_STMSI_ASSOC` (enb_ue id +
+      mme_ue id + raw NAS bytes) to the owner shard, which re-validates,
+      associates and dispatches the NAS PDU. Post failure falls back to
+      the legacy inline path instead of dropping the message.
 - [x] Handover paths (`path switch request`, `handover notify`):
       the tail (location write, NH chain, S11 Modify Bearer / Create
       Session) is now deferred to the UE owner shard via
@@ -176,12 +181,31 @@ Known remaining (accepted / TODO):
 ### Design checklist (remaining for Stage C-full)
 
 - [x] Process-global context; **never** TLS `mme_self()`
-- [ ] Shared: eNB table, config, served-TAI, IMSI→worker map (rwlock/RCU)
-- [ ] Sharded: `mme_ue`, `enb_ue`, sessions, bearers, timers, S11/S6a xacts
+- [x] Shared: eNB table, config, served-TAI all guarded by the recursive
+      `mme_ctx_lock` (mutex, not rwlock — upgrade only if contention
+      shows in perf); IMSI→worker via `mme_shard_from_imsi_bcd` hash
+- [~] Sharded: timers (per-worker `timer_mgr`), S11/S6a xacts
+      (per-thread `ogs_gtp_xact_init`, xid partition carries the
+      creator shard). `mme_ue`/`enb_ue`/session/bearer POOLS stay
+      process-global under the narrow ctx lock — **deferred with
+      reason**: ownership (all mutation on the owner thread) is what
+      correctness needs; splitting the pools buys allocator locality
+      only and would churn every `find_by_id` call site.
 - [x] Route after Initial UE: S1AP-id / S11 TEID bits (+ IMSI peek for TEID=0)
 - [x] Embed worker id in MME_UE_S1AP_ID, S11 TEID (Diameter session id later)
-- [ ] Stable `N` across restart or map + `% N` fallback for old GUTIs
-- [ ] eNB-scoped events (S1 Setup, Reset, Paging): main or fan-out
+- [x] Stable `N` across restart / stale shard prefixes: GUTIs do NOT
+      embed shard bits (S-TMSI resolves via the GUTI hash, then the S11
+      TEID names the owner), so `N` may change across restart freely.
+      Stale/forged TEID prefixes: `mme_event_resolve_wid` clamps
+      `wid % N` (deterministic owner, lookup fails there → legacy error
+      path); the Stage C RX classifier bounces them to main.
+- [x] eNB-scoped events — DECIDED: stay on main (eNB lifecycle owner).
+      S1 Setup / Reset / eNB teardown run on main and bounce the per-UE
+      work to owner shards (`MME_HO_TAIL_UE_REL` / `REL_AB`); the
+      partial-reset ACK is take-and-null under the ctx lock so the last
+      finisher (main or shard) sends it. Paging runs on the UE owner
+      shard and walks the eNB table under the ctx lock — no fan-out
+      event needed.
 - [x] All SCTP TX serialized on main/IO (`s1ap_io` / `s1ap_send_to_enb`)
 - [x] Stage landing: (A) bounce router only → (B) NAS crypto → (C) full UE ownership
 
@@ -237,7 +261,16 @@ all default 0 (bit-identical to before when off):
       mass attach/detach (24 UEs), parallel idle/service-request/TAU,
       paging, cross-eNB idle TAU (shard rehome). eNB threads record
       failures and main asserts after join (ABTS is not thread-safe).
+- [x] Branch merged with `main` (Aug 3 2026): multi-IO kept (per-worker
+      thread names `s1ap-io0..N`), main's TX hold watchdog / queue-depth
+      diagnostics kept, `s1ap_io_queue_depth()` now sums all IO workers.
+- [x] Stage C-full remaining design items closed (see checklist above):
+      S-TMSI association handoff (`MME_HO_TAIL_STMSI_ASSOC`), stable-N
+      / stale-prefix routing, eNB-scoped event policy decided; pool
+      sharding explicitly deferred with reason.
 - [ ] Prod soak stage_c + tx_direct after test-rig green
+- [ ] TSAN + load-test (`tests/load`) rerun over the merged branch
+      before any production enable
 
 ---
 
