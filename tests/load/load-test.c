@@ -42,9 +42,11 @@
 
 #include "test-common.h"
 
+/* Production-ish synthetic load (MCC 999/MNC 70, IMSI 9997037461xxxxx).
+ * Scale hits all Stage-C knobs: workers / stage_c / rx / tx / tx_direct / io. */
 #define LOAD_NUM_ENB        4
-#define LOAD_UES_PER_ENB    6
-#define LOAD_LIFECYCLE_UES  2
+#define LOAD_UES_PER_ENB    12
+#define LOAD_LIFECYCLE_UES  4
 
 typedef struct load_result_s {
     bool failed;
@@ -774,11 +776,19 @@ abts_suite *test_load(abts_suite *suite)
 {
     suite = ADD_SUITE(suite)
 
+    LOAD_MARK("knobs: workers=4 stage_c=1 rx=2 tx=2 tx_direct=1 io=2 "
+            "pkbuf_thread_pool=256; synthetic PLMN 999/70");
+    LOAD_MARK("flows: s1setup_churn | mass_attach_detach(%d eNB x %d UE) | "
+            "idle_SR_TAU(%d eNB x %d UE) | paging | cross_enb_tau",
+            LOAD_NUM_ENB, LOAD_UES_PER_ENB,
+            LOAD_NUM_ENB, LOAD_LIFECYCLE_UES);
+
     abts_run_test(suite, test_load_s1setup_churn, NULL);
     abts_run_test(suite, test_load_mass_attach_detach, NULL);
     abts_run_test(suite, test_load_idle_service_tau, NULL);
     abts_run_test(suite, test_load_paging, NULL);
     abts_run_test(suite, test_load_cross_enb_tau, NULL);
 
+    LOAD_MARK("all scenarios finished (see ABTS summary)");
     return suite;
 }

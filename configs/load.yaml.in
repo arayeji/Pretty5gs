@@ -1,6 +1,10 @@
 db_uri: mongodb://localhost/open5gs
 
+# Debug for Stage-C load verification: confirm shard routing / rehome /
+# S1AP RX→shard / TX-direct paths in the capture. Synthetic MCC 999/70
+# subscribers only — never production IMSIs.
 logger:
+  level: debug
 
 test:
   serving:
