@@ -269,14 +269,14 @@ all default 0 (bit-identical to before when off):
       / stale-prefix routing, eNB-scoped event policy decided; pool
       sharding explicitly deferred with reason.
 - [ ] Prod soak stage_c + tx_direct after test-rig green
-- [ ] TSAN + load-test (`tests/load`) rerun over the merged branch
-      before any production enable. NOTE: `tests/load` (like every EPC
-      suite) needs mongod running AND root for the UPF `ogstun` TUN
-      device (`ip tuntap add name ogstun mode tun` + addr + up) — on a
-      WSL box without passwordless sudo the suite dies at
-      `tun_open(dev:ogstun)`. Aug 3 verification on the merged branch:
-      full ninja build green; `open5gs-mmed` clean start/stop with
-      workers:4 stage_c:1 rx:2 tx:2 tx_direct:1 io:2.
+- [x] Load-test (`tests/load`) green on merged Stage C-full branch
+      (Aug 3 2026, WSL root + ogstun + mongod, logger.level=debug):
+      **SUCCESS / All tests passed** in ~9s with knobs
+      workers:4 stage_c:1 rx:2 tx:2 tx_direct:1 io:2 pkbuf:256.
+      Synthetic PLMN 999/70 only (IMSI 99970…). Flows: S1-Setup
+      churn (8 eNB), mass attach/detach (4×12), idle/SR/TAU (4×4),
+      paging (3 UE), cross-eNB idle TAU (2 UE / rehome). Capture under
+      `/tmp/stage-c-load-20260803/` (not in repo). Remaining: TSAN soak.
 
 ---
 
