@@ -33,6 +33,7 @@
 #include "s1ap-io.h"
 #include "mme-workers.h"
 #include "sgsap-path.h"
+#include "sgsap-io.h"
 #include "mme-gtp-path.h"
 #include "metrics.h"
 #include "metrics/prometheus/json_pager.h"
@@ -217,6 +218,28 @@ int mme_initialize(void)
         if (rv != OGS_OK) return OGS_ERROR;
     }
 
+    /*
+     * SGsAP TX from UE shards is the same hazard as S1AP TX from
+     * shards: main owns the VLR socket lifecycle (CONNREFUSED close +
+     * reconnect) while owner shards send CSFB/SMS PDUs. Auto-enable
+     * the VLR send thread rather than run a known send-vs-destroy
+     * race; one mostly-idle thread is the whole cost.
+     */
+    if (mme_self()->workers > 0 &&
+        !ogs_list_empty(&mme_self()->vlr_list) &&
+        !mme_self()->sgsap_io_thread) {
+        ogs_warn("mme.workers with SGsAP/VLR configured requires "
+                "mme.sgsap_io_thread: 1; enabling it");
+        mme_self()->sgsap_io_thread = 1;
+    }
+
+    /* before mme-main starts: the first LU-Request must already route
+     * through the IO thread */
+    if (mme_self()->sgsap_io_thread) {
+        rv = sgsap_io_start();
+        if (rv != OGS_OK) return OGS_ERROR;
+    }
+
     /* dedicated GTP-C RX thread (mme.gtpc_rx_thread, default off):
      * must come after mme_workers_start()/shards_enable(), and before
      * mme-main starts driving S11 transactions */
@@ -265,6 +288,12 @@ void mme_terminate(void)
 
     /* UE shards after helpers: no more S11/EMM posts from sockets */
     mme_workers_stop();
+
+    /* main + shards joined: nobody can post VLR sends anymore. Stop
+     * BEFORE mme_context_final() frees the VLRs the queued jobs
+     * reference (jobs re-validate under ctx lock, but the worker
+     * itself must be gone before the pool is). */
+    sgsap_io_stop();
 
     /* No more producers of CONNREFUSED / TX_READY */
     mme_event_s1ap_connrefused_final();

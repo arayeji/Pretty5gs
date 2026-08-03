@@ -313,6 +313,14 @@ typedef struct mme_context_s {
      */
     int             gtpc_rx_thread;
     /*
+     * Dedicated SGsAP (VLR) SCTP send thread (0/1, default 0,
+     * startup-only) — sgsap-io.c. With mme.workers > 0 the CSFB/SMS
+     * senders run on UE owner shards while main owns the VLR socket
+     * lifecycle; this thread serializes all VLR sends so no shard
+     * writes to a socket main is destroying.
+     */
+    int             sgsap_io_thread;
+    /*
      * Per-eNB-association outbound PDU cap on the S1AP IO thread.
      * PDUs beyond this are dropped (soft backpressure). 0 = default.
      */

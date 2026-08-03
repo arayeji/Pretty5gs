@@ -268,6 +268,17 @@ all default 0 (bit-identical to before when off):
       S-TMSI association handoff (`MME_HO_TAIL_STMSI_ASSOC`), stable-N
       / stale-prefix routing, eNB-scoped event policy decided; pool
       sharding explicitly deferred with reason.
+- [x] `mme.sgsap_io_thread: 0/1` (default 0) — `sgsap-io.c`: dedicated
+      VLR (SGsAP) send thread. With workers on, CSFB/SMS senders run on
+      UE owner shards while main owns the VLR socket lifecycle
+      (CONNREFUSED close + reconnect); the IO thread re-resolves
+      `vlr->sock` and sends under `mme_ctx_lock`, `mme_vlr_close()` /
+      `sgsap_client()` mutate the socket under the same lock — no
+      send-vs-destroy race, no DRAIN handshake needed. Single FIFO
+      preserves per-UE SGs ordering. Auto-enabled (with warning) when
+      `mme.workers > 0` and a VLR is configured. Queue-full = drop
+      (SGs recovers via Ts6-1 etc.), never inline cross-thread send.
+      `configs/csfb.yaml.in` runs the whole CSFB suite through it.
 - [ ] Prod soak stage_c + tx_direct after test-rig green
 - [x] Load-test (`tests/load`) green on merged Stage C-full branch
       (Aug 3 2026, WSL root + ogstun + mongod, logger.level=debug):

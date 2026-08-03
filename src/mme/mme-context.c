@@ -1426,6 +1426,12 @@ int mme_context_parse_config(void)
                     if (v) {
                         self.gtpc_rx_thread = atoi(v) ? 1 : 0;
                     }
+                } else if (!strcmp(mme_key, "sgsap_io_thread")) {
+                    /* dedicated SGsAP (VLR) send thread (0/1, default 0) */
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+                    if (v) {
+                        self.sgsap_io_thread = atoi(v) ? 1 : 0;
+                    }
                 } else if (!strcmp(mme_key, "s1ap_io_write_queue_max")) {
                     /* per-eNB outbound PDU cap (0 = default 10240) */
                     const char *v = ogs_yaml_iter_value(&mme_iter);
@@ -5049,6 +5055,14 @@ void mme_vlr_remove(mme_vlr_t *vlr)
 {
     ogs_assert(vlr);
 
+    /*
+     * Unlink + close + free as one critical section: the sgsap-io
+     * thread validates job->vlr against vlr_list and sends under the
+     * same lock, so after we release it no queued job can dereference
+     * this vlr or its socket. (mme_ctx_lock is recursive.)
+     */
+    mme_ctx_lock();
+
     ogs_list_remove(&self.vlr_list, vlr);
 
     mme_vlr_close(vlr);
@@ -5062,6 +5076,8 @@ void mme_vlr_remove(mme_vlr_t *vlr)
         ogs_free(vlr->option);
 
     ogs_pool_free(&mme_vlr_pool, vlr);
+
+    mme_ctx_unlock();
 }
 
 void mme_vlr_remove_all(void)
@@ -5080,10 +5096,17 @@ void mme_vlr_close(mme_vlr_t *vlr)
         ogs_pollset_remove(vlr->poll);
         vlr->poll = NULL;
     }
+    /*
+     * Destroy + NULL under the ctx lock: the sgsap-io thread holds the
+     * same lock from vlr->sock read through ogs_sctp_sendmsg(), so a
+     * queued send either completes before the destroy or sees NULL.
+     */
+    mme_ctx_lock();
     if (vlr->sock) {
         ogs_sctp_destroy(vlr->sock);
         vlr->sock = NULL;
     }
+    mme_ctx_unlock();
 }
 
 mme_vlr_t *mme_vlr_find_by_addr(const ogs_sockaddr_t *sa_list)

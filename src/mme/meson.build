@@ -32,6 +32,7 @@ libmme_sources = files('''
     s1ap-rx.h
     s1ap-tx.h
     s1ap-io.h
+    sgsap-io.h
     s1ap-shard.h
     s1ap-overload.h
     mme-workers.h
@@ -96,6 +97,7 @@ libmme_sources = files('''
     sgsap-conv.c
     sgsap-sctp.c
     sgsap-path.c
+    sgsap-io.c
     mme-fd-path.c
     mme-s6a-handler.c
     nas-security.c

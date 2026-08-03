@@ -25,6 +25,7 @@
 #include "mme-trace.h"
 
 #include "sgsap-path.h"
+#include "sgsap-io.h"
 
 void mme_sgs_ts6_1_timer_start(mme_ue_t *mme_ue)
 {
@@ -110,6 +111,19 @@ int sgsap_send_to_vlr_with_sid(
     ogs_assert(vlr);
     ogs_assert(pkbuf);
 
+    ogs_debug("    StreamNO[%d] VLR-IP[%s]",
+            stream_no, ogs_sockaddr_to_string_static(vlr->sa_list));
+
+    /*
+     * mme.sgsap_io_thread: hand the PDU to the dedicated VLR send
+     * thread. Callers may be UE owner shards (CSFB/SMS with
+     * mme.workers > 0) while main tears the VLR socket down; the IO
+     * thread re-resolves vlr->sock under mme_ctx_lock so the "socket
+     * down" check happens where it cannot race.
+     */
+    if (sgsap_io_active())
+        return sgsap_io_post_send(vlr, pkbuf, stream_no);
+
     sock = vlr->sock;
     if (!sock || sock->fd == INVALID_SOCKET) {
         ogs_error("SGsAP not sent: VLR SCTP down VLR[%s] stream[%d] "
@@ -120,9 +134,6 @@ int sgsap_send_to_vlr_with_sid(
         ogs_pkbuf_free(pkbuf);
         return OGS_ERROR;
     }
-
-    ogs_debug("    StreamNO[%d] VLR-IP[%s]",
-            stream_no, ogs_sockaddr_to_string_static(vlr->sa_list));
 
     return sgsap_send(sock, pkbuf, stream_no);
 }
