@@ -707,14 +707,12 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
 
         /* Find MME_UE if S_TMSI included */
         if (S_TMSI) {
-            served_gummei_t *served_gummei = &mme_self()->served_gummei[0];
             ogs_nas_eps_guti_t nas_guti;
-            memset(&nas_guti, 0, sizeof(ogs_nas_eps_guti_t));
+            uint8_t s_tmsi_mme_code = 0;
+            uint32_t s_tmsi_m_tmsi = 0;
+            int gi, pj;
 
-            /* Use the first configured plmn_id and mme group id */
-            ogs_nas_from_plmn_id(&nas_guti.nas_plmn_id,
-                    &served_gummei->plmn_id[0]);
-            nas_guti.mme_gid = served_gummei->mme_gid[0];
+            memset(&nas_guti, 0, sizeof(ogs_nas_eps_guti_t));
 
             /* size must be 1 */
             if (S_TMSI->mMEC.size != 1) {
@@ -728,7 +726,7 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
                 if (enb_ue_new) enb_ue_remove(enb_ue);
                 return;
             }
-            memcpy(&nas_guti.mme_code, S_TMSI->mMEC.buf, S_TMSI->mMEC.size);
+            memcpy(&s_tmsi_mme_code, S_TMSI->mMEC.buf, S_TMSI->mMEC.size);
             /* size must be 4 */
             if (S_TMSI->m_TMSI.size != 4) {
                 ogs_error("Invalid S_TMSI->m_TMSI.size = %d (expected 4)",
@@ -741,10 +739,47 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
                 if (enb_ue_new) enb_ue_remove(enb_ue);
                 return;
             }
-            memcpy(&nas_guti.m_tmsi, S_TMSI->m_TMSI.buf, S_TMSI->m_TMSI.size);
-            nas_guti.m_tmsi = be32toh(nas_guti.m_tmsi);
+            memcpy(&s_tmsi_m_tmsi, S_TMSI->m_TMSI.buf, S_TMSI->m_TMSI.size);
+            s_tmsi_m_tmsi = be32toh(s_tmsi_m_tmsi);
 
-            mme_ue_from_stmsi = mme_ue_find_by_guti(&nas_guti);
+            /* keep the not-found log meaningful even if no GUMMEI is tried */
+            nas_guti.mme_code = s_tmsi_mme_code;
+            nas_guti.m_tmsi = s_tmsi_m_tmsi;
+
+            /*
+             * S-TMSI carries only MMEC + M-TMSI: neither the PLMN nor the
+             * MME Group ID is on the wire, yet guti_ue_hash is keyed on the
+             * full ogs_nas_eps_guti_t. Since mme_ue_new_guti() allocates the
+             * GUTI PLMN from the UE's serving TAI (and only falls back to
+             * served_gummei[0].plmn_id[0]), resolving against index 0 alone
+             * misses every UE whose serving PLMN is not the first configured
+             * one - the UE is then treated as unknown, its Service Request is
+             * rejected with EMM cause 9, and it re-attaches from scratch.
+             *
+             * Try every served GUMMEI / PLMN pair, exactly as the NAS path
+             * mme_ue_find_by_message() does.
+             */
+            for (gi = 0;
+                    gi < mme_self()->num_of_served_gummei && !mme_ue_from_stmsi;
+                    gi++) {
+                served_gummei_t *sg = &mme_self()->served_gummei[gi];
+
+                if (sg->num_of_mme_gid == 0 || sg->num_of_mme_code == 0)
+                    continue;
+
+                for (pj = 0; pj < sg->num_of_plmn_id; pj++) {
+                    memset(&nas_guti, 0, sizeof(ogs_nas_eps_guti_t));
+                    ogs_nas_from_plmn_id(
+                            &nas_guti.nas_plmn_id, &sg->plmn_id[pj]);
+                    nas_guti.mme_gid = sg->mme_gid[0];
+                    nas_guti.mme_code = s_tmsi_mme_code;
+                    nas_guti.m_tmsi = s_tmsi_m_tmsi;
+
+                    mme_ue_from_stmsi = mme_ue_find_by_guti(&nas_guti);
+                    if (mme_ue_from_stmsi)
+                        break;
+                }
+            }
             if (!mme_ue_from_stmsi) {
                 ogs_mme_trace_set(enb_ue, NULL, NULL, "initial-ue");
                 OGS_TLOG_DEBUG("Unknown UE by S_TMSI[G:%d,C:%d,M_TMSI:0x%x]",
