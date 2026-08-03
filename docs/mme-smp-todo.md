@@ -270,7 +270,13 @@ all default 0 (bit-identical to before when off):
       sharding explicitly deferred with reason.
 - [ ] Prod soak stage_c + tx_direct after test-rig green
 - [ ] TSAN + load-test (`tests/load`) rerun over the merged branch
-      before any production enable
+      before any production enable. NOTE: `tests/load` (like every EPC
+      suite) needs mongod running AND root for the UPF `ogstun` TUN
+      device (`ip tuntap add name ogstun mode tun` + addr + up) — on a
+      WSL box without passwordless sudo the suite dies at
+      `tun_open(dev:ogstun)`. Aug 3 verification on the merged branch:
+      full ninja build green; `open5gs-mmed` clean start/stop with
+      workers:4 stage_c:1 rx:2 tx:2 tx_direct:1 io:2.
 
 ---
 
