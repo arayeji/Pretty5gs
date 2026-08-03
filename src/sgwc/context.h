@@ -73,6 +73,8 @@ typedef struct sgwc_pgw_peer_s {
     bool peer_recovery_valid;
     ogs_timer_t *t_echo;
     bool echo_pending;
+    /* Cached OGS_ADDR(gnode) for metrics/logs; filled at peer attach. */
+    char addr_str[OGS_ADDRSTRLEN];
 } sgwc_pgw_peer_t;
 
 /*
@@ -382,6 +384,8 @@ typedef struct sgwc_sess_s {
     char            metrics_rat[16];
     char            metrics_gtp_if[8];
     char            metrics_apn[OGS_MAX_APN_LEN+1];
+    /* PGW label used at session_active_inc; reused on dec (no re-format). */
+    char            metrics_pgw_addr[OGS_ADDRSTRLEN];
     unsigned        gn : 1;         /* Session from GTPv1 Gn */
     uint8_t         gtp_rat_type;
     unsigned        gtp_selection_mode_set : 1;
@@ -425,6 +429,9 @@ static inline void sgwc_create_session_phase(
     ogs_time_t elapsed;
 
     if (!sess || !ue || !phase || !phase[0] || !sess->create_session_t0)
+        return;
+
+    if (!ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_INFO))
         return;
 
     elapsed = ogs_time_now() - sess->create_session_t0;

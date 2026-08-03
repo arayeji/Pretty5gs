@@ -1084,6 +1084,10 @@ void sgwc_pgw_peer_attach(ogs_gtp_node_t *gnode)
     peer = ogs_calloc(1, sizeof(*peer));
     ogs_assert(peer);
     peer->gnode = gnode;
+    if (gnode->sa_list)
+        OGS_ADDR(gnode->sa_list, peer->addr_str);
+    else
+        OGS_ADDR(&gnode->addr, peer->addr_str);
     gnode->data_ptr = peer;
 }
 
