@@ -76,7 +76,7 @@ int mme_initialize(void)
     int rv;
 
     /* Bootstrap / accept thread — distinct from mme-main event loop */
-    ogs_thread_set_name("mme");
+    ogs_thread_set_name("mme-boot");
 
 #define APP_NAME "mme"
     rv = ogs_app_parse_local_conf(APP_NAME);
