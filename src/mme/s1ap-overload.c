@@ -235,6 +235,17 @@ static int enb_tx_congestion_level(mme_enb_t *enb, ogs_time_t now)
     if ((now - enb->overload.congested_at) >=
             ogs_time_from_sec(congest_lease_sec()))
         return 0;
+    /*
+     * A live lease says "this eNB reported congestion recently", not
+     * "this eNB is congested now". io_report_congestion() only ever
+     * reports a depth at or above the watermark, but the lease outlives
+     * the sample: if the queue has since drained, congested_depth is 0
+     * and there is nothing to shed for. Without this the eNB kept being
+     * charged level 1 for the rest of the lease with an empty TX queue -
+     * visible in the shed log as "level:1 tx-queue:0".
+     */
+    if (enb->overload.congested_depth <= 0)
+        return 0;
 
     return enb->overload.congested_depth >= 2 * s1ap_io_congest_depth() ?
         2 : 1;
@@ -510,7 +521,17 @@ bool s1ap_admit_initial_ue(mme_enb_t *enb, long rrc_cause, bool present)
     }
 
     if (level > 0 && rrc_cause_shed(rrc_cause, present, level)) {
-        shed_account(enb, "overload", level, now);
+        /*
+         * Name the source. Global (MME event-queue lag) and per-eNB TX
+         * congestion produce identical shed lines otherwise, which makes
+         * it impossible to tell from the field whether the MME is behind
+         * or one cell's downlink is backing up - the two have opposite
+         * remedies.
+         */
+        shed_account(enb,
+                enb_tx_congestion_level(enb, now) > 0 ?
+                    "tx-congestion" : "mme-event-lag",
+                level, now);
         return false;
     }
 
