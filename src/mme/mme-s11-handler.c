@@ -383,6 +383,21 @@ void mme_s11_handle_create_session_response(
      ********************/
     ogs_assert(xact);
     create_action = xact->create_action;
+    /*
+     * Same orphan/stale-xact hazard as Delete Session / Release Access
+     * Bearers / Delete Indirect responses: under S11 storms a late
+     * Create Session Response can match a reused or mistagged xact with
+     * create_action==0. The final create_action switch has no case for
+     * 0 and aborted the whole MME (ogs_assert_if_reached). Drop safely.
+     */
+    if (!create_action) {
+        ogs_error("Create Session Response: missing create_action "
+                "(orphan/stale xact) - ignore");
+        rv = ogs_gtp_xact_commit(xact);
+        if (rv != OGS_OK)
+            ogs_error("ogs_gtp_xact_commit() failed");
+        return;
+    }
 
     sess = mme_sess_find_by_id(OGS_POINTER_TO_UINT(xact->data));
     if (sess)
@@ -774,8 +789,10 @@ void mme_s11_handle_create_session_response(
         );
 
     } else {
-        ogs_fatal("Invalid Create Session Action[%d]", create_action);
-        ogs_assert_if_reached();
+        /* Session state is already updated above; an unexpected action
+         * must not abort the daemon (was ogs_assert_if_reached). */
+        ogs_error("Invalid Create Session Action[%d] - ignore",
+                create_action);
     }
 
 
