@@ -602,10 +602,101 @@ void s1ap_handle_enb_configuration_update(
     ogs_expect(r == OGS_OK);
 }
 
+/*
+ * S-TMSI resolution tail: validity check + NAS/S1 association + mobile
+ * reachable timer stop. Must run on the UE OWNER thread — inline on
+ * main without mme.workers, on the owner shard via
+ * MME_HO_TAIL_STMSI_ASSOC with them (mme_ue FSM state, holding
+ * context and UE timers are shard-owned). Returns the mme_ue when
+ * associated, NULL when it must be treated as an unknown UE.
+ */
+static mme_ue_t *initial_ue_stmsi_associate(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
+{
+    ogs_assert(enb_ue);
+    ogs_assert(mme_ue);
+
+    if (!mme_ue_is_valid_for_s1(mme_ue)) {
+        ogs_warn("Stale MME-UE for S_TMSI[G:%d,C:%d,M_TMSI:0x%x] "
+                "(mid-teardown) - treating as unknown UE",
+                mme_ue->current.guti.mme_gid,
+                mme_ue->current.guti.mme_code,
+                mme_ue->current.guti.m_tmsi);
+        return NULL;
+    }
+
+    ogs_debug("    S_TMSI[G:%d,C:%d,M_TMSI:0x%x] IMSI:[%s]",
+            mme_ue->current.guti.mme_gid,
+            mme_ue->current.guti.mme_code,
+            mme_ue->current.guti.m_tmsi,
+            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "Unknown");
+
+    /* If NAS(mme_ue_t) has already been associated with
+     * older S1(enb_ue_t) context */
+    if (ECM_CONNECTED(mme_ue)) {
+        /*
+         * Issue #2786
+         *
+         * In cases where the UE sends an Integrity Un-Protected Attach
+         * Request or Service Request, there is an issue of sending
+         * a UEContextReleaseCommand for the OLD ENB Context.
+         *
+         * For example, if the UE switchs off and power-on after
+         * the first connection, the EPC sends a UEContextReleaseCommand.
+         *
+         * However, since there is no ENB context for this on the eNB,
+         * the eNB does not send a UEContextReleaseComplete,
+         * so the deletion of the ENB Context does not function properly.
+         *
+         * To solve this problem, the EPC has been modified to implicitly
+         * delete the ENB Context instead of sending a UEContextReleaseCommand.
+         */
+        HOLDING_S1_CONTEXT(mme_ue);
+    }
+    enb_ue_associate_mme_ue(enb_ue, mme_ue);
+    ogs_debug("Mobile Reachable timer stopped for IMSI[%s]",
+            mme_ue->imsi_bcd);
+    CLEAR_MME_UE_TIMER(mme_ue->t_mobile_reachable);
+
+    return mme_ue;
+}
+
+/*
+ * MME_HO_TAIL_STMSI_ASSOC body, on the UE owner shard. nasbuf carries
+ * the raw NAS PDU bytes snapshotted by main; ownership stays with the
+ * event dispatcher (s1ap_send_to_nas copies them out).
+ */
+void s1ap_initial_ue_stmsi_assoc_tail(enb_ue_t *enb_ue,
+        ogs_pool_id_t mme_ue_id, ogs_pkbuf_t *nasbuf)
+{
+    mme_ue_t *mme_ue = NULL;
+    S1AP_NAS_PDU_t nas_pdu;
+
+    ogs_assert(enb_ue);
+    ogs_assert(nasbuf);
+
+    mme_ue = mme_ue_find_by_id(mme_ue_id);
+    if (mme_ue)
+        mme_ue = initial_ue_stmsi_associate(enb_ue, mme_ue);
+    else
+        ogs_warn("S-TMSI assoc tail: mme_ue gone [id:%d] - unknown UE",
+                (int)mme_ue_id);
+
+    ogs_mme_trace_set(enb_ue, mme_ue, NULL, "initial-ue");
+    OGS_TLOG_DEBUG("InitialUEMessage");
+
+    memset(&nas_pdu, 0, sizeof(nas_pdu));
+    nas_pdu.buf = nasbuf->data;
+    nas_pdu.size = nasbuf->len;
+
+    ogs_expect(OGS_OK == s1ap_send_to_nas(
+                enb_ue, S1AP_ProcedureCode_id_initialUEMessage, &nas_pdu));
+}
+
 void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
 {
     int i, r;
     char buf[OGS_ADDRSTRLEN];
+    int stmsi_owner = -1;
 
     S1AP_InitiatingMessage_t *initiatingMessage = NULL;
     S1AP_InitialUEMessage_t *InitialUEMessage = NULL;
@@ -785,46 +876,21 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
                 ogs_mme_trace_set(enb_ue, NULL, NULL, "initial-ue");
                 OGS_TLOG_DEBUG("Unknown UE by S_TMSI[G:%d,C:%d,M_TMSI:0x%x]",
                         nas_guti.mme_gid, nas_guti.mme_code, nas_guti.m_tmsi);
-            } else if (!mme_ue_is_valid_for_s1(mme_ue_from_stmsi)) {
-                ogs_warn("Stale MME-UE for S_TMSI[G:%d,C:%d,M_TMSI:0x%x] "
-                        "(mid-teardown) - treating as unknown UE",
-                        nas_guti.mme_gid, nas_guti.mme_code, nas_guti.m_tmsi);
+            } else if (mme_workers_active() &&
+                    (stmsi_owner = mme_shard_from_teid(
+                            mme_ue_from_stmsi->mme_s11_teid)) >= 0) {
+                /*
+                 * Stage C-full: the mme_ue is shard-owned. Main must
+                 * neither read its FSM state (validity check) nor
+                 * mutate it (holding context, association, mobile
+                 * reachable timer) — the owner shard does all of that
+                 * in the MME_HO_TAIL_STMSI_ASSOC tail posted at the
+                 * end of this handler, after enb_ue->saved is filled.
+                 */
+            } else if (!initial_ue_stmsi_associate(
+                        enb_ue, mme_ue_from_stmsi)) {
                 mme_ue_from_stmsi = NULL;
                 ogs_mme_trace_set(enb_ue, NULL, NULL, "initial-ue");
-            } else {
-                ogs_debug("    S_TMSI[G:%d,C:%d,M_TMSI:0x%x] IMSI:[%s]",
-                        mme_ue_from_stmsi->current.guti.mme_gid,
-                        mme_ue_from_stmsi->current.guti.mme_code,
-                        mme_ue_from_stmsi->current.guti.m_tmsi,
-                        MME_UE_HAVE_IMSI(mme_ue_from_stmsi)
-                            ? mme_ue_from_stmsi->imsi_bcd : "Unknown");
-
-                /* If NAS(mme_ue_t) has already been associated with
-                 * older S1(enb_ue_t) context */
-                if (ECM_CONNECTED(mme_ue_from_stmsi)) {
-    /*
-     * Issue #2786
-     *
-     * In cases where the UE sends an Integrity Un-Protected Attach
-     * Request or Service Request, there is an issue of sending
-     * a UEContextReleaseCommand for the OLD ENB Context.
-     *
-     * For example, if the UE switchs off and power-on after
-     * the first connection, the EPC sends a UEContextReleaseCommand.
-     *
-     * However, since there is no ENB context for this on the eNB,
-     * the eNB does not send a UEContextReleaseComplete,
-     * so the deletion of the ENB Context does not function properly.
-     *
-     * To solve this problem, the EPC has been modified to implicitly
-     * delete the ENB Context instead of sending a UEContextReleaseCommand.
-     */
-                    HOLDING_S1_CONTEXT(mme_ue_from_stmsi);
-                }
-                enb_ue_associate_mme_ue(enb_ue, mme_ue_from_stmsi);
-                ogs_debug("Mobile Reachable timer stopped for IMSI[%s]",
-                    mme_ue_from_stmsi->imsi_bcd);
-                CLEAR_MME_UE_TIMER(mme_ue_from_stmsi->t_mobile_reachable);
             }
         }
     } else {
@@ -940,6 +1006,34 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
     ogs_debug("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d] TAC[%d] CellID[0x%x]",
         enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id,
         enb_ue->saved.tai.tac, enb_ue->saved.e_cgi.cell_id);
+
+    if (mme_ue_from_stmsi && stmsi_owner >= 0) {
+        /*
+         * Deferred S-TMSI association (Stage C-full): hand the
+         * validity check + association + NAS dispatch to the UE owner
+         * shard. enb_ue->saved.* is complete at this point; the worker
+         * queue push is the release barrier for those writes.
+         */
+        ogs_pkbuf_t *nasbuf = ogs_pkbuf_alloc(NULL, NAS_PDU->size);
+
+        if (nasbuf) {
+            ogs_pkbuf_put_data(nasbuf, NAS_PDU->buf, NAS_PDU->size);
+            if (mme_worker_post_ho_tail(MME_HO_TAIL_STMSI_ASSOC,
+                        enb_ue->id, mme_ue_from_stmsi, nasbuf) == OGS_OK)
+                return;
+            ogs_pkbuf_free(nasbuf);
+        }
+
+        /*
+         * Post failed (owner queue full / no memory): legacy inline
+         * path. The main-vs-shard write race window is accepted here
+         * exactly as it was before the handoff existed — dropping the
+         * InitialUEMessage would be strictly worse (Service Request
+         * black-hole until UE retry).
+         */
+        if (!initial_ue_stmsi_associate(enb_ue, mme_ue_from_stmsi))
+            ogs_mme_trace_set(enb_ue, NULL, NULL, "initial-ue");
+    }
 
     ogs_expect(OGS_OK == s1ap_send_to_nas(
                 enb_ue, S1AP_ProcedureCode_id_initialUEMessage, NAS_PDU));

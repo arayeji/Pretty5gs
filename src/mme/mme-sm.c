@@ -1731,7 +1731,20 @@ cleanup:
         /* Deferred Path Switch / Handover Notify tail on the UE owner
          * shard (posted by the main-thread S1AP handlers). Contexts may
          * have died between post and dispatch — re-validate both. */
-        if (e->ho_kind == MME_HO_TAIL_UE_REL ||
+        if (e->ho_kind == MME_HO_TAIL_STMSI_ASSOC) {
+            /* mme_ue gone is NOT fatal here: the tail then dispatches
+             * the NAS PDU unassociated, exactly like an unknown S-TMSI
+             * (attach re-identifies, service request is rejected). */
+            enb_ue = enb_ue_find_by_id(e->enb_ue_id);
+            if (!enb_ue)
+                ogs_warn("S-TMSI assoc tail: enb_ue gone [id:%d]",
+                        e->enb_ue_id);
+            else if (e->pkbuf)
+                s1ap_initial_ue_stmsi_assoc_tail(
+                        enb_ue, e->mme_ue_id, e->pkbuf);
+            else
+                ogs_error("S-TMSI assoc tail without NAS payload");
+        } else if (e->ho_kind == MME_HO_TAIL_UE_REL ||
                 e->ho_kind == MME_HO_TAIL_REL_AB) {
             /* e->enb_ue_id may name an ALREADY-REMOVED enb_ue here:
              * only the mme_ue must still exist. */

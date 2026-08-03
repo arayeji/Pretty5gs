@@ -90,6 +90,15 @@ void s1ap_initial_context_setup_response_complete(
 void s1ap_ue_context_release_tail(mme_ue_t *mme_ue, int rel_action,
         ogs_pool_id_t old_enb_ue_id, int rel_flags);
 
+/*
+ * InitialUEMessage S-TMSI association tail (validity check,
+ * HOLDING_S1_CONTEXT, enb_ue association, mobile-reachable timer stop,
+ * NAS dispatch). Same owner shard rule (MME_HO_TAIL_STMSI_ASSOC);
+ * nasbuf carries the raw NAS PDU bytes and stays owned by the caller.
+ */
+void s1ap_initial_ue_stmsi_assoc_tail(enb_ue_t *enb_ue,
+        ogs_pool_id_t mme_ue_id, ogs_pkbuf_t *nasbuf);
+
 void s1ap_handle_enb_direct_information_transfer(
         mme_enb_t *enb, ogs_s1ap_message_t *message);
 

@@ -141,6 +141,16 @@ typedef enum {
  * the OGS_GTP_RELEASE_* action.
  */
 #define MME_HO_TAIL_REL_AB          5
+/*
+ * InitialUEMessage S-TMSI association deferred to the UE owner shard
+ * (Stage C-full). Main resolves the S-TMSI to a shard-owned mme_ue via
+ * the GUTI hash but must not read its FSM state (validity check) nor
+ * mutate it (HOLDING_S1_CONTEXT, enb_ue_associate_mme_ue, mobile
+ * reachable timer). The owner re-validates and associates, then feeds
+ * the NAS PDU (e->pkbuf, raw NAS bytes) into the normal EMM path.
+ * e->enb_ue_id names the NEW enb_ue created by main for this message.
+ */
+#define MME_HO_TAIL_STMSI_ASSOC     6
 
 #define MME_UE_REL_F_HO_PEER_GONE   0x1
 
