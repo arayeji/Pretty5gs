@@ -170,9 +170,14 @@ int mme_admin_ue_detach(const ogs_metrics_query_t *q,
 
     ogs_pool_id_t mme_ue_pool_id = OGS_INVALID_POOL_ID;
 
+    int owner_wid = -1;
+
     ogs_metrics_dump_lock();
     mme_ue_t *mme_ue = mme_ue_find_by_imsi_bcd(q->imsi);
-    if (mme_ue) mme_ue_pool_id = mme_ue->id;
+    if (mme_ue) {
+        mme_ue_pool_id = mme_ue->id;
+        owner_wid = mme_shard_from_teid(mme_ue->mme_s11_teid);
+    }
     ogs_metrics_dump_unlock();
 
     if (mme_ue_pool_id == OGS_INVALID_POOL_ID) {
@@ -188,6 +193,7 @@ int mme_admin_ue_detach(const ogs_metrics_query_t *q,
         return ADMIN_HTTP_INTERNAL_ERROR;
     }
     e->mme_ue_id = mme_ue_pool_id;
+    e->owner_wid = owner_wid;
     e->admin_force = q->force ? 1 : 0;
 
     int rv = mme_event_push_to_ue_owner(e);
@@ -215,12 +221,14 @@ int mme_admin_ue_page(const ogs_metrics_query_t *q,
 
     ogs_pool_id_t mme_ue_pool_id = OGS_INVALID_POOL_ID;
     bool connected = false;
+    int owner_wid = -1;
 
     ogs_metrics_dump_lock();
     mme_ue_t *mme_ue = mme_ue_find_by_imsi_bcd(q->imsi);
     if (mme_ue) {
         mme_ue_pool_id = mme_ue->id;
         connected = ECM_CONNECTED(mme_ue);
+        owner_wid = mme_shard_from_teid(mme_ue->mme_s11_teid);
     }
     ogs_metrics_dump_unlock();
 
@@ -248,6 +256,7 @@ int mme_admin_ue_page(const ogs_metrics_query_t *q,
         return ADMIN_HTTP_INTERNAL_ERROR;
     }
     e->mme_ue_id = mme_ue_pool_id;
+    e->owner_wid = owner_wid;
     /* force=1 -> re-page even if a paging procedure is already in flight. */
     e->admin_force = q->force ? 1 : 0;
 

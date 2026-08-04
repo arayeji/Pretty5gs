@@ -209,6 +209,7 @@ mme_event_t *mme_event_new(mme_event_e id)
     ogs_assert(e);
 
     e->id = id;
+    e->owner_wid = -1;
     e->created_at = ogs_get_monotonic_time();
 
     return e;

@@ -236,6 +236,13 @@ typedef struct mme_event_s {
     ogs_pool_id_t bearer_id;
     ogs_pool_id_t gtp_xact_id;
 
+    /*
+     * Cached UE-owner shard (>= 0) when the creator already resolved
+     * the UE. mme_event_push_to_ue_owner skips pool finds when set.
+     * -1 = unknown (default from mme_event_new).
+     */
+    int owner_wid;
+
     ogs_timer_t *timer;
 
     /*

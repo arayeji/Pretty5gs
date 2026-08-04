@@ -189,6 +189,7 @@ int s1ap_send_to_esm(
     e = mme_event_new(MME_EVENT_ESM_MESSAGE);
     ogs_assert(e);
     e->mme_ue_id = mme_ue->id;
+    e->owner_wid = mme_shard_from_teid(mme_ue->mme_s11_teid);
     e->pkbuf = esmbuf;
     e->nas_type = nas_type;
     e->create_action = create_action;
@@ -347,8 +348,10 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
             return OGS_ERROR;
         }
         e->enb_ue_id = enb_ue->id;
-        if (mme_ue)
+        if (mme_ue) {
             e->mme_ue_id = mme_ue->id;
+            e->owner_wid = mme_shard_from_teid(mme_ue->mme_s11_teid);
+        }
         e->s1ap_code = procedureCode;
         e->nas_type = security_header_type.type;
         e->pkbuf = nasbuf;
@@ -681,11 +684,16 @@ static bool enb_serves_tai(const mme_enb_t *enb, const ogs_eps_tai_t *tai)
     return false;
 }
 
+#define MME_PAGING_ENB_BATCH    512
+
 int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
 {
     mme_enb_t *enb = NULL;
     int rv;
     bool sent = false;
+    ogs_pool_id_t enb_ids[MME_PAGING_ENB_BATCH];
+    int n_enb = 0;
+    int i;
 
     ogs_debug("S1-Paging");
 
@@ -697,12 +705,11 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
     mme_metrics_paging_attempt(mme_ue);
 
     /*
-     * Paging runs on the UE owner shard (T3413 expiry, DDN, S1
-     * release) while main adds/removes eNBs on SCTP churn: walk
-     * enb_list / eNB hashes only under the ctx lock — enb add/remove
-     * mutate them under the same (recursive) mutex. The sends inside
-     * just queue to the S1AP IO/TX path, so holding the lock across
-     * the walk is cheap.
+     * Snapshot matching eNB pool IDs under mme_ctx_lock (enb_list /
+     * supported_ta_list mutate on main during SCTP churn), then send
+     * unlocked — same pattern as orphan-UE sweep. Holding the global
+     * lock across encode/queue fan-out serialized every UE find on
+     * s1ap-rx / mme-w for the whole paging burst.
      */
     mme_ctx_lock();
 
@@ -712,6 +719,8 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
      * eCGI (cell_id >> 8 = macro eNB id; full 28 bits = home eNB id).
      * T3413 retries fan out to the whole TA, so a UE that moved cells
      * while idle is still reached.
+     *
+     * mme_enb_find_by_enb_id takes the recursive ctx lock again.
      */
     if (mme_self()->paging_first_wave_last_enb &&
             mme_ue->t3413.retry_count == 0 &&
@@ -723,33 +732,35 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
             last_enb = mme_enb_find_by_enb_id(
                     mme_ue->e_cgi.cell_id & 0x0fffffff);
 
-        if (last_enb && enb_serves_tai(last_enb, &mme_ue->tai)) {
-            rv = paging_send_to_enb(mme_ue, last_enb, cn_domain);
-            if (rv != OGS_OK) {
-                mme_ctx_unlock();
-                return rv;
-            }
-            sent = true;
-        }
+        if (last_enb && enb_serves_tai(last_enb, &mme_ue->tai) &&
+                n_enb < MME_PAGING_ENB_BATCH)
+            enb_ids[n_enb++] = last_enb->id;
         /* last eNB gone / TA changed: fall through to full fan-out */
     }
 
-    if (!sent) {
+    if (!n_enb) {
         /* Full fan-out: every eNB advertising the UE's TAI. */
         ogs_list_for_each(&mme_self()->enb_list, enb) {
             if (!enb_serves_tai(enb, &mme_ue->tai))
                 continue;
-
-            rv = paging_send_to_enb(mme_ue, enb, cn_domain);
-            if (rv != OGS_OK) {
-                mme_ctx_unlock();
-                return rv;
-            }
-            sent = true;
+            if (n_enb >= MME_PAGING_ENB_BATCH)
+                break;
+            enb_ids[n_enb++] = enb->id;
         }
     }
 
     mme_ctx_unlock();
+
+    for (i = 0; i < n_enb; i++) {
+        enb = mme_enb_find_by_id(enb_ids[i]);
+        if (!enb)
+            continue;
+
+        rv = paging_send_to_enb(mme_ue, enb, cn_domain);
+        if (rv != OGS_OK)
+            return rv;
+        sent = true;
+    }
 
     if (!sent) {
         /*

@@ -1984,6 +1984,23 @@ enb_ue_t *enb_ue_find(uint32_t index);
 enb_ue_t *enb_ue_find_by_mme_ue_s1ap_id(uint32_t mme_ue_s1ap_id);
 enb_ue_t *enb_ue_find_by_id(ogs_pool_id_t id);
 
+/*
+ * Stage-C / hot S1AP: resolve under a single mme_ctx_lock so callers do
+ * not pay one lock round-trip per pool/hash find.
+ *
+ * mme_stagec_resolve_enb_ue: enb_ue by MME_UE_S1AP_ID + parent eNB,
+ * validating sock and S1-setup. Returns false → bounce to main.
+ *
+ * mme_resolve_enb_ue_mme_ue: enb_ue by message UE IDs + optional mme_ue.
+ * Returns false if enb_ue is missing; *out_mme_ue may still be NULL
+ * (stale S1 with no NAS UE).
+ */
+bool mme_stagec_resolve_enb_ue(uint32_t mme_ue_s1ap_id, ogs_sock_t *sock,
+        enb_ue_t **out_enb_ue, mme_enb_t **out_enb);
+bool mme_resolve_enb_ue_mme_ue(mme_enb_t *enb,
+        const uint32_t *mme_ue_s1ap_id, const uint32_t *enb_ue_s1ap_id,
+        enb_ue_t **out_enb_ue, mme_ue_t **out_mme_ue);
+
 sgw_ue_t *sgw_ue_add(mme_sgw_t *sgw);
 void sgw_ue_remove(sgw_ue_t *sgw_ue);
 void sgw_ue_switch_to_sgw(sgw_ue_t *sgw_ue, mme_sgw_t *new_sgw);

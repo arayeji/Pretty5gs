@@ -239,6 +239,10 @@ static int mme_event_resolve_wid(mme_event_t *e)
 
     ogs_assert(e);
 
+    /* Creator already knew the owner (timer path, purge, …). */
+    if (e->owner_wid >= 0)
+        return e->owner_wid;
+
     switch (e->id) {
     case MME_EVENT_EMM_MESSAGE:
     case MME_EVENT_EMM_TIMER:

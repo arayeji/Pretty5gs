@@ -76,6 +76,7 @@ void mme_ue_purge_on_owner(mme_ue_t *mme_ue)
         return;
     }
     e->mme_ue_id = mme_ue->id;
+    e->owner_wid = mme_shard_from_teid(mme_ue->mme_s11_teid);
 
     /* Frees e on failure; owner unknown falls back to the main queue. */
     mme_event_push_to_ue_owner(e);

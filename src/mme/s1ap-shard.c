@@ -242,11 +242,10 @@ bool s1ap_shard_handle(mme_event_t *e)
     ogs_assert(e->s1ap_rx_decoded);
 
     /*
-     * Resolve the owner-side context. All finds take mme_ctx_lock
-     * internally (pool-id / hash lookups); the returned pointers follow
-     * the same lifetime rules as every other shard-side S1AP tail
-     * (HO_TAIL, EMM handlers): main frees eNB/enb_ue only under the
-     * ctx lock, and stale ids resolve to NULL.
+     * Resolve owner-side context under one mme_ctx_lock (pool + parent
+     * eNB + sock/setup checks). Pointers follow the same lifetime rules
+     * as other shard-side S1AP tails: main frees under ctx lock; stale
+     * ids resolve to miss → bounce to main.
      */
     if (!stagec_extract_mme_ue_id(pdu, &mme_ue_s1ap_id)) {
         /* should be impossible: RX classified this PDU */
@@ -254,14 +253,7 @@ bool s1ap_shard_handle(mme_event_t *e)
         return !stagec_bounce_to_main(e);
     }
 
-    enb_ue = enb_ue_find_by_mme_ue_s1ap_id(mme_ue_s1ap_id);
-    if (enb_ue)
-        enb = mme_enb_find_by_id(enb_ue->enb_id);
-
-    if (!enb_ue || !enb ||
-            enb->sctp.sock != e->sock ||
-            !__atomic_load_n(&enb->state.s1_setup_success,
-                    __ATOMIC_ACQUIRE)) {
+    if (!mme_stagec_resolve_enb_ue(mme_ue_s1ap_id, e->sock, &enb_ue, &enb)) {
         /*
          * Unknown/stale UE id, eNB torn down or replaced by a fast
          * reconnect, or a PDU racing S1 Setup: main handles these with
@@ -271,6 +263,8 @@ bool s1ap_shard_handle(mme_event_t *e)
     }
 
     e->enb_id = enb->id;
+    e->enb_ue_id = enb_ue->id;
+    e->mme_ue_id = enb_ue->mme_ue_id;
 
     switch (pdu->present) {
     case S1AP_S1AP_PDU_PR_initiatingMessage:

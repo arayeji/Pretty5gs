@@ -173,15 +173,18 @@ static void emm_timer_event_send(mme_timer_e timer_id, void *data)
     int rv;
     mme_event_t *e = NULL;
     ogs_pool_id_t mme_ue_id = OGS_POINTER_TO_UINT(data);
+    mme_ue_t *mme_ue;
 
     ogs_assert(data);
 
-    if (!mme_ue_find_by_id(mme_ue_id))
+    mme_ue = mme_ue_find_by_id(mme_ue_id);
+    if (!mme_ue)
         return;
 
     e = mme_event_new(MME_EVENT_EMM_TIMER);
     e->timer_id = timer_id;
     e->mme_ue_id = mme_ue_id;
+    e->owner_wid = mme_shard_from_teid(mme_ue->mme_s11_teid);
 
     rv = mme_event_push_to_ue_owner(e);
     if (rv != OGS_OK)
@@ -223,6 +226,7 @@ static void esm_timer_event_send(mme_timer_e timer_id, void *data)
     mme_event_t *e = NULL;
     ogs_pool_id_t bearer_id = OGS_POINTER_TO_UINT(data);
     mme_bearer_t *bearer = NULL;
+    mme_ue_t *mme_ue = NULL;
 
     ogs_assert(data);
 
@@ -234,6 +238,9 @@ static void esm_timer_event_send(mme_timer_e timer_id, void *data)
     e->timer_id = timer_id;
     e->bearer_id = bearer_id;
     e->mme_ue_id = bearer->mme_ue_id;
+    mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
+    if (mme_ue)
+        e->owner_wid = mme_shard_from_teid(mme_ue->mme_s11_teid);
 
     rv = mme_event_push_to_ue_owner(e);
     if (rv != OGS_OK)
@@ -317,6 +324,8 @@ void mme_timer_s11_holding_timer_expire(void *data)
 {
     int rv;
     mme_event_t *e = NULL;
+    sgw_ue_t *sgw_ue;
+    mme_ue_t *mme_ue;
 
     ogs_assert(data);
 
@@ -324,6 +333,13 @@ void mme_timer_s11_holding_timer_expire(void *data)
 
     e->timer_id = MME_TIMER_S11_HOLDING;
     e->sgw_ue_id = OGS_POINTER_TO_UINT(data);
+    sgw_ue = sgw_ue_find_by_id(e->sgw_ue_id);
+    if (sgw_ue) {
+        e->mme_ue_id = sgw_ue->mme_ue_id;
+        mme_ue = mme_ue_find_by_id(sgw_ue->mme_ue_id);
+        if (mme_ue)
+            e->owner_wid = mme_shard_from_teid(mme_ue->mme_s11_teid);
+    }
 
     rv = mme_event_push_to_ue_owner(e);
     if (rv != OGS_OK)
@@ -335,16 +351,19 @@ void mme_timer_gn_holding_timer_expire(void *data)
     int rv;
     mme_event_t *e = NULL;
     ogs_pool_id_t mme_ue_id = OGS_POINTER_TO_UINT(data);
+    mme_ue_t *mme_ue;
 
     ogs_assert(data);
 
-    if (!mme_ue_find_by_id(mme_ue_id))
+    mme_ue = mme_ue_find_by_id(mme_ue_id);
+    if (!mme_ue)
         return;
 
     e = mme_event_new(MME_EVENT_GN_TIMER);
 
     e->timer_id = MME_TIMER_GN_HOLDING;
     e->mme_ue_id = mme_ue_id;
+    e->owner_wid = mme_shard_from_teid(mme_ue->mme_s11_teid);
 
     /* Gn holding drives UE teardown: run it on the owner shard. */
     rv = mme_event_push_to_ue_owner(e);

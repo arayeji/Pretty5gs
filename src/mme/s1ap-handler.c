@@ -44,27 +44,52 @@ static enb_ue_t *s1ap_find_enb_ue_by_message_ue_ids(
         S1AP_ENB_UE_S1AP_ID_t *enb_ue_s1ap_id)
 {
     enb_ue_t *enb_ue = NULL;
+    mme_ue_t *mme_ue = NULL;
+    uint32_t mme_id = 0, e_id = 0;
+    const uint32_t *pm = NULL, *pe = NULL;
 
     ogs_assert(enb);
 
-    if (enb_ue_s1ap_id)
-        enb_ue = enb_ue_find_by_enb_ue_s1ap_id(enb, *enb_ue_s1ap_id);
+    if (mme_ue_s1ap_id) {
+        mme_id = (uint32_t)*mme_ue_s1ap_id;
+        pm = &mme_id;
+    }
+    if (enb_ue_s1ap_id) {
+        e_id = (uint32_t)*enb_ue_s1ap_id;
+        pe = &e_id;
+    }
 
-    if (!enb_ue && mme_ue_s1ap_id)
-        enb_ue = enb_ue_find_by_mme_ue_s1ap_id(*mme_ue_s1ap_id);
-
-    if (!enb_ue)
-        return NULL;
-
-    if (mme_ue_s1ap_id && *mme_ue_s1ap_id &&
-            enb_ue->mme_ue_s1ap_id != (uint32_t)*mme_ue_s1ap_id)
-        return NULL;
-
-    if (enb_ue_s1ap_id && *enb_ue_s1ap_id &&
-            enb_ue->enb_ue_s1ap_id != (uint32_t)*enb_ue_s1ap_id)
+    if (!mme_resolve_enb_ue_mme_ue(enb, pm, pe, &enb_ue, &mme_ue))
         return NULL;
 
     return enb_ue;
+}
+
+/* One lock: enb_ue by message IDs + mme_ue. *mme_ue may be NULL (stale S1). */
+static bool s1ap_resolve_ue_pair(
+        mme_enb_t *enb,
+        S1AP_MME_UE_S1AP_ID_t *mme_ue_s1ap_id,
+        S1AP_ENB_UE_S1AP_ID_t *enb_ue_s1ap_id,
+        enb_ue_t **out_enb_ue,
+        mme_ue_t **out_mme_ue)
+{
+    uint32_t mme_id = 0, e_id = 0;
+    const uint32_t *pm = NULL, *pe = NULL;
+
+    ogs_assert(enb);
+    ogs_assert(out_enb_ue);
+    ogs_assert(out_mme_ue);
+
+    if (mme_ue_s1ap_id) {
+        mme_id = (uint32_t)*mme_ue_s1ap_id;
+        pm = &mme_id;
+    }
+    if (enb_ue_s1ap_id) {
+        e_id = (uint32_t)*enb_ue_s1ap_id;
+        pe = &e_id;
+    }
+
+    return mme_resolve_enb_ue_mme_ue(enb, pm, pe, out_enb_ue, out_mme_ue);
 }
 
 static bool maximum_number_of_enbs_is_reached(void)
@@ -1102,9 +1127,8 @@ void s1ap_handle_uplink_nas_transport(
     ogs_debug("    IP[%s] ENB_ID[%d]",
             OGS_ADDR(enb->sctp.addr, buf), enb->enb_id);
 
-    enb_ue = s1ap_find_enb_ue_by_message_ue_ids(
-            enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID);
-    if (!enb_ue) {
+    if (!s1ap_resolve_ue_pair(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
+                &enb_ue, &mme_ue)) {
         ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
         return;
     }
@@ -1130,7 +1154,6 @@ void s1ap_handle_uplink_nas_transport(
      *
      * Mirrors the AMF NGAP handling in ngap_handle_uplink_nas_transport().
      */
-    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
     if (!mme_ue) {
         ogs_warn("UplinkNASTransport on stale S1 context "
                 "[MME_UE_S1AP_ID:%d] - sending UEContextReleaseCommand",
@@ -1319,9 +1342,8 @@ void s1ap_handle_ue_capability_info_indication(
     ogs_debug("    IP[%s] ENB_ID[%d]",
             OGS_ADDR(enb->sctp.addr, buf), enb->enb_id);
 
-    enb_ue = s1ap_find_enb_ue_by_message_ue_ids(
-            enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID);
-    if (!enb_ue) {
+    if (!s1ap_resolve_ue_pair(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
+                &enb_ue, &mme_ue)) {
         ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
         return;
     }
@@ -1329,7 +1351,6 @@ void s1ap_handle_ue_capability_info_indication(
     ogs_debug("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
             enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
 
-    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
     if (mme_ue) {
         /*
          * UERadioCapability is mandatory per S1AP, but a malformed or
@@ -1397,9 +1418,8 @@ void s1ap_handle_initial_context_setup_response(
     ogs_debug("    IP[%s] ENB_ID[%d]",
             OGS_ADDR(enb->sctp.addr, buf), enb->enb_id);
 
-    enb_ue = s1ap_find_enb_ue_by_message_ue_ids(
-            enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID);
-    if (!enb_ue) {
+    if (!s1ap_resolve_ue_pair(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
+                &enb_ue, &mme_ue)) {
         ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
         return;
     }
@@ -1407,7 +1427,6 @@ void s1ap_handle_initial_context_setup_response(
     ogs_debug("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
             enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
 
-    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
     if (!mme_ue) {
         /*
          * Stale S1 context - see s1ap_handle_uplink_nas_transport()
@@ -1792,9 +1811,8 @@ void s1ap_handle_ue_context_modification_response(
     ogs_debug("    IP[%s] ENB_ID[%d]",
             OGS_ADDR(enb->sctp.addr, buf), enb->enb_id);
 
-    enb_ue = s1ap_find_enb_ue_by_message_ue_ids(
-            enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID);
-    if (!enb_ue) {
+    if (!s1ap_resolve_ue_pair(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
+                &enb_ue, &mme_ue)) {
         ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
         return;
     }
@@ -1802,7 +1820,6 @@ void s1ap_handle_ue_context_modification_response(
     ogs_debug("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
             enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
 
-    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
     if (!mme_ue) {
         /*
          * Stale S1 context - see s1ap_handle_uplink_nas_transport()
@@ -1978,9 +1995,8 @@ void s1ap_handle_e_rab_setup_response(
     ogs_debug("    IP[%s] ENB_ID[%d]",
             OGS_ADDR(enb->sctp.addr, buf), enb->enb_id);
 
-    enb_ue = s1ap_find_enb_ue_by_message_ue_ids(
-            enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID);
-    if (!enb_ue) {
+    if (!s1ap_resolve_ue_pair(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
+                &enb_ue, &mme_ue)) {
         ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
         return;
     }
@@ -1988,7 +2004,6 @@ void s1ap_handle_e_rab_setup_response(
     ogs_debug("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
         enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
 
-    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
     if (!mme_ue) {
         /*
          * Stale S1 context - see s1ap_handle_uplink_nas_transport()

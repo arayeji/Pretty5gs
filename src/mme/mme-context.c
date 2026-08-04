@@ -7030,6 +7030,111 @@ enb_ue_t *enb_ue_find_by_mme_ue_s1ap_id(uint32_t mme_ue_s1ap_id)
     return enb_ue;
 }
 
+bool mme_stagec_resolve_enb_ue(uint32_t mme_ue_s1ap_id, ogs_sock_t *sock,
+        enb_ue_t **out_enb_ue, mme_enb_t **out_enb)
+{
+    enb_ue_t *enb_ue = NULL;
+    mme_enb_t *enb = NULL;
+    uint32_t index;
+
+    ogs_assert(out_enb_ue);
+    ogs_assert(out_enb);
+    *out_enb_ue = NULL;
+    *out_enb = NULL;
+
+    if (!sock)
+        return false;
+
+    index = mme_ue_s1ap_id & ((1u << (32 - OGS_WORKER_ID_BITS)) - 1);
+
+    mme_ctx_lock();
+    enb_ue = ogs_pool_find(&enb_ue_pool, index);
+    if (!enb_ue || enb_ue->mme_ue_s1ap_id != mme_ue_s1ap_id) {
+        mme_ctx_unlock();
+        return false;
+    }
+
+    enb = ogs_pool_find_by_id(&mme_enb_pool, enb_ue->enb_id);
+    if (!enb || enb->sctp.sock != sock ||
+            !__atomic_load_n(&enb->state.s1_setup_success,
+                    __ATOMIC_ACQUIRE)) {
+        mme_ctx_unlock();
+        return false;
+    }
+
+    *out_enb_ue = enb_ue;
+    *out_enb = enb;
+    mme_ctx_unlock();
+    return true;
+}
+
+bool mme_resolve_enb_ue_mme_ue(mme_enb_t *enb,
+        const uint32_t *mme_ue_s1ap_id, const uint32_t *enb_ue_s1ap_id,
+        enb_ue_t **out_enb_ue, mme_ue_t **out_mme_ue)
+{
+    enb_ue_t *enb_ue = NULL;
+    mme_ue_t *mme_ue = NULL;
+
+    ogs_assert(enb);
+    ogs_assert(out_enb_ue);
+    ogs_assert(out_mme_ue);
+    *out_enb_ue = NULL;
+    *out_mme_ue = NULL;
+
+    mme_ctx_lock();
+
+    if (enb_ue_s1ap_id) {
+        if (enb->enb_ue_hash) {
+            enb_ue = (enb_ue_t *)ogs_hash_get(enb->enb_ue_hash,
+                    enb_ue_s1ap_id, sizeof(*enb_ue_s1ap_id));
+        } else {
+            enb_ue_t *iter = NULL;
+
+            ogs_list_for_each(&enb->enb_ue_list, iter) {
+                if (*enb_ue_s1ap_id == iter->enb_ue_s1ap_id) {
+                    enb_ue = iter;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!enb_ue && mme_ue_s1ap_id) {
+        uint32_t index = *mme_ue_s1ap_id &
+                ((1u << (32 - OGS_WORKER_ID_BITS)) - 1);
+
+        enb_ue = ogs_pool_find(&enb_ue_pool, index);
+        if (enb_ue && enb_ue->mme_ue_s1ap_id != *mme_ue_s1ap_id)
+            enb_ue = NULL;
+    }
+
+    if (!enb_ue) {
+        mme_ctx_unlock();
+        return false;
+    }
+
+    if (mme_ue_s1ap_id && *mme_ue_s1ap_id &&
+            enb_ue->mme_ue_s1ap_id != *mme_ue_s1ap_id) {
+        mme_ctx_unlock();
+        return false;
+    }
+
+    if (enb_ue_s1ap_id && *enb_ue_s1ap_id &&
+            enb_ue->enb_ue_s1ap_id != *enb_ue_s1ap_id) {
+        mme_ctx_unlock();
+        return false;
+    }
+
+    if (enb_ue->mme_ue_id >= OGS_MIN_POOL_ID &&
+            enb_ue->mme_ue_id <= OGS_MAX_POOL_ID)
+        mme_ue = ogs_pool_find_by_id(&mme_ue_pool, enb_ue->mme_ue_id);
+
+    *out_enb_ue = enb_ue;
+    *out_mme_ue = mme_ue;
+    mme_ctx_unlock();
+    return true;
+}
+
 enb_ue_t *enb_ue_find_by_id(ogs_pool_id_t id)
 {
     enb_ue_t *enb_ue = NULL;
