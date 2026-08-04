@@ -114,11 +114,23 @@ ogs_pkbuf_t *ogs_pfcp_recvfrom(ogs_socket_t fd, ogs_sockaddr_t *from)
        excluding the first 4 bytes. */
     pfcp_body_length = be16toh(h->length);
     expected_total_length = pfcp_body_length + 4;
-    if ((size_t)size != expected_total_length) {
-        ogs_error("Invalid PFCP Header Length: expected %zu bytes, "
+    if ((size_t)size < expected_total_length) {
+        ogs_error("Truncated PFCP message: header says %zu bytes, "
             "received %ld bytes", expected_total_length, (long)size);
         ogs_pkbuf_free(pkbuf);
         return NULL;
+    }
+    if ((size_t)size > expected_total_length) {
+        /* Trailing bytes after the declared message length: some UPFs
+         * (e.g. VPP) pad heartbeat datagrams. Dropping the whole packet
+         * here silently killed every UP-initiated heartbeat, so the UPF
+         * declared the CP dead and released the association and all
+         * sessions (live incident 2026-08). Trim and process instead. */
+        ogs_warn("PFCP message with %ld trailing byte(s): header says "
+            "%zu bytes, received %ld bytes; trimming",
+            (long)((size_t)size - expected_total_length),
+            expected_total_length, (long)size);
+        ogs_pkbuf_trim(pkbuf, expected_total_length);
     }
 
     return pkbuf;
