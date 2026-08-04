@@ -169,8 +169,11 @@ static void tx_post_ready(
     {
         mme_enb_t *enb = mme_enb_find_by_id(enb_id);
         if (enb &&
-            __atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0)
-            __atomic_sub_fetch(&enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
+            __atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0) {
+            if (__atomic_sub_fetch(&enb->s1ap_tx_pending, 1,
+                        __ATOMIC_ACQ_REL) == 0)
+                enb->s1ap_tx_pending_since = 0;
+        }
     }
 }
 
@@ -179,19 +182,19 @@ static void tx_post_ready(
  * post the encoded PDU straight to the IO thread and flush the hold
  * list ourselves — main is out of the send path entirely.
  *
- * Everything happens under mme_ctx_lock, for two reasons:
+ * Locking:
  *
- *  1. SEND-before-DRAIN: mme_enb_remove() runs its whole teardown —
- *     including the IO DRAIN post — under this (recursive) lock. If we
- *     resolve the eNB under the lock and post the SEND before
- *     releasing it, the IO worker is guaranteed to see our SEND ahead
- *     of any DRAIN for the same socket, so it can never touch a
- *     destroyed sock. If the eNB is already gone, find_by_id is NULL
- *     and we just drop.
+ *  1. mme_ctx_lock for SEND-before-DRAIN: mme_enb_remove() runs its
+ *     whole teardown — including the IO DRAIN post — under this
+ *     (recursive) lock. Resolve the eNB and post SEND before releasing
+ *     it so the IO worker never touches a destroyed sock.
  *
- *  2. The pending decrement and the hold-list splice must be atomic
- *     w.r.t. shard workers parking pkbufs in s1ap_send_to_enb()
- *     (same contract the TX_READY handler documents).
+ *  2. s1ap_tx_hold_lock for pending decrement + hold splice: same
+ *     contract as s1ap_tx_ready_handle(). Parking in s1ap_send_to_enb()
+ *     uses only the per-eNB hold lock; doing the flush under mme_ctx_lock
+ *     alone raced the park (pending already 0, pkbuf still appended) and
+ *     left hold_since set with an empty list — false WEDGED in
+ *     /admin/queues and stuck sync downlink until the watchdog.
  *
  * Posting to the IO queue under the lock is cheap (calloc + trypush,
  * never blocking I/O).
@@ -200,6 +203,10 @@ static void tx_complete_direct(
         ogs_pool_id_t enb_id, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
 {
     mme_enb_t *enb = NULL;
+    ogs_list_t flush;
+    ogs_pkbuf_t *held = NULL, *next = NULL;
+
+    ogs_list_init(&flush);
 
     mme_ctx_lock();
 
@@ -211,8 +218,25 @@ static void tx_complete_direct(
         return;
     }
 
-    if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0)
-        __atomic_sub_fetch(&enb->s1ap_tx_pending, 1, __ATOMIC_ACQ_REL);
+    /* Lock order: mme_ctx_lock → s1ap_tx_hold_lock (same as remove). */
+    ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
+    if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0) {
+        if (__atomic_sub_fetch(&enb->s1ap_tx_pending, 1,
+                    __ATOMIC_ACQ_REL) == 0)
+            enb->s1ap_tx_pending_since = 0;
+    }
+
+    enb->s1ap_tx_last_ready = ogs_time_now();
+
+    if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) == 0) {
+        ogs_list_for_each_safe(&enb->s1ap_tx_hold, next, held) {
+            ogs_list_remove(&enb->s1ap_tx_hold, held);
+            ogs_list_add(&flush, held);
+        }
+        enb->s1ap_tx_hold_since = 0;
+        enb->s1ap_tx_pending_since = 0;
+    }
+    ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
 
     if (pkbuf) {
         if (enb->sctp.sock && enb->sctp.sock->fd != INVALID_SOCKET) {
@@ -225,17 +249,13 @@ static void tx_complete_direct(
         }
     }
 
-    if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) == 0) {
-        ogs_pkbuf_t *held = NULL, *next = NULL;
-
-        ogs_list_for_each_safe(&enb->s1ap_tx_hold, next, held) {
-            ogs_list_remove(&enb->s1ap_tx_hold, held);
-            if (enb->sctp.sock && enb->sctp.sock->fd != INVALID_SOCKET)
-                s1ap_io_post_send(enb->sctp.sock, held, enb->sctp.addr,
-                        enb->sctp.type != SOCK_STREAM);
-            else
-                ogs_pkbuf_free(held);
-        }
+    ogs_list_for_each_safe(&flush, next, held) {
+        ogs_list_remove(&flush, held);
+        if (enb->sctp.sock && enb->sctp.sock->fd != INVALID_SOCKET)
+            s1ap_io_post_send(enb->sctp.sock, held, enb->sctp.addr,
+                    enb->sctp.type != SOCK_STREAM);
+        else
+            ogs_pkbuf_free(held);
     }
 
     mme_ctx_unlock();
@@ -561,7 +581,7 @@ void s1ap_tx_hold_recover_stalled(mme_enb_t *enb)
                 last_ready ? (long long)ogs_time_to_sec(now - last_ready)
                            : 0LL);
     else
-        ogs_warn("s1ap-tx: cleared leaked pending on eNB-id[0x%x] "
+        ogs_error("s1ap-tx: cleared leaked pending on eNB-id[0x%x] "
                 "(pending_was=%d, pending_age=%llds)",
                 enb->enb_id, pending,
                 since ? (long long)ogs_time_to_sec(now - since) : 0LL);

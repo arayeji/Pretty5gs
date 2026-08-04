@@ -538,9 +538,10 @@ int mme_admin_pgw_host_cache(const ogs_metrics_query_t *q,
  *   ok       - queues shallow, lag below the NAS-defer threshold
  *   behind   - lag >= 1.5s or main queue > 75% full (overloaded but
  *              draining; timers already defer, overload control active)
- *   wedged   - an eNB's TX hold list has been non-empty > 15s (leaked
- *              s1ap_tx_pending: that eNB's downlink is parked; the
- *              watchdog will force-flush it on the next orphan sweep)
+ *   wedged   - an eNB's TX hold list has been non-empty > 15s, or
+ *              pending>0 with empty hold and pending_since > 15s
+ *              (leaked s1ap_tx_pending: that eNB's downlink is parked;
+ *              the watchdog will force-flush it on the next orphan sweep)
  */
 #define QSTAT_HOLD_WEDGE_USEC   ogs_time_from_sec(15)
 
@@ -639,7 +640,7 @@ size_t mme_dump_queue_status(char *buf, size_t buflen,
     ogs_list_for_each(&mme_self()->enb_list, enb) {
         int pending, held = 0;
         long long age_s = 0;
-        ogs_time_t since;
+        ogs_time_t since, pending_since;
         ogs_pkbuf_t *pk = NULL;
         bool wedged;
 
@@ -648,6 +649,7 @@ size_t mme_dump_queue_status(char *buf, size_t buflen,
         ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
         pending = __atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE);
         since = enb->s1ap_tx_hold_since;
+        pending_since = enb->s1ap_tx_pending_since;
         ogs_list_for_each(&enb->s1ap_tx_hold, pk)
             held++;
         ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
@@ -656,9 +658,18 @@ size_t mme_dump_queue_status(char *buf, size_t buflen,
             continue;
 
         enb_parked++;
-        if (since)
+        /* Prefer hold age; empty-hold pending leak uses pending_since. */
+        if (held && since)
             age_s = (long long)ogs_time_to_sec(now - since);
-        wedged = since && (now - since) >= QSTAT_HOLD_WEDGE_USEC;
+        else if (!held && pending > 0 && pending_since)
+            age_s = (long long)ogs_time_to_sec(now - pending_since);
+        else if (since)
+            age_s = (long long)ogs_time_to_sec(now - since);
+
+        wedged = (held && since &&
+                        (now - since) >= QSTAT_HOLD_WEDGE_USEC) ||
+                 (!held && pending > 0 && pending_since &&
+                        (now - pending_since) >= QSTAT_HOLD_WEDGE_USEC);
         if (wedged) {
             enb_wedged++;
             verdict = "wedged";
