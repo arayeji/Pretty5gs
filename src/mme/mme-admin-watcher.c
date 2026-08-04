@@ -75,29 +75,37 @@ void mme_admin_tac_add_apply(const char *mcc, const char *mnc, int tac)
 
     ogs_plmn_id_build(&plmn_id, atoi(mcc), atoi(mnc), (int)strlen(mnc));
 
+    mme_ctx_lock();
+
     entry = find_served_tai_by_plmn(&plmn_id);
     if (entry < 0) {
         if (mme->num_of_served_tai >= OGS_MAX_NUM_OF_SUPPORTED_TA) {
+            mme_ctx_unlock();
             ogs_error("admin-watcher: served_tai full, dropping "
                       "mcc=%s mnc=%s tac=%d", mcc, mnc, tac);
             return;
         }
         entry = mme->num_of_served_tai;
-        list2 = &mme->served_tai[entry].list2;
-        list2->type = OGS_TAI2_TYPE;
-    } else {
-        list2 = &mme->served_tai[entry].list2;
     }
 
-    if (tac_already_present(entry, &plmn_id, tac))
+    if (entry < mme->num_of_served_tai &&
+            tac_already_present(entry, &plmn_id, tac)) {
+        mme_ctx_unlock();
         return;
+    }
 
+    list2 = &mme->served_tai[entry].list2;
     if (list2->num >= OGS_MAX_NUM_OF_TAI) {
+        mme_ctx_unlock();
         ogs_error("admin-watcher: list2 full for mcc=%s mnc=%s, "
                   "dropping tac=%d", mcc, mnc, tac);
         return;
     }
 
+    /* Invalidate before mutating so served-TAI hot path cannot race. */
+    mme_served_tai_map_invalidate();
+
+    list2->type = OGS_TAI2_TYPE;
     list2->tai[list2->num].plmn_id = plmn_id;
     list2->tai[list2->num].tac = tac;
     list2->num++;
@@ -105,7 +113,7 @@ void mme_admin_tac_add_apply(const char *mcc, const char *mnc, int tac)
     if (entry == mme->num_of_served_tai)
         mme->num_of_served_tai++;
 
-    mme_served_tai_map_invalidate();
+    mme_ctx_unlock();
 
     ogs_info("admin-watcher: added TAC mcc=%s mnc=%s tac=%d",
              mcc, mnc, tac);

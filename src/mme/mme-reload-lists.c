@@ -343,6 +343,9 @@ static void reload_served_tai_clear_all(void)
     int i;
 
     mme_ctx_lock();
+    /* Invalidate before teardown so concurrent find cannot walk freed
+     * list0 under the served-TAI hot path. */
+    mme_served_tai_map_invalidate();
     for (i = 0; i < OGS_MAX_NUM_OF_SUPPORTED_TA; i++) {
         if (self->served_tai[i].list0) {
             ogs_free(self->served_tai[i].list0);
@@ -352,7 +355,6 @@ static void reload_served_tai_clear_all(void)
 
     memset(self->served_tai, 0, sizeof(self->served_tai));
     self->num_of_served_tai = 0;
-    mme_served_tai_map_invalidate();
     mme_ctx_unlock();
 }
 
@@ -378,6 +380,9 @@ static int reload_served_tai_add_one(
         return 0;
     }
 
+    /* Dirty before mutating so hot-path find cannot race list2 growth. */
+    mme_served_tai_map_invalidate();
+
     for (i = 0; i < self->num_of_served_tai; i++) {
         list2 = &self->served_tai[i].list2;
         if (list2->num >= OGS_MAX_NUM_OF_TAI)
@@ -387,9 +392,6 @@ static int reload_served_tai_add_one(
         list2->tai[list2->num].plmn_id = *plmn_id;
         list2->tai[list2->num].tac = tac;
         list2->num++;
-        /* the dedup lookup above rebuilds the map lazily, so every
-         * mutation must dirty it again */
-        mme_served_tai_map_invalidate();
         added = 1;
         goto out;
     }
@@ -408,7 +410,6 @@ static int reload_served_tai_add_one(
     list2->tai[0].tac = tac;
     list2->num = 1;
     self->num_of_served_tai++;
-    mme_served_tai_map_invalidate();
     added = 1;
 
 out:
@@ -1242,9 +1243,10 @@ static int reload_served_tai_replace(ogs_yaml_iter_t *mme_iter)
     memcpy(backup, self->served_tai, sizeof(self->served_tai));
     backup_num = self->num_of_served_tai;
 
+    /* Invalidate before clearing live table (served-TAI hot path). */
+    mme_served_tai_map_invalidate();
     memset(self->served_tai, 0, sizeof(self->served_tai));
     self->num_of_served_tai = 0;
-    mme_served_tai_map_invalidate();
 
     added = reload_served_tai_add_from_yaml(mme_iter);
 

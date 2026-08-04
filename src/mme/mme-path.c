@@ -185,16 +185,30 @@ static void orphan_sweep_timer_cb(void *data)
     }
 }
 
+#define MME_ORPHAN_UE_BATCH     20000
+
 int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
 {
     mme_ue_t *mme_ue = NULL, *next = NULL;
     ogs_time_t now = ogs_time_now();
     int remaining = 0, purged = 0;
+    ogs_pool_id_t *purge_ids = NULL;
+    int n_purge = 0;
+    int i;
 
-    /* Shard workers add/remove list nodes under the ctx lock; walking
-     * bare from main read freed nodes. Purging inside the lock is fine:
-     * with workers on we only post events, with workers off the lock is
-     * recursive. */
+    /*
+     * Classify under mme_ctx_lock (list walk is not race-free without
+     * it), but do not hold the lock across purge: with workers on,
+     * mme_ue_purge_on_owner only posts events, yet find_by_id / event
+     * alloc still contend; with workers off, purge drives the UE FSM
+     * and can take the recursive lock for a long time. Collect up to
+     * MME_ORPHAN_UE_BATCH pool IDs, unlock, then purge by id.
+     */
+    if (do_purge) {
+        purge_ids = ogs_malloc(sizeof(*purge_ids) * MME_ORPHAN_UE_BATCH);
+        ogs_assert(purge_ids);
+    }
+
     mme_ctx_lock();
     ogs_list_for_each_safe(&mme_self()->mme_ue_list, next, mme_ue) {
         enb_ue_t *enb_ue = NULL;
@@ -268,7 +282,7 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
 
         remaining++;
 
-        if (!do_purge)
+        if (!do_purge || !purge_ids || n_purge >= MME_ORPHAN_UE_BATCH)
             continue;
 
         /*
@@ -299,18 +313,34 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
         }
         /* No anchor at all: legacy stub, reclaim it. */
 
-        ogs_warn("orphan sweep: purge imsi=%s (no session, S1=%s)",
-                mme_ue->imsi_bcd[0] ? mme_ue->imsi_bcd : "-",
-                enb_ue ? "present" : "gone");
+        purge_ids[n_purge++] = mme_ue->id;
+    }
+    mme_ctx_unlock();
+
+    for (i = 0; i < n_purge; i++) {
+        mme_ue = mme_ue_find_by_id(purge_ids[i]);
+        if (!mme_ue)
+            continue;
+        if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
+            continue;
+        if (!ogs_list_empty(&mme_ue->sess_list))
+            continue;
+
+        ogs_warn("orphan sweep: purge imsi=%s (no session)",
+                mme_ue->imsi_bcd[0] ? mme_ue->imsi_bcd : "-");
         mme_ue_purge_on_owner(mme_ue);
         purged++;
     }
-    mme_ctx_unlock();
+
+    if (purge_ids)
+        ogs_free(purge_ids);
 
     if (out_purged)
         *out_purged = purged;
 
-    return remaining;
+    /* remaining counted all eligible orphans; subtract those we queued
+     * this pass so the caller sees leftovers (same idea as enb_ue batch). */
+    return remaining - purged;
 }
 
 int mme_orphan_enb_sweep(bool do_purge, ogs_time_t grace, int *out_purged)

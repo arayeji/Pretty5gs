@@ -89,6 +89,14 @@ static int num_pkbuf_tp = 0;
 /* sgw_list guard: GTP-C RX thread vs SIGHUP reload (see mme-context.h) */
 static ogs_thread_mutex_t sgw_list_mutex;
 
+/*
+ * Served-TAI hash guard — separate from mme_ctx_lock so the hot
+ * mme_find_served_tai() path (every Attach/TAU/uplink NAS) does not
+ * contend with UE pool / IMSI hash mutations on the ctx lock.
+ * Lock order when both are needed: mme_ctx_lock → served_tai_mutex.
+ */
+static ogs_thread_mutex_t served_tai_mutex;
+
 void mme_sgw_list_lock(void)
 {
     ogs_thread_mutex_lock(&sgw_list_mutex);
@@ -469,6 +477,7 @@ void mme_context_init(void)
 
     ogs_thread_mutex_init(&pkbuf_tp_mutex);
     ogs_thread_mutex_init(&sgw_list_mutex);
+    ogs_thread_mutex_init(&served_tai_mutex);
 
     /* Initial FreeDiameter Config */
     memset(&g_diam_conf, 0, sizeof(ogs_diam_config_t));
@@ -9790,11 +9799,11 @@ ogs_session_t *mme_default_session(mme_ue_t *mme_ue)
  * the hash hit and the range hit.
  *
  * Writers (config parse, SIGHUP reload, admin TAC hot-add) mutate
- * served_tai[] and rebuild this hash. With mme.workers, readers run on
- * UE-owner shards concurrently - a SIGHUP that memset/frees list0 while a
- * worker is in mme_find_served_tai() wedges the main thread (reload) and
- * then crashes the worker (UAF / double-free of the hash arena). All
- * find/rebuild/replace paths therefore take mme_ctx_lock() (recursive).
+ * served_tai[] under mme_ctx_lock and invalidate the hash via
+ * served_tai_mutex. Readers take only served_tai_mutex on the hot
+ * (clean) path so Attach/TAU does not serialize behind UE pool/hash
+ * work on mme_ctx_lock. Dirty rebuild briefly takes both
+ * (ctx → tai) to snapshot served_tai[] safely.
  */
 typedef struct served_tai_key_s {
     uint8_t     plmn_id[OGS_PLMN_ID_LEN];
@@ -9812,10 +9821,10 @@ static int served_tai_max_keys = 0;
 
 void mme_served_tai_map_invalidate(void)
 {
-    /* Callers that mutate served_tai[] must already hold mme_ctx_lock.
-     * Readers observe the dirty flag under the same lock in
-     * mme_find_served_tai(), so a plain store is enough. */
+    /* Safe with or without mme_ctx_lock held (reload holds ctx). */
+    ogs_thread_mutex_lock(&served_tai_mutex);
     served_tai_hash_dirty = true;
+    ogs_thread_mutex_unlock(&served_tai_mutex);
 }
 
 void mme_served_tai_map_final(void)
@@ -9823,19 +9832,21 @@ void mme_served_tai_map_final(void)
     ogs_hash_t *old_hash;
     served_tai_key_t *old_keys;
 
-    mme_ctx_lock();
+    ogs_thread_mutex_lock(&served_tai_mutex);
     old_hash = served_tai_hash;
     old_keys = served_tai_keys;
     served_tai_hash = NULL;
     served_tai_keys = NULL;
     served_tai_num_keys = served_tai_max_keys = 0;
     served_tai_hash_dirty = true;
-    mme_ctx_unlock();
+    ogs_thread_mutex_unlock(&served_tai_mutex);
 
     if (old_hash)
         ogs_hash_destroy(old_hash);
     if (old_keys)
         ogs_free(old_keys);
+
+    ogs_thread_mutex_destroy(&served_tai_mutex);
 }
 
 static void served_tai_key_build(
@@ -9872,9 +9883,9 @@ static void served_tai_hash_rebuild(void)
     served_tai_key_t *old_keys;
 
     /*
-     * Take-and-null before free so a racing rebuild (should not happen
-     * under mme_ctx_lock, but did under SIGHUP before the lock) cannot
-     * double-destroy the same hash and trip talloc bad-magic abort.
+     * Caller holds served_tai_mutex; dirty rebuild also holds
+     * mme_ctx_lock. Take-and-null before free so a racing rebuild
+     * cannot double-destroy the same hash and trip talloc bad-magic.
      */
     old_hash = served_tai_hash;
     old_keys = served_tai_keys;
@@ -9939,28 +9950,11 @@ static void served_tai_hash_rebuild(void)
     served_tai_hash_dirty = false;
 }
 
-int mme_find_served_tai(ogs_eps_tai_t *tai)
+/* list1 range scan; caller holds served_tai_mutex (and ctx when dirty). */
+static int served_tai_list1_best(ogs_eps_tai_t *tai, int best)
 {
-    int i = 0, j = 0;
-    int best = -1;
-    served_tai_key_t key;
-    uintptr_t hit;
+    int i, j;
 
-    ogs_assert(tai);
-
-    mme_ctx_lock();
-
-    if (served_tai_hash_dirty || !served_tai_hash)
-        served_tai_hash_rebuild();
-
-    served_tai_key_build(&key, &tai->plmn_id, tai->tac);
-    hit = (uintptr_t)ogs_hash_get(served_tai_hash, &key, sizeof(key));
-    if (hit)
-        best = (int)hit - 1;
-
-    /* TAC ranges (list1) are not enumerated into the hash; entries are
-     * few, so scan them and keep whichever match has the lowest entry
-     * index (original scan order semantics). */
     for (i = 0; i < self.num_of_served_tai; i++) {
         ogs_eps_tai1_list_t *list1 = &self.served_tai[i].list1;
 
@@ -9984,7 +9978,55 @@ int mme_find_served_tai(ogs_eps_tai_t *tai)
         }
     }
 
-    mme_ctx_unlock();
+    return best;
+}
+
+int mme_find_served_tai(ogs_eps_tai_t *tai)
+{
+    int best = -1;
+    served_tai_key_t key;
+    uintptr_t hit;
+
+    ogs_assert(tai);
+
+    ogs_thread_mutex_lock(&served_tai_mutex);
+
+    if (served_tai_hash_dirty || !served_tai_hash) {
+        /*
+         * Rebuild needs a stable snapshot of served_tai[]. Drop the TAI
+         * mutex, take mme_ctx_lock (writers hold that while mutating
+         * lists), then re-take TAI under lock order ctx → tai.
+         * mme_ctx_lock is recursive so callers that already hold ctx
+         * (reload add-one) are fine.
+         */
+        ogs_thread_mutex_unlock(&served_tai_mutex);
+        mme_ctx_lock();
+        ogs_thread_mutex_lock(&served_tai_mutex);
+
+        if (served_tai_hash_dirty || !served_tai_hash)
+            served_tai_hash_rebuild();
+
+        served_tai_key_build(&key, &tai->plmn_id, tai->tac);
+        hit = (uintptr_t)ogs_hash_get(served_tai_hash, &key, sizeof(key));
+        if (hit)
+            best = (int)hit - 1;
+        best = served_tai_list1_best(tai, best);
+
+        ogs_thread_mutex_unlock(&served_tai_mutex);
+        mme_ctx_unlock();
+        return best;
+    }
+
+    /* Hot path: hash clean — only served_tai_mutex (no ctx lock).
+     * Writers must invalidate (take this mutex) before mutating
+     * served_tai[], so a clean-hash reader cannot race list teardown. */
+    served_tai_key_build(&key, &tai->plmn_id, tai->tac);
+    hit = (uintptr_t)ogs_hash_get(served_tai_hash, &key, sizeof(key));
+    if (hit)
+        best = (int)hit - 1;
+    best = served_tai_list1_best(tai, best);
+
+    ogs_thread_mutex_unlock(&served_tai_mutex);
     return best;
 }
 

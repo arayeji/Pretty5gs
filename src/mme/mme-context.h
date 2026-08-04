@@ -2158,8 +2158,9 @@ ogs_session_t *mme_default_session(mme_ue_t *mme_ue);
 int mme_find_served_tai(ogs_eps_tai_t *tai);
 
 /* Served-TAI lookup index: writers (config parse, SIGHUP reload, admin
- * TAC hot-add) must invalidate; rebuild is lazy on next lookup (main
- * thread only). */
+ * TAC hot-add) must call invalidate *before* mutating served_tai[] so
+ * hot-path find (served_tai_mutex only) cannot race teardown. Rebuild
+ * is lazy on the next lookup. */
 void mme_served_tai_map_invalidate(void);
 void mme_served_tai_map_final(void);
 
