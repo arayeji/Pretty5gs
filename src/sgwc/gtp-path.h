@@ -31,6 +31,7 @@ void sgwc_gtp_close(void);
 
 /* Dedicated GTP-C/Gn RX thread (sgwc.gtpc_rx_thread, default off). */
 int sgwc_gtpc_rx_start(void);
+void sgwc_gtpc_rx_stop(void);
 bool sgwc_gtpc_rx_active(void);
 uint64_t sgwc_gtpc_rx_drops(void);
 

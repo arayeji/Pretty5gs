@@ -175,6 +175,14 @@ void sgwc_terminate(void)
     ogs_thread_destroy(thread);
     thread = NULL;
 
+    /*
+     * Stop RX helpers before shard/context teardown (MME order). While
+     * alive they still recv/classify and can post into dying worker
+     * queues or create PFCP peers under context_final.
+     */
+    sgwc_gtpc_rx_stop();
+    sgwc_pfcp_rx_stop();
+
     sgwc_workers_stop();
 
     ogs_metrics_context_close(ogs_metrics_self());

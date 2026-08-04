@@ -48,6 +48,9 @@ static void pfcp_node_fsm_init(ogs_pfcp_node_t *node, bool try_to_associate)
 
     ogs_assert(node);
 
+    /* FSM + heartbeat timer belong on main (ogs_app()->timer_mgr). */
+    ogs_assert(!ogs_worker_self());
+
     memset(&e, 0, sizeof(e));
     e.pfcp_node = node;
 
@@ -58,6 +61,17 @@ static void pfcp_node_fsm_init(ogs_pfcp_node_t *node, bool try_to_associate)
     }
 
     ogs_fsm_init(&node->sm, sgwc_pfcp_state_initial, sgwc_pfcp_state_final, &e);
+}
+
+void sgwc_pfcp_node_ensure_fsm(ogs_pfcp_node_t *node)
+{
+    ogs_assert(node);
+    ogs_assert(!ogs_worker_self());
+
+    if (OGS_FSM_STATE(&node->sm))
+        return;
+
+    pfcp_node_fsm_init(node, false);
 }
 
 static void pfcp_node_fsm_fini(ogs_pfcp_node_t *node)
@@ -165,7 +179,13 @@ static int sgwc_pfcp_recv_one(ogs_socket_t fd)
             ogs_debug("Added PFCP-Node: addr_list %s",
                     ogs_sockaddr_to_string_static(node->addr_list));
 
-            pfcp_node_fsm_init(node, false);
+            /*
+             * RX helper must not run FSM init (creates main timer_mgr
+             * heartbeat + state entry). Main calls
+             * sgwc_pfcp_node_ensure_fsm() before dispatch.
+             */
+            if (!ogs_worker_self())
+                pfcp_node_fsm_init(node, false);
 
         } else {
             ogs_error("Cannot find PFCP-Node: type [%d] node_id %s from %s",
@@ -176,13 +196,16 @@ static int sgwc_pfcp_recv_one(ogs_socket_t fd)
                     ogs_sockaddr_to_string_static(&from));
             goto cleanup;
         }
-    } else {
+        } else {
         ogs_debug("Found PFCP-Node: addr_list %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
+        /* merge mutates addr_list; serialize with peer lock vs main/reload */
+        ogs_pfcp_peer_lock();
         ogs_expect(OGS_OK == ogs_pfcp_node_merge(
                     node,
                     pfcp_status == OGS_PFCP_STATUS_SUCCESS ?  &node_id : NULL,
                     &from));
+        ogs_pfcp_peer_unlock();
         ogs_debug("Merged PFCP-Node: addr_list %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
     }
@@ -391,6 +414,15 @@ int sgwc_pfcp_rx_start(void)
     return OGS_OK;
 }
 
+void sgwc_pfcp_rx_stop(void)
+{
+    if (!pfcp_rx_worker)
+        return;
+
+    ogs_worker_destroy(pfcp_rx_worker);
+    pfcp_rx_worker = NULL;
+}
+
 bool sgwc_pfcp_rx_active(void)
 {
     return pfcp_rx_worker != NULL;
@@ -400,10 +432,8 @@ void sgwc_pfcp_close(void)
 {
     ogs_pfcp_node_t *pfcp_node = NULL;
 
-    if (pfcp_rx_worker) {
-        ogs_worker_destroy(pfcp_rx_worker);
-        pfcp_rx_worker = NULL;
-    }
+    /* Idempotent: terminate() may have stopped the RX helper already. */
+    sgwc_pfcp_rx_stop();
 
     ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, pfcp_node)
         pfcp_node_fsm_fini(pfcp_node);

@@ -31,8 +31,12 @@ void sgwc_pfcp_close(void);
 
 /* Dedicated PFCP RX thread (sgwc.pfcp_rx_thread, default off). */
 int sgwc_pfcp_rx_start(void);
+void sgwc_pfcp_rx_stop(void);
 bool sgwc_pfcp_rx_active(void);
 uint64_t sgwc_pfcp_rx_drops(void);
+
+/* Main-thread only: init PFCP node FSM if RX created the peer. */
+void sgwc_pfcp_node_ensure_fsm(ogs_pfcp_node_t *node);
 
 int sgwc_pfcp_send_bearer_to_modify_list(
         sgwc_sess_t *sess, ogs_pfcp_xact_t *xact);

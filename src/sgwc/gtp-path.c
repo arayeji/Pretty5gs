@@ -753,6 +753,15 @@ int sgwc_gtpc_rx_start(void)
     return OGS_OK;
 }
 
+void sgwc_gtpc_rx_stop(void)
+{
+    if (!gtpc_rx_worker)
+        return;
+
+    ogs_worker_destroy(gtpc_rx_worker);
+    gtpc_rx_worker = NULL;
+}
+
 bool sgwc_gtpc_rx_active(void)
 {
     return gtpc_rx_worker != NULL;
@@ -1295,11 +1304,8 @@ int sgwc_gtp_send_delete_bearer_request_to_mme(
 
 void sgwc_gtp_close(void)
 {
-    /* Stop RX thread before closing sockets it polls (fini detaches). */
-    if (gtpc_rx_worker) {
-        ogs_worker_destroy(gtpc_rx_worker);
-        gtpc_rx_worker = NULL;
-    }
+    /* Idempotent: terminate() may have stopped the RX helper already. */
+    sgwc_gtpc_rx_stop();
 
     if (sgwc_self()->roam_gtpc_poll) {
         ogs_pollset_remove(sgwc_self()->roam_gtpc_poll);
