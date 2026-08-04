@@ -115,11 +115,6 @@ size_t mme_dump_ue_info(char *buf, size_t buflen,
     return mme_dump_ue_info_paged(buf, buflen, page, page_size, q);
 }
 
-static inline const char *cm_state_str(const mme_ue_t *ue)
-{
-    return (ue && ECM_CONNECTED(ue)) ? "connected" : "idle";
-}
-
 static bool ogs_ip_to_string(const ogs_ip_t *ip, char *buf, size_t buflen)
 {
     char ipbuf[OGS_ADDRSTRLEN];
@@ -141,320 +136,345 @@ static bool ogs_ip_to_string(const ogs_ip_t *ip, char *buf, size_t buflen)
     return false;
 }
 
-static cJSON *build_sgw(const mme_ue_t *ue)
+/*
+ * Value snapshot of one UE, filled under mme_ctx_lock(). The cJSON
+ * build (mallocs + snprintf per field) runs after unlock, so a poll
+ * of /ue-info no longer stalls main and the shard workers for the
+ * whole JSON build. No pointers into live context survive the unlock.
+ */
+#define UE_INFO_SNAP_MAX 4096   /* hard bound per response (~2 KB each) */
+#define UE_INFO_MAX_PDN  8      /* captured PDNs; pdn_count stays exact */
+
+typedef struct ue_pdn_snap_s {
+    char        apn[OGS_MAX_APN_LEN + 1];
+    int         qci;            /* 0 = absent */
+    unsigned    ebi_root;
+    unsigned    bearer_count;
+    int         num_ebis;
+    uint8_t     ebis[OGS_MAX_NUM_OF_BEARER];
+    bool        has_pgw;        /* emit the pgw object at all */
+    bool        has_pgw_addr;
+    char        pgw_addr[OGS_ADDRSTRLEN];
+    uint32_t    pgw_s5c_teid;
+    bool        has_pgw_cfg;
+    char        pgw_cfg[OGS_ADDRSTRLEN];
+} ue_pdn_snap_t;
+
+typedef struct ue_snap_s {
+    char        supi[OGS_MAX_IMSI_BCD_LEN + 2];
+    bool        connected;
+    uint16_t    enb_ostream_id;
+    bool        has_ran;
+    uint32_t    mme_ue_s1ap_id;
+    uint32_t    enb_ue_s1ap_id;
+    bool        has_enb_id;
+    uint32_t    enb_id;
+    uint32_t    cell_id;        /* 0 = absent */
+    ogs_plmn_id_t tai_plmn;
+    uint16_t    tac;
+    uint64_t    loc_ts;
+    uint64_t    ambr_dl;
+    uint64_t    ambr_ul;
+    bool        has_sgw;
+    char        sgw_addr[OGS_ADDRSTRLEN];
+    int         sgw_port;
+    uint32_t    s11_teid;       /* 0 = absent */
+    int         num_pdn;        /* captured (<= UE_INFO_MAX_PDN) */
+    size_t      pdn_count;      /* actual sessions on the UE */
+    ue_pdn_snap_t pdn[UE_INFO_MAX_PDN];
+} ue_snap_t;
+
+/* Runs under mme_ctx_lock(); copies values only, no allocation. */
+static void ue_snapshot_fill(ue_snap_t *s, const mme_ue_t *ue)
 {
-    sgw_ue_t *sgw_ue = NULL;
-    mme_sgw_t *sgw = NULL;
-    cJSON *o = NULL;
-    char addr[OGS_ADDRSTRLEN];
+    memset(s, 0, sizeof(*s));
 
-    if (!ue)
-        return NULL;
+    ogs_cpystrn(s->supi, ue->imsi_bcd, sizeof(s->supi));
+    s->connected = ECM_CONNECTED(ue) ? true : false;
+    s->enb_ostream_id = ue->enb_ostream_id;
 
-    sgw_ue = sgw_ue_find_by_id(ue->sgw_ue_id);
-    if (!sgw_ue || !sgw_ue->sgw)
-        return NULL;
-
-    sgw = sgw_ue->sgw;
-    if (!sgw->gnode.sa_list)
-        return NULL;
-
-    o = cJSON_CreateObject();
-    if (!o)
-        return NULL;
-
-    OGS_ADDR(sgw->gnode.sa_list, addr);
-    if (!cJSON_AddStringToObject(o, "address", addr))
-        goto fail;
-
-    if (!cJSON_AddNumberToObject(o, "port",
-                (double)OGS_PORT(sgw->gnode.sa_list)))
-        goto fail;
-
-    if (sgw_ue->sgw_s11_teid) {
-        if (!cJSON_AddNumberToObject(o, "s11_teid",
-                    (double)sgw_ue->sgw_s11_teid))
-            goto fail;
-    }
-
-    return o;
-
-fail:
-    cJSON_Delete(o);
-    return NULL;
-}
-
-static cJSON *build_pgw(const mme_sess_t *sess)
-{
-    cJSON *o = NULL;
-    char runtime_addr[OGS_ADDRSTRLEN];
-    char config_addr[OGS_ADDRSTRLEN];
-    mme_pgw_t *pgw = NULL;
-    bool has_runtime = false;
-    bool has_config = false;
-
-    if (!sess)
-        return NULL;
-
-    if (sess->pgw_s5c_ip.ipv4 || sess->pgw_s5c_ip.ipv6)
-        has_runtime = ogs_ip_to_string(
-                &sess->pgw_s5c_ip, runtime_addr, sizeof(runtime_addr));
-
-    pgw = mme_pgw_find_for_sess(&mme_self()->pgw_list, sess);
-    if (pgw && pgw->sa_list) {
-        OGS_ADDR(pgw->sa_list, config_addr);
-        has_config = true;
-    }
-
-    if (!has_runtime && !has_config && !sess->pgw_s5c_teid)
-        return NULL;
-
-    o = cJSON_CreateObject();
-    if (!o)
-        return NULL;
-
-    if (has_runtime) {
-        if (!cJSON_AddStringToObject(o, "address", runtime_addr))
-            goto fail;
-    }
-
-    if (sess->pgw_s5c_teid) {
-        if (!cJSON_AddNumberToObject(o, "s5c_teid",
-                    (double)sess->pgw_s5c_teid))
-            goto fail;
-    }
-
-    if (has_config) {
-        if (!cJSON_AddStringToObject(o, "config_selected", config_addr))
-            goto fail;
-    }
-
-    return o;
-
-fail:
-    cJSON_Delete(o);
-    return NULL;
-}
-
-static cJSON *build_enb(const mme_ue_t *ue)
-{
-    cJSON *enb = cJSON_CreateObject();
-    if (!enb) return NULL;
-
-    /* ostream_id */
-    if (!cJSON_AddNumberToObject(enb, "ostream_id", (double)ue->enb_ostream_id))
-        goto end;
-
-    /* S1AP IDs */
     enb_ue_t *ran = enb_ue_find_by_id(ue->enb_ue_id);
     if (ran) {
-        if (!cJSON_AddNumberToObject(enb, "mme_ue_ngap_id", (double)ran->mme_ue_s1ap_id))
-            goto end;
-        if (!cJSON_AddNumberToObject(enb, "ran_ue_ngap_id", (double)ran->enb_ue_s1ap_id))
-            goto end;
+        s->has_ran = true;
+        s->mme_ue_s1ap_id = ran->mme_ue_s1ap_id;
+        s->enb_ue_s1ap_id = ran->enb_ue_s1ap_id;
 
         mme_enb_t *enb_obj = mme_enb_find_by_id(ran->enb_id);
         if (enb_obj && enb_obj->enb_id_presence) {
-            if (!cJSON_AddNumberToObject(enb, "enb_id", (double)enb_obj->enb_id))
-                goto end;
+            s->has_enb_id = true;
+            s->enb_id = enb_obj->enb_id;
         }
 
-        /* cell_id: prefer last reported via E-UTRAN_CGI from RAN; else fallback to UE’s e_cgi */
-        uint32_t cell_id = 0;
-        if (ran->saved.e_cgi.cell_id) cell_id = ran->saved.e_cgi.cell_id;
-        else if (ue->e_cgi.cell_id)   cell_id = ue->e_cgi.cell_id;
+        /* prefer last reported E-UTRAN_CGI from RAN; else UE's e_cgi */
+        if (ran->saved.e_cgi.cell_id)
+            s->cell_id = ran->saved.e_cgi.cell_id;
+        else if (ue->e_cgi.cell_id)
+            s->cell_id = ue->e_cgi.cell_id;
+    }
 
-        if (cell_id) {
-            if (!cJSON_AddNumberToObject(enb, "cell_id", (double)cell_id))
-                goto end;
+    s->tai_plmn = ue->tai.plmn_id;
+    s->tac = ue->tai.tac;
+    s->loc_ts = (uint64_t)ue->ue_location_timestamp;
+    s->ambr_dl = ue->ambr.downlink;
+    s->ambr_ul = ue->ambr.uplink;
+
+    /* selected SGW (S11) */
+    {
+        sgw_ue_t *sgw_ue = sgw_ue_find_by_id(ue->sgw_ue_id);
+        if (sgw_ue && sgw_ue->sgw && sgw_ue->sgw->gnode.sa_list) {
+            OGS_ADDR(sgw_ue->sgw->gnode.sa_list, s->sgw_addr);
+            s->sgw_port = (int)OGS_PORT(sgw_ue->sgw->gnode.sa_list);
+            s->s11_teid = sgw_ue->sgw_s11_teid;
+            s->has_sgw = true;
         }
     }
 
-    return enb;
+    /* PDNs */
+    {
+        mme_sess_t *sess = NULL;
+        ogs_list_for_each(&((mme_ue_t *)ue)->sess_list, sess) {
+            s->pdn_count++;
+            if (s->num_pdn >= UE_INFO_MAX_PDN)
+                continue;       /* keep the count exact, stop capturing */
 
-end:
-    cJSON_Delete(enb);
-    return NULL;
-}
+            ue_pdn_snap_t *p = &s->pdn[s->num_pdn];
 
-static cJSON *build_location(const mme_ue_t *ue)
-{
-    cJSON *loc = cJSON_CreateObject();
-    if (!loc) return NULL;
+            if (sess->session && sess->session->name &&
+                    sess->session->name[0])
+                ogs_cpystrn(p->apn, sess->session->name, sizeof(p->apn));
 
-    cJSON *tai = cJSON_CreateObject();
-    if (!tai) goto end;
+            mme_bearer_t *b = NULL;
+            ogs_list_for_each(&sess->bearer_list, b) {
+                if (!b || b->ebi == 0) continue;
+                p->bearer_count++;
+                if (p->ebi_root == 0 || (unsigned)b->ebi < p->ebi_root)
+                    p->ebi_root = (unsigned)b->ebi;
+                if (p->num_ebis < (int)OGS_ARRAY_SIZE(p->ebis))
+                    p->ebis[p->num_ebis++] = b->ebi;
+            }
 
-    /* TAI: PLMN + TAC (hex and numeric) */
-    char plmn_str[OGS_PLMNIDSTRLEN] = {0};
-    ogs_plmn_id_to_string(&ue->tai.plmn_id, plmn_str);
-    if (!cJSON_AddStringToObject(tai, "plmn", plmn_str)) { cJSON_Delete(tai); goto end; }
+            if (sess->session && sess->session->qos.index > 0)
+                p->qci = sess->session->qos.index;
 
-    char tac_hex[8];
-    (void)snprintf(tac_hex, sizeof tac_hex, "%04x", (unsigned)ue->tai.tac);
-    if (!cJSON_AddStringToObject(tai, "tac_hex", tac_hex)) { cJSON_Delete(tai); goto end; }
-    if (!cJSON_AddNumberToObject(tai, "tac", (double)ue->tai.tac)) { cJSON_Delete(tai); goto end; }
+            /* PGW: runtime + configured address */
+            {
+                bool has_runtime = false, has_config = false;
+                mme_pgw_t *pgw = NULL;
 
-    cJSON_AddItemToObjectCS(loc, "tai", tai);
+                if (sess->pgw_s5c_ip.ipv4 || sess->pgw_s5c_ip.ipv6)
+                    has_runtime = ogs_ip_to_string(&sess->pgw_s5c_ip,
+                            p->pgw_addr, sizeof(p->pgw_addr));
 
-    /* Last location update timestamp (epoch microseconds, ogs_time_t).
-     * A value of 0 means the location has not yet been updated (i.e.
-     * the UE has not completed Initial Attach / TAU / Handover /
-     * Service Request response since the context was created).
-     * Updated on Initial Attach, TAU, Handover and Service Request responses;
-     * bounded by Periodic TAU (T3412). Keep the field name aligned with
-     * AMF /ue-info, which exposes this value as location.timestamp. */
-    if (!cJSON_AddNumberToObject(loc, "timestamp",
-                (double)ue->ue_location_timestamp)) goto end;
+                pgw = mme_pgw_find_for_sess(&mme_self()->pgw_list, sess);
+                if (pgw && pgw->sa_list) {
+                    OGS_ADDR(pgw->sa_list, p->pgw_cfg);
+                    has_config = true;
+                }
 
-    return loc;
+                p->has_pgw_addr = has_runtime;
+                p->has_pgw_cfg = has_config;
+                p->pgw_s5c_teid = sess->pgw_s5c_teid;
+                p->has_pgw = has_runtime || has_config ||
+                    sess->pgw_s5c_teid != 0;
+            }
 
-end:
-    cJSON_Delete(loc);
-    return NULL;
-}
-
-static cJSON *build_ambr(const mme_ue_t *ue)
-{
-    cJSON *ambr = cJSON_CreateObject();
-    if (!ambr) return NULL;
-
-    if (!cJSON_AddNumberToObject(ambr, "downlink", (double)ue->ambr.downlink)) goto end;
-    if (!cJSON_AddNumberToObject(ambr, "uplink",   (double)ue->ambr.uplink))   goto end;
-
-    return ambr;
-
-end:
-    cJSON_Delete(ambr);
-    return NULL;
-}
-
-static cJSON *build_pdn_array(const mme_ue_t *ue)
-{
-    cJSON *arr = cJSON_CreateArray();
-    if (!arr) return NULL;
-
-    mme_sess_t *sess = NULL;
-
-    ogs_list_for_each(&(ue->sess_list), sess) {
-        cJSON *it = cJSON_CreateObject();
-        if (!it) goto oom_all;
-
-        /* APN */
-        const char *apn = (sess->session && sess->session->name && sess->session->name[0])
-                            ? (const char*)sess->session->name : "";
-        if (apn[0]) {
-            if (!cJSON_AddStringToObject(it, "apn", apn)) { cJSON_Delete(it); goto oom_all; }
+            s->num_pdn++;
         }
-
-        /* QoS flows: list EBIs; QCI at session-level if present */
-        unsigned ebi_root = 0;
-        unsigned bearer_count = 0;
-
-        cJSON *qarr = cJSON_CreateArray();
-        if (!qarr) { cJSON_Delete(it); goto oom_all; }
-
-        mme_bearer_t *b = NULL;
-        ogs_list_for_each(&((mme_sess_t *)sess)->bearer_list, b) {
-            if (!b || b->ebi == 0) continue;
-
-            bearer_count++;
-            if (ebi_root == 0 || b->ebi < ebi_root)
-                ebi_root = (unsigned)b->ebi;
-
-            cJSON *q = cJSON_CreateObject();
-            if (!q) { cJSON_Delete(qarr); cJSON_Delete(it); goto oom_all; }
-            if (!cJSON_AddNumberToObject(q, "ebi", (double)b->ebi)) { cJSON_Delete(q); cJSON_Delete(qarr); cJSON_Delete(it); goto oom_all; }
-
-            cJSON_AddItemToArray(qarr, q);
-        }
-
-        cJSON_AddItemToObjectCS(it, "qos_flows", qarr);
-
-        /* Session-level QCI (if known) */
-        if (sess->session && sess->session->qos.index > 0) {
-            if (!cJSON_AddNumberToObject(it, "qci", (double)sess->session->qos.index)) { cJSON_Delete(it); goto oom_all; }
-        }
-
-        if (ebi_root) {
-            if (!cJSON_AddNumberToObject(it, "ebi", (double)ebi_root)) { cJSON_Delete(it); goto oom_all; }
-        }
-        if (!cJSON_AddNumberToObject(it, "bearer_count", (double)bearer_count)) { cJSON_Delete(it); goto oom_all; }
-
-        const char *state = bearer_count ? "active" : "unknown";
-        if (!cJSON_AddStringToObject(it, "pdu_state", state)) { cJSON_Delete(it); goto oom_all; }
-
-        {
-            cJSON *pgw = build_pgw(sess);
-            if (pgw)
-                cJSON_AddItemToObjectCS(it, "pgw", pgw);
-        }
-
-        cJSON_AddItemToArray(arr, it);
     }
-
-    return arr;
-
-oom_all:
-    cJSON_Delete(arr);
-    return NULL;
 }
 
-static cJSON *ue_to_json(const mme_ue_t *ue)
+/* Runs WITHOUT the context lock: pure value -> cJSON conversion. */
+static cJSON *ue_snap_to_json(const ue_snap_t *s)
 {
     cJSON *o = cJSON_CreateObject();
     if (!o) return NULL;
 
     /* identity */
-    if (ue->imsi_bcd[0]) {
-        if (!cJSON_AddStringToObject(o, "supi", ue->imsi_bcd)) goto end;
+    if (s->supi[0]) {
+        if (!cJSON_AddStringToObject(o, "supi", s->supi)) goto end;
     }
     if (!cJSON_AddStringToObject(o, "domain", "EPS")) goto end;
     if (!cJSON_AddStringToObject(o, "rat", "E-UTRA")) goto end;
-    if (!cJSON_AddStringToObject(o, "cm_state", cm_state_str(ue))) goto end;
+    if (!cJSON_AddStringToObject(o, "cm_state",
+                s->connected ? "connected" : "idle")) goto end;
 
     /* enb */
     {
-        cJSON *enb = build_enb(ue);
+        cJSON *enb = cJSON_CreateObject();
         if (!enb) goto end;
+
+        if (!cJSON_AddNumberToObject(enb, "ostream_id",
+                    (double)s->enb_ostream_id)) {
+            cJSON_Delete(enb); goto end;
+        }
+        if (s->has_ran) {
+            if (!cJSON_AddNumberToObject(enb, "mme_ue_ngap_id",
+                        (double)s->mme_ue_s1ap_id) ||
+                !cJSON_AddNumberToObject(enb, "ran_ue_ngap_id",
+                        (double)s->enb_ue_s1ap_id)) {
+                cJSON_Delete(enb); goto end;
+            }
+            if (s->has_enb_id &&
+                !cJSON_AddNumberToObject(enb, "enb_id",
+                        (double)s->enb_id)) {
+                cJSON_Delete(enb); goto end;
+            }
+            if (s->cell_id &&
+                !cJSON_AddNumberToObject(enb, "cell_id",
+                        (double)s->cell_id)) {
+                cJSON_Delete(enb); goto end;
+            }
+        }
+
         cJSON_AddItemToObjectCS(o, "enb", enb);
     }
 
     /* location */
     {
-        cJSON *loc = build_location(ue);
+        cJSON *loc = cJSON_CreateObject();
         if (!loc) goto end;
+
+        cJSON *tai = cJSON_CreateObject();
+        if (!tai) { cJSON_Delete(loc); goto end; }
+
+        char plmn_str[OGS_PLMNIDSTRLEN] = {0};
+        ogs_plmn_id_to_string(&s->tai_plmn, plmn_str);
+
+        char tac_hex[8];
+        (void)snprintf(tac_hex, sizeof tac_hex, "%04x", (unsigned)s->tac);
+
+        if (!cJSON_AddStringToObject(tai, "plmn", plmn_str) ||
+            !cJSON_AddStringToObject(tai, "tac_hex", tac_hex) ||
+            !cJSON_AddNumberToObject(tai, "tac", (double)s->tac)) {
+            cJSON_Delete(tai); cJSON_Delete(loc); goto end;
+        }
+
+        cJSON_AddItemToObjectCS(loc, "tai", tai);
+
+        /* Last location update timestamp (epoch microseconds); 0 means
+         * not yet updated. Field name aligned with AMF /ue-info. */
+        if (!cJSON_AddNumberToObject(loc, "timestamp",
+                    (double)s->loc_ts)) {
+            cJSON_Delete(loc); goto end;
+        }
+
         cJSON_AddItemToObjectCS(o, "location", loc);
     }
 
     /* ambr */
     {
-        cJSON *ambr = build_ambr(ue);
+        cJSON *ambr = cJSON_CreateObject();
         if (!ambr) goto end;
+        if (!cJSON_AddNumberToObject(ambr, "downlink",
+                    (double)s->ambr_dl) ||
+            !cJSON_AddNumberToObject(ambr, "uplink",
+                    (double)s->ambr_ul)) {
+            cJSON_Delete(ambr); goto end;
+        }
         cJSON_AddItemToObjectCS(o, "ambr", ambr);
     }
 
     /* selected SGW (S11) */
-    {
-        cJSON *sgw = build_sgw(ue);
-        if (sgw)
-            cJSON_AddItemToObjectCS(o, "sgw", sgw);
+    if (s->has_sgw) {
+        cJSON *sgw = cJSON_CreateObject();
+        if (!sgw) goto end;
+        if (!cJSON_AddStringToObject(sgw, "address", s->sgw_addr) ||
+            !cJSON_AddNumberToObject(sgw, "port", (double)s->sgw_port)) {
+            cJSON_Delete(sgw); goto end;
+        }
+        if (s->s11_teid &&
+            !cJSON_AddNumberToObject(sgw, "s11_teid",
+                    (double)s->s11_teid)) {
+            cJSON_Delete(sgw); goto end;
+        }
+        cJSON_AddItemToObjectCS(o, "sgw", sgw);
     }
 
     /* pdn + pdn_count */
     {
-        cJSON *pdn = build_pdn_array(ue);
-        if (!pdn) goto end;
+        cJSON *arr = cJSON_CreateArray();
+        if (!arr) goto end;
 
-        /* Count PDNs before attaching */
-        size_t pdn_count = 0;
-        {
-            cJSON *it = NULL;
-            cJSON_ArrayForEach(it, pdn) pdn_count++;
+        int i;
+        for (i = 0; i < s->num_pdn; i++) {
+            const ue_pdn_snap_t *p = &s->pdn[i];
+
+            cJSON *it = cJSON_CreateObject();
+            if (!it) { cJSON_Delete(arr); goto end; }
+
+            if (p->apn[0] &&
+                !cJSON_AddStringToObject(it, "apn", p->apn)) {
+                cJSON_Delete(it); cJSON_Delete(arr); goto end;
+            }
+
+            cJSON *qarr = cJSON_CreateArray();
+            if (!qarr) { cJSON_Delete(it); cJSON_Delete(arr); goto end; }
+
+            int e;
+            for (e = 0; e < p->num_ebis; e++) {
+                cJSON *qf = cJSON_CreateObject();
+                if (!qf) {
+                    cJSON_Delete(qarr); cJSON_Delete(it);
+                    cJSON_Delete(arr); goto end;
+                }
+                if (!cJSON_AddNumberToObject(qf, "ebi",
+                            (double)p->ebis[e])) {
+                    cJSON_Delete(qf); cJSON_Delete(qarr);
+                    cJSON_Delete(it); cJSON_Delete(arr); goto end;
+                }
+                cJSON_AddItemToArray(qarr, qf);
+            }
+
+            cJSON_AddItemToObjectCS(it, "qos_flows", qarr);
+
+            if (p->qci > 0 &&
+                !cJSON_AddNumberToObject(it, "qci", (double)p->qci)) {
+                cJSON_Delete(it); cJSON_Delete(arr); goto end;
+            }
+            if (p->ebi_root &&
+                !cJSON_AddNumberToObject(it, "ebi",
+                        (double)p->ebi_root)) {
+                cJSON_Delete(it); cJSON_Delete(arr); goto end;
+            }
+            if (!cJSON_AddNumberToObject(it, "bearer_count",
+                        (double)p->bearer_count)) {
+                cJSON_Delete(it); cJSON_Delete(arr); goto end;
+            }
+            if (!cJSON_AddStringToObject(it, "pdu_state",
+                        p->bearer_count ? "active" : "unknown")) {
+                cJSON_Delete(it); cJSON_Delete(arr); goto end;
+            }
+
+            if (p->has_pgw) {
+                cJSON *pgw = cJSON_CreateObject();
+                if (!pgw) { cJSON_Delete(it); cJSON_Delete(arr); goto end; }
+                if (p->has_pgw_addr &&
+                    !cJSON_AddStringToObject(pgw, "address",
+                            p->pgw_addr)) {
+                    cJSON_Delete(pgw); cJSON_Delete(it);
+                    cJSON_Delete(arr); goto end;
+                }
+                if (p->pgw_s5c_teid &&
+                    !cJSON_AddNumberToObject(pgw, "s5c_teid",
+                            (double)p->pgw_s5c_teid)) {
+                    cJSON_Delete(pgw); cJSON_Delete(it);
+                    cJSON_Delete(arr); goto end;
+                }
+                if (p->has_pgw_cfg &&
+                    !cJSON_AddStringToObject(pgw, "config_selected",
+                            p->pgw_cfg)) {
+                    cJSON_Delete(pgw); cJSON_Delete(it);
+                    cJSON_Delete(arr); goto end;
+                }
+                cJSON_AddItemToObjectCS(it, "pgw", pgw);
+            }
+
+            cJSON_AddItemToArray(arr, it);
         }
 
-        cJSON_AddItemToObjectCS(o, "pdn", pdn);
-        if (!cJSON_AddNumberToObject(o, "pdn_count", (double)pdn_count)) goto end;
+        cJSON_AddItemToObjectCS(o, "pdn", arr);
+        if (!cJSON_AddNumberToObject(o, "pdn_count",
+                    (double)s->pdn_count)) goto end;
     }
 
     return o;
@@ -462,6 +482,22 @@ static cJSON *ue_to_json(const mme_ue_t *ue)
 end:
     cJSON_Delete(o);
     return NULL;
+}
+
+/* Grow-by-doubling snapshot slot; NULL = bound hit or allocation fail. */
+static ue_snap_t *ue_snap_slot(ue_snap_t **arr, size_t *cap, size_t used)
+{
+    if (used >= UE_INFO_SNAP_MAX)
+        return NULL;
+    if (used == *cap) {
+        size_t ncap = *cap ? *cap * 2 : 64;
+        ue_snap_t *n = ogs_realloc(*arr, ncap * sizeof(*n));
+        if (!n)
+            return NULL;
+        *arr = n;
+        *cap = ncap;
+    }
+    return &(*arr)[used];
 }
 
 size_t mme_dump_ue_info_paged(char *buf, size_t buflen,
@@ -501,21 +537,25 @@ size_t mme_dump_ue_info_paged(char *buf, size_t buflen,
         return 0;
     }
 
+    ue_snap_t *snaps = NULL;
+    size_t snap_cap = 0;
+
     /*
-     * The MHD daemon runs on its own thread now, so we have to hold
-     * the metrics dump lock while walking mme_ue_list / each ue's
-     * sublists (sessions, bearers). The lock pairs with the wrappers
-     * the MME main thread takes around mme_ue_add / mme_ue_remove.
+     * Snapshot phase. The MHD daemon runs on its own thread; hold
+     * mme_ctx_lock() only while copying values out of the live UE
+     * objects (the lock pairs with mme_ue_add / mme_ue_remove and
+     * the sess/bearer list mutators). The cJSON build below runs
+     * after unlock, so a poll no longer stalls main/workers for the
+     * whole JSON build.
      */
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
 
     if (q && q->imsi && *q->imsi) {
         /*
          * Fast path for exact-IMSI queries (NMS IMSI watch / trace
-         * panel polls /ue-info?imsi= every few seconds). Walking the
-         * whole mme_ue_list under the global context lock stalls every
-         * worker thread on a loaded MME; resolve via the IMSI hash
-         * instead so the lock is held for one lookup + one JSON build.
+         * panel polls /ue-info?imsi= every few seconds). Resolve via
+         * the IMSI hash so the lock is held for one lookup + one
+         * value copy.
          */
         mme_ue_t *ue = mme_ue_find_by_imsi_bcd(q->imsi);
         if (ue && q->has_enb_id) {
@@ -528,9 +568,9 @@ size_t mme_dump_ue_info_paged(char *buf, size_t buflen,
             int act = json_pager_advance(no_paging, idx, start_index,
                     emitted, page_size, &has_next);
             if (act == 0) {
-                cJSON *one = ue_to_json(ue);
-                if (!one) oom = true;
-                else { cJSON_AddItemToArray(items, one); emitted++; }
+                ue_snap_t *slot = ue_snap_slot(&snaps, &snap_cap, emitted);
+                if (!slot) oom = true;
+                else { ue_snapshot_fill(slot, ue); emitted++; }
             }
             idx++;
         }
@@ -556,10 +596,10 @@ size_t mme_dump_ue_info_paged(char *buf, size_t buflen,
                     emitted, page_size, &has_next);
             if (act == 1) { idx++; continue; }
             if (act == 0) {
-                cJSON *one = ue_to_json(ue);
-                if (!one) { oom = true; break; }
+                ue_snap_t *slot = ue_snap_slot(&snaps, &snap_cap, emitted);
+                if (!slot) { oom = true; break; }
 
-                cJSON_AddItemToArray(items, one);
+                ue_snapshot_fill(slot, ue);
                 emitted++;
             }
             idx++;
@@ -573,17 +613,32 @@ size_t mme_dump_ue_info_paged(char *buf, size_t buflen,
                     emitted, page_size, &has_next);
             if (act == 1) { idx++; continue; }
             if (act == 0) {
-                cJSON *one = ue_to_json(ue);
-                if (!one) { oom = true; break; }
+                ue_snap_t *slot = ue_snap_slot(&snaps, &snap_cap, emitted);
+                if (!slot) { oom = true; break; }
 
-                cJSON_AddItemToArray(items, one);
+                ue_snapshot_fill(slot, ue);
                 emitted++;
             }
             idx++;
         }
     }
 
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
+
+    /* Build phase: values only, no live context pointers. */
+    {
+        size_t i;
+        for (i = 0; i < emitted; i++) {
+            cJSON *one = ue_snap_to_json(&snaps[i]);
+            if (!one) { oom = true; break; }
+            cJSON_AddItemToArray(items, one);
+        }
+        if (i < emitted)
+            emitted = i;
+    }
+
+    if (snaps)
+        ogs_free(snaps);
 
     /* attach only when array is fully built */
     cJSON_AddItemToObjectCS(root, "items", items);

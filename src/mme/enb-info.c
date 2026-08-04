@@ -122,6 +122,178 @@ static bool sa_matches_ip(const ogs_sockaddr_t *sa, const char *needle)
     return strlen(needle) == len && strncmp(s, needle, len) == 0;
 }
 
+/*
+ * Value snapshot of one eNB, filled under mme_ctx_lock(). The cJSON
+ * build (the expensive part: one malloc + snprintf per field) runs
+ * after unlock, so a scrape no longer stalls main/workers for the
+ * whole page. No pointers into live context survive the unlock.
+ */
+typedef struct enb_snap_s {
+    uint32_t        enb_id;
+    ogs_plmn_id_t   plmn_id;
+    bool            s1_setup_success;
+    char            peer[OGS_ADDRSTRLEN + 16]; /* "[v6]:port" form */
+    int             max_out_streams;
+    unsigned        next_ostream_id;
+    int             num_ta;
+    struct {
+        uint16_t        tac;
+        ogs_plmn_id_t   plmn_id;
+    } ta[OGS_MAX_NUM_OF_SUPPORTED_TA];
+    size_t          num_connected_ues;
+    double          ovl_level;
+    double          ovl_signalled;
+    double          ovl_tx_queue;
+    double          ovl_shed_total;
+    double          ovl_rate_shed_total;
+} enb_snap_t;
+
+/* Hard bound on one response's snapshot allocation (~1.7 KB each). */
+#define ENB_INFO_SNAP_MAX 4096
+
+/* Runs under mme_ctx_lock(); must not allocate or block. */
+static void enb_snapshot_fill(enb_snap_t *s, const mme_enb_t *enb)
+{
+    int t;
+
+    memset(s, 0, sizeof(*s));
+
+    s->enb_id = enb->enb_id;
+    s->plmn_id = enb->plmn_id;
+    s->s1_setup_success = enb->state.s1_setup_success ? true : false;
+    ogs_cpystrn(s->peer, safe_sa_str(enb->sctp.addr), sizeof(s->peer));
+    s->max_out_streams = enb->max_num_of_ostreams;
+    s->next_ostream_id = (unsigned)enb->ostream_id;
+
+    s->num_ta = enb->num_of_supported_ta_list;
+    if (s->num_ta > OGS_MAX_NUM_OF_SUPPORTED_TA)
+        s->num_ta = OGS_MAX_NUM_OF_SUPPORTED_TA;
+    if (s->num_ta < 0)
+        s->num_ta = 0;
+    for (t = 0; t < s->num_ta; t++) {
+        s->ta[t].tac = enb->supported_ta_list[t].tac;
+        s->ta[t].plmn_id = enb->supported_ta_list[t].plmn_id;
+    }
+
+    s->num_connected_ues =
+        (size_t)(enb->num_enb_ues > 0 ? enb->num_enb_ues : 0);
+
+    s->ovl_level = (double)enb->overload.level;
+    s->ovl_signalled = (double)enb->overload.signalled_level;
+    s->ovl_tx_queue = (double)enb->overload.congested_depth;
+    s->ovl_shed_total = (double)enb->overload.shed_total;
+    s->ovl_rate_shed_total = (double)enb->overload.rate_shed_total;
+}
+
+/* Runs WITHOUT the context lock: pure value -> cJSON conversion. */
+static cJSON *enb_snap_to_json(const enb_snap_t *s, const char *mme_name)
+{
+    cJSON *e = cJSON_CreateObject();
+    if (!e) return NULL;
+
+    if (!cJSON_AddNumberToObject(e, "enb_id",
+                (double)(unsigned)s->enb_id)) goto fail;
+
+    /* plmn */
+    {
+        char plmn_str[OGS_PLMNIDSTRLEN] = {0};
+        ogs_plmn_id_to_string(&s->plmn_id, plmn_str);
+        if (!cJSON_AddStringToObject(e, "plmn", plmn_str)) goto fail;
+    }
+
+    /* network */
+    {
+        cJSON *network = cJSON_CreateObject();
+        if (!network) goto fail;
+        if (!cJSON_AddStringToObject(network, "mme_name",
+                    mme_name ? mme_name : "")) {
+            cJSON_Delete(network); goto fail;
+        }
+        cJSON_AddItemToObjectCS(e, "network", network);
+    }
+
+    /* s1 + sctp block */
+    {
+        cJSON *s1 = cJSON_CreateObject();
+        if (!s1) goto fail;
+
+        if (!cJSON_AddBoolToObject(s1, "setup_success",
+                    s->s1_setup_success ? 1 : 0)) {
+            cJSON_Delete(s1); goto fail;
+        }
+
+        cJSON *sctp = cJSON_CreateObject();
+        if (!sctp) { cJSON_Delete(s1); goto fail; }
+
+        if (!cJSON_AddStringToObject(sctp, "peer", s->peer) ||
+            !cJSON_AddNumberToObject(sctp, "max_out_streams",
+                    (double)s->max_out_streams) ||
+            !cJSON_AddNumberToObject(sctp, "next_ostream_id",
+                    (double)s->next_ostream_id)) {
+            cJSON_Delete(sctp); cJSON_Delete(s1); goto fail;
+        }
+
+        cJSON_AddItemToObjectCS(s1, "sctp", sctp);
+        cJSON_AddItemToObjectCS(e, "s1", s1);
+    }
+
+    /* supported_ta_list (LTE TAC is 16-bit) */
+    {
+        cJSON *tas = cJSON_CreateArray();
+        if (!tas) goto fail;
+
+        int t;
+        for (t = 0; t < s->num_ta; t++) {
+            cJSON *ta = cJSON_CreateObject();
+            if (!ta) { cJSON_Delete(tas); goto fail; }
+
+            char tac_hex[5];
+            snprintf(tac_hex, sizeof tac_hex, "%04X",
+                    (unsigned)s->ta[t].tac);
+
+            char ta_plmn[OGS_PLMNIDSTRLEN] = {0};
+            ogs_plmn_id_to_string(&s->ta[t].plmn_id, ta_plmn);
+
+            if (!cJSON_AddStringToObject(ta, "tac", tac_hex) ||
+                !cJSON_AddStringToObject(ta, "plmn", ta_plmn)) {
+                cJSON_Delete(ta); cJSON_Delete(tas); goto fail;
+            }
+
+            cJSON_AddItemToArray(tas, ta);
+        }
+
+        cJSON_AddItemToObjectCS(e, "supported_ta_list", tas);
+    }
+
+    if (!cJSON_AddNumberToObject(e, "num_connected_ues",
+                (double)s->num_connected_ues)) goto fail;
+
+    /* overload block */
+    {
+        cJSON *ovl = cJSON_CreateObject();
+        if (!ovl) goto fail;
+
+        if (!cJSON_AddNumberToObject(ovl, "level", s->ovl_level) ||
+            !cJSON_AddNumberToObject(ovl, "signalled_level",
+                    s->ovl_signalled) ||
+            !cJSON_AddNumberToObject(ovl, "tx_queue", s->ovl_tx_queue) ||
+            !cJSON_AddNumberToObject(ovl, "shed_total",
+                    s->ovl_shed_total) ||
+            !cJSON_AddNumberToObject(ovl, "rate_shed_total",
+                    s->ovl_rate_shed_total)) {
+            cJSON_Delete(ovl); goto fail;
+        }
+
+        cJSON_AddItemToObjectCS(e, "overload", ovl);
+    }
+
+    return e;
+
+fail:
+    cJSON_Delete(e);
+    return NULL;
+}
+
 size_t mme_dump_enb_info_paged(char *buf, size_t buflen,
         size_t page, size_t page_size, const ogs_metrics_query_t *q)
 {
@@ -155,14 +327,20 @@ size_t mme_dump_enb_info_paged(char *buf, size_t buflen,
     bool has_next = false;
     bool oom = false;
 
+    char mme_name[256] = "";
+    enb_snap_t *snaps = NULL;
+    size_t snap_cap = 0;
+
     /*
-     * This dumper runs on the MHD thread (see lib/metrics/prometheus/
-     * context.c). Take the coarse metrics dump lock so the MME main
-     * thread can't free an mme_enb_t / enb_ue_t we are iterating.
-     * Released right before json_pager_finalize() since the rest of
-     * the work only touches the cJSON tree built above.
+     * Snapshot phase. This dumper runs on the MHD thread; hold
+     * mme_ctx_lock() only while copying scalar values out of the
+     * live eNB objects. The cJSON build below runs after unlock, so
+     * a scrape no longer stalls the MME for the whole JSON build.
      */
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
+
+    if (ctxt->mme_name)
+        ogs_cpystrn(mme_name, ctxt->mme_name, sizeof(mme_name));
 
     mme_enb_t *enb = NULL;
     ogs_list_for_each(&ctxt->enb_list, enb) {
@@ -179,139 +357,45 @@ size_t mme_dump_enb_info_paged(char *buf, size_t buflen,
         total++;
 
         int act = json_pager_advance(no_paging, idx, start_index, emitted, page_size, &has_next);
-        if (act == 1) { idx++; continue; }
-        if (act == 0) {
-        /*
-         * Use the maintained per-eNB counter rather than walking
-         * enb->enb_ue_list. The list is mutated by the MME main
-         * thread, and we are running on the MHD worker thread; the
-         * counter is a single int (atomic read) so a stale value is
-         * the worst case here, not a use-after-free.
-         */
-        size_t num_connected_ues = (size_t)(enb->num_enb_ues > 0 ? enb->num_enb_ues : 0);
+        if (act != 0) { idx++; continue; } /* skip / page full: keep counting total */
 
-        /* eNB object (build fully before attaching) */
-        cJSON *e = cJSON_CreateObject();
-        if (!e) { oom = true; break; }
-
-        /* enb_id */
-        if (!cJSON_AddNumberToObject(e, "enb_id", (double)(unsigned)enb->enb_id)) { cJSON_Delete(e); oom = true; break; }
-
-        /* plmn */
-        {
-            char plmn_str[OGS_PLMNIDSTRLEN] = {0};
-            ogs_plmn_id_to_string(&enb->plmn_id, plmn_str);
-            if (!cJSON_AddStringToObject(e, "plmn", plmn_str)) { cJSON_Delete(e); oom = true; break; }
+        if (emitted >= ENB_INFO_SNAP_MAX) {
+            /* snapshot allocation bound: report truncated, keep counting */
+            oom = true;
+            has_next = true;
+            idx++;
+            continue;
         }
 
-        /* network */
-        {
-            cJSON *network = cJSON_CreateObject();
-            if (!network) { cJSON_Delete(e); oom = true; break; }
-            if (!cJSON_AddStringToObject(network, "mme_name", ctxt->mme_name ? ctxt->mme_name : "")) {
-                cJSON_Delete(network); cJSON_Delete(e); oom = true; break;
-            }
-            cJSON_AddItemToObjectCS(e, "network", network);
+        if (emitted == snap_cap) {
+            size_t ncap = snap_cap ? snap_cap * 2 : 64;
+            enb_snap_t *n = ogs_realloc(snaps, ncap * sizeof(*n));
+            if (!n) { oom = true; break; }
+            snaps = n;
+            snap_cap = ncap;
         }
 
-        /* s1 + sctp block */
-        {
-            cJSON *s1 = cJSON_CreateObject();
-            if (!s1) { cJSON_Delete(e); oom = true; break; }
-
-            if (!cJSON_AddBoolToObject(s1, "setup_success", enb->state.s1_setup_success ? 1 : 0)) {
-                cJSON_Delete(s1); cJSON_Delete(e); oom = true; break;
-            }
-
-            /*  sctp  */
-            cJSON *sctp = cJSON_CreateObject();
-            if (!sctp) { cJSON_Delete(s1); cJSON_Delete(e); oom = true; break; }
-
-            if (!cJSON_AddStringToObject(sctp, "peer", safe_sa_str(enb->sctp.addr))) {
-                cJSON_Delete(sctp); cJSON_Delete(s1); cJSON_Delete(e); oom = true; break;
-            }
-            if (!cJSON_AddNumberToObject(sctp, "max_out_streams", (double)enb->max_num_of_ostreams)) {
-                cJSON_Delete(sctp); cJSON_Delete(s1); cJSON_Delete(e); oom = true; break;
-            }
-            if (!cJSON_AddNumberToObject(sctp, "next_ostream_id", (double)(unsigned)enb->ostream_id)) {
-                cJSON_Delete(sctp); cJSON_Delete(s1); cJSON_Delete(e); oom = true; break;
-            }
-
-            cJSON_AddItemToObjectCS(s1, "sctp", sctp);
-            cJSON_AddItemToObjectCS(e, "s1", s1);
-        }
-
-        /* supported_ta_list (LTE TAC is 16-bit) */
-        {
-            cJSON *tas = cJSON_CreateArray();
-            if (!tas) { cJSON_Delete(e); oom = true; break; }
-
-            bool inner_oom = false;
-            int t;
-
-            for (t = 0; t < enb->num_of_supported_ta_list; t++) {
-                cJSON *ta = cJSON_CreateObject();
-                if (!ta) { inner_oom = true; break; }
-
-                char tac_hex[5];
-                snprintf(tac_hex, sizeof tac_hex, "%04X", (unsigned)enb->supported_ta_list[t].tac);
-                if (!cJSON_AddStringToObject(ta, "tac", tac_hex)) {
-                    cJSON_Delete(ta); inner_oom = true; break;
-                }
-
-                char ta_plmn[OGS_PLMNIDSTRLEN] = {0};
-                ogs_plmn_id_to_string(&enb->supported_ta_list[t].plmn_id, ta_plmn);
-                if (!cJSON_AddStringToObject(ta, "plmn", ta_plmn)) {
-                    cJSON_Delete(ta); inner_oom = true; break;
-                }
-
-                cJSON_AddItemToArray(tas, ta);
-            }
-
-            if (inner_oom) { cJSON_Delete(tas); cJSON_Delete(e); oom = true; break; }
-
-            cJSON_AddItemToObjectCS(e, "supported_ta_list", tas);
-        }
-
-        /* num_connected_ues */
-        if (!cJSON_AddNumberToObject(e, "num_connected_ues", (double)num_connected_ues)) {
-            cJSON_Delete(e); oom = true; break;
-        }
-
-        /*
-         * overload block (s1ap-overload.c). Written on the MME main
-         * thread, read here: same rationale as num_connected_ues —
-         * these are plain ints/counters, so a stale or torn diagnostic
-         * read is acceptable and no lock is taken.
-         */
-        {
-            cJSON *ovl = cJSON_CreateObject();
-            if (!ovl) { cJSON_Delete(e); oom = true; break; }
-
-            if (!cJSON_AddNumberToObject(ovl, "level",
-                        (double)enb->overload.level) ||
-                !cJSON_AddNumberToObject(ovl, "signalled_level",
-                        (double)enb->overload.signalled_level) ||
-                !cJSON_AddNumberToObject(ovl, "tx_queue",
-                        (double)enb->overload.congested_depth) ||
-                !cJSON_AddNumberToObject(ovl, "shed_total",
-                        (double)enb->overload.shed_total) ||
-                !cJSON_AddNumberToObject(ovl, "rate_shed_total",
-                        (double)enb->overload.rate_shed_total)) {
-                cJSON_Delete(ovl); cJSON_Delete(e); oom = true; break;
-            }
-
-            cJSON_AddItemToObjectCS(e, "overload", ovl);
-        }
-
-        /* success -> append to items[] */
-        cJSON_AddItemToArray(items, e);
+        enb_snapshot_fill(&snaps[emitted], enb);
         emitted++;
-        }
         idx++;
     }
 
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
+
+    /* Build phase: values only, no live context pointers. */
+    {
+        size_t i;
+        for (i = 0; i < emitted; i++) {
+            cJSON *e = enb_snap_to_json(&snaps[i], mme_name);
+            if (!e) { oom = true; break; }
+            cJSON_AddItemToArray(items, e);
+        }
+        if (i < emitted)
+            emitted = i;
+    }
+
+    if (snaps)
+        ogs_free(snaps);
 
     json_pager_add_trailing(root, no_paging, page, page_size,
                             emitted, total, has_next && !oom, "/enb-info", oom);

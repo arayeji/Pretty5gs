@@ -147,24 +147,33 @@ static void mme_metrics_inst_by_plmn_add(ogs_plmn_id_t *plmn,
         mme_metric_type_by_plmn_t t, int val)
 {
     ogs_metrics_inst_t *metrics = NULL;
-    mme_metric_key_by_plmn_t *plmn_key;
+    /*
+     * Stack key for the (hot) lookup: these wrappers run per event on
+     * the shard workers, and a heap alloc+free per increment showed up
+     * in perf. Heap-copy the key only on first-seen label insert.
+     * memset - not designated init - so struct padding is zeroed and
+     * byte-wise hash key comparison stays exact.
+     */
+    mme_metric_key_by_plmn_t k;
     char plmn_id[OGS_PLMNIDSTRLEN] = "";
 
     ogs_assert(plmn);
     if (!metrics_hash_by_plmn)
         return;
 
-    plmn_key = ogs_calloc(1, sizeof(*plmn_key));
-    ogs_assert(plmn_key);
-
-    plmn_key->plmn_id = *plmn;
-    plmn_key->t = t;
+    memset(&k, 0, sizeof(k));
+    k.plmn_id = *plmn;
+    k.t = t;
 
     ogs_metrics_dump_lock();
-    metrics = ogs_hash_get(metrics_hash_by_plmn,
-            plmn_key, sizeof(*plmn_key));
+    metrics = ogs_hash_get(metrics_hash_by_plmn, &k, sizeof(k));
 
     if (!metrics) {
+        mme_metric_key_by_plmn_t *plmn_key =
+            ogs_calloc(1, sizeof(*plmn_key));
+        ogs_assert(plmn_key);
+        memcpy(plmn_key, &k, sizeof(k));
+
         ogs_plmn_id_to_string(plmn, plmn_id);
 
         metrics = ogs_metrics_inst_new(mme_metrics_spec_by_plmn[t],
@@ -174,8 +183,6 @@ static void mme_metrics_inst_by_plmn_add(ogs_plmn_id_t *plmn,
         ogs_assert(metrics);
         ogs_hash_set(metrics_hash_by_plmn,
                 plmn_key, sizeof(*plmn_key), metrics);
-    } else {
-        ogs_free(plmn_key);
     }
 
     ogs_metrics_inst_add(metrics, val);
@@ -186,7 +193,7 @@ static void mme_metrics_inst_by_plmn_cause_add(ogs_plmn_id_t *plmn,
         uint8_t cause, mme_metric_type_by_plmn_cause_t t, int val)
 {
     ogs_metrics_inst_t *metrics = NULL;
-    mme_metric_key_by_plmn_cause_t *key;
+    mme_metric_key_by_plmn_cause_t k;
     char plmn_id[OGS_PLMNIDSTRLEN] = "";
     char cause_str[4];
 
@@ -194,18 +201,19 @@ static void mme_metrics_inst_by_plmn_cause_add(ogs_plmn_id_t *plmn,
     if (!metrics_hash_by_plmn_cause)
         return;
 
-    key = ogs_calloc(1, sizeof(*key));
-    ogs_assert(key);
-
-    key->plmn_id = *plmn;
-    key->cause = cause;
-    key->t = t;
+    memset(&k, 0, sizeof(k));
+    k.plmn_id = *plmn;
+    k.cause = cause;
+    k.t = t;
 
     ogs_metrics_dump_lock();
-    metrics = ogs_hash_get(metrics_hash_by_plmn_cause,
-            key, sizeof(*key));
+    metrics = ogs_hash_get(metrics_hash_by_plmn_cause, &k, sizeof(k));
 
     if (!metrics) {
+        mme_metric_key_by_plmn_cause_t *key = ogs_calloc(1, sizeof(*key));
+        ogs_assert(key);
+        memcpy(key, &k, sizeof(k));
+
         ogs_plmn_id_to_string(plmn, plmn_id);
         ogs_snprintf(cause_str, sizeof(cause_str), "%d", cause);
 
@@ -216,8 +224,6 @@ static void mme_metrics_inst_by_plmn_cause_add(ogs_plmn_id_t *plmn,
         ogs_assert(metrics);
         ogs_hash_set(metrics_hash_by_plmn_cause,
                 key, sizeof(*key), metrics);
-    } else {
-        ogs_free(key);
     }
 
     ogs_metrics_inst_add(metrics, val);
@@ -228,7 +234,7 @@ static void mme_metrics_inst_by_plmn_tac_add(ogs_plmn_id_t *plmn,
         uint16_t tac, mme_metric_type_by_plmn_tac_t t, int val)
 {
     ogs_metrics_inst_t *metrics = NULL;
-    mme_metric_key_by_plmn_tac_t *key;
+    mme_metric_key_by_plmn_tac_t k;
     char plmn_id[OGS_PLMNIDSTRLEN] = "";
     char tac_str[8];
 
@@ -236,18 +242,19 @@ static void mme_metrics_inst_by_plmn_tac_add(ogs_plmn_id_t *plmn,
     if (!metrics_hash_by_plmn_tac)
         return;
 
-    key = ogs_calloc(1, sizeof(*key));
-    ogs_assert(key);
-
-    key->plmn_id = *plmn;
-    key->tac = tac;
-    key->t = t;
+    memset(&k, 0, sizeof(k));
+    k.plmn_id = *plmn;
+    k.tac = tac;
+    k.t = t;
 
     ogs_metrics_dump_lock();
-    metrics = ogs_hash_get(metrics_hash_by_plmn_tac,
-            key, sizeof(*key));
+    metrics = ogs_hash_get(metrics_hash_by_plmn_tac, &k, sizeof(k));
 
     if (!metrics) {
+        mme_metric_key_by_plmn_tac_t *key = ogs_calloc(1, sizeof(*key));
+        ogs_assert(key);
+        memcpy(key, &k, sizeof(k));
+
         ogs_plmn_id_to_string(plmn, plmn_id);
         ogs_snprintf(tac_str, sizeof(tac_str), "%u", tac);
 
@@ -258,8 +265,6 @@ static void mme_metrics_inst_by_plmn_tac_add(ogs_plmn_id_t *plmn,
         ogs_assert(metrics);
         ogs_hash_set(metrics_hash_by_plmn_tac,
                 key, sizeof(*key), metrics);
-    } else {
-        ogs_free(key);
     }
 
     ogs_metrics_inst_add(metrics, val);
@@ -271,7 +276,7 @@ static void mme_metrics_inst_by_plmn_ho_add(ogs_plmn_id_t *plmn,
         mme_metric_type_by_plmn_ho_t t, int val)
 {
     ogs_metrics_inst_t *metrics = NULL;
-    mme_metric_key_by_plmn_ho_t *key;
+    mme_metric_key_by_plmn_ho_t k;
     char plmn_id[OGS_PLMNIDSTRLEN] = "";
     char cause_value_str[16];
     const char *type_label = ho_type ? ho_type : "unknown";
@@ -282,20 +287,21 @@ static void mme_metrics_inst_by_plmn_ho_add(ogs_plmn_id_t *plmn,
     if (!metrics_hash_by_plmn_ho)
         return;
 
-    key = ogs_calloc(1, sizeof(*key));
-    ogs_assert(key);
-
-    key->plmn_id = *plmn;
-    ogs_cpystrn(key->ho_type, type_label, sizeof(key->ho_type));
-    ogs_cpystrn(key->cause_group, group_label, sizeof(key->cause_group));
-    key->cause_value = cause_value;
-    key->t = t;
+    memset(&k, 0, sizeof(k));
+    k.plmn_id = *plmn;
+    ogs_cpystrn(k.ho_type, type_label, sizeof(k.ho_type));
+    ogs_cpystrn(k.cause_group, group_label, sizeof(k.cause_group));
+    k.cause_value = cause_value;
+    k.t = t;
 
     ogs_metrics_dump_lock();
-    metrics = ogs_hash_get(metrics_hash_by_plmn_ho,
-            key, sizeof(*key));
+    metrics = ogs_hash_get(metrics_hash_by_plmn_ho, &k, sizeof(k));
 
     if (!metrics) {
+        mme_metric_key_by_plmn_ho_t *key = ogs_calloc(1, sizeof(*key));
+        ogs_assert(key);
+        memcpy(key, &k, sizeof(k));
+
         ogs_plmn_id_to_string(plmn, plmn_id);
         ogs_snprintf(cause_value_str, sizeof(cause_value_str), "%ld",
                 cause_value);
@@ -314,8 +320,6 @@ static void mme_metrics_inst_by_plmn_ho_add(ogs_plmn_id_t *plmn,
         ogs_assert(metrics);
         ogs_hash_set(metrics_hash_by_plmn_ho,
                 key, sizeof(*key), metrics);
-    } else {
-        ogs_free(key);
     }
 
     ogs_metrics_inst_add(metrics, val);
@@ -326,7 +330,7 @@ static void mme_metrics_inst_by_plmn_origin_add(ogs_plmn_id_t *plmn,
         const char *origin, mme_metric_type_by_plmn_origin_t t, int val)
 {
     ogs_metrics_inst_t *metrics = NULL;
-    mme_metric_key_by_plmn_origin_t *key;
+    mme_metric_key_by_plmn_origin_t k;
     char plmn_id[OGS_PLMNIDSTRLEN] = "";
 
     ogs_assert(plmn);
@@ -334,18 +338,19 @@ static void mme_metrics_inst_by_plmn_origin_add(ogs_plmn_id_t *plmn,
     if (!metrics_hash_by_plmn_origin)
         return;
 
-    key = ogs_calloc(1, sizeof(*key));
-    ogs_assert(key);
-
-    key->plmn_id = *plmn;
-    ogs_cpystrn(key->origin, origin, sizeof(key->origin));
-    key->t = t;
+    memset(&k, 0, sizeof(k));
+    k.plmn_id = *plmn;
+    ogs_cpystrn(k.origin, origin, sizeof(k.origin));
+    k.t = t;
 
     ogs_metrics_dump_lock();
-    metrics = ogs_hash_get(metrics_hash_by_plmn_origin,
-            key, sizeof(*key));
+    metrics = ogs_hash_get(metrics_hash_by_plmn_origin, &k, sizeof(k));
 
     if (!metrics) {
+        mme_metric_key_by_plmn_origin_t *key = ogs_calloc(1, sizeof(*key));
+        ogs_assert(key);
+        memcpy(key, &k, sizeof(k));
+
         ogs_plmn_id_to_string(plmn, plmn_id);
 
         metrics = ogs_metrics_inst_new(mme_metrics_spec_by_plmn_origin[t],
@@ -355,8 +360,6 @@ static void mme_metrics_inst_by_plmn_origin_add(ogs_plmn_id_t *plmn,
         ogs_assert(metrics);
         ogs_hash_set(metrics_hash_by_plmn_origin,
                 key, sizeof(*key), metrics);
-    } else {
-        ogs_free(key);
     }
 
     ogs_metrics_inst_add(metrics, val);
@@ -367,23 +370,24 @@ static void mme_metrics_inst_by_reason_add(const char *reason,
         mme_metric_type_by_reason_t t, int val)
 {
     ogs_metrics_inst_t *metrics = NULL;
-    mme_metric_key_by_reason_t *key;
+    mme_metric_key_by_reason_t k;
 
     ogs_assert(reason);
     if (!metrics_hash_by_reason)
         return;
 
-    key = ogs_calloc(1, sizeof(*key));
-    ogs_assert(key);
-
-    ogs_cpystrn(key->reason, reason, sizeof(key->reason));
-    key->t = t;
+    memset(&k, 0, sizeof(k));
+    ogs_cpystrn(k.reason, reason, sizeof(k.reason));
+    k.t = t;
 
     ogs_metrics_dump_lock();
-    metrics = ogs_hash_get(metrics_hash_by_reason,
-            key, sizeof(*key));
+    metrics = ogs_hash_get(metrics_hash_by_reason, &k, sizeof(k));
 
     if (!metrics) {
+        mme_metric_key_by_reason_t *key = ogs_calloc(1, sizeof(*key));
+        ogs_assert(key);
+        memcpy(key, &k, sizeof(k));
+
         metrics = ogs_metrics_inst_new(mme_metrics_spec_by_reason[t],
                 mme_metrics_spec_def_by_reason->num_labels,
                 (const char *[]){ key->reason });
@@ -391,8 +395,6 @@ static void mme_metrics_inst_by_reason_add(const char *reason,
         ogs_assert(metrics);
         ogs_hash_set(metrics_hash_by_reason,
                 key, sizeof(*key), metrics);
-    } else {
-        ogs_free(key);
     }
 
     ogs_metrics_inst_add(metrics, val);
@@ -404,7 +406,7 @@ static void mme_metrics_inst_by_sgw_plmn_apn_add(
         mme_metric_type_by_sgw_plmn_apn_t t, int val)
 {
     ogs_metrics_inst_t *metrics = NULL;
-    mme_metric_key_by_sgw_plmn_apn_t *key;
+    mme_metric_key_by_sgw_plmn_apn_t k;
     char plmn_id[OGS_PLMNIDSTRLEN] = "";
 
     ogs_assert(sgw_addr);
@@ -413,19 +415,20 @@ static void mme_metrics_inst_by_sgw_plmn_apn_add(
     if (!metrics_hash_by_sgw_plmn_apn)
         return;
 
-    key = ogs_calloc(1, sizeof(*key));
-    ogs_assert(key);
-
-    ogs_cpystrn(key->sgw_addr, sgw_addr, sizeof(key->sgw_addr));
-    key->plmn_id = *plmn;
-    ogs_cpystrn(key->apn, apn, sizeof(key->apn));
-    key->t = t;
+    memset(&k, 0, sizeof(k));
+    ogs_cpystrn(k.sgw_addr, sgw_addr, sizeof(k.sgw_addr));
+    k.plmn_id = *plmn;
+    ogs_cpystrn(k.apn, apn, sizeof(k.apn));
+    k.t = t;
 
     ogs_metrics_dump_lock();
-    metrics = ogs_hash_get(metrics_hash_by_sgw_plmn_apn,
-            key, sizeof(*key));
+    metrics = ogs_hash_get(metrics_hash_by_sgw_plmn_apn, &k, sizeof(k));
 
     if (!metrics) {
+        mme_metric_key_by_sgw_plmn_apn_t *key = ogs_calloc(1, sizeof(*key));
+        ogs_assert(key);
+        memcpy(key, &k, sizeof(k));
+
         ogs_plmn_id_to_string(&key->plmn_id, plmn_id);
 
         metrics = ogs_metrics_inst_new(mme_metrics_spec_by_sgw_plmn_apn[t],
@@ -435,8 +438,6 @@ static void mme_metrics_inst_by_sgw_plmn_apn_add(
         ogs_assert(metrics);
         ogs_hash_set(metrics_hash_by_sgw_plmn_apn,
                 key, sizeof(*key), metrics);
-    } else {
-        ogs_free(key);
     }
 
     ogs_metrics_inst_add(metrics, val);
@@ -448,7 +449,7 @@ static void mme_metrics_inst_by_sgw_plmn_add(
         mme_metric_type_by_sgw_plmn_t t, int val)
 {
     ogs_metrics_inst_t *metrics = NULL;
-    mme_metric_key_by_sgw_plmn_t *key;
+    mme_metric_key_by_sgw_plmn_t k;
     char plmn_id[OGS_PLMNIDSTRLEN] = "";
 
     ogs_assert(sgw_addr);
@@ -456,18 +457,19 @@ static void mme_metrics_inst_by_sgw_plmn_add(
     if (!metrics_hash_by_sgw_plmn)
         return;
 
-    key = ogs_calloc(1, sizeof(*key));
-    ogs_assert(key);
-
-    ogs_cpystrn(key->sgw_addr, sgw_addr, sizeof(key->sgw_addr));
-    key->plmn_id = *plmn;
-    key->t = t;
+    memset(&k, 0, sizeof(k));
+    ogs_cpystrn(k.sgw_addr, sgw_addr, sizeof(k.sgw_addr));
+    k.plmn_id = *plmn;
+    k.t = t;
 
     ogs_metrics_dump_lock();
-    metrics = ogs_hash_get(metrics_hash_by_sgw_plmn,
-            key, sizeof(*key));
+    metrics = ogs_hash_get(metrics_hash_by_sgw_plmn, &k, sizeof(k));
 
     if (!metrics) {
+        mme_metric_key_by_sgw_plmn_t *key = ogs_calloc(1, sizeof(*key));
+        ogs_assert(key);
+        memcpy(key, &k, sizeof(k));
+
         ogs_plmn_id_to_string(&key->plmn_id, plmn_id);
 
         metrics = ogs_metrics_inst_new(mme_metrics_spec_by_sgw_plmn[t],
@@ -477,8 +479,6 @@ static void mme_metrics_inst_by_sgw_plmn_add(
         ogs_assert(metrics);
         ogs_hash_set(metrics_hash_by_sgw_plmn,
                 key, sizeof(*key), metrics);
-    } else {
-        ogs_free(key);
     }
 
     ogs_metrics_inst_add(metrics, val);

@@ -89,7 +89,7 @@ int mme_admin_enb_detach(const ogs_metrics_query_t *q,
     ogs_pool_id_t enb_pool_id = OGS_INVALID_POOL_ID;
     uint32_t resolved_enb_id = 0;
 
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
     mme_enb_t *enb = NULL;
     if (q->has_enb_id) {
         enb = mme_enb_find_by_enb_id(q->enb_id);
@@ -125,7 +125,7 @@ int mme_admin_enb_detach(const ogs_metrics_query_t *q,
         enb_pool_id = enb->id;
         resolved_enb_id = enb->enb_id;
     }
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
 
     if (enb_pool_id == OGS_INVALID_POOL_ID) {
         *body_len = fmt_json_status(body, body_cap,
@@ -172,13 +172,13 @@ int mme_admin_ue_detach(const ogs_metrics_query_t *q,
 
     int owner_wid = -1;
 
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
     mme_ue_t *mme_ue = mme_ue_find_by_imsi_bcd(q->imsi);
     if (mme_ue) {
         mme_ue_pool_id = mme_ue->id;
         owner_wid = mme_shard_from_teid(mme_ue->mme_s11_teid);
     }
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
 
     if (mme_ue_pool_id == OGS_INVALID_POOL_ID) {
         *body_len = fmt_json_status(body, body_cap,
@@ -223,14 +223,14 @@ int mme_admin_ue_page(const ogs_metrics_query_t *q,
     bool connected = false;
     int owner_wid = -1;
 
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
     mme_ue_t *mme_ue = mme_ue_find_by_imsi_bcd(q->imsi);
     if (mme_ue) {
         mme_ue_pool_id = mme_ue->id;
         connected = ECM_CONNECTED(mme_ue);
         owner_wid = mme_shard_from_teid(mme_ue->mme_s11_teid);
     }
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
 
     if (mme_ue_pool_id == OGS_INVALID_POOL_ID) {
         *body_len = fmt_json_status(body, body_cap,
@@ -287,9 +287,9 @@ int mme_admin_trace_imsi(const ogs_metrics_query_t *q,
 
 static void mme_admin_set_maintenance(bool maintenance)
 {
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
     mme_self()->maintenance_mode = maintenance;
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
 }
 
 static int mme_admin_maintenance_queue(mme_event_e id, int force,
@@ -363,7 +363,7 @@ size_t mme_dump_maintenance_status(char *buf, size_t buflen,
 
     now = ogs_time_now();
 
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
     maintenance = mme_self()->maintenance_mode;
     drain_active = mme_self()->drain_active;
     drain_processed = mme_self()->drain_processed;
@@ -404,7 +404,7 @@ size_t mme_dump_maintenance_status(char *buf, size_t buflen,
     will_remove = maint_will_remove;
     orphan_candidates = maint_orphan_candidates;
     counts_age_s = (long long)ogs_time_to_sec(now - maint_counts_time);
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
 
     mme_orphan_sweep_get_stats(&sweep_last_run, &sweep_last_purged,
             &sweep_last_remaining, &sweep_total_purged);
@@ -531,7 +531,7 @@ int mme_admin_pgw_host_cache(const ogs_metrics_query_t *q,
  * workers, S1AP TX encode workers, S1AP IO command queue, CONNREFUSED
  * side-queue), the event dispatch lag, and per-eNB TX hold state. All
  * reads are diagnostic (torn reads acceptable, same convention as the
- * other dumpers); the eNB list walk holds ogs_metrics_dump_lock() so
+ * other dumpers); the eNB list walk holds mme_ctx_lock() so
  * main cannot free an eNB under us.
  *
  * verdict:
@@ -636,7 +636,7 @@ size_t mme_dump_queue_status(char *buf, size_t buflen,
      * A hold list non-empty for >15s is the wedge signature.
      */
     QSTAT_APPEND("\"enb_hold\":[");
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
     ogs_list_for_each(&mme_self()->enb_list, enb) {
         int pending, held = 0;
         long long age_s = 0;
@@ -683,7 +683,7 @@ size_t mme_dump_queue_status(char *buf, size_t buflen,
                     enb->enb_id, pending, held, age_s,
                     wedged ? "true" : "false");
     }
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
     QSTAT_APPEND("],");
 
     QSTAT_APPEND("\"enb\":{\"total\":%d,\"with_tx_backlog\":%d,"

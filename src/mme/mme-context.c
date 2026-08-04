@@ -259,21 +259,63 @@ static ogs_diam_config_t g_diam_conf;
  *  - The shared containers — every OGS_POOL below (free list + id_hash),
  *    the imsi/guti/teid hashes, mme_ue_list, per-eNB enb_ue lists/hashes
  *    and sgw->sgw_ue_list — are only mutated in this file under
- *    mme_ctx_lock(), which is the RECURSIVE metrics dump mutex shared
- *    with the /ue-info dumpers, so readers never interleave with
+ *    mme_ctx_lock(), a RECURSIVE mutex also taken by the /ue-info,
+ *    /enb-info and admin-API dumpers, so readers never interleave with
  *    mutators and nested lock takes (mme_ue_remove -> sess_remove_all)
  *    are safe. Lookups (find_by_id / find_by_guti / ...) take it too:
  *    ogs_hash_set can expand the bucket array, so lock-free ogs_hash_get
  *    on another thread would read freed memory.
+ *
+ * This lock used to alias the metrics dump mutex, which serialised
+ * every context mutation with /metrics scrapes AND with every labelled
+ * metric increment from the workers (one global futex; see perf
+ * 2026-08). It is now a dedicated mutex. The prom registry keeps its
+ * own ogs_metrics_dump_lock (lib/metrics).
+ *
+ * LOCK ORDER: mme_ctx_lock MAY be held when taking the metrics dump
+ * lock (metric adds inside context paths). NEVER take mme_ctx_lock
+ * while holding the metrics dump lock.
  */
+#if defined(_WIN32)
+static ogs_thread_mutex_t ctx_mutex;
+#else
+static pthread_mutex_t ctx_mutex;
+#endif
+static int ctx_mutex_initialized = 0;
+
+static void mme_ctx_lock_init(void)
+{
+    if (ctx_mutex_initialized) return;
+#if defined(_WIN32)
+    ogs_thread_mutex_init(&ctx_mutex);
+#else
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&ctx_mutex, &attr);
+    pthread_mutexattr_destroy(&attr);
+#endif
+    ctx_mutex_initialized = 1;
+}
+
 void mme_ctx_lock(void)
 {
-    ogs_metrics_dump_lock();
+    if (!ctx_mutex_initialized) return;
+#if defined(_WIN32)
+    ogs_thread_mutex_lock(&ctx_mutex);
+#else
+    pthread_mutex_lock(&ctx_mutex);
+#endif
 }
 
 void mme_ctx_unlock(void)
 {
-    ogs_metrics_dump_unlock();
+    if (!ctx_mutex_initialized) return;
+#if defined(_WIN32)
+    ogs_thread_mutex_unlock(&ctx_mutex);
+#else
+    pthread_mutex_unlock(&ctx_mutex);
+#endif
 }
 
 /* PLMN-indexed csmap buckets (see mme_csmap_plmn_attach). */
@@ -471,8 +513,10 @@ void mme_context_init(void)
 {
     ogs_assert(context_initialized == 0);
 
-    /* mme_ctx_lock() needs the recursive metrics dump mutex; the
-     * metrics context may not be initialized yet at this point. */
+    /* Dedicated recursive context mutex; init the metrics dump mutex
+     * too since the metrics context may not be initialized yet and
+     * the metric wrappers can run early. */
+    mme_ctx_lock_init();
     ogs_metrics_dump_lock_init();
 
     ogs_thread_mutex_init(&pkbuf_tp_mutex);
@@ -6480,10 +6524,10 @@ mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
      * so the reader either sees the old or the new list head, never
      * a partial pointer write.
      */
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
     ogs_list_add(&self.enb_list, enb);
     self.num_of_enbs++;
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
     mme_metrics_inst_global_inc(MME_METR_GLOB_GAUGE_ENB);
 
     ogs_info("[Added] Number of eNBs is now %d", self.num_of_enbs);
@@ -6504,7 +6548,7 @@ int mme_enb_remove(mme_enb_t *enb)
      * accesses enb_ue_list, sctp.addr, etc. and we are about to
      * free them.
      */
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
     ogs_list_remove(&self.enb_list, enb);
     if (self.num_of_enbs > 0)
         self.num_of_enbs--;
@@ -6632,7 +6676,7 @@ int mme_enb_remove(mme_enb_t *enb)
     }
 
     ogs_pool_id_free(&mme_enb_pool, enb);
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
     mme_metrics_inst_global_dec(MME_METR_GLOB_GAUGE_ENB);
     ogs_info("[Removed] Number of eNBs is now %d", self.num_of_enbs);
 
@@ -7970,9 +8014,9 @@ mme_ue_t *mme_ue_add(enb_ue_t *enb_ue)
      * the link insertion so the reader sees a fully-initialized
      * mme_ue or no mme_ue at all.
      */
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
     ogs_list_add(&self.mme_ue_list, mme_ue);
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
 
     /*
      * ogs_list_count() walks the whole UE list: O(N) on EVERY attach. At
@@ -8010,10 +8054,10 @@ void mme_ue_remove(mme_ue_t *mme_ue)
      * duration of teardown so /ue-info dumpers never walk a half-freed
      * UE. Released only after pool_id_free().
      */
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
     if (ogs_pool_find_by_id(&mme_ue_pool, mme_ue_id) != mme_ue ||
             mme_ue->being_removed) {
-        ogs_metrics_dump_unlock();
+        mme_ctx_unlock();
         ogs_error("mme_ue_remove() ignored: context already removed "
                 "or removal in progress (id:%d)", (int)mme_ue_id);
         return;
@@ -8112,7 +8156,7 @@ void mme_ue_remove(mme_ue_t *mme_ue)
         mme_ue->gn.mme_gn_teid_node = NULL;
     }
     ogs_pool_id_free(&mme_ue_pool, mme_ue);
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
 
     /* See mme_ue_add(): never walk the UE list unless debug will print. */
     if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
@@ -9066,9 +9110,9 @@ mme_sess_t *mme_sess_add(mme_ue_t *mme_ue, uint8_t pti)
      * even when we are already inside a locked region (e.g. attach
      * processing that holds it for a wider window).
      */
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
     ogs_list_add(&mme_ue->sess_list, sess);
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
 
     stats_add_mme_session();
 
@@ -9089,7 +9133,7 @@ void mme_sess_remove(mme_sess_t *sess)
      * Same as mme_sess_add - keep the dumper from observing a
      * half-removed sess or following a freed pointer.
      */
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
     ogs_list_remove(&mme_ue->sess_list, sess);
 
     sess->pgw_dns_pending = false;
@@ -9102,7 +9146,7 @@ void mme_sess_remove(mme_sess_t *sess)
     OGS_TLV_CLEAR_DATA(&sess->pgw_epco);
 
     ogs_pool_id_free(&mme_sess_pool, sess);
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
 
     stats_remove_mme_session();
 }
@@ -9244,9 +9288,9 @@ mme_bearer_t *mme_bearer_add(mme_sess_t *sess)
      * Guard bearer_list mutation - the /ue-info dumper walks
      * sess->bearer_list on the MHD worker thread.
      */
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
     ogs_list_add(&sess->bearer_list, bearer);
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
     /* Keep the EBI -> bearer-id lookup table in sync so subsequent
      * mme_bearer_find_by_ue_ebi() calls hit O(1). */
     if (bearer->ebi >= MIN_EPS_BEARER_ID && bearer->ebi <= MAX_EPS_BEARER_ID)
@@ -9309,7 +9353,7 @@ void mme_bearer_remove(mme_bearer_t *bearer)
         ogs_timer_delete(bearer->t_bearer_setup.timer);
         ogs_timer_delete(bearer->t_nas_deactivate.timer);
 
-        ogs_metrics_dump_lock();
+        mme_ctx_lock();
         if (sess)
             ogs_list_remove(&sess->bearer_list, bearer);
         OGS_TLV_CLEAR_DATA(&bearer->tft);
@@ -9323,7 +9367,7 @@ void mme_bearer_remove(mme_bearer_t *bearer)
         }
         mme_bearer_update_xact_clear(bearer);
         ogs_pool_id_free(&mme_bearer_pool, bearer);
-        ogs_metrics_dump_unlock();
+        mme_ctx_unlock();
         return;
     }
 
@@ -9347,7 +9391,7 @@ void mme_bearer_remove(mme_bearer_t *bearer)
      * bearer. Lock is recursive (see lib/metrics/context.c) so an
      * outer locked section is OK.
      */
-    ogs_metrics_dump_lock();
+    mme_ctx_lock();
     ogs_list_remove(&sess->bearer_list, bearer);
 
     OGS_TLV_CLEAR_DATA(&bearer->tft);
@@ -9365,7 +9409,7 @@ void mme_bearer_remove(mme_bearer_t *bearer)
     mme_bearer_update_xact_clear(bearer);
 
     ogs_pool_id_free(&mme_bearer_pool, bearer);
-    ogs_metrics_dump_unlock();
+    mme_ctx_unlock();
 }
 
 /*
