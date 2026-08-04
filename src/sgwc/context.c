@@ -1894,6 +1894,14 @@ int sgwc_context_parse_config(void)
                             ogs_warn("unknown key `%s` in sgwc.buffer_idle",
                                     bk);
                     }
+                } else if (!strcmp(sgwc_key, "gtpc_rx_thread")) {
+                    const char *v = ogs_yaml_iter_value(&sgwc_iter);
+                    if (v)
+                        self.gtpc_rx_thread = atoi(v) ? 1 : 0;
+                } else if (!strcmp(sgwc_key, "pfcp_rx_thread")) {
+                    const char *v = ogs_yaml_iter_value(&sgwc_iter);
+                    if (v)
+                        self.pfcp_rx_thread = atoi(v) ? 1 : 0;
                 } else if (!strcmp(sgwc_key, "ddn_holddown")) {
                     const char *v = ogs_yaml_iter_value(&sgwc_iter);
                     if (v) self.ddn_holddown_s = (uint32_t)atoi(v);

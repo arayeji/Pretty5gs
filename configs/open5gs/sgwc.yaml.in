@@ -30,7 +30,9 @@ global:
 #    triggers: start,interim,stop
 #
 sgwc:
-#  workers: 0   # SMP session shards (0=off/default, max 8). Trial on staging first.
+#  workers: 0   # SMP session shards (0=off/default, max 15 with 4-bit ids). Trial on staging first.
+#  gtpc_rx_thread: 0   # 1 = dedicated GTP-C/Gn RX thread (default 0 = main)
+#  pfcp_rx_thread: 0   # 1 = dedicated PFCP RX thread (default 0 = main)
   metrics:
     server:
       - address: 127.0.0.3

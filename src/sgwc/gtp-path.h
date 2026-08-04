@@ -29,6 +29,11 @@ extern "C" {
 int sgwc_gtp_open(void);
 void sgwc_gtp_close(void);
 
+/* Dedicated GTP-C/Gn RX thread (sgwc.gtpc_rx_thread, default off). */
+int sgwc_gtpc_rx_start(void);
+bool sgwc_gtpc_rx_active(void);
+uint64_t sgwc_gtpc_rx_drops(void);
+
 void sgwc_gtp_send_mme_echo(ogs_gtp_node_t *gnode);
 void sgwc_timer_mme_echo(void *data);
 void sgwc_mme_peer_setup(ogs_gtp_node_t *gnode);

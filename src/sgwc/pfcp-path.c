@@ -26,6 +26,22 @@
 #include "event.h"
 #include "sgwc-workers.h"
 
+/*
+ * Dedicated PFCP RX helper (sgwc.pfcp_rx_thread). Not a protocol shard.
+ */
+static ogs_worker_t *pfcp_rx_worker = NULL;
+static uint64_t pfcp_rx_drop_count = 0;
+
+static void sgwc_pfcp_rx_drop(void)
+{
+    __atomic_fetch_add(&pfcp_rx_drop_count, 1, __ATOMIC_RELAXED);
+}
+
+uint64_t sgwc_pfcp_rx_drops(void)
+{
+    return __atomic_load_n(&pfcp_rx_drop_count, __ATOMIC_RELAXED);
+}
+
 static void pfcp_node_fsm_init(ogs_pfcp_node_t *node, bool try_to_associate)
 {
     sgwc_event_t e;
@@ -176,12 +192,15 @@ static int sgwc_pfcp_recv_one(ogs_socket_t fd)
     e->pfcp_message = message;
 
     if (!sgwc_workers_active()) {
-        /* trypush: RX runs on the same thread that drains this queue */
+        /* trypush: never block the RX poll thread */
         rv = ogs_queue_trypush(ogs_app()->queue, e);
         if (rv != OGS_OK) {
             ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
+            sgwc_pfcp_rx_drop();
             goto cleanup;
         }
+        if (pfcp_rx_worker)
+            ogs_pollset_notify(ogs_app()->pollset);
         return 1;
     }
 
@@ -236,13 +255,18 @@ static int sgwc_pfcp_recv_one(ogs_socket_t fd)
             rv = ogs_queue_trypush(ogs_app()->queue, e);
             if (rv != OGS_OK) {
                 ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
+                sgwc_pfcp_rx_drop();
                 goto cleanup;
             }
+            if (pfcp_rx_worker)
+                ogs_pollset_notify(ogs_app()->pollset);
             return 1;
         }
 
-        if (sgwc_event_push_to_worker(wid, e) != OGS_OK)
+        if (sgwc_event_push_to_worker(wid, e) != OGS_OK) {
+            sgwc_pfcp_rx_drop();
             return 1; /* push_to_worker already freed e + buffers */
+        }
         return 1;
     }
 
@@ -274,23 +298,28 @@ int sgwc_pfcp_open(void)
 {
     ogs_socknode_t *node = NULL;
     ogs_sock_t *sock = NULL;
+    bool rx_offload = sgwc_self()->pfcp_rx_thread != 0;
 
     /* PFCP Server */
     ogs_list_for_each(&ogs_pfcp_self()->pfcp_list, node) {
         sock = ogs_pfcp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, pfcp_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!rx_offload) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, pfcp_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
     ogs_list_for_each(&ogs_pfcp_self()->pfcp_list6, node) {
         sock = ogs_pfcp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, pfcp_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!rx_offload) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, pfcp_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
 
     OGS_SETUP_PFCP_SERVER;
@@ -298,9 +327,83 @@ int sgwc_pfcp_open(void)
     return OGS_OK;
 }
 
+static void pfcp_rx_dispatch(ogs_worker_t *worker, void *data)
+{
+    (void)worker;
+    (void)data;
+}
+
+static void pfcp_rx_thread_init(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_list, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, pfcp_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_list6, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, pfcp_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+
+    ogs_info("SGW-C PFCP RX thread started");
+}
+
+static void pfcp_rx_thread_fini(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    (void)worker;
+
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_list, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_list6, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+}
+
+int sgwc_pfcp_rx_start(void)
+{
+    if (!sgwc_self()->pfcp_rx_thread)
+        return OGS_OK;
+
+    ogs_assert(!pfcp_rx_worker);
+
+    pfcp_rx_worker = ogs_worker_create(0, 64, 8, 64,
+            pfcp_rx_dispatch, NULL);
+    ogs_assert(pfcp_rx_worker);
+    ogs_worker_hooks(pfcp_rx_worker,
+            pfcp_rx_thread_init, pfcp_rx_thread_fini);
+    ogs_worker_set_name(pfcp_rx_worker, "pfcp-rx");
+    ogs_worker_start(pfcp_rx_worker);
+
+    return OGS_OK;
+}
+
+bool sgwc_pfcp_rx_active(void)
+{
+    return pfcp_rx_worker != NULL;
+}
+
 void sgwc_pfcp_close(void)
 {
     ogs_pfcp_node_t *pfcp_node = NULL;
+
+    if (pfcp_rx_worker) {
+        ogs_worker_destroy(pfcp_rx_worker);
+        pfcp_rx_worker = NULL;
+    }
 
     ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, pfcp_node)
         pfcp_node_fsm_fini(pfcp_node);

@@ -621,9 +621,16 @@ size_t sgwc_dump_queue_status(char *buf, size_t buflen,
         verdict = "behind";
 
     QSTAT_APPEND("{\"event_lag_ms\":%lld,"
+            "\"gtpc_rx_thread\":%s,\"pfcp_rx_thread\":%s,"
+            "\"gtpc_rx_drops\":%llu,\"pfcp_rx_drops\":%llu,"
             "\"main\":{\"depth\":%u,\"cap\":%u},"
             "\"shards\":[",
-            lag_ms, depth, cap);
+            lag_ms,
+            sgwc_gtpc_rx_active() ? "true" : "false",
+            sgwc_pfcp_rx_active() ? "true" : "false",
+            (unsigned long long)sgwc_gtpc_rx_drops(),
+            (unsigned long long)sgwc_pfcp_rx_drops(),
+            depth, cap);
 
     n = sgwc_workers_count();
     for (i = 0; i < n; i++) {

@@ -146,6 +146,16 @@ int sgwc_initialize(void)
         if (rv != OGS_OK) return rv;
     }
 
+    /*
+     * RX helpers after shards_enable (workers_start): they are not
+     * protocol shards. Sockets already exist; datagrams wait in the
+     * kernel buffer until the helper registers its polls.
+     */
+    rv = sgwc_gtpc_rx_start();
+    if (rv != OGS_OK) return rv;
+    rv = sgwc_pfcp_rx_start();
+    if (rv != OGS_OK) return rv;
+
     thread = ogs_thread_create_named(sgwc_main, NULL, "sgwc-main");
     if (!thread) return OGS_ERROR;
 

@@ -265,6 +265,13 @@ typedef struct sgwc_context_s {
     ogs_sockaddr_t *gn_addr6;
     ogs_list_t gn_pgw_list;
     uint8_t gn_gtpc_recovery;
+
+    /*
+     * Dedicated RX helper threads (default 0 = sockets on sgwc-main).
+     * Not protocol shards — they never call ogs_worker_shards_enable().
+     */
+    int gtpc_rx_thread;
+    int pfcp_rx_thread;
 } sgwc_context_t;
 
 typedef struct sgwc_ue_s {

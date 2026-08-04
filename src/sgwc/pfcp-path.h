@@ -29,6 +29,11 @@ extern "C" {
 int sgwc_pfcp_open(void);
 void sgwc_pfcp_close(void);
 
+/* Dedicated PFCP RX thread (sgwc.pfcp_rx_thread, default off). */
+int sgwc_pfcp_rx_start(void);
+bool sgwc_pfcp_rx_active(void);
+uint64_t sgwc_pfcp_rx_drops(void);
+
 int sgwc_pfcp_send_bearer_to_modify_list(
         sgwc_sess_t *sess, ogs_pfcp_xact_t *xact);
 

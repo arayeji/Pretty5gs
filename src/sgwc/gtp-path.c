@@ -28,6 +28,23 @@
 #include "event.h"
 
 /*
+ * Dedicated GTP-C RX helper (sgwc.gtpc_rx_thread). Not a protocol
+ * shard — never calls ogs_worker_shards_enable().
+ */
+static ogs_worker_t *gtpc_rx_worker = NULL;
+static uint64_t gtpc_rx_drop_count = 0;
+
+static void sgwc_gtpc_rx_drop(void)
+{
+    __atomic_fetch_add(&gtpc_rx_drop_count, 1, __ATOMIC_RELAXED);
+}
+
+uint64_t sgwc_gtpc_rx_drops(void)
+{
+    return __atomic_load_n(&gtpc_rx_drop_count, __ATOMIC_RELAXED);
+}
+
+/*
  * Deliver a GTP event to the owning shard (or the main queue when
  * workers are off / message is node-local Echo).
  */
@@ -45,15 +62,18 @@ static int sgwc_gtp_deliver(sgwc_event_t *e, ogs_pkbuf_t *pkbuf)
     ogs_assert(pkbuf);
 
     if (!sgwc_workers_active()) {
-        /* trypush: RX runs on the same thread that drains this queue */
+        /* trypush: never block the RX poll thread */
         rv = ogs_queue_trypush(ogs_app()->queue, e);
         if (rv != OGS_OK) {
             ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
+            sgwc_gtpc_rx_drop();
             ogs_pkbuf_free(pkbuf);
             e->pkbuf = NULL;
             sgwc_event_free(e);
             return -1;
         }
+        if (gtpc_rx_worker)
+            ogs_pollset_notify(ogs_app()->pollset);
         return 1;
     }
 
@@ -125,15 +145,23 @@ static int sgwc_gtp_deliver(sgwc_event_t *e, ogs_pkbuf_t *pkbuf)
         rv = ogs_queue_trypush(ogs_app()->queue, e);
         if (rv != OGS_OK) {
             ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
+            sgwc_gtpc_rx_drop();
             ogs_pkbuf_free(pkbuf);
             e->pkbuf = NULL;
             sgwc_event_free(e);
             return -1;
         }
+        if (gtpc_rx_worker)
+            ogs_pollset_notify(ogs_app()->pollset);
         return 1;
     }
 
-    return sgwc_event_push_to_worker(wid, e) == OGS_OK ? 1 : -1;
+    rv = sgwc_event_push_to_worker(wid, e);
+    if (rv != OGS_OK) {
+        sgwc_gtpc_rx_drop();
+        return -1;
+    }
+    return 1;
 }
 
 /*
@@ -451,9 +479,11 @@ static int sgwc_roam_gtpc_open(void)
         ogs_info("roam GTP-C bind [%s]:%u (S5 local source; PGW dest port %u)",
                 OGS_ADDR(sgwc_self()->roam_gtpc_addr, buf), port,
                 ogs_gtp_self()->gtpc_port);
-        sgwc_self()->roam_gtpc_poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
-        ogs_assert(sgwc_self()->roam_gtpc_poll);
+        if (!sgwc_self()->gtpc_rx_thread) {
+            sgwc_self()->roam_gtpc_poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
+            ogs_assert(sgwc_self()->roam_gtpc_poll);
+        }
     }
 
     if (ogs_gtp_self()->gtpc_addr6) {
@@ -470,9 +500,11 @@ static int sgwc_roam_gtpc_open(void)
         ogs_info("roam GTP-C bind [%s]:%u (S5 local source; PGW dest port %u)",
                 OGS_ADDR(sgwc_self()->roam_gtpc_addr6, buf), port,
                 ogs_gtp_self()->gtpc_port);
-        sgwc_self()->roam_gtpc_poll6 = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
-        ogs_assert(sgwc_self()->roam_gtpc_poll6);
+        if (!sgwc_self()->gtpc_rx_thread) {
+            sgwc_self()->roam_gtpc_poll6 = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
+            ogs_assert(sgwc_self()->roam_gtpc_poll6);
+        }
     }
 
     if (!sgwc_self()->roam_gtpc_sock && !sgwc_self()->roam_gtpc_sock6) {
@@ -539,22 +571,27 @@ int sgwc_gtp_open(void)
 {
     ogs_socknode_t *node = NULL;
     ogs_sock_t *sock = NULL;
+    bool rx_offload = sgwc_self()->gtpc_rx_thread != 0;
 
     ogs_list_for_each(&ogs_gtp_self()->gtpc_list, node) {
         sock = ogs_gtp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!rx_offload) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
     ogs_list_for_each(&ogs_gtp_self()->gtpc_list6, node) {
         sock = ogs_gtp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!rx_offload) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
 
     OGS_SETUP_GTPC_SERVER;
@@ -571,17 +608,23 @@ int sgwc_gtp_open(void)
                 gn_sock = ogs_gtp_server(node);
                 if (!gn_sock)
                     return OGS_ERROR;
-                node->poll = ogs_pollset_add(ogs_app()->pollset,
-                        OGS_POLLIN, gn_sock->fd, _gtpv1_c_recv_cb, gn_sock);
-                ogs_assert(node->poll);
+                if (!rx_offload) {
+                    node->poll = ogs_pollset_add(ogs_app()->pollset,
+                            OGS_POLLIN, gn_sock->fd, _gtpv1_c_recv_cb,
+                            gn_sock);
+                    ogs_assert(node->poll);
+                }
             }
             ogs_list_for_each(&sgwc_self()->gn_server_list6, node) {
                 gn_sock = ogs_gtp_server(node);
                 if (!gn_sock)
                     return OGS_ERROR;
-                node->poll = ogs_pollset_add(ogs_app()->pollset,
-                        OGS_POLLIN, gn_sock->fd, _gtpv1_c_recv_cb, gn_sock);
-                ogs_assert(node->poll);
+                if (!rx_offload) {
+                    node->poll = ogs_pollset_add(ogs_app()->pollset,
+                            OGS_POLLIN, gn_sock->fd, _gtpv1_c_recv_cb,
+                            gn_sock);
+                    ogs_assert(node->poll);
+                }
             }
         }
 
@@ -596,6 +639,123 @@ int sgwc_gtp_open(void)
     }
 
     return sgwc_roam_gtpc_open();
+}
+
+static void gtpc_rx_dispatch(ogs_worker_t *worker, void *data)
+{
+    (void)worker;
+    (void)data;
+}
+
+static void gtpc_rx_thread_init(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, _gtpv2_c_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list6, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, _gtpv2_c_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+
+    if (sgwc_self()->gn_enabled) {
+        ogs_list_for_each(&sgwc_self()->gn_server_list, node) {
+            ogs_assert(node->sock);
+            node->poll = ogs_pollset_add(worker->pollset,
+                    OGS_POLLIN, node->sock->fd, _gtpv1_c_recv_cb, node->sock);
+            ogs_assert(node->poll);
+        }
+        ogs_list_for_each(&sgwc_self()->gn_server_list6, node) {
+            ogs_assert(node->sock);
+            node->poll = ogs_pollset_add(worker->pollset,
+                    OGS_POLLIN, node->sock->fd, _gtpv1_c_recv_cb, node->sock);
+            ogs_assert(node->poll);
+        }
+    }
+
+    if (sgwc_self()->roam_gtpc_sock) {
+        sgwc_self()->roam_gtpc_poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, sgwc_self()->roam_gtpc_sock->fd,
+                _gtpv2_c_recv_cb, sgwc_self()->roam_gtpc_sock);
+        ogs_assert(sgwc_self()->roam_gtpc_poll);
+    }
+    if (sgwc_self()->roam_gtpc_sock6) {
+        sgwc_self()->roam_gtpc_poll6 = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, sgwc_self()->roam_gtpc_sock6->fd,
+                _gtpv2_c_recv_cb, sgwc_self()->roam_gtpc_sock6);
+        ogs_assert(sgwc_self()->roam_gtpc_poll6);
+    }
+
+    ogs_info("SGW-C GTP-C RX thread started");
+}
+
+static void gtpc_rx_thread_fini(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    (void)worker;
+
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list6, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+    ogs_list_for_each(&sgwc_self()->gn_server_list, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+    ogs_list_for_each(&sgwc_self()->gn_server_list6, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+    if (sgwc_self()->roam_gtpc_poll) {
+        ogs_pollset_remove(sgwc_self()->roam_gtpc_poll);
+        sgwc_self()->roam_gtpc_poll = NULL;
+    }
+    if (sgwc_self()->roam_gtpc_poll6) {
+        ogs_pollset_remove(sgwc_self()->roam_gtpc_poll6);
+        sgwc_self()->roam_gtpc_poll6 = NULL;
+    }
+}
+
+int sgwc_gtpc_rx_start(void)
+{
+    if (!sgwc_self()->gtpc_rx_thread)
+        return OGS_OK;
+
+    ogs_assert(!gtpc_rx_worker);
+
+    gtpc_rx_worker = ogs_worker_create(0, 64, 8, 64,
+            gtpc_rx_dispatch, NULL);
+    ogs_assert(gtpc_rx_worker);
+    ogs_worker_hooks(gtpc_rx_worker,
+            gtpc_rx_thread_init, gtpc_rx_thread_fini);
+    ogs_worker_set_name(gtpc_rx_worker, "gtpc-rx");
+    ogs_worker_start(gtpc_rx_worker);
+
+    return OGS_OK;
+}
+
+bool sgwc_gtpc_rx_active(void)
+{
+    return gtpc_rx_worker != NULL;
 }
 
 void sgwc_gtp_send_mme_echo(ogs_gtp_node_t *gnode)
@@ -1135,6 +1295,12 @@ int sgwc_gtp_send_delete_bearer_request_to_mme(
 
 void sgwc_gtp_close(void)
 {
+    /* Stop RX thread before closing sockets it polls (fini detaches). */
+    if (gtpc_rx_worker) {
+        ogs_worker_destroy(gtpc_rx_worker);
+        gtpc_rx_worker = NULL;
+    }
+
     if (sgwc_self()->roam_gtpc_poll) {
         ogs_pollset_remove(sgwc_self()->roam_gtpc_poll);
         sgwc_self()->roam_gtpc_poll = NULL;
