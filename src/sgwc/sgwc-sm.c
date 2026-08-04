@@ -324,8 +324,14 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         ogs_assert(pfcp_message);
         pfcp_node = e->pfcp_node;
         ogs_assert(pfcp_node);
-        /* RX may have added the peer; FSM/timer init is main-only. */
-        sgwc_pfcp_node_ensure_fsm(pfcp_node);
+        /*
+         * RX may have added the peer without FSM init; that deferred
+         * init is main-only. Shard workers only see session messages
+         * for already-associated peers — never call ensure_fsm here
+         * (ogs_assert(!ogs_worker_self()) would abort the process).
+         */
+        if (!ogs_worker_self())
+            sgwc_pfcp_node_ensure_fsm(pfcp_node);
         ogs_assert(OGS_FSM_STATE(&pfcp_node->sm));
 
         rv = ogs_pfcp_xact_receive(pfcp_node, &pfcp_message->h, &pfcp_xact);

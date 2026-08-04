@@ -66,10 +66,20 @@ static void pfcp_node_fsm_init(ogs_pfcp_node_t *node, bool try_to_associate)
 void sgwc_pfcp_node_ensure_fsm(ogs_pfcp_node_t *node)
 {
     ogs_assert(node);
-    ogs_assert(!ogs_worker_self());
 
     if (OGS_FSM_STATE(&node->sm))
         return;
+
+    /*
+     * Timer/FSM init is main-owned. Session messages on shards must
+     * already have an associated peer (config/RX→main path). Never
+     * abort a worker here — that took SGW-C down under workers>0.
+     */
+    if (ogs_worker_self()) {
+        ogs_error("PFCP node has no FSM on shard worker; "
+                "association must complete on main first");
+        return;
+    }
 
     pfcp_node_fsm_init(node, false);
 }
