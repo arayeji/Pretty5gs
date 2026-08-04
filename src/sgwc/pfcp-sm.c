@@ -478,20 +478,26 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
     case SGWC_EVT_SXA_NO_HEARTBEAT:
         ogs_warn("No Heartbeat from SGW-U %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
-        /* 3GPP TS 23.007 19A: when re-associating, the UP function deletes
-         * the existing PFCP association and all associated PFCP sessions
-         * upon receiving the new Association Setup Request. The sessions
-         * must therefore be re-established with PFCPSEReq-Flags RESTI
-         * (TS 29.244 8.2.116) once the association is up again. */
-        node->restoration_required = true;
+        /* Do NOT set node->restoration_required here. A heartbeat timeout
+         * is NOT proof the SGW-U restarted: under load one late/lost
+         * heartbeat response used to trigger a full pfcp_restoration()
+         * fan-out against a UPF that still held every session, so each
+         * re-establish came back "Duplicate F-SEID" and the reject path
+         * tore down perfectly healthy (and brand-new) subscribers. The
+         * storm then delayed the next heartbeat and the cycle repeated
+         * every few seconds. Real restarts are detected authoritatively
+         * in lib/pfcp/handler.c by the Recovery Time Stamp comparison
+         * (heartbeats + association setup), which sets
+         * restoration_required only when the peer's RTS advances. */
         OGS_FSM_TRAN(s, sgwc_pfcp_state_will_associate);
         break;
     case SGWC_EVT_SXA_REASSOCIATE:
         ogs_warn("PFCP re-association required with SGW-U %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
-        /* See TS 23.007 19A note above: sessions are deleted on the UP
-         * function by the new association; restore them after setup. */
-        node->restoration_required = true;
+        /* Same rationale as NO_HEARTBEAT above: cause 72 from the peer
+         * means the association is gone, not that its sessions are. If it
+         * really restarted, the RTS in the new Association Setup Response
+         * triggers restoration via lib/pfcp/handler.c. */
         OGS_FSM_TRAN(s, sgwc_pfcp_state_will_associate);
         break;
     default:

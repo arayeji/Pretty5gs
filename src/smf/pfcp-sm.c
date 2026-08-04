@@ -494,11 +494,14 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
     case SMF_EVT_N4_REASSOCIATE:
         ogs_warn("PFCP re-association required with UPF %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
-        /* 3GPP TS 23.007 19A: the UP function deletes the existing PFCP
-         * association and all associated PFCP sessions when it accepts the
-         * new Association Setup Request. Re-establish the sessions with
-         * PFCPSEReq-Flags RESTI (TS 29.244 8.2.116) after association. */
-        node->restoration_required = true;
+        /* Do NOT set node->restoration_required here: an association-loss
+         * hint (cause 72) does not prove the UPF restarted or lost its
+         * sessions. Forcing restoration against a UPF that still holds
+         * every session makes each re-establish fail "Duplicate F-SEID"
+         * and tears down healthy subscribers (seen live on SGW-C 2026-08).
+         * Real restarts are detected in lib/pfcp/handler.c by the
+         * Recovery Time Stamp comparison, which sets restoration_required
+         * only when the peer's RTS advances. */
         OGS_FSM_TRAN(s, smf_pfcp_state_will_associate);
         break;
     default:
