@@ -1058,8 +1058,10 @@ void sgwc_s11_handle_modify_bearer_request(
 
                 current_xact->assoc_xact_id = s11_xact->id;
                 if (gtpbuf) {
-                    if (current_xact->gtpbuf)
+                    if (current_xact->gtpbuf) {
                         ogs_pkbuf_free(current_xact->gtpbuf);
+                        current_xact->gtpbuf = NULL;
+                    }
                     current_xact->gtpbuf = ogs_pkbuf_copy(gtpbuf);
                     ogs_assert(current_xact->gtpbuf);
                 }
@@ -1102,6 +1104,10 @@ void sgwc_s11_handle_modify_bearer_request(
                 OGS_PFCP_MODIFY_OUTER_HEADER_REMOVAL|
                 OGS_PFCP_MODIFY_ACTIVATE;
             if (gtpbuf) {
+                if (current_xact->gtpbuf) {
+                    ogs_pkbuf_free(current_xact->gtpbuf);
+                    current_xact->gtpbuf = NULL;
+                }
                 current_xact->gtpbuf = ogs_pkbuf_copy(gtpbuf);
                 ogs_assert(current_xact->gtpbuf);
             }

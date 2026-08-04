@@ -358,8 +358,16 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
             ogs_error("PFCP state machine exception");
         }
 
-        if (pfcp_xact->gtpbuf)
+        /*
+         * Must NULL after free: an in-flight PFCP modify xact can be
+         * found again by a Modify Bearer retransmit (step >= 1) which
+         * frees xact->gtpbuf before replacing it. Leaving a dangling
+         * pointer here caused talloc "access after free" under load.
+         */
+        if (pfcp_xact->gtpbuf) {
             ogs_pkbuf_free(pfcp_xact->gtpbuf);
+            pfcp_xact->gtpbuf = NULL;
+        }
         ogs_pkbuf_free(recvbuf);
         ogs_pfcp_message_free(pfcp_message);
         break;
