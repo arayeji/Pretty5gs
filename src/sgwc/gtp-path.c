@@ -251,13 +251,17 @@ static int sgwc_gn_recv_one(ogs_sock_t *sock)
     return sgwc_gn_queue_message(sock, pkbuf, &from);
 }
 
+/* Same budget as MME GTP-C / SGW-C PFCP: level-triggered poll re-fires. */
+#define SGWC_GTPC_RECV_BUDGET   512
+
 static void _gtpv1_c_recv_cb(short when, ogs_socket_t fd, void *data)
 {
     ogs_sock_t *sock = data;
+    int budget = SGWC_GTPC_RECV_BUDGET;
 
     ogs_assert(sock);
 
-    while (sgwc_gn_recv_one(sock) > 0)
+    while (budget-- > 0 && sgwc_gn_recv_one(sock) > 0)
         ;
 }
 
@@ -420,11 +424,12 @@ static int sgwc_gtpc_recv_one(ogs_sock_t *sock)
 static void _gtpv2_c_recv_cb(short when, ogs_socket_t fd, void *data)
 {
     ogs_sock_t *sock = data;
+    int budget = SGWC_GTPC_RECV_BUDGET;
 
     ogs_assert(fd != INVALID_SOCKET);
     ogs_assert(sock);
 
-    while (sgwc_gtpc_recv_one(sock) > 0)
+    while (budget-- > 0 && sgwc_gtpc_recv_one(sock) > 0)
         ;
 }
 

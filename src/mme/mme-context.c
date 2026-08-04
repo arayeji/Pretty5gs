@@ -7113,6 +7113,12 @@ bool mme_resolve_enb_ue_mme_ue(mme_enb_t *enb,
         return false;
     }
 
+    /* Global MME_UE_S1AP_ID fallback must still belong to this eNB. */
+    if (enb_ue->enb_id != enb->id) {
+        mme_ctx_unlock();
+        return false;
+    }
+
     if (mme_ue_s1ap_id && *mme_ue_s1ap_id &&
             enb_ue->mme_ue_s1ap_id != *mme_ue_s1ap_id) {
         mme_ctx_unlock();

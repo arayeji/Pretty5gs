@@ -684,15 +684,13 @@ static bool enb_serves_tai(const mme_enb_t *enb, const ogs_eps_tai_t *tai)
     return false;
 }
 
-#define MME_PAGING_ENB_BATCH    512
-
 int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
 {
     mme_enb_t *enb = NULL;
     int rv;
     bool sent = false;
-    ogs_pool_id_t enb_ids[MME_PAGING_ENB_BATCH];
-    int n_enb = 0;
+    ogs_pool_id_t *enb_ids = NULL;
+    int n_enb = 0, n_cap = 0, n_match = 0;
     int i;
 
     ogs_debug("S1-Paging");
@@ -710,8 +708,17 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
      * unlocked — same pattern as orphan-UE sweep. Holding the global
      * lock across encode/queue fan-out serialized every UE find on
      * s1ap-rx / mme-w for the whole paging burst.
+     *
+     * Cap follows current enb_list size so large TAs are not silently
+     * truncated at a fixed 512.
      */
     mme_ctx_lock();
+
+    n_cap = mme_self()->num_of_enbs;
+    if (n_cap < 1)
+        n_cap = 1;
+    enb_ids = ogs_malloc(sizeof(*enb_ids) * (size_t)n_cap);
+    ogs_assert(enb_ids);
 
     /*
      * Smart paging (mme.paging.first_wave: last_enb): first wave goes
@@ -732,9 +739,11 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
             last_enb = mme_enb_find_by_enb_id(
                     mme_ue->e_cgi.cell_id & 0x0fffffff);
 
-        if (last_enb && enb_serves_tai(last_enb, &mme_ue->tai) &&
-                n_enb < MME_PAGING_ENB_BATCH)
-            enb_ids[n_enb++] = last_enb->id;
+        if (last_enb && enb_serves_tai(last_enb, &mme_ue->tai)) {
+            n_match++;
+            if (n_enb < n_cap)
+                enb_ids[n_enb++] = last_enb->id;
+        }
         /* last eNB gone / TA changed: fall through to full fan-out */
     }
 
@@ -743,24 +752,37 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
         ogs_list_for_each(&mme_self()->enb_list, enb) {
             if (!enb_serves_tai(enb, &mme_ue->tai))
                 continue;
-            if (n_enb >= MME_PAGING_ENB_BATCH)
-                break;
-            enb_ids[n_enb++] = enb->id;
+            n_match++;
+            if (n_enb < n_cap)
+                enb_ids[n_enb++] = enb->id;
         }
     }
 
     mme_ctx_unlock();
 
+    if (n_match > n_enb) {
+        ogs_warn("[%s] S1-Paging: truncated fan-out %d→%d eNBs "
+                "(enb_list grew during snapshot) TAC[%d]",
+                mme_ue->imsi_bcd, n_match, n_enb, mme_ue->tai.tac);
+    }
+
     for (i = 0; i < n_enb; i++) {
         enb = mme_enb_find_by_id(enb_ids[i]);
         if (!enb)
             continue;
+        /* Pool-id recycle / TA list change after unlock. */
+        if (!enb_serves_tai(enb, &mme_ue->tai))
+            continue;
 
         rv = paging_send_to_enb(mme_ue, enb, cn_domain);
-        if (rv != OGS_OK)
+        if (rv != OGS_OK) {
+            ogs_free(enb_ids);
             return rv;
+        }
         sent = true;
     }
+
+    ogs_free(enb_ids);
 
     if (!sent) {
         /*

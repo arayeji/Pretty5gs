@@ -188,12 +188,18 @@ static void orphan_sweep_timer_cb(void *data)
 
 #define MME_ORPHAN_UE_BATCH     20000
 
+typedef struct mme_orphan_ue_cand_s {
+    ogs_pool_id_t id;
+    /* Generation stamp: reject pool-id recycle after unlock. */
+    ogs_time_t context_created;
+} mme_orphan_ue_cand_t;
+
 int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
 {
     mme_ue_t *mme_ue = NULL, *next = NULL;
     ogs_time_t now = ogs_time_now();
     int remaining = 0, purged = 0;
-    ogs_pool_id_t *purge_ids = NULL;
+    mme_orphan_ue_cand_t *purge_cands = NULL;
     int n_purge = 0;
     int i;
 
@@ -203,11 +209,12 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
      * mme_ue_purge_on_owner only posts events, yet find_by_id / event
      * alloc still contend; with workers off, purge drives the UE FSM
      * and can take the recursive lock for a long time. Collect up to
-     * MME_ORPHAN_UE_BATCH pool IDs, unlock, then purge by id.
+     * MME_ORPHAN_UE_BATCH candidates (id + context_created), unlock,
+     * then re-validate every orphan gate before purge.
      */
     if (do_purge) {
-        purge_ids = ogs_malloc(sizeof(*purge_ids) * MME_ORPHAN_UE_BATCH);
-        ogs_assert(purge_ids);
+        purge_cands = ogs_malloc(sizeof(*purge_cands) * MME_ORPHAN_UE_BATCH);
+        ogs_assert(purge_cands);
     }
 
     mme_ctx_lock();
@@ -283,7 +290,7 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
 
         remaining++;
 
-        if (!do_purge || !purge_ids || n_purge >= MME_ORPHAN_UE_BATCH)
+        if (!do_purge || !purge_cands || n_purge >= MME_ORPHAN_UE_BATCH)
             continue;
 
         /*
@@ -314,17 +321,37 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
         }
         /* No anchor at all: legacy stub, reclaim it. */
 
-        purge_ids[n_purge++] = mme_ue->id;
+        purge_cands[n_purge].id = mme_ue->id;
+        purge_cands[n_purge].context_created = mme_ue->context_created;
+        n_purge++;
     }
     mme_ctx_unlock();
 
     for (i = 0; i < n_purge; i++) {
-        mme_ue = mme_ue_find_by_id(purge_ids[i]);
+        enb_ue_t *enb_ue = NULL;
+        ogs_time_t anchor;
+
+        mme_ue = mme_ue_find_by_id(purge_cands[i].id);
         if (!mme_ue)
+            continue;
+        /* Pool-id recycle: different UE now sits in this slot. */
+        if (mme_ue->context_created != purge_cands[i].context_created)
             continue;
         if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
             continue;
         if (!ogs_list_empty(&mme_ue->sess_list))
+            continue;
+        if (MME_SESSION_RELEASE_PENDING(mme_ue))
+            continue;
+
+        enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+        if (enb_ue &&
+                enb_ue->ue_ctx_rel_action != S1AP_UE_CTX_REL_INVALID_ACTION)
+            continue;
+
+        anchor = mme_ue->context_created ?
+                mme_ue->context_created : mme_ue->idle_since;
+        if (anchor && (now - anchor) < grace)
             continue;
 
         ogs_warn("orphan sweep: purge imsi=%s (no session)",
@@ -333,8 +360,8 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
         purged++;
     }
 
-    if (purge_ids)
-        ogs_free(purge_ids);
+    if (purge_cands)
+        ogs_free(purge_cands);
 
     if (out_purged)
         *out_purged = purged;

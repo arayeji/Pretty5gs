@@ -249,17 +249,23 @@ static void sgwc_reload_gtpu_key(
 static ogs_pfcp_node_t *sgwc_reload_pfcp_peer_find(ogs_sockaddr_t *addr)
 {
     ogs_pfcp_node_t *node = NULL;
+    ogs_pfcp_node_t *found = NULL;
 
     ogs_assert(addr);
 
+    /* Serialize vs pfcp-rx peer add/merge. */
+    ogs_pfcp_peer_lock();
     ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, node) {
         if (node->config_addr &&
                 sgwc_reload_sockaddr_lists_match(
-                    addr, node->config_addr, NULL))
-            return node;
+                    addr, node->config_addr, NULL)) {
+            found = node;
+            break;
+        }
     }
+    ogs_pfcp_peer_unlock();
 
-    return NULL;
+    return found;
 }
 
 static int sgwc_reload_sgwu_peer_add_only(
@@ -571,14 +577,60 @@ static bool sgwc_reload_sgwu_peer_wanted(
     return false;
 }
 
+static bool sgwc_reload_pfcp_peer_still_listed(ogs_pfcp_node_t *want)
+{
+    ogs_pfcp_node_t *node = NULL;
+
+    ogs_assert(want);
+
+    ogs_pfcp_peer_lock();
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, node) {
+        if (node == want) {
+            ogs_pfcp_peer_unlock();
+            return true;
+        }
+    }
+    ogs_pfcp_peer_unlock();
+    return false;
+}
+
 static void sgwc_reload_sgwu_remove_stale(ogs_yaml_iter_t *pfcp_iter)
 {
-    ogs_pfcp_node_t *node = NULL, *next = NULL;
+    ogs_pfcp_node_t *node = NULL;
+    ogs_pfcp_node_t **nodes = NULL;
+    int n = 0, cap = 0, i;
 
-    ogs_list_for_each_safe(&ogs_pfcp_self()->pfcp_peer_list, next, node) {
-        bool resolve_failed = false;
+    /*
+     * Snapshot config peers under the peer lock, then decide/remove
+     * outside (wanted-set may do DNS). Re-check list membership before
+     * remove so pfcp-rx cannot leave us with a freed pointer.
+     */
+    ogs_pfcp_peer_lock();
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, node) {
+        ogs_pfcp_node_t **grown;
 
         if (!node->config_addr)
+            continue;
+        if (n >= cap) {
+            int ncap = cap ? cap * 2 : 16;
+
+            grown = ogs_realloc(nodes, sizeof(*nodes) * (size_t)ncap);
+            if (!grown) {
+                ogs_error("sgwu remove-stale: realloc failed");
+                break;
+            }
+            nodes = grown;
+            cap = ncap;
+        }
+        nodes[n++] = node;
+    }
+    ogs_pfcp_peer_unlock();
+
+    for (i = 0; i < n; i++) {
+        bool resolve_failed = false;
+
+        node = nodes[i];
+        if (!sgwc_reload_pfcp_peer_still_listed(node))
             continue;
         if (sgwc_reload_sgwu_peer_wanted(pfcp_iter, node, &resolve_failed))
             continue;
@@ -604,6 +656,9 @@ static void sgwc_reload_sgwu_remove_stale(ogs_yaml_iter_t *pfcp_iter)
                 ogs_sockaddr_to_string_static(node->config_addr),
                 OGS_PORT(node->config_addr));
     }
+
+    if (nodes)
+        ogs_free(nodes);
 }
 
 static int sgwc_reload_pfcp_sgwu_sync(ogs_yaml_iter_t *pfcp_iter)
