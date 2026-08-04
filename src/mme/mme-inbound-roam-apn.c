@@ -105,8 +105,8 @@ static int mme_inbound_roam_apn_yaml_list(ogs_yaml_iter_t *iter,
         }
         ogs_cpystrn(list[count], v, OGS_MAX_APN_LEN + 1);
         count++;
-    } while (ogs_yaml_iter_type(&list_iter) == YAML_SEQUENCE_NODE &&
-            ogs_yaml_iter_next(&list_iter));
+    /* Do not advance in the while condition: body already next()'d. */
+    } while (ogs_yaml_iter_type(&list_iter) == YAML_SEQUENCE_NODE);
 
     *out_count = count;
     return OGS_OK;
@@ -213,8 +213,12 @@ static void mme_inbound_roam_apn_parse_rules(mme_context_t *self,
             ogs_warn("unexpected YAML node in inbound_roam apn_rule");
             break;
         }
-    } while (ogs_yaml_iter_type(&rule_array) == YAML_SEQUENCE_NODE &&
-            ogs_yaml_iter_next(&rule_array));
+    /*
+     * Same pattern as apn_correction / hss_map: next() only in the body.
+     * An extra next() in the while condition skipped every other rule, so
+     * a second apn_rule (e.g. 43235 denied_apn: [ims]) never loaded.
+     */
+    } while (ogs_yaml_iter_type(&rule_array) == YAML_SEQUENCE_NODE);
 }
 
 static void mme_inbound_roam_config_parse_key(mme_context_t *self,

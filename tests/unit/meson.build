@@ -28,6 +28,7 @@ testunit_unit_sources = files('''
     crash-test.c
     eplmn-test.c
     access-control-eplmn-test.c
+    inbound-roam-apn-yaml-test.c
     tai-list-test.c
     pfcp-buffer-test.c
 '''.split())

@@ -40,6 +40,7 @@ abts_suite *test_nrf_discovery(abts_suite *suite);
 abts_suite *test_crash(abts_suite *suite);
 abts_suite *test_eplmn(abts_suite *suite);
 abts_suite *test_access_control_eplmn(abts_suite *suite);
+abts_suite *test_inbound_roam_apn_yaml(abts_suite *suite);
 abts_suite *test_tai_list(abts_suite *suite);
 abts_suite *test_pfcp_buffer(abts_suite *suite);
 
@@ -57,6 +58,7 @@ const struct testlist {
     {test_crash},
     {test_eplmn},
     {test_access_control_eplmn},
+    {test_inbound_roam_apn_yaml},
     {test_tai_list},
     {test_pfcp_buffer},
     {NULL},
