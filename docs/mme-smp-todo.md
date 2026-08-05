@@ -291,12 +291,113 @@ all default 0 (bit-identical to before when off):
 
 ---
 
+## 7. Global talloc allocator mutex — the main-thread ceiling
+
+Prod DWARF perf (`perf record -F 499 --call-graph dwarf`, 120 s,
+582k samples; knobs stage_c:1 tx_direct:1 sgsap_io:1 gtpc_rx:1
+rx:8 tx:4 io:1 workers:10, Aug 5 2026):
+
+- process = **9.73 cores on an 88-core box** (89% idle → the limit is
+  serialization, not CPU exhaustion)
+- `mme-main` = 8.61% = **0.84 of ONE core** — hottest thread and the
+  ceiling. Every other pool has ~2x headroom (rx ~0.46 c each,
+  shards ~0.36 c each, io 0.33 c)
+- of main's own cycles: `__x64_sys_futex` 53%, `__switch_to_asm` 53%,
+  `pthread_mutex_lock` 46%, `lll_lock_wait`→`futex_wait` 43%,
+  unlock→`lll_lock_wake` 31% → **~70-75% is mutex machinery**, leaving
+  only ~0.2 c of real MME work. Shard workers lose ~39% the same way;
+  ~2 of 9.7 cores burned process-wide.
+
+The contended lock is **NOT** `mme_ctx_lock`. Recovering the
+`(deleted)` libogscore from `/proc/PID/map_files` and resolving the
+addresses by hand named the callers: `ogs_talloc_free` /
+`ogs_talloc_zero_size` / `ogs_talloc_size` — i.e. the ONE global mutex
+in `lib/core/ogs-memory.c` that every ogs_malloc/calloc/free/realloc
+takes, **including every pkbuf alloc and free** (`ogs-pkbuf.c`
+allocates via `ogs_talloc_*`). Section 5's per-thread pkbuf pools
+removed the pkbuf *pool* mutex but not this one underneath it.
+
+- [x] `ogs_mem_init`: `PTHREAD_MUTEX_ADAPTIVE_NP` — spin before futex.
+      Critical section is a few hundred ns of talloc pointer work, so
+      spinning beats a syscall + 2 context switches. Non-recursive
+      semantics unchanged, no call-site changes.
+- [x] `mme_event_new/free`: plain `calloc`/`free` — flat struct with no
+      talloc children → glibc per-thread tcache, no lock at all.
+      Removes 2 acquisitions of the hottest lock per event.
+- [x] `s1ap_send_paging`: stack array for <= 64 eNBs (heap only for
+      large TAs) — was a malloc+free per paging attempt.
+- [x] `mme_orphan_ue_sweep`: allocate the 320 KB candidate array once
+      and reuse (sweep is main-only: ORPHAN_SWEEP / ADMIN_MAINTENANCE
+      are not UE-scoped, so shard workers reject them).
+- [x] WSL `tests/load` green x3 with the MME knobs + sgwc workers +
+      gtpc/pfcp_rx_thread. NOTE: the load harness proves correctness,
+      **not** speedup (non-TSAN build, not a throughput benchmark).
+- [ ] **Measure the win.** Re-run the same dwarf perf on prod after
+      deploy and compare main's futex share against the ~70% baseline
+      above. Quote no speedup number until this is done.
+- [ ] Structural: get pkbuf alloc/free off the global mutex entirely.
+      talloc with strictly per-thread contexts and no NULL-parent
+      allocs needs no global lock, and the per-thread pools already
+      exist — but this is the exact machinery behind the "bad talloc
+      magic" crashes, so do it deliberately under TSAN, never blind.
+- [ ] Split `mme_ctx_lock` into domain locks (eNB table → rwlock; UE
+      pools/hashes; sess/bearer). Precedents that worked:
+      `served_tai_mutex` (af445061f), `enb->s1ap_tx_hold_lock`.
+- [ ] Lock-free `*_find_by_id`: pool slots are never returned to the
+      OS, so a plain array index + `->id` / `context_created`
+      generation check can replace the locked hash lookup on the
+      per-message hot path (called several times per message x 19
+      active threads).
+- [ ] Chunk the orphan-sweep classify walk: it still holds
+      `mme_ctx_lock` across the whole `mme_ue_list`. At high UE counts
+      that is a multi-ms global stall for all 70 threads.
+- [ ] Try `s1ap_rx_workers: 4-6`. 8 threads at only ~46% each are 8
+      extra contenders on a convoyed lock; fewer can mean more
+      throughput. Config-only, instantly revertible.
+
+### Profiling gotchas (cost real time — remember these)
+
+- `pgrep -n open5gs-mmed` **fails**: the process renames its comm to
+  `mme-main`. Use `pgrep -f "open5gs-mmed -c"`.
+- A `(deleted)` DSO (binary reinstalled while the process ran) breaks
+  perf symbol resolution and `perf buildid-cache -a` will NOT fix it.
+  Recover the running image instead:
+  `cp /proc/PID/map_files/<range> /tmp/`, then
+  `addr2line -f -C -e <recovered.so> $((runtime_addr - map_base))`.
+- Kernel frames need `sudo` (kptr_restrict) or manual
+  `/proc/kallsyms` nearest-symbol lookup.
+- `perf lock contention` is **not** available on this box's perf.
+
+---
+
+## 8. Open audit / coverage gaps
+
+- [ ] Ownership audit for `mme_vlr_t` (SGs), `mme_sgw_t` and the
+      served-TAI/config tables. `mme_enb_t` was audited field-by-field
+      (3 bugs found from one root: designed main-owned, silently made
+      shared by UE shards); these three have NOT had the same pass.
+- [ ] sgwc RX offload (`gtpc_rx_thread` / `pfcp_rx_thread`) hangs every
+      meson EPC suite but passes `tests/load`. Strongly suspected to be
+      the fork-based test harness (5 NFs forked into children under
+      TSAN, `application.c` races already documented) rather than a
+      product bug — but it is **unproven**. Needs a TSAN race-check via
+      a harness that does not fork (build `tests/load` under TSAN, or
+      run the NFs as separate TSAN processes).
+- [ ] TSAN soak of the allocator changes in section 7 (the WSL
+      validation was a non-TSAN build).
+
+---
+
 ## Suggested order (current)
 
 1. ~~`mme_find_served_tai`~~ — done / confirmed in perf  
 2. ~~S1AP TX DLNAS wedge~~ — landed; **finish Stage 2b** (more builders + SCTP send placement)  
-3. **NAS sec snapshot** — optional; pairs with TX if already queuing NAS  
-4. **Stage C UE shards** — only after SGWC soak + test rig (attacks remaining `mme_main` FSM)
+3. **Measure section 7 on prod** (dwarf perf before/after) — everything
+   else is guesswork until the allocator win is quantified  
+4. **Split `mme_ctx_lock` + lock-free find_by_id** — the structural
+   follow-through once section 7 is measured  
+5. **NAS sec snapshot** — optional; pairs with TX if already queuing NAS  
+6. **Stage C UE shards** — only after SGWC soak + test rig (attacks remaining `mme_main` FSM)
 
 ## Deployment reminder
 
