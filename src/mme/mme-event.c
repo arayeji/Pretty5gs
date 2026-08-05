@@ -203,9 +203,19 @@ mme_event_t *mme_event_new(mme_event_e id)
 {
     mme_event_t *e = NULL;
 
-    /* ogs_calloc already zeroes; the extra memset here doubled the
-     * per-event zeroing cost (~3% of CPU was memset under load) */
-    e = ogs_calloc(1, sizeof *e);
+    /*
+     * Plain calloc/free, NOT ogs_calloc/ogs_free.
+     *
+     * ogs_talloc_* takes one process-global mutex, so every event
+     * alloc + free cost two round-trips on the hottest lock in the
+     * process (see ogs_mem_init). An mme_event_t is a small, flat,
+     * self-contained struct with no talloc children, so glibc malloc
+     * serves it from the per-thread tcache with no lock at all.
+     * Payload members (addr / s6a_message / s1ap_message / pkbuf) are
+     * allocated separately and still use their own allocators.
+     * mme_event_free() is the ONLY place events are released.
+     */
+    e = calloc(1, sizeof *e);
     ogs_assert(e);
 
     e->id = id;
@@ -260,7 +270,8 @@ ogs_time_t mme_event_lag(void)
 void mme_event_free(mme_event_t *e)
 {
     ogs_assert(e);
-    ogs_free(e);
+    /* paired with calloc() in mme_event_new() -- see the note there */
+    free(e);
 }
 
 const char *mme_event_get_name(mme_event_t *e)

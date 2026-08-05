@@ -212,9 +212,23 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
      * MME_ORPHAN_UE_BATCH candidates (id + context_created), unlock,
      * then re-validate every orphan gate before purge.
      */
+    /*
+     * The candidate array is allocated once and reused. This sweep runs
+     * on MAIN only (ORPHAN_SWEEP / ADMIN_MAINTENANCE are not UE-scoped,
+     * so shard workers reject them in mme_worker_dispatch), so a single
+     * cached buffer needs no locking. Re-allocating it per sweep cost a
+     * 320 KB ogs_malloc + ogs_free, i.e. two acquisitions of the
+     * process-global allocator mutex (see ogs_mem_init), on every pass.
+     */
     if (do_purge) {
-        purge_cands = ogs_malloc(sizeof(*purge_cands) * MME_ORPHAN_UE_BATCH);
-        ogs_assert(purge_cands);
+        static mme_orphan_ue_cand_t *purge_cands_cache = NULL;
+
+        if (!purge_cands_cache) {
+            purge_cands_cache = ogs_malloc(
+                    sizeof(*purge_cands_cache) * MME_ORPHAN_UE_BATCH);
+            ogs_assert(purge_cands_cache);
+        }
+        purge_cands = purge_cands_cache;
     }
 
     mme_ctx_lock();
@@ -360,8 +374,7 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
         purged++;
     }
 
-    if (purge_cands)
-        ogs_free(purge_cands);
+    /* purge_cands is the cached buffer above -- never freed here. */
 
     if (out_purged)
         *out_purged = purged;

@@ -689,7 +689,18 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
     mme_enb_t *enb = NULL;
     int rv;
     bool sent = false;
+    /*
+     * Most TAs are served by a handful of eNBs, so keep the snapshot on
+     * the stack and only fall back to the heap for unusually large TAs.
+     * ogs_malloc/ogs_free take the process-global allocator mutex (see
+     * ogs_mem_init), and paging is a per-UE hot path -- a malloc+free
+     * per page put two acquisitions of the hottest lock in the process
+     * on every paging attempt.
+     */
+#define MME_PAGING_ENB_STACK    64
+    ogs_pool_id_t enb_ids_stack[MME_PAGING_ENB_STACK];
     ogs_pool_id_t *enb_ids = NULL;
+    bool enb_ids_heap = false;
     int n_enb = 0, n_cap = 0, n_match = 0;
     int i;
 
@@ -717,8 +728,13 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
     n_cap = mme_self()->num_of_enbs;
     if (n_cap < 1)
         n_cap = 1;
-    enb_ids = ogs_malloc(sizeof(*enb_ids) * (size_t)n_cap);
-    ogs_assert(enb_ids);
+    if (n_cap <= MME_PAGING_ENB_STACK) {
+        enb_ids = enb_ids_stack;
+    } else {
+        enb_ids = ogs_malloc(sizeof(*enb_ids) * (size_t)n_cap);
+        ogs_assert(enb_ids);
+        enb_ids_heap = true;
+    }
 
     /*
      * Smart paging (mme.paging.first_wave: last_enb): first wave goes
@@ -776,13 +792,15 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
 
         rv = paging_send_to_enb(mme_ue, enb, cn_domain);
         if (rv != OGS_OK) {
-            ogs_free(enb_ids);
+            if (enb_ids_heap)
+                ogs_free(enb_ids);
             return rv;
         }
         sent = true;
     }
 
-    ogs_free(enb_ids);
+    if (enb_ids_heap)
+        ogs_free(enb_ids);
 
     if (!sent) {
         /*

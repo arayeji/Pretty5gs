@@ -64,7 +64,37 @@ static void mem_talloc_abort(const char *reason)
 
 void ogs_mem_init(void)
 {
+    /*
+     * ADAPTIVE mutex, not a plain one.
+     *
+     * Every ogs_malloc/ogs_calloc/ogs_free/ogs_realloc in the process --
+     * including every pkbuf alloc/free (ogs-pkbuf.c) and every event --
+     * serializes on this single lock. Production DWARF profiling (MME,
+     * 70 threads, 9.7 cores) showed the main thread burning ~70% of its
+     * CPU in futex_wait/futex_wake/__switch_to_asm underneath
+     * ogs_talloc_free/ogs_talloc_zero_size, and shard workers ~39%: a
+     * classic lock convoy. The critical section is a few hundred ns of
+     * talloc pointer work, so a short spin almost always beats a futex
+     * syscall plus two context switches.
+     *
+     * PTHREAD_MUTEX_ADAPTIVE_NP spins briefly before sleeping. Semantics
+     * are otherwise identical to the previous default (non-recursive),
+     * so no call site changes. Falls back cleanly where unavailable.
+     */
+#if defined(_WIN32)
     ogs_thread_mutex_init(&mutex);
+#else
+    {
+        pthread_mutexattr_t attr;
+
+        pthread_mutexattr_init(&attr);
+#if defined(PTHREAD_MUTEX_ADAPTIVE_NP)
+        pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ADAPTIVE_NP);
+#endif
+        pthread_mutex_init(&mutex, &attr);
+        pthread_mutexattr_destroy(&attr);
+    }
+#endif
 
     talloc_enable_null_tracking();
     talloc_set_log_fn(mem_talloc_log);
