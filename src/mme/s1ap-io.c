@@ -131,14 +131,21 @@ static int io_stall_teardown_sec(void)
 
 static OGS_THREAD_LOCAL ogs_hash_t *io_sock_hash = NULL;
 
+static bool io_sockaddr_usable(const ogs_sockaddr_t *a)
+{
+    return a && (a->ogs_sa_family == AF_INET || a->ogs_sa_family == AF_INET6);
+}
+
 /* eNB peer address for diagnostics (both send paths pass enb->sctp.addr) */
 static const char *io_sock_peer_str(io_sock_t *ctx, char *buf)
 {
     ogs_sockaddr_t *a = NULL;
 
-    if (ctx->has_peer)
+    /* has_peer alone is not enough: enb->sctp.addr can be non-NULL with
+     * AF_UNSPEC/zeroed during teardown; OGS_ADDR used to abort MME. */
+    if (ctx->has_peer && io_sockaddr_usable(&ctx->addr))
         a = &ctx->addr;
-    else if (ctx->sock && ctx->sock->remote_addr.ogs_sa_family)
+    else if (ctx->sock && io_sockaddr_usable(&ctx->sock->remote_addr))
         a = &ctx->sock->remote_addr;
 
     if (!a)
@@ -310,11 +317,12 @@ static void io_request_teardown(io_sock_t *ctx, const char *why)
             io_sock_peer_str(ctx, peer), (void *)ctx->sock,
             why ? why : "?");
 
-    if (ctx->has_peer) {
+    if (ctx->has_peer && io_sockaddr_usable(&ctx->addr)) {
         addr = ogs_calloc(1, sizeof(*addr));
         if (addr)
             memcpy(addr, &ctx->addr, sizeof(*addr));
-    } else if (ctx->sock && ctx->sock->remote_addr.ogs_sa_family) {
+    } else if (ctx->sock &&
+            io_sockaddr_usable(&ctx->sock->remote_addr)) {
         addr = ogs_calloc(1, sizeof(*addr));
         if (addr)
             memcpy(addr, &ctx->sock->remote_addr, sizeof(*addr));
@@ -464,7 +472,7 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
     case IO_CMD_SEND:
         ogs_assert(job->pkbuf);
         ctx = io_sock_get(job->sock);
-        if (job->has_peer) {
+        if (job->has_peer && io_sockaddr_usable(&job->addr)) {
             ctx->has_peer = true;
             memcpy(&ctx->addr, &job->addr, sizeof(ctx->addr));
         }
@@ -628,9 +636,13 @@ int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
     job->sock = sock;
     job->pkbuf = pkbuf;
     job->send_addr = send_with_addr;
-    if (peer_addr) {
+    if (io_sockaddr_usable(peer_addr)) {
         job->has_peer = true;
         memcpy(&job->addr, peer_addr, sizeof(job->addr));
+    } else if (peer_addr) {
+        /* Non-NULL but unusable (AF_UNSPEC): keep send_addr false so we
+         * do not pass a zeroed sockaddr into sendmsg. */
+        job->send_addr = false;
     }
 
     rv = ogs_worker_post(io_pick(sock), job);

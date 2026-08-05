@@ -473,9 +473,19 @@ const char *ogs_inet_ntop(void *sa, char *buf, int buflen)
         return inet_ntop(family, &sockaddr->sin6.sin6_addr, buf,
                 INET6_ADDRSTRLEN);
     default:
-        ogs_fatal("Unknown family(%d)", family);
-        ogs_abort();
-        return NULL;
+        /*
+         * Logging helper — never abort the process. Callers (S1AP IO
+         * teardown, GTP timeout, metrics) can see AF_UNSPEC / zeroed
+         * sockaddrs during assoc teardown races; killing MME for that
+         * takes every UE down.
+         */
+        ogs_error("Unknown family(%d)", family);
+        if (buflen > 0) {
+            buf[0] = '?';
+            if (buflen > 1)
+                buf[1] = '\0';
+        }
+        return buf;
     }
 }
 
