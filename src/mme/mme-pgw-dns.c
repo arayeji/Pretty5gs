@@ -935,7 +935,7 @@ static int pgw_dns_resolve_apn_uncached(
         }
     }
 
-    ogs_error("PGW APN DNS failed: fqdn=%s", apn_fqdn);
+    ogs_warn("PGW APN DNS failed: fqdn=%s", apn_fqdn);
     pgw_dns_cache_store(cache_key, NULL, false);
     return OGS_ERROR;
 }

@@ -1942,7 +1942,9 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
     case OGS_FSM_ENTRY_SIG:
         CLEAR_MME_UE_TIMER(mme_ue->t3460);
         r = nas_eps_send_security_mode_command(mme_ue);
-        ogs_expect(r == OGS_OK);
+        if (r != OGS_OK)
+            ogs_warn("[%s] Security mode command send failed",
+                    mme_ue->imsi_bcd);
         break;
     case OGS_FSM_EXIT_SIG:
         break;
@@ -2210,7 +2212,10 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
                         enb_ue_find_by_id(mme_ue->enb_ue_id), mme_ue,
                         OGS_NAS_EMM_CAUSE_SECURITY_MODE_REJECTED_UNSPECIFIED,
                         OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
-                ogs_expect(r == OGS_OK);
+                if (r != OGS_OK)
+                    ogs_warn("[%s] attach reject after T3460 max "
+                            "retransmit failed to send",
+                            mme_ue->imsi_bcd);
             } else {
                 r = nas_eps_send_security_mode_command(mme_ue);
                 if (r == OGS_OK) {

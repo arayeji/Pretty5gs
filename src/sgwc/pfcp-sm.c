@@ -179,6 +179,10 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
     case OGS_FSM_ENTRY_SIG:
         ogs_info("PFCP associated %s",
             ogs_sockaddr_to_string_static(node->addr_list));
+        /* Association may already have a timer event queued; stop so it
+         * cannot keep retrying Association Setup against an up peer. */
+        if (node->t_association)
+            ogs_timer_stop(node->t_association);
         ogs_timer_start(node->t_no_heartbeat,
                 ogs_local_conf()->time.message.pfcp.no_heartbeat_duration);
         ogs_assert(OGS_OK ==
@@ -469,9 +473,24 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
             ogs_assert(OGS_OK ==
                 ogs_pfcp_send_heartbeat_request(node, node_timeout));
             break;
+        case SGWC_TIMER_PFCP_ASSOCIATION:
+            /*
+             * Race: association succeeded while a retry timer event was
+             * already on the queue. Ignore — do not send another Setup.
+             */
+            node = e->pfcp_node;
+            ogs_assert(node);
+            if (node->t_association)
+                ogs_timer_stop(node->t_association);
+            ogs_warn("PFCP association retry timer ignored "
+                    "(already associated) peer %s",
+                    ogs_sockaddr_to_string_static(node->addr_list));
+            break;
         default:
-            ogs_error("Unknown timer[%s:%d]",
-                    sgwc_timer_get_name(e->timer_id), e->timer_id);
+            ogs_warn("Unknown PFCP timer[%s:%d] peer %s",
+                    sgwc_timer_get_name(e->timer_id), e->timer_id,
+                    node ? ogs_sockaddr_to_string_static(node->addr_list)
+                         : "-");
             break;
         }
         break;

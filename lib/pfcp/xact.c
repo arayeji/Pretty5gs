@@ -525,7 +525,11 @@ static int ogs_pfcp_xact_update_rx(ogs_pfcp_xact_t *xact, uint8_t type)
 
         case PFCP_XACT_FINAL_STAGE:
             if (xact->step != 1) {
-                ogs_error("invalid step[%d] type[%d]", xact->step, type);
+                ogs_error("[%d] invalid step[%d] type[%d] org=LOCAL peer %s",
+                        xact->xid, xact->step, type,
+                        xact->node ?
+                            ogs_sockaddr_to_string_static(
+                                xact->node->addr_list) : "-");
                 return OGS_ERROR;
             }
             /*
@@ -599,7 +603,13 @@ static int ogs_pfcp_xact_update_rx(ogs_pfcp_xact_t *xact, uint8_t type)
             }
 
             if (xact->step != 0) {
-                ogs_error("invalid step[%d] type[%d]", xact->step, type);
+                ogs_error("[%d] invalid step[%d] type[%d] org=%s peer %s",
+                        xact->xid, xact->step, type,
+                        xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
+                            "LOCAL" : "REMOTE",
+                        xact->node ?
+                            ogs_sockaddr_to_string_static(
+                                xact->node->addr_list) : "-");
                 return OGS_ERROR;
             }
             if (xact->tm_holding)
@@ -615,7 +625,13 @@ static int ogs_pfcp_xact_update_rx(ogs_pfcp_xact_t *xact, uint8_t type)
 
         case PFCP_XACT_FINAL_STAGE:
             if (xact->step != 2) {
-                ogs_error("invalid step[%d] type[%d]", xact->step, type);
+                ogs_error("[%d] invalid step[%d] type[%d] org=%s peer %s",
+                        xact->xid, xact->step, type,
+                        xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
+                            "LOCAL" : "REMOTE",
+                        xact->node ?
+                            ogs_sockaddr_to_string_static(
+                                xact->node->addr_list) : "-");
                 return OGS_ERROR;
             }
 
@@ -997,7 +1013,11 @@ int ogs_pfcp_xact_receive(
 
     rv = ogs_pfcp_xact_update_rx(new, type);
     if (rv == OGS_ERROR) {
-        ogs_error("ogs_pfcp_xact_update_rx() failed");
+        ogs_error("[%d] ogs_pfcp_xact_update_rx() failed type[%d] "
+                "org=%s peer %s",
+                new->xid, type,
+                new->org == OGS_PFCP_LOCAL_ORIGINATOR ? "LOCAL" : "REMOTE",
+                ogs_sockaddr_to_string_static(node->addr_list));
         ogs_pfcp_xact_delete(new);
         return rv;
     } else if (rv == OGS_RETRY) {
