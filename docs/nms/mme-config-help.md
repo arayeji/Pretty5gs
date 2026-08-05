@@ -2351,6 +2351,9 @@ Samples may show `global.time.message.duration`. **Not accepted** under `global:
 - **Type:** `integer`
 - **Default when omitted:** `0`
 - **Reload:** `restart`
+- **Notes / quirks:** Prefer 4–6 in production; 8 RX threads add
+  allocator contenders without proportional gain once Stage C / deferred
+  free are on.
 - **Evidence:** `src/mme/mme-context.c`
 
 ### `mme.s1ap_tx_workers`

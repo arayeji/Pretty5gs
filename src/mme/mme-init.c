@@ -28,6 +28,7 @@
 
 #include "mme-fd-path.h"
 #include "s1ap-path.h"
+#include "s1ap-free.h"
 #include "s1ap-rx.h"
 #include "s1ap-tx.h"
 #include "s1ap-io.h"
@@ -246,6 +247,11 @@ int mme_initialize(void)
     rv = mme_gtpc_rx_start();
     if (rv != OGS_OK) return OGS_ERROR;
 
+    /* ASN.1/pkbuf free offload: after shards_enable so the helper is a
+     * normal ogs_worker; before accept so the first decoded PDU can defer */
+    rv = s1ap_free_start();
+    if (rv != OGS_OK) return OGS_ERROR;
+
     rv = s1ap_open();
     if (rv != OGS_OK) return OGS_ERROR;
 
@@ -294,6 +300,9 @@ void mme_terminate(void)
      * reference (jobs re-validate under ctx lock, but the worker
      * itself must be gone before the pool is). */
     sgsap_io_stop();
+
+    /* No more producers of deferred ASN.1 frees (main + RX + shards) */
+    s1ap_free_stop();
 
     /* No more producers of CONNREFUSED / TX_READY */
     mme_event_s1ap_connrefused_final();

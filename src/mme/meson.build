@@ -87,6 +87,7 @@ libmme_sources = files('''
     s1ap-tx.c
     s1ap-io.c
     s1ap-shard.c
+    s1ap-free.c
     s1ap-overload.c
     mme-workers.c
     s1ap-sctp.c

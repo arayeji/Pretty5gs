@@ -187,12 +187,19 @@ static void orphan_sweep_timer_cb(void *data)
 }
 
 #define MME_ORPHAN_UE_BATCH     20000
+/* Max UEs examined under one mme_ctx_lock hold. A full pass resumes
+ * from orphan_ue_cursor on the next ORPHAN_SWEEP so the classify walk
+ * cannot stall all ~70 MME threads for multi-ms at high ue_count. */
+#define MME_ORPHAN_UE_LOCK_CHUNK 4096
 
 typedef struct mme_orphan_ue_cand_s {
     ogs_pool_id_t id;
     /* Generation stamp: reject pool-id recycle after unlock. */
     ogs_time_t context_created;
 } mme_orphan_ue_cand_t;
+
+/* Resume point for chunked classify (MAIN-only; no lock needed). */
+static ogs_pool_id_t orphan_ue_cursor = OGS_INVALID_POOL_ID;
 
 int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
 {
@@ -201,6 +208,7 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
     int remaining = 0, purged = 0;
     mme_orphan_ue_cand_t *purge_cands = NULL;
     int n_purge = 0;
+    int n_walked = 0;
     int i;
 
     /*
@@ -232,9 +240,22 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
     }
 
     mme_ctx_lock();
-    ogs_list_for_each_safe(&mme_self()->mme_ue_list, next, mme_ue) {
+
+    /* Resume after the UE we last fully examined (O(1) pool lookup). */
+    if (orphan_ue_cursor != OGS_INVALID_POOL_ID) {
+        mme_ue = mme_ue_find_by_id(orphan_ue_cursor);
+        if (mme_ue)
+            mme_ue = ogs_list_next(mme_ue);
+    }
+    if (!mme_ue)
+        mme_ue = ogs_list_first(&mme_self()->mme_ue_list);
+
+    for (; mme_ue; mme_ue = next) {
         enb_ue_t *enb_ue = NULL;
         ogs_time_t anchor;
+
+        next = ogs_list_next(mme_ue);
+        n_walked++;
 
         /*
          * Intentionally do NOT blanket-skip ue_context_will_remove==true.
@@ -258,7 +279,7 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
          * the removal that its original caller failed to complete.
          */
         if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove))
-            continue;
+            goto chunk_check;
 
         /*
          * Safety net for "parked" UEs: a REGISTERED, ECM-IDLE context
@@ -293,19 +314,19 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
          * is what drives ue_count above mme_session / enb_ue.
          */
         if (!ogs_list_empty(&mme_ue->sess_list))
-            continue;
+            goto chunk_check;
         if (MME_SESSION_RELEASE_PENDING(mme_ue))
-            continue;
+            goto chunk_check;
 
         enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
         if (enb_ue &&
                 enb_ue->ue_ctx_rel_action != S1AP_UE_CTX_REL_INVALID_ACTION)
-            continue;
+            goto chunk_check;
 
         remaining++;
 
         if (!do_purge || !purge_cands || n_purge >= MME_ORPHAN_UE_BATCH)
-            continue;
+            goto chunk_check;
 
         /*
          * Anchor the grace on the fixed creation time, never on idle_since.
@@ -331,14 +352,23 @@ int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
                 mme_ue->context_created : mme_ue->idle_since;
         if (anchor) {
             if ((now - anchor) < grace)
-                continue;
+                goto chunk_check;
         }
         /* No anchor at all: legacy stub, reclaim it. */
 
         purge_cands[n_purge].id = mme_ue->id;
         purge_cands[n_purge].context_created = mme_ue->context_created;
         n_purge++;
+
+chunk_check:
+        if (n_walked >= MME_ORPHAN_UE_LOCK_CHUNK) {
+            orphan_ue_cursor = mme_ue->id;
+            break;
+        }
     }
+    if (!mme_ue)
+        orphan_ue_cursor = OGS_INVALID_POOL_ID;
+
     mme_ctx_unlock();
 
     for (i = 0; i < n_purge; i++) {

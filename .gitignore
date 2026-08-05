@@ -85,3 +85,9 @@ tools/admin-api/scripts/publish-linux.sh
 .git-filter*
 .git-redact*
 .reportout.txt
+
+tools/_epc_analyzer/
+tools/epc_audit_reports/
+tools/analyze_epc_1h.sh
+tools/extract_epc_signaling.sh
+

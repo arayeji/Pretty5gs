@@ -124,11 +124,16 @@ the single-threaded daemon.
 
   ```yaml
   mme:
-    s1ap_rx_workers: 2   # 0 = off (default); max 8
+    s1ap_rx_workers: 4   # 0 = off (default); prefer 4–6 in prod (8 adds
+                         # lock contenders with little extra throughput)
+    stage_c: 1           # needs workers > 0
+    s1ap_tx_direct: 1    # needs s1ap_tx_workers + s1ap_io_thread
   ```
 
   Watch main-thread CPU (`rate(process_cpu_seconds_total[5m])`), GTP
   xact timeout counters, and S1 setup churn during an eNB flap storm.
+  After deploy, re-profile `comm: mme-main` (see `docs/mme-smp-todo.md`
+  §7) — expect lower futex share from pkbuf `calloc` + `s1ap-free`.
 - SGW-C staging trial:
 
   ```yaml

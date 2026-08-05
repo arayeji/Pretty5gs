@@ -213,6 +213,48 @@ static void log_tai_mismatch_diagnostic(mme_enb_t *enb)
     }
 }
 
+/*
+ * UE-associated S1AP arrived on eNB B but MME_UE_S1AP_ID resolves to an
+ * enb_ue still parented by eNB A. Common after Path Switch Failure
+ * (e.g. inbound-roam TAC ACL reject): context stays on source while the
+ * target keeps sending Release Request/Complete. Log at WARN with IMSI
+ * and 3GPP eNB-IDs — not internal pool ids.
+ */
+static void log_s1ap_enb_ownership_mismatch(
+        const char *procedure, mme_enb_t *msg_enb, enb_ue_t *enb_ue,
+        uint32_t mme_ue_s1ap_id, uint32_t msg_enb_ue_s1ap_id)
+{
+    char msg_addr[OGS_ADDRSTRLEN];
+    char owner_addr[OGS_ADDRSTRLEN];
+    mme_enb_t *owner_enb = NULL;
+    mme_ue_t *mme_ue = NULL;
+    const char *imsi = "-";
+
+    ogs_assert(procedure);
+    ogs_assert(msg_enb);
+    ogs_assert(enb_ue);
+
+    owner_enb = mme_enb_find_by_id(enb_ue->enb_id);
+    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+    if (mme_ue && mme_ue->imsi_bcd[0])
+        imsi = mme_ue->imsi_bcd;
+
+    ogs_warn("[%s] %s: MME_UE_S1AP_ID[%u] ENB_UE_S1AP_ID[%u] from eNB[0x%x]"
+            " IP[%s] but S1 context owned by eNB[0x%x] IP[%s] "
+            "(ctx ENB_UE_S1AP_ID[%u] TAI[PLMN:%06x,TAC:%u]) — "
+            "typical after PathSwitch/HO reject or source residual; ignored",
+            imsi, procedure, mme_ue_s1ap_id, msg_enb_ue_s1ap_id,
+            msg_enb->enb_id,
+            msg_enb->sctp.addr ?
+                OGS_ADDR(msg_enb->sctp.addr, msg_addr) : "-",
+            owner_enb ? owner_enb->enb_id : 0,
+            (owner_enb && owner_enb->sctp.addr) ?
+                OGS_ADDR(owner_enb->sctp.addr, owner_addr) : "-",
+            enb_ue->enb_ue_s1ap_id,
+            ogs_plmn_id_hexdump(&enb_ue->saved.tai.plmn_id),
+            enb_ue->saved.tai.tac);
+}
+
 void s1ap_handle_s1_setup_request(mme_enb_t *enb, ogs_s1ap_message_t *message)
 {
     char buf[OGS_ADDRSTRLEN];
@@ -2290,11 +2332,9 @@ void s1ap_handle_ue_context_release_request(
     }
 
     if (enb_ue->enb_id != enb->id) {
-        ogs_error("MME_UE_S1AP_ID[%lld] does not belong to this eNB "
-                "[UE:eNB-ID:%llu, Message:eNB-ID:%llu]",
-                (long long)*MME_UE_S1AP_ID,
-                (unsigned long long)enb_ue->enb_id,
-                (unsigned long long)enb->id);
+        log_s1ap_enb_ownership_mismatch(
+                "UEContextReleaseRequest", enb, enb_ue,
+                (uint32_t)*MME_UE_S1AP_ID, (uint32_t)*ENB_UE_S1AP_ID);
         r = s1ap_send_error_indication(enb,
                 MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_radioNetwork,
@@ -2442,11 +2482,9 @@ void s1ap_handle_ue_context_release_complete(
     }
 
     if (enb_ue->enb_id != enb->id) {
-        ogs_error("MME_UE_S1AP_ID[%lld] does not belong to this eNB "
-                "[UE:eNB-ID:%llu, Message:eNB-ID:%llu]",
-                (long long)*MME_UE_S1AP_ID,
-                (unsigned long long)enb_ue->enb_id,
-                (unsigned long long)enb->id);
+        log_s1ap_enb_ownership_mismatch(
+                "UEContextReleaseComplete", enb, enb_ue,
+                (uint32_t)*MME_UE_S1AP_ID, (uint32_t)*ENB_UE_S1AP_ID);
         r = s1ap_send_error_indication(enb,
                 MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_radioNetwork,
@@ -2481,13 +2519,14 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
 
     /*
      * Split: the eNB-side bookkeeping (HO peer unlink, enb_ue_remove)
-     * runs here on main — enb_ue and the per-eNB list/hash are
-     * main-owned. Everything that touches shard-owned mme_ue state
-     * (mobile-reachable timer, will-remove, mme_ue_remove, indirect
-     * tunnel teardown, paging) is the tail, which runs on the UE owner
-     * shard when mme.workers is active. Running mme_ue_remove here on
-     * main while the owner shard was mid-event was the "Assertion
-     * 'sess'/'sgw_ue' failed" production crash loop.
+     * runs here — under mme_ctx_lock so it is safe from the UE owner
+     * shard when Stage C routes UEContextReleaseComplete. Everything
+     * that touches shard-owned mme_ue state (mobile-reachable timer,
+     * will-remove, mme_ue_remove, indirect tunnel teardown, paging) is
+     * the tail, which runs on the UE owner shard when mme.workers is
+     * active. Running mme_ue_remove here on main while the owner shard
+     * was mid-event was the "Assertion 'sess'/'sgw_ue' failed"
+     * production crash loop.
      */
     switch (rel_action) {
     case S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE:
@@ -3366,10 +3405,12 @@ void s1ap_handle_path_switch_request(
      */
     if (mme_inbound_roam_access_emm_cause_at(mme_ue, &tai, enb) !=
             OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED) {
-        ogs_debug("[%s] PathSwitch rejected by inbound roam access_control "
-                "TAI[PLMN:%06x,TAC:%u] eNB[0x%x]",
+        ogs_warn("[%s] PathSwitch rejected by inbound roam access_control "
+                "TAI[PLMN:%06x,TAC:%u] target-eNB[0x%x] IP[%s] — "
+                "S1 context stays on source; target Release* may follow",
                 mme_ue->imsi_bcd, ogs_plmn_id_hexdump(&tai.plmn_id),
-                tai.tac, enb->enb_id);
+                tai.tac, enb->enb_id,
+                enb->sctp.addr ? OGS_ADDR(enb->sctp.addr, buf) : "-");
         mme_metrics_ho_fail(mme_ue, "path_switch",
                 s1ap_cause_group_name(S1AP_Cause_PR_radioNetwork),
                 S1AP_CauseRadioNetwork_ho_target_not_allowed);
@@ -3856,6 +3897,7 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
     uint32_t target_enb_id = 0;
     S1AP_ENB_ID_PR target_enb_id_pr = S1AP_ENB_ID_PR_NOTHING;
     mme_ue_t *mme_ue = NULL;
+    char buf[OGS_ADDRSTRLEN];
     int r;
 
     ogs_assert(source_ue);
@@ -4007,11 +4049,14 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
         if (mme_inbound_roam_access_emm_cause_at(
                     mme_ue, &target_tai, target_enb) !=
                 OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED) {
-            ogs_debug("[%s] Handover Required rejected by inbound roam "
-                    "access_control TAI[PLMN:%06x,TAC:%u] eNB[0x%x]",
+            ogs_warn("[%s] Handover Required rejected by inbound roam "
+                    "access_control TAI[PLMN:%06x,TAC:%u] target-eNB[0x%x] "
+                    "IP[%s] — S1 context stays on source",
                     mme_ue->imsi_bcd,
                     ogs_plmn_id_hexdump(&target_tai.plmn_id),
-                    target_tai.tac, target_enb->enb_id);
+                    target_tai.tac, target_enb->enb_id,
+                    target_enb->sctp.addr ?
+                        OGS_ADDR(target_enb->sctp.addr, buf) : "-");
             r = s1ap_send_handover_preparation_failure(source_ue,
                     S1AP_Cause_PR_radioNetwork,
                     S1AP_CauseRadioNetwork_ho_target_not_allowed);

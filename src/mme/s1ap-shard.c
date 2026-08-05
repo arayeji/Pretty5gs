@@ -28,13 +28,16 @@
  * with pure arithmetic and post the decoded PDU straight to that
  * shard's queue.
  *
- * Whitelist (phase 1) — handlers verified UE-scoped, no eNB lifecycle:
+ * Whitelist — handlers verified UE-scoped (enb_ue_remove under
+ * mme_ctx_lock where needed):
  *
  *   initiatingMessage:  UplinkNASTransport, UECapabilityInfoIndication
  *   successfulOutcome:  InitialContextSetupResponse,
- *                       UEContextModificationResponse, E-RABSetupResponse
+ *                       UEContextModificationResponse, E-RABSetupResponse,
+ *                       UEContextReleaseComplete,
+ *                       E-RABModifyResponse, E-RABReleaseResponse
  *
- * Everything else (S1Setup, Reset, InitialUEMessage, release, handover,
+ * Everything else (S1Setup, Reset, InitialUEMessage, handover prep,
  * paging, failures) stays on main. Ordering: any routed message is
  * causally later than the InitialUEMessage that created the enb_ue
  * (the UE only talks after the MME answered), so the shard never sees
@@ -56,6 +59,7 @@
 #include "s1ap-path.h"
 #include "s1ap-handler.h"
 #include "s1ap-shard.h"
+#include "s1ap-free.h"
 
 bool s1ap_stage_c_active(void)
 {
@@ -132,6 +136,21 @@ static bool stagec_extract_mme_ue_id(
                     S1AP_E_RABSetupResponseIEs_t,
                     S1AP_E_RABSetupResponseIEs__value_PR_MME_UE_S1AP_ID,
                     mme_ue_s1ap_id);
+        case S1AP_ProcedureCode_id_UEContextRelease:
+            stagec_scan_ies(&so->value.choice.UEContextReleaseComplete,
+                    S1AP_UEContextReleaseComplete_IEs_t,
+                    S1AP_UEContextReleaseComplete_IEs__value_PR_MME_UE_S1AP_ID,
+                    mme_ue_s1ap_id);
+        case S1AP_ProcedureCode_id_E_RABModify:
+            stagec_scan_ies(&so->value.choice.E_RABModifyResponse,
+                    S1AP_E_RABModifyResponseIEs_t,
+                    S1AP_E_RABModifyResponseIEs__value_PR_MME_UE_S1AP_ID,
+                    mme_ue_s1ap_id);
+        case S1AP_ProcedureCode_id_E_RABRelease:
+            stagec_scan_ies(&so->value.choice.E_RABReleaseResponse,
+                    S1AP_E_RABReleaseResponseIEs_t,
+                    S1AP_E_RABReleaseResponseIEs__value_PR_MME_UE_S1AP_ID,
+                    mme_ue_s1ap_id);
         default:
             return false;
         }
@@ -162,13 +181,12 @@ int s1ap_shard_classify_wid(ogs_s1ap_message_t *pdu)
 static void stagec_event_cleanup(mme_event_t *e)
 {
     if (e->s1ap_rx_decoded && e->s1ap_message) {
-        ogs_s1ap_free(e->s1ap_message);
-        ogs_free(e->s1ap_message);
+        s1ap_free_defer(e->s1ap_message, e->pkbuf);
         e->s1ap_message = NULL;
         e->s1ap_rx_decoded = false;
-    }
-    if (e->pkbuf) {
-        ogs_pkbuf_free(e->pkbuf);
+        e->pkbuf = NULL;
+    } else if (e->pkbuf) {
+        s1ap_free_defer(NULL, e->pkbuf);
         e->pkbuf = NULL;
     }
     if (e->addr) {
@@ -295,6 +313,17 @@ bool s1ap_shard_handle(mme_event_t *e)
             break;
         case S1AP_ProcedureCode_id_E_RABSetup:
             s1ap_handle_e_rab_setup_response(enb, pdu);
+            break;
+        case S1AP_ProcedureCode_id_UEContextRelease:
+            /*
+             * enb_ue_remove() is lock-protected; UE-side tail posts to
+             * the owner shard (or runs inline when already on it).
+             */
+            s1ap_handle_ue_context_release_complete(enb, pdu);
+            break;
+        case S1AP_ProcedureCode_id_E_RABModify:
+        case S1AP_ProcedureCode_id_E_RABRelease:
+            /* No UE-state handler today (same as s1ap-sm); free only. */
             break;
         default:
             ogs_error("stage-c: unexpected successful proc %d",

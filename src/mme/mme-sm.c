@@ -27,6 +27,7 @@
 #include "s1ap-path.h"
 #include "s1ap-tx.h"
 #include "s1ap-io.h"
+#include "s1ap-free.h"
 #include "s1ap-overload.h"
 #include "sgsap-path.h"
 #include "nas-security.h"
@@ -328,11 +329,14 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             ogs_error("S1AP MESSAGE: invalid peer address (family=%u)",
                     addr ? addr->ogs_sa_family : 0);
             if (addr) ogs_free(addr);
-            ogs_pkbuf_free(pkbuf);
             if (e->s1ap_rx_decoded) {
-                ogs_s1ap_free(e->s1ap_message);
-                ogs_free(e->s1ap_message);
+                s1ap_free_defer(e->s1ap_message, pkbuf);
+                e->s1ap_message = NULL;
+                e->s1ap_rx_decoded = false;
+            } else {
+                ogs_pkbuf_free(pkbuf);
             }
+            e->pkbuf = NULL;
             break;
         }
 
@@ -344,11 +348,14 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
              * main thread removes the eNB context; without workers this
              * cannot happen and used to be an assert. Drop it. */
             ogs_warn("S1AP MESSAGE for removed eNB - dropped");
-            ogs_pkbuf_free(pkbuf);
             if (e->s1ap_rx_decoded) {
-                ogs_s1ap_free(e->s1ap_message);
-                ogs_free(e->s1ap_message);
+                s1ap_free_defer(e->s1ap_message, pkbuf);
+                e->s1ap_message = NULL;
+                e->s1ap_rx_decoded = false;
+            } else {
+                ogs_pkbuf_free(pkbuf);
             }
+            e->pkbuf = NULL;
             break;
         }
         ogs_assert(OGS_FSM_STATE(&enb->sm));
@@ -358,9 +365,11 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             e->enb_id = enb->id;
             ogs_fsm_dispatch(&enb->sm, e);
 
-            ogs_s1ap_free(e->s1ap_message);
-            ogs_free(e->s1ap_message);
-            ogs_pkbuf_free(pkbuf);
+            /* Handlers must not retain IE pointers into the PDU. */
+            s1ap_free_defer(e->s1ap_message, pkbuf);
+            e->s1ap_message = NULL;
+            e->s1ap_rx_decoded = false;
+            e->pkbuf = NULL;
             break;
         }
 

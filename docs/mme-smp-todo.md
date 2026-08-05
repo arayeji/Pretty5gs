@@ -335,11 +335,24 @@ removed the pkbuf *pool* mutex but not this one underneath it.
 - [ ] **Measure the win.** Re-run the same dwarf perf on prod after
       deploy and compare main's futex share against the ~70% baseline
       above. Quote no speedup number until this is done.
-- [ ] Structural: get pkbuf alloc/free off the global mutex entirely.
-      talloc with strictly per-thread contexts and no NULL-parent
-      allocs needs no global lock, and the per-thread pools already
-      exist — but this is the exact machinery behind the "bad talloc
-      magic" crashes, so do it deliberately under TSAN, never blind.
+
+      After deploying `s1ap-free` + pkbuf `calloc` + Stage C widen:
+
+      ```bash
+      # pgrep -n open5gs-mmed fails (comm is mme-main)
+      PID=$(pgrep -f 'open5gs-mmed -c')
+      perf record -F 499 --call-graph dwarf -p "$PID" -o mme.dwarf.post.data -- sleep 60
+      perf report -i mme.dwarf.post.data --comms mme-main --stdio | head -80
+      top -H -p "$PID" -b -n 1 | head -40
+      ```
+
+      Compare: `CHOICE_free` / `ogs_talloc_free` under `mme-main` should
+      drop (frees moved to `s1ap-free`); pkbuf path should leave the
+      global talloc mutex. Prefer `s1ap_rx_workers: 4-6` for the soak.
+- [x] Structural: pkbuf alloc/free off the global talloc mutex when
+      `OGS_USE_TALLOC=1` — `ogs_pkbuf_alloc`/`free` use `calloc`/`free`
+      (glibc tcache); ASN.1 remains on talloc. Pair with deferred
+      `s1ap-free` worker for heap PDU teardown off `mme-main`.
 - [ ] Split `mme_ctx_lock` into domain locks (eNB table → rwlock; UE
       pools/hashes; sess/bearer). Precedents that worked:
       `served_tai_mutex` (af445061f), `enb->s1ap_tx_hold_lock`.
@@ -348,12 +361,12 @@ removed the pkbuf *pool* mutex but not this one underneath it.
       generation check can replace the locked hash lookup on the
       per-message hot path (called several times per message x 19
       active threads).
-- [ ] Chunk the orphan-sweep classify walk: it still holds
-      `mme_ctx_lock` across the whole `mme_ue_list`. At high UE counts
-      that is a multi-ms global stall for all 70 threads.
-- [ ] Try `s1ap_rx_workers: 4-6`. 8 threads at only ~46% each are 8
-      extra contenders on a convoyed lock; fewer can mean more
-      throughput. Config-only, instantly revertible.
+- [x] Chunk the orphan-sweep classify walk (`MME_ORPHAN_UE_LOCK_CHUNK`
+      4096 + resume cursor) so `mme_ctx_lock` is not held across the
+      whole `mme_ue_list`.
+- [x] Prefer `s1ap_rx_workers: 4-6` in prod (not 8): fewer contenders
+      on remaining ASN.1 talloc traffic; config-only, see
+      `docs/smp-workers.md`.
 
 ### Profiling gotchas (cost real time — remember these)
 

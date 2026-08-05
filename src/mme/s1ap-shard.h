@@ -31,6 +31,8 @@ extern "C" {
  * to the owning UE shard worker, bypassing the main thread.
  *
  * Knob: mme.stage_c (default 0). Requires mme.workers > 0.
+ * Whitelist includes UplinkNAS, UECapability, ICS/UECtxtMod/E-RABSetup
+ * responses, UEContextReleaseComplete, E-RABModify/Release responses.
  */
 
 /* true when mme.stage_c is on AND UE shard workers are running */
