@@ -126,15 +126,23 @@ do_test() {
     # daemons) must not turn into nonzero exits, or the test harness's
     # child_main asserts during teardown and aborts the whole suite.
     export TSAN_OPTIONS="${TSAN_OPTIONS:-halt_on_error=0 exitcode=0 history_size=7 second_deadlock_stack=1 log_path=tsan-mme}"
+    # WSL2 / modern Ubuntu: high ASLR entropy makes libtsan abort at
+    # startup with "FATAL: ThreadSanitizer: unexpected memory mapping".
+    # Disable ASLR for the test process tree when setarch is available
+    # (needs no root, unlike lowering vm.mmap_rnd_bits).
+    WRAP=""
+    if command -v setarch >/dev/null 2>&1; then
+        WRAP="setarch $(uname -m) -R"
+    fi
     if [ -n "$suite" ]; then
         cleanup_lab
-        meson test -C "$BUILDDIR" "$suite" --timeout-multiplier 4 \
+        $WRAP meson test -C "$BUILDDIR" "$suite" --timeout-multiplier 4 \
             --print-errorlogs
     else
         for s in $SUITES; do
             echo "==== TSAN suite: $s ===="
             cleanup_lab
-            meson test -C "$BUILDDIR" "$s" --timeout-multiplier 4 \
+            $WRAP meson test -C "$BUILDDIR" "$s" --timeout-multiplier 4 \
                 --print-errorlogs || true
         done
     fi
