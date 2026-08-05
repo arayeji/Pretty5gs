@@ -373,14 +373,52 @@ static bool emm_clear_stale_timer(mme_ue_t *mme_ue, int timer_id)
         CLEAR_MME_UE_TIMER(mme_ue->t3470);
         return true;
     case MME_TIMER_MOBILE_REACHABLE:
-        ogs_debug("[%s] Stale %s in EMM state; clearing",
-                mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
-        CLEAR_MME_UE_TIMER(mme_ue->t_mobile_reachable);
-        return true;
     case MME_TIMER_IMPLICIT_DETACH:
-        ogs_debug("[%s] Stale %s in EMM state; clearing",
-                mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
+        /*
+         * Do NOT silently discard these two.
+         *
+         * They are the ONLY lifetime bound a session-bearing context
+         * has: the orphan sweep deliberately skips any UE that still
+         * holds a session (mme-path.c), so clearing them here parks
+         * the context -- and the PDN session it holds on the SGW-C and
+         * on the home PGW -- forever.
+         *
+         * Measured in production: ~1.0M registered contexts against a
+         * TAU + service-request rate that can only account for ~0.5M
+         * present devices, with the count still growing; roaming
+         * partners saw their session count go 20k -> 200k.
+         *
+         * Reaching here means the timer expired while the UE was NOT
+         * in emm_state_registered. Mobile-reachable only fires
+         * T3412 + margin after the S1 release, so a context still
+         * stuck mid-procedure that long is dead, not in transit.
+         * Tear it down the same way emm_state_registered does --
+         * including Delete Session toward the SGW/PGW, so the roaming
+         * partner's session is released too, not just ours.
+         */
+        CLEAR_MME_UE_TIMER(mme_ue->t_mobile_reachable);
         CLEAR_MME_UE_TIMER(mme_ue->t_implicit_detach);
+
+        if (OGS_FSM_CHECK(&mme_ue->sm, emm_state_ue_context_will_remove) ||
+                mme_ue->ue_context_will_remove ||
+                MME_SESSION_RELEASE_PENDING(mme_ue)) {
+            /* Teardown already under way - do not start a second one. */
+            ogs_debug("[%s] Stale %s while already removing; clearing",
+                    mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
+            return true;
+        }
+
+        ogs_warn("[%s] %s expired in non-registered EMM state - "
+                "implicitly detaching stale context",
+                mme_ue->imsi_bcd, mme_timer_get_name(timer_id));
+
+        mme_ue->detach_type = MME_DETACH_TYPE_MME_IMPLICIT;
+        mme_metrics_detach(mme_ue, "implicit_stale");
+        mme_send_delete_session_or_detach(
+                enb_ue_find_by_id(mme_ue->enb_ue_id), mme_ue);
+
+        if (mme_ue->ue_context_will_remove)
+            mme_ue_enter_ue_context_will_remove(mme_ue);
         return true;
     case MME_TIMER_SGS_TS6_1:
         ogs_debug("[%s] Stale %s in EMM state; clearing",
@@ -702,6 +740,13 @@ void emm_state_registered(ogs_fsm_t *s, mme_event_t *e)
              * the network, the network shall implicitly detach the UE.
              */
             mme_ue->detach_type = MME_DETACH_TYPE_MME_IMPLICIT;
+            /*
+             * Implicit detach was invisible in metrics: mme_detach_total
+             * only ever saw origin "ue" / "network", so the reaper that
+             * bounds every idle context could not be observed working
+             * (or not working) at fleet scale. Count it explicitly.
+             */
+            mme_metrics_detach(mme_ue, "implicit");
             if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
                 if (sgsap_send_detach_indication(mme_ue) != OGS_OK) {
                     /*
