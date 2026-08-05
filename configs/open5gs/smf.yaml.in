@@ -189,8 +189,9 @@ smf:
 #    spool_dir: /var/spool/open5gs/cdr
 #    # Value of CDR [18] nodeID; also used as filename prefix.
 #    node_id: open5gs-smf-1
-#    # IPv4 address emitted as CDR [4] p-GWAddress. If unset the field
-#    # is omitted.
+#    # CDR [4] p-GWAddress:
+#    #   1) gtpc.server.advertise  2) address/pgw_address  3) local_address
+#    address: 10.0.0.1
 #    local_address: 10.0.0.1
 #    # Rotate the active file when any of these is first hit. Set to 0
 #    # to disable an individual trigger.

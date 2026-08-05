@@ -268,7 +268,14 @@ typedef struct smf_cdr_config_s {
 
     const char *spool_dir;      /* e.g. /var/spool/open5gs/cdr */
     const char *node_id;        /* value of CDR [18] nodeID, ASCII */
-    const char *local_address;  /* value of CDR [4] p-GWAddress (IPv4) */
+    /*
+     * CDR [4] p-GWAddress selection (IPv4):
+     *   1) gtpc.server.advertise (ogs_gtp_self()->gtpc_ip)
+     *   2) address / pgw_address (manual override below)
+     *   3) local_address (last-resort fallback)
+     */
+    const char *address;        /* manual CDR [4] override (alias: pgw_address) */
+    const char *local_address;  /* last-resort CDR [4] fallback */
 
     /* Rotation thresholds. Whichever is hit first closes the active file
      * and renames it into <spool_dir>/ready/. 0 means disabled. */

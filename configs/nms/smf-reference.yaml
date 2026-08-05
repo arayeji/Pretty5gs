@@ -90,6 +90,7 @@ smf:
     enabled: true
     spool_dir: /var/spool/open5gs/cdr
     node_id: open5gs-smf-1
+    address: 127.0.0.4
     local_address: 127.0.0.4
 
   radius:

@@ -358,15 +358,24 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
         if (n) ber_prim_ctx(&b, 3, tmp, n);
     }
 
-    if (cfg->local_address) {
-        ogs_ipsubnet_t ipsub;
-        if (ogs_ipsubnet(&ipsub, cfg->local_address, NULL) == OGS_OK &&
-                ipsub.family == AF_INET)
-            encode_gsn_address_v4(&b, 4, ntohl(ipsub.sub[0]));
-    } else if (ogs_gtp_self()->gtpc_addr &&
-            ogs_gtp_self()->gtpc_addr->ogs_sa_family == AF_INET) {
-        encode_gsn_address_v4(&b, 4,
-                ntohl(ogs_gtp_self()->gtpc_addr->sin.sin_addr.s_addr));
+    /* [4] s-GWAddress: gtpc advertise > cdr.address > cdr.local_address */
+    if (ogs_gtp_self()->gtpc_ip.ipv4) {
+        encode_gsn_address_v4(&b, 4, ntohl(ogs_gtp_self()->gtpc_ip.addr));
+    } else {
+        const char *candidates[2] = { cfg->address, cfg->local_address };
+        int i;
+
+        for (i = 0; i < 2; i++) {
+            ogs_ipsubnet_t ipsub;
+
+            if (!candidates[i])
+                continue;
+            if (ogs_ipsubnet(&ipsub, candidates[i], NULL) == OGS_OK &&
+                    ipsub.family == AF_INET) {
+                encode_gsn_address_v4(&b, 4, ntohl(ipsub.sub[0]));
+                break;
+            }
+        }
     }
 
     if (sess->charging_id)
@@ -808,6 +817,7 @@ void sgwc_ga_writer_close(void)
 
 static char *g_owned_spool_dir;
 static char *g_owned_node_id;
+static char *g_owned_address;
 static char *g_owned_local_address;
 
 static void replace_owned_string(const char **field, char **owned,
@@ -845,6 +855,8 @@ int sgwc_ga_writer_apply_runtime(const sgwc_cdr_config_t *new_cfg)
             new_cfg->spool_dir);
     replace_owned_string(&cur->node_id, &g_owned_node_id,
             new_cfg->node_id);
+    replace_owned_string(&cur->address, &g_owned_address,
+            new_cfg->address);
     replace_owned_string(&cur->local_address, &g_owned_local_address,
             new_cfg->local_address);
 

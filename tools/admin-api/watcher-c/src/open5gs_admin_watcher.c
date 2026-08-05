@@ -373,6 +373,9 @@ static void ow_apply_smf_cdr_payload(
 
     cfg.spool_dir     = ow_str_or_null(cJSON_GetObjectItem(payload, "spool_dir"));
     cfg.node_id       = ow_str_or_null(cJSON_GetObjectItem(payload, "node_id"));
+    cfg.address       = ow_str_or_null(cJSON_GetObjectItem(payload, "address"));
+    if (!cfg.address)
+        cfg.address = ow_str_or_null(cJSON_GetObjectItem(payload, "pgw_address"));
     cfg.local_address = ow_str_or_null(cJSON_GetObjectItem(payload, "local_address"));
 
     cfg.rotate_max_records =

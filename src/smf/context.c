@@ -513,6 +513,7 @@ static int smf_context_prepare(void)
     self.cdr.enabled = false;
     self.cdr.spool_dir = NULL;
     self.cdr.node_id = NULL;
+    self.cdr.address = NULL;
     self.cdr.local_address = NULL;
     self.cdr.rotate_max_records = 100;
     self.cdr.rotate_max_bytes = 65536;
@@ -1144,8 +1145,10 @@ int smf_context_parse_config(void)
                         } else if (!strcmp(ck, "node_id") ||
                                 !strcmp(ck, "nodeid")) {
                             self.cdr.node_id = cv;
-                        } else if (!strcmp(ck, "local_address") ||
+                        } else if (!strcmp(ck, "address") ||
                                 !strcmp(ck, "pgw_address")) {
+                            self.cdr.address = cv;
+                        } else if (!strcmp(ck, "local_address")) {
                             self.cdr.local_address = cv;
                         } else if (!strcmp(ck, "max_records")) {
                             if (cv) self.cdr.rotate_max_records =

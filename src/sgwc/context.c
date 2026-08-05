@@ -1803,8 +1803,10 @@ int sgwc_context_parse_config(void)
                         } else if (!strcmp(ck, "node_id") ||
                                 !strcmp(ck, "nodeid")) {
                             self.cdr.node_id = cv;
-                        } else if (!strcmp(ck, "local_address") ||
+                        } else if (!strcmp(ck, "address") ||
                                 !strcmp(ck, "sgw_address")) {
+                            self.cdr.address = cv;
+                        } else if (!strcmp(ck, "local_address")) {
                             self.cdr.local_address = cv;
                         } else if (!strcmp(ck, "interim_interval_s") ||
                                 !strcmp(ck, "interim_interval")) {

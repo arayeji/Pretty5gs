@@ -86,7 +86,14 @@ typedef struct sgwc_cdr_config_s {
 
     const char *spool_dir;
     const char *node_id;
-    const char *local_address;  /* SGW S5/S11 address for CDR [4] s-GWAddress */
+    /*
+     * CDR [4] s-GWAddress selection (IPv4):
+     *   1) gtpc.server.advertise (ogs_gtp_self()->gtpc_ip)
+     *   2) address / sgw_address (manual override below)
+     *   3) local_address (last-resort fallback)
+     */
+    const char *address;        /* manual CDR [4] override (alias: sgw_address) */
+    const char *local_address;  /* last-resort CDR [4] fallback */
 
     uint32_t interim_interval_s;   /* URR time_threshold, default 300 */
     uint32_t rotate_max_records;

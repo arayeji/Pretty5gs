@@ -83,6 +83,8 @@ smf:
     enabled: true
     spool_dir: /var/spool/open5gs/cdr
     node_id: open5gs-smf-1
+    # CDR [4]: gtpc.server.advertise > address/pgw_address > local_address
+    address: 127.0.0.4
     local_address: 127.0.0.4
   radius:
     enabled: false

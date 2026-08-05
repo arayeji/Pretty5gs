@@ -209,7 +209,8 @@ UPF entry fields: `address`, `port`, `family`, `apn`/`dnn`, `tac`, `order`.
 | `smf.cdr.enabled` | yes | writer close/reopen |
 | `smf.cdr.spool_dir` / `directory` | yes | |
 | `smf.cdr.node_id` / `nodeid` | yes | |
-| `smf.cdr.local_address` / `pgw_address` | yes | |
+| `smf.cdr.address` / `pgw_address` | yes | manual CDR [4] (after gtpc advertise) |
+| `smf.cdr.local_address` | yes | last-resort CDR [4] fallback |
 | `smf.cdr.max_records` | yes | |
 | `smf.cdr.max_bytes` | yes | |
 | `smf.cdr.max_seconds` | yes | |
@@ -283,7 +284,8 @@ Removal: only when **no PFCP sessions** on that SGW-U.
 | `sgwc.cdr.enabled` | yes | writer close/reopen |
 | `sgwc.cdr.spool_dir` / `directory` | yes | |
 | `sgwc.cdr.node_id` / `nodeid` | yes | |
-| `sgwc.cdr.local_address` / `sgw_address` | yes | |
+| `sgwc.cdr.address` / `sgw_address` | yes | manual CDR [4] (after gtpc advertise) |
+| `sgwc.cdr.local_address` | yes | last-resort CDR [4] fallback |
 | `sgwc.cdr.interim_interval_s` / `interim_interval` | yes | |
 | `sgwc.cdr.max_records` / `max_bytes` / `max_seconds` | yes | |
 | `sgwc.cdr.triggers` | yes | |

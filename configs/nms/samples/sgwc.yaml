@@ -21,6 +21,8 @@ global:
     enabled: true
     spool_dir: /var/spool/open5gs/cdr
     node_id: open5gs-sgwc-1
+    # CDR [4]: gtpc.server.advertise > address/sgw_address > local_address
+    address: 127.0.0.3
     local_address: 127.0.0.3
     triggers: start,interim,stop
 sgwc:

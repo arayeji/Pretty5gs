@@ -223,6 +223,7 @@ curl -XPUT -H "Authorization: Bearer $TOKEN" \
   "enabled":        true,
   "spool_dir":      "/var/spool/open5gs/cdr",
   "node_id":        "open5gs-smf-1",
+  "address":        "10.0.0.1",
   "local_address":  "10.0.0.1",
   "max_records":    100,
   "max_bytes":      65536,
