@@ -36,6 +36,7 @@
 #include "mme-path.h"
 #include "mme-sm.h"
 #include "mme-workers.h"
+#include "mme-roam-access.h"
 #include "metrics.h"
 
 static enb_ue_t *s1ap_find_enb_ue_by_message_ue_ids(
@@ -3359,6 +3360,33 @@ void s1ap_handle_path_switch_request(
 
     mme_ue->send_ue_security_capability_in_path_switch_ack = false;
 
+    /*
+     * Inbound-roam TAC / eNB access_control applies to the *target*
+     * cell (same policy as Attach/TAU). Check before mutating enb_ue.
+     */
+    if (mme_inbound_roam_access_emm_cause_at(mme_ue, &tai, enb) !=
+            OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED) {
+        ogs_debug("[%s] PathSwitch rejected by inbound roam access_control "
+                "TAI[PLMN:%06x,TAC:%u] eNB[0x%x]",
+                mme_ue->imsi_bcd, ogs_plmn_id_hexdump(&tai.plmn_id),
+                tai.tac, enb->enb_id);
+        mme_metrics_ho_fail(mme_ue, "path_switch",
+                s1ap_cause_group_name(S1AP_Cause_PR_radioNetwork),
+                S1AP_CauseRadioNetwork_ho_target_not_allowed);
+        s1apbuf = s1ap_build_path_switch_failure(
+                *ENB_UE_S1AP_ID, *MME_UE_S1AP_ID,
+                S1AP_Cause_PR_radioNetwork,
+                S1AP_CauseRadioNetwork_ho_target_not_allowed);
+        if (!s1apbuf) {
+            ogs_error("s1ap_build_path_switch_failure() failed");
+            return;
+        }
+
+        r = s1ap_send_to_enb(enb, s1apbuf, S1AP_NON_UE_SIGNALLING);
+        ogs_expect(r == OGS_OK);
+        return;
+    }
+
     if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
         ogs_error("No Security Context");
         mme_metrics_ho_fail(mme_ue, "path_switch",
@@ -3947,6 +3975,49 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
             ogs_error("[%s] UEContextReleaseCommand failed after "
                     "bearer-less handover", mme_ue->imsi_bcd);
         return;
+    }
+
+    /* Inbound-roam TAC / eNB ACL against the selected target TAI. */
+    {
+        ogs_eps_tai_t target_tai;
+        S1AP_TAI_t *selected_tai =
+                &TargetID->choice.targeteNB_ID->selected_TAI;
+        S1AP_PLMNidentity_t *pLMNidentity = &selected_tai->pLMNidentity;
+        S1AP_TAC_t *tAC = &selected_tai->tAC;
+
+        memset(&target_tai, 0, sizeof(target_tai));
+        if (pLMNidentity->size == sizeof(target_tai.plmn_id) &&
+                tAC->size == sizeof(target_tai.tac)) {
+            memcpy(&target_tai.plmn_id, pLMNidentity->buf,
+                    sizeof(target_tai.plmn_id));
+            memcpy(&target_tai.tac, tAC->buf, sizeof(target_tai.tac));
+            target_tai.tac = be16toh(target_tai.tac);
+        } else {
+            ogs_error("[%s] Handover Required: invalid selected_TAI "
+                    "(plmn_size=%d tac_size=%d)",
+                    mme_ue->imsi_bcd,
+                    (int)pLMNidentity->size, (int)tAC->size);
+            r = s1ap_send_handover_preparation_failure(source_ue,
+                    S1AP_Cause_PR_protocol,
+                    S1AP_CauseProtocol_semantic_error);
+            ogs_expect(r == OGS_OK);
+            return;
+        }
+
+        if (mme_inbound_roam_access_emm_cause_at(
+                    mme_ue, &target_tai, target_enb) !=
+                OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED) {
+            ogs_debug("[%s] Handover Required rejected by inbound roam "
+                    "access_control TAI[PLMN:%06x,TAC:%u] eNB[0x%x]",
+                    mme_ue->imsi_bcd,
+                    ogs_plmn_id_hexdump(&target_tai.plmn_id),
+                    target_tai.tac, target_enb->enb_id);
+            r = s1ap_send_handover_preparation_failure(source_ue,
+                    S1AP_Cause_PR_radioNetwork,
+                    S1AP_CauseRadioNetwork_ho_target_not_allowed);
+            ogs_expect(r == OGS_OK);
+            return;
+        }
     }
 
     source_ue->handover_type = S1AP_HandoverType_intralte;

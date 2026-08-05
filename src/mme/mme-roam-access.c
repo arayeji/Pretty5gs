@@ -131,12 +131,13 @@ void mme_access_control_free_all(void)
     }
 }
 
-uint8_t mme_inbound_roam_access_emm_cause(
-        mme_ue_t *mme_ue, enb_ue_t *enb_ue)
+uint8_t mme_inbound_roam_access_emm_cause_at(
+        mme_ue_t *mme_ue, const ogs_eps_tai_t *target_tai,
+        mme_enb_t *target_enb)
 {
     mme_context_t *self = mme_self();
     mme_access_control_t *ac = NULL;
-    mme_enb_t *enb = NULL;
+    const ogs_eps_tai_t *tai;
     uint16_t tac;
     uint32_t enb_id = 0;
     bool tac_required = false, enb_required = false;
@@ -156,14 +157,12 @@ uint8_t mme_inbound_roam_access_emm_cause(
 
     mme_access_control_entry_types(&has_prefix_acl, &has_plmn_acl);
 
-    tac = mme_ue->tai.tac;
-    ogs_plmn_id_to_string(&mme_ue->tai.plmn_id, serving_plmn);
+    tai = target_tai ? target_tai : &mme_ue->tai;
+    tac = tai->tac;
+    ogs_plmn_id_to_string(&tai->plmn_id, serving_plmn);
 
-    if (enb_ue) {
-        enb = mme_enb_find_by_id(enb_ue->enb_id);
-        if (enb && enb->enb_id_presence)
-            enb_id = enb->enb_id;
-    }
+    if (target_enb && target_enb->enb_id_presence)
+        enb_id = target_enb->enb_id;
 
     ac = mme_access_control_find_for_imsi(
             self->access_control, self->num_of_access_control,
@@ -226,6 +225,17 @@ uint8_t mme_inbound_roam_access_emm_cause(
     }
 
     return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
+}
+
+uint8_t mme_inbound_roam_access_emm_cause(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue)
+{
+    mme_enb_t *enb = NULL;
+
+    if (enb_ue)
+        enb = mme_enb_find_by_id(enb_ue->enb_id);
+
+    return mme_inbound_roam_access_emm_cause_at(mme_ue, NULL, enb);
 }
 
 bool mme_access_control_eplmn_tac_allowed(mme_ue_t *mme_ue)
