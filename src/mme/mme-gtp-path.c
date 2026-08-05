@@ -410,6 +410,33 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
     case OGS_GTP2_BEARER_RESOURCE_COMMAND_TYPE:
         /* Nothing to do */
         break;
+    case OGS_GTP2_RELEASE_ACCESS_BEARERS_REQUEST_TYPE:
+        /*
+         * S1 release must NOT tear down the PDN connection.
+         *
+         * Release Access Bearers is the normal ECM-CONNECTED ->
+         * ECM-IDLE transition (TS 23.401 5.3.5): it only releases the
+         * S1-U access bearers; the EPS bearer / PDN context stays so
+         * the UE can be paged and resume with a Service Request. This
+         * used to fall through to `default:` ->
+         * mme_send_delete_session_or_mme_ue_context_release(), so a
+         * slow or overloaded SGW-C turned "UE goes idle" into "UE
+         * loses its PDN" -- and because RAB timeouts arrive in bursts
+         * when the SGW is under load, it deleted sessions en masse
+         * exactly when the fleet was going idle.
+         *
+         * Finish the release locally instead (same helper the
+         * no-SGW-TEID skip path already uses): clear the eNB S1-U
+         * paths and complete the requested S1 action. The SGW-C keeps
+         * its own bearers; if it really lost them, the next Modify
+         * Bearer / DDN reconciles via Context Not Found.
+         */
+        ogs_warn("[%s] GTP timeout: Release Access Bearers "
+                "(action=%d) - finishing S1 release locally, "
+                "PDN kept", mme_log_imsi(mme_ue), xact->release_action);
+        mme_s11_finish_release_access_bearers(
+                mme_ue, enb_ue, xact->release_action);
+        break;
     case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
         /*
          * SGW dead or overloaded: previously this fell into the default

@@ -49,7 +49,7 @@ static bool sgwc_sxa_tunnel_matches_modify(
 }
 
 ogs_pkbuf_t *sgwc_sxa_build_session_establishment_request(
-        uint8_t type, sgwc_sess_t *sess)
+        uint8_t type, sgwc_sess_t *sess, ogs_pfcp_xact_t *xact)
 {
     ogs_pfcp_message_t *pfcp_message = NULL;
     ogs_pfcp_session_establishment_request_t *req = NULL;
@@ -163,6 +163,26 @@ ogs_pkbuf_t *sgwc_sxa_build_session_establishment_request(
     /* Create BAR */
     if (sess->pfcp.bar) {
         ogs_pfcp_build_create_bar(&req->create_bar, sess->pfcp.bar);
+    }
+
+    /*
+     * Restoration Indication (TS 29.244 8.2.136, TS 23.007 16.1A.4).
+     *
+     * The restoration path already asks for this flag via
+     * OGS_PFCP_CREATE_RESTORATION_INDICATION, but it was never encoded
+     * on the wire here -- only the SMF (n4-build.c) did it. Without
+     * RESTI=1 the SGW-U cannot tell a restoration re-establishment
+     * from a brand new session, so it will not restore the F-TEIDs it
+     * had allocated and the restored sessions blackhole.
+     */
+    if (xact && (xact->create_flags &
+                OGS_PFCP_CREATE_RESTORATION_INDICATION)) {
+        ogs_pfcp_sereq_flags_t sereq_flags;
+
+        sereq_flags.value = 0;
+        sereq_flags.restoration_indication = 1;
+        req->pfcpsereq_flags.presence = 1;
+        req->pfcpsereq_flags.u8 = sereq_flags.value;
     }
 
     pfcp_message->h.type = type;

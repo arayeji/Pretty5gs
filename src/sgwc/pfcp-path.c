@@ -839,7 +839,7 @@ int sgwc_pfcp_send_session_establishment_request(
  */
     h.seid = sess->sgwu_sxa_seid;
 
-    sxabuf = sgwc_sxa_build_session_establishment_request(h.type, sess);
+    sxabuf = sgwc_sxa_build_session_establishment_request(h.type, sess, xact);
     if (!sxabuf) {
         ogs_error("sgwc_sxa_build_session_establishment_request() failed");
         return OGS_ERROR;
