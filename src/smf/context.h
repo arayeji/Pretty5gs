@@ -273,9 +273,14 @@ typedef struct smf_cdr_config_s {
      *   1) gtpc.server.advertise (ogs_gtp_self()->gtpc_ip)
      *   2) address / pgw_address (manual override below)
      *   3) local_address (last-resort fallback)
+     *
+     * CDR [6] servingNodeAddress (SGW S5-C / SGSN Gn peer):
+     *   1) peer IP from Create Session / Create PDP signalling
+     *   2) serving_node_address / sgsn_address / sgw_serving_address
      */
     const char *address;        /* manual CDR [4] override (alias: pgw_address) */
     const char *local_address;  /* last-resort CDR [4] fallback */
+    const char *serving_node_address; /* manual CDR [6] fallback */
 
     /* Rotation thresholds. Whichever is hit first closes the active file
      * and renames it into <spool_dir>/ready/. 0 means disabled. */

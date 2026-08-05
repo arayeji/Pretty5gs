@@ -91,9 +91,15 @@ typedef struct sgwc_cdr_config_s {
      *   1) gtpc.server.advertise (ogs_gtp_self()->gtpc_ip)
      *   2) address / sgw_address (manual override below)
      *   3) local_address (last-resort fallback)
+     *
+     * CDR [6] servingNodeAddress (MME S11 / SGSN Gn peer):
+     *   1) peer signalling IP stored from CSR / Create PDP
+     *   2) serving_node_address / sgsn_address / mme_address
+     *   3) peer gnode remote address
      */
     const char *address;        /* manual CDR [4] override (alias: sgw_address) */
     const char *local_address;  /* last-resort CDR [4] fallback */
+    const char *serving_node_address; /* manual CDR [6] fallback */
 
     uint32_t interim_interval_s;   /* URR time_threshold, default 300 */
     uint32_t rotate_max_records;

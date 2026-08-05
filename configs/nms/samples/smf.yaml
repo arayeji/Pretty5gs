@@ -86,6 +86,8 @@ smf:
     # CDR [4]: gtpc.server.advertise > address/pgw_address > local_address
     address: 127.0.0.4
     local_address: 127.0.0.4
+    # CDR [6] fallback if SGW/SGSN peer IP unknown:
+    # serving_node_address / sgsn_address / sgw_serving_address
   radius:
     enabled: false
     select: primary_failover

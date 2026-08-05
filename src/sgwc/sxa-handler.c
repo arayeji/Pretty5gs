@@ -697,15 +697,11 @@ void sgwc_sxa_handle_session_establishment_response(
     memset(&sgw_s5c_teid, 0, sizeof(ogs_gtp2_f_teid_t));
     sgw_s5c_teid.interface_type = OGS_GTP2_F_TEID_S5_S8_SGW_GTP_C;
     sgw_s5c_teid.teid = htobe32(sess->sgw_s5c_teid);
-    {
-        ogs_sockaddr_t *gtpc_addr = NULL, *gtpc_addr6 = NULL;
-        sgwc_gtpc_f_teid_addr(sess, &gtpc_addr, &gtpc_addr6);
-        rv = ogs_gtp2_sockaddr_to_f_teid(
-                gtpc_addr, gtpc_addr6, &sgw_s5c_teid, &sgw_s5c_len);
-    }
+    rv = sgwc_gtpc_sockaddr_or_advertise_to_f_teid(
+            sess, &sgw_s5c_teid, &sgw_s5c_len);
     if (rv != OGS_OK) {
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-        ogs_error("ogs_gtp2_sockaddr_to_f_teid(S5C) failed");
+        ogs_error("sgwc_gtpc_sockaddr_or_advertise_to_f_teid(S5C) failed");
         sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
                 OGS_GTP2_CAUSE_SYSTEM_FAILURE);
         return;
@@ -1765,15 +1761,14 @@ indirect_fail:
             gtp_rsp = &recv_message->create_session_response;
             ogs_assert(gtp_rsp);
 
-            /* Send Control Plane(UL) : SGW-S11 */
+            /* Send Control Plane(UL) : SGW-S11 (prefer gtpc advertise) */
             memset(&sgw_s11_teid, 0, sizeof(ogs_gtp2_f_teid_t));
             sgw_s11_teid.interface_type = OGS_GTP2_F_TEID_S11_S4_SGW_GTP_C;
             sgw_s11_teid.teid = htobe32(sgwc_ue->sgw_s11_teid);
-            rv = ogs_gtp2_sockaddr_to_f_teid(
-                    ogs_gtp_self()->gtpc_addr, ogs_gtp_self()->gtpc_addr6,
-                    &sgw_s11_teid, &len);
+            rv = sgwc_gtpc_sockaddr_or_advertise_to_f_teid(
+                    sess, &sgw_s11_teid, &len);
             if (rv != OGS_OK) {
-                ogs_error("ogs_gtp2_sockaddr_to_f_teid(S11) failed");
+                ogs_error("sgwc_gtpc_sockaddr_or_advertise_to_f_teid(S11) failed");
                 sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
                         OGS_GTP2_CAUSE_SYSTEM_FAILURE);
                 return;

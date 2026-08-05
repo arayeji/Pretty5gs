@@ -515,6 +515,7 @@ static int smf_context_prepare(void)
     self.cdr.node_id = NULL;
     self.cdr.address = NULL;
     self.cdr.local_address = NULL;
+    self.cdr.serving_node_address = NULL;
     self.cdr.rotate_max_records = 100;
     self.cdr.rotate_max_bytes = 65536;
     self.cdr.rotate_max_seconds = 30;
@@ -1150,6 +1151,10 @@ int smf_context_parse_config(void)
                             self.cdr.address = cv;
                         } else if (!strcmp(ck, "local_address")) {
                             self.cdr.local_address = cv;
+                        } else if (!strcmp(ck, "serving_node_address") ||
+                                !strcmp(ck, "sgsn_address") ||
+                                !strcmp(ck, "sgw_serving_address")) {
+                            self.cdr.serving_node_address = cv;
                         } else if (!strcmp(ck, "max_records")) {
                             if (cv) self.cdr.rotate_max_records =
                                 (uint32_t)atoi(cv);

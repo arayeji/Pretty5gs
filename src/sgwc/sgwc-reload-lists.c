@@ -61,6 +61,10 @@ static void sgwc_reload_cdr_cfg_clear(sgwc_cdr_config_t *cfg)
         ogs_free((void *)cfg->local_address);
         cfg->local_address = NULL;
     }
+    if (cfg->serving_node_address) {
+        ogs_free((void *)cfg->serving_node_address);
+        cfg->serving_node_address = NULL;
+    }
 }
 
 static void sgwc_reload_parse_cdr(ogs_yaml_iter_t *sgwc_iter,
@@ -101,6 +105,10 @@ static void sgwc_reload_parse_cdr(ogs_yaml_iter_t *sgwc_iter,
             cfg->address = cv ? ogs_strdup(cv) : NULL;
         } else if (!strcmp(ck, "local_address")) {
             cfg->local_address = cv ? ogs_strdup(cv) : NULL;
+        } else if (!strcmp(ck, "serving_node_address") ||
+                !strcmp(ck, "sgsn_address") ||
+                !strcmp(ck, "mme_address")) {
+            cfg->serving_node_address = cv ? ogs_strdup(cv) : NULL;
         } else if (!strcmp(ck, "interim_interval_s") ||
                 !strcmp(ck, "interim_interval")) {
             if (cv)

@@ -18,6 +18,7 @@
  */
 
 #include "s11-build.h"
+#include "gtp-path.h"
 
 ogs_pkbuf_t *sgwc_s11_build_create_session_response(
         uint8_t type, sgwc_sess_t *sess)
@@ -61,13 +62,11 @@ ogs_pkbuf_t *sgwc_s11_build_create_session_response(
 
     cause.value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
-    /* Send Control Plane(UL) : SGW-S11 */
+    /* Send Control Plane(UL) : SGW-S11 (prefer gtpc advertise) */
     memset(&sgw_s11_teid, 0, sizeof(ogs_gtp2_f_teid_t));
     sgw_s11_teid.interface_type = OGS_GTP2_F_TEID_S11_S4_SGW_GTP_C;
     sgw_s11_teid.teid = htobe32(sgwc_ue->sgw_s11_teid);
-    rv = ogs_gtp2_sockaddr_to_f_teid(
-            ogs_gtp_self()->gtpc_addr, ogs_gtp_self()->gtpc_addr6,
-            &sgw_s11_teid, &len);
+    rv = sgwc_gtpc_sockaddr_or_advertise_to_f_teid(sess, &sgw_s11_teid, &len);
     ogs_assert(rv == OGS_OK);
     rsp->sender_f_teid_for_control_plane.presence = 1;
     rsp->sender_f_teid_for_control_plane.data = &sgw_s11_teid;

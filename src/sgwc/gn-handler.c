@@ -779,6 +779,18 @@ void sgwc_gn_handle_create_pdp_context_request(
     if (sgwc_ue->gnode == NULL && gn_xact->gnode)
         OGS_SETUP_GTP_NODE(sgwc_ue, gn_xact->gnode);
 
+    /* CDR [6] / peer identity: prefer SGSN Address for Signalling IE. */
+    if (req->sgsn_address_for_signalling.presence) {
+        ogs_ip_t sgsn_ip;
+
+        if (ogs_gtp1_gsn_addr_to_ip(req->sgsn_address_for_signalling.data,
+                req->sgsn_address_for_signalling.len, &sgsn_ip) == OGS_OK &&
+                sgsn_ip.ipv4) {
+            sgwc_ue->mme_s11_ipv4 = ntohl(sgsn_ip.addr);
+            sgwc_ue->mme_s11_ipv4_valid = 1;
+        }
+    }
+
     {
         sgwc_sess_t *sess = NULL;
         ogs_gtp_xact_t *pending_s5 = NULL;

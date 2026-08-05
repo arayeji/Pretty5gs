@@ -554,6 +554,26 @@ void sgwc_gtpc_f_teid_addr(
     }
 }
 
+/*
+ * Address for F-TEID IEs sent to peers (S11/S5-C). Prefer advertise so
+ * peer CDRs do not record this SGW's internal bind IP.
+ */
+int sgwc_gtpc_sockaddr_or_advertise_to_f_teid(
+        sgwc_sess_t *sess, ogs_gtp2_f_teid_t *f_teid, int *len)
+{
+    ogs_sockaddr_t *addr = NULL, *addr6 = NULL;
+
+    ogs_assert(f_teid);
+    ogs_assert(len);
+
+    if (!sgwc_gtpc_use_roam_socket(sess) &&
+            (ogs_gtp_self()->gtpc_ip.ipv4 || ogs_gtp_self()->gtpc_ip.ipv6))
+        return ogs_gtp2_ip_to_f_teid(&ogs_gtp_self()->gtpc_ip, f_teid, len);
+
+    sgwc_gtpc_f_teid_addr(sess, &addr, &addr6);
+    return ogs_gtp2_sockaddr_to_f_teid(addr, addr6, f_teid, len);
+}
+
 int sgwc_gtp_connect_peer(sgwc_sess_t *sess, ogs_gtp_node_t *gnode)
 {
     ogs_sock_t *sock = NULL;

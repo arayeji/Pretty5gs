@@ -69,6 +69,8 @@ int sgwc_gtp_connect_peer(sgwc_sess_t *sess, ogs_gtp_node_t *gnode);
 void sgwc_gtpc_f_teid_addr(
         sgwc_sess_t *sess,
         ogs_sockaddr_t **addr, ogs_sockaddr_t **addr6);
+int sgwc_gtpc_sockaddr_or_advertise_to_f_teid(
+        sgwc_sess_t *sess, ogs_gtp2_f_teid_t *f_teid, int *len);
 
 int sgwc_gtp_send_create_session_response(
     sgwc_sess_t *sess, ogs_gtp_xact_t *xact);

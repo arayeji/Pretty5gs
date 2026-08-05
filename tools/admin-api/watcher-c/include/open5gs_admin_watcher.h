@@ -75,6 +75,7 @@ typedef struct ogs_admin_smf_cdr_s {
     const char *node_id;        /* may be NULL when enabled == 0 */
     const char *address;        /* manual CDR [4] override; may be NULL */
     const char *local_address;  /* last-resort CDR [4]; may be NULL */
+    const char *serving_node_address; /* CDR [6] fallback; may be NULL */
     uint32_t  rotate_max_records;
     uint32_t  rotate_max_bytes;
     uint32_t  rotate_max_seconds;

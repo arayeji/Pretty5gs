@@ -1808,6 +1808,10 @@ int sgwc_context_parse_config(void)
                             self.cdr.address = cv;
                         } else if (!strcmp(ck, "local_address")) {
                             self.cdr.local_address = cv;
+                        } else if (!strcmp(ck, "serving_node_address") ||
+                                !strcmp(ck, "sgsn_address") ||
+                                !strcmp(ck, "mme_address")) {
+                            self.cdr.serving_node_address = cv;
                         } else if (!strcmp(ck, "interim_interval_s") ||
                                 !strcmp(ck, "interim_interval")) {
                             if (cv) self.cdr.interim_interval_s =

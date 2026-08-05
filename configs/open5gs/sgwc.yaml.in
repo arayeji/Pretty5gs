@@ -25,6 +25,9 @@ global:
 #    # CDR [4]: gtpc.server.advertise > address/sgw_address > local_address
 #    address: 127.0.0.3
 #    local_address: 127.0.0.3
+#    # CDR [6] servingNodeAddress fallback if peer signalling IP is unknown:
+#    # serving_node_address / sgsn_address / mme_address
+#    # serving_node_address: 10.0.0.2
 #    interim_interval_s: 300
 #    max_records: 100
 #    max_bytes: 65536

@@ -547,10 +547,10 @@ static size_t build_pgw_record(
      * reports "BER Error: Missing field in SET class:CONTEXT(2) tag:6
      * expected" when this is absent, and real CGFs reject the record.
      *
-     * We always emit at least one address:
-     *   1. SGW S5-C IPv4 (EPC GTPv2 path), else
-     *   2. SGW S5-C IPv6, else
-     *   3. 0.0.0.0 placeholder so the mandatory slot is filled.
+     * Order:
+     *   1. Peer signalling IP (SGW S5-C from F-TEID, or SGSN Gn address)
+     *   2. cdr.serving_node_address / sgsn_address / sgw_serving_address
+     *   3. 0.0.0.0 placeholder so the mandatory slot is filled
      */
     if (sess->sgw_s5c_ip.ipv4) {
         encode_gsn_address_v4(&b, 6, ntohl(sess->sgw_s5c_ip.addr));
@@ -559,6 +559,14 @@ static size_t build_pgw_record(
         size_t m = ber_begin_ctx(&b, 6);
         ber_prim_ctx(&b, 1, sess->sgw_s5c_ip.addr6, OGS_IPV6_LEN);
         ber_end(&b, m);
+    } else if (cfg->serving_node_address) {
+        ogs_ipsubnet_t ipsub;
+
+        if (ogs_ipsubnet(&ipsub, cfg->serving_node_address, NULL) == OGS_OK &&
+                ipsub.family == AF_INET)
+            encode_gsn_address_v4(&b, 6, ntohl(ipsub.sub[0]));
+        else
+            encode_gsn_address_v4(&b, 6, 0);
     } else {
         encode_gsn_address_v4(&b, 6, 0);
     }
@@ -751,7 +759,14 @@ static size_t build_pgw_record(
     /* [35] servingNodeType SEQUENCE OF. */
     {
         size_t m = ber_begin_ctx(&b, 35);
-        uint8_t snt = sess->epc ? CDR_SNT_GTP_SGW : CDR_SNT_MME;
+        uint8_t snt;
+
+        if (sess->gtp.version == 1)
+            snt = CDR_SNT_SGSN;
+        else if (sess->epc)
+            snt = CDR_SNT_GTP_SGW;
+        else
+            snt = CDR_SNT_MME;
         /* ServingNodeType ::= ENUMERATED — encoded as a context [x] is
          * wrong; spec says it's a universal ENUMERATED inside the SEQ.
          * Use UNIVERSAL ENUMERATED primitive tag 0x0a. */
@@ -1130,6 +1145,7 @@ static char *g_owned_spool_dir;
 static char *g_owned_node_id;
 static char *g_owned_address;
 static char *g_owned_local_address;
+static char *g_owned_serving_node_address;
 
 static void replace_owned_string(const char **field, char **owned,
                                  const char *new_value)
@@ -1173,6 +1189,9 @@ int smf_ga_writer_apply_runtime(const smf_cdr_config_t *new_cfg)
                          new_cfg->address);
     replace_owned_string(&cur->local_address, &g_owned_local_address,
                          new_cfg->local_address);
+    replace_owned_string(&cur->serving_node_address,
+                         &g_owned_serving_node_address,
+                         new_cfg->serving_node_address);
 
     /* 3. Scalar fields. */
     cur->rotate_max_records = new_cfg->rotate_max_records

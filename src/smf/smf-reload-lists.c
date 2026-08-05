@@ -75,6 +75,10 @@ static void smf_reload_cdr_cfg_clear(smf_cdr_config_t *cfg)
         ogs_free((void *)cfg->local_address);
         cfg->local_address = NULL;
     }
+    if (cfg->serving_node_address) {
+        ogs_free((void *)cfg->serving_node_address);
+        cfg->serving_node_address = NULL;
+    }
 }
 
 static void smf_reload_radius_cfg_clear(smf_radius_config_t *cfg)
@@ -1002,6 +1006,10 @@ static void smf_reload_parse_cdr(ogs_yaml_iter_t *smf_iter, smf_cdr_config_t *cf
             cfg->address = cv ? ogs_strdup(cv) : NULL;
         } else if (!strcmp(ck, "local_address")) {
             cfg->local_address = cv ? ogs_strdup(cv) : NULL;
+        } else if (!strcmp(ck, "serving_node_address") ||
+                !strcmp(ck, "sgsn_address") ||
+                !strcmp(ck, "sgw_serving_address")) {
+            cfg->serving_node_address = cv ? ogs_strdup(cv) : NULL;
         } else if (!strcmp(ck, "max_records")) {
             if (cv) cfg->rotate_max_records = (uint32_t)atoi(cv);
         } else if (!strcmp(ck, "max_bytes")) {

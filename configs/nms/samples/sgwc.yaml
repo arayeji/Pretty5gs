@@ -24,6 +24,8 @@ global:
     # CDR [4]: gtpc.server.advertise > address/sgw_address > local_address
     address: 127.0.0.3
     local_address: 127.0.0.3
+    # CDR [6] fallback if MME/SGSN peer IP unknown:
+    # serving_node_address / sgsn_address / mme_address
     triggers: start,interim,stop
 sgwc:
   metrics:

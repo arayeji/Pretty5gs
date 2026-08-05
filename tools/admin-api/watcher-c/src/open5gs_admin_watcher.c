@@ -377,6 +377,14 @@ static void ow_apply_smf_cdr_payload(
     if (!cfg.address)
         cfg.address = ow_str_or_null(cJSON_GetObjectItem(payload, "pgw_address"));
     cfg.local_address = ow_str_or_null(cJSON_GetObjectItem(payload, "local_address"));
+    cfg.serving_node_address =
+        ow_str_or_null(cJSON_GetObjectItem(payload, "serving_node_address"));
+    if (!cfg.serving_node_address)
+        cfg.serving_node_address =
+            ow_str_or_null(cJSON_GetObjectItem(payload, "sgsn_address"));
+    if (!cfg.serving_node_address)
+        cfg.serving_node_address =
+            ow_str_or_null(cJSON_GetObjectItem(payload, "sgw_serving_address"));
 
     cfg.rotate_max_records =
         (uint32_t)ow_clamp_long(cJSON_GetObjectItem(payload, "max_records"), 100);

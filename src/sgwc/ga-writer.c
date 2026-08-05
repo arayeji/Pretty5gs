@@ -34,6 +34,7 @@
 /* CHOICE alternative tag for SGWRecord (PGW uses 79). */
 #define CDR_OUTER_TAG_SGW   78
 
+#define CDR_SNT_SGSN             0
 #define CDR_SNT_MME              5
 #define CDR_CAUSE_TIME_LIMIT     17
 #define CDR_CAUSE_NORMAL_RELEASE 0
@@ -297,13 +298,28 @@ static uint32_t gsn_ipv4_from_gnode(const ogs_gtp_node_t *gnode)
     return 0;
 }
 
-static uint32_t mme_serving_node_ipv4(const sgwc_ue_t *sgwc_ue)
+/*
+ * CDR [6] servingNodeAddress: peer signalling IP first, then configured
+ * fallback, then gnode remote. Never use this SGW's own bind/advertise.
+ */
+static uint32_t serving_node_ipv4(
+        const sgwc_ue_t *sgwc_ue, const sgwc_cdr_config_t *cfg)
 {
-    if (!sgwc_ue)
-        return 0;
-    if (sgwc_ue->mme_s11_ipv4_valid)
+    if (sgwc_ue && sgwc_ue->mme_s11_ipv4_valid)
         return sgwc_ue->mme_s11_ipv4;
-    return gsn_ipv4_from_gnode(sgwc_ue->gnode);
+
+    if (cfg && cfg->serving_node_address) {
+        ogs_ipsubnet_t ipsub;
+
+        if (ogs_ipsubnet(&ipsub, cfg->serving_node_address, NULL) == OGS_OK &&
+                ipsub.family == AF_INET)
+            return ntohl(ipsub.sub[0]);
+    }
+
+    if (sgwc_ue)
+        return gsn_ipv4_from_gnode(sgwc_ue->gnode);
+
+    return 0;
 }
 
 static void encode_epc_qos(ber_t *b, const ogs_qos_t *qos)
@@ -381,8 +397,8 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
     if (sess->charging_id)
         ber_uint_be_ctx(&b, 5, sess->charging_id, 4);
 
-    /* [6] servingNodeAddress — MME S11-C (not PGW). */
-    encode_gsn_address_v4(&b, 6, mme_serving_node_ipv4(sgwc_ue));
+    /* [6] servingNodeAddress — MME S11-C or SGSN Gn peer (not this SGW). */
+    encode_gsn_address_v4(&b, 6, serving_node_ipv4(sgwc_ue, cfg));
 
     if (sess->session.name)
         ber_prim_ctx(&b, 7, sess->session.name, strlen(sess->session.name));
@@ -515,9 +531,10 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
 
     {
         size_t m = ber_begin_ctx(&b, 35);
+        uint8_t snt = (sgwc_ue && sgwc_ue->gn) ? CDR_SNT_SGSN : CDR_SNT_MME;
         ber_u8(&b, 0x0a);
         ber_u8(&b, 0x01);
-        ber_u8(&b, CDR_SNT_MME);
+        ber_u8(&b, snt);
         ber_end(&b, m);
     }
 
@@ -819,6 +836,7 @@ static char *g_owned_spool_dir;
 static char *g_owned_node_id;
 static char *g_owned_address;
 static char *g_owned_local_address;
+static char *g_owned_serving_node_address;
 
 static void replace_owned_string(const char **field, char **owned,
         const char *new_value)
@@ -859,6 +877,8 @@ int sgwc_ga_writer_apply_runtime(const sgwc_cdr_config_t *new_cfg)
             new_cfg->address);
     replace_owned_string(&cur->local_address, &g_owned_local_address,
             new_cfg->local_address);
+    replace_owned_string(&cur->serving_node_address,
+            &g_owned_serving_node_address, new_cfg->serving_node_address);
 
     if (new_cfg->interim_interval_s)
         cur->interim_interval_s = new_cfg->interim_interval_s;

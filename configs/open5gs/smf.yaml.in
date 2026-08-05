@@ -193,6 +193,9 @@ smf:
 #    #   1) gtpc.server.advertise  2) address/pgw_address  3) local_address
 #    address: 10.0.0.1
 #    local_address: 10.0.0.1
+#    # CDR [6] servingNodeAddress fallback (SGW S5-C / SGSN) if peer IP unknown:
+#    # serving_node_address / sgsn_address / sgw_serving_address
+#    # serving_node_address: 10.0.0.3
 #    # Rotate the active file when any of these is first hit. Set to 0
 #    # to disable an individual trigger.
 #    max_records: 100
