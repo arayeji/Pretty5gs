@@ -144,19 +144,26 @@ char *ogs_cpystrn(char *dst, const char *src, size_t dst_size)
 }
 
 /*****************************************
- * Memory Pool - Use talloc library
+ * Memory Pool - plain glibc heap
+ *
+ * These used to be talloc calls under the process-global allocator
+ * mutex (see the convoy analysis in ogs-memory.c). They now use the
+ * plain heap, lock-free per thread, and MUST stay allocator-compatible
+ * with ogs_malloc/ogs_free in ogs-memory.c: strings they return are
+ * released with ogs_free() (= free()) all over the tree.
  *****************************************/
 
 char *ogs_talloc_strdup(const void *t, const char *p)
 {
     char *ptr = NULL;
 
-    ogs_thread_mutex_lock(ogs_mem_get_mutex());
+    (void)t;
 
-    ptr = talloc_strdup(t, p);
+    if (!p)
+        return NULL;
+
+    ptr = strdup(p);
     ogs_expect(ptr);
-
-    ogs_thread_mutex_unlock(ogs_mem_get_mutex());
 
     return ptr;
 }
@@ -165,12 +172,13 @@ char *ogs_talloc_strndup(const void *t, const char *p, size_t n)
 {
     char *ptr = NULL;
 
-    ogs_thread_mutex_lock(ogs_mem_get_mutex());
+    (void)t;
 
-    ptr = talloc_strndup(t, p, n);
+    if (!p)
+        return NULL;
+
+    ptr = strndup(p, n);
     ogs_expect(ptr);
-
-    ogs_thread_mutex_unlock(ogs_mem_get_mutex());
 
     return ptr;
 }
@@ -179,12 +187,15 @@ void *ogs_talloc_memdup(const void *t, const void *p, size_t size)
 {
     void *ptr = NULL;
 
-    ogs_thread_mutex_lock(ogs_mem_get_mutex());
+    (void)t;
 
-    ptr = talloc_memdup(t, p, size);
+    if (!p)
+        return NULL;
+
+    ptr = malloc(size);
     ogs_expect(ptr);
-
-    ogs_thread_mutex_unlock(ogs_mem_get_mutex());
+    if (ptr)
+        memcpy(ptr, p, size);
 
     return ptr;
 }
@@ -192,34 +203,58 @@ void *ogs_talloc_memdup(const void *t, const void *p, size_t size)
 char *ogs_talloc_asprintf(const void *t, const char *fmt, ...)
 {
     va_list ap;
-    char *ret;
+    char *ret = NULL;
+    int rc;
 
-    ogs_thread_mutex_lock(ogs_mem_get_mutex());
+    (void)t;
 
     va_start(ap, fmt);
-    ret = talloc_vasprintf(t, fmt, ap);
-    ogs_expect(ret);
+    rc = vasprintf(&ret, fmt, ap);
     va_end(ap);
 
-    ogs_thread_mutex_unlock(ogs_mem_get_mutex());
+    if (rc < 0) {
+        ogs_expect(0);
+        return NULL;
+    }
 
     return ret;
 }
 
 char *ogs_talloc_asprintf_append(char *s, const char *fmt, ...)
 {
-    va_list ap;
+    va_list ap, ap2;
+    size_t slen;
+    int addlen;
+    char *ret = NULL;
 
-    ogs_thread_mutex_lock(ogs_mem_get_mutex());
+    if (!s)
+        slen = 0;
+    else
+        slen = strlen(s);
 
     va_start(ap, fmt);
-    s = talloc_vasprintf_append(s, fmt, ap);
-    ogs_expect(s);
+    va_copy(ap2, ap);
+    addlen = vsnprintf(NULL, 0, fmt, ap);
+    if (addlen < 0) {
+        va_end(ap2);
+        va_end(ap);
+        ogs_expect(0);
+        return s;
+    }
+
+    ret = realloc(s, slen + addlen + 1);
+    if (!ret) {
+        va_end(ap2);
+        va_end(ap);
+        ogs_expect(0);
+        return s;
+    }
+
+    vsnprintf(ret + slen, addlen + 1, fmt, ap2);
+    va_end(ap2);
     va_end(ap);
 
-    ogs_thread_mutex_unlock(ogs_mem_get_mutex());
-
-    return s;
+    return ret;
 }
 
 
