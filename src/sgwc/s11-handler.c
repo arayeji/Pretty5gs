@@ -2226,6 +2226,43 @@ out:
     }
 
     /*
+     * TS 23.007 / TS 29.274: Context Not Found in the Downlink Data
+     * Notification Ack means the MME holds NO context for our S11
+     * TEID: the UE was lost at the MME through a path that never sent
+     * Delete Session (context freed while a response was in flight,
+     * S6a purge, error cleanup, ...). No Delete Session will ever
+     * come, so without this the PDN sits at SGW-C/SGW-U/PGW forever
+     * and only surfaces again as the next DDN failure. Tear the UE's
+     * sessions down properly: S5 Delete to the PGW, PFCP delete to
+     * SGW-U, local remove. Sessions younger than a minute are skipped
+     * so a racing (re)attach that is about to claim this UE with a
+     * Modify Bearer Request is never hit.
+     */
+    if (cause_value == OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND && sgwc_ue) {
+        sgwc_sess_t *stale = NULL, *next_stale = NULL;
+        ogs_time_t now = ogs_time_now();
+        int torn = 0, kept = 0;
+
+        ogs_list_for_each_safe(&sgwc_ue->sess_list, next_stale, stale) {
+            if (stale->create_session_t0 &&
+                    (now - stale->create_session_t0) <
+                        ogs_time_from_sec(60)) {
+                kept++;
+                continue;
+            }
+            sgwc_sess_abort_create(stale);
+            torn++;
+        }
+        ogs_warn("[%s] DDN Ack Context-Not-Found: MME lost the UE "
+                "context; released %d stale session(s), kept %d fresh",
+                sgwc_ue->imsi_bcd, torn, kept);
+        if (torn) {
+            sgwc_ue_remove_if_empty(sgwc_ue);
+            return; /* sess/bearer freed above; nothing below applies */
+        }
+    }
+
+    /*
      * Paging failed (TS 23.401 5.3.4.3): "the Serving GW deletes the
      * buffered packet(s)". Realized with PFCPSMReq-Flags DROBU=1
      * (TS 29.244 5.2.4.3): discard what is buffered NOW, but keep the
