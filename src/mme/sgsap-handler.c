@@ -563,11 +563,22 @@ void sgsap_handle_detach_ack(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         mme_ue->detach_type = MME_DETACH_TYPE_MME_IMPLICIT;
     }
 
+    /*
+     * S1 may already be gone (CLEAR_S1_CONTEXT before SGs indication).
+     * Still Delete Session if PDN remains — skipping DSR here was an
+     * SGW/PGW leak. If detach already started DSR, sessions/xacts show
+     * that and we skip the duplicate.
+     */
+    if (ogs_list_empty(&mme_ue->sess_list) ||
+            MME_SESSION_RELEASE_PENDING(mme_ue) ||
+            mme_ue_xact_count(mme_ue, OGS_GTP_LOCAL_ORIGINATOR) > 0)
+        return;
+
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-    if (enb_ue)
-        mme_send_delete_session_or_detach(enb_ue, mme_ue);
-    else
-        ogs_warn("ENB-S1 Context has already been removed");
+    if (!enb_ue)
+        ogs_warn("[%s] SGsAP DETACH-ACK: no S1 context - Delete Session anyway",
+                mme_ue->imsi_bcd);
+    mme_send_delete_session_or_detach(enb_ue, mme_ue);
 }
 
 void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)

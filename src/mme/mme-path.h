@@ -70,6 +70,12 @@ void mme_admin_drain_step(void);
 void mme_admin_drain_timer_stop(void);
 
 void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
+/*
+ * UE/network detach: optional SGs Detach Indication, then always Delete
+ * Session immediately. Never wait for SGs DETACH-ACK before tearing down
+ * PDN (ACK may arrive after S1 is gone and previously skipped DSR).
+ */
+void mme_send_eps_detach_with_session_delete(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 void mme_send_delete_session_or_mme_ue_context_release(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 void mme_send_release_access_bearer_or_ue_context_release(enb_ue_t *enb_ue);

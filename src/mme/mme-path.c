@@ -780,6 +780,20 @@ void mme_admin_detach_ue(mme_ue_t *mme_ue, bool force)
     }
 }
 
+void mme_send_eps_detach_with_session_delete(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
+        if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
+            ogs_error("[%s] sgsap_send_detach_indication() failed - "
+                    "continuing with EPS Delete Session",
+                    MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+    }
+
+    mme_send_delete_session_or_detach(enb_ue, mme_ue);
+}
+
 void mme_send_delete_session_or_detach(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
 {
     int r, xact_count;

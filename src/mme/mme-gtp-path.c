@@ -930,12 +930,14 @@ void mme_gtp_send_delete_all_sessions(
         return;
     }
 
+    /*
+     * Always Delete Session toward SGW when S11 exists. Gating on
+     * MME_HAVE_SGW_S1U_PATH left SGW/PGW PDNs alive when S1-U was cleared
+     * or never installed while the S11 session remained (detach / reject
+     * cleanup then only freed local MME state).
+     */
     ogs_list_for_each_safe(&mme_ue->sess_list, next_sess, sess) {
-        if (MME_HAVE_SGW_S1U_PATH(sess)) {
-            mme_gtp_send_delete_session_request(enb_ue, sgw_ue, sess, action);
-        } else {
-            MME_SESS_CLEAR(sess);
-        }
+        mme_gtp_send_delete_session_request(enb_ue, sgw_ue, sess, action);
     }
 }
 
