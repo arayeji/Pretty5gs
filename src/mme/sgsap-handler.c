@@ -288,7 +288,9 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (!mme_ue) {
-        ogs_warn("No UE(mme-ue) context"); /* late SGsAP after detach — expected */
+        /* VLR LU-Reject after MME already dropped the UE — expected. */
+        ogs_warn("[SGSAP] LOCATION-UPDATE-REJECT: no UE context IMSI[%s]",
+                imsi_bcd);
         return;
     }
 
@@ -451,7 +453,8 @@ void sgsap_handle_alert_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     mme_ue = mme_ue_find_by_imsi_bcd(imsi_bcd);
 
     if (!mme_ue) {
-       ogs_warn("No UE(mme-ue) context"); /* late SGsAP after detach — expected */
+       /* ALERT for an IMSI we no longer hold — reply IMSI unknown. */
+       ogs_warn("[SGSAP] ALERT-REQUEST: no UE context IMSI[%s]", imsi_bcd);
        sgs_cause = SGSAP_SGS_CAUSE_IMSI_UNKNOWN;
        goto alert_reject;
     }
@@ -547,7 +550,15 @@ void sgsap_handle_detach_ack(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (!mme_ue) {
-        ogs_warn("No UE(mme-ue) context"); /* late SGsAP after detach — expected */
+        /*
+         * DETACH-ACK after MME already removed the UE (local detach
+         * finished first). Harmless — nothing left to clear.
+         */
+        ogs_warn("[SGSAP] %s: no UE context IMSI[%s] "
+                "(late ACK after local detach)",
+                type == SGSAP_EPS_DETACH_ACK ? "EPS-DETACH-ACK" :
+                type == SGSAP_IMSI_DETACH_ACK ? "IMSI-DETACH-ACK" : "DETACH-ACK",
+                imsi_bcd);
         return;
     }
 
@@ -818,7 +829,9 @@ void sgsap_handle_downlink_unitdata(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (!mme_ue) {
-        ogs_warn("No UE(mme-ue) context"); /* late SGsAP after detach — expected */
+        /* DOWNLINK-UNITDATA for an IMSI already gone — drop. */
+        ogs_warn("[SGSAP] DOWNLINK-UNITDATA: no UE context IMSI[%s]",
+                imsi_bcd);
         return;
     }
 
