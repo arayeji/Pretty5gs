@@ -1506,20 +1506,20 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                 break;
             }
 
-            if (!MME_UE_HAVE_IMSI(mme_ue) ||
-                    !SECURITY_CONTEXT_IS_VALID(mme_ue)) {
-                /*
-                 * Still Delete Session if PDN exists. Service-reject-only
-                 * left SGW/PGW sessions alive (ignore_sgs prod leaks).
-                 */
-                if (SESSION_CONTEXT_IS_AVAILABLE(mme_ue) ||
-                        !ogs_list_empty(&mme_ue->sess_list)) {
-                    ogs_warn("[%s] Detach with %s - Delete Session anyway",
-                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
-                            !MME_UE_HAVE_IMSI(mme_ue) ?
-                                "unknown UE" : "no security context");
-                    mme_send_delete_session_or_detach(enb_ue, mme_ue);
-                }
+            if (!MME_UE_HAVE_IMSI(mme_ue)) {
+                ogs_warn("Detach request : Unknown UE");
+                if (nas_eps_send_service_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
+                        != OGS_OK)
+                    ogs_error("[%s] Service Reject failed",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+                MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
+                break;
+            }
+
+            if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
+                mme_ue_error(mme_ue, enb_ue, "emm", NULL,
+                        "No Security Context");
                 if (nas_eps_send_service_reject(enb_ue, mme_ue,
                         OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
                         != OGS_OK)
@@ -1813,16 +1813,20 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
                 break;
             }
 
-            if (!MME_UE_HAVE_IMSI(mme_ue) ||
-                    !SECURITY_CONTEXT_IS_VALID(mme_ue)) {
-                if (SESSION_CONTEXT_IS_AVAILABLE(mme_ue) ||
-                        !ogs_list_empty(&mme_ue->sess_list)) {
-                    ogs_warn("[%s] Detach with %s - Delete Session anyway",
-                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
-                            !MME_UE_HAVE_IMSI(mme_ue) ?
-                                "unknown UE" : "no security context");
-                    mme_send_delete_session_or_detach(enb_ue, mme_ue);
-                }
+            if (!MME_UE_HAVE_IMSI(mme_ue)) {
+                ogs_warn("Detach request : Unknown UE");
+                if (nas_eps_send_service_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
+                        != OGS_OK)
+                    ogs_error("[%s] Service Reject failed",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+                MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
+                break;
+            }
+
+            if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
+                mme_ue_error(mme_ue, enb_ue, "emm", NULL,
+                        "No Security Context");
                 if (nas_eps_send_service_reject(enb_ue, mme_ue,
                         OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
                         != OGS_OK)
@@ -2126,16 +2130,20 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
                 break;
             }
 
-            if (!MME_UE_HAVE_IMSI(mme_ue) ||
-                    !SECURITY_CONTEXT_IS_VALID(mme_ue)) {
-                if (SESSION_CONTEXT_IS_AVAILABLE(mme_ue) ||
-                        !ogs_list_empty(&mme_ue->sess_list)) {
-                    ogs_warn("[%s] Detach with %s - Delete Session anyway",
-                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
-                            !MME_UE_HAVE_IMSI(mme_ue) ?
-                                "unknown UE" : "no security context");
-                    mme_send_delete_session_or_detach(enb_ue, mme_ue);
-                }
+            if (!MME_UE_HAVE_IMSI(mme_ue)) {
+                ogs_warn("Detach request : Unknown UE");
+                if (nas_eps_send_service_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
+                        != OGS_OK)
+                    ogs_error("[%s] Service Reject failed",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+                OGS_FSM_TRAN(s, &emm_state_exception);
+                break;
+            }
+
+            if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
+                mme_ue_error(mme_ue, enb_ue, "emm", NULL,
+                        "No Security Context");
                 if (nas_eps_send_service_reject(enb_ue, mme_ue,
                         OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
                         != OGS_OK)
@@ -2444,16 +2452,20 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
                 break;
             }
 
-            if (!MME_UE_HAVE_IMSI(mme_ue) ||
-                    !SECURITY_CONTEXT_IS_VALID(mme_ue)) {
-                if (SESSION_CONTEXT_IS_AVAILABLE(mme_ue) ||
-                        !ogs_list_empty(&mme_ue->sess_list)) {
-                    ogs_warn("[%s] Detach with %s - Delete Session anyway",
-                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
-                            !MME_UE_HAVE_IMSI(mme_ue) ?
-                                "unknown UE" : "no security context");
-                    mme_send_delete_session_or_detach(enb_ue, mme_ue);
-                }
+            if (!MME_UE_HAVE_IMSI(mme_ue)) {
+                ogs_warn("Detach request : Unknown UE");
+                if (nas_eps_send_service_reject(enb_ue, mme_ue,
+                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
+                        != OGS_OK)
+                    ogs_error("[%s] Service Reject failed",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+                OGS_FSM_TRAN(s, &emm_state_exception);
+                break;
+            }
+
+            if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
+                mme_ue_error(mme_ue, enb_ue, "emm", NULL,
+                        "No Security Context");
                 if (nas_eps_send_service_reject(enb_ue, mme_ue,
                         OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
                         != OGS_OK)
@@ -2693,10 +2705,9 @@ void emm_state_exception(ogs_fsm_t *s, mme_event_t *e)
                     enb_ue, mme_ue, &message->emm.detach_request_from_ue);
             if (rv != OGS_OK)
                 break;
+            /* Only DSR if a PDN still exists on this mme_ue. */
             if (SESSION_CONTEXT_IS_AVAILABLE(mme_ue) ||
                     !ogs_list_empty(&mme_ue->sess_list))
-                mme_send_eps_detach_with_session_delete(enb_ue, mme_ue);
-            else if (SECURITY_CONTEXT_IS_VALID(mme_ue))
                 mme_send_eps_detach_with_session_delete(enb_ue, mme_ue);
             OGS_FSM_TRAN(s, &emm_state_de_registered);
             break;
