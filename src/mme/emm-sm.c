@@ -823,6 +823,8 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
         ogs_assert(message);
 
         enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+        if (!enb_ue)
+            enb_ue = enb_ue_find_by_id(e->enb_ue_id);
         if (!enb_ue) {
             ogs_error("No S1 Context IMSI[%s] NAS-Type[%d] "
                     "ENB-UE-ID[%d:%d][%p:%p]",
@@ -830,6 +832,18 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                     e->enb_ue_id, mme_ue->enb_ue_id,
                     enb_ue_find_by_id(e->enb_ue_id),
                     enb_ue_find_by_id(mme_ue->enb_ue_id));
+            /*
+             * Detach must still Delete Session toward SGW/PGW even when
+             * the S1 association is already gone; dropping here orphans
+             * PDNs (seen in production with ignore_sgs, no SGs wait).
+             */
+            if (message->emm.h.message_type == OGS_NAS_EPS_DETACH_REQUEST &&
+                    (SESSION_CONTEXT_IS_AVAILABLE(mme_ue) ||
+                     !ogs_list_empty(&mme_ue->sess_list))) {
+                mme_ue->detach_type = MME_DETACH_TYPE_REQUEST_FROM_UE;
+                mme_send_delete_session_or_detach(NULL, mme_ue);
+                OGS_FSM_TRAN(s, &emm_state_de_registered);
+            }
             ogs_assert(e->pkbuf);
             /* perf: 1.7% of production CPU was NAS hexdumps on these
              * chronic error paths — rate-guard the dump, not the line */
@@ -838,6 +852,8 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                         e->pkbuf->data, e->pkbuf->len);
             break;
         }
+        if (mme_ue->enb_ue_id != enb_ue->id)
+            enb_ue_associate_mme_ue(enb_ue, mme_ue);
 
         ogs_mme_trace_set(enb_ue, mme_ue, NULL, "emm");
 
@@ -1490,20 +1506,20 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                 break;
             }
 
-            if (!MME_UE_HAVE_IMSI(mme_ue)) {
-                ogs_warn("Detach request : Unknown UE");
-                if (nas_eps_send_service_reject(enb_ue, mme_ue,
-                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
-                        != OGS_OK)
-                    ogs_error("[%s] Service Reject failed",
-                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
-                MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
-                break;
-            }
-
-            if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
-                mme_ue_error(mme_ue, enb_ue, "emm", NULL,
-                        "No Security Context");
+            if (!MME_UE_HAVE_IMSI(mme_ue) ||
+                    !SECURITY_CONTEXT_IS_VALID(mme_ue)) {
+                /*
+                 * Still Delete Session if PDN exists. Service-reject-only
+                 * left SGW/PGW sessions alive (ignore_sgs prod leaks).
+                 */
+                if (SESSION_CONTEXT_IS_AVAILABLE(mme_ue) ||
+                        !ogs_list_empty(&mme_ue->sess_list)) {
+                    ogs_warn("[%s] Detach with %s - Delete Session anyway",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
+                            !MME_UE_HAVE_IMSI(mme_ue) ?
+                                "unknown UE" : "no security context");
+                    mme_send_delete_session_or_detach(enb_ue, mme_ue);
+                }
                 if (nas_eps_send_service_reject(enb_ue, mme_ue,
                         OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
                         != OGS_OK)
@@ -1797,20 +1813,16 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
                 break;
             }
 
-            if (!MME_UE_HAVE_IMSI(mme_ue)) {
-                ogs_warn("Detach request : Unknown UE");
-                if (nas_eps_send_service_reject(enb_ue, mme_ue,
-                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
-                        != OGS_OK)
-                    ogs_error("[%s] Service Reject failed",
-                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
-                MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
-                break;
-            }
-
-            if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
-                mme_ue_error(mme_ue, enb_ue, "emm", NULL,
-                        "No Security Context");
+            if (!MME_UE_HAVE_IMSI(mme_ue) ||
+                    !SECURITY_CONTEXT_IS_VALID(mme_ue)) {
+                if (SESSION_CONTEXT_IS_AVAILABLE(mme_ue) ||
+                        !ogs_list_empty(&mme_ue->sess_list)) {
+                    ogs_warn("[%s] Detach with %s - Delete Session anyway",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
+                            !MME_UE_HAVE_IMSI(mme_ue) ?
+                                "unknown UE" : "no security context");
+                    mme_send_delete_session_or_detach(enb_ue, mme_ue);
+                }
                 if (nas_eps_send_service_reject(enb_ue, mme_ue,
                         OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
                         != OGS_OK)
@@ -2114,20 +2126,16 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
                 break;
             }
 
-            if (!MME_UE_HAVE_IMSI(mme_ue)) {
-                ogs_warn("Detach request : Unknown UE");
-                if (nas_eps_send_service_reject(enb_ue, mme_ue,
-                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
-                        != OGS_OK)
-                    ogs_error("[%s] Service Reject failed",
-                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
-                OGS_FSM_TRAN(s, &emm_state_exception);
-                break;
-            }
-
-            if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
-                mme_ue_error(mme_ue, enb_ue, "emm", NULL,
-                        "No Security Context");
+            if (!MME_UE_HAVE_IMSI(mme_ue) ||
+                    !SECURITY_CONTEXT_IS_VALID(mme_ue)) {
+                if (SESSION_CONTEXT_IS_AVAILABLE(mme_ue) ||
+                        !ogs_list_empty(&mme_ue->sess_list)) {
+                    ogs_warn("[%s] Detach with %s - Delete Session anyway",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
+                            !MME_UE_HAVE_IMSI(mme_ue) ?
+                                "unknown UE" : "no security context");
+                    mme_send_delete_session_or_detach(enb_ue, mme_ue);
+                }
                 if (nas_eps_send_service_reject(enb_ue, mme_ue,
                         OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
                         != OGS_OK)
@@ -2436,20 +2444,16 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
                 break;
             }
 
-            if (!MME_UE_HAVE_IMSI(mme_ue)) {
-                ogs_warn("Detach request : Unknown UE");
-                if (nas_eps_send_service_reject(enb_ue, mme_ue,
-                        OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
-                        != OGS_OK)
-                    ogs_error("[%s] Service Reject failed",
-                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
-                OGS_FSM_TRAN(s, &emm_state_exception);
-                break;
-            }
-
-            if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
-                mme_ue_error(mme_ue, enb_ue, "emm", NULL,
-                        "No Security Context");
+            if (!MME_UE_HAVE_IMSI(mme_ue) ||
+                    !SECURITY_CONTEXT_IS_VALID(mme_ue)) {
+                if (SESSION_CONTEXT_IS_AVAILABLE(mme_ue) ||
+                        !ogs_list_empty(&mme_ue->sess_list)) {
+                    ogs_warn("[%s] Detach with %s - Delete Session anyway",
+                            MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
+                            !MME_UE_HAVE_IMSI(mme_ue) ?
+                                "unknown UE" : "no security context");
+                    mme_send_delete_session_or_detach(enb_ue, mme_ue);
+                }
                 if (nas_eps_send_service_reject(enb_ue, mme_ue,
                         OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK)
                         != OGS_OK)
@@ -2652,6 +2656,8 @@ void emm_state_exception(ogs_fsm_t *s, mme_event_t *e)
         ogs_assert(message);
 
         enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+        if (!enb_ue)
+            enb_ue = enb_ue_find_by_id(e->enb_ue_id);
         if (!enb_ue) {
             ogs_error("No S1 Context IMSI[%s] NAS-Type[%d] "
                     "ENB-UE-ID[%d:%d][%p:%p]",
@@ -2659,6 +2665,12 @@ void emm_state_exception(ogs_fsm_t *s, mme_event_t *e)
                     e->enb_ue_id, mme_ue->enb_ue_id,
                     enb_ue_find_by_id(e->enb_ue_id),
                     enb_ue_find_by_id(mme_ue->enb_ue_id));
+            if (message->emm.h.message_type == OGS_NAS_EPS_DETACH_REQUEST &&
+                    (SESSION_CONTEXT_IS_AVAILABLE(mme_ue) ||
+                     !ogs_list_empty(&mme_ue->sess_list))) {
+                mme_ue->detach_type = MME_DETACH_TYPE_REQUEST_FROM_UE;
+                mme_send_delete_session_or_detach(NULL, mme_ue);
+            }
             ogs_assert(e->pkbuf);
             /* perf: 1.7% of production CPU was NAS hexdumps on these
              * chronic error paths — rate-guard the dump, not the line */
@@ -2667,12 +2679,27 @@ void emm_state_exception(ogs_fsm_t *s, mme_event_t *e)
                         e->pkbuf->data, e->pkbuf->len);
             break;
         }
+        if (mme_ue->enb_ue_id != enb_ue->id)
+            enb_ue_associate_mme_ue(enb_ue, mme_ue);
 
         h.type = e->nas_type;
 
         xact_count = mme_ue_xact_count(mme_ue, OGS_GTP_LOCAL_ORIGINATOR);
 
         switch (message->emm.h.message_type) {
+        case OGS_NAS_EPS_DETACH_REQUEST:
+            ogs_warn("[%s] Detach request in exception", mme_ue->imsi_bcd);
+            rv = emm_handle_detach_request(
+                    enb_ue, mme_ue, &message->emm.detach_request_from_ue);
+            if (rv != OGS_OK)
+                break;
+            if (SESSION_CONTEXT_IS_AVAILABLE(mme_ue) ||
+                    !ogs_list_empty(&mme_ue->sess_list))
+                mme_send_eps_detach_with_session_delete(enb_ue, mme_ue);
+            else if (SECURITY_CONTEXT_IS_VALID(mme_ue))
+                mme_send_eps_detach_with_session_delete(enb_ue, mme_ue);
+            OGS_FSM_TRAN(s, &emm_state_de_registered);
+            break;
         case OGS_NAS_EPS_ATTACH_REQUEST:
             ogs_warn("[%s] Attach request", mme_ue->imsi_bcd);
             rv = emm_handle_attach_request(
