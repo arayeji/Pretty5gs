@@ -9132,7 +9132,7 @@ void mme_sess_remove(mme_sess_t *sess)
      * loudly so the offending path shows up in the error log.
      */
     if (sess->sess_removing) {
-        ogs_error("mme_sess_remove: DOUBLE REMOVE blocked "
+        ogs_warn("mme_sess_remove: DOUBLE REMOVE blocked "
                 "(sess id:%d mme_ue id:%d pti:%d)",
                 (int)sess->id, (int)sess->mme_ue_id, sess->pti);
         return;

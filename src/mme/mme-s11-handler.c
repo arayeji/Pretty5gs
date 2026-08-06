@@ -2067,7 +2067,7 @@ void mme_s11_finish_release_access_bearers(
              * is always better than dying, so fall back instead.
              */
             if (!enb_ue->relcause.group) {
-                ogs_error("[%s] Release Access Bearers Response with no "
+                ogs_warn("[%s] Release Access Bearers Response with no "
                         "release cause; using eutran-generated-reason",
                         mme_ue->imsi_bcd);
                 enb_ue->relcause.group = S1AP_Cause_PR_radioNetwork;

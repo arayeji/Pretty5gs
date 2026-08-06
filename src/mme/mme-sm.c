@@ -783,8 +783,26 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                 "esm");
 
         ogs_fsm_dispatch(&bearer->sm, e);
+
+        /*
+         * ESM may already have freed this sess (and the bearer) — e.g.
+         * mme_gtp_send_delete_session_request() with no S11 TEID does an
+         * immediate MME_SESS_CLEAR. Re-resolve before touching anything.
+         */
+        bearer = mme_bearer_find_by_id(e->bearer_id);
+        if (!bearer) {
+            ogs_pkbuf_free(pkbuf);
+            break;
+        }
+        sess = mme_sess_find_by_id(bearer->sess_id);
+        if (!sess || sess->sess_removing) {
+            ogs_pkbuf_free(pkbuf);
+            break;
+        }
+        default_bearer = mme_default_bearer_in_sess(sess);
+
         if (OGS_FSM_CHECK(&bearer->sm, esm_state_bearer_deactivated)) {
-            if (default_bearer->ebi == bearer->ebi) {
+            if (default_bearer && default_bearer->ebi == bearer->ebi) {
                 /* if the bearer is a default bearer,
                  * remove all session context linked the default bearer */
                 MME_SESS_CLEAR(sess);
@@ -801,7 +819,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
              * with the bearer that finished the procedure — asserting here
              * aborted production MME (default_bearer->ebi == bearer->ebi).
              */
-            if (default_bearer->ebi != bearer->ebi) {
+            if (default_bearer && default_bearer->ebi != bearer->ebi) {
                 ogs_error("[%s] PDN disconnect completed on EBI[%d] but "
                         "list-default is EBI[%d]; clearing session anyway",
                         mme_ue->imsi_bcd, bearer->ebi, default_bearer->ebi);
@@ -809,16 +827,17 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             MME_SESS_CLEAR(sess);
 
         } else if (OGS_FSM_CHECK(&bearer->sm, esm_state_exception)) {
-
             /*
-             * The UE requested the wrong APN.
+             * Wrong-APN / failed-ESM: keep the UE, drop the session.
              *
-             * From the Issues #568, MME need to accept further service request.
-             * To do this, we are not going to release UE context.
-             *
-             * Just we'll remove MME session context.
+             * Many exception transitions already sent Delete Session (default
+             * bearer reject, bearer-setup timeout, ...). Clearing here raced
+             * the Delete Session Response and double-removed the sess (the
+             * DOUBLE REMOVE guard caught it in production). When a Delete
+             * Session is in flight, DSR owns the remove.
              */
-            MME_SESS_CLEAR(sess);
+            if (!sess->delete_session_pending)
+                MME_SESS_CLEAR(sess);
         }
 
         ogs_pkbuf_free(pkbuf);
@@ -833,9 +852,12 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         ogs_assert(OGS_FSM_STATE(&bearer->sm));
 
         ogs_fsm_dispatch(&bearer->sm, e);
+        bearer = mme_bearer_find_by_id(e->bearer_id);
+        if (!bearer)
+            break;
         if (OGS_FSM_CHECK(&bearer->sm, esm_state_bearer_deactivated)) {
             sess = mme_sess_find_by_id(bearer->sess_id);
-            if (!sess) {
+            if (!sess || sess->sess_removing) {
                 ogs_warn("ESM timer: sess gone for bearer id=%d",
                         bearer->id);
                 break;
@@ -851,6 +873,13 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             } else {
                 mme_bearer_remove(bearer);
             }
+        } else if (OGS_FSM_CHECK(&bearer->sm, esm_state_exception)) {
+            sess = mme_sess_find_by_id(bearer->sess_id);
+            if (!sess || sess->sess_removing)
+                break;
+            /* Same rule as ESM-message exception: DSR owns the clear. */
+            if (!sess->delete_session_pending)
+                MME_SESS_CLEAR(sess);
         }
         break;
 

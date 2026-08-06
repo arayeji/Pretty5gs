@@ -1695,6 +1695,13 @@ typedef struct mme_sess_s {
      * pool slot. Block and log the second call instead.
      */
     bool            sess_removing;
+
+    /*
+     * Set when Delete Session Request has been committed on S11. The
+     * Response handler owns MME_SESS_CLEAR; ESM exception / other local
+     * paths must not clear in parallel or they race the DSR.
+     */
+    bool            delete_session_pending;
 } mme_sess_t;
 
 #define MME_HAVE_ENB_S1U_PATH(__bEARER) \

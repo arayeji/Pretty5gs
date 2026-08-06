@@ -910,6 +910,8 @@ int mme_gtp_send_delete_session_request(
 
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
+    if (rv == OGS_OK)
+        sess->delete_session_pending = true;
 
     return rv;
 }

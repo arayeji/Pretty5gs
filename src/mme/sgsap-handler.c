@@ -288,7 +288,7 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (!mme_ue) {
-        ogs_error("No UE(mme-ue) context");
+        ogs_warn("No UE(mme-ue) context"); /* late SGsAP after detach — expected */
         return;
     }
 
@@ -451,7 +451,7 @@ void sgsap_handle_alert_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     mme_ue = mme_ue_find_by_imsi_bcd(imsi_bcd);
 
     if (!mme_ue) {
-       ogs_error("No UE(mme-ue) context");
+       ogs_warn("No UE(mme-ue) context"); /* late SGsAP after detach — expected */
        sgs_cause = SGSAP_SGS_CAUSE_IMSI_UNKNOWN;
        goto alert_reject;
     }
@@ -547,7 +547,7 @@ void sgsap_handle_detach_ack(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (!mme_ue) {
-        ogs_error("No UE(mme-ue) context");
+        ogs_warn("No UE(mme-ue) context"); /* late SGsAP after detach — expected */
         return;
     }
 
@@ -818,7 +818,7 @@ void sgsap_handle_downlink_unitdata(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (!mme_ue) {
-        ogs_error("No UE(mme-ue) context");
+        ogs_warn("No UE(mme-ue) context"); /* late SGsAP after detach — expected */
         return;
     }
 

@@ -920,7 +920,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             }
 
             if (!SESSION_CONTEXT_IS_AVAILABLE(mme_ue)) {
-                ogs_error("No Session Context : IMSI[%s]", mme_ue->imsi_bcd);
+                ogs_warn("No Session Context : IMSI[%s]", mme_ue->imsi_bcd);
                 r = nas_eps_send_service_reject(enb_ue, mme_ue,
                     OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK);
                 ogs_expect(r == OGS_OK);
