@@ -61,6 +61,9 @@ hss_context_t *hss_self(void);
 
 int hss_context_parse_config(void);
 
+/* SIGHUP: reload logger (via ogs_app_config_reload) and hss.trace_imsi */
+void hss_context_reload_runtime(void);
+
 int hss_db_auth_info(char *imsi_bcd, ogs_dbi_auth_info_t *auth_info);
 int hss_db_update_sqn(char *imsi_bcd, uint8_t *rand, uint64_t sqn);
 int hss_db_increment_sqn(char *imsi_bcd);

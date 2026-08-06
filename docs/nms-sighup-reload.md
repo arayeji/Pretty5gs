@@ -1,12 +1,12 @@
 # NMS reference: SIGHUP runtime config reload
 
-This document lists every YAML key that **open5gs-mmed**, **open5gs-smfd**, and **open5gs-sgwcd** apply on **SIGHUP** without restarting the daemon (attached UEs / sessions stay up).
+This document lists every YAML key that **open5gs-mmed**, **open5gs-smfd**, **open5gs-sgwcd**, and **open5gs-hssd** apply on **SIGHUP** without restarting the daemon (attached UEs / sessions stay up).
 
 Branch: `feature/sighup-list-replace` (Pretty5gs fork).
 
-**Other NFs** (AMF, UPF, HSS, PCRF, NRF, …) have **no SIGHUP handler** — any config change requires a daemon restart.
+**Other NFs** (AMF, UPF, PCRF, NRF, …) have **no SIGHUP handler** — any config change requires a daemon restart.
 
-HSS still supports **runtime** per-IMSI trace via `GET /admin/trace/imsi` on its metrics port (and `hss.trace_imsi` at process start); that does not go through SIGHUP.
+HSS SIGHUP is minimal: **logger** (via `ogs_app_config_reload`) and **`hss.trace_imsi`** full-replace. Diameter / metrics / `sms_over_ims` / change-stream still need restart. Runtime trace also works via `GET /admin/trace/imsi` on the metrics port.
 
 ---
 
@@ -17,6 +17,7 @@ HSS still supports **runtime** per-IMSI trace via `GET /admin/trace/imsi` on its
 | MME | `sudo systemctl reload open5gs-mmed` | `sudo kill -HUP "$(pidof open5gs-mmed)"` |
 | SMF | `sudo systemctl reload open5gs-smfd` | `sudo kill -HUP "$(pidof open5gs-smfd)"` |
 | SGWC | `sudo systemctl reload open5gs-sgwcd` | `sudo kill -HUP "$(pidof open5gs-sgwcd)"` |
+| HSS | `sudo systemctl reload open5gs-hssd` | `sudo kill -HUP "$(pidof open5gs-hssd)"` |
 
 ### Log signals
 
@@ -298,32 +299,47 @@ Removal: only when **no PFCP sessions** on that SGW-U.
 
 ---
 
+## HSS (`hss:`)
+
+| Key | Reloadable | Notes |
+|-----|------------|-------|
+| `hss.trace_imsi[]` | yes | full replace; empty sequence clears |
+| `logger.*` | yes | via `ogs_app_config_reload` on every SIGHUP |
+
+### HSS — restart required
+
+`hss.freeDiameter`, `hss.metrics`, `hss.sms_over_ims`, `hss.use_mongodb_change_stream`, `hss.diameter_stats_interval`.
+
+Runtime alternative for trace filters: `GET /admin/trace/imsi` on the HSS metrics port.
+
+---
+
 ## Quick lookup by category
 
-| Category | MME | SMF | SGWC |
-|----------|-----|-----|------|
-| Timers | `mme.time.*` (wide set) | — | — |
-| GTP echo interval | yes | — | yes |
-| GTP-U / TEID scalars | — | — | yes (+ `inbound_roam`) |
-| Session / IP pools | — | yes | — |
-| PFCP peer lists | — | UPF sync | SGW-U sync |
-| GTP-C peer lists | SGWC + SMF sync | — | — |
-| ACL / policy lists | tai, access_control, hss_map, imsi_acl, emergency, … | — | gn.pgw |
-| Trace IMSI | yes | yes | yes | HSS: YAML + `/admin/trace/imsi` (no SIGHUP) |
-| CDR | — | yes | yes |
-| RADIUS | — | yes (+ per-APN from session) | — |
-| DNS | — | yes | — |
-| MTU | — | yes | — |
-| NWI rewrite | — | — | yes |
-| Logger | yes | yes | yes |
-| Bind / listen addresses | restart | restart | restart |
+| Category | MME | SMF | SGWC | HSS |
+|----------|-----|-----|------|-----|
+| Timers | `mme.time.*` (wide set) | — | — | — |
+| GTP echo interval | yes | — | yes | — |
+| GTP-U / TEID scalars | — | — | yes (+ `inbound_roam`) | — |
+| Session / IP pools | — | yes | — | — |
+| PFCP peer lists | — | UPF sync | SGW-U sync | — |
+| GTP-C peer lists | SGWC + SMF sync | — | — | — |
+| ACL / policy lists | tai, access_control, hss_map, imsi_acl, emergency, … | — | gn.pgw | — |
+| Trace IMSI | yes | yes | yes | yes |
+| CDR | — | yes | yes | — |
+| RADIUS | — | yes (+ per-APN from session) | — | — |
+| DNS | — | yes | — | — |
+| MTU | — | yes | — | — |
+| NWI rewrite | — | — | yes | — |
+| Logger | yes | yes | yes | yes |
+| Bind / listen addresses | restart | restart | restart | restart |
 
 ---
 
 ## NMS reload workflow (recommended)
 
 1. Validate YAML syntax before push.
-2. Write config to the live path (`/etc/open5gs/{mme,smf,sgwc}.yaml`).
+2. Write config to the live path (`/etc/open5gs/{mme,smf,sgwc,hss}.yaml`).
 3. Trigger reload (systemctl reload or `kill -HUP`).
 4. Parse daemon log for `Configuration reloaded` and audit lines.
 5. If any `… ignored (bind address)` or `Configuration reload failed` appears, mark the change as **needs restart**.

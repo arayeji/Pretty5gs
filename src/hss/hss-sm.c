@@ -32,6 +32,9 @@ void hss_state_initial(ogs_fsm_t *s, hss_event_t *e)
 
     ogs_assert(s);
 
+    if (e && e->id == HSS_EVT_CONFIG_RELOAD)
+        hss_context_reload_runtime();
+
 #if MONGOC_CHECK_VERSION(1, 9, 0)
     if (hss_self()->use_mongodb_change_stream) {
         ogs_dbi_collection_watch_init();
@@ -94,6 +97,10 @@ void hss_state_operational(ogs_fsm_t *s, hss_event_t *e)
         hss_handle_change_event(e->dbi.document);
 
         bson_destroy(e->dbi.document);
+        break;
+
+    case HSS_EVT_CONFIG_RELOAD:
+        hss_context_reload_runtime();
         break;
 
     default:
