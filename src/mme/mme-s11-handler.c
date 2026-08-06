@@ -349,6 +349,49 @@ void mme_s11_create_session_fail(
     mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
 }
 
+/*
+ * An ACCEPTED Create Session Response whose MME-side context (sess / S1 /
+ * UE) is already gone leaves a fully-established PDN at the SGW and PGW
+ * that nothing will ever delete: the SGW S11 F-TEID in this response was
+ * never stored, so all later cleanup takes the local-only MME_SESS_CLEAR
+ * path. Delete the just-created SGW session using the response itself.
+ */
+static void csrsp_teardown_unclaimed_sgw_session(
+        ogs_gtp_node_t *gnode,
+        ogs_gtp2_create_session_response_t *rsp, const char *why)
+{
+    ogs_gtp2_cause_t *cause = NULL;
+    ogs_gtp2_f_teid_t *sgw_f_teid = NULL;
+    uint8_t ebi = 0;
+
+    if (!gnode || !rsp)
+        return;
+
+    if (!rsp->cause.presence || !rsp->cause.data)
+        return;
+    cause = rsp->cause.data;
+    if (!OGS_GTP2_CAUSE_IS_SUCCESS(cause->value))
+        return; /* rejected create leaves nothing behind at the SGW */
+
+    if (!rsp->sender_f_teid_for_control_plane.presence ||
+            !rsp->sender_f_teid_for_control_plane.data)
+        return;
+    sgw_f_teid = rsp->sender_f_teid_for_control_plane.data;
+
+    if (rsp->bearer_contexts_created[0].presence &&
+            rsp->bearer_contexts_created[0].eps_bearer_id.presence)
+        ebi = rsp->bearer_contexts_created[0].eps_bearer_id.u8;
+
+    ogs_warn("Create Session accepted but %s - "
+            "deleting unclaimed SGW session [SGW-S11-TEID:0x%x EBI:%d]",
+            why, be32toh(sgw_f_teid->teid), ebi);
+
+    if (mme_gtp_send_orphan_delete_session(
+                gnode, be32toh(sgw_f_teid->teid), ebi) != OGS_OK)
+        ogs_error("orphan Delete Session not sent [SGW-S11-TEID:0x%x]",
+                be32toh(sgw_f_teid->teid));
+}
+
 void mme_s11_handle_create_session_response(
         ogs_gtp_xact_t *xact, mme_ue_t *mme_ue_from_teid,
         ogs_gtp2_create_session_response_t *rsp)
@@ -373,6 +416,7 @@ void mme_s11_handle_create_session_response(
     uint16_t decoded = 0;
     int create_action = 0;
     const char *fail_reason = NULL;
+    ogs_gtp_node_t *csrsp_gnode = NULL;
 
     ogs_assert(rsp);
 
@@ -407,6 +451,10 @@ void mme_s11_handle_create_session_response(
 
     enb_ue = enb_ue_find_by_id(xact->enb_ue_id);
 
+    /* Keep the peer node across ogs_gtp_xact_commit() (it may free xact);
+     * needed for the unclaimed-session teardown on the early returns. */
+    csrsp_gnode = xact->gnode;
+
     if (mme_ue && MME_UE_HAVE_IMSI(mme_ue))
         mme_ue_info(mme_ue, enb_ue, "s11",
                 (sess && sess->session) ? sess->session->name : NULL,
@@ -423,18 +471,32 @@ void mme_s11_handle_create_session_response(
     if (!sess) {
         mme_ue_warn(mme_ue, enb_ue, "s11", NULL,
                 "Session Context has already been removed");
+        csrsp_teardown_unclaimed_sgw_session(csrsp_gnode, rsp,
+                "Session Context already removed");
         return;
     }
 
     if (!enb_ue) {
         mme_ran_warn(NULL, NULL, mme_ue ? mme_ue : mme_ue_from_teid,
                 "s11", NULL, "ENB-S1 Context has already been removed");
+        /*
+         * Local sess/UE are reclaimed later by the normal machinery
+         * (attach reject cleanup / implicit detach), but those paths
+         * local-clear only because sgw_s11_teid was never stored here.
+         * Tear the SGW side down now; leave local state untouched (in
+         * TAU/path-switch relocation the sess is shared with the old,
+         * still-working SGW association).
+         */
+        csrsp_teardown_unclaimed_sgw_session(csrsp_gnode, rsp,
+                "ENB-S1 Context already removed");
         return;
     }
 
     if (!mme_ue) {
         mme_ran_warn(NULL, enb_ue, NULL, "s11", NULL,
                 "MME-UE Context has already been removed");
+        csrsp_teardown_unclaimed_sgw_session(csrsp_gnode, rsp,
+                "MME-UE Context already removed");
         return;
     }
 

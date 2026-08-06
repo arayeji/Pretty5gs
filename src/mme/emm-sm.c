@@ -284,6 +284,21 @@ static void emm_handle_s6a_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
          */
         if (!MME_SESSION_RELEASE_PENDING(mme_ue)) {
             mme_sess_t *sess = NULL, *next_sess = NULL;
+            sgw_ue_t *sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+
+            /*
+             * If the sessions exist at the SGW, tear them down on S11 as
+             * well: the local-only clear stranded the PDN at SGW/PGW
+             * forever. UE removal then continues in the Delete Session
+             * Response handler (UE_CONTEXT_REMOVE, ECM-IDLE path), safely
+             * outside this FSM dispatch.
+             */
+            if (mme_sess_first(mme_ue) && sgw_ue && sgw_ue->sgw_s11_teid) {
+                mme_gtp_send_delete_all_sessions(NULL, mme_ue,
+                        OGS_GTP_DELETE_SEND_RELEASE_WITH_UE_CONTEXT_REMOVE);
+                if (MME_SESSION_RELEASE_PENDING(mme_ue))
+                    return;
+            }
 
             ogs_list_for_each_safe(&mme_ue->sess_list, next_sess, sess)
                 MME_SESS_CLEAR(sess);

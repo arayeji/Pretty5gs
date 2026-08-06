@@ -398,6 +398,16 @@ typedef struct sgwc_sess_s {
     /* Counted in sgwc_context_t.admission_outstanding (exactly-once) */
     unsigned        admission_counted : 1;
 
+    /*
+     * Set when the MME proves it owns this session (bearer-resolved
+     * Modify Bearer Request). Every legitimate attach sends one within
+     * seconds of Create Session. A counted session that never sees it
+     * belongs to an MME context that died mid-attach (e.g. accepted
+     * Create Session Response hit an early return); the orphan sweep may
+     * reclaim it after a long grace.
+     */
+    unsigned        s11_owned : 1;
+
     unsigned        metrics_session_counted : 1;
     unsigned        metrics_rat_labeled : 1;
     unsigned        metrics_apn_labeled : 1;

@@ -995,6 +995,9 @@ void sgwc_s11_handle_modify_bearer_request(
         sess = sgwc_sess_find_by_id(bearer->sess_id);
         ogs_assert(sess);
 
+        /* MME references this session: it is not an abandoned create. */
+        sess->s11_owned = 1;
+
         /*
          * Data Plane(DL) : eNB-S1U. Parse the eNB F-TEID up front:
          * the retransmit check below must compare it against what is

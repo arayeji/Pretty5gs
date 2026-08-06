@@ -914,6 +914,75 @@ int mme_gtp_send_delete_session_request(
     return rv;
 }
 
+static void orphan_delete_timeout(ogs_gtp_xact_t *xact, void *data)
+{
+    char peer[OGS_ADDRSTRLEN];
+
+    ogs_error("orphan Delete Session timeout SGW[%s]:%d",
+            xact && xact->gnode ?
+                OGS_ADDR(&xact->gnode->addr, peer) : "-",
+            xact && xact->gnode ? OGS_PORT(&xact->gnode->addr) : 0);
+}
+
+/*
+ * Tear down an SGW session the MME has no context for.
+ *
+ * Used when an accepted Create Session Response arrives after the
+ * MME-side context (sess / S1 / UE) is already gone: the SGW S11 F-TEID
+ * from that response was never stored, so every later cleanup would take
+ * the local-only MME_SESS_CLEAR path and the PDN would sit at SGW/PGW
+ * forever. Build the Delete Session directly from the response's own
+ * F-TEID and default-bearer EBI.
+ */
+int mme_gtp_send_orphan_delete_session(
+        ogs_gtp_node_t *gnode, uint32_t sgw_s11_teid, uint8_t ebi)
+{
+    int rv;
+    ogs_gtp2_message_t gtp_message;
+    ogs_gtp2_delete_session_request_t *req = NULL;
+    ogs_gtp2_header_t h;
+    ogs_pkbuf_t *pkbuf = NULL;
+    ogs_gtp_xact_t *xact = NULL;
+
+    ogs_assert(gnode);
+
+    memset(&gtp_message, 0, sizeof(gtp_message));
+    req = &gtp_message.delete_session_request;
+
+    memset(&h, 0, sizeof(ogs_gtp2_header_t));
+    h.type = OGS_GTP2_DELETE_SESSION_REQUEST_TYPE;
+    h.teid = sgw_s11_teid;
+
+    req->linked_eps_bearer_id.presence = 1;
+    req->linked_eps_bearer_id.u8 = ebi;
+
+    gtp_message.h.type = h.type;
+    pkbuf = ogs_gtp2_build_msg(&gtp_message);
+    if (!pkbuf) {
+        ogs_error("ogs_gtp2_build_msg() failed");
+        return OGS_ERROR;
+    }
+
+    xact = ogs_gtp_xact_local_create(
+            gnode, &h, pkbuf, orphan_delete_timeout, NULL);
+    if (!xact) {
+        ogs_error("ogs_gtp_xact_local_create() failed");
+        ogs_pkbuf_free(pkbuf);
+        return OGS_ERROR;
+    }
+    /*
+     * NO_ACTION keeps the response out of the stale-xact drop guard; the
+     * handler then returns at the !sess check (xact->data is unset).
+     */
+    xact->delete_action = OGS_GTP_DELETE_NO_ACTION;
+    xact->enb_ue_id = OGS_INVALID_POOL_ID;
+
+    rv = ogs_gtp_xact_commit(xact);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
 void mme_gtp_send_delete_all_sessions(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue, int action)
 {

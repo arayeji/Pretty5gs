@@ -2714,21 +2714,38 @@ int sgwc_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
             bool no_bearer = ogs_list_empty(&sess->bearer_list);
             bool is_orphan = (!sess->metrics_session_counted ||
                               sess->sgwu_sxa_seid == 0 || no_bearer);
+            /*
+             * Fully-created S11 session the MME never claimed with a
+             * Modify Bearer Request: the MME context died mid-attach
+             * and no Delete Session will ever come. Reclaim after a
+             * long grace (must exceed the MME implicit-detach window;
+             * also protects idle TAU-relocated sessions, which see no
+             * MBR until the UE turns active).
+             */
+#define SGWC_SWEEP_NEVER_OWNED_GRACE ogs_time_from_sec(2700)
+            bool never_owned = (!sess->gn &&
+                    sess->metrics_session_counted &&
+                    !sess->s11_owned &&
+                    sess->create_session_t0 != 0 &&
+                    ((now - sess->create_session_t0) >
+                        SGWC_SWEEP_NEVER_OWNED_GRACE));
             bool aged_out;
 
-            if (!is_orphan)
+            if (!is_orphan && !never_owned)
                 continue;
 
-            aged_out = (sess->create_session_t0 == 0) ||
+            aged_out = never_owned ||
+                    (sess->create_session_t0 == 0) ||
                     ((now - sess->create_session_t0) > grace);
 
             if (do_purge && aged_out) {
                 ogs_info("orphan sweep: purge imsi=%s apn=%s "
-                         "(counted=%d sxa_seid=0x%" PRIx64 " bearers=%s)",
+                         "(counted=%d sxa_seid=0x%" PRIx64 " bearers=%s "
+                         "owned=%d)",
                          ue->imsi_bcd,
                          sess->session.name ? sess->session.name : "-",
                          sess->metrics_session_counted, sess->sgwu_sxa_seid,
-                         no_bearer ? "none" : "yes");
+                         no_bearer ? "none" : "yes", sess->s11_owned);
                 sgwc_sess_abort_create(sess);
                 purged++;
                 continue; /* sess is freed; do not count as remaining */
