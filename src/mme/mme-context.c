@@ -9125,7 +9125,15 @@ void mme_sess_remove(mme_sess_t *sess)
 
     ogs_assert(sess);
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
-    ogs_assert(mme_ue);
+    /*
+     * UE can already be gone on a late Delete Session Response after
+     * multi-session teardown (mme_ue_remove cleared the context while a
+     * sibling DSRSP was still in flight). Free the orphan sess; do not
+     * abort the process.
+     */
+    if (!mme_ue)
+        ogs_warn("mme_sess_remove: MME-UE already gone (sess id:%d)",
+                (int)sess->id);
 
     mme_metrics_on_sess_remove(sess);
 
@@ -9134,7 +9142,8 @@ void mme_sess_remove(mme_sess_t *sess)
      * half-removed sess or following a freed pointer.
      */
     mme_ctx_lock();
-    ogs_list_remove(&mme_ue->sess_list, sess);
+    if (mme_ue)
+        ogs_list_remove(&mme_ue->sess_list, sess);
 
     sess->pgw_dns_pending = false;
 

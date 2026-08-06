@@ -1098,10 +1098,13 @@ void mme_s11_handle_delete_session_response(
     /********************
      * Check ALL Context
      ********************/
-    ogs_assert(sess);
-    ogs_assert(mme_ue);
-    ogs_assert(target_ue);
-    ogs_assert(source_ue);
+    if (!sess || !mme_ue || !target_ue || !source_ue) {
+        ogs_warn("Delete Session Response: context disappeared mid-handler "
+                "(sess=%p mme_ue=%p target=%p source=%p action=%d) - ignore",
+                (void *)sess, (void *)mme_ue, (void *)target_ue,
+                (void *)source_ue, action);
+        return;
+    }
 
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
             mme_ue->mme_s11_teid, source_ue->sgw_s11_teid);

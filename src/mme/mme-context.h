@@ -1594,7 +1594,14 @@ struct mme_ue_s {
         mme_ue_t *mme_ue = NULL; \
         ogs_assert(__sESS); \
         mme_ue = mme_ue_find_by_id((__sESS)->mme_ue_id); \
-        ogs_assert(mme_ue); \
+        /* Late Delete Session Response can outlive mme_ue (multi-PDN
+         * teardown / will_remove). Never abort the MME on that race. */ \
+        if (!mme_ue) { \
+            ogs_warn("MME_SESS_CLEAR: MME-UE already gone (sess id:%d)", \
+                    (int)((__sESS)->id)); \
+            mme_sess_remove(__sESS); \
+            break; \
+        } \
         mme_sess_removed_log(mme_ue, \
                 (__sESS)->session ? (__sESS)->session->name : NULL); \
         if (mme_sess_count(mme_ue) == 1) /* Last Session */ \
