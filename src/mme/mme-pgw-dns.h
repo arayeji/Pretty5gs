@@ -37,9 +37,9 @@ int mme_pgw_dns_build_apn_fqdn(
  * Resolve PGW-C via APN-FQDN S-NAPTR (x-s5-gtp / x-s8-gtp), then SRV/A/AAAA.
  * Falls back to A/AAAA on APN-FQDN and legacy <ni>.mnc.mcc.gprs.
  *
- * Cache hit/negative is fast on the caller. On miss, work is queued to the
- * DNS worker pool and the caller waits on the job (getaddrinfo never runs
- * on UE shard / mme-main). Prefer mme_pgw_dns_resolve_apn_async().
+ * Caches the DNS candidate list (not a sticky final IP). Each call
+ * re-selects with RFC 2782 weighted random among equal SRV priority
+ * (TS 29.303). Prefer mme_pgw_dns_resolve_apn_async().
  */
 int mme_pgw_dns_resolve_apn(
         const char *apn_ni, const ogs_plmn_id_t *oi_plmn_id,

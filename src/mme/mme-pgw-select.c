@@ -34,7 +34,11 @@ static bool mme_pgw_hss_static_usable(const ogs_session_t *session)
     if (!session->smf_ip.ipv4 && !session->smf_ip.ipv6)
         return false;
 
-    /* DYNAMIC means HSS identity is not a permanent static binding. */
+    /*
+     * TS 29.272: MIP6 without PDN-GW-Allocation-Type ⇒ statically
+     * allocated. DYNAMIC ⇒ last/previously allocated; MME must perform
+     * local PGW selection instead of treating MIP6 as a permanent bind.
+     */
     if (session->pdn_gw_allocation_type == OGS_PDN_GW_ALLOCATION_DYNAMIC)
         return false;
 
@@ -264,25 +268,27 @@ int mme_pgw_select_for_sess(
     }
 
     /*
-     * 2) HSS MIP6 PGW address, including DYNAMIC allocation type.
-     *
-     * DYNAMIC formally means "last/previously allocated PGW", but in
-     * practice (e.g. inbound S8 roaming partners) the HSS-provided
-     * address is authoritative and the APN DNS zone may point to a PGW
-     * that rejects the session. So HSS MIP6 always wins over APN DNS;
-     * DNS is used only when the HSS provides no PGW address.
+     * 2) HSS MIP6 only when statically allocated (TS 29.272):
+     *    - MIP6 present + PDN-GW-Allocation-Type absent → static
+     *    - MIP6 present + STATIC → use it
+     *    - MIP6 present + DYNAMIC → do NOT bind permanently; fall
+     *      through to APN DNS / YAML (local PGW selection)
      */
-    if (session->smf_ip.ipv4 || session->smf_ip.ipv6) {
+    if (mme_pgw_hss_static_usable(session)) {
         memcpy(out_ip, &session->smf_ip, sizeof(*out_ip));
         source = MME_PGW_SOURCE_HSS_STATIC;
-        if (!mme_pgw_hss_static_usable(session))
-            ogs_debug("[%s] Using HSS MIP6 PGW (DYNAMIC) for APN[%s]",
-                    mme_ue ? mme_ue->imsi_bcd : "-",
-                    session->name ? session->name : "-");
         goto done;
     }
+    if ((session->smf_ip.ipv4 || session->smf_ip.ipv6) &&
+            session->pdn_gw_allocation_type ==
+                OGS_PDN_GW_ALLOCATION_DYNAMIC) {
+        ogs_info("[%s] HSS MIP6 for APN[%s] is DYNAMIC — "
+                "re-selecting PGW (APN DNS / YAML)",
+                mme_ue ? mme_ue->imsi_bcd : "-",
+                session->name ? session->name : "-");
+    }
 
-    /* 3) Standards APN DNS discovery (no HSS-provided PGW) */
+    /* 3) Standards APN DNS discovery (no usable static HSS PGW) */
     if (mme_self()->pgw_selection.dns_enabled && mme_ue) {
         if (mme_pgw_select_apn_dns(mme_ue, session, out_ip) == OGS_OK) {
             source = MME_PGW_SOURCE_APN_DNS;
@@ -435,12 +441,20 @@ int mme_pgw_bind_for_csr(mme_ue_t *mme_ue, mme_sess_t *sess,
         }
     }
 
-    /* 2) HSS MIP6 */
-    if (session->smf_ip.ipv4 || session->smf_ip.ipv6) {
+    /* 2) HSS MIP6 only when statically allocated (see select_for_sess) */
+    if (mme_pgw_hss_static_usable(session)) {
         memcpy(&sess->pgw_s5c_ip, &session->smf_ip, sizeof(sess->pgw_s5c_ip));
         mme_pgw_bind_log(mme_ue, session, MME_PGW_SOURCE_HSS_STATIC,
                 &session->smf_ip);
         return OGS_OK;
+    }
+    if ((session->smf_ip.ipv4 || session->smf_ip.ipv6) &&
+            session->pdn_gw_allocation_type ==
+                OGS_PDN_GW_ALLOCATION_DYNAMIC) {
+        ogs_info("[%s] HSS MIP6 for APN[%s] is DYNAMIC — "
+                "re-selecting PGW (APN DNS / YAML)",
+                mme_ue ? mme_ue->imsi_bcd : "-",
+                session->name ? session->name : "-");
     }
 
     /* 3) Standards APN DNS (async) */

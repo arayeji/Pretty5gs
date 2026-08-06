@@ -32,8 +32,9 @@ const char *mme_pgw_selection_source_string(mme_pgw_selection_source_t source);
  * Select PGW-C address for a new/restored PDN Create Session.
  *
  * Precedence (mode=standard):
- *   1) HSS static MIP6 (smf_ip and allocation != DYNAMIC)
- *   2) APN DNS (if enabled)
+ *   1) HSS static MIP6 (smf_ip present and allocation != DYNAMIC;
+ *      absent Allocation-Type counts as static per TS 29.272)
+ *   2) APN DNS (if enabled) — also used when HSS MIP6 is DYNAMIC
  *   3) YAML gtpc.client.smf
  *
  * mode=force: always YAML (ignores HSS and APN DNS).

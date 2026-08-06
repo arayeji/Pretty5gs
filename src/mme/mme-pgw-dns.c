@@ -28,6 +28,7 @@
 #define MME_PGW_DNS_MAX_NS          4
 #define MME_PGW_DNS_TIMEOUT_MS      2000
 #define MME_PGW_DNS_MAX_CANDIDATES  16
+#define MME_PGW_DNS_MAX_HOST_IPS    8
 #define MME_PGW_DNS_CACHE_TTL_SEC   300
 /* Negative APN/host cache uses the same TTL as positive (was 30s). */
 #define MME_PGW_DNS_NEG_TTL_SEC     MME_PGW_DNS_CACHE_TTL_SEC
@@ -40,11 +41,37 @@
 #define DNS_TYPE_NAPTR  35
 #define DNS_CLASS_IN    1
 
+/*
+ * One PGW candidate from S-NAPTR (+ SRV). IPs are resolved on the DNS
+ * worker when the APN candidate list is built so cache hits on
+ * mme-main / UE shards never call getaddrinfo.
+ *
+ * Per-session pick: order → preference → SRV priority, then RFC 2782
+ * weighted random among the same priority (TS 29.303).
+ */
+typedef struct pgw_dns_cand_s {
+    uint16_t order;
+    uint16_t preference;
+    uint16_t priority;
+    uint16_t weight;
+    int num_ip;
+    ogs_ip_t ip[MME_PGW_DNS_MAX_HOST_IPS];
+    char hostname[OGS_MAX_FQDN_LEN + 1]; /* diagnostics only */
+} pgw_dns_cand_t;
+
 typedef struct pgw_dns_cache_entry_s {
-    ogs_ip_t    ip;
+    bool        resolved;   /* false = negative cache */
+    ogs_time_t  expire;
+    int         num_cands;
+    pgw_dns_cand_t cands[MME_PGW_DNS_MAX_CANDIDATES];
+} pgw_dns_cache_entry_t;
+
+typedef struct host_dns_cache_entry_s {
     bool        resolved;
     ogs_time_t  expire;
-} pgw_dns_cache_entry_t;
+    int         num_ip;
+    ogs_ip_t    ip[MME_PGW_DNS_MAX_HOST_IPS];
+} host_dns_cache_entry_t;
 
 typedef struct naptr_rr_s {
     uint16_t order;
@@ -110,14 +137,6 @@ static void pgw_dns_tolower(char *s)
     }
 }
 
-static void pgw_dns_cache_free_entry(char *key, pgw_dns_cache_entry_t *entry)
-{
-    if (key)
-        ogs_free(key);
-    if (entry)
-        ogs_free(entry);
-}
-
 static void pgw_dns_hash_clear_unlocked(ogs_hash_t *hash)
 {
     ogs_hash_index_t *hi;
@@ -127,9 +146,12 @@ static void pgw_dns_hash_clear_unlocked(ogs_hash_t *hash)
 
     for (hi = ogs_hash_first(hash); hi; hi = ogs_hash_next(hi)) {
         char *key = (char *)ogs_hash_this_key(hi);
-        pgw_dns_cache_entry_t *entry =
-            (pgw_dns_cache_entry_t *)ogs_hash_this_val(hi);
-        pgw_dns_cache_free_entry(key, entry);
+        void *entry = ogs_hash_this_val(hi);
+
+        if (key)
+            ogs_free(key);
+        if (entry)
+            ogs_free(entry);
     }
     ogs_hash_clear(hash);
 }
@@ -619,10 +641,11 @@ static int pgw_dns_parse_srv(
 }
 
 static void pgw_dns_host_cache_store(
-        const char *hostname, const ogs_ip_t *ip, bool resolved)
+        const char *hostname, const ogs_ip_t *ips, int num_ip, bool resolved)
 {
     char *cache_key;
-    pgw_dns_cache_entry_t *entry;
+    host_dns_cache_entry_t *entry;
+    int n;
 
     ogs_assert(hostname);
     ogs_thread_mutex_lock(&pgw_dns_cache_mutex);
@@ -639,19 +662,30 @@ static void pgw_dns_host_cache_store(
         ogs_hash_set(host_dns_cache, cache_key, strlen(cache_key), entry);
     }
     entry->resolved = resolved;
-    if (resolved && ip)
-        memcpy(&entry->ip, ip, sizeof(entry->ip));
-    else
-        memset(&entry->ip, 0, sizeof(entry->ip));
+    entry->num_ip = 0;
+    memset(entry->ip, 0, sizeof(entry->ip));
+    if (resolved && ips && num_ip > 0) {
+        n = num_ip;
+        if (n > MME_PGW_DNS_MAX_HOST_IPS)
+            n = MME_PGW_DNS_MAX_HOST_IPS;
+        memcpy(entry->ip, ips, sizeof(ogs_ip_t) * (size_t)n);
+        entry->num_ip = n;
+    }
     entry->expire = ogs_time_now() +
             ogs_time_from_sec(MME_PGW_DNS_CACHE_TTL_SEC);
     ogs_thread_mutex_unlock(&pgw_dns_cache_mutex);
 }
 
-static int pgw_dns_host_cache_lookup(const char *hostname, ogs_ip_t *out_ip)
+/* Copy cached host IPs under lock; returns OGS_OK / OGS_RETRY(neg) / OGS_ERROR */
+static int pgw_dns_host_cache_lookup(
+        const char *hostname, ogs_ip_t *out_ips, int *out_num)
 {
-    pgw_dns_cache_entry_t *entry;
+    host_dns_cache_entry_t *entry;
     ogs_time_t now = ogs_time_now();
+
+    ogs_assert(out_ips);
+    ogs_assert(out_num);
+    *out_num = 0;
 
     ogs_thread_mutex_lock(&pgw_dns_cache_mutex);
     if (!host_dns_cache) {
@@ -663,30 +697,53 @@ static int pgw_dns_host_cache_lookup(const char *hostname, ogs_ip_t *out_ip)
         ogs_thread_mutex_unlock(&pgw_dns_cache_mutex);
         return OGS_ERROR;
     }
-    if (!entry->resolved) {
+    if (!entry->resolved || entry->num_ip <= 0) {
         ogs_thread_mutex_unlock(&pgw_dns_cache_mutex);
         return OGS_RETRY; /* negative hit */
     }
-    memcpy(out_ip, &entry->ip, sizeof(*out_ip));
+    *out_num = entry->num_ip;
+    memcpy(out_ips, entry->ip, sizeof(ogs_ip_t) * (size_t)entry->num_ip);
     ogs_thread_mutex_unlock(&pgw_dns_cache_mutex);
     return OGS_OK;
 }
 
-static int pgw_dns_hostname_to_ip(const char *hostname, ogs_ip_t *out_ip)
+static void pgw_dns_pick_ip(const ogs_ip_t *ips, int num_ip, ogs_ip_t *out_ip)
+{
+    int i;
+
+    ogs_assert(ips);
+    ogs_assert(out_ip);
+    ogs_assert(num_ip > 0);
+
+    i = (int)(ogs_random32() % (uint32_t)num_ip);
+    memcpy(out_ip, &ips[i], sizeof(*out_ip));
+}
+
+/*
+ * Resolve hostname to one or more A/AAAA addresses. Caches the full set;
+ * each caller that needs a single address should pick randomly from the set
+ * (via out_ips or a follow-up pgw_dns_pick_ip).
+ */
+static int pgw_dns_hostname_to_ips(
+        const char *hostname, ogs_ip_t *out_ips, int *out_num)
 {
     int rv;
     ogs_sockaddr_t *sa_list = NULL;
-    ogs_sockaddr_t *addr = NULL, *addr6 = NULL, *walk;
+    ogs_sockaddr_t *walk;
     char host_key[OGS_MAX_FQDN_LEN + 1];
+    ogs_ip_t tmp[MME_PGW_DNS_MAX_HOST_IPS];
+    int n = 0;
 
     ogs_assert(hostname);
-    ogs_assert(out_ip);
-    memset(out_ip, 0, sizeof(*out_ip));
+    ogs_assert(out_ips);
+    ogs_assert(out_num);
+    *out_num = 0;
+    memset(out_ips, 0, sizeof(ogs_ip_t) * MME_PGW_DNS_MAX_HOST_IPS);
 
     ogs_cpystrn(host_key, hostname, sizeof(host_key));
     pgw_dns_tolower(host_key);
 
-    rv = pgw_dns_host_cache_lookup(host_key, out_ip);
+    rv = pgw_dns_host_cache_lookup(host_key, out_ips, out_num);
     if (rv == OGS_OK)
         return OGS_OK;
     if (rv == OGS_RETRY)
@@ -694,7 +751,7 @@ static int pgw_dns_hostname_to_ip(const char *hostname, ogs_ip_t *out_ip)
 
     rv = ogs_getaddrinfo(&sa_list, AF_UNSPEC, hostname, 0, 0);
     if (rv != OGS_OK || !sa_list) {
-        pgw_dns_host_cache_store(host_key, NULL, false);
+        pgw_dns_host_cache_store(host_key, NULL, 0, false);
         return OGS_ERROR;
     }
 
@@ -703,35 +760,37 @@ static int pgw_dns_hostname_to_ip(const char *hostname, ogs_ip_t *out_ip)
             ogs_global_conf()->parameter.no_ipv6,
             ogs_global_conf()->parameter.prefer_ipv4);
     if (!sa_list) {
-        pgw_dns_host_cache_store(host_key, NULL, false);
+        pgw_dns_host_cache_store(host_key, NULL, 0, false);
         return OGS_ERROR;
     }
 
-    for (walk = sa_list; walk; walk = walk->next) {
+    memset(tmp, 0, sizeof(tmp));
+    for (walk = sa_list; walk && n < MME_PGW_DNS_MAX_HOST_IPS; walk = walk->next) {
+        ogs_ip_t one;
+
+        memset(&one, 0, sizeof(one));
         if (walk->ogs_sa_family == AF_INET) {
-            addr = walk;
-            break;
+            if (ogs_sockaddr_to_ip(walk, NULL, &one) != OGS_OK)
+                continue;
+        } else if (walk->ogs_sa_family == AF_INET6) {
+            if (ogs_sockaddr_to_ip(NULL, walk, &one) != OGS_OK)
+                continue;
+        } else {
+            continue;
         }
+        memcpy(&tmp[n++], &one, sizeof(one));
     }
-    for (walk = sa_list; walk; walk = walk->next) {
-        if (walk->ogs_sa_family == AF_INET6) {
-            addr6 = walk;
-            break;
-        }
-    }
-    if (!addr && !addr6) {
-        ogs_freeaddrinfo(sa_list);
-        pgw_dns_host_cache_store(host_key, NULL, false);
+    ogs_freeaddrinfo(sa_list);
+
+    if (n <= 0) {
+        pgw_dns_host_cache_store(host_key, NULL, 0, false);
         return OGS_ERROR;
     }
 
-    rv = ogs_sockaddr_to_ip(addr, addr6, out_ip);
-    ogs_freeaddrinfo(sa_list);
-    if (rv == OGS_OK)
-        pgw_dns_host_cache_store(host_key, out_ip, true);
-    else
-        pgw_dns_host_cache_store(host_key, NULL, false);
-    return rv;
+    pgw_dns_host_cache_store(host_key, tmp, n, true);
+    memcpy(out_ips, tmp, sizeof(ogs_ip_t) * (size_t)n);
+    *out_num = n;
+    return OGS_OK;
 }
 
 static int naptr_cmp(const void *a, const void *b)
@@ -744,24 +803,68 @@ static int naptr_cmp(const void *a, const void *b)
     return (int)x->preference - (int)y->preference;
 }
 
-static int srv_cmp(const void *a, const void *b)
+static int cand_cmp(const void *a, const void *b)
 {
-    const srv_rr_t *x = a;
-    const srv_rr_t *y = b;
+    const pgw_dns_cand_t *x = a;
+    const pgw_dns_cand_t *y = b;
 
+    if (x->order != y->order)
+        return (int)x->order - (int)y->order;
+    if (x->preference != y->preference)
+        return (int)x->preference - (int)y->preference;
     if (x->priority != y->priority)
         return (int)x->priority - (int)y->priority;
     return (int)y->weight - (int)x->weight;
 }
 
-static int pgw_dns_resolve_via_naptr(
+static int pgw_dns_cand_add_host(
+        pgw_dns_cand_t *cands, int *n_cands,
+        uint16_t order, uint16_t preference,
+        uint16_t priority, uint16_t weight,
+        const char *hostname)
+{
+    ogs_ip_t ips[MME_PGW_DNS_MAX_HOST_IPS];
+    int num_ip = 0;
+    pgw_dns_cand_t *c;
+
+    ogs_assert(cands);
+    ogs_assert(n_cands);
+    ogs_assert(hostname);
+
+    if (*n_cands >= MME_PGW_DNS_MAX_CANDIDATES)
+        return OGS_ERROR;
+    if (pgw_dns_hostname_to_ips(hostname, ips, &num_ip) != OGS_OK)
+        return OGS_ERROR;
+
+    c = &cands[*n_cands];
+    memset(c, 0, sizeof(*c));
+    c->order = order;
+    c->preference = preference;
+    c->priority = priority;
+    c->weight = weight;
+    c->num_ip = num_ip;
+    memcpy(c->ip, ips, sizeof(ogs_ip_t) * (size_t)num_ip);
+    ogs_cpystrn(c->hostname, hostname, sizeof(c->hostname));
+    (*n_cands)++;
+    return OGS_OK;
+}
+
+/*
+ * Build a resolved candidate list from S-NAPTR (+ SRV). Does not pick —
+ * callers cache the list and select per session.
+ */
+static int pgw_dns_discover_via_naptr(
         ogs_sockaddr_t *ns_list, const char *apn_fqdn, bool use_s8,
-        ogs_ip_t *out_ip)
+        pgw_dns_cand_t *cands, int *n_cands)
 {
     uint8_t resp[MME_PGW_DNS_PKT_MAX];
     int rlen;
     naptr_rr_t naptrs[MME_PGW_DNS_MAX_CANDIDATES];
     int n_naptr, i;
+
+    ogs_assert(cands);
+    ogs_assert(n_cands);
+    *n_cands = 0;
 
     rlen = pgw_dns_query_udp(ns_list, apn_fqdn, DNS_TYPE_NAPTR,
             resp, (int)sizeof(resp));
@@ -794,31 +897,125 @@ static int pgw_dns_resolve_via_naptr(
                     MME_PGW_DNS_MAX_CANDIDATES);
             if (n_srv <= 0)
                 continue;
-            qsort(srvs, n_srv, sizeof(srv_rr_t), srv_cmp);
             for (j = 0; j < n_srv; j++) {
                 if (!srvs[j].target[0] || strcmp(srvs[j].target, ".") == 0)
                     continue;
-                if (pgw_dns_hostname_to_ip(srvs[j].target, out_ip) == OGS_OK) {
-                    ogs_info("PGW APN DNS NAPTR/SRV: %s -> %s",
-                            apn_fqdn, srvs[j].target);
-                    return OGS_OK;
-                }
+                (void)pgw_dns_cand_add_host(cands, n_cands,
+                        naptrs[i].order, naptrs[i].preference,
+                        srvs[j].priority, srvs[j].weight,
+                        srvs[j].target);
             }
         } else {
             /* flag "a" or empty: replacement is a host */
-            if (pgw_dns_hostname_to_ip(naptrs[i].replacement, out_ip) ==
-                    OGS_OK) {
-                ogs_info("PGW APN DNS NAPTR: %s -> %s (svc=%s)",
-                        apn_fqdn, naptrs[i].replacement, naptrs[i].service);
-                return OGS_OK;
-            }
+            (void)pgw_dns_cand_add_host(cands, n_cands,
+                    naptrs[i].order, naptrs[i].preference,
+                    0, 1, naptrs[i].replacement);
         }
     }
-    return OGS_ERROR;
+
+    if (*n_cands <= 0)
+        return OGS_ERROR;
+
+    qsort(cands, *n_cands, sizeof(pgw_dns_cand_t), cand_cmp);
+    ogs_info("PGW APN DNS NAPTR: %s -> %d candidate(s)",
+            apn_fqdn, *n_cands);
+    return OGS_OK;
 }
 
-static void pgw_dns_cache_store(
-        const char *key, const ogs_ip_t *ip, bool resolved)
+/* RFC 2782 weighted pick among idx[0..n). Returns index into cands[]. */
+static int pgw_dns_weighted_index(
+        const pgw_dns_cand_t *cands, const int *idx, int n)
+{
+    uint32_t sum = 0, r, run = 0;
+    int i;
+
+    ogs_assert(cands);
+    ogs_assert(idx);
+    ogs_assert(n > 0);
+
+    for (i = 0; i < n; i++)
+        sum += cands[idx[i]].weight;
+
+    if (sum == 0)
+        return idx[(int)(ogs_random32() % (uint32_t)n)];
+
+    r = ogs_random32() % sum;
+    for (i = 0; i < n; i++) {
+        run += cands[idx[i]].weight;
+        if (r < run)
+            return idx[i];
+    }
+    return idx[n - 1];
+}
+
+/*
+ * Per-session selection from a cached candidate list (TS 29.303 / RFC 2782).
+ * Does not touch the network.
+ */
+static int pgw_dns_select_from_cands(
+        const pgw_dns_cand_t *cands, int n_cands, ogs_ip_t *out_ip)
+{
+    int group[MME_PGW_DNS_MAX_CANDIDATES];
+    int ng = 0, i, pick;
+    uint16_t best_order = 0xffff, best_pref = 0xffff, best_prio = 0xffff;
+
+    ogs_assert(cands);
+    ogs_assert(out_ip);
+    ogs_assert(n_cands > 0);
+    ogs_assert(n_cands <= MME_PGW_DNS_MAX_CANDIDATES);
+
+    memset(out_ip, 0, sizeof(*out_ip));
+
+    for (i = 0; i < n_cands; i++) {
+        if (cands[i].num_ip <= 0)
+            continue;
+        if (cands[i].order < best_order) {
+            best_order = cands[i].order;
+            best_pref = cands[i].preference;
+            best_prio = cands[i].priority;
+        }
+    }
+    for (i = 0; i < n_cands; i++) {
+        if (cands[i].num_ip <= 0 || cands[i].order != best_order)
+            continue;
+        if (cands[i].preference < best_pref) {
+            best_pref = cands[i].preference;
+            best_prio = cands[i].priority;
+        }
+    }
+    for (i = 0; i < n_cands; i++) {
+        if (cands[i].num_ip <= 0 ||
+                cands[i].order != best_order ||
+                cands[i].preference != best_pref)
+            continue;
+        if (cands[i].priority < best_prio)
+            best_prio = cands[i].priority;
+    }
+    for (i = 0; i < n_cands; i++) {
+        if (cands[i].num_ip <= 0)
+            continue;
+        if (cands[i].order == best_order &&
+                cands[i].preference == best_pref &&
+                cands[i].priority == best_prio)
+            group[ng++] = i;
+    }
+    if (ng <= 0)
+        return OGS_ERROR;
+
+    pick = pgw_dns_weighted_index(cands, group, ng);
+    pgw_dns_pick_ip(cands[pick].ip, cands[pick].num_ip, out_ip);
+    ogs_info("PGW APN DNS select: host=%s order=%u pref=%u "
+            "prio=%u weight=%u (group=%d/%d)",
+            cands[pick].hostname[0] ? cands[pick].hostname : "-",
+            cands[pick].order, cands[pick].preference,
+            cands[pick].priority, cands[pick].weight,
+            ng, n_cands);
+    return OGS_OK;
+}
+
+static void pgw_dns_cache_store_cands(
+        const char *key, const pgw_dns_cand_t *cands, int n_cands,
+        bool resolved)
 {
     char *cache_key;
     pgw_dns_cache_entry_t *entry;
@@ -838,19 +1035,34 @@ static void pgw_dns_cache_store(
         ogs_hash_set(pgw_dns_cache, cache_key, strlen(cache_key), entry);
     }
     entry->resolved = resolved;
-    if (resolved && ip)
-        memcpy(&entry->ip, ip, sizeof(entry->ip));
-    else
-        memset(&entry->ip, 0, sizeof(entry->ip));
+    entry->num_cands = 0;
+    memset(entry->cands, 0, sizeof(entry->cands));
+    if (resolved && cands && n_cands > 0) {
+        int n = n_cands;
+
+        if (n > MME_PGW_DNS_MAX_CANDIDATES)
+            n = MME_PGW_DNS_MAX_CANDIDATES;
+        memcpy(entry->cands, cands, sizeof(pgw_dns_cand_t) * (size_t)n);
+        entry->num_cands = n;
+    }
     entry->expire = ogs_time_now() +
             ogs_time_from_sec(MME_PGW_DNS_CACHE_TTL_SEC);
     ogs_thread_mutex_unlock(&pgw_dns_cache_mutex);
 }
 
-static int pgw_dns_cache_lookup(const char *key, ogs_ip_t *out_ip)
+/*
+ * Look up APN candidate list and pick a PGW IP for this session.
+ * Returns OGS_OK, OGS_RETRY (negative cache), or OGS_ERROR (miss/expired).
+ */
+static int pgw_dns_cache_lookup_select(const char *key, ogs_ip_t *out_ip)
 {
     pgw_dns_cache_entry_t *entry;
     ogs_time_t now = ogs_time_now();
+    pgw_dns_cand_t local[MME_PGW_DNS_MAX_CANDIDATES];
+    int n = 0;
+
+    ogs_assert(out_ip);
+    memset(out_ip, 0, sizeof(*out_ip));
 
     ogs_thread_mutex_lock(&pgw_dns_cache_mutex);
     if (!pgw_dns_cache) {
@@ -862,13 +1074,15 @@ static int pgw_dns_cache_lookup(const char *key, ogs_ip_t *out_ip)
         ogs_thread_mutex_unlock(&pgw_dns_cache_mutex);
         return OGS_ERROR;
     }
-    if (!entry->resolved) {
+    if (!entry->resolved || entry->num_cands <= 0) {
         ogs_thread_mutex_unlock(&pgw_dns_cache_mutex);
         return OGS_RETRY; /* negative hit */
     }
-    memcpy(out_ip, &entry->ip, sizeof(*out_ip));
+    n = entry->num_cands;
+    memcpy(local, entry->cands, sizeof(pgw_dns_cand_t) * (size_t)n);
     ogs_thread_mutex_unlock(&pgw_dns_cache_mutex);
-    return OGS_OK;
+
+    return pgw_dns_select_from_cands(local, n, out_ip);
 }
 
 /* Network part of APN resolve — must run on a DNS worker thread. */
@@ -878,7 +1092,8 @@ static int pgw_dns_resolve_apn_uncached(
         ogs_ip_t *out_ip)
 {
     ogs_sockaddr_t *ns_list = NULL;
-    ogs_ip_t resolved;
+    pgw_dns_cand_t cands[MME_PGW_DNS_MAX_CANDIDATES];
+    int n_cands = 0;
     char legacy[OGS_MAX_FQDN_LEN + 1];
 
     ogs_assert(apn_ni);
@@ -887,29 +1102,30 @@ static int pgw_dns_resolve_apn_uncached(
     ogs_assert(cache_key);
     ogs_assert(out_ip);
     memset(out_ip, 0, sizeof(*out_ip));
-    memset(&resolved, 0, sizeof(resolved));
+    memset(cands, 0, sizeof(cands));
 
     ogs_info("PGW APN DNS lookup: fqdn=%s service=x-3gpp-pgw:%s",
             apn_fqdn, use_s8 ? "x-s8-gtp" : "x-s5-gtp");
 
     if (pgw_dns_read_resolv_conf(&ns_list) == OGS_OK && ns_list) {
-        if (pgw_dns_resolve_via_naptr(
-                    ns_list, apn_fqdn, use_s8, &resolved) == OGS_OK) {
+        if (pgw_dns_discover_via_naptr(
+                    ns_list, apn_fqdn, use_s8, cands, &n_cands) == OGS_OK) {
             ogs_freeaddrinfo(ns_list);
-            memcpy(out_ip, &resolved, sizeof(*out_ip));
-            pgw_dns_cache_store(cache_key, out_ip, true);
-            return OGS_OK;
+            pgw_dns_cache_store_cands(cache_key, cands, n_cands, true);
+            return pgw_dns_select_from_cands(cands, n_cands, out_ip);
         }
         ogs_freeaddrinfo(ns_list);
         ns_list = NULL;
     }
 
-    /* Fallback: A/AAAA on APN-FQDN */
-    if (pgw_dns_hostname_to_ip(apn_fqdn, &resolved) == OGS_OK) {
-        ogs_info("PGW APN DNS A/AAAA fallback: %s", apn_fqdn);
-        memcpy(out_ip, &resolved, sizeof(*out_ip));
-        pgw_dns_cache_store(cache_key, out_ip, true);
-        return OGS_OK;
+    /* Fallback: A/AAAA on APN-FQDN as a single equal-weight candidate */
+    n_cands = 0;
+    if (pgw_dns_cand_add_host(cands, &n_cands, 0, 0, 0, 1, apn_fqdn) ==
+            OGS_OK) {
+        ogs_info("PGW APN DNS A/AAAA fallback: %s (%d addr)",
+                apn_fqdn, cands[0].num_ip);
+        pgw_dns_cache_store_cands(cache_key, cands, n_cands, true);
+        return pgw_dns_select_from_cands(cands, n_cands, out_ip);
     }
 
     /* Fallback: legacy .gprs APN */
@@ -927,16 +1143,17 @@ static int pgw_dns_resolve_apn_uncached(
                     ogs_plmn_id_mnc(oi_plmn_id),
                     ogs_plmn_id_mcc(oi_plmn_id));
 
-        if (pgw_dns_hostname_to_ip(legacy, &resolved) == OGS_OK) {
+        n_cands = 0;
+        if (pgw_dns_cand_add_host(cands, &n_cands, 0, 0, 0, 1, legacy) ==
+                OGS_OK) {
             ogs_info("PGW APN DNS legacy .gprs fallback: %s", legacy);
-            memcpy(out_ip, &resolved, sizeof(*out_ip));
-            pgw_dns_cache_store(cache_key, out_ip, true);
-            return OGS_OK;
+            pgw_dns_cache_store_cands(cache_key, cands, n_cands, true);
+            return pgw_dns_select_from_cands(cands, n_cands, out_ip);
         }
     }
 
     ogs_warn("PGW APN DNS failed: fqdn=%s", apn_fqdn);
-    pgw_dns_cache_store(cache_key, NULL, false);
+    pgw_dns_cache_store_cands(cache_key, NULL, 0, false);
     return OGS_ERROR;
 }
 
@@ -1058,7 +1275,7 @@ static void pgw_dns_worker_main(void *data)
             ogs_error("PGW DNS worker: failed to build APN-FQDN NI[%s]",
                     job->apn_ni);
             rv = OGS_ERROR;
-            pgw_dns_cache_store(job->cache_key, NULL, false);
+            pgw_dns_cache_store_cands(job->cache_key, NULL, 0, false);
         } else {
             rv = pgw_dns_resolve_apn_uncached(
                     job->apn_ni, &job->oi_plmn, job->use_s8,
@@ -1295,7 +1512,7 @@ int mme_pgw_dns_resolve_apn(
                 cache_key, sizeof(cache_key)) != OGS_OK)
         return OGS_ERROR;
 
-    rv = pgw_dns_cache_lookup(cache_key, out_ip);
+    rv = pgw_dns_cache_lookup_select(cache_key, out_ip);
     if (rv == OGS_OK) {
         ogs_debug("PGW APN DNS cache hit [%s]", cache_key);
         return OGS_OK;
@@ -1331,7 +1548,7 @@ int mme_pgw_dns_resolve_apn_async(
                 cache_key, sizeof(cache_key)) != OGS_OK)
         return OGS_ERROR;
 
-    rv = pgw_dns_cache_lookup(cache_key, out_ip_on_cache_hit);
+    rv = pgw_dns_cache_lookup_select(cache_key, out_ip_on_cache_hit);
     if (rv == OGS_OK) {
         ogs_debug("PGW APN DNS async cache hit [%s]", cache_key);
         return OGS_OK;
