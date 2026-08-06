@@ -1804,8 +1804,24 @@ void s1ap_handle_initial_context_setup_failure(
      * explicit release (MME-initiated UE Context Release procedure)
      * may in principle be adopted. The eNB should ensure
      * that no hanging resources remain at the eNB.
+     *
+     * Attach (or any non-REGISTERED procedure) that already created an
+     * S11 session must Delete Session. Clearing T3450 above disables the
+     * exception→DSR safety net; Release Access Bearers alone leaves the
+     * SGW/PGW PDN orphaned. REGISTERED UEs (Service Request / TAU with
+     * ICS) keep the PDN and only drop S1-U.
      */
-    mme_send_release_access_bearer_or_ue_context_release(enb_ue);
+    if (mme_ue &&
+            !OGS_FSM_CHECK(&mme_ue->sm, emm_state_registered) &&
+            SESSION_CONTEXT_IS_AVAILABLE(mme_ue) &&
+            !MME_SESSION_RELEASE_PENDING(mme_ue)) {
+        ogs_warn("[%s] ICS Failure during attach/non-registered: "
+                "Delete Session + UE context release",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+        mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+    } else {
+        mme_send_release_access_bearer_or_ue_context_release(enb_ue);
+    }
 }
 
 void s1ap_handle_ue_context_modification_response(

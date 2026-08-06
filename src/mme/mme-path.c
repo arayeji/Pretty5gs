@@ -930,6 +930,10 @@ void mme_send_delete_session_or_mme_ue_context_release(
     if (!enb_ue)
         enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
 
+    /* Avoid duplicate Delete Session if teardown is already in flight. */
+    if (MME_SESSION_RELEASE_PENDING(mme_ue))
+        return;
+
     xact_count = mme_ue_xact_count(mme_ue, OGS_GTP_LOCAL_ORIGINATOR);
 
     mme_gtp_send_delete_all_sessions(enb_ue, mme_ue,

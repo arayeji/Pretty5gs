@@ -354,6 +354,36 @@ int nas_eps_send_attach_reject(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     if (rv == OGS_OK)
         mme_t3346_on_reject_sent(mme_ue, emm_cause);
 
+    /*
+     * UE-safe SGW/PGW cleanup: only when an S11 session already exists
+     * (CSR accepted earlier, or leftover PDN on this mme_ue). Early ACL
+     * / TAC rejects before Create Session have no SGW TEID and are
+     * untouched. Registered Service Request / TAU paths do not use
+     * Attach Reject. DSR uses UE_CONTEXT_REMOVE so S1 is released on
+     * GTP completion even if emm_state_exception skips due to pending.
+     */
+    if (rv == OGS_OK &&
+            SESSION_CONTEXT_IS_AVAILABLE(mme_ue) &&
+            !MME_SESSION_RELEASE_PENDING(mme_ue)) {
+        mme_sess_t *s = NULL;
+        bool has_sgw_s1u = false;
+
+        ogs_list_for_each(&mme_ue->sess_list, s) {
+            if (MME_HAVE_SGW_S1U_PATH(s)) {
+                has_sgw_s1u = true;
+                break;
+            }
+        }
+        if (has_sgw_s1u) {
+            ogs_warn("[%s] Attach Reject with live SGW session: "
+                    "Delete Session + UE context release "
+                    "[EMM:%d ESM:%d]",
+                    MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
+                    emm_cause, esm_cause);
+            mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+        }
+    }
+
     return rv;
 }
 

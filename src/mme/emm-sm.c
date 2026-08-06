@@ -2684,9 +2684,15 @@ void emm_state_exception(ogs_fsm_t *s, mme_event_t *e)
                     "(no eNB-initiated release)", mme_ue->imsi_bcd);
             mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
         } else if (!enb_ue && !MME_SESSION_RELEASE_PENDING(mme_ue)) {
-            ogs_warn("[%s] EMM exception: no S1 context, removing UE",
+            /*
+             * No S1 association: still tear down any live S11 PDN before
+             * local UE remove. mme_ue_enter_ue_context_will_remove() only
+             * frees local state and orphans SGW/PGW sessions.
+             */
+            ogs_warn("[%s] EMM exception: no S1 context, "
+                    "Delete Session (if any) then remove UE",
                     mme_ue->imsi_bcd);
-            mme_ue_enter_ue_context_will_remove(mme_ue);
+            mme_send_delete_session_or_mme_ue_context_release(NULL, mme_ue);
         }
         break;
     case OGS_FSM_EXIT_SIG:
