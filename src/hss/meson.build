@@ -22,6 +22,7 @@ libhss_sources = files('''
     hss-event.h
     hss-timer.h
     hss-sm.h
+    hss-trace.h
     metrics.h
 
     hss-init.c
@@ -29,6 +30,7 @@ libhss_sources = files('''
     hss-event.c
     hss-timer.c
     hss-sm.c
+    hss-trace.c
 
     hss-s6a-path.c
     hss-cx-path.c

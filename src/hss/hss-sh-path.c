@@ -24,6 +24,7 @@
 #include "hss-context.h"
 #include "hss-fd-path.h"
 #include "hss-s6a-path.h"
+#include "hss-trace.h"
 #include "ogs-diameter-s6a.h"
 
 /* AVP codes (3GPP TS 29.328 / 29.329) used while browsing requests */
@@ -380,6 +381,15 @@ static int hss_ogs_diam_sh_udr_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
+    {
+        char udr_imsi[OGS_MAX_IMSI_BCD_LEN+1];
+        memset(udr_imsi, 0, sizeof(udr_imsi));
+        (void)hss_sh_resolve_imsi(
+                public_identity, msisdn_bcd, udr_imsi, sizeof(udr_imsi));
+        hss_imsi_debug(udr_imsi[0] ? udr_imsi : NULL, "Sh-UDR",
+                "Rx User-Data-Request");
+    }
+
     /* Requested-Domain (optional) */
     ret = fd_msg_search_avp(qry, ogs_diam_sh_requested_domain, &avpch);
     if (ret == 0 && avpch) {
@@ -462,6 +472,14 @@ static int hss_ogs_diam_sh_udr_cb(struct msg **msg, struct avp *avp,
     }
 
     ogs_debug("Tx User-Data-Answer");
+    {
+        char udr_imsi[OGS_MAX_IMSI_BCD_LEN+1];
+        memset(udr_imsi, 0, sizeof(udr_imsi));
+        (void)hss_sh_resolve_imsi(
+                public_identity, msisdn_bcd, udr_imsi, sizeof(udr_imsi));
+        hss_imsi_debug(udr_imsi[0] ? udr_imsi : NULL, "Sh-UDR",
+                "Tx User-Data-Answer");
+    }
     OGS_DIAM_STATS_MTX( OGS_DIAM_STATS_INC(nb_echoed); )
 
     if (user_data) ogs_free(user_data);
@@ -585,6 +603,9 @@ static int hss_ogs_diam_sh_snr_cb(struct msg **msg, struct avp *avp,
     (void)hss_sh_resolve_imsi(
             public_identity, msisdn_bcd, imsi_bcd, sizeof(imsi_bcd));
 
+    hss_imsi_debug(imsi_bcd[0] ? imsi_bcd : NULL, "Sh-SNR",
+            "Rx Subscribe-Notifications-Request");
+
     if (origin_host) {
         const char *key = public_identity ? public_identity : msisdn_bcd;
         for (i = 0; i < num_data_references; i++) {
@@ -623,6 +644,8 @@ static int hss_ogs_diam_sh_snr_cb(struct msg **msg, struct avp *avp,
     }
 
     ogs_debug("Tx Subscribe-Notifications-Answer");
+    hss_imsi_debug(imsi_bcd[0] ? imsi_bcd : NULL, "Sh-SNR",
+            "Tx Subscribe-Notifications-Answer");
     OGS_DIAM_STATS_MTX( OGS_DIAM_STATS_INC(nb_echoed); )
 
     /* Kamailio T-ADS: arm UE-reachability on the serving node (IWF/MME). */
@@ -793,6 +816,9 @@ static void hss_sh_send_pnr(sh_subscription_t *subs)
 
     ogs_debug("Tx Push-Notification-Request to [%s]",
             subs->origin_host ? subs->origin_host : "(realm)");
+    hss_imsi_debug(subs->imsi_bcd, "Sh-PNR",
+            "Tx Push-Notification-Request to [%s]",
+            subs->origin_host ? subs->origin_host : "(realm)");
     OGS_DIAM_STATS_MTX( OGS_DIAM_STATS_INC(nb_sent); )
 
     ogs_free(user_data);
@@ -809,6 +835,9 @@ void hss_sh_notify_by_imsi(const char *imsi_bcd)
 
     if (!imsi_bcd || !imsi_bcd[0])
         return;
+
+    hss_imsi_debug(imsi_bcd, "Sh-PNR",
+            "Notify subscribed ASs after S6a NOR");
 
     ogs_thread_mutex_lock(&sh_subscription_lock);
     ogs_list_for_each(&sh_subscription_list, subs) {

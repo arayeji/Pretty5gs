@@ -20,6 +20,7 @@
 #include "hss-context.h"
 #include "hss-fd-path.h"
 #include "hss-sm.h"
+#include "hss-trace.h"
 #include "metrics.h"
 
 
@@ -52,6 +53,7 @@ int hss_initialize(void)
     if (rv != OGS_OK) return rv;
 
     ogs_metrics_context_open(ogs_metrics_self());
+    hss_admin_api_register();
 
     rv = ogs_dbi_init(ogs_app()->db_uri);
     if (rv != OGS_OK) return rv;

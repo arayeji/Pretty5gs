@@ -22,6 +22,7 @@
 #include "hss-context.h"
 #include "hss-fd-path.h"
 #include "hss-s6a-path.h"
+#include "hss-trace.h"
 
 /* handler for fallback cb */
 static struct disp_hdl *hdl_s6a_fb = NULL;
@@ -361,6 +362,8 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
+    hss_imsi_debug(imsi_bcd, "S6a-AIR", "Rx Authentication-Information-Request");
+
     /* Get authentication info from database */
     rv = hss_db_auth_info(imsi_bcd, &auth_info);
     if (rv != OGS_OK) {
@@ -560,6 +563,8 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Authentication-Information-Answer");
+        hss_imsi_debug(imsi_bcd, "S6a-AIR",
+                "Tx Authentication-Information-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -1133,6 +1138,8 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
             error_occurred = 1;
             goto out;
         }
+
+        hss_imsi_debug(imsi_bcd, "S6a-ULR", "Rx Update-Location-Request");
     } else {
         ogs_error("No User-Name AVP found");
         result_code = OGS_DIAM_MISSING_AVP;
@@ -1627,6 +1634,7 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Update-Location-Answer");
+        hss_imsi_debug(imsi_bcd, "S6a-ULR", "Tx Update-Location-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -1761,6 +1769,8 @@ static int hss_ogs_diam_s6a_pur_cb(struct msg **msg, struct avp *avp,
         error_occurred = 1;
         goto out;
     }
+
+    hss_imsi_debug(imsi_bcd, "S6a-PUR", "Rx Purge-UE-Request");
 
     /* Get subscription data from database */
     rv = hss_db_subscription_data(imsi_bcd, &subscription_data);
@@ -1944,6 +1954,7 @@ static int hss_ogs_diam_s6a_pur_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Purge-UE-Answer");
+        hss_imsi_debug(imsi_bcd, "S6a-PUR", "Tx Purge-UE-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -2018,6 +2029,12 @@ void hss_s6a_send_clr(char *imsi_bcd, char *mme_host, char *mme_realm,
     /* Create the random value to store with the session */
     sess_data = ogs_calloc(1, sizeof(*sess_data));
     ogs_assert(sess_data);
+    if (imsi_bcd)
+        ogs_cpystrn(sess_data->imsi_bcd, imsi_bcd, sizeof(sess_data->imsi_bcd));
+
+    hss_imsi_debug(imsi_bcd, "S6a-CLR",
+            "Tx Cancel-Location-Request type=%u host=%s",
+            cancellation_type, mme_host ? mme_host : "-");
 
     /* Create the request */
     ret = fd_msg_new(ogs_diam_s6a_cmd_clr, MSGFL_ALLOC_ETEID, &req);
@@ -2190,6 +2207,9 @@ static void hss_s6a_cla_cb(void *data, struct msg **msg)
         goto cleanup;
     }
 
+    hss_imsi_debug(sess_data->imsi_bcd, "S6a-CLR",
+            "Rx Cancel-Location-Answer");
+
 cleanup:
     /* Always try to free the message if it exists */
     if (msg && *msg) {
@@ -2299,6 +2319,12 @@ int hss_s6a_send_idr(char *imsi_bcd, uint32_t idr_flags, uint32_t subdata_mask)
     /* Create the random value to store with the session */
     sess_data = ogs_calloc(1, sizeof(*sess_data));
     ogs_assert(sess_data);
+    if (imsi_bcd)
+        ogs_cpystrn(sess_data->imsi_bcd, imsi_bcd, sizeof(sess_data->imsi_bcd));
+
+    hss_imsi_debug(imsi_bcd, "S6a-IDR",
+            "Tx Insert-Subscriber-Data-Request flags=0x%x host=%s",
+            idr_flags, dest_host ? dest_host : "-");
 
     /* Create the request */
     ret = fd_msg_new(ogs_diam_s6a_cmd_idr, MSGFL_ALLOC_ETEID, &req);
@@ -2477,6 +2503,9 @@ static void hss_s6a_ida_cb(void *data, struct msg **msg)
         goto cleanup;
     }
 
+    hss_imsi_debug(sess_data->imsi_bcd, "S6a-IDR",
+            "Rx Insert-Subscriber-Data-Answer");
+
 cleanup:
     /* Always try to free the message if it exists */
     if (msg && *msg) {
@@ -2565,8 +2594,10 @@ static int hss_ogs_diam_s6a_nor_cb(struct msg **msg, struct avp *avp,
     ogs_debug("[HSS] Tx Notify-Answer");
 
     /* Map MME Notify to Sh PNR for subscribed Application Servers */
-    if (have_imsi)
+    if (have_imsi) {
+        hss_imsi_debug(imsi_bcd, "S6a-NOR", "Rx Notify-Request");
         hss_sh_notify_by_imsi(imsi_bcd);
+    }
 
     return 0;
 }

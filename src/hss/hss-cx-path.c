@@ -21,6 +21,7 @@
 
 #include "hss-context.h"
 #include "hss-fd-path.h"
+#include "hss-trace.h"
 
 /* handler for fallback cb */
 static struct disp_hdl *hdl_cx_fb = NULL;
@@ -227,6 +228,9 @@ static int hss_ogs_diam_cx_uar_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
+    hss_imsi_debug(msisdn_data.imsi.bcd, "Cx-UAR",
+            "Rx User-Authorization-Request");
+
     if (!error_occurred) {
         /* Set Vendor-Specific-Application-Id AVP */
         ret = ogs_diam_message_vendor_specific_appid_set(
@@ -313,6 +317,8 @@ static int hss_ogs_diam_cx_uar_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx User-Authorization-Answer");
+        hss_imsi_debug(msisdn_data.imsi.bcd, "Cx-UAR",
+                "Tx User-Authorization-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -553,6 +559,8 @@ static int hss_ogs_diam_cx_mar_cb(struct msg **msg, struct avp *avp,
         error_occurred = 1;
         goto out;
     }
+
+    hss_imsi_debug(imsi_bcd, "Cx-MAR", "Rx Multimedia-Auth-Request");
 
     /* Get the SIP-Auth-Data-Item AVP (Mandatory) */
     ret = fd_msg_search_avp(
@@ -970,6 +978,7 @@ static int hss_ogs_diam_cx_mar_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Multimedia-Auth-Answer");
+        hss_imsi_debug(imsi_bcd, "Cx-MAR", "Tx Multimedia-Auth-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -1205,6 +1214,8 @@ static int hss_ogs_diam_cx_sar_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
+    hss_imsi_debug(imsi_bcd, "Cx-SAR", "Rx Server-Assignment-Request");
+
     /* Check if Visited-Network-Identifier */
     visited_network_identifier =
         hss_cx_get_visited_network_identifier(public_identity);
@@ -1436,6 +1447,7 @@ static int hss_ogs_diam_cx_sar_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Server-Assignment-Answer");
+        hss_imsi_debug(imsi_bcd, "Cx-SAR", "Tx Server-Assignment-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -1570,6 +1582,11 @@ static int hss_ogs_diam_cx_lir_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
+    {
+        char *lir_imsi = hss_cx_get_imsi_bcd(public_identity);
+        hss_imsi_debug(lir_imsi, "Cx-LIR", "Rx Location-Info-Request");
+    }
+
     if (!error_occurred) {
         /* Set Vendor-Specific-Application-Id AVP */
         ret = ogs_diam_message_vendor_specific_appid_set(
@@ -1640,6 +1657,8 @@ static int hss_ogs_diam_cx_lir_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Location-Info-Answer");
+        hss_imsi_debug(hss_cx_get_imsi_bcd(public_identity), "Cx-LIR",
+                "Tx Location-Info-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(

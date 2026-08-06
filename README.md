@@ -10,7 +10,7 @@ Upstream docs: [open5gs.org](https://open5gs.org/open5gs/docs/). This README des
 |------|----------|-------------|
 | **RADIUS (SMF)** | Basic support | Multi-server RADIUS, framed IP, Framed-Route / Framed-IPv6-Route, accounting, admin API controls |
 | **PFCP / SMF pools** | Standard pools | Multi-DNN subnets sharing one UE pool; pool-exhaustion logs with IMSI/DNN |
-| **Admin HTTP API** | Limited | MME/SMF/SGWC `:9090` — metrics under load, per-IMSI trace, RADIUS/subnet tuning |
+| **Admin HTTP API** | Limited | MME/SMF/SGWC/HSS `:9090` — metrics under load, per-IMSI trace, RADIUS/subnet tuning |
 | **Production metrics** | Global gauges only on MME; SMF/UPF 5G-style | Per-PLMN attach/auth/registered UE (MME), SGWC UE/session by PGW, SMF UE by PLMN, UPF sessions by CP peer (SGWU/PGWU) |
 | **MME scale** | Fixed large pools | Configurable per-UE pool multipliers, peak stats, SIGUSR1 pool dump, soft-cap LRU |
 | **MME lookups** | Linear scans | O(1) `enb_ue` by S1AP-ID; EBI → bearer map |
@@ -97,7 +97,7 @@ Order: YAML `pcrf.policy` → MySQL (if enabled) → MongoDB (if `mongodb: true`
 **Per-IMSI debug (no restart)**
 
 ```yaml
-mme:
+mme:   # also smf / sgwc / hss
   trace_imsi:
     - 001010000000001
 ```
@@ -106,6 +106,8 @@ mme:
 curl 'http://127.0.0.1:9090/admin/trace/imsi?imsi=001010000000001'
 curl 'http://127.0.0.1:9090/admin/trace/imsi?imsi=list'
 ```
+
+HSS traces S6a / Cx / SWx / Sh Diameter exchanges for matching IMSIs (PROC=`S6a-AIR`, `Cx-UAR`, `SWx-MAR`, `Sh-UDR`, …). YAML `hss.trace_imsi` loads at start; runtime add/list/clear via the metrics port (HSS has no SIGHUP reload).
 
 **HSS ACL — block unknown IMSIs before S6a (AIR/ULR)**
 

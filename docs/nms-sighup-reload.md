@@ -6,6 +6,8 @@ Branch: `feature/sighup-list-replace` (Pretty5gs fork).
 
 **Other NFs** (AMF, UPF, HSS, PCRF, NRF, …) have **no SIGHUP handler** — any config change requires a daemon restart.
 
+HSS still supports **runtime** per-IMSI trace via `GET /admin/trace/imsi` on its metrics port (and `hss.trace_imsi` at process start); that does not go through SIGHUP.
+
 ---
 
 ## How to reload
@@ -307,7 +309,7 @@ Removal: only when **no PFCP sessions** on that SGW-U.
 | PFCP peer lists | — | UPF sync | SGW-U sync |
 | GTP-C peer lists | SGWC + SMF sync | — | — |
 | ACL / policy lists | tai, access_control, hss_map, imsi_acl, emergency, … | — | gn.pgw |
-| Trace IMSI | yes | yes | yes |
+| Trace IMSI | yes | yes | yes | HSS: YAML + `/admin/trace/imsi` (no SIGHUP) |
 | CDR | — | yes | yes |
 | RADIUS | — | yes (+ per-APN from session) | — |
 | DNS | — | yes | — |
