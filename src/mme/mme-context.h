@@ -1685,6 +1685,16 @@ typedef struct mme_sess_s {
     char            metrics_sgw_addr[OGS_ADDRSTRLEN];
     ogs_plmn_id_t   metrics_plmn_id;
     char            metrics_apn[OGS_MAX_APN_LEN+1];
+
+    /*
+     * Double-remove guard. The mme_session global gauge went negative
+     * during an admin drain and in steady state trails the sum of
+     * mme_session_active_by_sgw (which IS double-dec-protected by
+     * metrics_sess_counted above): symptoms of mme_sess_remove()
+     * running twice on the same sess, which would also double-free the
+     * pool slot. Block and log the second call instead.
+     */
+    bool            sess_removing;
 } mme_sess_t;
 
 #define MME_HAVE_ENB_S1U_PATH(__bEARER) \

@@ -9124,6 +9124,21 @@ void mme_sess_remove(mme_sess_t *sess)
     mme_ue_t *mme_ue = NULL;
 
     ogs_assert(sess);
+
+    /*
+     * See sess_removing in mme-context.h: a second remove would corrupt
+     * the pool free-list and double-decrement the mme_session gauge
+     * (observed as a negative gauge during admin drain). Refuse it
+     * loudly so the offending path shows up in the error log.
+     */
+    if (sess->sess_removing) {
+        ogs_error("mme_sess_remove: DOUBLE REMOVE blocked "
+                "(sess id:%d mme_ue id:%d pti:%d)",
+                (int)sess->id, (int)sess->mme_ue_id, sess->pti);
+        return;
+    }
+    sess->sess_removing = true;
+
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     /*
      * UE can already be gone on a late Delete Session Response after
@@ -10590,6 +10605,10 @@ static void stats_remove_mme_session(void)
 {
     mme_metrics_inst_global_dec(MME_METR_GLOB_GAUGE_MME_SESS);
     num_of_mme_sess = num_of_mme_sess - 1;
+    /* error (not info): must surface even at the production log level */
+    if (num_of_mme_sess < 0)
+        ogs_error("MME-Session counter went NEGATIVE (%d): "
+                "more removes than adds", num_of_mme_sess);
     ogs_info("[Removed] Number of MME-Sessions is now %d", num_of_mme_sess);
 }
 
