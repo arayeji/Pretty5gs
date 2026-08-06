@@ -202,20 +202,34 @@ void *ogs_talloc_memdup(const void *t, const void *p, size_t size)
 
 char *ogs_talloc_asprintf(const void *t, const char *fmt, ...)
 {
-    va_list ap;
+    /* vasprintf() is a GNU extension; two-pass vsnprintf is portable */
+    va_list ap, ap2;
     char *ret = NULL;
-    int rc;
+    int len;
 
     (void)t;
 
     va_start(ap, fmt);
-    rc = vasprintf(&ret, fmt, ap);
-    va_end(ap);
-
-    if (rc < 0) {
+    va_copy(ap2, ap);
+    len = vsnprintf(NULL, 0, fmt, ap);
+    if (len < 0) {
+        va_end(ap2);
+        va_end(ap);
         ogs_expect(0);
         return NULL;
     }
+
+    ret = malloc(len + 1);
+    if (!ret) {
+        va_end(ap2);
+        va_end(ap);
+        ogs_expect(0);
+        return NULL;
+    }
+
+    vsnprintf(ret, len + 1, fmt, ap2);
+    va_end(ap2);
+    va_end(ap);
 
     return ret;
 }
