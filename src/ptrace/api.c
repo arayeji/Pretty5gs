@@ -157,18 +157,36 @@ static _MHD_Result handle_trace_start(struct MHD_Connection *conn,
     ptrace_trace_t *tr;
     char *resp;
     int n;
+    const char *q;
 
-    json_get_str(body, "imsi", imsi, sizeof(imsi));
-    if (!imsi[0]) {
-        /* nested trace_request.imsi */
-        const char *p = strstr(body ? body : "", "\"imsi\"");
+    imsi[0] = '\0';
+    q = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "imsi");
+    if (q && q[0])
+        ogs_cpystrn(imsi, q, sizeof(imsi));
+
+    if (!imsi[0] && body && body[0])
+        json_get_str(body, "imsi", imsi, sizeof(imsi));
+    if (!imsi[0] && body && body[0]) {
+        const char *p = strstr(body, "\"imsi\"");
         if (p)
-            json_get_str(p - 1, "imsi", imsi, sizeof(imsi));
+            json_get_str(p, "imsi", imsi, sizeof(imsi));
     }
-    duration = json_get_int(body, "duration", 300);
-    if (!imsi[0])
-        return send_json(conn, MHD_HTTP_BAD_REQUEST,
-                "{\"error\":\"imsi required\"}\n");
+
+    duration = 300;
+    q = MHD_lookup_connection_value(conn, MHD_GET_ARGUMENT_KIND, "duration");
+    if (q && q[0])
+        duration = atoi(q);
+    else if (body && body[0])
+        duration = json_get_int(body, "duration", 300);
+
+    if (!imsi[0]) {
+        char err[128];
+        snprintf(err, sizeof(err),
+                "{\"error\":\"imsi required\",\"hint\":"
+                "\"POST JSON {\\\"imsi\\\":\\\"...\\\"} or "
+                "GET /trace/start?imsi=...\"}\n");
+        return send_json(conn, MHD_HTTP_BAD_REQUEST, err);
+    }
 
     tr = ptrace_trace_start(imsi, duration);
     if (!tr)
@@ -298,6 +316,11 @@ static _MHD_Result access_handler(void *cls,
     if (!strcmp(method, "GET") &&
             (!strcmp(url, "/ws/events") || !strcmp(url, "/events/stream")))
         return handle_sse(conn);
+
+    if (!strcmp(method, "GET") &&
+            (!strcmp(url, "/trace") || !strcmp(url, "/trace/start"))) {
+        return handle_trace_start(conn, NULL);
+    }
 
     if (!strcmp(method, "GET") && !strncmp(url, "/ue/", 4)) {
         ptrace_ue_t *ue = ptrace_correlate_find(url + 4);
