@@ -1,0 +1,52 @@
+# Pretty-Trace — passive EPC/5GC probe for PrettyNMS
+#
+# Standalone NF: observes mirrored SPAN/TAP traffic. Does not modify
+# or require hooks inside other network functions.
+#
+# Placeholders only — do not put production secrets or addresses here.
+
+logger:
+  file:
+    path: @localstatedir@/log/open5gs/ptrace.log
+#  level: info
+
+global:
+  max:
+    ue: 1024
+
+ptrace:
+  capture:
+    # pcap | afpacket | pfring (stub) | dpdk (stub)
+    backend: pcap
+    # Set for offline replay; leave empty for live interfaces
+    pcap_file: ""
+    workers: 4
+    interface:
+      - dev: eth0
+        role: s1mme
+#      - dev: eth1
+#        role: s11
+#      - dev: eth2
+#        role: s1u
+#      - dev: eth3
+#        role: n4
+#      - dev: eth4
+#        role: diameter
+
+  cache:
+    # Rolling metadata window: 1 | 5 | 10 | 15 | 60
+    duration_minutes: 10
+    pcap_ring_path: @localstatedir@/lib/open5gs/ptrace/ring
+    pcap_ring_size_gb: 2
+
+  redis:
+    enabled: false
+    # url: redis://127.0.0.1:6379
+
+  clickhouse:
+    enabled: false
+    # url: http://127.0.0.1:8123/?query=INSERT%20INTO%20ptrace_events%20FORMAT%20JSONEachRow
+
+  api:
+    addr: 127.0.0.1
+    port: 8088

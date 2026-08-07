@@ -1,0 +1,26 @@
+[Unit]
+Description=Open5GS Pretty-Trace Daemon (passive EPC/5GC probe)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+User=open5gs
+Group=open5gs
+
+Restart=always
+ExecStart=@bindir@/open5gs-ptraced -c @sysconfdir@/open5gs/ptrace.yaml
+RestartSec=2
+RestartPreventExitStatus=1
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Packet capture + API.
+LimitNOFILE=1048576
+# CAP_NET_RAW needed for AF_PACKET / live pcap; grant via AmbientCapabilities
+# if deploying with non-root User=.
+#AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+#CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target
