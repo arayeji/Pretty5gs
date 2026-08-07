@@ -626,19 +626,26 @@ static size_t build_pgw_record(
         ber_end(&b, list);
     }
 
-    /* [13] recordOpeningTime */
+    /*
+     * [13] recordOpeningTime: TS 32.251 partial-record semantics — each
+     * partial CDR opens when the previous one closed (last_change_time),
+     * not at session establishment. The session start stays in [38].
+     */
     {
         uint8_t ts[9];
-        ogs_time_t open_t = sess->cdr.start_time ?
-                sess->cdr.start_time : now;
+        ogs_time_t open_t = sess->cdr.last_change_time ?
+                sess->cdr.last_change_time :
+                (sess->cdr.start_time ? sess->cdr.start_time : now);
         timestamp_encode(open_t, ts);
         ber_prim_ctx(&b, 13, ts, 9);
     }
 
-    /* [14] duration (seconds since session start) */
+    /* [14] duration (seconds covered by this record) */
     {
-        ogs_time_t start = sess->cdr.start_time ? sess->cdr.start_time : now;
-        uint64_t secs = (uint64_t)((now - start) / OGS_USEC_PER_SEC);
+        ogs_time_t open_t = sess->cdr.last_change_time ?
+                sess->cdr.last_change_time :
+                (sess->cdr.start_time ? sess->cdr.start_time : now);
+        uint64_t secs = (uint64_t)((now - open_t) / OGS_USEC_PER_SEC);
         ber_duration_ctx(&b, 14, secs);
     }
 

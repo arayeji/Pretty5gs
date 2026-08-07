@@ -375,6 +375,13 @@ typedef struct sgwc_sess_s {
 
     struct {
         ogs_time_t start_time;
+        /*
+         * recordOpeningTime of the *next* CDR (TS 32.251: each partial
+         * record opens when the previous one closes). start_time stays
+         * fixed at session establishment for [38] startTime; this one
+         * advances on every emitted partial record.
+         */
+        ogs_time_t opening_time;
         uint32_t record_seq;
         uint64_t last_ul_octets;
         uint64_t last_dl_octets;

@@ -428,9 +428,11 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
         uint8_t ts[9];
         size_t list, row;
         uint64_t dur = interval_duration_s;
+        ogs_time_t open_t = sess->cdr.opening_time ?
+                sess->cdr.opening_time : sess->cdr.start_time;
 
-        if (!dur && sess->cdr.start_time && now > sess->cdr.start_time)
-            dur = (uint64_t)((now - sess->cdr.start_time) / OGS_USEC_PER_SEC);
+        if (!dur && open_t && now > open_t)
+            dur = (uint64_t)((now - open_t) / OGS_USEC_PER_SEC);
 
         list = ber_begin_ctx(&b, 12);
         row = ber_begin_seq(&b);
@@ -445,16 +447,28 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
         ber_end(&b, list);
     }
 
+    /*
+     * [13] recordOpeningTime: TS 32.251 partial-record semantics — each
+     * partial CDR opens at the closure of the previous one, so this
+     * advances every interval (matches Huawei CGF output and keeps the
+     * downstream GA server's StartDate-based day bucketing correct).
+     * The true session start stays in [38] startTime below.
+     */
     {
         uint8_t ts[9];
-        ogs_time_t open_t = sess->cdr.start_time ? sess->cdr.start_time : now;
+        ogs_time_t open_t = sess->cdr.opening_time ? sess->cdr.opening_time :
+                (sess->cdr.start_time ? sess->cdr.start_time : now);
         timestamp_encode(open_t, ts);
         ber_prim_ctx(&b, 13, ts, 9);
     }
 
-    ber_duration_ctx(&b, 14, interval_duration_s ? interval_duration_s :
-            (sess->cdr.start_time && now > sess->cdr.start_time ?
-             (uint64_t)((now - sess->cdr.start_time) / OGS_USEC_PER_SEC) : 0));
+    {
+        ogs_time_t open_t = sess->cdr.opening_time ?
+                sess->cdr.opening_time : sess->cdr.start_time;
+        ber_duration_ctx(&b, 14, interval_duration_s ? interval_duration_s :
+                (open_t && now > open_t ?
+                 (uint64_t)((now - open_t) / OGS_USEC_PER_SEC) : 0));
+    }
 
     if (is_stop)
         tmp[0] = sess->cdr.cause_for_rec_closing ?
@@ -766,6 +780,9 @@ static void emit(sgwc_sess_t *sess, bool is_stop, uint32_t interval_duration_s)
     sess->cdr.last_dl_octets = sess->usage_dl_octets;
     sess->cdr.last_interval_duration_s = interval_duration_s;
     sess->cdr.record_seq++;
+    /* This record just closed; the next partial record opens now. */
+    if (!is_stop)
+        sess->cdr.opening_time = ogs_time_now();
 }
 
 void sgwc_sess_usage_accumulate(sgwc_sess_t *sess,
@@ -922,6 +939,8 @@ void sgwc_ga_cdr_session_start(sgwc_sess_t *sess)
 
     if (!sess->cdr.start_time)
         sess->cdr.start_time = ogs_time_now();
+    if (!sess->cdr.opening_time)
+        sess->cdr.opening_time = sess->cdr.start_time;
 
     if (sgwc_self()->cdr.triggers & SGWC_CDR_TRIG_START)
         emit(sess, false, 0);
@@ -947,6 +966,7 @@ void sgwc_ga_sess_clear(sgwc_sess_t *sess)
 {
     ogs_assert(sess);
     sess->cdr.start_time = 0;
+    sess->cdr.opening_time = 0;
     sess->cdr.record_seq = 0;
     sess->cdr.last_ul_octets = 0;
     sess->cdr.last_dl_octets = 0;
