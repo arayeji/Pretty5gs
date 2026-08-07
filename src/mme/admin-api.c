@@ -349,9 +349,7 @@ size_t mme_dump_maintenance_status(char *buf, size_t buflen,
     ogs_time_t now;
     long long counts_age_s;
 
-    ogs_time_t sweep_last_run = 0;
-    int sweep_last_purged = 0, sweep_last_remaining = 0;
-    uint64_t sweep_total_purged = 0;
+    mme_orphan_sweep_stats_t sweep;
     long long sweep_age_s = -1;
 
     (void)page;
@@ -406,24 +404,37 @@ size_t mme_dump_maintenance_status(char *buf, size_t buflen,
     counts_age_s = (long long)ogs_time_to_sec(now - maint_counts_time);
     mme_ctx_unlock();
 
-    mme_orphan_sweep_get_stats(&sweep_last_run, &sweep_last_purged,
-            &sweep_last_remaining, &sweep_total_purged);
-    if (sweep_last_run)
+    memset(&sweep, 0, sizeof(sweep));
+    mme_orphan_sweep_get_stats(&sweep);
+    if (sweep.last_run)
         sweep_age_s = (long long)ogs_time_to_sec(
-                ogs_time_now() - sweep_last_run);
+                ogs_time_now() - sweep.last_run);
 
+    /*
+     * sweep.last_queued = successfully queued/sync-removed this tick
+     * (not "hoped"). last_remaining = eligible seen this tick not queued
+     * (includes in-grace). examined/in_grace/skipped_s1/queue_fail explain
+     * why orphan_candidates can stay high while last_remaining looks small.
+     */
     written = snprintf(buf, buflen,
             "{\"maintenance\":%s,\"ue_count\":%d,"
             "\"sessionless\":%d,\"idle\":%d,\"will_remove\":%d,"
             "\"orphan_candidates\":%d,\"counts_age_s\":%lld,"
             "\"drain\":{\"active\":%s,\"processed\":%u},"
-            "\"sweep\":{\"age_s\":%lld,\"last_purged\":%d,"
-            "\"last_remaining\":%d,\"total_purged\":%llu}}\n",
+            "\"sweep\":{\"age_s\":%lld,\"last_queued\":%d,"
+            "\"last_purged\":%d,\"last_remaining\":%d,"
+            "\"examined\":%d,\"in_grace\":%d,\"skipped_s1\":%d,"
+            "\"queue_fail\":%d,\"total_queued\":%llu,"
+            "\"total_purged\":%llu}}\n",
             maintenance ? "true" : "false", ue_count,
             sessionless, idle, will_remove, orphan_candidates, counts_age_s,
             drain_active ? "true" : "false", drain_processed,
-            sweep_age_s, sweep_last_purged, sweep_last_remaining,
-            (unsigned long long)sweep_total_purged);
+            sweep_age_s, sweep.last_queued,
+            sweep.last_queued, sweep.last_remaining,
+            sweep.last_examined, sweep.last_in_grace, sweep.last_skipped_s1,
+            sweep.last_queue_fail,
+            (unsigned long long)sweep.total_queued,
+            (unsigned long long)sweep.total_queued);
     if (written < 0)
         return 0;
     return (size_t)((size_t)written < buflen ? (size_t)written : buflen - 1);

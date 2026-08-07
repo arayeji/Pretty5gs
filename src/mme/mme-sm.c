@@ -1839,9 +1839,9 @@ cleanup:
             ue_remaining = mme_orphan_ue_sweep(true, grace, &ue_purged);
             enb_remaining = mme_orphan_enb_sweep(true, grace, &enb_purged);
             if (ue_purged || enb_purged)
-                ogs_warn("admin maintenance: orphan sweep purged %d "
-                        "stale UE(s) (%d left), %d failed-setup eNB(s) "
-                        "(%d left)",
+                ogs_warn("admin maintenance: orphan sweep queued/removed %d "
+                        "stale UE(s) (%d eligible left this tick), "
+                        "%d failed-setup eNB(s) (%d left)",
                         ue_purged, ue_remaining, enb_purged, enb_remaining);
         }
         break;
@@ -1871,18 +1871,19 @@ cleanup:
             /* un-wedge any eNB whose TX hold list leaked (s1ap-tx.c) */
             s1ap_tx_hold_watchdog();
 
-            /* Heartbeat for /admin/maintenance/status (visible at any log level). */
-            mme_orphan_sweep_record(ue_purged, ue_remaining);
+            /* Heartbeat recorded inside mme_orphan_ue_sweep(). */
 
             if (ue_purged || enb_purged || enb_ue_purged)
-                ogs_warn("orphan sweep: purged %d stale UE(s) (%d left), "
+                ogs_warn("orphan sweep: queued/removed %d stale UE(s) "
+                        "(%d eligible left this tick), "
                         "%d failed-setup eNB(s) (%d left), "
                         "%d orphan S1 context(s) (%d left)",
                         ue_purged, ue_remaining, enb_purged, enb_remaining,
                         enb_ue_purged, enb_ue_remaining);
             else if (ue_remaining || enb_remaining || enb_ue_remaining)
-                ogs_debug("orphan sweep: %d stale UE(s), %d failed-setup "
-                        "eNB(s), %d orphan S1 context(s) within grace",
+                ogs_debug("orphan sweep: %d eligible UE(s) this tick, "
+                        "%d failed-setup eNB(s), %d orphan S1 context(s) "
+                        "(grace/pending)",
                         ue_remaining, enb_remaining, enb_ue_remaining);
 
             mme_orphan_timer_rearm();

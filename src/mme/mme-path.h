@@ -27,8 +27,13 @@ extern "C" {
 #endif
 
 void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue);
-/* Same reclaim, but bounced to the UE owner shard when workers are on. */
-void mme_ue_purge_on_owner(mme_ue_t *mme_ue);
+/*
+ * Same reclaim, bounced to the UE owner shard when workers are on.
+ * Returns OGS_OK if the UE was removed synchronously (no workers) or the
+ * ADMIN_PURGE_UE event was successfully queued; OGS_ERROR if the event
+ * could not be allocated/queued (caller must not count a purge).
+ */
+int mme_ue_purge_on_owner(mme_ue_t *mme_ue);
 
 /*
  * Maintenance window: reject a brand-new S1/NAS procedure without
@@ -42,8 +47,11 @@ int mme_maintenance_reject_without_ue(
  * Reclaim MME-UE contexts with no ESM session (regardless of EMM state).
  * Registered ECM-IDLE subscribers always retain at least one session until
  * detach; empty sess_list means the context is stale.
- * Returns the number of orphan candidates still on mme_ue_list after the
- * sweep; writes the number actually purged to out_purged when non-NULL.
+ *
+ * Walks the UE list in lock-held chunks (resumed via cursor across ticks).
+ * Returns eligible orphans in this tick that were NOT successfully
+ * queued/removed (includes in-grace). Writes successfully queued/removed
+ * count to out_purged when non-NULL.
  */
 int mme_orphan_ue_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
 int mme_orphan_enb_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
@@ -53,9 +61,19 @@ void mme_orphan_timer_stop(void);
 void mme_orphan_timer_rearm(void);
 
 /* Orphan-sweep heartbeat, surfaced via /admin/maintenance/status. */
-void mme_orphan_sweep_record(int ue_purged, int ue_remaining);
-void mme_orphan_sweep_get_stats(ogs_time_t *last_run, int *last_purged,
-        int *last_remaining, uint64_t *total_purged);
+typedef struct mme_orphan_sweep_stats_s {
+    ogs_time_t last_run;
+    int last_queued;       /* successfully queued/sync-removed this tick */
+    int last_remaining;    /* eligible in this tick, not yet queued (incl grace) */
+    int last_examined;     /* UEs walked this tick */
+    int last_in_grace;     /* eligible but younger than grace */
+    int last_skipped_s1;   /* sessionless skipped: S1 release in progress */
+    int last_queue_fail;   /* purge enqueue failures this tick */
+    uint64_t total_queued; /* cumulative successful queue/sync-remove */
+} mme_orphan_sweep_stats_t;
+
+void mme_orphan_sweep_record(const mme_orphan_sweep_stats_t *stats);
+void mme_orphan_sweep_get_stats(mme_orphan_sweep_stats_t *stats);
 
 void mme_admin_detach_ue(mme_ue_t *mme_ue, bool force);
 
