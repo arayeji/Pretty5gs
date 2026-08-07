@@ -20,6 +20,7 @@
 #include "cgf-sm.h"
 #include "gtpp-path.h"
 #include "spool.h"
+#include "worker.h"
 
 /* Stack buffer for one MTU-safe DTRR payload (+ GTP'/IE overhead). */
 #define CGF_BATCH_BUF_SIZE 4096
@@ -264,13 +265,26 @@ void cgf_sm_on_dtrr_response(cgf_peer_t *peer, uint16_t seq, uint8_t cause)
     }
 
     if (file) {
-        if (!cgf_spool_ack_batch(file, xact->batch_start,
-                xact->records_in_batch)) {
+        bool freed = false;
+
+        if (!cgf_spool_ack_batch_ex(file, xact->batch_start,
+                xact->records_in_batch, &freed)) {
             abort_file_pipeline(peer, file, true);
             cgf_gtpp_free_xact(xact);
             cgf_sm_try_drain();
             return;
         }
+        /*
+         * On a drain worker thread, `file` may be a stale/freed
+         * pointer past this point — the worker caches it in
+         * worker->active across ticks (unlike the main thread, which
+         * always re-fetches cgf_spool_get_active()). Let the worker
+         * null its cached pointer before we touch anything else that
+         * (indirectly) reads worker->active, i.e. cgf_sm_try_drain()
+         * below.
+         */
+        if (freed) cgf_worker_on_file_gone(file);
+
         ogs_debug("cgf: DTRR seq=%u ptc=%u accepted by '%s' "
                 "(cause=%u, %u records)",
                 seq, ptc, peer->address_str, cause, xact->records_in_batch);
@@ -308,6 +322,12 @@ void cgf_sm_on_echo_tick(void)
     cgf_context_t *self = cgf_self();
     uint32_t i;
 
+    /* Drain workers own the real peer sockets and run their own echo
+     * tick (see worker.c); the main thread's peers[] entries have no
+     * socket in that mode, so this loop would be a no-op anyway, but
+     * skip it explicitly for clarity. */
+    if (cgf_workers_enabled()) return;
+
     for (i = 0; i < self->num_of_peers; i++) {
         cgf_peer_t *p = &self->peers[i];
         if (!p->sock) continue;
@@ -336,12 +356,15 @@ void cgf_sm_on_echo_tick(void)
 void cgf_sm_on_rto_tick(void)
 {
     cgf_context_t *self = cgf_self();
-    cgf_peer_t *p = active_peer();
+    cgf_peer_t *p;
     ogs_time_t now = ogs_time_now();
     ogs_time_t rto = ogs_time_from_msec(self->request_rto_ms);
     uint32_t i;
     bool gave_up = false;
 
+    if (cgf_workers_enabled()) return;
+
+    p = active_peer();
     if (!p) return;
 
     for (i = 0; i < CGF_MAX_INFLIGHT; i++) {
@@ -373,6 +396,12 @@ void cgf_sm_on_rto_tick(void)
 
 void cgf_sm_on_spool_tick(void)
 {
+    /* Workers claim files themselves (atomic rename out of ready/);
+     * letting the main thread's cgf_spool_refill() also scan ready/
+     * here would race their claims and could open (via g_active) a
+     * file a worker is trying to claim at the same time. */
+    if (cgf_workers_enabled()) return;
+
     cgf_spool_refill();
     cgf_sm_try_drain();
 }
@@ -388,6 +417,20 @@ void cgf_sm_try_drain(void)
     cgf_spool_file_t *f;
     uint32_t window;
     static uint8_t batch[CGF_BATCH_BUF_SIZE];
+
+    /*
+     * Called from cgf_sm_on_echo_response()/on_dtrr_response(), which
+     * are shared between the main thread and every drain worker
+     * thread (worker.c's recv callback calls cgf_gtpp_handle_recv()
+     * directly). On a worker thread, drain worker-local state instead
+     * of this function's `static batch` / cgf_self()->peers — that
+     * buffer is not safe to share across concurrently-running worker
+     * threads, and the active peer/file live on the worker, not here.
+     */
+    if (cgf_worker_self()) {
+        cgf_worker_try_drain(cgf_worker_self());
+        return;
+    }
 
     p = active_peer();
     if (!p || !peer_may_send(p)) return;

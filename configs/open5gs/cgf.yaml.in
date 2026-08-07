@@ -18,14 +18,30 @@ global:
 # blocks SMF session handling, and CDRs survive restarts on disk.
 #
 # Directory layout under `spool_dir` (mirrors the writer side):
-#   current/   -- file being appended by the SMF
-#   ready/     -- rotated files picked up by this daemon
-#   done/      -- files successfully delivered to a CGF
-#   failed/    -- files quarantined (bad framing or all peers rejected)
+#   current/     -- file being appended by the SMF
+#   ready/       -- rotated files picked up by this daemon
+#   processing/  -- only used when `workers` > 1: processing/<id>/
+#                   holds the file(s) each drain worker has claimed
+#   done/        -- files successfully delivered to a CGF
+#   failed/      -- files quarantined (bad framing or all peers rejected)
 #
 cgf:
   spool_dir: @localstatedir@/spool/open5gs/cdr
   node_id: open5gs-cgf-1
+
+  # Parallel drain workers (restart required to change this value).
+  # 1 (default) = legacy single-thread behaviour: one drain pipeline
+  # on the main thread, exactly as before this option existed.
+  # N>1 spawns N independent drain worker threads, each opening its
+  # own UDP association to every configured peer (own source port =>
+  # own GTP' sequence/xact space, so the peer(s) must accept multiple
+  # simultaneous associations from this host) and claiming disjoint
+  # files out of ready/ (via atomic rename into processing/<id>/) so
+  # workers never contend over the same CDR file. Peer/timer/batch
+  # config changes made via the Admin API are still picked up live —
+  # the worker pool is transparently restarted to apply them — but
+  # changing `workers` itself needs a daemon restart.
+  #workers: 4
 
   # Retention for fully-delivered CDR files.
   #

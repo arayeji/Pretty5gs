@@ -77,6 +77,17 @@ extern "C" {
 int cgf_gtpp_open(void);
 void cgf_gtpp_close(void);
 
+/*
+ * Resolve, dial and register ONE peer against an arbitrary pollset /
+ * receive callback. `cgf_gtpp_open()` uses this internally against
+ * ogs_app()->pollset with the main-thread recv callback; drain workers
+ * call it directly against their own pollset with their own recv
+ * callback so each worker gets an independent UDP source port (and
+ * therefore an independent GTP' sequence/xact space, TS 32.295 §6.1.1).
+ */
+int cgf_gtpp_open_peer(cgf_peer_t *peer, ogs_pollset_t *pollset,
+        ogs_poll_handler_f recv_cb, void *data);
+
 /* Build and transmit an Echo Request to the given peer. Updates
  * peer->last_echo_sent and peer->next_seq; on socket error returns
  * OGS_ERROR and the caller should mark the peer down. */
@@ -102,8 +113,15 @@ int cgf_gtpp_send_data_record_transfer(
 int cgf_gtpp_send_release(cgf_peer_t *peer, uint16_t released_seq);
 
 /* Re-send the packet stored in `xact->pkbuf` without allocating a new
- * sequence number. Used by the RTO timer. */
+ * sequence number. Used by the RTO timer. Resolves `xact`'s owning
+ * peer by searching cgf_self()->peers — main-thread (workers==1) use
+ * only. */
 int cgf_gtpp_retransmit_xact(cgf_xact_t *xact);
+
+/* Same retransmit, but against an explicitly-given peer. Drain
+ * workers' xacts live on worker-owned cgf_peer_t's, not
+ * cgf_self()->peers, so they must use this variant instead. */
+int cgf_gtpp_retransmit_xact_on(cgf_peer_t *peer, cgf_xact_t *xact);
 
 /* Reset peer->next_seq to 0 (CDF/peer restart alignment). */
 void cgf_gtpp_reset_seq(cgf_peer_t *peer);

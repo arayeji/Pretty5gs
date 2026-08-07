@@ -33,9 +33,15 @@ extern int __cgf_log_domain;
 #define OGS_LOG_DOMAIN __cgf_log_domain
 
 #define CGF_MAX_PEERS            4
-#define CGF_MAX_INFLIGHT         16
+/* Parallel drain workers (cgf.workers: N). 1 = legacy single-thread
+ * behaviour (default); >1 spawns independent drain threads, each with
+ * its own peer sockets / GTP' sequence space / spool file. */
+#define CGF_MAX_WORKERS          8
+#define CGF_MAX_INFLIGHT         64
 #define CGF_DEFAULT_GTPP_PORT    3386
 #define CGF_DEFAULT_MAX_BYTES_PER_PACKET  1400
+/* Conservative default so single-worker installs see no behaviour
+ * change; operators can raise this (and cgf.workers) together. */
 #define CGF_DEFAULT_MAX_INFLIGHT            16
 
 /* One outstanding DataRecordTransferRequest slot per peer. GTP' allows
@@ -103,6 +109,22 @@ typedef struct cgf_context_s {
     char *ready_dir;
     char *done_dir;
     char *failed_dir;
+    /*
+     * processing/<worker_id>/ — files claimed (atomically renamed out
+     * of ready/) by a drain worker while in flight. Only used when
+     * `workers` > 1; NULL/unused in legacy single-thread mode.
+     */
+    char *processing_dir;
+
+    /*
+     * Number of parallel drain worker threads (cgf.workers: N, 1..
+     * CGF_MAX_WORKERS). 1 (default) preserves the legacy single-thread
+     * main-FSM drain path exactly. >1 spawns that many worker threads,
+     * each opening its own UDP sockets to the configured peers (hence
+     * its own source port and GTP' sequence/xact space) and claiming
+     * disjoint spool files out of ready/.
+     */
+    uint32_t workers;
 
     /* Identity. Sent as Address-of-Recording-Entity / Node Name IE
      * where relevant; also used for logging. */

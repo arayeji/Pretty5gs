@@ -290,7 +290,7 @@ static int quarantine_bad_header(const char *path)
     return rename(path, dst);
 }
 
-static bool open_spool_file(const char *path)
+cgf_spool_file_t *cgf_spool_open_path(const char *path)
 {
     cgf_spool_file_t *f;
     uint8_t *data = NULL;
@@ -298,8 +298,7 @@ static bool open_spool_file(const char *path)
 
     if (slurp(path, &data, &data_len) != OGS_OK) {
         ogs_warn("cgf: cannot read '%s'", path);
-        spool_clear_cached_next();
-        return false;
+        return NULL;
     }
 
     if (data_len >= CDR_RECORD_HDR_LEN) {
@@ -313,8 +312,7 @@ static bool open_spool_file(const char *path)
                 ogs_warn("cgf: quarantine rename failed for '%s': %s",
                         path, strerror(errno));
             }
-            spool_clear_cached_next();
-            return false;
+            return NULL;
         }
     }
 
@@ -325,13 +323,29 @@ static bool open_spool_file(const char *path)
     f->data_len = data_len;
     f->next_record_offset = 0;
     f->send_offset = 0;
-    g_active = f;
-    spool_clear_cached_next();
 
     ogs_info("cgf: opened spool file '%s' (%zu B, first_record=%s)",
             path, data_len,
             data_len >= OGS_CDR_RECORD_HDR_LEN ?
                 ogs_cdr_format_name(data[5]) : "?");
+    return f;
+}
+
+void cgf_spool_release(cgf_spool_file_t *file)
+{
+    free_file(file);
+}
+
+static bool open_spool_file(const char *path)
+{
+    cgf_spool_file_t *f = cgf_spool_open_path(path);
+
+    if (!f) {
+        spool_clear_cached_next();
+        return false;
+    }
+    g_active = f;
+    spool_clear_cached_next();
     return true;
 }
 
@@ -489,11 +503,14 @@ static void drain_pending_acks(cgf_spool_file_t *file)
     } while (advanced);
 }
 
-static void maybe_finish_file(cgf_spool_file_t *file)
+/* Returns true if `file` was fully delivered and therefore freed —
+ * callers holding a persistent pointer to it (drain workers) must
+ * null that pointer out when this returns true. */
+static bool maybe_finish_file(cgf_spool_file_t *file)
 {
-    if (!file) return;
-    if (file->next_record_offset < file->data_len) return;
-    if (file->inflight_batches > 0) return;
+    if (!file) return false;
+    if (file->next_record_offset < file->data_len) return false;
+    if (file->inflight_batches > 0) return false;
 
     /*
      * Retention policy for fully-acked files:
@@ -518,6 +535,7 @@ static void maybe_finish_file(cgf_spool_file_t *file)
     spool_clear_cached_next();
     spool_clear_empty_backoff();
     free_file(file);
+    return true;
 }
 
 static bool pending_ack_exists(const cgf_spool_file_t *file,
@@ -532,10 +550,11 @@ static bool pending_ack_exists(const cgf_spool_file_t *file,
     return false;
 }
 
-bool cgf_spool_ack_batch(cgf_spool_file_t *file,
-        size_t batch_start, uint32_t records)
+bool cgf_spool_ack_batch_ex(cgf_spool_file_t *file,
+        size_t batch_start, uint32_t records, bool *out_freed)
 {
     ogs_assert(file);
+    if (out_freed) *out_freed = false;
 
     file->pending_batch_records = 0;
     if (file->inflight_batches > 0)
@@ -547,7 +566,7 @@ bool cgf_spool_ack_batch(cgf_spool_file_t *file,
                 file->path, batch_start, file->next_record_offset);
         if (file->send_possibly_dup && file->inflight_batches == 0)
             file->send_possibly_dup = false;
-        maybe_finish_file(file);
+        if (maybe_finish_file(file) && out_freed) *out_freed = true;
         return true;
     }
 
@@ -561,14 +580,14 @@ bool cgf_spool_ack_batch(cgf_spool_file_t *file,
          */
         if (file->send_possibly_dup && file->inflight_batches == 0)
             file->send_possibly_dup = false;
-        maybe_finish_file(file);
+        if (maybe_finish_file(file) && out_freed) *out_freed = true;
         return true;
     }
 
     if (pending_ack_exists(file, batch_start)) {
         ogs_debug("cgf: duplicate buffered DTRR ack for '%s' at offset %zu",
                 file->path, batch_start);
-        maybe_finish_file(file);
+        if (maybe_finish_file(file) && out_freed) *out_freed = true;
         return true;
     }
 
@@ -584,8 +603,14 @@ bool cgf_spool_ack_batch(cgf_spool_file_t *file,
     file->pending_acks[file->num_pending_acks].batch_start = batch_start;
     file->pending_acks[file->num_pending_acks].records = records;
     file->num_pending_acks++;
-    maybe_finish_file(file);
+    if (maybe_finish_file(file) && out_freed) *out_freed = true;
     return true;
+}
+
+bool cgf_spool_ack_batch(cgf_spool_file_t *file,
+        size_t batch_start, uint32_t records)
+{
+    return cgf_spool_ack_batch_ex(file, batch_start, records, NULL);
 }
 
 void cgf_spool_nack_batch(cgf_spool_file_t *file)
@@ -624,4 +649,97 @@ void cgf_spool_close(void)
 {
     if (g_active) { free_file(g_active); g_active = NULL; }
     spool_reset_scan_state();
+}
+
+/* ------------------------------------------------------------------ */
+/*  Multi-worker file claiming                                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Serializes ready/ directory scans + claim renames across drain
+ * worker threads. Each worker only ever needs one claim at a time
+ * (when its own `active` slot goes empty), so contention is low; a
+ * single mutex protecting "scan + rename" keeps two workers from ever
+ * racing to claim the same file.
+ */
+static ogs_thread_mutex_t g_claim_mutex;
+static bool g_claim_mutex_ready = false;
+
+void cgf_spool_claim_init(void)
+{
+    if (g_claim_mutex_ready) return;
+    ogs_thread_mutex_init(&g_claim_mutex);
+    g_claim_mutex_ready = true;
+}
+
+int cgf_spool_claim_for_worker(int worker_id, char *out_path, size_t cap)
+{
+    cgf_context_t *self = cgf_self();
+    int rv = OGS_ERROR;
+
+    ogs_assert(out_path);
+    if (!self->processing_dir || !self->ready_dir) return OGS_ERROR;
+    if (!g_claim_mutex_ready) return OGS_ERROR;
+
+    ogs_thread_mutex_lock(&g_claim_mutex);
+
+#ifdef _WIN32
+    {
+        WIN32_FIND_DATAA fd;
+        HANDLE h;
+        char pattern[512];
+
+        ogs_snprintf(pattern, sizeof(pattern), "%s\\*.cdr", self->ready_dir);
+        h = FindFirstFileA(pattern, &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                char src[512], dst[512];
+
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+                if (!spool_is_cdr_name(fd.cFileName)) continue;
+                ogs_snprintf(src, sizeof(src), "%s\\%s",
+                        self->ready_dir, fd.cFileName);
+                ogs_snprintf(dst, sizeof(dst), "%s\\%d\\%s",
+                        self->processing_dir, worker_id, fd.cFileName);
+                if (rename(src, dst) == 0) {
+                    ogs_snprintf(out_path, cap, "%s", dst);
+                    rv = OGS_OK;
+                    break;
+                }
+                /* Lost it to something else (or it vanished); try the
+                 * next directory entry. */
+            } while (FindNextFileA(h, &fd));
+            FindClose(h);
+        }
+    }
+#else
+    {
+        DIR *d;
+        struct dirent *ent;
+
+        d = opendir(self->ready_dir);
+        if (d) {
+            while ((ent = readdir(d)) != NULL) {
+                char src[512], dst[512];
+
+                if (!spool_is_cdr_name(ent->d_name)) continue;
+                ogs_snprintf(src, sizeof(src), "%s/%s",
+                        self->ready_dir, ent->d_name);
+                ogs_snprintf(dst, sizeof(dst), "%s/%d/%s",
+                        self->processing_dir, worker_id, ent->d_name);
+                if (rename(src, dst) == 0) {
+                    ogs_snprintf(out_path, cap, "%s", dst);
+                    rv = OGS_OK;
+                    break;
+                }
+                /* Lost it to something else (or it vanished); try the
+                 * next directory entry. */
+            }
+            closedir(d);
+        }
+    }
+#endif
+
+    ogs_thread_mutex_unlock(&g_claim_mutex);
+    return rv;
 }

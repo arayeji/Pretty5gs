@@ -21,6 +21,7 @@
 #include "event.h"
 #include "spool.h"
 #include "cgf-sm.h"
+#include "worker.h"
 
 /* ================================================================== */
 /*  GTP' header layout                                                */
@@ -124,7 +125,8 @@ static void recv_cb(short when, ogs_socket_t fd, void *data)
  */
 static char *g_cgf_owned_host[CGF_MAX_PEERS];
 
-static int open_one_peer(cgf_peer_t *peer)
+int cgf_gtpp_open_peer(cgf_peer_t *peer, ogs_pollset_t *pollset,
+        ogs_poll_handler_f recv_cb_fn, void *data)
 {
     int rv;
 
@@ -136,6 +138,9 @@ static int open_one_peer(cgf_peer_t *peer)
         return OGS_ERROR;
     }
 
+    /* Unconnected local endpoint per peer: distinct UDP source port
+     * per (worker, peer) pair, hence an independent GTP' sequence/xact
+     * space when this is called from a drain worker. */
     peer->sock = ogs_udp_client(peer->addr, NULL);
     if (!peer->sock) {
         ogs_error("cgf: ogs_udp_client('%s':%u) failed",
@@ -143,19 +148,29 @@ static int open_one_peer(cgf_peer_t *peer)
         return OGS_ERROR;
     }
 
-    peer->poll = ogs_pollset_add(ogs_app()->pollset,
-            OGS_POLLIN, peer->sock->fd, recv_cb, peer);
+    peer->poll = ogs_pollset_add(pollset,
+            OGS_POLLIN, peer->sock->fd, recv_cb_fn, data);
     if (!peer->poll) {
         ogs_error("cgf: pollset_add failed for peer '%s'",
                 peer->address_str);
         return OGS_ERROR;
     }
 
-    ogs_info("cgf: peer %u='%s':%u (%s) ready",
-            (unsigned)(peer - cgf_self()->peers),
-            peer->address_str, peer->port,
-            peer->role == CGF_PEER_ROLE_PRIMARY ? "primary" : "secondary");
     return OGS_OK;
+}
+
+static int open_one_peer(cgf_peer_t *peer)
+{
+    int rv = cgf_gtpp_open_peer(peer, ogs_app()->pollset, recv_cb, peer);
+
+    if (rv == OGS_OK) {
+        ogs_info("cgf: peer %u='%s':%u (%s) ready",
+                (unsigned)(peer - cgf_self()->peers),
+                peer->address_str, peer->port,
+                peer->role == CGF_PEER_ROLE_PRIMARY ?
+                    "primary" : "secondary");
+    }
+    return rv;
 }
 
 int cgf_gtpp_open(void)
@@ -279,6 +294,17 @@ int cgf_gtpp_apply_runtime(const cgf_hot_config_t *hot)
     cgf_peer_t old_peers[CGF_MAX_PEERS];
     char *old_owned[CGF_MAX_PEERS];
     int old_n = (int)ctx->num_of_peers;
+    /*
+     * When drain workers own the real peer sockets, cgf_self()->peers
+     * is just the config template they copy on (re)start — it must
+     * NEVER get real sockets/pollset registrations of its own (that
+     * would create a second, main-thread echo/DTRR state machine
+     * racing the workers' GTP' sequence spaces against the same
+     * peers). So below we only ever touch the bookkeeping fields for
+     * new peers, and restart the worker pool at the end to pick up
+     * the change.
+     */
+    bool workers_mode = cgf_workers_enabled();
     int i;
 
     ogs_assert(hot);
@@ -355,7 +381,10 @@ int cgf_gtpp_apply_runtime(const cgf_hot_config_t *hot)
             dst->port = hp->port ? hp->port : CGF_DEFAULT_GTPP_PORT;
             dst->role = hp->is_primary
                     ? CGF_PEER_ROLE_PRIMARY : CGF_PEER_ROLE_SECONDARY;
-            if (open_one_peer(dst) != OGS_OK) {
+            dst->state = CGF_PEER_STATE_DOWN;
+            /* In workers_mode, dst is only a config template — the
+             * worker pool restart below opens the real socket(s). */
+            if (!workers_mode && open_one_peer(dst) != OGS_OK) {
                 ogs_warn("cgf: failed to open new peer '%s':%u, skipping",
                         dst->address_str, dst->port);
                 close_peer(dst);
@@ -393,6 +422,14 @@ int cgf_gtpp_apply_runtime(const cgf_hot_config_t *hot)
                 break;
             }
         }
+    }
+
+    if (workers_mode) {
+        ogs_warn("cgf: workers=%u active — restarting %u drain worker(s) "
+                "to apply the updated peer/tunable config",
+                ctx->workers, ctx->workers);
+        cgf_workers_stop();
+        cgf_workers_start();
     }
 
     return OGS_OK;
@@ -633,25 +670,12 @@ int cgf_gtpp_send_release(cgf_peer_t *peer, uint16_t released_seq)
     return OGS_OK;
 }
 
-int cgf_gtpp_retransmit_xact(cgf_xact_t *xact)
+int cgf_gtpp_retransmit_xact_on(cgf_peer_t *peer, cgf_xact_t *xact)
 {
-    cgf_peer_t *peer;
+    ogs_pkbuf_t *dup;
+    int rv;
 
-    if (!xact || !xact->active || !xact->pkbuf) return OGS_ERROR;
-    peer = NULL;
-    {
-        cgf_context_t *ctx = cgf_self();
-        uint32_t i, j;
-        for (i = 0; i < ctx->num_of_peers && !peer; i++) {
-            for (j = 0; j < CGF_MAX_INFLIGHT; j++) {
-                if (&ctx->peers[i].xacts[j] == xact) {
-                    peer = &ctx->peers[i];
-                    break;
-                }
-            }
-        }
-    }
-    ogs_assert(peer);
+    if (!peer || !xact || !xact->active || !xact->pkbuf) return OGS_ERROR;
 
     xact->retries++;
     xact->sent_at = ogs_time_now();
@@ -660,14 +684,31 @@ int cgf_gtpp_retransmit_xact(cgf_xact_t *xact)
             xact->seq, peer->address_str,
             xact->retries, cgf_self()->request_retries);
 
-    {
-        ogs_pkbuf_t *dup = ogs_pkbuf_copy(xact->pkbuf);
-        int rv;
-        ogs_assert(dup);
-        rv = raw_send(peer, dup);
-        ogs_pkbuf_free(dup);
-        return rv;
+    dup = ogs_pkbuf_copy(xact->pkbuf);
+    ogs_assert(dup);
+    rv = raw_send(peer, dup);
+    ogs_pkbuf_free(dup);
+    return rv;
+}
+
+int cgf_gtpp_retransmit_xact(cgf_xact_t *xact)
+{
+    cgf_context_t *ctx = cgf_self();
+    cgf_peer_t *peer = NULL;
+    uint32_t i, j;
+
+    if (!xact || !xact->active || !xact->pkbuf) return OGS_ERROR;
+    for (i = 0; i < ctx->num_of_peers && !peer; i++) {
+        for (j = 0; j < CGF_MAX_INFLIGHT; j++) {
+            if (&ctx->peers[i].xacts[j] == xact) {
+                peer = &ctx->peers[i];
+                break;
+            }
+        }
     }
+    ogs_assert(peer);
+
+    return cgf_gtpp_retransmit_xact_on(peer, xact);
 }
 
 /* ================================================================== */
