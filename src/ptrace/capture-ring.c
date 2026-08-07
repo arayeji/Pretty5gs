@@ -11,6 +11,8 @@
 #include <sys/stat.h>
 
 #define PTRACE_RING_FILES       8
+#define PTRACE_RING_SUFFIX_LEN  32  /* "/ring-00.pcap" + margin */
+#define PTRACE_RING_PATH_LEN    (PTRACE_MAX_PATH_LEN + PTRACE_RING_SUFFIX_LEN)
 #define PCAP_MAGIC              0xa1b2c3d4
 
 typedef struct pcap_hdr_s {
@@ -41,17 +43,29 @@ static struct {
     ogs_thread_mutex_t lock;
 } ring;
 
-static void ring_path(char *buf, size_t buflen, int idx)
+static int ring_path(char *buf, size_t buflen, int idx)
 {
-    snprintf(buf, buflen, "%s/ring-%02d.pcap", ring.dir, idx);
+    int n;
+
+    if (!buf || buflen < PTRACE_RING_SUFFIX_LEN)
+        return OGS_ERROR;
+
+    n = snprintf(buf, buflen, "%s/ring-%02d.pcap", ring.dir, idx);
+    if (n < 0 || (size_t)n >= buflen) {
+        ogs_error("ptrace ring path too long (dir=%s idx=%d)",
+                ring.dir, idx);
+        return OGS_ERROR;
+    }
+    return OGS_OK;
 }
 
 static int ring_open_file(int idx)
 {
-    char path[PTRACE_MAX_PATH_LEN];
+    char path[PTRACE_RING_PATH_LEN];
     pcap_hdr_t hdr;
 
-    ring_path(path, sizeof(path), idx);
+    if (ring_path(path, sizeof(path), idx) != OGS_OK)
+        return OGS_ERROR;
     ring.fp = fopen(path, "wb");
     if (!ring.fp) {
         ogs_error("ptrace ring open failed: %s (%s)", path, strerror(errno));
@@ -190,7 +204,7 @@ int ptrace_ring_export(const char *const *refs, int nrefs,
         int idx = 0;
         long offset = 0;
         unsigned len = 0;
-        char path[PTRACE_MAX_PATH_LEN];
+        char path[PTRACE_RING_PATH_LEN];
         FILE *in;
         uint8_t buf[PTRACE_MAX_PACKET + sizeof(pcaprec_hdr_t)];
         size_t need;
@@ -200,7 +214,8 @@ int ptrace_ring_export(const char *const *refs, int nrefs,
         if (len > PTRACE_MAX_PACKET)
             continue;
 
-        ring_path(path, sizeof(path), idx);
+        if (ring_path(path, sizeof(path), idx) != OGS_OK)
+            continue;
         in = fopen(path, "rb");
         if (!in)
             continue;
