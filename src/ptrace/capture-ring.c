@@ -9,11 +9,43 @@
 #include <stdio.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #define PTRACE_RING_FILES       8
 #define PTRACE_RING_SUFFIX_LEN  32  /* "/ring-00.pcap" + margin */
 #define PTRACE_RING_PATH_LEN    (PTRACE_MAX_PATH_LEN + PTRACE_RING_SUFFIX_LEN)
 #define PCAP_MAGIC              0xa1b2c3d4
+
+static int mkdir_p(const char *path)
+{
+    char *copy, *p;
+    int rc = OGS_OK;
+
+    if (!path || !*path)
+        return OGS_ERROR;
+
+    copy = ogs_strdup(path);
+    if (!copy)
+        return OGS_ERROR;
+
+    for (p = copy + 1; *p; p++) {
+        if (*p == '/') {
+            char saved = *p;
+            *p = '\0';
+            if (mkdir(copy, 0755) != 0 && errno != EEXIST) {
+                rc = OGS_ERROR;
+                *p = saved;
+                break;
+            }
+            *p = saved;
+        }
+    }
+    if (rc == OGS_OK && mkdir(copy, 0755) != 0 && errno != EEXIST)
+        rc = OGS_ERROR;
+
+    ogs_free(copy);
+    return rc;
+}
 
 typedef struct pcap_hdr_s {
     uint32_t magic;
@@ -103,9 +135,10 @@ int ptrace_ring_open(const char *path, int size_gb)
     if (ring.max_bytes < 16 * 1024 * 1024)
         ring.max_bytes = 16 * 1024 * 1024;
 
-    if (mkdir(ring.dir, 0755) < 0 && errno != EEXIST) {
-        ogs_warn("ptrace ring mkdir %s: %s (will retry on write)",
+    if (mkdir_p(ring.dir) != OGS_OK) {
+        ogs_error("ptrace ring mkdir_p %s: %s",
                 ring.dir, strerror(errno));
+        return OGS_ERROR;
     }
 
     ogs_thread_mutex_init(&ring.lock);

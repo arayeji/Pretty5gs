@@ -22,6 +22,7 @@ ptrace:
     pcap_file: ""
     workers: 4
     interface:
+      # Replace with the real SPAN/TAP NIC names on this host.
       - dev: eth0
         role: s1mme
 #      - dev: eth1
