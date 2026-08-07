@@ -60,9 +60,11 @@ extern "C" {
 #define CGF_GTPP_IE_CAUSE             1       /* 1 B value */
 #define CGF_GTPP_IE_RECOVERY          14      /* 1 B value */
 #define CGF_GTPP_IE_PACKET_TRANSFER_CMD 126   /* 1 B value */
+#define CGF_GTPP_IE_SEQ_NUMS_RELEASED 249     /* TLIV, TS 32.295 §6.2.4.5.4 */
+#define CGF_GTPP_IE_SEQ_NUMS_CANCELLED 250    /* TLIV, TS 32.295 §6.2.4.5.5 */
 #define CGF_GTPP_IE_DATA_RECORD_PACKET 252    /* TLIV */
 
-/* PacketTransferCommand values (TS 32.295 §6.2.4.5.3). */
+/* PacketTransferCommand values (TS 32.295 §6.2.4.5.2). */
 #define CGF_GTPP_PTC_SEND_DATA_REC    1
 #define CGF_GTPP_PTC_SEND_POSS_DUP    2
 #define CGF_GTPP_PTC_CANCEL_DATA_REC  3
@@ -82,7 +84,9 @@ int cgf_gtpp_send_echo_request(cgf_peer_t *peer);
 
 /* Build a DataRecordTransferRequest carrying the supplied encoded
  * records, transmit it, and move the parameters into peer->xact. The
- * pkbuf is retained inside peer->xact for retransmits. */
+ * pkbuf is retained inside peer->xact for retransmits.
+ * Packet Transfer Command is Send, or Send-possibly-duplicated when
+ * file->send_possibly_dup is set (TS 32.295 redundancy). */
 int cgf_gtpp_send_data_record_transfer(
         cgf_peer_t *peer,
         const uint8_t *records, size_t records_len,
@@ -90,9 +94,19 @@ int cgf_gtpp_send_data_record_transfer(
         struct cgf_spool_file_s *file,
         size_t first_record_offset);
 
+/*
+ * After a Possibly-Duplicated packet is accepted, authorize the CGF to
+ * forward those CDRs to the BD (TS 32.295 Release Data Record Packet).
+ * `released_seq` is the GTP' sequence number of the prior POSS_DUP DTRR.
+ */
+int cgf_gtpp_send_release(cgf_peer_t *peer, uint16_t released_seq);
+
 /* Re-send the packet stored in `xact->pkbuf` without allocating a new
  * sequence number. Used by the RTO timer. */
 int cgf_gtpp_retransmit_xact(cgf_xact_t *xact);
+
+/* Reset peer->next_seq to 0 (CDF/peer restart alignment). */
+void cgf_gtpp_reset_seq(cgf_peer_t *peer);
 
 uint32_t cgf_gtpp_inflight_count(const cgf_peer_t *peer);
 cgf_xact_t *cgf_gtpp_find_xact(cgf_peer_t *peer, uint16_t seq);

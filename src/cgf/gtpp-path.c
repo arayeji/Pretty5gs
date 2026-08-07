@@ -499,15 +499,100 @@ int cgf_gtpp_send_data_record_transfer(
         return OGS_ERROR;
     }
 
-    /* Payload layout:
-     *   [Packet Transfer Command TV]  2 B  (tag 126, value 1)
-     *   [Data Record Packet TLIV]     3 + 5 + records_len B
-     *        tag 252 + 2-byte len + 5-byte DRP sub-header + records */
-    payload_len = 2 + 3 + CGF_GTPP_DRP_SUBHDR_LEN + records_len;
-    if (payload_len + CGF_GTPP_HDR_LEN > OGS_MAX_SDU_LEN) {
-        ogs_error("cgf: batch too large for a single datagram (%zu B)",
-                payload_len);
-        return OGS_ERROR;
+    {
+        uint8_t ptc = (file && file->send_possibly_dup) ?
+                CGF_GTPP_PTC_SEND_POSS_DUP : CGF_GTPP_PTC_SEND_DATA_REC;
+
+        /* Payload layout:
+         *   [Packet Transfer Command TV]  2 B  (tag 126)
+         *   [Data Record Packet TLIV]     3 + 5 + records_len B
+         *        tag 252 + 2-byte len + 5-byte DRP sub-header + records */
+        payload_len = 2 + 3 + CGF_GTPP_DRP_SUBHDR_LEN + records_len;
+        if (payload_len + CGF_GTPP_HDR_LEN > OGS_MAX_SDU_LEN) {
+            ogs_error("cgf: batch too large for a single datagram (%zu B)",
+                    payload_len);
+            return OGS_ERROR;
+        }
+
+        pkbuf = ogs_pkbuf_alloc(NULL, CGF_GTPP_HDR_LEN + payload_len);
+        ogs_assert(pkbuf);
+        ogs_pkbuf_put(pkbuf, CGF_GTPP_HDR_LEN + payload_len);
+        p = pkbuf->data;
+
+        seq = peer->next_seq++;
+        hdr_write(p, CGF_GTPP_MSGTYPE_DATA_RECORD_TRANSFER_REQ,
+                seq, (uint16_t)payload_len);
+        p += CGF_GTPP_HDR_LEN;
+
+        p += tlv_put_1byte(p, CGF_GTPP_IE_PACKET_TRANSFER_CMD, ptc);
+
+        /* IE 252 = tag + 2-byte length + (sub-header + records). */
+        {
+            uint16_t ie_len = (uint16_t)(CGF_GTPP_DRP_SUBHDR_LEN + records_len);
+            *p++ = CGF_GTPP_IE_DATA_RECORD_PACKET;
+            *p++ = (uint8_t)(ie_len >> 8);
+            *p++ = (uint8_t)(ie_len & 0xff);
+            p += drp_subhdr_put(p, (uint8_t)records_in_batch);
+            memcpy(p, records, records_len);
+            p += records_len;
+        }
+        (void)p;
+
+        /* Retain pkbuf for possible retransmission; only keep state if
+         * send succeeds so a failure doesn't leave orphaned xacts. */
+        if (raw_send(peer, pkbuf) != OGS_OK) {
+            ogs_pkbuf_free(pkbuf);
+            return OGS_ERROR;
+        }
+
+        xact->active = true;
+        xact->seq = seq;
+        xact->ptc = ptc;
+        xact->retries = 0;
+        xact->sent_at = ogs_time_now();
+        xact->pkbuf = pkbuf;
+        xact->file = file;
+        xact->batch_start = first_record_offset;
+        xact->records_in_batch = records_in_batch;
+
+        if (ptc == CGF_GTPP_PTC_SEND_POSS_DUP)
+            ogs_warn("cgf: dtrr -> '%s' seq=%u ptc=Send-possibly-dup "
+                    "records=%u bytes=%zu",
+                    peer->address_str, seq, records_in_batch, records_len);
+        else
+            ogs_debug("cgf: dtrr -> '%s' seq=%u ptc=%u records=%u bytes=%zu "
+                    "inflight=%u",
+                    peer->address_str, seq, ptc, records_in_batch, records_len,
+                    cgf_gtpp_inflight_count(peer));
+        return OGS_OK;
+    }
+}
+
+void cgf_gtpp_reset_seq(cgf_peer_t *peer)
+{
+    if (!peer) return;
+    ogs_info("cgf: reset GTP' sequence for '%s' (was %u)",
+            peer->address_str, peer->next_seq);
+    peer->next_seq = 0;
+}
+
+int cgf_gtpp_send_release(cgf_peer_t *peer, uint16_t released_seq)
+{
+    ogs_pkbuf_t *pkbuf;
+    cgf_xact_t *xact;
+    uint16_t seq;
+    uint8_t *p;
+    uint8_t seq_be[2];
+    /* PTC(2) + IE249 TLIV header(3) + one seq(2) */
+    size_t payload_len = 2 + 3 + 2;
+
+    ogs_assert(peer);
+
+    xact = alloc_xact(peer);
+    if (!xact) {
+        ogs_warn("cgf: Release deferred, peer '%s' inflight window full "
+                "(released_seq=%u)", peer->address_str, released_seq);
+        return OGS_RETRY;
     }
 
     pkbuf = ogs_pkbuf_alloc(NULL, CGF_GTPP_HDR_LEN + payload_len);
@@ -521,24 +606,13 @@ int cgf_gtpp_send_data_record_transfer(
     p += CGF_GTPP_HDR_LEN;
 
     p += tlv_put_1byte(p, CGF_GTPP_IE_PACKET_TRANSFER_CMD,
-            CGF_GTPP_PTC_SEND_DATA_REC);
+            CGF_GTPP_PTC_RELEASE_DATA_REC);
 
-    /* IE 252 = tag + 2-byte length + (sub-header + records). We write
-     * the TLIV header by hand here so we can splice in the sub-header
-     * without an extra scratch buffer. */
-    {
-        uint16_t ie_len = (uint16_t)(CGF_GTPP_DRP_SUBHDR_LEN + records_len);
-        *p++ = CGF_GTPP_IE_DATA_RECORD_PACKET;
-        *p++ = (uint8_t)(ie_len >> 8);
-        *p++ = (uint8_t)(ie_len & 0xff);
-        p += drp_subhdr_put(p, (uint8_t)records_in_batch);
-        memcpy(p, records, records_len);
-        p += records_len;
-    }
+    seq_be[0] = (uint8_t)(released_seq >> 8);
+    seq_be[1] = (uint8_t)(released_seq & 0xff);
+    p += tliv_put(p, CGF_GTPP_IE_SEQ_NUMS_RELEASED, seq_be, sizeof(seq_be));
     (void)p;
 
-    /* Retain pkbuf for possible retransmission; duplicate only if
-     * send succeeds so a failure doesn't leave orphaned state. */
     if (raw_send(peer, pkbuf) != OGS_OK) {
         ogs_pkbuf_free(pkbuf);
         return OGS_ERROR;
@@ -546,16 +620,16 @@ int cgf_gtpp_send_data_record_transfer(
 
     xact->active = true;
     xact->seq = seq;
+    xact->ptc = CGF_GTPP_PTC_RELEASE_DATA_REC;
     xact->retries = 0;
     xact->sent_at = ogs_time_now();
     xact->pkbuf = pkbuf;
-    xact->file = file;
-    xact->batch_start = first_record_offset;
-    xact->records_in_batch = records_in_batch;
+    xact->file = NULL;
+    xact->batch_start = 0;
+    xact->records_in_batch = 0;
 
-    ogs_debug("cgf: dtrr -> '%s' seq=%u records=%u bytes=%zu inflight=%u",
-            peer->address_str, seq, records_in_batch, records_len,
-            cgf_gtpp_inflight_count(peer));
+    ogs_info("cgf: release -> '%s' seq=%u released_seq=%u",
+            peer->address_str, seq, released_seq);
     return OGS_OK;
 }
 

@@ -44,6 +44,8 @@ extern int __cgf_log_domain;
 typedef struct cgf_xact_s {
     bool active;
     uint16_t seq;
+    /* Packet Transfer Command used in this request (TS 32.295 §6.2.4.5.2). */
+    uint8_t ptc;
     uint32_t retries;
     ogs_time_t sent_at;
     ogs_pkbuf_t *pkbuf;
@@ -79,7 +81,9 @@ typedef struct cgf_peer_s {
     /*
      * Per-peer GTP' sequence-number space. A single 16-bit counter is
      * shared by Echo Request and DataRecordTransferRequest, as required
-     * by TS 32.295 §6.1.1. Incremented on every transmit, wraps freely.
+     * by TS 32.295 §6.1.1. Starts at 0 on CDF (re)start and after a peer
+     * Recovery change (CGF restart); increments on every transmit and
+     * wraps freely.
      */
     uint16_t next_seq;
 

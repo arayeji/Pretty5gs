@@ -545,6 +545,8 @@ bool cgf_spool_ack_batch(cgf_spool_file_t *file,
         ogs_debug("cgf: duplicate DTRR ack for '%s' at offset %zu "
                 "(confirmed through %zu)",
                 file->path, batch_start, file->next_record_offset);
+        if (file->send_possibly_dup && file->inflight_batches == 0)
+            file->send_possibly_dup = false;
         maybe_finish_file(file);
         return true;
     }
@@ -553,6 +555,12 @@ bool cgf_spool_ack_batch(cgf_spool_file_t *file,
         file->next_record_offset = offset_after_records(
                 file, batch_start, records);
         drain_pending_acks(file);
+        /*
+         * Uncertain range has been re-accepted: drop Possibly-Dup once
+         * nothing remains in flight for this file.
+         */
+        if (file->send_possibly_dup && file->inflight_batches == 0)
+            file->send_possibly_dup = false;
         maybe_finish_file(file);
         return true;
     }
@@ -587,6 +595,16 @@ void cgf_spool_nack_batch(cgf_spool_file_t *file)
     file->pending_batch_records = 0;
     file->inflight_batches = 0;
     file->num_pending_acks = 0;
+}
+
+void cgf_spool_mark_possibly_dup(cgf_spool_file_t *file)
+{
+    ogs_assert(file);
+    if (!file->send_possibly_dup) {
+        ogs_warn("cgf: '%s' next DTRR(s) use Send-possibly-duplicated "
+                "(TS 32.295)", file->path);
+        file->send_possibly_dup = true;
+    }
 }
 
 void cgf_spool_quarantine(cgf_spool_file_t *file)

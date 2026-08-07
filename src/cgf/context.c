@@ -157,7 +157,8 @@ static int parse_peer_block(yaml_document_t *document,
     peer->port = port;
     peer->role = role;
     peer->state = CGF_PEER_STATE_DOWN;
-    peer->next_seq = (uint16_t)(ogs_random32() & 0xffff);
+    /* TS 32.295: start from 0 after CDF (re)start; increment thereafter. */
+    peer->next_seq = 0;
     return OGS_OK;
 }
 

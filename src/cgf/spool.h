@@ -51,6 +51,14 @@ typedef struct cgf_spool_file_s {
     /* Out-of-order DTRR acks buffered until the confirmed cursor catches up. */
     cgf_spool_pending_ack_t pending_acks[CGF_MAX_INFLIGHT];
     uint32_t num_pending_acks;
+
+    /*
+     * After uncertain delivery (timeout / failover / peer restart), the
+     * next DTRR(s) for this file use Packet Transfer Command = Send
+     * possibly duplicated (TS 32.295 §6.2.4.5.2). Cleared once the
+     * unacked range has been re-accepted and no batches remain in flight.
+     */
+    bool send_possibly_dup;
 } cgf_spool_file_t;
 
 cgf_spool_file_t *cgf_spool_get_active(void);
@@ -70,6 +78,9 @@ bool cgf_spool_ack_batch(cgf_spool_file_t *file,
         size_t batch_start, uint32_t records);
 
 void cgf_spool_nack_batch(cgf_spool_file_t *file);
+
+/* Mark subsequent sends as Possibly-Duplicated (uncertain prior delivery). */
+void cgf_spool_mark_possibly_dup(cgf_spool_file_t *file);
 
 void cgf_spool_quarantine(cgf_spool_file_t *file);
 void cgf_spool_close(void);

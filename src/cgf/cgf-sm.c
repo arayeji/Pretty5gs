@@ -52,7 +52,15 @@ static void switch_to_next_peer(void)
     }
 }
 
-static void abort_file_pipeline(cgf_peer_t *peer, cgf_spool_file_t *file)
+/*
+ * Tear down in-flight DTRRs for one spool file and rewind to the last
+ * confirmed offset. When `uncertain` is true the prior packets may have
+ * reached the CGF without an ACK (timeout / failover / peer restart), so
+ * the next send must use Send-possibly-duplicated (TS 32.295 §6.2.4.5.2).
+ * Explicit CGF rejects are not uncertain.
+ */
+static void abort_file_pipeline(cgf_peer_t *peer, cgf_spool_file_t *file,
+        bool uncertain)
 {
     uint32_t i;
 
@@ -64,6 +72,8 @@ static void abort_file_pipeline(cgf_peer_t *peer, cgf_spool_file_t *file)
             cgf_gtpp_free_xact(x);
     }
     cgf_spool_nack_batch(file);
+    if (uncertain)
+        cgf_spool_mark_possibly_dup(file);
 }
 
 static void abort_in_flight(cgf_peer_t *peer, const char *reason)
@@ -94,8 +104,10 @@ static void abort_in_flight(cgf_peer_t *peer, const char *reason)
         }
         cgf_gtpp_free_xact(x);
     }
-    for (i = 0; i < n_nacked; i++)
+    for (i = 0; i < n_nacked; i++) {
         cgf_spool_nack_batch(nacked[i]);
+        cgf_spool_mark_possibly_dup(nacked[i]);
+    }
 }
 
 static bool peer_may_send(const cgf_peer_t *peer)
@@ -200,6 +212,8 @@ void cgf_sm_on_echo_response(cgf_peer_t *peer, uint16_t seq,
                     peer->address_str,
                     peer->peer_restart_counter, recovery);
             abort_in_flight(peer, "peer restarted");
+            /* CGF restarted: restart our outbound sequence space too. */
+            cgf_gtpp_reset_seq(peer);
         }
         peer->peer_restart_counter = recovery;
         peer->peer_restart_counter_valid = true;
@@ -212,6 +226,9 @@ void cgf_sm_on_dtrr_response(cgf_peer_t *peer, uint16_t seq, uint8_t cause)
 {
     cgf_xact_t *xact = cgf_gtpp_find_xact(peer, seq);
     cgf_spool_file_t *file;
+    uint8_t ptc;
+    uint16_t released_seq = 0;
+    bool need_release = false;
 
     if (!xact) {
         ogs_debug("cgf: stale DTRR response seq=%u from '%s'",
@@ -220,12 +237,13 @@ void cgf_sm_on_dtrr_response(cgf_peer_t *peer, uint16_t seq, uint8_t cause)
     }
 
     file = xact->file;
+    ptc = xact->ptc;
 
     if (cause < 128) {
-        ogs_warn("cgf: DTRR seq=%u rejected by '%s' (cause=%u)",
-                seq, peer->address_str, cause);
+        ogs_warn("cgf: DTRR seq=%u ptc=%u rejected by '%s' (cause=%u)",
+                seq, ptc, peer->address_str, cause);
         if (file)
-            abort_file_pipeline(peer, file);
+            abort_file_pipeline(peer, file, false);
         cgf_gtpp_free_xact(xact);
         cgf_sm_try_drain();
         return;
@@ -237,19 +255,47 @@ void cgf_sm_on_dtrr_response(cgf_peer_t *peer, uint16_t seq, uint8_t cause)
         peer->state = CGF_PEER_STATE_UP;
     }
 
+    if (ptc == CGF_GTPP_PTC_RELEASE_DATA_REC) {
+        ogs_info("cgf: Release seq=%u accepted by '%s'",
+                seq, peer->address_str);
+        cgf_gtpp_free_xact(xact);
+        cgf_sm_try_drain();
+        return;
+    }
+
     if (file) {
         if (!cgf_spool_ack_batch(file, xact->batch_start,
                 xact->records_in_batch)) {
-            abort_file_pipeline(peer, file);
+            abort_file_pipeline(peer, file, true);
             cgf_gtpp_free_xact(xact);
             cgf_sm_try_drain();
             return;
         }
-        ogs_debug("cgf: DTRR seq=%u accepted by '%s' (cause=%u, %u records)",
-                seq, peer->address_str, cause, xact->records_in_batch);
+        ogs_debug("cgf: DTRR seq=%u ptc=%u accepted by '%s' "
+                "(cause=%u, %u records)",
+                seq, ptc, peer->address_str, cause, xact->records_in_batch);
+
+        /*
+         * Spec: after Possibly-Duplicated is accepted, CGF holds CDRs until
+         * Release. Authorize forward to BD now that we treat this peer as
+         * the delivery path for these packets.
+         */
+        if (ptc == CGF_GTPP_PTC_SEND_POSS_DUP) {
+            need_release = true;
+            released_seq = xact->seq;
+        }
     }
 
     cgf_gtpp_free_xact(xact);
+
+    if (need_release) {
+        int rv = cgf_gtpp_send_release(peer, released_seq);
+        if (rv != OGS_OK)
+            ogs_warn("cgf: Release for seq=%u failed (%d); "
+                    "CGF may hold Possibly-Dup CDRs until retry",
+                    released_seq, rv);
+    }
+
     cgf_sm_try_drain();
 }
 
@@ -305,10 +351,10 @@ void cgf_sm_on_rto_tick(void)
         if (now - x->sent_at < rto) continue;
 
         if (x->retries >= self->request_retries) {
-            ogs_warn("cgf: DTRR seq=%u gave up after %u retries",
-                    x->seq, x->retries);
+            ogs_warn("cgf: DTRR seq=%u ptc=%u gave up after %u retries",
+                    x->seq, x->ptc, x->retries);
             if (x->file)
-                abort_file_pipeline(p, x->file);
+                abort_file_pipeline(p, x->file, true);
             else
                 cgf_gtpp_free_xact(x);
             gave_up = true;
@@ -381,7 +427,7 @@ void cgf_sm_try_drain(void)
             break;
         if (rv != OGS_OK) {
             ogs_warn("cgf: send failed, backing off");
-            abort_file_pipeline(p, f);
+            abort_file_pipeline(p, f, true);
             p->state = CGF_PEER_STATE_DOWN;
             switch_to_next_peer();
             break;
