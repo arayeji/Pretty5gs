@@ -19,7 +19,6 @@ static ogs_thread_t *worker_threads[PTRACE_MAX_WORKERS];
 static int num_workers;
 static bool started;
 static bool workers_running;
-static ogs_timer_t *expire_timer;
 
 static void process_packet(ptrace_packet_t *pkt)
 {
@@ -78,10 +77,11 @@ static void expire_timer_cb(void *data)
 static void ptrace_main(void *data)
 {
     (void)data;
-    for (;;) {
-        ogs_pollset_poll(ogs_app()->pollset,
-                ogs_timer_mgr_next(ogs_app()->timer_mgr));
-        ogs_timer_mgr_expire(ogs_app()->timer_mgr);
+    /* Avoid sharing ogs_app()->pollset with the signal thread.
+     * Housekeeping runs on a simple sleep loop. */
+    while (workers_running) {
+        ogs_msleep(1000);
+        expire_timer_cb(NULL);
     }
 }
 
@@ -151,11 +151,6 @@ int ptrace_initialize(void)
     if (rv != OGS_OK)
         return rv;
 
-    expire_timer = ogs_timer_add(ogs_app()->timer_mgr,
-            expire_timer_cb, NULL);
-    ogs_assert(expire_timer);
-    ogs_timer_start(expire_timer, ogs_time_from_sec(30));
-
     main_thread = ogs_thread_create(ptrace_main, NULL);
     if (!main_thread)
         return OGS_ERROR;
@@ -175,11 +170,6 @@ void ptrace_terminate(void)
     workers_running = false;
     ptrace_capture_close();
     ptrace_api_close();
-
-    if (expire_timer) {
-        ogs_timer_delete(expire_timer);
-        expire_timer = NULL;
-    }
 
     if (main_thread) {
         ogs_thread_destroy(main_thread);

@@ -14,6 +14,8 @@ static bool initialized = false;
 
 static OGS_POOL(pkt_pool, ptrace_packet_t);
 static OGS_POOL(evt_pool, ptrace_event_t);
+static ogs_thread_mutex_t pkt_lock;
+static ogs_thread_mutex_t evt_lock;
 
 ptrace_context_t *ptrace_self(void)
 {
@@ -41,6 +43,8 @@ int ptrace_context_init(void)
 
     ogs_pool_init(&pkt_pool, PTRACE_PKT_POOL_SIZE);
     ogs_pool_init(&evt_pool, PTRACE_EVT_POOL_SIZE);
+    ogs_thread_mutex_init(&pkt_lock);
+    ogs_thread_mutex_init(&evt_lock);
 
     self.pkt_queue = ogs_queue_create(PTRACE_PKT_POOL_SIZE);
     ogs_assert(self.pkt_queue);
@@ -62,6 +66,8 @@ void ptrace_context_final(void)
 
     ogs_pool_final(&pkt_pool);
     ogs_pool_final(&evt_pool);
+    ogs_thread_mutex_destroy(&pkt_lock);
+    ogs_thread_mutex_destroy(&evt_lock);
 
     memset(&self, 0, sizeof(self));
     initialized = false;
@@ -228,7 +234,10 @@ int ptrace_context_parse_config(void)
 ptrace_packet_t *ptrace_packet_alloc(void)
 {
     ptrace_packet_t *pkt = NULL;
+
+    ogs_thread_mutex_lock(&pkt_lock);
     ogs_pool_alloc(&pkt_pool, &pkt);
+    ogs_thread_mutex_unlock(&pkt_lock);
     if (!pkt)
         return NULL;
     memset(pkt, 0, sizeof(*pkt));
@@ -239,17 +248,22 @@ void ptrace_packet_free(ptrace_packet_t *pkt)
 {
     if (!pkt)
         return;
+    ogs_thread_mutex_lock(&pkt_lock);
     ogs_pool_free(&pkt_pool, pkt);
+    ogs_thread_mutex_unlock(&pkt_lock);
 }
 
 ptrace_event_t *ptrace_event_alloc(void)
 {
     ptrace_event_t *evt = NULL;
+
+    ogs_thread_mutex_lock(&evt_lock);
     ogs_pool_alloc(&evt_pool, &evt);
-    if (!evt)
-        return NULL;
-    memset(evt, 0, sizeof(*evt));
-    evt->id = self.next_event_id++;
+    if (evt) {
+        memset(evt, 0, sizeof(*evt));
+        evt->id = self.next_event_id++;
+    }
+    ogs_thread_mutex_unlock(&evt_lock);
     return evt;
 }
 
@@ -257,5 +271,7 @@ void ptrace_event_free(ptrace_event_t *evt)
 {
     if (!evt)
         return;
+    ogs_thread_mutex_lock(&evt_lock);
     ogs_pool_free(&evt_pool, evt);
+    ogs_thread_mutex_unlock(&evt_lock);
 }
