@@ -13,14 +13,16 @@
 #define NAS_ATTACH_REJECT               0x44
 #define NAS_DETACH_REQUEST              0x45
 #define NAS_DETACH_ACCEPT               0x46
-#define NAS_AUTH_REQUEST                0x52
-#define NAS_AUTH_RESPONSE               0x53
-#define NAS_AUTH_REJECT                 0x54
-#define NAS_SECURITY_MODE_COMMAND       0x5d
-#define NAS_SECURITY_MODE_COMPLETE      0x5e
 #define NAS_TAU_REQUEST                 0x48
 #define NAS_TAU_ACCEPT                  0x49
 #define NAS_SERVICE_REQUEST             0x4c
+#define NAS_AUTH_REQUEST                0x52
+#define NAS_AUTH_RESPONSE               0x53
+#define NAS_AUTH_REJECT                 0x54
+#define NAS_IDENTITY_REQUEST            0x55
+#define NAS_IDENTITY_RESPONSE           0x56
+#define NAS_SECURITY_MODE_COMMAND       0x5d
+#define NAS_SECURITY_MODE_COMPLETE      0x5e
 
 static const char *nas_name(uint8_t t)
 {
@@ -34,6 +36,8 @@ static const char *nas_name(uint8_t t)
     case NAS_AUTH_REQUEST: return "Authentication Request";
     case NAS_AUTH_RESPONSE: return "Authentication Response";
     case NAS_AUTH_REJECT: return "Authentication Reject";
+    case NAS_IDENTITY_REQUEST: return "Identity Request";
+    case NAS_IDENTITY_RESPONSE: return "Identity Response";
     case NAS_SECURITY_MODE_COMMAND: return "Security Mode Command";
     case NAS_SECURITY_MODE_COMPLETE: return "Security Mode Complete";
     case NAS_TAU_REQUEST: return "NAS TAU Request";
@@ -43,20 +47,54 @@ static const char *nas_name(uint8_t t)
     }
 }
 
-static void bcd_imsi(const uint8_t *b, int len, char *out, size_t outlen)
+/* TS 24.008 Mobile Identity — IMSI/IMEI digits */
+static void parse_mobile_identity(const uint8_t *mi, int mi_len,
+        ptrace_event_t *evt)
 {
-    int i, o = 0;
-    for (i = 0; i < len && o + 2 < (int)outlen; i++) {
-        int lo = b[i] & 0x0f;
-        int hi = (b[i] >> 4) & 0x0f;
+    uint8_t type_id;
+    uint8_t odd;
+    char digits[32];
+    int o = 0;
+    int i;
+
+    if (!mi || mi_len < 1 || !evt)
+        return;
+
+    type_id = mi[0] & 0x07;
+    odd = (mi[0] >> 3) & 0x01;
+
+    /* first digit in high nibble of octet 0 */
+    {
+        int d1 = (mi[0] >> 4) & 0x0f;
+        if (d1 <= 9)
+            digits[o++] = (char)('0' + d1);
+    }
+    for (i = 1; i < mi_len && o + 2 < (int)sizeof(digits); i++) {
+        int lo = mi[i] & 0x0f;
+        int hi = (mi[i] >> 4) & 0x0f;
         if (lo <= 9)
-            out[o++] = (char)('0' + lo);
+            digits[o++] = (char)('0' + lo);
+        if (i == mi_len - 1 && !odd)
+            break;
         if (hi == 0x0f)
             break;
         if (hi <= 9)
-            out[o++] = (char)('0' + hi);
+            digits[o++] = (char)('0' + hi);
     }
-    out[o] = '\0';
+    digits[o] = '\0';
+
+    if (type_id == 1) { /* IMSI */
+        if (!evt->ids.imsi[0])
+            ogs_cpystrn(evt->ids.imsi, digits, sizeof(evt->ids.imsi));
+    } else if (type_id == 2 || type_id == 3) { /* IMEI / IMEISV */
+        if (!evt->ids.imei[0])
+            ogs_cpystrn(evt->ids.imei, digits, sizeof(evt->ids.imei));
+    } else if (type_id == 6 && mi_len >= 11) { /* GUTI */
+        uint32_t mtmsi = (uint32_t)((mi[7] << 24) | (mi[8] << 16) |
+                (mi[9] << 8) | mi[10]);
+        snprintf(evt->ids.m_tmsi, sizeof(evt->ids.m_tmsi), "%08x", mtmsi);
+        snprintf(evt->ids.guti, sizeof(evt->ids.guti), "guti-%08x", mtmsi);
+    }
 }
 
 int ptrace_decode_nas(const uint8_t *data, int len, ptrace_event_t *evt)
@@ -71,18 +109,17 @@ int ptrace_decode_nas(const uint8_t *data, int len, ptrace_event_t *evt)
     pd = data[0] & 0x0f;
     sec = (data[0] >> 4) & 0x0f;
 
-    /* Security protected: skip MAC + seq, then plain NAS */
     if (sec == 1 || sec == 2 || sec == 3 || sec == 4) {
         if (len < 7)
             return OGS_ERROR;
         if (sec == 2 || sec == 4) {
-            /* ciphered — cannot decode payload */
             evt->protocol = PTRACE_PROTO_NAS;
             ogs_cpystrn(evt->message, "NAS (ciphered)", sizeof(evt->message));
             snprintf(evt->fields, sizeof(evt->fields), "sec_hdr=%u", sec);
             return OGS_OK;
         }
-        off = 6; /* header + MAC(4) + seq(1) approx for integrity-only */
+        /* integrity-protected, not ciphered: PD/sec + MAC(4) + seq(1) */
+        off = 6;
         if (off >= len)
             return OGS_ERROR;
         data += off;
@@ -90,7 +127,7 @@ int ptrace_decode_nas(const uint8_t *data, int len, ptrace_event_t *evt)
         pd = data[0] & 0x0f;
     }
 
-    if (pd != 0x07 && pd != 0x02) /* EMM / ESM */
+    if (pd != 0x07 && pd != 0x02)
         return OGS_ERROR;
 
     if (pd == 0x07) {
@@ -98,7 +135,6 @@ int ptrace_decode_nas(const uint8_t *data, int len, ptrace_event_t *evt)
             return OGS_ERROR;
         msg_type = data[1];
     } else {
-        /* ESM: skip EPS bearer id / PTI */
         if (len < 3)
             return OGS_ERROR;
         msg_type = data[2];
@@ -119,50 +155,41 @@ int ptrace_decode_nas(const uint8_t *data, int len, ptrace_event_t *evt)
     evt->msg_type = msg_type;
     ogs_cpystrn(evt->message, name, sizeof(evt->message));
 
-    /* Attach Request: EPS mobile identity after attach type / KSI */
-    if (msg_type == NAS_ATTACH_REQUEST && len >= 6) {
-        int mi_len = data[4]; /* after 2 hdr + 1 attach/ksi + 1 spare? */
-        /* Layout: PD|sec, msg_type, EPS attach type/NAS KSI, MI length */
-        mi_len = data[3];
-        if (mi_len > 0 && 4 + mi_len <= len) {
-            const uint8_t *mi = data + 4;
-            uint8_t type_id = mi[0] & 0x07;
-            if (type_id == 1 && mi_len >= 2) { /* IMSI */
-                bcd_imsi(mi, mi_len, evt->ids.imsi, sizeof(evt->ids.imsi));
-                /* first digit is in high nibble of byte0 with type */
-                /* Standard: byte0 = dig1 | (type<<4) in different packing —
-                 * use full MI buffer as TBCD starting at byte0 */
-            } else if (type_id == 6 && mi_len >= 11) { /* GUTI */
-                uint32_t mtmsi = (uint32_t)((mi[7] << 24) | (mi[8] << 16) |
-                        (mi[9] << 8) | mi[10]);
-                snprintf(evt->ids.m_tmsi, sizeof(evt->ids.m_tmsi),
-                        "%08x", mtmsi);
-                snprintf(evt->ids.guti, sizeof(evt->ids.guti),
-                        "guti-%08x", mtmsi);
-            }
-        }
+    if (msg_type == NAS_ATTACH_REQUEST && len >= 4) {
+        int mi_len = data[3];
+        if (mi_len > 0 && 4 + mi_len <= len)
+            parse_mobile_identity(data + 4, mi_len, evt);
+    } else if (msg_type == NAS_IDENTITY_RESPONSE && len >= 4) {
+        /* Identity Response: PD, msg_type, MI length, MI */
+        int mi_len = data[2];
+        if (mi_len > 0 && 3 + mi_len <= len)
+            parse_mobile_identity(data + 3, mi_len, evt);
     } else if (msg_type == NAS_ATTACH_REJECT && len >= 3) {
         evt->cause_code = data[2];
         snprintf(evt->cause, sizeof(evt->cause), "%u", evt->cause_code);
     } else if (msg_type == NAS_ATTACH_ACCEPT && len >= 15) {
-        /* GUTI often present as IEI 0x50 */
         int i;
         for (i = 2; i + 13 < len; i++) {
             if (data[i] == 0x50 && data[i + 1] == 11) {
-                const uint8_t *mi = data + i + 2;
-                uint32_t mtmsi = (uint32_t)((mi[7] << 24) | (mi[8] << 16) |
-                        (mi[9] << 8) | mi[10]);
-                snprintf(evt->ids.m_tmsi, sizeof(evt->ids.m_tmsi),
-                        "%08x", mtmsi);
-                snprintf(evt->ids.guti, sizeof(evt->ids.guti),
-                        "guti-%08x", mtmsi);
+                parse_mobile_identity(data + i + 2, 11, evt);
+                break;
+            }
+        }
+    } else if (msg_type == NAS_SECURITY_MODE_COMPLETE && len >= 5) {
+        /* optional IMEISV IEI 0x23 */
+        int i;
+        for (i = 2; i + 2 < len; i++) {
+            if (data[i] == 0x23 && i + 1 < len) {
+                int mi_len = data[i + 1];
+                if (mi_len > 0 && i + 2 + mi_len <= len)
+                    parse_mobile_identity(data + i + 2, mi_len, evt);
                 break;
             }
         }
     }
 
     snprintf(evt->fields, sizeof(evt->fields),
-            "imsi=%s guti=%s cause=%s",
-            evt->ids.imsi, evt->ids.guti, evt->cause);
+            "imsi=%s imei=%s guti=%s cause=%s",
+            evt->ids.imsi, evt->ids.imei, evt->ids.guti, evt->cause);
     return OGS_OK;
 }

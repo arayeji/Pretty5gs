@@ -58,6 +58,14 @@ static void walk_ie(const uint8_t *p, int len, ptrace_event_t *evt)
             if (vlen > 0)
                 bcd_imsi(v, vlen, evt->ids.imsi, sizeof(evt->ids.imsi));
             break;
+        case 75: /* MEI / IMEI */
+            if (vlen > 0 && !evt->ids.imei[0])
+                bcd_imsi(v, vlen, evt->ids.imei, sizeof(evt->ids.imei));
+            break;
+        case 76: /* MSISDN */
+            if (vlen > 0 && !evt->ids.msisdn[0])
+                bcd_imsi(v, vlen, evt->ids.msisdn, sizeof(evt->ids.msisdn));
+            break;
         case 2: /* Cause */
             if (vlen >= 1) {
                 evt->cause_code = v[0];
@@ -145,8 +153,9 @@ int ptrace_decode_gtpc(const uint8_t *data, int len, ptrace_event_t *evt)
 
     walk_ie(data + hdr, len - hdr, evt);
     snprintf(evt->fields, sizeof(evt->fields),
-            "teid=%u apn=%s ue_ip=%s cause=%s",
+            "teid=%u imsi=%s msisdn=%s imei=%s apn=%s ue_ip=%s cause=%s",
             evt->ids.has_teid ? evt->ids.teid : 0,
+            evt->ids.imsi, evt->ids.msisdn, evt->ids.imei,
             evt->ids.apn, evt->ids.ue_ip, evt->cause);
     return OGS_OK;
 }
