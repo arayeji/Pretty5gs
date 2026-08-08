@@ -1014,26 +1014,28 @@ static int hss_s6a_avp_add_subscription_data(
                         MSG_BRW_LAST_CHILD, pdn_gw_allocation_type);
                 ogs_assert(ret == 0);
 
-                if (subscription_data->imsi) {
+                if (subscription_data->imsi &&
+                        ogs_trace_filter_match(subscription_data->imsi)) {
                     if (session->smf_ip.ipv4) {
                         char ipstr[OGS_ADDRSTRLEN];
 
                         OGS_INET_NTOP(&session->smf_ip.addr, ipstr);
-                        hss_imsi_info(subscription_data->imsi, "S6a-ULA",
-                                "APN[%s] static PGW/SMF %s "
-                                "(MIP6 + PDN-GW-Allocation-Type=STATIC)",
+                        ogs_warn("[%s] S6a-ULA APN[%s] static PGW/SMF %s "
+                                "(MIP6 + Allocation-Type=STATIC)",
+                                subscription_data->imsi,
                                 session->name ? session->name : "-", ipstr);
                     } else {
-                        hss_imsi_info(subscription_data->imsi, "S6a-ULA",
-                                "APN[%s] static PGW/SMF IPv6 "
-                                "(MIP6 + PDN-GW-Allocation-Type=STATIC)",
+                        ogs_warn("[%s] S6a-ULA APN[%s] static PGW/SMF IPv6 "
+                                "(MIP6 + Allocation-Type=STATIC)",
+                                subscription_data->imsi,
                                 session->name ? session->name : "-");
                     }
                 }
-            } else if (subscription_data->imsi) {
-                hss_imsi_info(subscription_data->imsi, "S6a-ULA",
-                        "APN[%s] no static SMF/PGW in subscription "
-                        "(set slice[].session[].smf.ipv4 in MongoDB/WebUI)",
+            } else if (subscription_data->imsi &&
+                    ogs_trace_filter_match(subscription_data->imsi)) {
+                ogs_warn("[%s] S6a-ULA APN[%s] no static SMF/PGW in DB "
+                        "(set slice[].session[].smf.ipv4)",
+                        subscription_data->imsi,
                         session->name ? session->name : "-");
             }
 
@@ -1184,6 +1186,9 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
         error_occurred = 1;
         goto out;
     }
+    /* Ensure IMSI is set for static-PGW / APN trace lines in the builder */
+    if (!subscription_data.imsi)
+        subscription_data.imsi = ogs_strdup(imsi_bcd);
 
     /* Get Origin-Host */
     ret = fd_msg_search_avp(qry, ogs_diam_origin_host, &avp);
