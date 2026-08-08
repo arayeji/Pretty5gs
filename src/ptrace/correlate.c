@@ -611,14 +611,25 @@ ptrace_ue_t *ptrace_correlate_find(const char *key)
     ptrace_ue_t *ue = NULL;
     uint32_t u32;
     uint64_t u64;
+    char digits[PTRACE_MAX_ID_LEN];
+    int i, o = 0;
 
     if (!key || !key[0] || !ready)
         return NULL;
 
+    /* Normalize IMSI/MSISDN-like keys to digits (NMS may send spaces). */
+    for (i = 0; key[i] && o + 1 < (int)sizeof(digits); i++) {
+        if (key[i] >= '0' && key[i] <= '9')
+            digits[o++] = key[i];
+    }
+    digits[o] = '\0';
+
     ogs_thread_mutex_lock(&lock);
-    ue = lookup_str(by_imsi, key);
-    if (!ue) ue = lookup_str(by_msisdn, key);
-    if (!ue) ue = lookup_str(by_imei, key);
+    if (digits[0])
+        ue = lookup_str(by_imsi, digits);
+    if (!ue) ue = lookup_str(by_imsi, key);
+    if (!ue) ue = lookup_str(by_msisdn, digits[0] ? digits : key);
+    if (!ue) ue = lookup_str(by_imei, digits[0] ? digits : key);
     if (!ue) ue = lookup_str(by_guti, key);
     if (!ue) ue = lookup_str(by_mtmsi, key);
     if (!ue) ue = lookup_str(by_ueip, key);
@@ -629,8 +640,24 @@ ptrace_ue_t *ptrace_correlate_find(const char *key)
     }
     if (!ue && sscanf(key, "%llu", (unsigned long long *)&u64) == 1)
         ue = lookup_u64(by_seid, u64);
+    ue = ue_resolve(ue);
     ogs_thread_mutex_unlock(&lock);
     return ue;
+}
+
+int ptrace_correlate_ue_count(void)
+{
+    ptrace_ue_t *ue;
+    int n = 0;
+    if (!ready)
+        return 0;
+    ogs_thread_mutex_lock(&lock);
+    ogs_list_for_each(&ue_list, ue) {
+        if (!ue->canonical)
+            n++;
+    }
+    ogs_thread_mutex_unlock(&lock);
+    return n;
 }
 
 int ptrace_correlate_ue_json(ptrace_ue_t *ue, char *buf, size_t buflen)

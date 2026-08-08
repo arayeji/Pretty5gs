@@ -305,13 +305,18 @@ static _MHD_Result access_handler(void *cls,
     }
 
     if (!strcmp(method, "GET") && !strcmp(url, "/healthz")) {
-        char buf[256];
+        char buf[384];
         snprintf(buf, sizeof(buf),
                 "{\"status\":\"ok\",\"packets\":%llu,\"dropped\":%llu,"
-                "\"events\":%llu}\n",
+                "\"events\":%llu,\"ue_count\":%d,"
+                "\"s1ap_ok\":%llu,\"s1ap_fail\":%llu,\"s1ap_scan\":%llu}\n",
                 (unsigned long long)ctx->packets_in,
                 (unsigned long long)ctx->packets_drop,
-                (unsigned long long)ctx->events_out);
+                (unsigned long long)ctx->events_out,
+                ptrace_correlate_ue_count(),
+                (unsigned long long)ctx->s1ap_ok,
+                (unsigned long long)ctx->s1ap_fail,
+                (unsigned long long)ctx->s1ap_scan_hit);
         return send_json(conn, MHD_HTTP_OK, buf);
     }
 

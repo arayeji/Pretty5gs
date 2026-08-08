@@ -36,71 +36,61 @@ static void ipv6_str(const uint8_t *addr, char *buf, size_t buflen)
     inet_ntop(AF_INET6, addr, buf, (socklen_t)buflen);
 }
 
-static int sctp_payload(const uint8_t *data, int len,
+static int sctp_next_s1ap(const uint8_t *data, int len, int *state,
         const uint8_t **payload, int *plen)
 {
-    /* Prefer a complete (B+E) DATA chunk with S1AP PPID=18.
-     * Fall back to Beginning-fragment (B) so truncated snaplen /
-     * mid-association SPAN copies still yield Attach Request NAS. */
+    /* *state is byte offset into SCTP after common header (start 12).
+     * Yields successive PPID=18 DATA payloads (prefer B+E, else B). */
     const uint8_t *p;
     int remain;
-    uint16_t chunk_len;
-    uint8_t type, flags;
-    uint32_t ppid, ppid_le;
-    const uint8_t *fallback = NULL;
-    int fallback_len = 0;
+    int off;
 
-    if (len < 16)
+    if (!data || len < 16 || !state || !payload || !plen)
         return OGS_ERROR;
-    p = data + 12;
-    remain = len - 12;
+    off = *state > 12 ? *state : 12;
+    p = data + off;
+    remain = len - off;
 
     while (remain >= 4) {
-        type = p[0];
-        flags = p[1];
-        chunk_len = (uint16_t)((p[2] << 8) | p[3]);
+        uint8_t type = p[0];
+        uint8_t flags = p[1];
+        uint16_t chunk_len = (uint16_t)((p[2] << 8) | p[3]);
+        uint32_t ppid, ppid_le;
+        int step;
+
         if (chunk_len < 4)
             return OGS_ERROR;
-        /* Snaplen may truncate the last chunk — still try PPID/payload. */
         if (chunk_len > remain)
             chunk_len = (uint16_t)remain;
-        if (type == 0) { /* DATA */
-            if (chunk_len < 16)
-                goto next_chunk;
+
+        if (type == 0 && chunk_len >= 16) {
             ppid = ((uint32_t)p[12] << 24) | ((uint32_t)p[13] << 16) |
                     ((uint32_t)p[14] << 8) | p[15];
             ppid_le = (uint32_t)p[12] |
                     ((uint32_t)p[13] << 8) |
                     ((uint32_t)p[14] << 16) |
                     ((uint32_t)p[15] << 24);
-            if (ppid != 18 && ppid_le != 18) /* OGS_SCTP_S1AP_PPID */
-                goto next_chunk;
-            if ((flags & 0x03) == 0x03) {
-                *payload = p + 16;
-                *plen = chunk_len - 16;
-                if (*plen > 0)
-                    return OGS_OK;
-            } else if ((flags & 0x02) && !fallback) {
-                /* B bit set: start of user message */
-                fallback = p + 16;
-                fallback_len = chunk_len - 16;
+            if (ppid == 18 || ppid_le == 18) {
+                if ((flags & 0x03) == 0x03 || (flags & 0x02)) {
+                    *payload = p + 16;
+                    *plen = chunk_len - 16;
+                    step = chunk_len + ((4 - (chunk_len & 3)) & 3);
+                    if (step <= 0 || step > remain)
+                        *state = len;
+                    else
+                        *state = (int)(p - data) + step;
+                    if (*plen > 0)
+                        return OGS_OK;
+                }
             }
         }
-next_chunk:
-        {
-            int pad = (4 - (chunk_len & 3)) & 3;
-            int step = chunk_len + pad;
-            if (step <= 0 || step > remain)
-                break;
-            p += step;
-            remain -= step;
-        }
+        step = chunk_len + ((4 - (chunk_len & 3)) & 3);
+        if (step <= 0 || step > remain)
+            break;
+        p += step;
+        remain -= step;
     }
-    if (fallback && fallback_len > 0) {
-        *payload = fallback;
-        *plen = fallback_len;
-        return OGS_OK;
-    }
+    *state = len;
     return OGS_ERROR;
 }
 
@@ -183,9 +173,55 @@ int ptrace_decode_packet(ptrace_packet_t *pkt,
     } else if (ipproto == IPPROTO_SCTP) {
         sport = (uint16_t)((l4[0] << 8) | l4[1]);
         dport = (uint16_t)((l4[2] << 8) | l4[3]);
-        if (sctp_payload(l4, l4len, &payload, &plen) != OGS_OK)
-            return OGS_OK;
+        /* Tried below with multi-chunk iteration */
+        payload = NULL;
+        plen = 0;
     } else {
+        return OGS_OK;
+    }
+
+    if (ipproto != IPPROTO_SCTP) {
+        if (!payload || plen <= 0)
+            return OGS_OK;
+    }
+
+    if (ipproto == IPPROTO_SCTP &&
+            (sport == PTRACE_PORT_SCTP_S1AP ||
+             dport == PTRACE_PORT_SCTP_S1AP ||
+             pkt->role == PTRACE_ROLE_S1MME)) {
+        int sctp_state = 12;
+        while (sctp_next_s1ap(l4, l4len, &sctp_state, &payload, &plen) ==
+                OGS_OK) {
+            ptrace_event_t *extra[PTRACE_MAX_EVENTS_PER_PKT];
+            int nextra = 0;
+            evt = ptrace_event_alloc();
+            if (!evt)
+                break;
+            evt->ts = pkt->ts;
+            evt->role = pkt->role;
+            ogs_cpystrn(evt->src_ip, src_ip, sizeof(evt->src_ip));
+            ogs_cpystrn(evt->dst_ip, dst_ip, sizeof(evt->dst_ip));
+            evt->src_port = sport;
+            evt->dst_port = dport;
+            evt->raw_len = pkt->len;
+            ogs_cpystrn(evt->packet_ref, pkt->packet_ref,
+                    sizeof(evt->packet_ref));
+            if (ptrace_decode_s1ap(payload, plen, evt, extra, &nextra) ==
+                    OGS_OK) {
+                out[n++] = evt;
+                while (nextra > 0 && n < PTRACE_MAX_EVENTS_PER_PKT)
+                    out[n++] = extra[--nextra];
+                while (nextra > 0)
+                    ptrace_event_free(extra[--nextra]);
+                /* Keep scanning chunks — one SCTP packet can carry
+                 * several S1AP PDUs (rare but seen on SPAN). */
+                if (n >= PTRACE_MAX_EVENTS_PER_PKT)
+                    break;
+            } else {
+                ptrace_event_free(evt);
+            }
+        }
+        *nout = n;
         return OGS_OK;
     }
 
@@ -232,22 +268,6 @@ int ptrace_decode_packet(ptrace_packet_t *pkt,
             out[n++] = evt;
         else
             ptrace_event_free(evt);
-    } else if ((sport == PTRACE_PORT_SCTP_S1AP ||
-            dport == PTRACE_PORT_SCTP_S1AP ||
-            pkt->role == PTRACE_ROLE_S1MME) &&
-            ipproto == IPPROTO_SCTP) {
-        ptrace_event_t *extra[PTRACE_MAX_EVENTS_PER_PKT];
-        int nextra = 0;
-        if (ptrace_decode_s1ap(payload, plen, evt, extra, &nextra) == OGS_OK) {
-            out[n++] = evt;
-            while (nextra > 0 && n < PTRACE_MAX_EVENTS_PER_PKT) {
-                out[n++] = extra[--nextra];
-            }
-            while (nextra > 0)
-                ptrace_event_free(extra[--nextra]);
-        } else {
-            ptrace_event_free(evt);
-        }
     } else {
         ptrace_event_free(evt);
     }

@@ -20,6 +20,7 @@ void ptrace_decode_s1ap_init(void);
 int ptrace_decode_s1ap(const uint8_t *data, int len,
         ptrace_event_t *base, ptrace_event_t **extra, int *nextra);
 int ptrace_decode_nas(const uint8_t *data, int len, ptrace_event_t *evt);
+int ptrace_decode_nas_scan(const uint8_t *data, int len, ptrace_event_t *evt);
 int ptrace_decode_gtpc(const uint8_t *data, int len, ptrace_event_t *evt);
 int ptrace_decode_gtpu(const uint8_t *data, int len, ptrace_event_t *evt);
 int ptrace_decode_pfcp(const uint8_t *data, int len, ptrace_event_t *evt);

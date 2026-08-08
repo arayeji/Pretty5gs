@@ -24,15 +24,21 @@ static uint32_t rd32(const uint8_t *p)
            ((uint32_t)p[2] << 8) | p[3];
 }
 
-static void copy_digits(const uint8_t *v, int vlen, char *out, size_t outlen)
+static void copy_imsi_field(const uint8_t *v, int vlen, char *out, size_t outlen)
 {
     int i, o = 0;
     if (!v || vlen <= 0 || !out || !outlen)
         return;
+    /* User-Name may be IMSI or IMSI@realm — take leading digits only. */
     for (i = 0; i < vlen && o + 1 < (int)outlen; i++) {
         char c = (char)v[i];
-        if (c >= '0' && c <= '9')
+        if (c >= '0' && c <= '9') {
             out[o++] = c;
+            if (o >= 15)
+                break;
+        } else if (o > 0) {
+            break; /* stop at @ or other separator */
+        }
     }
     out[o] = '\0';
 }
@@ -103,15 +109,8 @@ static void walk_avps(const uint8_t *p, int len, ptrace_event_t *evt)
 
         switch (code) {
         case DIAM_AVP_USER_NAME:
-            if (vlen > 0 && !evt->ids.imsi[0]) {
-                copy_digits(v, vlen, evt->ids.imsi, sizeof(evt->ids.imsi));
-                if (!evt->ids.imsi[0]) {
-                    int n = vlen < (int)sizeof(evt->ids.imsi) - 1 ?
-                        vlen : (int)sizeof(evt->ids.imsi) - 1;
-                    memcpy(evt->ids.imsi, v, (size_t)n);
-                    evt->ids.imsi[n] = '\0';
-                }
-            }
+            if (vlen > 0 && !evt->ids.imsi[0])
+                copy_imsi_field(v, vlen, evt->ids.imsi, sizeof(evt->ids.imsi));
             break;
         case DIAM_AVP_RESULT_CODE:
             if (vlen >= 4) {
@@ -134,14 +133,14 @@ static void walk_avps(const uint8_t *p, int len, ptrace_event_t *evt)
             break;
         case DIAM_AVP_IMEI:
             if (vlen > 0 && !evt->ids.imei[0]) {
-                copy_digits(v, vlen, evt->ids.imei, sizeof(evt->ids.imei));
+                copy_imsi_field(v, vlen, evt->ids.imei, sizeof(evt->ids.imei));
                 if (!evt->ids.imei[0])
                     tbcd_to_str(v, vlen, evt->ids.imei, sizeof(evt->ids.imei));
             }
             break;
         case DIAM_AVP_SUBSCRIPTION_ID_DATA:
             if (vlen > 0 && !evt->ids.imsi[0])
-                copy_digits(v, vlen, evt->ids.imsi, sizeof(evt->ids.imsi));
+                copy_imsi_field(v, vlen, evt->ids.imsi, sizeof(evt->ids.imsi));
             break;
         default:
             maybe_recurse(code, flags, v, vlen, evt);

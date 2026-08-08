@@ -44,6 +44,9 @@ typedef struct ptrace_context_s {
     uint64_t packets_in;
     uint64_t packets_drop;
     uint64_t events_out;
+    uint64_t s1ap_ok;
+    uint64_t s1ap_fail;
+    uint64_t s1ap_scan_hit;
 } ptrace_context_t;
 
 ptrace_context_t *ptrace_self(void);

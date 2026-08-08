@@ -71,6 +71,7 @@ int ptrace_correlate_init(void);
 void ptrace_correlate_final(void);
 uint64_t ptrace_correlate_event(ptrace_event_t *evt);
 ptrace_ue_t *ptrace_correlate_find(const char *key);
+int ptrace_correlate_ue_count(void);
 int ptrace_correlate_ue_json(ptrace_ue_t *ue, char *buf, size_t buflen);
 bool ptrace_correlate_event_matches_ue(const ptrace_event_t *evt,
         const ptrace_ue_t *ue);

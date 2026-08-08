@@ -347,6 +347,7 @@ int ptrace_decode_s1ap(const uint8_t *data, int len,
     ogs_pkbuf_t *pkbuf;
     const char *name;
     int rv;
+    ptrace_context_t *ctx = ptrace_self();
 
     if (!data || len < 2 || !base || !extra || !nextra)
         return OGS_ERROR;
@@ -362,11 +363,23 @@ int ptrace_decode_s1ap(const uint8_t *data, int len,
     rv = ogs_s1ap_decode(&message, pkbuf);
     ogs_pkbuf_free(pkbuf);
     if (rv != OGS_OK) {
-        /* Failed decode may leave partial ASN contents — free safely. */
         ogs_s1ap_free(&message);
         ogs_thread_mutex_unlock(&s1ap_lock);
+        ctx->s1ap_fail++;
+        /* ASN failed (truncated SPAN / partial SCTP) — still try to pull
+         * cleartext Attach/Identity IMSI out of the raw bytes. */
+        if (ptrace_decode_nas_scan(data, len, base) == OGS_OK &&
+                (base->ids.imsi[0] || base->ids.guti[0])) {
+            base->protocol = PTRACE_PROTO_S1AP;
+            if (!base->message[0])
+                ogs_cpystrn(base->message, "S1AP (NAS scan)",
+                        sizeof(base->message));
+            ctx->s1ap_scan_hit++;
+            return OGS_OK;
+        }
         return OGS_ERROR;
     }
+    ctx->s1ap_ok++;
 
     base->protocol = PTRACE_PROTO_S1AP;
     name = pdu_proc_name(&message);
@@ -433,5 +446,12 @@ int ptrace_decode_s1ap(const uint8_t *data, int len,
 
     ogs_s1ap_free(&message);
     ogs_thread_mutex_unlock(&s1ap_lock);
+
+    /* ASN ok but no IMSI yet (GUTI attach / partial NAS) — scan PDU. */
+    if (!base->ids.imsi[0] &&
+            ptrace_decode_nas_scan(data, len, base) == OGS_OK &&
+            base->ids.imsi[0])
+        ctx->s1ap_scan_hit++;
+
     return OGS_OK;
 }
