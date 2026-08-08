@@ -67,8 +67,9 @@
  *   GET /admin/trace/imsi?imsi=<prefix>&match=exact  exact IMSI match
  *   GET /admin/trace/imsi?imsi=list                  list active prefixes
  *   GET /admin/trace/imsi?force=1                    clear all filters
- *   GET /admin/trace/imsi?imsi=<p>&sync=sgwc,smf     MME: push to peers
+ *   GET /admin/trace/imsi?imsi=<p>&sync=hss,sgwc,smf MME: push to peers
  *   GET /admin/trace/imsi?imsi=<p>&sync=all          MME: push to all peers
+ *   (HSS also has its own /admin/trace/imsi on metrics port; sync is optional)
  *
  *   POST /admin/pgw-host/cache?clear=1                 ; or GET
  *   POST /admin/pgw-host/cache?fqdn=<host.realm>       ; or GET
