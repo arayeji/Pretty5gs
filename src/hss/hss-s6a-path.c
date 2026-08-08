@@ -1020,12 +1020,12 @@ static int hss_s6a_avp_add_subscription_data(
                         char ipstr[OGS_ADDRSTRLEN];
 
                         OGS_INET_NTOP(&session->smf_ip.addr, ipstr);
-                        ogs_warn("[%s] S6a-ULA APN[%s] static PGW/SMF %s "
+                        ogs_error("[%s] S6a-ULA APN[%s] static PGW/SMF %s "
                                 "(MIP6 + Allocation-Type=STATIC)",
                                 subscription_data->imsi,
                                 session->name ? session->name : "-", ipstr);
                     } else {
-                        ogs_warn("[%s] S6a-ULA APN[%s] static PGW/SMF IPv6 "
+                        ogs_error("[%s] S6a-ULA APN[%s] static PGW/SMF IPv6 "
                                 "(MIP6 + Allocation-Type=STATIC)",
                                 subscription_data->imsi,
                                 session->name ? session->name : "-");
@@ -1033,7 +1033,7 @@ static int hss_s6a_avp_add_subscription_data(
                 }
             } else if (subscription_data->imsi &&
                     ogs_trace_filter_match(subscription_data->imsi)) {
-                ogs_warn("[%s] S6a-ULA APN[%s] no static SMF/PGW in DB "
+                ogs_error("[%s] S6a-ULA APN[%s] no static SMF/PGW in DB "
                         "(set slice[].session[].smf.ipv4)",
                         subscription_data->imsi,
                         session->name ? session->name : "-");
@@ -1116,8 +1116,6 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
     ogs_plmn_id_t visited_plmn_id;
     int error_occurred = 0;
 
-    ogs_debug("Rx Update-Location-Request");
-
     /* Validate input parameters */
     if (!msg || !*msg) {
         ogs_error("Invalid message pointer");
@@ -1130,53 +1128,54 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
     memset(imeisv_bcd, 0, sizeof(imeisv_bcd));
     memset(&visited_plmn_id, 0, sizeof(visited_plmn_id));
 
-    /* Create answer header */
+    /*
+     * Parse IMSI and install trace context BEFORE creating the answer and
+     * before any ogs_debug. With domain=info, DEBUG only elevates when the
+     * thread-local IMSI is already set (AIR's AIA lines work that way).
+     * The old leading ogs_debug("Rx Update-Location-Request") had no IMSI
+     * yet, so it was silent and looked like "ULR never arrived".
+     */
     qry = *msg;
+    ret = fd_msg_search_avp(qry, ogs_diam_user_name, &avp);
+    if (ret != 0 || !avp) {
+        ogs_error("Failed to search User-Name AVP on ULR");
+        result_code = OGS_DIAM_MISSING_AVP;
+        error_occurred = 1;
+        /* Still try to build an error answer below */
+    } else {
+        ret = fd_msg_avp_hdr(avp, &hdr);
+        if (ret != 0 || !hdr ||
+                hss_s6a_user_name_to_imsi_bcd(
+                    hdr, imsi_bcd, sizeof(imsi_bcd)) == false) {
+            ogs_error("Invalid User-Name IMSI on ULR");
+            result_code = OGS_DIAM_INVALID_AVP_VALUE;
+            error_occurred = 1;
+            imsi_bcd[0] = '\0';
+        }
+    }
+
+    if (imsi_bcd[0]) {
+        hss_trace_set(imsi_bcd, "S6a-ULR");
+        /* ERROR is eager (never lazy-gated) — visible when IMSI filter hits */
+        if (ogs_trace_filter_match(imsi_bcd))
+            ogs_error("[%s] S6a-ULR Rx Update-Location-Request", imsi_bcd);
+        hss_imsi_info(imsi_bcd, "S6a-ULR",
+                "Rx Update-Location-Request (User-Location)");
+        ogs_debug("[%s] Rx Update-Location-Request", imsi_bcd);
+    } else {
+        ogs_debug("Rx Update-Location-Request (no IMSI yet)");
+    }
+
+    /* Create answer header */
     ret = fd_msg_new_answer_from_req(fd_g_config->cnf_dict, msg, 0);
     if (ret != 0) {
         ogs_error("Failed to create answer message");
-        error_occurred = 1;
-        goto out;
+        return EINVAL;
     }
     ans = *msg;
 
-    /* Get User-Name AVP */
-    ret = fd_msg_search_avp(qry, ogs_diam_user_name, &avp);
-    if (ret != 0) {
-        ogs_error("Failed to search User-Name AVP");
-        result_code = OGS_DIAM_MISSING_AVP;
-        error_occurred = 1;
+    if (error_occurred)
         goto out;
-    }
-
-    if (avp) {
-        ret = fd_msg_avp_hdr(avp, &hdr);
-        if (ret != 0 || !hdr) {
-            ogs_error("Failed to get User-Name AVP header");
-            result_code = OGS_DIAM_INVALID_AVP_VALUE;
-            error_occurred = 1;
-            goto out;
-        }
-
-        if (hss_s6a_user_name_to_imsi_bcd(
-                hdr, imsi_bcd, sizeof(imsi_bcd)) == false) {
-            ogs_error("Invalid User-Name IMSI");
-            result_code = OGS_DIAM_INVALID_AVP_VALUE;
-            error_occurred = 1;
-            goto out;
-        }
-
-        hss_imsi_info(imsi_bcd, "S6a-ULR",
-                "Rx Update-Location-Request (User-Location)");
-        /* Reliable path: ogs_warn is not subject to hss_imsi_log rate limits */
-        if (ogs_trace_filter_match(imsi_bcd))
-            ogs_warn("[%s] S6a-ULR Rx Update-Location-Request", imsi_bcd);
-    } else {
-        ogs_error("No User-Name AVP found");
-        result_code = OGS_DIAM_MISSING_AVP;
-        error_occurred = 1;
-        goto out;
-    }
 
     /* Get subscription data from database */
     rv = hss_db_subscription_data(imsi_bcd, &subscription_data);
@@ -1428,7 +1427,7 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
                     OGS_DIAM_S6A_ULR_SKIP_SUBSCRIBER_DATA);
 
             if (ogs_trace_filter_match(imsi_bcd))
-                ogs_warn("[%s] S6a-ULR flags=0x%x skip_subscriber_data=%d",
+                ogs_error("[%s] S6a-ULR flags=0x%x skip_subscriber_data=%d",
                         imsi_bcd, ulr_flags, skip_sub ? 1 : 0);
 
             if (!skip_sub) {
@@ -1457,10 +1456,10 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
                 }
 
                 if (ogs_trace_filter_match(imsi_bcd))
-                    ogs_warn("[%s] S6a-ULA includes Subscription-Data",
+                    ogs_error("[%s] S6a-ULA includes Subscription-Data",
                             imsi_bcd);
             } else if (ogs_trace_filter_match(imsi_bcd)) {
-                ogs_warn("[%s] S6a-ULA omits Subscription-Data "
+                ogs_error("[%s] S6a-ULA omits Subscription-Data "
                         "(MME set Skip-Subscriber-Data)", imsi_bcd);
             }
         }
@@ -1688,7 +1687,7 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
         hss_imsi_info(imsi_bcd, "S6a-ULR",
                 "Tx Update-Location-Answer (User-Location)");
         if (ogs_trace_filter_match(imsi_bcd))
-            ogs_warn("[%s] S6a-ULR Tx Update-Location-Answer", imsi_bcd);
+            ogs_error("[%s] S6a-ULR Tx Update-Location-Answer", imsi_bcd);
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
