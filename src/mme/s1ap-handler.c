@@ -1084,7 +1084,17 @@ void s1ap_handle_initial_ue_message(
          * validity check + association + NAS dispatch to the UE owner
          * shard. enb_ue->saved.* is complete at this point; the worker
          * queue push is the release barrier for those writes.
+         *
+         * Dump InitialUE here — the early return below never reaches the
+         * pkbuf dump at the end of this function, and the shard tail only
+         * carries the NAS PDU copy (not the full S1AP message).
          */
+        if (pkbuf && MME_UE_HAVE_IMSI(mme_ue_from_stmsi)) {
+            ogs_trace_packet(mme_ue_from_stmsi->imsi_bcd, "s1ap", "rx",
+                    pkbuf->data, pkbuf->len);
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
+        }
+
         ogs_pkbuf_t *nasbuf = ogs_pkbuf_alloc(NULL, NAS_PDU->size);
 
         if (nasbuf) {
