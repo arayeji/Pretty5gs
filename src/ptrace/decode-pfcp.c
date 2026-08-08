@@ -53,6 +53,65 @@ static void walk_pfcp_ie(const uint8_t *p, int len, ptrace_event_t *evt,
                         "%u.%u.%u.%u", v[1], v[2], v[3], v[4]);
             }
             break;
+        case 141: /* User ID — IMSI / IMEI / MSISDN (TS 29.244) */
+            if (ielen >= 2) {
+                uint8_t flags = v[0];
+                int off = 1;
+                if ((flags & 0x01) && off < ielen) { /* IMSI */
+                    int ilen = v[off++];
+                    int o = 0, j;
+                    if (off + ilen <= ielen) {
+                        for (j = 0; j < ilen && o + 2 < (int)sizeof(evt->ids.imsi); j++) {
+                            int lo = v[off + j] & 0x0f;
+                            int hi = (v[off + j] >> 4) & 0x0f;
+                            if (lo <= 9)
+                                evt->ids.imsi[o++] = (char)('0' + lo);
+                            if (hi == 0x0f)
+                                break;
+                            if (hi <= 9)
+                                evt->ids.imsi[o++] = (char)('0' + hi);
+                        }
+                        evt->ids.imsi[o] = '\0';
+                        off += ilen;
+                    }
+                }
+                if ((flags & 0x02) && off < ielen) { /* IMEI */
+                    int ilen = v[off++];
+                    int o = 0, j;
+                    if (off + ilen <= ielen) {
+                        for (j = 0; j < ilen && o + 2 < (int)sizeof(evt->ids.imei); j++) {
+                            int lo = v[off + j] & 0x0f;
+                            int hi = (v[off + j] >> 4) & 0x0f;
+                            if (lo <= 9)
+                                evt->ids.imei[o++] = (char)('0' + lo);
+                            if (hi == 0x0f)
+                                break;
+                            if (hi <= 9)
+                                evt->ids.imei[o++] = (char)('0' + hi);
+                        }
+                        evt->ids.imei[o] = '\0';
+                        off += ilen;
+                    }
+                }
+                if ((flags & 0x04) && off < ielen) { /* MSISDN */
+                    int ilen = v[off++];
+                    int o = 0, j;
+                    if (off + ilen <= ielen) {
+                        for (j = 0; j < ilen && o + 2 < (int)sizeof(evt->ids.msisdn); j++) {
+                            int lo = v[off + j] & 0x0f;
+                            int hi = (v[off + j] >> 4) & 0x0f;
+                            if (lo <= 9)
+                                evt->ids.msisdn[o++] = (char)('0' + lo);
+                            if (hi == 0x0f)
+                                break;
+                            if (hi <= 9)
+                                evt->ids.msisdn[o++] = (char)('0' + hi);
+                        }
+                        evt->ids.msisdn[o] = '\0';
+                    }
+                }
+            }
+            break;
         case 56: /* Create PDR */
             (*pdr)++;
             walk_pfcp_ie(v, ielen, evt, pdr, far, qer);

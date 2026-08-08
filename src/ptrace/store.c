@@ -29,14 +29,26 @@ void ptrace_store_put(ptrace_event_t *evt)
             evt->ids.imei[0] || evt->ids.ue_ip[0] ||
             evt->ids.num_teids > 0 || evt->ids.has_teid ||
             evt->ids.has_seid ||
+            evt->ids.has_enb_ue_s1ap_id || evt->ids.has_mme_ue_s1ap_id ||
+            evt->ids.has_diam_hbh ||
             (evt->message[0] && (
                 strstr(evt->message, "Attach") ||
                 strstr(evt->message, "Identity") ||
                 strstr(evt->message, "Reject") ||
                 strstr(evt->message, "Detach") ||
                 strstr(evt->message, "Create Session") ||
+                strstr(evt->message, "Modify Bearer") ||
                 strstr(evt->message, "Session Establishment") ||
-                strstr(evt->message, "Initial UE")));
+                strstr(evt->message, "Session Modification") ||
+                strstr(evt->message, "Initial UE") ||
+                strstr(evt->message, "NAS") ||
+                strstr(evt->message, "Context Setup") ||
+                strstr(evt->message, "UE Context") ||
+                !strcmp(evt->message, "AIR") ||
+                !strcmp(evt->message, "AIA") ||
+                !strcmp(evt->message, "ULR") ||
+                !strcmp(evt->message, "ULA") ||
+                strstr(evt->message, "PFCP")));
 
     if (keep)
         ptrace_cache_put(evt);

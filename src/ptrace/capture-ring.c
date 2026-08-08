@@ -442,6 +442,8 @@ int ptrace_ring_export(const char *const *refs, int nrefs,
     FILE *out = NULL;
     pcap_hdr_t hdr;
     int i;
+    char seen[512][PTRACE_MAX_REF_LEN];
+    int nseen = 0;
 
     if (!refs || nrefs <= 0 || !out_path)
         return OGS_ERROR;
@@ -467,6 +469,7 @@ int ptrace_ring_export(const char *const *refs, int nrefs,
         FILE *in;
         uint8_t buf[PTRACE_MAX_PACKET + sizeof(pcaprec_hdr_t)];
         size_t need;
+        int j;
 
         concrete[0] = '\0';
         if (resolve_ref(refs[i], concrete, sizeof(concrete)) != OGS_OK)
@@ -475,6 +478,16 @@ int ptrace_ring_export(const char *const *refs, int nrefs,
             continue;
         if (len > PTRACE_MAX_PACKET)
             continue;
+
+        /* Dedupe by resolved ring location (same frame, many events). */
+        for (j = 0; j < nseen; j++) {
+            if (!strcmp(seen[j], concrete))
+                break;
+        }
+        if (j < nseen)
+            continue;
+        if (nseen < (int)(sizeof(seen) / sizeof(seen[0])))
+            ogs_cpystrn(seen[nseen++], concrete, sizeof(seen[0]));
 
         if (ring_path(path, sizeof(path), idx) != OGS_OK)
             continue;

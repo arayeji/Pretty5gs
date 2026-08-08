@@ -236,6 +236,10 @@ static inline bool ptrace_ids_worth_indexing(const ptrace_ids_t *ids)
         return true;
     if (ids->has_diam_hbh)
         return true;
+    if (ids->has_enb_ue_s1ap_id || ids->has_mme_ue_s1ap_id)
+        return true;
+    if (ids->ue_ip[0])
+        return true;
     return false;
 }
 

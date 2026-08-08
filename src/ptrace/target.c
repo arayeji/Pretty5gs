@@ -61,6 +61,12 @@ static void sync_ue_view(ptrace_target_t *t)
     for (i = 0; i < ue->num_sessions; i++)
         ogs_cpystrn(ue->sessions[i], t->sessions[i],
                 sizeof(ue->sessions[i]));
+    ue->num_enb = t->num_enb < 8 ? t->num_enb : 8;
+    for (i = 0; i < ue->num_enb; i++)
+        ue->enb_ue_s1ap_ids[i] = t->enb_ue_s1ap_ids[i];
+    ue->num_mme = t->num_mme < 8 ? t->num_mme : 8;
+    for (i = 0; i < ue->num_mme; i++)
+        ue->mme_ue_s1ap_ids[i] = t->mme_ue_s1ap_ids[i];
     ue->last_seen = t->last_seen;
 }
 
@@ -128,6 +134,30 @@ static void add_hbh(ptrace_target_t *t, uint32_t hbh)
         t->hbhs[t->num_hbhs++] = hbh;
 }
 
+static void add_enb(ptrace_target_t *t, uint32_t id)
+{
+    int i;
+    if (!id)
+        return;
+    for (i = 0; i < t->num_enb; i++)
+        if (t->enb_ue_s1ap_ids[i] == id)
+            return;
+    if (t->num_enb < PTRACE_TARGET_MAX_S1AP)
+        t->enb_ue_s1ap_ids[t->num_enb++] = id;
+}
+
+static void add_mme(ptrace_target_t *t, uint32_t id)
+{
+    int i;
+    if (!id)
+        return;
+    for (i = 0; i < t->num_mme; i++)
+        if (t->mme_ue_s1ap_ids[i] == id)
+            return;
+    if (t->num_mme < PTRACE_TARGET_MAX_S1AP)
+        t->mme_ue_s1ap_ids[t->num_mme++] = id;
+}
+
 static void add_str(char (*arr)[PTRACE_MAX_ID_LEN], int *n, int max,
         const char *s)
 {
@@ -186,6 +216,10 @@ static void learn(ptrace_target_t *t, const ptrace_ids_t *ids)
         add_seid(t, ids->seid);
     if (ids->has_diam_hbh)
         add_hbh(t, ids->diam_hbh);
+    if (ids->has_enb_ue_s1ap_id)
+        add_enb(t, ids->enb_ue_s1ap_id);
+    if (ids->has_mme_ue_s1ap_id)
+        add_mme(t, ids->mme_ue_s1ap_id);
     sync_ue_view(t);
 }
 
@@ -235,6 +269,16 @@ static bool ids_match_target(ptrace_target_t *t, const ptrace_ids_t *ids)
     if (ids->has_diam_hbh) {
         for (i = 0; i < t->num_hbhs; i++)
             if (ids->diam_hbh == t->hbhs[i])
+                return true;
+    }
+    if (ids->has_enb_ue_s1ap_id) {
+        for (i = 0; i < t->num_enb; i++)
+            if (ids->enb_ue_s1ap_id == t->enb_ue_s1ap_ids[i])
+                return true;
+    }
+    if (ids->has_mme_ue_s1ap_id) {
+        for (i = 0; i < t->num_mme; i++)
+            if (ids->mme_ue_s1ap_id == t->mme_ue_s1ap_ids[i])
                 return true;
     }
     return false;
@@ -417,6 +461,33 @@ uint64_t ptrace_target_match_learn(ptrace_ids_t *ids, ogs_time_t ts)
     }
     ogs_thread_mutex_unlock(&lock);
     return id;
+}
+
+int ptrace_target_s1ap_keys(uint32_t *enb, int max_enb,
+        uint32_t *mme, int max_mme)
+{
+    ptrace_target_t *t;
+    int ne = 0, nm = 0, i;
+
+    if (enb && max_enb > 0)
+        memset(enb, 0, sizeof(uint32_t) * (size_t)max_enb);
+    if (mme && max_mme > 0)
+        memset(mme, 0, sizeof(uint32_t) * (size_t)max_mme);
+
+    if (!ready || active_count <= 0)
+        return 0;
+
+    ogs_thread_mutex_lock(&lock);
+    ogs_list_for_each(&targets, t) {
+        if (!t->active)
+            continue;
+        for (i = 0; i < t->num_enb && ne < max_enb; i++)
+            enb[ne++] = t->enb_ue_s1ap_ids[i];
+        for (i = 0; i < t->num_mme && nm < max_mme; i++)
+            mme[nm++] = t->mme_ue_s1ap_ids[i];
+    }
+    ogs_thread_mutex_unlock(&lock);
+    return ne + nm;
 }
 
 int ptrace_target_expire(void)

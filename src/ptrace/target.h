@@ -20,6 +20,7 @@ extern "C" {
 #define PTRACE_TARGET_MAX_HBH       16
 #define PTRACE_TARGET_MAX_SEIDS     8
 #define PTRACE_TARGET_MAX_SESS      8
+#define PTRACE_TARGET_MAX_S1AP      8
 #define PTRACE_TARGET_DEFAULT_SEC   600
 
 typedef struct ptrace_target_s {
@@ -40,6 +41,10 @@ typedef struct ptrace_target_s {
     int num_seids;
     uint32_t hbhs[PTRACE_TARGET_MAX_HBH];
     int num_hbhs;
+    uint32_t enb_ue_s1ap_ids[PTRACE_TARGET_MAX_S1AP];
+    int num_enb;
+    uint32_t mme_ue_s1ap_ids[PTRACE_TARGET_MAX_S1AP];
+    int num_mme;
     ogs_time_t created;
     ogs_time_t until;
     ogs_time_t last_seen;
@@ -60,6 +65,10 @@ bool ptrace_target_any_active(void);
 
 /* Hot path: true if ids belong to an active target; learns session keys. */
 uint64_t ptrace_target_match_learn(ptrace_ids_t *ids, ogs_time_t ts);
+
+/* Snapshot of learned eNB/MME S1AP IDs for cheap SCTP prefilter. */
+int ptrace_target_s1ap_keys(uint32_t *enb, int max_enb,
+        uint32_t *mme, int max_mme);
 
 /* Expire finished targets. */
 int ptrace_target_expire(void);

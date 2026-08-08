@@ -143,5 +143,15 @@ bool ptrace_correlate_event_matches_ue(const ptrace_event_t *evt,
             if (ids->seid == ue->seids[i])
                 return true;
     }
+    if (ids->has_enb_ue_s1ap_id) {
+        for (i = 0; i < ue->num_enb; i++)
+            if (ids->enb_ue_s1ap_id == ue->enb_ue_s1ap_ids[i])
+                return true;
+    }
+    if (ids->has_mme_ue_s1ap_id) {
+        for (i = 0; i < ue->num_mme; i++)
+            if (ids->mme_ue_s1ap_id == ue->mme_ue_s1ap_ids[i])
+                return true;
+    }
     return false;
 }

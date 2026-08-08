@@ -1,11 +1,14 @@
 /*
  * Copyright (C) 2026 by Pretty5GS Contributors
  *
- * Capture hot-path identity extract (no full-frame worker queue, no ASN.1).
+ * Capture hot-path identity extract for active targets.
+ * S1AP: NAS scan + ASN (when IMSI hit or learned eNB/MME S1AP IDs present).
  */
 
 #include "identity.h"
 #include "decode.h"
+#include "target.h"
+#include "context.h"
 
 #include <arpa/inet.h>
 #include <netinet/if_ether.h>
@@ -65,6 +68,238 @@ static void copy_to_id(const ptrace_event_t *evt, ptrace_id_event_t *out)
     out->ids = evt->ids;
     ogs_cpystrn(out->packet_ref, evt->packet_ref, sizeof(out->packet_ref));
     out->raw_len = evt->raw_len;
+}
+
+static void merge_ids(ptrace_ids_t *dst, const ptrace_ids_t *src)
+{
+    int i;
+    if (!dst || !src)
+        return;
+    if (src->imsi[0] && !dst->imsi[0])
+        ogs_cpystrn(dst->imsi, src->imsi, sizeof(dst->imsi));
+    if (src->msisdn[0] && !dst->msisdn[0])
+        ogs_cpystrn(dst->msisdn, src->msisdn, sizeof(dst->msisdn));
+    if (src->imei[0] && !dst->imei[0])
+        ogs_cpystrn(dst->imei, src->imei, sizeof(dst->imei));
+    if (src->guti[0])
+        ogs_cpystrn(dst->guti, src->guti, sizeof(dst->guti));
+    if (src->m_tmsi[0])
+        ogs_cpystrn(dst->m_tmsi, src->m_tmsi, sizeof(dst->m_tmsi));
+    if (src->ue_ip[0] && !dst->ue_ip[0])
+        ogs_cpystrn(dst->ue_ip, src->ue_ip, sizeof(dst->ue_ip));
+    if (src->has_enb_ue_s1ap_id) {
+        dst->enb_ue_s1ap_id = src->enb_ue_s1ap_id;
+        dst->has_enb_ue_s1ap_id = true;
+    }
+    if (src->has_mme_ue_s1ap_id) {
+        dst->mme_ue_s1ap_id = src->mme_ue_s1ap_id;
+        dst->has_mme_ue_s1ap_id = true;
+    }
+    if (src->has_teid)
+        ptrace_ids_add_teid(dst, src->teid);
+    for (i = 0; i < src->num_teids; i++)
+        ptrace_ids_add_teid(dst, src->teids[i]);
+    if (src->has_seid) {
+        dst->seid = src->seid;
+        dst->has_seid = true;
+    }
+}
+
+static bool memmem_u24(const uint8_t *hay, int haylen, uint32_t id)
+{
+    uint8_t needle[3];
+    int i;
+    if (!id || haylen < 3)
+        return false;
+    needle[0] = (uint8_t)((id >> 16) & 0xff);
+    needle[1] = (uint8_t)((id >> 8) & 0xff);
+    needle[2] = (uint8_t)(id & 0xff);
+    for (i = 0; i + 2 < haylen; i++) {
+        if (hay[i] == needle[0] && hay[i + 1] == needle[1] &&
+                hay[i + 2] == needle[2])
+            return true;
+    }
+    return false;
+}
+
+static bool memmem_u32(const uint8_t *hay, int haylen, uint32_t id)
+{
+    uint8_t needle[4];
+    int i;
+    if (!id || haylen < 4)
+        return false;
+    needle[0] = (uint8_t)((id >> 24) & 0xff);
+    needle[1] = (uint8_t)((id >> 16) & 0xff);
+    needle[2] = (uint8_t)((id >> 8) & 0xff);
+    needle[3] = (uint8_t)(id & 0xff);
+    for (i = 0; i + 3 < haylen; i++) {
+        if (hay[i] == needle[0] && hay[i + 1] == needle[1] &&
+                hay[i + 2] == needle[2] && hay[i + 3] == needle[3])
+            return true;
+    }
+    return false;
+}
+
+static bool s1ap_keys_in_payload(const uint8_t *l4, int l4len)
+{
+    uint32_t enb[64], mme[64];
+    int n, i, nenb = 0, nmme = 0;
+
+    n = ptrace_target_s1ap_keys(enb, 64, mme, 64);
+    if (n <= 0)
+        return false;
+    for (i = 0; i < 64; i++) {
+        if (enb[i])
+            nenb++;
+        else
+            break;
+    }
+    for (i = 0; i < 64; i++) {
+        if (mme[i])
+            nmme++;
+        else
+            break;
+    }
+    for (i = 0; i < nenb; i++) {
+        if (memmem_u24(l4, l4len, enb[i]))
+            return true;
+        if (memmem_u32(l4, l4len, enb[i]))
+            return true;
+    }
+    for (i = 0; i < nmme; i++) {
+        if (memmem_u32(l4, l4len, mme[i]))
+            return true;
+    }
+    return false;
+}
+
+static int sctp_next_s1ap(const uint8_t *data, int len, int *state,
+        const uint8_t **payload, int *plen)
+{
+    const uint8_t *p;
+    int remain, off, step;
+
+    if (!data || len < 16 || !state || !payload || !plen)
+        return OGS_ERROR;
+    off = *state > 12 ? *state : 12;
+    p = data + off;
+    remain = len - off;
+
+    while (remain >= 4) {
+        uint8_t type = p[0];
+        uint8_t flags = p[1];
+        uint16_t chunk_len = (uint16_t)((p[2] << 8) | p[3]);
+        uint32_t ppid, ppid_le;
+
+        if (chunk_len < 4 || chunk_len > remain)
+            break;
+        if (type == 0 && chunk_len >= 16) {
+            ppid = ((uint32_t)p[12] << 24) | ((uint32_t)p[13] << 16) |
+                    ((uint32_t)p[14] << 8) | p[15];
+            ppid_le = (uint32_t)p[12] | ((uint32_t)p[13] << 8) |
+                    ((uint32_t)p[14] << 16) | ((uint32_t)p[15] << 24);
+            if ((ppid == 18 || ppid_le == 18) && (flags & 0x03) == 0x03) {
+                *payload = p + 16;
+                *plen = chunk_len - 16;
+                step = chunk_len + ((4 - (chunk_len & 3)) & 3);
+                *state = (step <= 0 || step > remain) ? len :
+                        (int)(p - data) + step;
+                if (*plen > 0)
+                    return OGS_OK;
+            }
+        }
+        step = chunk_len + ((4 - (chunk_len & 3)) & 3);
+        if (step <= 0 || step > remain)
+            break;
+        p += step;
+        remain -= step;
+    }
+    *state = len;
+    return OGS_ERROR;
+}
+
+/* ASN-decode complete S1AP PDUs; merge NAS extras' identities into evt. */
+static bool s1ap_asn_extract(const uint8_t *l4, int l4len, ptrace_event_t *evt)
+{
+    int state = 12;
+    const uint8_t *payload = NULL;
+    int plen = 0;
+    bool any = false;
+
+    while (sctp_next_s1ap(l4, l4len, &state, &payload, &plen) == OGS_OK) {
+        ptrace_event_t *extra[PTRACE_MAX_EVENTS_PER_PKT];
+        int nextra = 0;
+        ptrace_event_t base;
+
+        memset(extra, 0, sizeof(extra));
+        base = *evt;
+        if (ptrace_decode_s1ap(payload, plen, &base, extra, &nextra) ==
+                OGS_OK) {
+            merge_ids(&evt->ids, &base.ids);
+            if (base.message[0])
+                ogs_cpystrn(evt->message, base.message, sizeof(evt->message));
+            evt->protocol = PTRACE_PROTO_S1AP;
+            any = true;
+            while (nextra > 0) {
+                nextra--;
+                if (extra[nextra]) {
+                    merge_ids(&evt->ids, &extra[nextra]->ids);
+                    /* Prefer concrete NAS message name when cleartext. */
+                    if (extra[nextra]->message[0] &&
+                            strncmp(extra[nextra]->message, "NAS (ciphered)",
+                                    14) != 0)
+                        ogs_cpystrn(evt->message, extra[nextra]->message,
+                                sizeof(evt->message));
+                    ptrace_event_free(extra[nextra]);
+                }
+            }
+        } else {
+            while (nextra > 0) {
+                nextra--;
+                if (extra[nextra])
+                    ptrace_event_free(extra[nextra]);
+            }
+        }
+    }
+    return any;
+}
+
+static bool extract_s1ap(const uint8_t *l4, int l4len, ogs_time_t ts,
+        ptrace_role_e role, const char *src, const char *dst,
+        uint16_t sport, uint16_t dport, uint16_t raw_len,
+        const char *packet_ref, ptrace_id_event_t *out)
+{
+    ptrace_event_t evt;
+    bool nas_hit = false;
+    bool need_asn = false;
+
+    fill_base(&evt, ts, role, src, dst, sport, dport, raw_len, packet_ref);
+
+    /* Cleartext Attach/Identity/TAU — always try NAS scan first. */
+    if (ptrace_decode_nas_scan(l4, l4len, &evt) == OGS_OK &&
+            (evt.ids.imsi[0] || evt.ids.guti[0] || evt.ids.imei[0] ||
+             evt.ids.m_tmsi[0])) {
+        nas_hit = true;
+        need_asn = true; /* learn eNB/MME S1AP IDs from same frame */
+        if (!evt.message[0])
+            ogs_cpystrn(evt.message, "NAS Identity", sizeof(evt.message));
+    } else if (s1ap_keys_in_payload(l4, l4len)) {
+        /* Follow-up for a traced UE — ASN for message + NAS/IMEI/MSISDN. */
+        need_asn = true;
+    } else {
+        return false;
+    }
+
+    if (need_asn)
+        s1ap_asn_extract(l4, l4len, &evt);
+
+    if (!ptrace_ids_worth_indexing(&evt.ids) && !nas_hit)
+        return false;
+
+    if (!evt.message[0])
+        ogs_cpystrn(evt.message, "S1AP", sizeof(evt.message));
+    copy_to_id(&evt, out);
+    return true;
 }
 
 bool ptrace_identity_extract(const uint8_t *data, uint16_t len,
@@ -142,20 +377,10 @@ bool ptrace_identity_extract(const uint8_t *data, uint16_t len,
     } else if (ipproto == IPPROTO_SCTP && l4len >= 12) {
         sport = (uint16_t)((l4[0] << 8) | l4[1]);
         dport = (uint16_t)((l4[2] << 8) | l4[3]);
-        /* NAS byte-scan over whole SCTP datagram (covers fragmented chunks). */
         if (sport == PTRACE_PORT_SCTP_S1AP || dport == PTRACE_PORT_SCTP_S1AP ||
                 role == PTRACE_ROLE_S1MME) {
-            fill_base(&evt, ts, role, src_ip, dst_ip, sport, dport, len,
-                    packet_ref);
-            evt.protocol = PTRACE_PROTO_NAS;
-            if (ptrace_decode_nas_scan(l4, l4len, &evt) == OGS_OK &&
-                    ptrace_ids_worth_indexing(&evt.ids)) {
-                if (!evt.message[0])
-                    ogs_cpystrn(evt.message, "NAS Identity",
-                            sizeof(evt.message));
-                copy_to_id(&evt, out);
-                return true;
-            }
+            return extract_s1ap(l4, l4len, ts, role, src_ip, dst_ip,
+                    sport, dport, len, packet_ref, out);
         }
         return false;
     } else {
