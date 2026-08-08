@@ -33,21 +33,38 @@ typedef struct cap_arg_s {
 
 static cap_arg_t cap_args[PTRACE_MAX_IFACES + 1];
 
+static bool packet_is_signaling(const uint8_t *data, uint16_t len,
+        bool include_gtpu);
+static int apply_bpf(pcap_t *p);
+
 static void enqueue_packet(const uint8_t *data, uint16_t len,
         ogs_time_t ts, ptrace_role_e role, const char *iface)
 {
     ptrace_context_t *ctx = ptrace_self();
     ptrace_packet_t *pkt;
     char ref[PTRACE_MAX_REF_LEN];
+    static uint64_t drop_log_at;
 
     if (!data || !len || !capture_running)
         return;
     if (len > PTRACE_MAX_PACKET)
         len = PTRACE_MAX_PACKET;
 
+    /* Kernel BPF should already filter; this is a cheap safety net
+     * (esp. AF_PACKET) so user-plane floods never enter the pool. */
+    if (!packet_is_signaling(data, len, ctx->include_gtpu)) {
+        ctx->packets_drop++;
+        return;
+    }
+
     pkt = ptrace_packet_alloc();
     if (!pkt) {
-        ogs_warn("ptrace packet pool exhausted");
+        ctx->packets_drop++;
+        if (ctx->packets_drop >= drop_log_at) {
+            ogs_warn("ptrace packet pool exhausted (dropped=%llu)",
+                    (unsigned long long)ctx->packets_drop);
+            drop_log_at = ctx->packets_drop + 10000;
+        }
         return;
     }
 
@@ -64,9 +81,101 @@ static void enqueue_packet(const uint8_t *data, uint16_t len,
 
     if (ogs_queue_trypush(ctx->pkt_queue, pkt) != OGS_OK) {
         ptrace_packet_free(pkt);
+        ctx->packets_drop++;
         return;
     }
     ctx->packets_in++;
+}
+
+static const char *default_bpf(bool include_gtpu)
+{
+    /* S1AP + GTP-C + Diameter + PFCP; GTP-U optional (user plane flood). */
+    if (include_gtpu)
+        return "sctp port 36412 or udp port 2123 or udp port 2152 or "
+               "tcp port 3868 or udp port 3868 or udp port 8805";
+    return "sctp port 36412 or udp port 2123 or "
+           "tcp port 3868 or udp port 3868 or udp port 8805";
+}
+
+static int apply_bpf(pcap_t *p)
+{
+    ptrace_context_t *ctx = ptrace_self();
+    struct bpf_program fp;
+    const char *expr;
+
+    if (!p)
+        return OGS_ERROR;
+    expr = ctx->bpf[0] ? ctx->bpf : default_bpf(ctx->include_gtpu);
+    if (pcap_compile(p, &fp, expr, 1, PCAP_NETMASK_UNKNOWN) < 0) {
+        ogs_error("pcap_compile(%s): %s", expr, pcap_geterr(p));
+        return OGS_ERROR;
+    }
+    if (pcap_setfilter(p, &fp) < 0) {
+        ogs_error("pcap_setfilter: %s", pcap_geterr(p));
+        pcap_freecode(&fp);
+        return OGS_ERROR;
+    }
+    pcap_freecode(&fp);
+    ogs_info("ptrace BPF filter: %s", expr);
+    return OGS_OK;
+}
+
+/* Cheap L3/L4 check used when BPF is absent (AF_PACKET). */
+static bool packet_is_signaling(const uint8_t *data, uint16_t len,
+        bool include_gtpu)
+{
+    uint16_t ethertype;
+    const uint8_t *p;
+    int remain;
+    uint8_t ipproto;
+    uint16_t sport, dport;
+    int ihl;
+
+    if (!data || len < 14)
+        return false;
+    ethertype = (uint16_t)((data[12] << 8) | data[13]);
+    p = data + 14;
+    remain = len - 14;
+    if (ethertype == 0x8100 && remain >= 4) {
+        ethertype = (uint16_t)((p[2] << 8) | p[3]);
+        p += 4;
+        remain -= 4;
+    }
+    if (ethertype == 0x0800 && remain >= 20) {
+        ihl = (p[0] & 0x0f) * 4;
+        if (ihl < 20 || remain < ihl)
+            return false;
+        if ((p[6] & 0x1f) || p[7]) /* fragmented */
+            return false;
+        ipproto = p[9];
+        p += ihl;
+        remain -= ihl;
+    } else if (ethertype == 0x86dd && remain >= 40) {
+        ipproto = p[6];
+        p += 40;
+        remain -= 40;
+    } else {
+        return false;
+    }
+    if (remain < 4)
+        return false;
+    if (ipproto == 132) /* SCTP — treat as signaling (S1AP) */
+        return true;
+    if (ipproto != 17 && ipproto != 6) /* UDP/TCP */
+        return false;
+    sport = (uint16_t)((p[0] << 8) | p[1]);
+    dport = (uint16_t)((p[2] << 8) | p[3]);
+    if (sport == 2123 || dport == 2123)
+        return true;
+    if (sport == 3868 || dport == 3868)
+        return true;
+    if (sport == 8805 || dport == 8805)
+        return true;
+    if (include_gtpu && (sport == 2152 || dport == 2152))
+        return true;
+    if (sport == 36412 || dport == 36412)
+        return true;
+    return false;
 }
 
 static void pcap_dispatch_cb(u_char *user, const struct pcap_pkthdr *h,
@@ -102,6 +211,10 @@ static void pcap_thread(void *data)
         p = pcap_open_live(arg->iface, PTRACE_MAX_PACKET, 1, 100, errbuf);
         if (!p) {
             ogs_error("pcap_open_live(%s): %s", arg->iface, errbuf);
+            return;
+        }
+        if (apply_bpf(p) != OGS_OK) {
+            pcap_close(p);
             return;
         }
         ogs_info("ptrace live capture on %s role=%s",

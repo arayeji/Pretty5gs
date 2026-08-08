@@ -21,6 +21,8 @@ typedef struct ptrace_context_s {
     int workers;
     int num_ifaces;
     ptrace_iface_t ifaces[PTRACE_MAX_IFACES];
+    bool include_gtpu;          /* capture GTP-U user plane (very heavy) */
+    char bpf[256];              /* optional override; empty = auto */
 
     int cache_minutes;
     char pcap_ring_path[PTRACE_MAX_PATH_LEN];
@@ -40,6 +42,7 @@ typedef struct ptrace_context_s {
     uint64_t next_event_id;
     uint64_t next_ue_id;
     uint64_t packets_in;
+    uint64_t packets_drop;
     uint64_t events_out;
 } ptrace_context_t;
 

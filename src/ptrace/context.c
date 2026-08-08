@@ -9,8 +9,8 @@ int __ptrace_log_domain;
 static ptrace_context_t self;
 static bool initialized = false;
 
-#define PTRACE_PKT_POOL_SIZE    4096
-#define PTRACE_EVT_POOL_SIZE    8192
+#define PTRACE_PKT_POOL_SIZE    16384
+#define PTRACE_EVT_POOL_SIZE    32768
 
 static OGS_POOL(pkt_pool, ptrace_packet_t);
 static OGS_POOL(evt_pool, ptrace_event_t);
@@ -132,6 +132,15 @@ int ptrace_context_parse_config(void)
                                 if (self.workers > PTRACE_MAX_WORKERS)
                                     self.workers = PTRACE_MAX_WORKERS;
                             }
+                        } else if (!strcmp(ck, "include_gtpu")) {
+                            const char *v = ogs_yaml_iter_value(&cap_iter);
+                            if (v && (!strcmp(v, "true") || !strcmp(v, "yes") ||
+                                    !strcmp(v, "1")))
+                                self.include_gtpu = true;
+                        } else if (!strcmp(ck, "bpf")) {
+                            const char *v = ogs_yaml_iter_value(&cap_iter);
+                            if (v)
+                                ogs_cpystrn(self.bpf, v, sizeof(self.bpf));
                         } else if (!strcmp(ck, "interface")) {
                             ogs_yaml_iter_t iface_array, iface_iter;
                             ogs_yaml_iter_recurse(&cap_iter, &iface_array);

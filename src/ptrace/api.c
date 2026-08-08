@@ -307,8 +307,10 @@ static _MHD_Result access_handler(void *cls,
     if (!strcmp(method, "GET") && !strcmp(url, "/healthz")) {
         char buf[256];
         snprintf(buf, sizeof(buf),
-                "{\"status\":\"ok\",\"packets\":%llu,\"events\":%llu}\n",
+                "{\"status\":\"ok\",\"packets\":%llu,\"dropped\":%llu,"
+                "\"events\":%llu}\n",
                 (unsigned long long)ctx->packets_in,
+                (unsigned long long)ctx->packets_drop,
                 (unsigned long long)ctx->events_out);
         return send_json(conn, MHD_HTTP_OK, buf);
     }
