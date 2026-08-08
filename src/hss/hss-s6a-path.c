@@ -1166,6 +1166,9 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
 
         hss_imsi_info(imsi_bcd, "S6a-ULR",
                 "Rx Update-Location-Request (User-Location)");
+        /* Reliable path: ogs_warn is not subject to hss_imsi_log rate limits */
+        if (ogs_trace_filter_match(imsi_bcd))
+            ogs_warn("[%s] S6a-ULR Rx Update-Location-Request", imsi_bcd);
     } else {
         ogs_error("No User-Name AVP found");
         result_code = OGS_DIAM_MISSING_AVP;
@@ -1414,29 +1417,46 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
             goto out;
         }
 
-        if (!(hdr->avp_value->u32 & OGS_DIAM_S6A_ULR_SKIP_SUBSCRIBER_DATA)) {
-            /* Set the Subscription Data */
-            ret = fd_msg_avp_new(ogs_diam_s6a_subscription_data, 0, &avp);
-            if (ret != 0) {
-                ogs_error("Failed to create Subscription-Data AVP");
-                error_occurred = 1;
-                goto out;
-            }
+        {
+            uint32_t ulr_flags = hdr->avp_value->u32;
+            bool skip_sub = !!(ulr_flags &
+                    OGS_DIAM_S6A_ULR_SKIP_SUBSCRIBER_DATA);
 
-            rv = hss_s6a_avp_add_subscription_data(&subscription_data,
-                avp, OGS_DIAM_S6A_SUBDATA_ALL);
-            if (rv != OGS_OK) {
-                ogs_error("Failed to add subscription data");
-                result_code = OGS_DIAM_S6A_ERROR_UNKNOWN_EPS_SUBSCRIPTION;
-                error_occurred = 1;
-                goto out;
-            }
+            if (ogs_trace_filter_match(imsi_bcd))
+                ogs_warn("[%s] S6a-ULR flags=0x%x skip_subscriber_data=%d",
+                        imsi_bcd, ulr_flags, skip_sub ? 1 : 0);
 
-            ret = fd_msg_avp_add(ans, MSG_BRW_LAST_CHILD, avp);
-            if (ret != 0) {
-                ogs_error("Failed to add Subscription-Data AVP");
-                error_occurred = 1;
-                goto out;
+            if (!skip_sub) {
+                /* Set the Subscription Data */
+                ret = fd_msg_avp_new(ogs_diam_s6a_subscription_data, 0, &avp);
+                if (ret != 0) {
+                    ogs_error("Failed to create Subscription-Data AVP");
+                    error_occurred = 1;
+                    goto out;
+                }
+
+                rv = hss_s6a_avp_add_subscription_data(&subscription_data,
+                    avp, OGS_DIAM_S6A_SUBDATA_ALL);
+                if (rv != OGS_OK) {
+                    ogs_error("Failed to add subscription data");
+                    result_code = OGS_DIAM_S6A_ERROR_UNKNOWN_EPS_SUBSCRIPTION;
+                    error_occurred = 1;
+                    goto out;
+                }
+
+                ret = fd_msg_avp_add(ans, MSG_BRW_LAST_CHILD, avp);
+                if (ret != 0) {
+                    ogs_error("Failed to add Subscription-Data AVP");
+                    error_occurred = 1;
+                    goto out;
+                }
+
+                if (ogs_trace_filter_match(imsi_bcd))
+                    ogs_warn("[%s] S6a-ULA includes Subscription-Data",
+                            imsi_bcd);
+            } else if (ogs_trace_filter_match(imsi_bcd)) {
+                ogs_warn("[%s] S6a-ULA omits Subscription-Data "
+                        "(MME set Skip-Subscriber-Data)", imsi_bcd);
             }
         }
     }
@@ -1662,6 +1682,8 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
         ogs_debug("Tx Update-Location-Answer");
         hss_imsi_info(imsi_bcd, "S6a-ULR",
                 "Tx Update-Location-Answer (User-Location)");
+        if (ogs_trace_filter_match(imsi_bcd))
+            ogs_warn("[%s] S6a-ULR Tx Update-Location-Answer", imsi_bcd);
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
