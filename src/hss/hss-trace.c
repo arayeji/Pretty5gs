@@ -43,16 +43,28 @@ void hss_imsi_log(
     char prefix[OGS_TRACE_PREFIX_BUFSIZE];
     char msg[OGS_HUGE_LEN];
     const char *id = (imsi_bcd && imsi_bcd[0]) ? imsi_bcd : "-";
+    bool filter_hit;
 
     ogs_assert(fmt);
 
     /* Per-IMSI trace lines are opt-in: emit only for filter-matched
      * subscribers or a debug-enabled domain. */
-    if (!ogs_trace_filter_match(id) &&
+    filter_hit = ogs_trace_filter_match(id);
+    if (!filter_hit &&
             !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
         return;
 
     if (level != OGS_LOG_DEBUG && !ogs_log_guard())
+        return;
+
+    /*
+     * Filter-matched DEBUG is capped by the process-wide trace budget
+     * (same as MME). Peek before formatting so AIR vector dumps cannot
+     * starve later ULR/ULA procedure lines in the same second.
+     */
+    if (level == OGS_LOG_DEBUG &&
+            ogs_log_get_domain_level(OGS_LOG_DOMAIN) < OGS_LOG_DEBUG &&
+            !ogs_log_trace_budget(false))
         return;
 
     hss_trace_set(id, proc);
@@ -62,6 +74,11 @@ void hss_imsi_log(
     ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
 
+    /*
+     * Procedure boundary lines use INFO so they print when the domain is
+     * at info/warn and the IMSI filter matches, without relying on the
+     * DEBUG trace-budget path that freeDiameter AIR dumps can exhaust.
+     */
     ogs_log_printf(level, OGS_LOG_DOMAIN,
             0, __FILE__, __LINE__, OGS_FUNC, 0, "%s %s", prefix, msg);
 }

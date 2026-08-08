@@ -172,6 +172,30 @@ uint8_t mme_s6a_handle_ula(
     }
     mme_ue->num_of_session = num_of_session;
 
+    if (ogs_trace_filter_match(mme_ue->imsi_bcd)) {
+        int si;
+
+        for (si = 0; si < slice_data->num_of_session &&
+                si < OGS_MAX_NUM_OF_SESS; si++) {
+            ogs_session_t *hs = &slice_data->session[si];
+
+            if (hs->smf_ip.ipv4 || hs->smf_ip.ipv6) {
+                char ipstr[OGS_ADDRSTRLEN] = "-";
+
+                if (hs->smf_ip.ipv4)
+                    OGS_INET_NTOP(&hs->smf_ip.addr, ipstr);
+                mme_ue_info(mme_ue, NULL, "s6a", hs->name,
+                        "ULA APN[%s] HSS static PGW %s alloc=%u",
+                        hs->name ? hs->name : "-", ipstr,
+                        hs->pdn_gw_allocation_type);
+            } else {
+                mme_ue_info(mme_ue, NULL, "s6a", hs->name,
+                        "ULA APN[%s] no HSS static PGW (MIP6 absent)",
+                        hs->name ? hs->name : "-");
+            }
+        }
+    }
+
     mme_ue->context_identifier = slice_data->context_identifier;
 
     if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {

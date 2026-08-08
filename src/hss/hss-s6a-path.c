@@ -362,7 +362,7 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
-    hss_imsi_debug(imsi_bcd, "S6a-AIR", "Rx Authentication-Information-Request");
+    hss_imsi_info(imsi_bcd, "S6a-AIR", "Rx Authentication-Information-Request");
 
     /* Get authentication info from database */
     rv = hss_db_auth_info(imsi_bcd, &auth_info);
@@ -563,7 +563,7 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Authentication-Information-Answer");
-        hss_imsi_debug(imsi_bcd, "S6a-AIR",
+        hss_imsi_info(imsi_bcd, "S6a-AIR",
                 "Tx Authentication-Information-Answer");
 
         /* Add to stats */
@@ -1012,6 +1012,28 @@ static int hss_s6a_avp_add_subscription_data(
                 ret = fd_msg_avp_add(apn_configuration,
                         MSG_BRW_LAST_CHILD, pdn_gw_allocation_type);
                 ogs_assert(ret == 0);
+
+                if (subscription_data->imsi) {
+                    if (session->smf_ip.ipv4) {
+                        char ipstr[OGS_ADDRSTRLEN];
+
+                        OGS_INET_NTOP(&session->smf_ip.addr, ipstr);
+                        hss_imsi_info(subscription_data->imsi, "S6a-ULA",
+                                "APN[%s] static PGW/SMF %s "
+                                "(MIP6 + PDN-GW-Allocation-Type=STATIC)",
+                                session->name ? session->name : "-", ipstr);
+                    } else {
+                        hss_imsi_info(subscription_data->imsi, "S6a-ULA",
+                                "APN[%s] static PGW/SMF IPv6 "
+                                "(MIP6 + PDN-GW-Allocation-Type=STATIC)",
+                                session->name ? session->name : "-");
+                    }
+                }
+            } else if (subscription_data->imsi) {
+                hss_imsi_info(subscription_data->imsi, "S6a-ULA",
+                        "APN[%s] no static SMF/PGW in subscription "
+                        "(set slice[].session[].smf.ipv4 in MongoDB/WebUI)",
+                        session->name ? session->name : "-");
             }
 
             /* Set VPLMN-Dynamic-Address-Allowed */
@@ -1141,7 +1163,7 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
             goto out;
         }
 
-        hss_imsi_debug(imsi_bcd, "S6a-ULR", "Rx Update-Location-Request");
+        hss_imsi_info(imsi_bcd, "S6a-ULR", "Rx Update-Location-Request");
     } else {
         ogs_error("No User-Name AVP found");
         result_code = OGS_DIAM_MISSING_AVP;
@@ -1636,7 +1658,7 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Update-Location-Answer");
-        hss_imsi_debug(imsi_bcd, "S6a-ULR", "Tx Update-Location-Answer");
+        hss_imsi_info(imsi_bcd, "S6a-ULR", "Tx Update-Location-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -1772,7 +1794,7 @@ static int hss_ogs_diam_s6a_pur_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
-    hss_imsi_debug(imsi_bcd, "S6a-PUR", "Rx Purge-UE-Request");
+    hss_imsi_info(imsi_bcd, "S6a-PUR", "Rx Purge-UE-Request");
 
     /* Get subscription data from database */
     rv = hss_db_subscription_data(imsi_bcd, &subscription_data);
@@ -1956,7 +1978,7 @@ static int hss_ogs_diam_s6a_pur_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Purge-UE-Answer");
-        hss_imsi_debug(imsi_bcd, "S6a-PUR", "Tx Purge-UE-Answer");
+        hss_imsi_info(imsi_bcd, "S6a-PUR", "Tx Purge-UE-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(

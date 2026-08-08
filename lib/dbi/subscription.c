@@ -723,8 +723,10 @@ int ogs_dbi_subscription_data(char *supi,
                                                 session->ambr.uplink *= 1000;
                                         }
                                     }
-                                } else if (!strcmp(child4_key,
-                                            OGS_SMF_STRING) &&
+                                } else if ((!strcmp(child4_key,
+                                                OGS_SMF_STRING) ||
+                                            !strcmp(child4_key,
+                                                OGS_PGW_STRING)) &&
                                     BSON_ITER_HOLDS_DOCUMENT(&child4_iter)) {
                                     bson_iter_recurse(
                                             &child4_iter, &child5_iter);
@@ -738,11 +740,20 @@ int ogs_dbi_subscription_data(char *supi,
                                             ogs_ipsubnet_t ipsub;
                                             const char *v = bson_iter_utf8(
                                                     &child5_iter, &length);
+                                            if (!v || !v[0])
+                                                continue;
                                             rv = ogs_ipsubnet(&ipsub, v, NULL);
                                             if (rv == OGS_OK) {
                                                 session->smf_ip.ipv4 = 1;
                                                 session->smf_ip.addr =
                                                     ipsub.sub[0];
+                                            } else {
+                                                ogs_warn("session[%s] %s.ipv4 "
+                                                        "'%s' invalid; "
+                                                        "MIP6 not sent in ULA",
+                                                        session->name ?
+                                                            session->name : "-",
+                                                        child4_key, v);
                                             }
                                         } else if (!strcmp(child5_key,
                                                     OGS_IPV6_STRING) &&
@@ -751,13 +762,52 @@ int ogs_dbi_subscription_data(char *supi,
                                             ogs_ipsubnet_t ipsub;
                                             const char *v = bson_iter_utf8(
                                                     &child5_iter, &length);
+                                            if (!v || !v[0])
+                                                continue;
                                             rv = ogs_ipsubnet(&ipsub, v, NULL);
                                             if (rv == OGS_OK) {
                                                 session->smf_ip.ipv6 = 1;
                                                 memcpy(session->smf_ip.addr6,
                                                         ipsub.sub,
                                                         sizeof(ipsub.sub));
+                                            } else {
+                                                ogs_warn("session[%s] %s.ipv6 "
+                                                        "'%s' invalid; "
+                                                        "MIP6 not sent in ULA",
+                                                        session->name ?
+                                                            session->name : "-",
+                                                        child4_key, v);
                                             }
+                                        }
+                                    }
+                                } else if ((!strcmp(child4_key,
+                                                OGS_SMF_STRING) ||
+                                            !strcmp(child4_key,
+                                                OGS_PGW_STRING)) &&
+                                    BSON_ITER_HOLDS_UTF8(&child4_iter)) {
+                                    /* Allow "smf":"10.1.2.3" (bare string). */
+                                    ogs_ipsubnet_t ipsub;
+                                    const char *v = bson_iter_utf8(
+                                            &child4_iter, &length);
+                                    if (v && v[0]) {
+                                        rv = ogs_ipsubnet(&ipsub, v, NULL);
+                                        if (rv == OGS_OK &&
+                                                ipsub.family == AF_INET) {
+                                            session->smf_ip.ipv4 = 1;
+                                            session->smf_ip.addr =
+                                                ipsub.sub[0];
+                                        } else if (rv == OGS_OK &&
+                                                ipsub.family == AF_INET6) {
+                                            session->smf_ip.ipv6 = 1;
+                                            memcpy(session->smf_ip.addr6,
+                                                    ipsub.sub,
+                                                    sizeof(ipsub.sub));
+                                        } else {
+                                            ogs_warn("session[%s] %s '%s' "
+                                                    "invalid; MIP6 not sent",
+                                                    session->name ?
+                                                        session->name : "-",
+                                                    child4_key, v);
                                         }
                                     }
                                 } else if (!strcmp(child4_key, OGS_UE_STRING) &&
