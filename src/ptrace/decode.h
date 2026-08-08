@@ -16,6 +16,7 @@ extern "C" {
 int ptrace_decode_packet(ptrace_packet_t *pkt,
         ptrace_event_t **out, int *nout);
 
+void ptrace_decode_s1ap_init(void);
 int ptrace_decode_s1ap(const uint8_t *data, int len,
         ptrace_event_t *base, ptrace_event_t **extra, int *nextra);
 int ptrace_decode_nas(const uint8_t *data, int len, ptrace_event_t *evt);

@@ -10,6 +10,14 @@
 
 #include "ogs-s1ap.h"
 
+/* ASN.1 codec is not safe across decode workers. */
+static ogs_thread_mutex_t s1ap_lock;
+
+void ptrace_decode_s1ap_init(void)
+{
+    ogs_thread_mutex_init(&s1ap_lock);
+}
+
 static const char *pdu_proc_name(const ogs_s1ap_message_t *msg)
 {
     uint8_t code;
@@ -350,10 +358,13 @@ int ptrace_decode_s1ap(const uint8_t *data, int len,
     ogs_pkbuf_put_data(pkbuf, (uint8_t *)data, len);
 
     memset(&message, 0, sizeof(message));
+    ogs_thread_mutex_lock(&s1ap_lock);
     rv = ogs_s1ap_decode(&message, pkbuf);
     ogs_pkbuf_free(pkbuf);
-    if (rv != OGS_OK)
+    if (rv != OGS_OK) {
+        ogs_thread_mutex_unlock(&s1ap_lock);
         return OGS_ERROR;
+    }
 
     base->protocol = PTRACE_PROTO_S1AP;
     name = pdu_proc_name(&message);
@@ -419,5 +430,6 @@ int ptrace_decode_s1ap(const uint8_t *data, int len,
             base->ids.imsi, base->ids.msisdn, base->ids.imei, base->ids.guti);
 
     ogs_s1ap_free(&message);
+    ogs_thread_mutex_unlock(&s1ap_lock);
     return OGS_OK;
 }

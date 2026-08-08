@@ -14,6 +14,8 @@
 #include "api.h"
 #include "ptrace-sm.h"
 
+#include "ogs-s1ap.h"
+
 static ogs_thread_t *main_thread;
 static ogs_thread_t *worker_threads[PTRACE_MAX_WORKERS];
 static int num_workers;
@@ -103,6 +105,11 @@ int ptrace_initialize(void)
             ogs_app()->logger.domain, ogs_app()->logger.level);
     if (rv != OGS_OK)
         return rv;
+
+    /* Required before any ogs_s1ap_decode() — otherwise decode-fail
+     * logging aborts on an uninitialized S1AP log domain. */
+    ogs_log_install_domain(&__ogs_s1ap_domain, "s1ap", ogs_core()->log.level);
+    ptrace_decode_s1ap_init();
 
     rv = ptrace_context_parse_config();
     if (rv != OGS_OK)
