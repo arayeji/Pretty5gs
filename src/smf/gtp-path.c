@@ -321,6 +321,18 @@ int smf_gtp1_send_create_pdp_context_response(
         return OGS_ERROR;
     }
 
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
+
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -352,6 +364,18 @@ int smf_gtp1_send_delete_pdp_context_response(
         ogs_error("ogs_gtp1_xact_update_tx() failed");
         return OGS_ERROR;
     }
+
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
 
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
@@ -394,6 +418,18 @@ int smf_gtp1_send_update_pdp_context_request(
         return OGS_ERROR;
     }
 
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
+
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -433,6 +469,18 @@ int smf_gtp1_send_update_pdp_context_response(
         return OGS_ERROR;
     }
 
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
+
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -464,6 +512,18 @@ int smf_gtp2_send_create_session_response(
         ogs_error("ogs_gtp_xact_update_tx() failed");
         return OGS_ERROR;
     }
+
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
 
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
@@ -510,6 +570,18 @@ int smf_gtp2_send_modify_bearer_response(
         return OGS_ERROR;
     }
 
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
+
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -541,6 +613,18 @@ int smf_gtp2_send_delete_session_response(
         ogs_error("ogs_gtp_xact_update_tx() failed");
         return OGS_ERROR;
     }
+
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
 
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
@@ -586,6 +670,18 @@ int smf_gtp2_send_delete_bearer_request(
         return OGS_ERROR;
     }
     xact->local_teid = sess->smf_n4_teid;
+
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
 
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);

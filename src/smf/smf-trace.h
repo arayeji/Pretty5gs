@@ -33,6 +33,11 @@ void ogs_smf_trace_set(
 void ogs_smf_trace_set_from_gtp2_create_session_request(
         ogs_gtp2_create_session_request_t *req, const char *proc);
 
+void smf_trace_bind_gtp(ogs_gtp_xact_t *xact, smf_ue_t *smf_ue);
+void smf_trace_bind_pfcp(ogs_pfcp_xact_t *xact, smf_sess_t *sess);
+void smf_trace_pfcp_rx(ogs_pfcp_xact_t *xact, smf_sess_t *sess,
+        const void *data, size_t len);
+
 /*
  * Enriched per-UE log: full ogs_trace_format_prefix on one line.
  * DEBUG is emitted when logger level is debug or trace_imsi matches.

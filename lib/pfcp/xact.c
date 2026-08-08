@@ -30,6 +30,24 @@ typedef enum {
     PFCP_XACT_FINAL_STAGE,
 } ogs_pfcp_xact_stage_t;
 
+void ogs_pfcp_xact_set_imsi(ogs_pfcp_xact_t *xact, const char *imsi_bcd)
+{
+    if (!xact || !imsi_bcd || !imsi_bcd[0])
+        return;
+    ogs_cpystrn(xact->imsi_bcd, imsi_bcd, sizeof(xact->imsi_bcd));
+}
+
+static void pfcp_xact_trace_tx(ogs_pfcp_xact_t *xact, ogs_pkbuf_t *pkbuf)
+{
+    if (!xact || !pkbuf || !pkbuf->data || !pkbuf->len)
+        return;
+    if (xact->imsi_bcd[0])
+        ogs_trace_packet(xact->imsi_bcd, "pfcp", "tx",
+                pkbuf->data, pkbuf->len);
+    else
+        ogs_trace_packet_ctx("pfcp", "tx", pkbuf->data, pkbuf->len);
+}
+
 /*
  * Same storage model as lib/gtp/xact.c: process-global pool on the main
  * / IO thread (shared by initialize + nf_main), TLS pool on SMP workers.
@@ -496,6 +514,7 @@ static int ogs_pfcp_xact_update_rx(ogs_pfcp_xact_t *xact, uint8_t type)
                             xact->step, type,
                             ogs_sockaddr_to_string_static(
                                 xact->node->addr_list));
+                    pfcp_xact_trace_tx(xact, pkbuf);
                     ogs_expect(OGS_OK == ogs_pfcp_sendto(xact->node, pkbuf));
                 } else {
                     ogs_warn("[%d] %s Request Duplicated. Discard!"
@@ -587,6 +606,7 @@ static int ogs_pfcp_xact_update_rx(ogs_pfcp_xact_t *xact, uint8_t type)
                             xact->step, type,
                             ogs_sockaddr_to_string_static(
                                 xact->node->addr_list));
+                    pfcp_xact_trace_tx(xact, pkbuf);
                     ogs_expect(OGS_OK == ogs_pfcp_sendto(xact->node, pkbuf));
                 } else {
                     ogs_warn("[%d] %s Request Duplicated. Discard!"
@@ -667,6 +687,12 @@ int ogs_pfcp_xact_commit(ogs_pfcp_xact_t *xact)
 
     ogs_assert(xact);
     ogs_assert(xact->node);
+
+    if (!xact->imsi_bcd[0]) {
+        const ogs_trace_ctx_t *ctx = ogs_trace_get();
+        if (ctx && ctx->imsi[0])
+            ogs_cpystrn(xact->imsi_bcd, ctx->imsi, sizeof(xact->imsi_bcd));
+    }
 
     ogs_debug("[%d] %s Commit  peer %s",
             xact->xid,
@@ -761,6 +787,7 @@ int ogs_pfcp_xact_commit(ogs_pfcp_xact_t *xact)
     pkbuf = xact->seq[xact->step-1].pkbuf;
     ogs_assert(pkbuf);
 
+    pfcp_xact_trace_tx(xact, pkbuf);
     ogs_expect(OGS_OK == ogs_pfcp_sendto(xact->node, pkbuf));
 
     return OGS_OK;
@@ -864,6 +891,7 @@ static void response_timeout(void *data)
         pkbuf = xact->seq[xact->step-1].pkbuf;
         ogs_assert(pkbuf);
 
+        pfcp_xact_trace_tx(xact, pkbuf);
         ogs_expect(OGS_OK == ogs_pfcp_sendto(xact->node, pkbuf));
     } else {
         ogs_warn("[%d] %s No Reponse. Give up! "

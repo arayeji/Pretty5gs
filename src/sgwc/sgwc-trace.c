@@ -76,6 +76,41 @@ void ogs_sgwc_trace_set(
         ogs_trace_packet_on_imsi(ctx.imsi);
 }
 
+void sgwc_trace_bind_gtp(ogs_gtp_xact_t *xact, sgwc_ue_t *sgwc_ue)
+{
+    if (!xact || !sgwc_ue || !sgwc_ue->imsi_bcd[0])
+        return;
+    ogs_gtp_xact_set_imsi(xact, sgwc_ue->imsi_bcd);
+}
+
+void sgwc_trace_bind_pfcp(ogs_pfcp_xact_t *xact, sgwc_sess_t *sess)
+{
+    sgwc_ue_t *sgwc_ue;
+
+    if (!xact || !sess)
+        return;
+    sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+    if (!sgwc_ue || !sgwc_ue->imsi_bcd[0])
+        return;
+    ogs_pfcp_xact_set_imsi(xact, sgwc_ue->imsi_bcd);
+}
+
+void sgwc_trace_pfcp_rx(ogs_pfcp_xact_t *xact, sgwc_sess_t *sess,
+        const void *data, size_t len)
+{
+    sgwc_ue_t *sgwc_ue;
+
+    if (!sess || !data || !len)
+        return;
+    sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+    if (!sgwc_ue || !sgwc_ue->imsi_bcd[0])
+        return;
+    if (xact)
+        ogs_pfcp_xact_set_imsi(xact, sgwc_ue->imsi_bcd);
+    ogs_trace_packet(sgwc_ue->imsi_bcd, "pfcp", "rx", data, len);
+    ogs_trace_packet_bind_rx(NULL, NULL, 0);
+}
+
 void sgwc_ue_log(
         sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess,
         const char *proc, const char *apn, int level, const char *fmt, ...)

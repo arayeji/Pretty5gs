@@ -22,6 +22,7 @@
 #include "gn-handler.h"
 #include "metrics.h"
 #include "sgwc-workers.h"
+#include "sgwc-trace.h"
 
 static void pfcp_restoration(ogs_pfcp_node_t *node);
 static void node_timeout(ogs_pfcp_xact_t *xact, void *data);
@@ -234,6 +235,9 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
             if (sess_id >= OGS_MIN_POOL_ID && sess_id <= OGS_MAX_POOL_ID)
                 sess = sgwc_sess_find_by_id(sess_id);
         }
+
+        if (sess && e->pkbuf)
+            sgwc_trace_pfcp_rx(xact, sess, e->pkbuf->data, e->pkbuf->len);
 
         switch (message->h.type) {
         case OGS_PFCP_HEARTBEAT_REQUEST_TYPE:

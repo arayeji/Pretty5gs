@@ -212,6 +212,9 @@ void sgwc_s5c_handle_create_session_response(
     ogs_assert(s5c_xact);
     s11_xact = ogs_gtp_xact_find_by_id(s5c_xact->assoc_xact_id);
 
+    sgwc_trace_bind_gtp(s5c_xact, sgwc_ue);
+
+
     rv = ogs_gtp_xact_commit(s5c_xact);
     ogs_expect(rv == OGS_OK);
 
@@ -567,6 +570,9 @@ void sgwc_s5c_handle_modify_bearer_response(
     s11_xact = ogs_gtp_xact_find_by_id(s5c_xact->assoc_xact_id);
     modify_action = s5c_xact->modify_action;
 
+    sgwc_trace_bind_gtp(s5c_xact, sgwc_ue);
+
+
     rv = ogs_gtp_xact_commit(s5c_xact);
     ogs_expect(rv == OGS_OK);
 
@@ -716,6 +722,9 @@ void sgwc_s5c_handle_modify_bearer_response(
             return;
         }
 
+        sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
+
         rv = ogs_gtp_xact_commit(s11_xact);
         ogs_expect(rv == OGS_OK);
         }
@@ -746,6 +755,9 @@ void sgwc_s5c_handle_delete_session_response(
      ********************/
     ogs_assert(s5c_xact);
     s11_xact = ogs_gtp_xact_find_by_id(s5c_xact->assoc_xact_id);
+
+    sgwc_trace_bind_gtp(s5c_xact, sgwc_ue);
+
 
     rv = ogs_gtp_xact_commit(s5c_xact);
     ogs_expect(rv == OGS_OK);
@@ -1094,6 +1106,9 @@ void sgwc_s5c_handle_update_bearer_request(
     }
     s11_xact->local_teid = sgwc_ue->sgw_s11_teid;
 
+    sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
+
     rv = ogs_gtp_xact_commit(s11_xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1280,6 +1295,9 @@ void sgwc_s5c_handle_delete_bearer_request(
     }
     s11_xact->local_teid = sgwc_ue->sgw_s11_teid;
 
+    sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
+
     rv = ogs_gtp_xact_commit(s11_xact);
     ogs_expect(rv == OGS_OK);
 }
@@ -1306,6 +1324,9 @@ void sgwc_s5c_handle_bearer_resource_failure_indication(
      ********************/
     ogs_assert(s5c_xact);
     s11_xact = ogs_gtp_xact_find_by_id(s5c_xact->assoc_xact_id);
+
+    sgwc_trace_bind_gtp(s5c_xact, sgwc_ue);
+
 
     rv = ogs_gtp_xact_commit(s5c_xact);
     ogs_expect(rv == OGS_OK);

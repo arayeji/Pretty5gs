@@ -25,6 +25,7 @@
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __sgwc_log_domain
 #include "sgwc-workers.h"
+#include "sgwc-trace.h"
 #include "event.h"
 
 /*
@@ -1133,6 +1134,11 @@ int sgwc_gtp_send_s5c_delete_session_request(sgwc_sess_t *sess)
     }
     xact->local_teid = sess->sgw_s5c_teid;
 
+    {
+        sgwc_ue_t *_tue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        sgwc_trace_bind_gtp(xact, _tue);
+    }
+
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1192,6 +1198,9 @@ int sgwc_gtp_send_network_delete_session(
         return OGS_ERROR;
     }
     xact->local_teid = sgwc_ue->sgw_s11_teid;
+
+    sgwc_trace_bind_gtp(xact, sgwc_ue);
+
 
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
@@ -1321,6 +1330,9 @@ int sgwc_gtp_send_delete_bearer_request_to_mme(
                      sess->session.name ? sess->session.name : "-",
              s5c_xact_id == OGS_INVALID_POOL_ID ? "yes" : "no");
 
+    sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
+
     rv = ogs_gtp_xact_commit(s11_xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1388,6 +1400,9 @@ int sgwc_gtp_send_create_pdp_context_response(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_gtp(gn_xact, sgwc_ue);
+
+
     rv = ogs_gtp_xact_commit(gn_xact);
     ogs_expect(rv == OGS_OK);
     return rv;
@@ -1422,6 +1437,9 @@ int sgwc_gtp_send_delete_pdp_context_response(
         ogs_error("ogs_gtp1_xact_update_tx() failed");
         return OGS_ERROR;
     }
+
+    sgwc_trace_bind_gtp(gn_xact, sgwc_ue);
+
 
     rv = ogs_gtp_xact_commit(gn_xact);
     ogs_expect(rv == OGS_OK);
@@ -1521,6 +1539,9 @@ int sgwc_gtp_send_create_session_response(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_gtp(xact, sgwc_ue);
+
+
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1573,6 +1594,9 @@ int sgwc_gtp_send_downlink_data_notification(
         return OGS_ERROR;
     }
     gtp_xact->local_teid = sgwc_ue->sgw_s11_teid;
+
+    sgwc_trace_bind_gtp(gtp_xact, sgwc_ue);
+
 
     rv = ogs_gtp_xact_commit(gtp_xact);
     ogs_expect(rv == OGS_OK);

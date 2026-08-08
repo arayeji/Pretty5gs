@@ -30,6 +30,12 @@ void ogs_sgwc_trace_set(
         sgwc_ue_t *sgwc_ue, sgwc_sess_t *sess,
         const char *apn, const char *proc);
 
+/* Bind IMSI onto GTP/PFCP xacts for PACKET dumps (not thread-local). */
+void sgwc_trace_bind_gtp(ogs_gtp_xact_t *xact, sgwc_ue_t *sgwc_ue);
+void sgwc_trace_bind_pfcp(ogs_pfcp_xact_t *xact, sgwc_sess_t *sess);
+void sgwc_trace_pfcp_rx(ogs_pfcp_xact_t *xact, sgwc_sess_t *sess,
+        const void *data, size_t len);
+
 /*
  * Enriched per-UE log: full ogs_trace_format_prefix (IMSI, APN, PROC, TEIDs,
  * UE IP) on one line.  DEBUG is emitted when logger level is debug or

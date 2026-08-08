@@ -76,6 +76,9 @@ typedef struct ogs_pfcp_xact_s {
     uint64_t        local_seid;     /**< Local SEID,
                                          expected in reply from peer */
 
+    /* Optional IMSI for PACKET dumps on TX (incl. retransmits). */
+    char            imsi_bcd[16];
+
     ogs_pool_id_t   assoc_xact_id;  /**< Associated GTP transaction ID */
     ogs_pkbuf_t     *gtpbuf;        /**< GTP packet buffer */
 
@@ -181,6 +184,9 @@ int ogs_pfcp_xact_update_tx(ogs_pfcp_xact_t *xact,
 
 int ogs_pfcp_xact_commit(ogs_pfcp_xact_t *xact);
 void ogs_pfcp_xact_delayed_commit(ogs_pfcp_xact_t *xact, ogs_time_t duration);
+
+/** Bind IMSI onto a PFCP xact so TX PACKET dumps work without thread-local ctx. */
+void ogs_pfcp_xact_set_imsi(ogs_pfcp_xact_t *xact, const char *imsi_bcd);
 
 int ogs_pfcp_xact_delete(ogs_pfcp_xact_t *xact);
 

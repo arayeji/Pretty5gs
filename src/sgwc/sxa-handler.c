@@ -24,7 +24,6 @@
 #include "sxa-handler.h"
 #include "sgwc-trace.h"
 #include "ga-writer.h"
-#include "sgwc-trace.h"
 #include "sgwc-gtp-interop.h"
 #include "gn-handler.h"
 #include "gn-build.h"
@@ -908,6 +907,10 @@ void sgwc_sxa_handle_session_establishment_response(
 
     ogs_gtp_xact_associate(s11_xact, s5c_xact);
 
+    if (!sgwc_ue && sess)
+        sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+    sgwc_trace_bind_gtp(s5c_xact, sgwc_ue);
+
     rv = ogs_gtp_xact_commit(s5c_xact);
     ogs_expect(rv == OGS_OK);
 }
@@ -1364,6 +1367,9 @@ void sgwc_sxa_handle_session_modification_response(
                     return;
                 }
 
+                sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
+
                 rv = ogs_gtp_xact_commit(s11_xact);
                 ogs_expect(rv == OGS_OK);
             }
@@ -1389,6 +1395,9 @@ void sgwc_sxa_handle_session_modification_response(
                     ogs_error("ogs_gtp_xact_update_tx() failed");
                     return;
                 }
+
+                sgwc_trace_bind_gtp(s5c_xact, sgwc_ue);
+
 
                 rv = ogs_gtp_xact_commit(s5c_xact);
                 ogs_expect(rv == OGS_OK);
@@ -1458,6 +1467,9 @@ void sgwc_sxa_handle_session_modification_response(
             s11_xact->local_teid = sgwc_ue->sgw_s11_teid;
 
             ogs_gtp_xact_associate(s5c_xact, s11_xact);
+
+            sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
 
             rv = ogs_gtp_xact_commit(s11_xact);
             ogs_expect(rv == OGS_OK);
@@ -1543,6 +1555,9 @@ void sgwc_sxa_handle_session_modification_response(
                 ogs_error("ogs_gtp_xact_update_tx() failed");
                 return;
             }
+
+            sgwc_trace_bind_gtp(s5c_xact, sgwc_ue);
+
 
             rv = ogs_gtp_xact_commit(s5c_xact);
             ogs_expect(rv == OGS_OK);
@@ -1720,6 +1735,9 @@ indirect_fail:
                     ogs_error("ogs_gtp_xact_update_tx() failed");
                     return;
                 }
+
+                sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
 
                 rv = ogs_gtp_xact_commit(s11_xact);
                 ogs_expect(rv == OGS_OK);
@@ -1926,6 +1944,9 @@ indirect_fail:
                 return;
             }
 
+            sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
+
             rv = ogs_gtp_xact_commit(s11_xact);
             ogs_expect(rv == OGS_OK);
 
@@ -1972,6 +1993,9 @@ indirect_fail:
                     s5c_xact->local_teid = sess->sgw_s5c_teid;
 
                     ogs_gtp_xact_associate(s11_xact, s5c_xact);
+
+                    sgwc_trace_bind_gtp(s5c_xact, sgwc_ue);
+
 
                     rv = ogs_gtp_xact_commit(s5c_xact);
                     ogs_expect(rv == OGS_OK);
@@ -2052,6 +2076,9 @@ indirect_fail:
                         ogs_error("ogs_gtp_xact_update_tx() failed");
                         return;
                     }
+
+                    sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
 
                     rv = ogs_gtp_xact_commit(s11_xact);
                     ogs_expect(rv == OGS_OK);
@@ -2155,6 +2182,9 @@ indirect_fail:
                             "(RAB Response; pkbuf already freed)");
                     return;
                 }
+
+                sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
 
                 rv = ogs_gtp_xact_commit(s11_xact);
                 ogs_expect(rv == OGS_OK);
@@ -2359,6 +2389,9 @@ void sgwc_sxa_handle_session_deletion_response(
             ogs_error("ogs_gtp_xact_update_tx() failed");
             return;
         }
+
+        sgwc_trace_bind_gtp(gtp_xact, sgwc_ue);
+
 
         rv = ogs_gtp_xact_commit(gtp_xact);
         ogs_expect(rv == OGS_OK);

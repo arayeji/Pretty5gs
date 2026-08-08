@@ -746,6 +746,7 @@ int sgwc_pfcp_send_bearer_to_modify_list(
     sgwc_sess_sync_pfcp_pdr_nwi(sess);
 
     xact->local_seid = sess->sgwc_sxa_seid;
+    sgwc_trace_bind_pfcp(xact, sess);
     ogs_debug("PFCP Session Modification xact: "
             "sess_id=%d xact=%p local_seid=0x%llx bearer_to_modify_count=%d",
             sess->id, xact, (unsigned long long)xact->local_seid,
@@ -767,6 +768,7 @@ int sgwc_pfcp_send_bearer_to_modify_list(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -803,6 +805,7 @@ int sgwc_pfcp_send_session_establishment_request(
         }
     }
     xact->local_seid = sess->sgwc_sxa_seid;
+    sgwc_trace_bind_pfcp(xact, sess);
     xact->create_flags = flags;
 
     memset(&h, 0, sizeof(ogs_pfcp_header_t));
@@ -851,6 +854,7 @@ int sgwc_pfcp_send_session_establishment_request(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -910,6 +914,7 @@ int sgwc_pfcp_send_session_modification_request(
         }
     }
     xact->local_seid = sess->sgwc_sxa_seid;
+    sgwc_trace_bind_pfcp(xact, sess);
 
     ogs_list_for_each(&sess->bearer_list, bearer) {
         sgwc_bearer_unlink_to_modify(bearer, sess->pfcp_node);
@@ -954,6 +959,7 @@ int sgwc_pfcp_send_bearer_modification_request(
         }
     }
     xact->local_seid = sess->sgwc_sxa_seid;
+    sgwc_trace_bind_pfcp(xact, sess);
 
     sgwc_bearer_unlink_to_modify(bearer, sess->pfcp_node);
     ogs_list_add(&xact->bearer_to_modify_list, &bearer->to_modify_node);
@@ -976,6 +982,7 @@ int sgwc_pfcp_send_bearer_modification_request(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1009,6 +1016,7 @@ int sgwc_pfcp_send_session_deletion_request(
         }
     }
     xact->local_seid = sess->sgwc_sxa_seid;
+    sgwc_trace_bind_pfcp(xact, sess);
 
     memset(&h, 0, sizeof(ogs_pfcp_header_t));
     h.type = OGS_PFCP_SESSION_DELETION_REQUEST_TYPE;
@@ -1028,6 +1036,7 @@ int sgwc_pfcp_send_session_deletion_request(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1084,6 +1093,7 @@ static int sgwc_pfcp_send_orphan_session_purge(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1244,6 +1254,7 @@ int sgwc_pfcp_send_session_report_response(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 

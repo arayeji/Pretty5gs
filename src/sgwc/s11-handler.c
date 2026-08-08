@@ -571,6 +571,8 @@ static void sgwc_s11_create_session_proceed(
     }
 
     ogs_sgwc_trace_set(sgwc_ue, sess, NULL, "create-session");
+    if (s11_xact)
+        sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
         sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid);
 
@@ -1381,6 +1383,9 @@ void sgwc_s11_handle_delete_session_request(
 
         ogs_gtp_xact_associate(s11_xact, s5c_xact);
 
+        sgwc_trace_bind_gtp(s5c_xact, sgwc_ue);
+
+
         rv = ogs_gtp_xact_commit(s5c_xact);
         ogs_expect(rv == OGS_OK);
     }
@@ -1475,6 +1480,9 @@ void sgwc_s11_handle_create_bearer_response(
         if (!sgwc_ue)
             ogs_error("No SGWC-UE ID [%d]", sess->sgwc_ue_id);
     }
+
+    sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
 
     rv = ogs_gtp_xact_commit(s11_xact);
     ogs_expect(rv == OGS_OK);
@@ -1753,6 +1761,9 @@ void sgwc_s11_handle_update_bearer_response(
             ogs_error("No SGWC-UE ID [%d]", sess->sgwc_ue_id);
     }
 
+    sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
+
     rv = ogs_gtp_xact_commit(s11_xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1840,6 +1851,9 @@ void sgwc_s11_handle_update_bearer_response(
         return;
     }
 
+    sgwc_trace_bind_gtp(s5c_xact, sgwc_ue);
+
+
     rv = ogs_gtp_xact_commit(s5c_xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1893,6 +1907,8 @@ void sgwc_s11_handle_delete_bearer_response(
         /* MME received Bearer Resource Modification Request: s5c_xact required */
         if (!s5c_xact || !s5c_xact->data) {
             ogs_error("Delete Bearer Response (CMD path): missing S5C xact");
+            sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
             rv = ogs_gtp_xact_commit(s11_xact);
             ogs_expect(rv == OGS_OK);
             return;
@@ -1926,6 +1942,9 @@ void sgwc_s11_handle_delete_bearer_response(
         if (!sgwc_ue)
             ogs_error("No SGWC-UE ID [%d]", sess->sgwc_ue_id);
     }
+
+    sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
 
     rv = ogs_gtp_xact_commit(s11_xact);
     ogs_expect(rv == OGS_OK);
@@ -2205,6 +2224,8 @@ void sgwc_s11_handle_downlink_data_notification_ack(
     }
 
 out:
+    sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
     rv = ogs_gtp_xact_commit(s11_xact);
     ogs_expect(rv == OGS_OK);
 
@@ -2766,6 +2787,9 @@ void sgwc_s11_handle_bearer_resource_command(
     s5c_xact->local_teid = sess->sgw_s5c_teid;
 
     ogs_gtp_xact_associate(s11_xact, s5c_xact);
+
+    sgwc_trace_bind_gtp(s5c_xact, sgwc_ue);
+
 
     rv = ogs_gtp_xact_commit(s5c_xact);
     ogs_expect(rv == OGS_OK);

@@ -566,6 +566,7 @@ int smf_pfcp_send_modify_list(
     ogs_assert(xact);
 
     xact->local_seid = sess->smf_n4_seid;
+    smf_trace_bind_pfcp(xact, sess);
 
     memset(&h, 0, sizeof(ogs_pfcp_header_t));
     h.type = OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE;
@@ -590,7 +591,8 @@ int smf_pfcp_send_modify_list(
 
         return OGS_OK;
     } else {
-        rv = ogs_pfcp_xact_commit(xact);
+        smf_trace_bind_pfcp(xact, sess);
+    rv = ogs_pfcp_xact_commit(xact);
         if (rv != OGS_OK) {
             ogs_pfcp_xact_delete(xact);
             return OGS_ERROR;
@@ -624,6 +626,7 @@ int smf_5gc_pfcp_send_session_establishment_request(
     }
 
     xact->local_seid = sess->smf_n4_seid;
+    smf_trace_bind_pfcp(xact, sess);
     xact->create_flags = flags;
 
     memset(&h, 0, sizeof(ogs_pfcp_header_t));
@@ -674,6 +677,7 @@ int smf_5gc_pfcp_send_session_establishment_request(
         return OGS_ERROR;
     }
 
+    smf_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -706,6 +710,7 @@ int smf_5gc_pfcp_send_all_pdr_modification_request(
     }
 
     xact->local_seid = sess->smf_n4_seid;
+    smf_trace_bind_pfcp(xact, sess);
     xact->modify_flags = flags | OGS_PFCP_MODIFY_SESSION;
     xact->delete_trigger = trigger;
 
@@ -743,6 +748,7 @@ int smf_5gc_pfcp_send_qos_flow_list_modification_request(
     }
 
     xact->local_seid = sess->smf_n4_seid;
+    smf_trace_bind_pfcp(xact, sess);
     xact->modify_flags = flags | OGS_PFCP_MODIFY_SESSION;
 
     rv = smf_pfcp_send_modify_list(
@@ -779,6 +785,7 @@ int smf_5gc_pfcp_send_one_qos_flow_modification_request(
     }
 
     xact->local_seid = sess->smf_n4_seid;
+    smf_trace_bind_pfcp(xact, sess);
     xact->modify_flags = flags;
 
     ogs_list_init(&sess->qos_flow_to_modify_list);
@@ -817,6 +824,7 @@ int smf_5gc_pfcp_send_session_deletion_request(
 
     xact->delete_trigger = trigger;
     xact->local_seid = sess->smf_n4_seid;
+    smf_trace_bind_pfcp(xact, sess);
 
     memset(&h, 0, sizeof(ogs_pfcp_header_t));
     h.type = OGS_PFCP_SESSION_DELETION_REQUEST_TYPE;
@@ -834,6 +842,7 @@ int smf_5gc_pfcp_send_session_deletion_request(
         return OGS_ERROR;
     }
 
+    smf_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -860,6 +869,7 @@ int smf_epc_pfcp_send_session_establishment_request(
     xact->epc = true; /* EPC PFCP transaction */
     xact->assoc_xact_id = gtp_xact_id;
     xact->local_seid = sess->smf_n4_seid;
+    smf_trace_bind_pfcp(xact, sess);
     xact->create_flags = flags;
 
     memset(&h, 0, sizeof(ogs_pfcp_header_t));
@@ -910,6 +920,7 @@ int smf_epc_pfcp_send_session_establishment_request(
         return OGS_ERROR;
     }
 
+    smf_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -936,6 +947,7 @@ int smf_epc_pfcp_send_all_pdr_modification_request(
     xact->epc = true; /* EPC PFCP transaction */
     xact->assoc_xact_id = gtp_xact_id;
     xact->local_seid = sess->smf_n4_seid;
+    smf_trace_bind_pfcp(xact, sess);
     xact->modify_flags = flags | OGS_PFCP_MODIFY_SESSION;
 
     xact->gtp_pti = gtp_pti;
@@ -983,6 +995,7 @@ int smf_epc_pfcp_send_one_bearer_modification_request(
     xact->epc = true; /* EPC PFCP transaction */
     xact->assoc_xact_id = gtp_xact_id;
     xact->local_seid = sess->smf_n4_seid;
+    smf_trace_bind_pfcp(xact, sess);
     xact->modify_flags = flags;
 
     xact->gtp_pti = gtp_pti;
@@ -1029,6 +1042,7 @@ int smf_epc_pfcp_send_session_deletion_best_effort(smf_sess_t *sess)
     xact->epc = true;
     xact->assoc_xact_id = OGS_INVALID_POOL_ID;
     xact->local_seid = sess->smf_n4_seid;
+    smf_trace_bind_pfcp(xact, sess);
     xact->delete_trigger = OGS_PFCP_DELETE_TRIGGER_BEST_EFFORT;
 
     memset(&h, 0, sizeof(ogs_pfcp_header_t));
@@ -1049,6 +1063,7 @@ int smf_epc_pfcp_send_session_deletion_best_effort(smf_sess_t *sess)
         return OGS_ERROR;
     }
 
+    smf_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1097,6 +1112,7 @@ int smf_epc_pfcp_send_session_deletion_request(
      */
     xact->assoc_xact_id = gtp_xact_id;
     xact->local_seid = sess->smf_n4_seid;
+    smf_trace_bind_pfcp(xact, sess);
 
     memset(&h, 0, sizeof(ogs_pfcp_header_t));
     h.type = OGS_PFCP_SESSION_DELETION_REQUEST_TYPE;
@@ -1116,6 +1132,7 @@ int smf_epc_pfcp_send_session_deletion_request(
         return OGS_ERROR;
     }
 
+    smf_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1144,6 +1161,7 @@ int smf_epc_pfcp_send_orphan_session_purge(
     xact->epc = true;
     xact->assoc_xact_id = OGS_INVALID_POOL_ID;
     xact->local_seid = sess->smf_n4_seid;
+    smf_trace_bind_pfcp(xact, sess);
     xact->delete_trigger = OGS_PFCP_DELETE_TRIGGER_ORPHAN_PURGE;
 
     memset(&h, 0, sizeof(ogs_pfcp_header_t));
@@ -1164,6 +1182,7 @@ int smf_epc_pfcp_send_orphan_session_purge(
         return OGS_ERROR;
     }
 
+    smf_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1399,6 +1418,7 @@ int smf_pfcp_send_session_report_response(
         return OGS_ERROR;
     }
 
+    smf_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 

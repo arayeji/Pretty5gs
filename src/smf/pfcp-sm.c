@@ -21,6 +21,7 @@
 #include "pfcp-path.h"
 #include "local-path.h"
 #include "metrics.h"
+#include "smf-trace.h"
 
 #include "n4-handler.h"
 
@@ -241,6 +242,9 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
         }
         if (sess)
             e->sess_id = sess->id;
+
+        if (sess && e->pkbuf)
+            smf_trace_pfcp_rx(xact, sess, e->pkbuf->data, e->pkbuf->len);
 
         switch (message->h.type) {
         case OGS_PFCP_HEARTBEAT_REQUEST_TYPE:
