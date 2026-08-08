@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2026 by Open5GS contributors
  *
- * MME /admin/trace/imsi ?sync=hss,sgwc,smf propagation to peer NF metrics ports.
+ * MME /admin/trace/imsi ?sync=sgwc,smf propagation to peer NF metrics ports.
  */
 
 #include "mme-trace-sync.h"
@@ -21,7 +21,6 @@ typedef struct {
 
 /* Default loopback metrics ports from configs/open5gs yaml templates */
 static const mme_trace_sync_peer_t default_peers[] = {
-    { "hss",  "127.0.0.8", 9090 },
     { "sgwc", "127.0.0.3", 9090 },
     { "smf",  "127.0.0.4", 9090 },
 };
