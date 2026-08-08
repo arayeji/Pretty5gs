@@ -306,7 +306,7 @@ bool s1ap_shard_handle(mme_event_t *e)
         ogs_assert(so);
         switch (so->procedureCode) {
         case S1AP_ProcedureCode_id_InitialContextSetup:
-            s1ap_handle_initial_context_setup_response(enb, pdu);
+            s1ap_handle_initial_context_setup_response(enb, pdu, e->pkbuf);
             break;
         case S1AP_ProcedureCode_id_UEContextModification:
             s1ap_handle_ue_context_modification_response(enb, pdu);
@@ -319,7 +319,7 @@ bool s1ap_shard_handle(mme_event_t *e)
              * enb_ue_remove() is lock-protected; UE-side tail posts to
              * the owner shard (or runs inline when already on it).
              */
-            s1ap_handle_ue_context_release_complete(enb, pdu);
+            s1ap_handle_ue_context_release_complete(enb, pdu, e->pkbuf);
             break;
         case S1AP_ProcedureCode_id_E_RABModify:
         case S1AP_ProcedureCode_id_E_RABRelease:

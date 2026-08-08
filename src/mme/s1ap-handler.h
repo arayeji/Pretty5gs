@@ -38,9 +38,9 @@ void s1ap_handle_uplink_nas_transport(
 void s1ap_handle_ue_capability_info_indication(
         mme_enb_t *enb, ogs_s1ap_message_t *message);
 void s1ap_handle_initial_context_setup_response(
-        mme_enb_t *enb, ogs_s1ap_message_t *message);
+        mme_enb_t *enb, ogs_s1ap_message_t *message, ogs_pkbuf_t *pkbuf);
 void s1ap_handle_initial_context_setup_failure(
-        mme_enb_t *enb, ogs_s1ap_message_t *message);
+        mme_enb_t *enb, ogs_s1ap_message_t *message, ogs_pkbuf_t *pkbuf);
 
 void s1ap_handle_ue_context_modification_response(
         mme_enb_t *enb, ogs_s1ap_message_t *message);
@@ -48,9 +48,9 @@ void s1ap_handle_ue_context_modification_failure(
         mme_enb_t *enb, ogs_s1ap_message_t *message);
 
 void s1ap_handle_ue_context_release_request(
-        mme_enb_t *enb, ogs_s1ap_message_t *message);
+        mme_enb_t *enb, ogs_s1ap_message_t *message, ogs_pkbuf_t *pkbuf);
 void s1ap_handle_ue_context_release_complete(
-        mme_enb_t *enb, ogs_s1ap_message_t *message);
+        mme_enb_t *enb, ogs_s1ap_message_t *message, ogs_pkbuf_t *pkbuf);
 void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue);
 
 void s1ap_handle_e_rab_setup_response(

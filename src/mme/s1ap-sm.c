@@ -107,7 +107,7 @@ void s1ap_state_operational(ogs_fsm_t *s, mme_event_t *e)
                 s1ap_handle_ue_capability_info_indication(enb, pdu);
                 break;
             case S1AP_ProcedureCode_id_UEContextReleaseRequest:
-                s1ap_handle_ue_context_release_request(enb, pdu);
+                s1ap_handle_ue_context_release_request(enb, pdu, e->pkbuf);
                 break;
             case S1AP_ProcedureCode_id_PathSwitchRequest:
                 s1ap_handle_path_switch_request(enb, pdu);
@@ -177,14 +177,14 @@ void s1ap_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
             switch (successfulOutcome->procedureCode) {
             case S1AP_ProcedureCode_id_InitialContextSetup:
-                s1ap_handle_initial_context_setup_response(enb, pdu);
+                s1ap_handle_initial_context_setup_response(enb, pdu, e->pkbuf);
                 break;
             case S1AP_ProcedureCode_id_UEContextModification:
                 s1ap_handle_ue_context_modification_response(enb, pdu);
                 break;
             case S1AP_ProcedureCode_id_UEContextRelease:
                 s1ap_handle_ue_context_release_complete(
-                        enb, pdu);
+                        enb, pdu, e->pkbuf);
                 break;
             case S1AP_ProcedureCode_id_E_RABSetup:
                 s1ap_handle_e_rab_setup_response(enb, pdu);
@@ -214,7 +214,7 @@ void s1ap_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
             switch (unsuccessfulOutcome->procedureCode) {
             case S1AP_ProcedureCode_id_InitialContextSetup :
-                s1ap_handle_initial_context_setup_failure(enb, pdu);
+                s1ap_handle_initial_context_setup_failure(enb, pdu, e->pkbuf);
                 break;
             case S1AP_ProcedureCode_id_UEContextModification:
                 s1ap_handle_ue_context_modification_failure(enb, pdu);

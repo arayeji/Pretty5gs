@@ -1428,7 +1428,7 @@ void s1ap_handle_ue_capability_info_indication(
 }
 
 void s1ap_handle_initial_context_setup_response(
-        mme_enb_t *enb, ogs_s1ap_message_t *message)
+        mme_enb_t *enb, ogs_s1ap_message_t *message, ogs_pkbuf_t *pkbuf)
 {
     int i, r, rv;
     char buf[OGS_ADDRSTRLEN];
@@ -1485,6 +1485,13 @@ void s1ap_handle_initial_context_setup_response(
 
     ogs_debug("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
             enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
+
+    /* Stage-C shard never hits s1ap-sm bind_rx/on_imsi — dump here. */
+    if (pkbuf && mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
+        ogs_trace_packet(mme_ue->imsi_bcd, "s1ap", "rx",
+                pkbuf->data, pkbuf->len);
+        ogs_trace_packet_bind_rx(NULL, NULL, 0);
+    }
 
     if (!mme_ue) {
         /*
@@ -1715,7 +1722,7 @@ void s1ap_initial_context_setup_response_complete(
 }
 
 void s1ap_handle_initial_context_setup_failure(
-        mme_enb_t *enb, ogs_s1ap_message_t *message)
+        mme_enb_t *enb, ogs_s1ap_message_t *message, ogs_pkbuf_t *pkbuf)
 {
     char buf[OGS_ADDRSTRLEN];
     int i, r;
@@ -1782,6 +1789,11 @@ void s1ap_handle_initial_context_setup_failure(
     }
 
     mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+    if (pkbuf && mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
+        ogs_trace_packet(mme_ue->imsi_bcd, "s1ap", "rx",
+                pkbuf->data, pkbuf->len);
+        ogs_trace_packet_bind_rx(NULL, NULL, 0);
+    }
     {
         mme_sess_t *sess = mme_ue ? mme_sess_first(mme_ue) : NULL;
         const char *apn = (sess && sess->session) ? sess->session->name : NULL;
@@ -2280,7 +2292,7 @@ void s1ap_handle_e_rab_setup_response(
 }
 
 void s1ap_handle_ue_context_release_request(
-        mme_enb_t *enb, ogs_s1ap_message_t *message)
+        mme_enb_t *enb, ogs_s1ap_message_t *message, ogs_pkbuf_t *pkbuf)
 {
     char buf[OGS_ADDRSTRLEN];
     int i, r;
@@ -2404,6 +2416,11 @@ void s1ap_handle_ue_context_release_request(
             Cause->present, (int)Cause->choice.radioNetwork);
 
     mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+    if (pkbuf && mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
+        ogs_trace_packet(mme_ue->imsi_bcd, "s1ap", "rx",
+                pkbuf->data, pkbuf->len);
+        ogs_trace_packet_bind_rx(NULL, NULL, 0);
+    }
     if (mme_ue) {
         mme_sess_t *sess = mme_sess_first(mme_ue);
         const char *apn = (sess && sess->session) ? sess->session->name : NULL;
@@ -2435,7 +2452,7 @@ void s1ap_handle_ue_context_release_request(
 }
 
 void s1ap_handle_ue_context_release_complete(
-        mme_enb_t *enb, ogs_s1ap_message_t *message)
+        mme_enb_t *enb, ogs_s1ap_message_t *message, ogs_pkbuf_t *pkbuf)
 {
     char buf[OGS_ADDRSTRLEN];
     int i, r;
@@ -2511,6 +2528,16 @@ void s1ap_handle_ue_context_release_complete(
                 S1AP_CauseRadioNetwork_unknown_mme_ue_s1ap_id);
         ogs_expect(r == OGS_OK);
         return;
+    }
+
+    if (pkbuf) {
+        mme_ue_t *trace_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+
+        if (trace_ue && MME_UE_HAVE_IMSI(trace_ue)) {
+            ogs_trace_packet(trace_ue->imsi_bcd, "s1ap", "rx",
+                    pkbuf->data, pkbuf->len);
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
+        }
     }
 
     if (enb_ue->enb_id != enb->id) {

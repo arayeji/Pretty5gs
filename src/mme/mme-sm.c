@@ -1111,6 +1111,9 @@ cleanup:
                         gtp_message.h.teid_presence ?
                             gtp_message.h.teid : 0,
                         sqn, rv);
+                if (MME_UE_HAVE_IMSI(ue_hint))
+                    ogs_trace_packet(ue_hint->imsi_bcd, "gtp", "rx",
+                            pkbuf->data, pkbuf->len);
                 if (gtp_message.h.type ==
                         OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE)
                     mme_ue_progress(ue_hint, "create_session_rsp_late");
@@ -1124,6 +1127,7 @@ cleanup:
                             gtp_message.h.teid : 0,
                         sqn, rv);
             }
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
             ogs_pkbuf_free(pkbuf);
             break;
         }
@@ -1180,13 +1184,18 @@ cleanup:
             mme_ue = mme_ue_find_by_s11_local_teid(xact->local_teid);
         }
 
-        /* Dump GTP RX with IMSI from TEID — do not wait for handler
-         * mme_ue_info()/trace_set (same class of bug as S1AP bind/on_imsi). */
+        /* Dump GTP RX with IMSI from TEID or from the originating xact
+         * (Create Session Response often matches before handler trace_set;
+         * xact IMSI was bound when we sent the request). */
         if (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
             ogs_gtp_xact_set_imsi(xact, mme_ue->imsi_bcd);
             ogs_trace_packet(mme_ue->imsi_bcd, "gtp", "rx",
                     pkbuf->data, pkbuf->len);
             ogs_trace_packet_bind_rx(NULL, NULL, 0); /* avoid on_imsi dup */
+        } else if (xact && xact->imsi_bcd[0]) {
+            ogs_trace_packet(xact->imsi_bcd, "gtp", "rx",
+                    pkbuf->data, pkbuf->len);
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
         }
 
         switch (gtp_message.h.type) {
