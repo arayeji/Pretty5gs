@@ -532,6 +532,7 @@ void ptrace_correlate_final(void)
 uint64_t ptrace_correlate_event(ptrace_event_t *evt)
 {
     ptrace_ue_t *ue = NULL;
+    ptrace_ue_t *imsi_ue = NULL;
     ptrace_ue_t *cands[8];
     ptrace_ids_t *ids;
     int nc = 0;
@@ -543,9 +544,12 @@ uint64_t ptrace_correlate_event(ptrace_event_t *evt)
 
     ogs_thread_mutex_lock(&lock);
 
-    /* Collect every UE that already owns any identity on this message,
-     * then absorb duplicates so attach S1AP + GTP-C + Diameter share one root. */
-    consider_ue(cands, &nc, lookup_str(by_imsi, ids->imsi));
+    /* IMSI is authoritative — eNB/MME S1AP IDs are recycled and must not
+     * glue a new subscriber onto an old UE that already has another IMSI. */
+    if (ids->imsi[0])
+        imsi_ue = ue_resolve(lookup_str(by_imsi, ids->imsi));
+
+    consider_ue(cands, &nc, imsi_ue);
     consider_ue(cands, &nc, lookup_str(by_msisdn, ids->msisdn));
     consider_ue(cands, &nc, lookup_str(by_imei, ids->imei));
     consider_ue(cands, &nc, lookup_str(by_guti, ids->guti));
@@ -567,11 +571,38 @@ uint64_t ptrace_correlate_event(ptrace_event_t *evt)
     if (ids->has_diam_hbh)
         consider_ue(cands, &nc, lookup_u32(by_hbh, ids->diam_hbh));
 
-    ue = prefer_ue(cands, nc);
+    /* Drop candidates whose IMSI conflicts with this message. */
+    if (ids->imsi[0] && nc > 0) {
+        int w = 0;
+        for (i = 0; i < nc; i++) {
+            if (cands[i]->imsi[0] && strcmp(cands[i]->imsi, ids->imsi))
+                continue;
+            cands[w++] = cands[i];
+        }
+        nc = w;
+    }
+
+    if (imsi_ue)
+        ue = imsi_ue;
+    else
+        ue = prefer_ue(cands, nc);
+
+    /* S1AP-only hit on a UE that already has a *different* IMSI → new root. */
+    if (ids->imsi[0] && ue && ue->imsi[0] && strcmp(ue->imsi, ids->imsi))
+        ue = NULL;
+
     if (ue && nc > 1) {
         for (i = 0; i < nc; i++) {
-            if (cands[i] != ue)
-                ue_absorb(ue, cands[i]);
+            if (cands[i] == ue)
+                continue;
+            /* Never absorb a UE that already has a conflicting IMSI. */
+            if (ue->imsi[0] && cands[i]->imsi[0] &&
+                    strcmp(ue->imsi, cands[i]->imsi))
+                continue;
+            if (ids->imsi[0] && cands[i]->imsi[0] &&
+                    strcmp(ids->imsi, cands[i]->imsi))
+                continue;
+            ue_absorb(ue, cands[i]);
         }
     }
 
@@ -587,13 +618,14 @@ uint64_t ptrace_correlate_event(ptrace_event_t *evt)
 
     if (ue) {
         ue_merge_ids(ue, ids);
+        /* Always bind this message's IMSI if present (new root or empty). */
+        if (ids->imsi[0] && !ue->imsi[0])
+            ogs_cpystrn(ue->imsi, ids->imsi, sizeof(ue->imsi));
         ue_touch_pdn(ue, ids);
         if (ids->has_diam_hbh)
             index_u32(by_hbh, ids->diam_hbh, ue);
         ue_reindex(ue);
         evt->ue_id = ue->ue_id;
-        /* Stamp subscriber IDs onto the event so export/timeline
-         * still match after the packet itself omitted them (AIA/ULA). */
         if (ue->imsi[0] && !ids->imsi[0])
             ogs_cpystrn(ids->imsi, ue->imsi, sizeof(ids->imsi));
         if (ue->msisdn[0] && !ids->msisdn[0])
