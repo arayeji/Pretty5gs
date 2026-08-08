@@ -28,7 +28,7 @@ extern "C" {
 #define PTRACE_MAX_FIELDS_LEN       512
 #define PTRACE_MAX_PACKET           8192
 #define PTRACE_MAX_EVENTS_PER_PKT   8
-#define PTRACE_ID_POOL_SIZE         16384
+#define PTRACE_ID_POOL_SIZE         65536
 #define PTRACE_UE_IDLE_SEC          600
 #define PTRACE_UE_NO_IMSI_IDLE_SEC  120
 #define PTRACE_MAX_UE_TEIDS         16
@@ -218,6 +218,25 @@ static inline bool ptrace_ids_has_subscriber(const ptrace_ids_t *ids)
         return false;
     return ids->imsi[0] || ids->guti[0] || ids->msisdn[0] || ids->imei[0] ||
             ids->session_id[0];
+}
+
+/* Index for timeline stitching — TEID/HBH attach to an existing UE root;
+ * do not create roots from these alone (see correlate). */
+static inline bool ptrace_ids_worth_indexing(const ptrace_ids_t *ids)
+{
+    if (!ids)
+        return false;
+    if (ptrace_ids_has_subscriber(ids))
+        return true;
+    if (ids->m_tmsi[0])
+        return true;
+    if (ids->has_teid || ids->num_teids > 0)
+        return true;
+    if (ids->has_seid)
+        return true;
+    if (ids->has_diam_hbh)
+        return true;
+    return false;
 }
 
 #ifdef __cplusplus

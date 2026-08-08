@@ -205,7 +205,7 @@ int ptrace_decode_diameter(const uint8_t *data, int len, ptrace_event_t *evt)
         ogs_cpystrn(evt->message,
                 (flags & 0x80) ? "IDR" : "IDA", sizeof(evt->message));
     else
-        snprintf(evt->message, sizeof(evt->message), "Diameter-%u", cmd);
+        return OGS_ERROR; /* skip CER/DWR/etc — not UE timeline */
 
     walk_avps(data + 20, walk_len - 20, evt);
     snprintf(evt->fields, sizeof(evt->fields),

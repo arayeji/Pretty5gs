@@ -219,12 +219,21 @@ int ptrace_decode_nas_scan(const uint8_t *data, int len, ptrace_event_t *evt)
         uint8_t sec = (b0 >> 4) & 0x0f;
         uint8_t pd = b0 & 0x0f;
 
-        /* Plain EMM Attach / Identity Response / TAU */
+        /* Plain EMM Attach / Identity / TAU / Auth / SMC (pre-cipher) */
         if (pd == 0x07 && (p[1] == NAS_ATTACH_REQUEST ||
                 p[1] == NAS_IDENTITY_RESPONSE ||
-                p[1] == NAS_TAU_REQUEST)) {
+                p[1] == NAS_TAU_REQUEST ||
+                p[1] == NAS_AUTH_REQUEST ||
+                p[1] == NAS_AUTH_RESPONSE ||
+                p[1] == NAS_SECURITY_MODE_COMMAND ||
+                p[1] == NAS_SECURITY_MODE_COMPLETE ||
+                p[1] == NAS_ATTACH_ACCEPT ||
+                p[1] == NAS_ATTACH_COMPLETE ||
+                p[1] == NAS_ATTACH_REJECT ||
+                p[1] == NAS_DETACH_REQUEST)) {
             if (decode_plain_emm(p, remain, evt) == OGS_OK &&
-                    (evt->ids.imsi[0] || evt->ids.guti[0] || evt->ids.imei[0]))
+                    (evt->ids.imsi[0] || evt->ids.guti[0] || evt->ids.imei[0] ||
+                     evt->ids.m_tmsi[0]))
                 return OGS_OK;
         }
 
@@ -235,10 +244,18 @@ int ptrace_decode_nas_scan(const uint8_t *data, int len, ptrace_event_t *evt)
             if (plen >= 2 && (plain[0] & 0x0f) == 0x07 &&
                     (plain[1] == NAS_ATTACH_REQUEST ||
                      plain[1] == NAS_IDENTITY_RESPONSE ||
-                     plain[1] == NAS_TAU_REQUEST)) {
+                     plain[1] == NAS_TAU_REQUEST ||
+                     plain[1] == NAS_AUTH_REQUEST ||
+                     plain[1] == NAS_AUTH_RESPONSE ||
+                     plain[1] == NAS_SECURITY_MODE_COMMAND ||
+                     plain[1] == NAS_SECURITY_MODE_COMPLETE ||
+                     plain[1] == NAS_ATTACH_ACCEPT ||
+                     plain[1] == NAS_ATTACH_COMPLETE ||
+                     plain[1] == NAS_ATTACH_REJECT ||
+                     plain[1] == NAS_DETACH_REQUEST)) {
                 if (decode_plain_emm(plain, plen, evt) == OGS_OK &&
                         (evt->ids.imsi[0] || evt->ids.guti[0] ||
-                         evt->ids.imei[0]))
+                         evt->ids.imei[0] || evt->ids.m_tmsi[0]))
                     return OGS_OK;
             }
         }

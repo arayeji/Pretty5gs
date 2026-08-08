@@ -83,11 +83,15 @@ static void process_id_event(ptrace_id_event_t *id)
             strstr(evt->message, "Reject") ||
             strstr(evt->message, "Detach") ||
             strstr(evt->message, "Create Session") ||
+            strstr(evt->message, "Modify Bearer") ||
             strstr(evt->message, "Session Establishment") ||
-            strstr(evt->message, "Attach Request") ||
+            strstr(evt->message, "Attach") ||
             strstr(evt->message, "Initial UE") ||
-            strstr(evt->message, "NAS Attach") ||
-            strstr(evt->message, "NAS Identity") ||
+            strstr(evt->message, "NAS ") ||
+            !strcmp(evt->message, "AIR") ||
+            !strcmp(evt->message, "AIA") ||
+            !strcmp(evt->message, "ULR") ||
+            !strcmp(evt->message, "ULA") ||
             evt->ids.imsi[0])
         ptrace_api_publish(evt);
 

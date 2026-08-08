@@ -149,7 +149,7 @@ bool ptrace_identity_extract(const uint8_t *data, uint16_t len,
                     packet_ref);
             evt.protocol = PTRACE_PROTO_NAS;
             if (ptrace_decode_nas_scan(l4, l4len, &evt) == OGS_OK &&
-                    ptrace_ids_has_subscriber(&evt.ids)) {
+                    ptrace_ids_worth_indexing(&evt.ids)) {
                 if (!evt.message[0])
                     ogs_cpystrn(evt.message, "NAS Identity",
                             sizeof(evt.message));
@@ -171,7 +171,7 @@ bool ptrace_identity_extract(const uint8_t *data, uint16_t len,
             role == PTRACE_ROLE_S11 || role == PTRACE_ROLE_S5 ||
             role == PTRACE_ROLE_S8) {
         if (ptrace_decode_gtpc(payload, plen, &evt) == OGS_OK &&
-                ptrace_ids_has_subscriber(&evt.ids)) {
+                ptrace_ids_worth_indexing(&evt.ids)) {
             copy_to_id(&evt, out);
             return true;
         }
@@ -181,7 +181,7 @@ bool ptrace_identity_extract(const uint8_t *data, uint16_t len,
     if (sport == PTRACE_PORT_DIAMETER || dport == PTRACE_PORT_DIAMETER ||
             role == PTRACE_ROLE_DIAMETER) {
         if (ptrace_decode_diameter(payload, plen, &evt) == OGS_OK &&
-                ptrace_ids_has_subscriber(&evt.ids)) {
+                ptrace_ids_worth_indexing(&evt.ids)) {
             copy_to_id(&evt, out);
             return true;
         }
@@ -190,9 +190,8 @@ bool ptrace_identity_extract(const uint8_t *data, uint16_t len,
 
     if (sport == PTRACE_PORT_PFCP || dport == PTRACE_PORT_PFCP ||
             role == PTRACE_ROLE_N4) {
-        /* PFCP rarely carries IMSI; skip unless subscriber fields appear. */
         if (ptrace_decode_pfcp(payload, plen, &evt) == OGS_OK &&
-                ptrace_ids_has_subscriber(&evt.ids)) {
+                ptrace_ids_worth_indexing(&evt.ids)) {
             copy_to_id(&evt, out);
             return true;
         }

@@ -69,21 +69,24 @@ static void enqueue_packet(const uint8_t *data, uint16_t len,
     ts = ts ? ts : ogs_time_now();
     ref[0] = '\0';
 
-    /* Ring is source of truth for PCAP; never block capture on disk. */
-    ptrace_ring_write(data, len, ts, ref, sizeof(ref));
-
-    /* Identity-first: cheap extract only — no 8KB decode-pool copy. */
-    if (!ptrace_identity_extract(data, len, ts, role, ref, &stack_id)) {
+    /* Extract first — do not copy S1AP storms into the disk ring. */
+    if (!ptrace_identity_extract(data, len, ts, role, NULL, &stack_id)) {
         ctx->filtered_noise++;
         return;
     }
+
+    /* Ring only for indexed packets (IMSI/TEID/Diameter/…). */
+    ptrace_ring_write(data, len, ts, ref, sizeof(ref));
+    if (ref[0])
+        ogs_cpystrn(stack_id.packet_ref, ref, sizeof(stack_id.packet_ref));
 
     id = ptrace_id_event_alloc();
     if (!id) {
         ctx->packets_drop++;
         if (ctx->packets_drop >= drop_log_at) {
-            ogs_warn("ptrace identity pool exhausted (dropped=%llu)",
-                    (unsigned long long)ctx->packets_drop);
+            ogs_warn("ptrace identity pool exhausted (dropped=%llu id_avail=%d)",
+                    (unsigned long long)ctx->packets_drop,
+                    ptrace_id_pool_avail());
             drop_log_at = ctx->packets_drop + 10000;
         }
         return;
