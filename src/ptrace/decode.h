@@ -21,6 +21,7 @@ int ptrace_decode_s1ap(const uint8_t *data, int len,
         ptrace_event_t *base, ptrace_event_t **extra, int *nextra);
 int ptrace_decode_nas(const uint8_t *data, int len, ptrace_event_t *evt);
 int ptrace_decode_nas_scan(const uint8_t *data, int len, ptrace_event_t *evt);
+bool ptrace_bytes_look_like_identity(const uint8_t *data, uint16_t len);
 /* Best-effort IMSI/GUTI index with no packet-pool alloc (overload path). */
 void ptrace_index_identity_inline(const uint8_t *data, uint16_t len,
         ogs_time_t ts, ptrace_role_e role);

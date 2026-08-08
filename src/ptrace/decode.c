@@ -197,7 +197,8 @@ int ptrace_decode_packet(ptrace_packet_t *pkt,
 
         /* Scan whole SCTP datagram for cleartext Attach/Identity —
          * covers fragmented B/E chunks we no longer feed to ASN.1. */
-        if (n < PTRACE_MAX_EVENTS_PER_PKT) {
+        if (n < PTRACE_MAX_EVENTS_PER_PKT &&
+                ptrace_bytes_look_like_identity(l4, l4len)) {
             ptrace_event_t *seed = ptrace_event_alloc();
             if (seed) {
                 seed->ts = pkt->ts;
@@ -218,7 +219,8 @@ int ptrace_decode_packet(ptrace_packet_t *pkt,
             }
         }
 
-        /* Under backlog, skip ASN.1 (global lock) — IMSI already seeded. */
+        /* Default: skip heavy ASN unless pool has plenty of headroom.
+         * IMSI indexing does not need ASN; TEID/S1AP-ID enrichment does. */
         if (ptrace_under_pressure()) {
             ptrace_self()->s1ap_skip_pressure++;
             *nout = n;

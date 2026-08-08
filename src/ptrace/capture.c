@@ -39,22 +39,6 @@ static bool packet_is_signaling(const uint8_t *data, uint16_t len,
         bool include_gtpu);
 static int apply_bpf(pcap_t *p);
 
-static bool bytes_look_like_identity(const uint8_t *d, uint16_t len)
-{
-    int i;
-    if (!d || len < 6)
-        return false;
-    for (i = 0; i + 1 < len; i++) {
-        if (d[i] == 0x07 && (d[i + 1] == 0x41 || d[i + 1] == 0x56))
-            return true;
-        if ((d[i] == 0x17 || d[i] == 0x37) && i + 7 < len &&
-                d[i + 6] == 0x07 &&
-                (d[i + 7] == 0x41 || d[i + 7] == 0x56))
-            return true;
-    }
-    return false;
-}
-
 static void enqueue_packet(const uint8_t *data, uint16_t len,
         ogs_time_t ts, ptrace_role_e role, const char *iface)
 {
@@ -79,7 +63,7 @@ static void enqueue_packet(const uint8_t *data, uint16_t len,
     if (!pkt) {
         ctx->packets_drop++;
         /* Overload: still index cleartext Attach/Identity so /ue works. */
-        if (bytes_look_like_identity(data, len))
+        if (ptrace_bytes_look_like_identity(data, len))
             ptrace_index_identity_inline(data, len, ts, role);
         if (ctx->packets_drop >= drop_log_at) {
             ogs_warn("ptrace packet pool exhausted (dropped=%llu)",
@@ -101,7 +85,7 @@ static void enqueue_packet(const uint8_t *data, uint16_t len,
     if (ogs_queue_trypush(ctx->pkt_queue, pkt) != OGS_OK) {
         ptrace_packet_free(pkt);
         ctx->packets_drop++;
-        if (bytes_look_like_identity(data, len))
+        if (ptrace_bytes_look_like_identity(data, len))
             ptrace_index_identity_inline(data, len, ts, role);
         return;
     }

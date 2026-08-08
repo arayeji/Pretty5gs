@@ -296,6 +296,7 @@ int ptrace_packet_pool_avail(void)
 
 bool ptrace_under_pressure(void)
 {
-    /* Leave headroom so Attach can still be queued. */
-    return ptrace_packet_pool_avail() < (PTRACE_PKT_POOL_SIZE / 4);
+    /* Skip heavy ASN while pool is below half — leave headroom for
+     * Attach/Identity bursts. */
+    return ptrace_packet_pool_avail() < (PTRACE_PKT_POOL_SIZE / 2);
 }

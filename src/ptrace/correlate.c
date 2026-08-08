@@ -628,12 +628,11 @@ uint64_t ptrace_correlate_event(ptrace_event_t *evt)
     }
 
     if (!ue) {
-        /* Create on subscriber / tunnel / S1AP keys. Session-Id alone
-         * only looks up (so AIA/ULA attach to the AIR/ULR UE). */
+        /* Create only on subscriber / tunnel identity. S1AP IDs alone
+         * must not spawn roots — they recycle and explode ue_count. */
         if (ids->imsi[0] || ids->msisdn[0] || ids->guti[0] ||
                 ids->ue_ip[0] || ids->num_teids > 0 ||
-                (ids->has_teid && ids->teid) || ids->has_seid ||
-                ids->has_enb_ue_s1ap_id || ids->has_mme_ue_s1ap_id)
+                (ids->has_teid && ids->teid) || ids->has_seid)
             ue = ue_new();
     }
 

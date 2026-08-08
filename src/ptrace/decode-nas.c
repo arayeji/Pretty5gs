@@ -246,6 +246,24 @@ int ptrace_decode_nas_scan(const uint8_t *data, int len, ptrace_event_t *evt)
     return OGS_ERROR;
 }
 
+bool ptrace_bytes_look_like_identity(const uint8_t *data, uint16_t len)
+{
+    int i;
+    if (!data || len < 6)
+        return false;
+    for (i = 0; i + 1 < (int)len; i++) {
+        if (data[i] == 0x07 && (data[i + 1] == NAS_ATTACH_REQUEST ||
+                data[i + 1] == NAS_IDENTITY_RESPONSE))
+            return true;
+        if ((data[i] == 0x17 || data[i] == 0x37) && i + 7 < (int)len &&
+                data[i + 6] == 0x07 &&
+                (data[i + 7] == NAS_ATTACH_REQUEST ||
+                 data[i + 7] == NAS_IDENTITY_RESPONSE))
+            return true;
+    }
+    return false;
+}
+
 void ptrace_index_identity_inline(const uint8_t *data, uint16_t len,
         ogs_time_t ts, ptrace_role_e role)
 {
