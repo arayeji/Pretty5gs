@@ -962,11 +962,13 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
             }
         }
     } else {
+        /* Existing S1 context for this ENB_UE_S1AP_ID (reuse / race) —
+         * not a protocol failure; continue with the same enb_ue. */
         mme_ue_t *mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
-        ogs_error("Known UE ENB_UE_S1AP_ID[%d] [%p:%p]",
+        ogs_info("Known UE ENB_UE_S1AP_ID[%d] [%p:%p]",
                 (int)*ENB_UE_S1AP_ID, enb_ue, mme_ue);
         if (mme_ue) {
-            ogs_error("    S_TMSI[G:%d,C:%d,M_TMSI:0x%x] IMSI:[%s]",
+            ogs_info("    S_TMSI[G:%d,C:%d,M_TMSI:0x%x] IMSI:[%s]",
                 mme_ue->current.guti.mme_gid,
                 mme_ue->current.guti.mme_code,
                 mme_ue->current.guti.m_tmsi,
