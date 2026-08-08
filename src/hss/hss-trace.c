@@ -137,9 +137,23 @@ void hss_trace_diameter(
     if (!ogs_trace_filter_match(imsi_bcd))
         return;
 
-    ret = fd_msg_bufferize(msg, &buf, &len);
-    if (ret != 0 || !buf || !len)
+    /* Lengths must be current or bufferize returns an empty/failed buffer. */
+    ret = fd_msg_update_length(msg);
+    if (ret != 0) {
+        ogs_warn("[%s] PACKET diameter %s: fd_msg_update_length failed (%d)",
+                imsi_bcd, dir && dir[0] ? dir : "-", ret);
         return;
+    }
+
+    ret = fd_msg_bufferize(msg, &buf, &len);
+    if (ret != 0 || !buf || !len) {
+        ogs_warn("[%s] PACKET diameter %s: fd_msg_bufferize failed "
+                "(ret=%d len=%zu) — no PACKET line",
+                imsi_bcd, dir && dir[0] ? dir : "-", ret, len);
+        if (buf)
+            free(buf);
+        return;
+    }
 
     ogs_trace_packet(imsi_bcd, "diameter", dir && dir[0] ? dir : "-",
             buf, len);
