@@ -159,6 +159,11 @@ int ptrace_decode_nas(const uint8_t *data, int len, ptrace_event_t *evt)
         int mi_len = data[3];
         if (mi_len > 0 && 4 + mi_len <= len)
             parse_mobile_identity(data + 4, mi_len, evt);
+    } else if (msg_type == NAS_TAU_REQUEST && len >= 4) {
+        /* Same layout as Attach Request for EPS mobile identity */
+        int mi_len = data[3];
+        if (mi_len > 0 && 4 + mi_len <= len)
+            parse_mobile_identity(data + 4, mi_len, evt);
     } else if (msg_type == NAS_IDENTITY_RESPONSE && len >= 4) {
         /* Identity Response: PD, msg_type, MI length, MI */
         int mi_len = data[2];

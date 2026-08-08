@@ -26,6 +26,7 @@ int ptrace_decode_gtpu(const uint8_t *data, int len, ptrace_event_t *evt)
             sizeof(evt->message));
     evt->ids.teid = teid;
     evt->ids.has_teid = true;
+    ptrace_ids_add_teid(&evt->ids, teid);
     snprintf(evt->fields, sizeof(evt->fields),
             "teid=%u len=%d", teid, len);
     return OGS_OK;

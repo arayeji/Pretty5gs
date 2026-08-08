@@ -100,11 +100,11 @@ static void walk_ie(const uint8_t *p, int len, ptrace_event_t *evt)
                         "%u.%u.%u.%u", v[1], v[2], v[3], v[4]);
             }
             break;
-        case 87: /* F-TEID */
+        case 87: /* F-TEID — keep every endpoint TEID for UE stitching */
             if (vlen >= 5) {
-                evt->ids.teid = (uint32_t)((v[1] << 24) | (v[2] << 16) |
+                uint32_t teid = (uint32_t)((v[1] << 24) | (v[2] << 16) |
                         (v[3] << 8) | v[4]);
-                evt->ids.has_teid = true;
+                ptrace_ids_add_teid(&evt->ids, teid);
             }
             break;
         case 93: /* Bearer Context — recurse nested IEs (same TLV) */
@@ -146,15 +146,16 @@ int ptrace_decode_gtpc(const uint8_t *data, int len, ptrace_event_t *evt)
     ogs_cpystrn(evt->message, name, sizeof(evt->message));
 
     if (flags & 0x08) {
-        evt->ids.teid = (uint32_t)((data[4] << 24) | (data[5] << 16) |
+        uint32_t teid = (uint32_t)((data[4] << 24) | (data[5] << 16) |
                 (data[6] << 8) | data[7]);
-        evt->ids.has_teid = true;
+        ptrace_ids_add_teid(&evt->ids, teid);
     }
 
     walk_ie(data + hdr, len - hdr, evt);
     snprintf(evt->fields, sizeof(evt->fields),
-            "teid=%u imsi=%s msisdn=%s imei=%s apn=%s ue_ip=%s cause=%s",
+            "teid=%u nteid=%d imsi=%s msisdn=%s imei=%s apn=%s ue_ip=%s cause=%s",
             evt->ids.has_teid ? evt->ids.teid : 0,
+            evt->ids.num_teids,
             evt->ids.imsi, evt->ids.msisdn, evt->ids.imei,
             evt->ids.apn, evt->ids.ue_ip, evt->cause);
     return OGS_OK;
