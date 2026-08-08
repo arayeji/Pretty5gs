@@ -126,6 +126,7 @@ int s1ap_send_to_enb_ue(enb_ue_t *enb_ue, ogs_pkbuf_t *pkbuf)
 {
     int rv;
     mme_enb_t *enb = NULL;
+    mme_ue_t *mme_ue = NULL;
 
     ogs_assert(pkbuf);
 
@@ -141,6 +142,11 @@ int s1ap_send_to_enb_ue(enb_ue_t *enb_ue, ogs_pkbuf_t *pkbuf)
         ogs_pkbuf_free(pkbuf);
         return OGS_NOTFOUND;
     }
+
+    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+    if (mme_ue && MME_UE_HAVE_IMSI(mme_ue))
+        ogs_trace_packet(mme_ue->imsi_bcd, "s1ap", "tx",
+                pkbuf->data, pkbuf->len);
 
     rv = s1ap_send_to_enb(enb, pkbuf, enb_ue->enb_ostream_id);
     ogs_expect(rv == OGS_OK);

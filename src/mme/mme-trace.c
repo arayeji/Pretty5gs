@@ -84,6 +84,8 @@ void ogs_mme_trace_set(
 
     /* Full snapshot: unset fields show "-" instead of previous UE/session data. */
     ogs_trace_set(&ctx);
+    if (ctx.imsi[0])
+        ogs_trace_packet_on_imsi(ctx.imsi);
 }
 
 void ogs_mme_trace_from_ids(

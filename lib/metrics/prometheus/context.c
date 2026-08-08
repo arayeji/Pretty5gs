@@ -490,6 +490,8 @@ static void fill_query_from_connection(struct MHD_Connection *connection,
             MHD_GET_ARGUMENT_KIND, "liid");
     q->msisdn = MHD_lookup_connection_value(connection,
             MHD_GET_ARGUMENT_KIND, "msisdn");
+    q->imei = MHD_lookup_connection_value(connection,
+            MHD_GET_ARGUMENT_KIND, "imei");
 
     q->fqdn = MHD_lookup_connection_value(connection,
             MHD_GET_ARGUMENT_KIND, "fqdn");

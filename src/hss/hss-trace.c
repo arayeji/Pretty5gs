@@ -18,8 +18,11 @@
  */
 
 #include "hss-trace.h"
+#include "ogs-metrics.h"
 
 #include <stdarg.h>
+#include <stdio.h>
+#include <string.h>
 
 void hss_trace_set(const char *imsi_bcd, const char *proc)
 {
@@ -33,6 +36,8 @@ void hss_trace_set(const char *imsi_bcd, const char *proc)
         ogs_cpystrn(ctx.proc, proc, sizeof(ctx.proc));
 
     ogs_trace_set(&ctx);
+    if (ctx.imsi[0])
+        ogs_trace_packet_on_imsi(ctx.imsi);
 }
 
 void hss_trace_done(void)
@@ -117,9 +122,44 @@ void hss_trace_event(
     hss_imsi_info(id, proc, "%s", msg);
 }
 
+static int hss_admin_trace_imsi(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    ogs_metrics_query_t resolved = { 0 };
+    char imsi_buf[OGS_TRACE_IMSI_LEN];
+    const ogs_metrics_query_t *use_q = q;
+
+    if (q && q->msisdn && q->msisdn[0] &&
+            !q->force && !(q->imsi && strcmp(q->imsi, "list") == 0)) {
+        ogs_msisdn_data_t msisdn_data;
+
+        memset(&msisdn_data, 0, sizeof(msisdn_data));
+        if (hss_db_msisdn_data((char *)q->msisdn, &msisdn_data) != OGS_OK ||
+                !msisdn_data.imsi.bcd[0]) {
+            *body_len = (size_t)snprintf(body, body_cap,
+                    "{\"ok\":false,\"detail\":\"msisdn %s not found in HSS DB\","
+                    "\"trace_imsi\":[]}\n", q->msisdn);
+            return 400;
+        }
+
+        ogs_cpystrn(imsi_buf, msisdn_data.imsi.bcd, sizeof(imsi_buf));
+        if (!q->remove)
+            (void)ogs_trace_alias_set(OGS_TRACE_ALIAS_MSISDN, q->msisdn, imsi_buf);
+
+        resolved = *q;
+        resolved.imsi = imsi_buf;
+        resolved.msisdn = NULL;
+        if (!resolved.match)
+            resolved.match = "exact";
+        use_q = &resolved;
+    }
+
+    return ogs_metrics_admin_trace_imsi(use_q, body, body_cap, body_len);
+}
+
 void hss_admin_api_register(void)
 {
-    ogs_metrics_register_admin_ep(ogs_metrics_admin_trace_imsi,
+    ogs_metrics_register_admin_ep(hss_admin_trace_imsi,
             "/admin/trace/imsi",
             OGS_METRICS_ADMIN_METHOD_GET);
 }

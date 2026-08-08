@@ -174,6 +174,7 @@ typedef struct ogs_metrics_query_s {
     const char *action;    /* ?action=add|remove|list */
     const char *liid;      /* ?liid=... */
     const char *msisdn;    /* ?msisdn=... */
+    const char *imei;      /* ?imei=... (trace resolve → IMSI) */
 
     /* MIP-Home-Agent-Host DNS cache admin (/admin/pgw-host/cache) */
     const char *fqdn;      /* ?fqdn=host.realm */

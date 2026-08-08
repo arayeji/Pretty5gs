@@ -241,6 +241,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         ogs_assert(e);
         recvbuf = e->pkbuf;
         ogs_assert(recvbuf);
+        ogs_trace_packet_bind_rx("gtp", recvbuf->data, recvbuf->len);
 
         smf_gnode = e->gnode;
         ogs_assert(smf_gnode);
@@ -623,6 +624,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         ogs_assert(e);
         recvbuf = e->pkbuf;
         ogs_assert(recvbuf);
+        ogs_trace_packet_bind_rx("pfcp", recvbuf->data, recvbuf->len);
         pfcp_message = e->pfcp_message;
         ogs_assert(pfcp_message);
         pfcp_node = e->pfcp_node;

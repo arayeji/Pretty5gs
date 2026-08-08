@@ -159,6 +159,7 @@ void ogs_trace_filter_clear(void)
     trace_filter.count = 0;
     memset(trace_filter.imsi, 0, sizeof(trace_filter.imsi));
     ogs_thread_mutex_unlock(&trace_filter.mutex);
+    ogs_trace_alias_clear();
 }
 
 int ogs_trace_filter_add(const char *imsi_prefix)
@@ -351,4 +352,267 @@ size_t ogs_trace_format_prefix(char *buf, size_t buflen)
             self.ue_ip[0] ? self.ue_ip : "-",
             self.apn[0] ? self.apn : "-",
             self.proc[0] ? self.proc : "-");
+}
+
+/* ---- PACKET dumps (filter-gated) ----------------------------------- */
+
+static const char trace_b64_table[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static OGS_THREAD_LOCAL struct {
+    const uint8_t *data;
+    size_t len;
+    char proto[16];
+} packet_rx;
+
+static struct {
+    ogs_thread_mutex_t mutex;
+    int initialized;
+    int count;
+    ogs_trace_alias_type_e type[OGS_MAX_TRACE_ALIASES];
+    char key[OGS_MAX_TRACE_ALIASES][OGS_TRACE_ALIAS_KEY_LEN];
+    char imsi[OGS_MAX_TRACE_ALIASES][OGS_TRACE_IMSI_LEN];
+} trace_alias;
+
+static void trace_alias_init_once(void)
+{
+    if (trace_alias.initialized)
+        return;
+    /* Same single-threaded startup assumption as trace_filter_init. */
+    ogs_thread_mutex_init(&trace_alias.mutex);
+    trace_alias.initialized = 1;
+}
+
+static size_t trace_b64_encode(char *out, size_t out_size,
+        const uint8_t *in, size_t in_size)
+{
+    size_t i, o = 0;
+
+    if (!out || out_size < 1)
+        return 0;
+    if (!in && in_size)
+        return 0;
+
+    for (i = 0; i + 2 < in_size; i += 3) {
+        if (o + 4 >= out_size)
+            break;
+        out[o++] = trace_b64_table[(in[i] >> 2) & 0x3F];
+        out[o++] = trace_b64_table[((in[i] & 0x3) << 4) |
+                ((in[i + 1] & 0xF0) >> 4)];
+        out[o++] = trace_b64_table[((in[i + 1] & 0xF) << 2) |
+                ((in[i + 2] & 0xC0) >> 6)];
+        out[o++] = trace_b64_table[in[i + 2] & 0x3F];
+    }
+    if (i < in_size && o + 4 < out_size) {
+        out[o++] = trace_b64_table[(in[i] >> 2) & 0x3F];
+        if (i + 1 == in_size) {
+            out[o++] = trace_b64_table[((in[i] & 0x3) << 4)];
+            out[o++] = '=';
+        } else {
+            out[o++] = trace_b64_table[((in[i] & 0x3) << 4) |
+                    ((in[i + 1] & 0xF0) >> 4)];
+            out[o++] = trace_b64_table[((in[i + 1] & 0xF) << 2)];
+        }
+        out[o++] = '=';
+    }
+    out[o] = '\0';
+    return o;
+}
+
+void ogs_trace_packet(const char *imsi, const char *proto, const char *dir,
+        const void *data, size_t len)
+{
+    char b64[((OGS_TRACE_PACKET_MAX + 2) / 3) * 4 + 1];
+    size_t dump_len;
+    int truncated = 0;
+
+    /* Lock-free empty-filter fast path — production default. */
+    if (trace_filter.count == 0)
+        return;
+    if (!imsi || !imsi[0] || !data || !len)
+        return;
+    if (!ogs_trace_filter_match(imsi))
+        return;
+
+    dump_len = len;
+    if (dump_len > OGS_TRACE_PACKET_MAX) {
+        dump_len = OGS_TRACE_PACKET_MAX;
+        truncated = 1;
+    }
+
+    if (!trace_b64_encode(b64, sizeof(b64), (const uint8_t *)data, dump_len))
+        return;
+
+    ogs_info("[IMSI:%s] PACKET: proto=%s dir=%s len=%zu%s b64=%s",
+            imsi,
+            proto && proto[0] ? proto : "-",
+            dir && dir[0] ? dir : "-",
+            len,
+            truncated ? " trunc=1" : "",
+            b64);
+}
+
+void ogs_trace_packet_ctx(const char *proto, const char *dir,
+        const void *data, size_t len)
+{
+    if (!self.imsi[0])
+        return;
+    ogs_trace_packet(self.imsi, proto, dir, data, len);
+}
+
+void ogs_trace_packet_bind_rx(const char *proto, const void *data, size_t len)
+{
+    packet_rx.data = NULL;
+    packet_rx.len = 0;
+    packet_rx.proto[0] = '\0';
+
+    if (trace_filter.count == 0)
+        return;
+    if (!data || !len)
+        return;
+
+    packet_rx.data = (const uint8_t *)data;
+    packet_rx.len = len;
+    if (proto && proto[0])
+        ogs_cpystrn(packet_rx.proto, proto, sizeof(packet_rx.proto));
+    else
+        ogs_cpystrn(packet_rx.proto, "-", sizeof(packet_rx.proto));
+}
+
+void ogs_trace_packet_on_imsi(const char *imsi)
+{
+    if (!packet_rx.data || !packet_rx.len)
+        return;
+    if (!imsi || !imsi[0])
+        return;
+
+    ogs_trace_packet(imsi, packet_rx.proto, "rx",
+            packet_rx.data, packet_rx.len);
+    packet_rx.data = NULL;
+    packet_rx.len = 0;
+    packet_rx.proto[0] = '\0';
+}
+
+static bool trace_alias_imei_match(const char *key, const char *imeisv)
+{
+    size_t kn, in;
+
+    if (!key || !key[0] || !imeisv || !imeisv[0])
+        return false;
+
+    kn = strlen(key);
+    in = strlen(imeisv);
+    /* IMEI is 14–15 digits; IMEISV adds a spare. Match key as prefix. */
+    if (kn < 14 || kn > 16)
+        return false;
+    if (in < kn)
+        return false;
+    return strncmp(imeisv, key, kn) == 0;
+}
+
+int ogs_trace_alias_set(ogs_trace_alias_type_e type, const char *key,
+        const char *imsi_bcd)
+{
+    int i;
+
+    if ((type != OGS_TRACE_ALIAS_MSISDN && type != OGS_TRACE_ALIAS_IMEI) ||
+            !key || !key[0] || !imsi_bcd || !imsi_bcd[0])
+        return OGS_ERROR;
+
+    trace_alias_init_once();
+    ogs_thread_mutex_lock(&trace_alias.mutex);
+
+    for (i = 0; i < trace_alias.count; i++) {
+        if (trace_alias.type[i] == type &&
+                strcmp(trace_alias.key[i], key) == 0) {
+            ogs_cpystrn(trace_alias.imsi[i], imsi_bcd, OGS_TRACE_IMSI_LEN);
+            ogs_thread_mutex_unlock(&trace_alias.mutex);
+            return ogs_trace_filter_add_ex(imsi_bcd, true);
+        }
+    }
+
+    if (trace_alias.count >= OGS_MAX_TRACE_ALIASES) {
+        ogs_thread_mutex_unlock(&trace_alias.mutex);
+        return OGS_ERROR;
+    }
+
+    trace_alias.type[trace_alias.count] = type;
+    ogs_cpystrn(trace_alias.key[trace_alias.count], key,
+            OGS_TRACE_ALIAS_KEY_LEN);
+    ogs_cpystrn(trace_alias.imsi[trace_alias.count], imsi_bcd,
+            OGS_TRACE_IMSI_LEN);
+    trace_alias.count++;
+    ogs_thread_mutex_unlock(&trace_alias.mutex);
+
+    return ogs_trace_filter_add_ex(imsi_bcd, true);
+}
+
+void ogs_trace_alias_refresh_imsi(const char *msisdn_bcd,
+        const char *imeisv_bcd, const char *imsi_bcd)
+{
+    int i;
+    char old_list[OGS_MAX_TRACE_ALIASES][OGS_TRACE_IMSI_LEN];
+    char key_list[OGS_MAX_TRACE_ALIASES][OGS_TRACE_ALIAS_KEY_LEN];
+    int type_list[OGS_MAX_TRACE_ALIASES];
+    int n_old = 0;
+    bool hit = false;
+
+    if (!imsi_bcd || !imsi_bcd[0])
+        return;
+    if (!trace_alias.initialized || trace_alias.count == 0)
+        return;
+
+    memset(old_list, 0, sizeof(old_list));
+
+    ogs_thread_mutex_lock(&trace_alias.mutex);
+
+    for (i = 0; i < trace_alias.count; i++) {
+        bool match = false;
+
+        if (trace_alias.type[i] == OGS_TRACE_ALIAS_MSISDN &&
+                msisdn_bcd && msisdn_bcd[0] &&
+                strcmp(trace_alias.key[i], msisdn_bcd) == 0)
+            match = true;
+        else if (trace_alias.type[i] == OGS_TRACE_ALIAS_IMEI &&
+                trace_alias_imei_match(trace_alias.key[i], imeisv_bcd))
+            match = true;
+
+        if (!match)
+            continue;
+
+        hit = true;
+        if (strcmp(trace_alias.imsi[i], imsi_bcd) != 0) {
+            ogs_cpystrn(old_list[n_old], trace_alias.imsi[i],
+                    OGS_TRACE_IMSI_LEN);
+            ogs_cpystrn(key_list[n_old], trace_alias.key[i],
+                    OGS_TRACE_ALIAS_KEY_LEN);
+            type_list[n_old] = (int)trace_alias.type[i];
+            ogs_cpystrn(trace_alias.imsi[i], imsi_bcd, OGS_TRACE_IMSI_LEN);
+            n_old++;
+        }
+    }
+
+    ogs_thread_mutex_unlock(&trace_alias.mutex);
+
+    if (!hit)
+        return;
+
+    for (i = 0; i < n_old; i++) {
+        (void)ogs_trace_filter_remove(old_list[i]);
+        ogs_info("trace alias refresh type=%d key=%s imsi=%s (was %s)",
+                type_list[i], key_list[i], imsi_bcd, old_list[i]);
+    }
+
+    (void)ogs_trace_filter_add_ex(imsi_bcd, true);
+}
+
+void ogs_trace_alias_clear(void)
+{
+    if (!trace_alias.initialized)
+        return;
+    ogs_thread_mutex_lock(&trace_alias.mutex);
+    trace_alias.count = 0;
+    memset(trace_alias.key, 0, sizeof(trace_alias.key));
+    memset(trace_alias.imsi, 0, sizeof(trace_alias.imsi));
+    ogs_thread_mutex_unlock(&trace_alias.mutex);
 }

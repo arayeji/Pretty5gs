@@ -54,4 +54,4 @@ subdir('smf')
 subdir('amf')
 subdir('cgf')
 subdir('admf')
-subdir('ptrace')
+# ptrace is local-only (gitignored); do not build or ship it.

@@ -72,6 +72,8 @@ void ogs_sgwc_trace_set(
     }
 
     ogs_trace_set(&ctx);
+    if (ctx.imsi[0])
+        ogs_trace_packet_on_imsi(ctx.imsi);
 }
 
 void sgwc_ue_log(

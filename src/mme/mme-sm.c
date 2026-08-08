@@ -1079,6 +1079,8 @@ cleanup:
         pkbuf = e->pkbuf;
         ogs_assert(pkbuf);
 
+        ogs_trace_packet_bind_rx("gtp", pkbuf->data, pkbuf->len);
+
         if (ogs_gtp2_parse_msg(&gtp_message, pkbuf) != OGS_OK) {
             ogs_error("ogs_gtp2_parse_msg() failed");
             ogs_pkbuf_free(pkbuf);

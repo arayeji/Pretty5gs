@@ -320,6 +320,7 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         ogs_assert(e);
         recvbuf = e->pkbuf;
         ogs_assert(recvbuf);
+        ogs_trace_packet_bind_rx("pfcp", recvbuf->data, recvbuf->len);
         pfcp_message = e->pfcp_message;
         ogs_assert(pfcp_message);
         pfcp_node = e->pfcp_node;
@@ -387,6 +388,7 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         ogs_assert(e);
         recvbuf = e->pkbuf;
         ogs_assert(recvbuf);
+        ogs_trace_packet_bind_rx("gtp", recvbuf->data, recvbuf->len);
 
         if (recvbuf->len >= sizeof(ogs_gtp1_header_t)) {
             uint8_t gtp_ver = ((ogs_gtp1_header_t *)recvbuf->data)->version;

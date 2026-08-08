@@ -36,7 +36,6 @@ systemd_conf_in = '''
     open5gs-cgfd.service
     open5gs-admfd.service
     open5gs-admin-api.service
-    open5gs-ptraced.service
 '''.split()
 
 # Historically these were templated but not installed by `meson install`
@@ -55,8 +54,7 @@ foreach file : systemd_conf_in
     do_install = (
             file == 'open5gs-cgfd.service' or
             file == 'open5gs-admfd.service' or
-            file == 'open5gs-admin-api.service' or
-            file == 'open5gs-ptraced.service')
+            file == 'open5gs-admin-api.service')
     if do_install
         configure_file(
                 input : file + '.in',

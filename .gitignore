@@ -91,3 +91,8 @@ tools/epc_audit_reports/
 tools/analyze_epc_1h.sh
 tools/extract_epc_signaling.sh
 
+# Local SPAN/PCAP ptrace daemon (kept local; not built or shipped)
+src/ptrace/
+configs/open5gs/ptrace.yaml.in
+configs/systemd/open5gs-ptraced.service.in
+

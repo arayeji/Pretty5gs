@@ -277,10 +277,71 @@ int mme_admin_ue_page(const ogs_metrics_query_t *q,
 int mme_admin_trace_imsi(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len)
 {
-    int status = ogs_metrics_admin_trace_imsi(q, body, body_cap, body_len);
+    ogs_metrics_query_t resolved = { 0 };
+    char imsi_buf[OGS_TRACE_IMSI_LEN];
+    char key_buf[OGS_TRACE_ALIAS_KEY_LEN];
+    ogs_trace_alias_type_e alias_type = 0;
+    const ogs_metrics_query_t *use_q = q;
+    int status;
 
-    if (q && q->sync && q->sync[0] && status == 200)
-        *body_len = mme_trace_sync_append(q, body, body_cap, *body_len);
+    if (q && ((q->msisdn && q->msisdn[0]) || (q->imei && q->imei[0])) &&
+            !q->force && !(q->imsi && strcmp(q->imsi, "list") == 0)) {
+        mme_ue_t *mme_ue = NULL;
+        bool found = false;
+
+        mme_ctx_lock();
+        ogs_list_for_each(&mme_self()->mme_ue_list, mme_ue) {
+            if (!MME_UE_HAVE_IMSI(mme_ue))
+                continue;
+            if (q->msisdn && q->msisdn[0] && mme_ue->msisdn_bcd[0] &&
+                    strcmp(mme_ue->msisdn_bcd, q->msisdn) == 0) {
+                ogs_cpystrn(imsi_buf, mme_ue->imsi_bcd, sizeof(imsi_buf));
+                alias_type = OGS_TRACE_ALIAS_MSISDN;
+                ogs_cpystrn(key_buf, q->msisdn, sizeof(key_buf));
+                found = true;
+                break;
+            }
+            if (q->imei && q->imei[0] && mme_ue->imeisv_bcd[0]) {
+                size_t kn = strlen(q->imei);
+                if (kn >= 14 &&
+                        strncmp(mme_ue->imeisv_bcd, q->imei, kn) == 0) {
+                    ogs_cpystrn(imsi_buf, mme_ue->imsi_bcd, sizeof(imsi_buf));
+                    alias_type = OGS_TRACE_ALIAS_IMEI;
+                    ogs_cpystrn(key_buf, q->imei, sizeof(key_buf));
+                    found = true;
+                    break;
+                }
+            }
+        }
+        mme_ctx_unlock();
+
+        if (!found) {
+            *body_len = (size_t)snprintf(body, body_cap,
+                    "{\"ok\":false,\"detail\":\"no attached UE for "
+                    "%s=%s (try again after attach, or use imsi=)\","
+                    "\"trace_imsi\":[]}\n",
+                    (q->msisdn && q->msisdn[0]) ? "msisdn" : "imei",
+                    (q->msisdn && q->msisdn[0]) ? q->msisdn : q->imei);
+            return ADMIN_HTTP_BAD_REQUEST;
+        }
+
+        if (!q->remove)
+            (void)ogs_trace_alias_set(alias_type, key_buf, imsi_buf);
+
+        resolved = *q;
+        resolved.imsi = imsi_buf;
+        resolved.msisdn = NULL;
+        resolved.imei = NULL;
+        /* Prefer exact IMSI once resolved from MSISDN/IMEI. */
+        if (!resolved.match)
+            resolved.match = "exact";
+        use_q = &resolved;
+    }
+
+    status = ogs_metrics_admin_trace_imsi(use_q, body, body_cap, body_len);
+
+    if (use_q && use_q->sync && use_q->sync[0] && status == 200)
+        *body_len = mme_trace_sync_append(use_q, body, body_cap, *body_len);
 
     return status;
 }

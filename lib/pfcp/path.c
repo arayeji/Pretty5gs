@@ -180,6 +180,8 @@ int ogs_pfcp_sendto(ogs_pfcp_node_t *node, ogs_pkbuf_t *pkbuf)
         return OGS_ERROR;
     }
 
+    ogs_trace_packet_ctx("pfcp", "tx", pkbuf->data, pkbuf->len);
+
     sent = ogs_sendto(sock->fd, pkbuf->data, pkbuf->len, 0, addr);
     if (sent < 0 || sent != pkbuf->len) {
         if (ogs_socket_errno != OGS_EAGAIN) {

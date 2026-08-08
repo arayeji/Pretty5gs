@@ -2297,6 +2297,11 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
         switch (message->emm.h.message_type) {
         case OGS_NAS_EPS_ATTACH_COMPLETE:
             ogs_mme_trace_set(enb_ue, mme_ue, NULL, "attach");
+            if (MME_UE_HAVE_IMSI(mme_ue))
+                ogs_trace_alias_refresh_imsi(
+                        mme_ue->msisdn_bcd[0] ? mme_ue->msisdn_bcd : NULL,
+                        mme_ue->imeisv_bcd[0] ? mme_ue->imeisv_bcd : NULL,
+                        mme_ue->imsi_bcd);
             mme_ue_progress(mme_ue, "attach_complete");
             OGS_TLOG_INFO("Attach complete");
 
