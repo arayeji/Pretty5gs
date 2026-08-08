@@ -362,7 +362,8 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
-    hss_imsi_info(imsi_bcd, "S6a-AIR", "Rx Authentication-Information-Request");
+    hss_imsi_info(imsi_bcd, "S6a-AIR",
+            "Rx Authentication-Information-Request");
 
     /* Get authentication info from database */
     rv = hss_db_auth_info(imsi_bcd, &auth_info);
@@ -1163,7 +1164,8 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
             goto out;
         }
 
-        hss_imsi_info(imsi_bcd, "S6a-ULR", "Rx Update-Location-Request");
+        hss_imsi_info(imsi_bcd, "S6a-ULR",
+                "Rx Update-Location-Request (User-Location)");
     } else {
         ogs_error("No User-Name AVP found");
         result_code = OGS_DIAM_MISSING_AVP;
@@ -1658,7 +1660,8 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Update-Location-Answer");
-        hss_imsi_info(imsi_bcd, "S6a-ULR", "Tx Update-Location-Answer");
+        hss_imsi_info(imsi_bcd, "S6a-ULR",
+                "Tx Update-Location-Answer (User-Location)");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(

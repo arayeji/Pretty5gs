@@ -167,20 +167,24 @@ void mme_ue_log(
      * Runtime enable without restart: POST /admin/trace/imsi with a
      * prefix ("432" captures every UE).
      */
-    if (!ogs_trace_filter_match(imsi) &&
-            !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
-        return;
+    {
+        bool filter_hit = ogs_trace_filter_match(imsi);
 
-    /* storm guard: skip formatting entirely when over budget */
-    if (level != OGS_LOG_DEBUG && !ogs_log_guard())
-        return;
+        if (!filter_hit &&
+                !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+            return;
+
+        /* Filter-matched lines skip the thread-local storm guard so a
+         * busy worker cannot hide ATTACH/S6a steps for the traced IMSI. */
+        if (!filter_hit && level != OGS_LOG_DEBUG && !ogs_log_guard())
+            return;
+    }
 
     /*
-     * Filter-matched DEBUG is capped by the process-wide trace budget
-     * instead of ogs_log_guard. Peek (not consume - ogs_log_vprintf
-     * consumes) before the enrichment below: mme_ue_resolve_enb +
-     * ogs_mme_trace_set cost ~4 global-mutex lookups per line, which a
-     * whole-population trace prefix multiplied into meltdown.
+     * Elevating past domain level is capped by the process-wide trace
+     * budget. Peek (ogs_log_vprintf consumes) before enrichment:
+     * mme_ue_resolve_enb + ogs_mme_trace_set cost ~4 global-mutex
+     * lookups per line.
      */
     if (ogs_log_get_domain_level(OGS_LOG_DOMAIN) < (ogs_log_level_e)level &&
             !ogs_log_trace_budget(false))

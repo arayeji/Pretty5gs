@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2026 by Open5GS contributors
  *
- * MME /admin/trace/imsi ?sync=sgwc,smf propagation to peer NF metrics ports.
+ * MME /admin/trace/imsi ?sync=hss,sgwc,smf propagation to peer NF metrics ports.
  */
 
 #include "mme-trace-sync.h"
@@ -19,7 +19,9 @@ typedef struct {
     uint16_t port;
 } mme_trace_sync_peer_t;
 
+/* Default loopback metrics ports from configs/open5gs yaml templates */
 static const mme_trace_sync_peer_t default_peers[] = {
+    { "hss",  "127.0.0.8", 9090 },
     { "sgwc", "127.0.0.3", 9090 },
     { "smf",  "127.0.0.4", 9090 },
 };
@@ -32,6 +34,10 @@ static bool sync_token_requested(const char *sync, const char *name)
     if (!sync || !sync[0] || !name || !name[0])
         return false;
 
+    /* sync=all → every known peer */
+    if (!strcasecmp(sync, "all"))
+        return true;
+
     ogs_snprintf(pattern, sizeof(pattern), "%s", name);
     p = sync;
     while (*p) {
@@ -42,6 +48,8 @@ static bool sync_token_requested(const char *sync, const char *name)
         end = strchr(p, ',');
         if (!end)
             end = p + strlen(p);
+        if ((size_t)(end - p) == 3 && strncasecmp(p, "all", 3) == 0)
+            return true;
         if ((size_t)(end - p) == strlen(pattern) &&
                 strncasecmp(p, pattern, end - p) == 0)
             return true;

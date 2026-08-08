@@ -44,6 +44,7 @@ void hss_imsi_log(
     char msg[OGS_HUGE_LEN];
     const char *id = (imsi_bcd && imsi_bcd[0]) ? imsi_bcd : "-";
     bool filter_hit;
+    ogs_log_level_e domain_level;
 
     ogs_assert(fmt);
 
@@ -54,16 +55,21 @@ void hss_imsi_log(
             !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
         return;
 
-    if (level != OGS_LOG_DEBUG && !ogs_log_guard())
+    /*
+     * Filter-matched lines must not share the thread-local ogs_log_guard
+     * with unrelated FD-thread INFO/WARN chatter — that was dropping
+     * S6a-ULR after S6a-AIR on busy HSS workers.
+     */
+    if (!filter_hit && level != OGS_LOG_DEBUG && !ogs_log_guard())
         return;
 
+    domain_level = ogs_log_get_domain_level(OGS_LOG_DOMAIN);
+
     /*
-     * Filter-matched DEBUG is capped by the process-wide trace budget
-     * (same as MME). Peek before formatting so AIR vector dumps cannot
-     * starve later ULR/ULA procedure lines in the same second.
+     * When elevating past the domain level, cap with the process-wide
+     * trace budget (peek; ogs_log_vprintf consumes).
      */
-    if (level == OGS_LOG_DEBUG &&
-            ogs_log_get_domain_level(OGS_LOG_DOMAIN) < OGS_LOG_DEBUG &&
+    if (domain_level < (ogs_log_level_e)level &&
             !ogs_log_trace_budget(false))
         return;
 
@@ -74,11 +80,6 @@ void hss_imsi_log(
     ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
 
-    /*
-     * Procedure boundary lines use INFO so they print when the domain is
-     * at info/warn and the IMSI filter matches, without relying on the
-     * DEBUG trace-budget path that freeDiameter AIR dumps can exhaust.
-     */
     ogs_log_printf(level, OGS_LOG_DOMAIN,
             0, __FILE__, __LINE__, OGS_FUNC, 0, "%s %s", prefix, msg);
 }
