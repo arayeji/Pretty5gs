@@ -50,7 +50,8 @@ int ogs_s1ap_decode(ogs_s1ap_message_t *message, ogs_pkbuf_t *pkbuf)
     rv = ogs_asn_decode(&asn_DEF_S1AP_S1AP_PDU,
             message, sizeof(ogs_s1ap_message_t), pkbuf);
     if (rv != OGS_OK) {
-        ogs_warn("Failed to decode S1AP-PDU");
+        /* Keep at debug: live NFs rarely hit this; ptrace SPAN often does. */
+        ogs_debug("Failed to decode S1AP-PDU");
         return rv;
     }
 

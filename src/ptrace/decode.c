@@ -60,8 +60,10 @@ static int sctp_next_s1ap(const uint8_t *data, int len, int *state,
 
         if (chunk_len < 4)
             return OGS_ERROR;
+        /* Truncated on the wire (SPAN snaplen / IP frag) — do not feed
+         * a partial DATA chunk to ASN.1 (RC_FAIL consumed:0 flood). */
         if (chunk_len > remain)
-            chunk_len = (uint16_t)remain;
+            break;
 
         if (type == 0 && chunk_len >= 16) {
             ppid = ((uint32_t)p[12] << 24) | ((uint32_t)p[13] << 16) |
@@ -71,7 +73,9 @@ static int sctp_next_s1ap(const uint8_t *data, int len, int *state,
                     ((uint32_t)p[14] << 16) |
                     ((uint32_t)p[15] << 24);
             if (ppid == 18 || ppid_le == 18) {
-                if ((flags & 0x03) == 0x03 || (flags & 0x02)) {
+                /* Only complete S1AP PDUs (B+E). Fragmented B/E-only
+                 * chunks are still covered by NAS byte-scan on the frame. */
+                if ((flags & 0x03) == 0x03) {
                     *payload = p + 16;
                     *plen = chunk_len - 16;
                     step = chunk_len + ((4 - (chunk_len & 3)) & 3);
@@ -190,34 +194,34 @@ int ptrace_decode_packet(ptrace_packet_t *pkt,
              dport == PTRACE_PORT_SCTP_S1AP ||
              pkt->role == PTRACE_ROLE_S1MME)) {
         int sctp_state = 12;
+
+        /* Scan whole SCTP datagram for cleartext Attach/Identity —
+         * covers fragmented B/E chunks we no longer feed to ASN.1. */
+        if (n < PTRACE_MAX_EVENTS_PER_PKT) {
+            ptrace_event_t *seed = ptrace_event_alloc();
+            if (seed) {
+                seed->ts = pkt->ts;
+                seed->role = pkt->role;
+                ogs_cpystrn(seed->src_ip, src_ip, sizeof(seed->src_ip));
+                ogs_cpystrn(seed->dst_ip, dst_ip, sizeof(seed->dst_ip));
+                seed->src_port = sport;
+                seed->dst_port = dport;
+                seed->raw_len = pkt->len;
+                ogs_cpystrn(seed->packet_ref, pkt->packet_ref,
+                        sizeof(seed->packet_ref));
+                if (ptrace_decode_nas_scan(l4, l4len, seed) == OGS_OK &&
+                        (seed->ids.imsi[0] || seed->ids.guti[0])) {
+                    out[n++] = seed;
+                } else {
+                    ptrace_event_free(seed);
+                }
+            }
+        }
+
         while (sctp_next_s1ap(l4, l4len, &sctp_state, &payload, &plen) ==
                 OGS_OK) {
             ptrace_event_t *extra[PTRACE_MAX_EVENTS_PER_PKT];
             int nextra = 0;
-
-            /* Lock-free IMSI seed: cleartext Attach/Identity in the
-             * SCTP chunk — index subscriber even when ASN.1 is backed up. */
-            if (n < PTRACE_MAX_EVENTS_PER_PKT) {
-                ptrace_event_t *seed = ptrace_event_alloc();
-                if (seed) {
-                    seed->ts = pkt->ts;
-                    seed->role = pkt->role;
-                    ogs_cpystrn(seed->src_ip, src_ip, sizeof(seed->src_ip));
-                    ogs_cpystrn(seed->dst_ip, dst_ip, sizeof(seed->dst_ip));
-                    seed->src_port = sport;
-                    seed->dst_port = dport;
-                    seed->raw_len = pkt->len;
-                    ogs_cpystrn(seed->packet_ref, pkt->packet_ref,
-                            sizeof(seed->packet_ref));
-                    if (ptrace_decode_nas_scan(payload, plen, seed) ==
-                            OGS_OK &&
-                            (seed->ids.imsi[0] || seed->ids.guti[0])) {
-                        out[n++] = seed;
-                    } else {
-                        ptrace_event_free(seed);
-                    }
-                }
-            }
 
             evt = ptrace_event_alloc();
             if (!evt)
