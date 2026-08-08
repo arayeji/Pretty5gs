@@ -310,8 +310,9 @@ static _MHD_Result access_handler(void *cls,
                 "{\"status\":\"ok\",\"packets\":%llu,\"dropped\":%llu,"
                 "\"ring_drop\":%llu,\"filtered\":%llu,\"events\":%llu,"
                 "\"ue_count\":%d,\"ifaces\":%d,\"capture_threads\":%d,"
-                "\"workers\":%d,"
-                "\"s1ap_ok\":%llu,\"s1ap_fail\":%llu,\"s1ap_scan\":%llu}\n",
+                "\"workers\":%d,\"pool_avail\":%d,"
+                "\"s1ap_ok\":%llu,\"s1ap_fail\":%llu,\"s1ap_scan\":%llu,"
+                "\"s1ap_skip\":%llu,\"identity_inline\":%llu}\n",
                 (unsigned long long)ctx->packets_in,
                 (unsigned long long)ctx->packets_drop,
                 (unsigned long long)ctx->packets_ring_drop,
@@ -321,9 +322,12 @@ static _MHD_Result access_handler(void *cls,
                 ctx->num_ifaces,
                 ctx->capture_threads,
                 ctx->workers,
+                ptrace_packet_pool_avail(),
                 (unsigned long long)ctx->s1ap_ok,
                 (unsigned long long)ctx->s1ap_fail,
-                (unsigned long long)ctx->s1ap_scan_hit);
+                (unsigned long long)ctx->s1ap_scan_hit,
+                (unsigned long long)ctx->s1ap_skip_pressure,
+                (unsigned long long)ctx->identity_inline);
         return send_json(conn, MHD_HTTP_OK, buf);
     }
 

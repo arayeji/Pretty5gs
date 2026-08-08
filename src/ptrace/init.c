@@ -41,11 +41,13 @@ static void process_packet(ptrace_packet_t *pkt)
     if (n > PTRACE_MAX_EVENTS_PER_PKT)
         n = PTRACE_MAX_EVENTS_PER_PKT;
 
-    /* Async disk ring (dedicated writer thread). */
+    /* Async disk ring — skip when workers are already behind. */
     ref[0] = '\0';
-    ptrace_ring_write(pkt->data, pkt->len, pkt->ts, ref, sizeof(ref));
-    if (ref[0])
-        ogs_cpystrn(pkt->packet_ref, ref, sizeof(pkt->packet_ref));
+    if (!ptrace_under_pressure()) {
+        ptrace_ring_write(pkt->data, pkt->len, pkt->ts, ref, sizeof(ref));
+        if (ref[0])
+            ogs_cpystrn(pkt->packet_ref, ref, sizeof(pkt->packet_ref));
+    }
 
     for (i = 0; i < n; i++) {
         if (!evs[i])

@@ -218,6 +218,13 @@ int ptrace_decode_packet(ptrace_packet_t *pkt,
             }
         }
 
+        /* Under backlog, skip ASN.1 (global lock) — IMSI already seeded. */
+        if (ptrace_under_pressure()) {
+            ptrace_self()->s1ap_skip_pressure++;
+            *nout = n;
+            return OGS_OK;
+        }
+
         while (sctp_next_s1ap(l4, l4len, &sctp_state, &payload, &plen) ==
                 OGS_OK) {
             ptrace_event_t *extra[PTRACE_MAX_EVENTS_PER_PKT];

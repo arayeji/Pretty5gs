@@ -49,6 +49,8 @@ typedef struct ptrace_context_s {
     uint64_t s1ap_ok;
     uint64_t s1ap_fail;
     uint64_t s1ap_scan_hit;
+    uint64_t s1ap_skip_pressure; /* ASN skipped due to backlog */
+    uint64_t identity_inline;    /* Attach/Identity indexed on drop path */
     int capture_threads;
 } ptrace_context_t;
 
@@ -65,6 +67,8 @@ ptrace_packet_t *ptrace_packet_alloc(void);
 void ptrace_packet_free(ptrace_packet_t *pkt);
 ptrace_event_t *ptrace_event_alloc(void);
 void ptrace_event_free(ptrace_event_t *evt);
+int ptrace_packet_pool_avail(void);
+bool ptrace_under_pressure(void);
 
 #ifdef __cplusplus
 }

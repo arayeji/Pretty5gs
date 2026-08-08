@@ -18,9 +18,28 @@ void ptrace_store_final(void)
 void ptrace_store_put(ptrace_event_t *evt)
 {
     ptrace_context_t *ctx = ptrace_self();
+    bool keep;
+
     if (!evt)
         return;
-    ptrace_cache_put(evt);
+
+    /* Caching every S1AP frame OOM/stalls workers. Keep identity and
+     * session-critical messages only. */
+    keep = evt->ids.imsi[0] || evt->ids.guti[0] || evt->ids.msisdn[0] ||
+            evt->ids.imei[0] || evt->ids.ue_ip[0] ||
+            evt->ids.num_teids > 0 || evt->ids.has_teid ||
+            evt->ids.has_seid ||
+            (evt->message[0] && (
+                strstr(evt->message, "Attach") ||
+                strstr(evt->message, "Identity") ||
+                strstr(evt->message, "Reject") ||
+                strstr(evt->message, "Detach") ||
+                strstr(evt->message, "Create Session") ||
+                strstr(evt->message, "Session Establishment") ||
+                strstr(evt->message, "Initial UE")));
+
+    if (keep)
+        ptrace_cache_put(evt);
     if (ctx->redis_enabled)
         ptrace_store_redis_put(evt);
     if (ctx->clickhouse_enabled)

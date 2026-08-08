@@ -284,3 +284,18 @@ void ptrace_event_free(ptrace_event_t *evt)
     ogs_pool_free(&evt_pool, evt);
     ogs_thread_mutex_unlock(&evt_lock);
 }
+
+int ptrace_packet_pool_avail(void)
+{
+    int avail;
+    ogs_thread_mutex_lock(&pkt_lock);
+    avail = pkt_pool.avail;
+    ogs_thread_mutex_unlock(&pkt_lock);
+    return avail;
+}
+
+bool ptrace_under_pressure(void)
+{
+    /* Leave headroom so Attach can still be queued. */
+    return ptrace_packet_pool_avail() < (PTRACE_PKT_POOL_SIZE / 4);
+}

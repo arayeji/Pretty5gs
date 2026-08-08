@@ -5,6 +5,8 @@
  */
 
 #include "decode.h"
+#include "context.h"
+#include "correlate.h"
 
 /* 3GPP TS 24.301 EMM message types */
 #define NAS_ATTACH_REQUEST              0x41
@@ -242,4 +244,28 @@ int ptrace_decode_nas_scan(const uint8_t *data, int len, ptrace_event_t *evt)
         }
     }
     return OGS_ERROR;
+}
+
+void ptrace_index_identity_inline(const uint8_t *data, uint16_t len,
+        ogs_time_t ts, ptrace_role_e role)
+{
+    ptrace_event_t evt;
+    ptrace_context_t *ctx = ptrace_self();
+
+    if (!data || len < 6)
+        return;
+
+    memset(&evt, 0, sizeof(evt));
+    evt.ts = ts ? ts : ogs_time_now();
+    evt.role = role;
+    evt.protocol = PTRACE_PROTO_NAS;
+    if (ptrace_decode_nas_scan(data, (int)len, &evt) != OGS_OK)
+        return;
+    if (!evt.ids.imsi[0] && !evt.ids.guti[0])
+        return;
+    if (!evt.message[0])
+        ogs_cpystrn(evt.message, "NAS (inline)", sizeof(evt.message));
+    ptrace_correlate_event(&evt);
+    if (ctx)
+        ctx->identity_inline++;
 }
