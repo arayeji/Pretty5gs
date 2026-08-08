@@ -10,8 +10,12 @@
 #include "ogs-app.h"
 #include "ogs-metrics.h"
 
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/socket.h>
+#include <sys/time.h>
 
 typedef struct {
     const char *name;
@@ -113,6 +117,17 @@ static int trace_http_get(const char *host, uint16_t port,
     if (!sock)
         return OGS_ERROR;
 
+    /* Bound sync so a hung peer cannot stall the MHD admin thread. */
+    {
+        struct timeval tv;
+        tv.tv_sec = 2;
+        tv.tv_usec = 0;
+        (void)setsockopt(sock->fd, SOL_SOCKET, SO_RCVTIMEO,
+                (const void *)&tv, sizeof(tv));
+        (void)setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO,
+                (const void *)&tv, sizeof(tv));
+    }
+
     req_len = ogs_snprintf(req, sizeof(req),
             "GET %s HTTP/1.1\r\n"
             "Host: %s\r\n"
@@ -174,6 +189,27 @@ static int trace_http_get(const char *host, uint16_t port,
     return OGS_OK;
 }
 
+static size_t admin_buf_append(char *body, size_t body_cap, size_t off,
+        const char *fmt, ...)
+{
+    va_list ap;
+    int n;
+
+    if (!body || body_cap == 0 || off >= body_cap)
+        return off;
+
+    va_start(ap, fmt);
+    n = vsnprintf(body + off, body_cap - off, fmt, ap);
+    va_end(ap);
+
+    if (n < 0)
+        return off;
+    /* C99: snprintf returns the length that would have been written. */
+    if ((size_t)n >= body_cap - off)
+        return body_cap - 1;
+    return off + (size_t)n;
+}
+
 size_t mme_trace_sync_append(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t body_len)
 {
@@ -183,8 +219,11 @@ size_t mme_trace_sync_append(const ogs_metrics_query_t *q,
     size_t peer_len = 0;
     unsigned int i;
 
-    if (!q || !q->sync || !q->sync[0] || !body || body_cap == 0)
+    if (!q || !q->sync || !q->sync[0] || !body || body_cap < 2)
         return body_len;
+
+    if (off >= body_cap)
+        off = body_cap - 1;
 
     if (off > 0 && body[off - 1] == '\n')
         off--;
@@ -204,22 +243,20 @@ size_t mme_trace_sync_append(const ogs_metrics_query_t *q,
         peer_body[0] = '\0';
         if (trace_http_get(peer->host, peer->port, path,
                 peer_body, sizeof(peer_body), &peer_len) != OGS_OK) {
-            off += (size_t)snprintf(body + off, body_cap - off,
+            off = admin_buf_append(body, body_cap, off,
                     ",\"%s\":{\"ok\":false,\"detail\":\"peer unreachable\"}",
                     peer->name);
             continue;
         }
 
-        off += (size_t)snprintf(body + off, body_cap - off,
-                ",\"%s\":", peer->name);
+        off = admin_buf_append(body, body_cap, off, ",\"%s\":", peer->name);
         if (peer_len > 0 && peer_body[peer_len - 1] == '\n')
             peer_body[--peer_len] = '\0';
-        off += (size_t)snprintf(body + off, body_cap - off, "%s",
+        off = admin_buf_append(body, body_cap, off, "%s",
                 peer_body[0] ? peer_body : "{\"ok\":false}");
     }
 
-    if (off < body_cap)
-        off += (size_t)snprintf(body + off, body_cap - off, "}\n");
-
-    return off;
+    off = admin_buf_append(body, body_cap, off, "}\n");
+    body[off < body_cap ? off : body_cap - 1] = '\0';
+    return off < body_cap ? off : body_cap - 1;
 }
