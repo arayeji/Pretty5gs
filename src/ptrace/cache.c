@@ -102,6 +102,19 @@ void ptrace_cache_pin_ue(uint64_t ue_id, ogs_time_t until)
     ogs_thread_mutex_unlock(&lock);
 }
 
+void ptrace_cache_remap_ue(uint64_t from_id, uint64_t to_id)
+{
+    cache_node_t *n;
+    if (!ready || !from_id || !to_id || from_id == to_id)
+        return;
+    ogs_thread_mutex_lock(&lock);
+    ogs_list_for_each(&meta_list, n) {
+        if (n->evt.ue_id == from_id)
+            n->evt.ue_id = to_id;
+    }
+    ogs_thread_mutex_unlock(&lock);
+}
+
 void ptrace_cache_expire(void)
 {
     cache_node_t *n, *nn;
@@ -146,6 +159,31 @@ int ptrace_cache_query_ue(uint64_t ue_id, ogs_time_t from, ogs_time_t to,
         if (from && n->evt.ts < from)
             continue;
         if (to && n->evt.ts > to)
+            continue;
+        out[count++] = &n->evt;
+        if (count >= max_out)
+            break;
+    }
+    ogs_thread_mutex_unlock(&lock);
+    return count;
+}
+
+int ptrace_cache_query_match(ptrace_cache_match_cb match, void *user,
+        ogs_time_t from, ogs_time_t to,
+        ptrace_event_t **out, int max_out)
+{
+    cache_node_t *n;
+    int count = 0;
+    if (!ready || !match || !out || max_out <= 0)
+        return 0;
+
+    ogs_thread_mutex_lock(&lock);
+    ogs_list_for_each(&meta_list, n) {
+        if (from && n->evt.ts < from)
+            continue;
+        if (to && n->evt.ts > to)
+            continue;
+        if (!match(&n->evt, user))
             continue;
         out[count++] = &n->evt;
         if (count >= max_out)

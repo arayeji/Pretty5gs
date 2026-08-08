@@ -1,210 +1,423 @@
 /*
  * Copyright (C) 2026 by Pretty5GS Contributors
  *
- * Lightweight S1AP PER/BER field scan for UE IDs + NAS-PDU.
- * Uses procedureCode from initiating message; extracts known IE ids.
+ * S1AP decode via Open5GS ASN.1 — extract UE S1AP IDs, TAI/ECGI,
+ * NAS-PDU, and S1-U GTP TEIDs from Initial Context Setup.
  */
 
 #include "decode.h"
 #include "context.h"
 
-/* S1AP Procedure codes (subset) */
-#define S1AP_PROC_INITIAL_UE            12
-#define S1AP_PROC_DL_NAS_TRANSPORT      11
-#define S1AP_PROC_UL_NAS_TRANSPORT      13
-#define S1AP_PROC_INITIAL_CONTEXT_SETUP 9
-#define S1AP_PROC_UE_CONTEXT_RELEASE    23
+#include "ogs-s1ap.h"
 
-/* IE ids */
-#define S1AP_IE_MME_UE_S1AP_ID          0
-#define S1AP_IE_ENB_UE_S1AP_ID          8
-#define S1AP_IE_NAS_PDU                 26
-#define S1AP_IE_TAI                     67
-#define S1AP_IE_EUTRAN_CGI              100
-
-static const char *s1ap_proc_name(uint32_t code)
+static const char *pdu_proc_name(const ogs_s1ap_message_t *msg)
 {
-    switch (code) {
-    case S1AP_PROC_INITIAL_UE: return "Initial UE Message";
-    case S1AP_PROC_DL_NAS_TRANSPORT: return "Downlink NAS Transport";
-    case S1AP_PROC_UL_NAS_TRANSPORT: return "Uplink NAS Transport";
-    case S1AP_PROC_INITIAL_CONTEXT_SETUP: return "Initial Context Setup";
-    case S1AP_PROC_UE_CONTEXT_RELEASE: return "UE Context Release";
-    default: return NULL;
+    uint8_t code;
+
+    if (!msg)
+        return NULL;
+    if (msg->present == S1AP_S1AP_PDU_PR_initiatingMessage &&
+            msg->choice.initiatingMessage) {
+        code = msg->choice.initiatingMessage->procedureCode;
+        switch (code) {
+        case S1AP_ProcedureCode_id_initialUEMessage:
+            return "Initial UE Message";
+        case S1AP_ProcedureCode_id_downlinkNASTransport:
+            return "Downlink NAS Transport";
+        case S1AP_ProcedureCode_id_uplinkNASTransport:
+            return "Uplink NAS Transport";
+        case S1AP_ProcedureCode_id_InitialContextSetup:
+            return "Initial Context Setup Request";
+        case S1AP_ProcedureCode_id_UEContextRelease:
+            return "UE Context Release";
+        case S1AP_ProcedureCode_id_UEContextReleaseRequest:
+            return "UE Context Release Request";
+        case S1AP_ProcedureCode_id_E_RABSetup:
+            return "E-RAB Setup Request";
+        case S1AP_ProcedureCode_id_E_RABModify:
+            return "E-RAB Modify Request";
+        case S1AP_ProcedureCode_id_E_RABRelease:
+            return "E-RAB Release Command";
+        default:
+            return NULL;
+        }
     }
+    if (msg->present == S1AP_S1AP_PDU_PR_successfulOutcome &&
+            msg->choice.successfulOutcome) {
+        code = msg->choice.successfulOutcome->procedureCode;
+        switch (code) {
+        case S1AP_ProcedureCode_id_InitialContextSetup:
+            return "Initial Context Setup Response";
+        case S1AP_ProcedureCode_id_UEContextRelease:
+            return "UE Context Release Complete";
+        case S1AP_ProcedureCode_id_E_RABSetup:
+            return "E-RAB Setup Response";
+        default:
+            return NULL;
+        }
+    }
+    return NULL;
 }
 
-/* Very small ASN.1 BER helper: find SEQUENCE contents after tag */
-static int ber_len(const uint8_t *p, int len, int *hdr, int *vlen)
+static uint32_t teid_from_octet(OCTET_STRING_t *os)
 {
-    if (len < 2)
-        return OGS_ERROR;
-    if (!(p[1] & 0x80)) {
-        *hdr = 2;
-        *vlen = p[1];
-        return (*hdr + *vlen <= len) ? OGS_OK : OGS_ERROR;
-    }
-    {
-        int n = p[1] & 0x7f;
-        int i;
-        uint32_t L = 0;
-        if (n == 0 || n > 3 || len < 2 + n)
-            return OGS_ERROR;
-        for (i = 0; i < n; i++)
-            L = (L << 8) | p[2 + i];
-        *hdr = 2 + n;
-        *vlen = (int)L;
-        return (*hdr + *vlen <= len) ? OGS_OK : OGS_ERROR;
-    }
-}
-
-static void scan_ies(const uint8_t *p, int len, ptrace_event_t *evt,
-        const uint8_t **nas, int *nas_len)
-{
-    /* Heuristic scan for known IE id patterns in PER-aligned S1AP is hard.
-     * Instead scan for plaintext markers: many stacks emit IE id as 2-byte
-     * big-endian near value. We look for criticality+id patterns commonly
-     * seen after Open5GS encode. Fallback: extract from decoded-like layout.
-     *
-     * Practical approach used here: byte-scan for IE ID followed by length
-     * for the few IEs we care about (aligned with APER open type dumps).
-     */
+    uint32_t teid = 0;
     int i;
-    for (i = 0; i + 6 < len; i++) {
-        uint16_t ieid = (uint16_t)((p[i] << 8) | p[i + 1]);
-        /* Prefer single-byte id encoding used in APER (id < 256) */
-        uint8_t id8 = p[i];
-        if (id8 == S1AP_IE_ENB_UE_S1AP_ID && p[i + 1] <= 2) {
-            /* speculative */
-        }
-        (void)ieid;
-    }
+    if (!os || !os->buf || os->size <= 0)
+        return 0;
+    for (i = 0; i < os->size && i < 4; i++)
+        teid = (teid << 8) | os->buf[i];
+    return teid;
+}
 
-    /* Alternative: after S1AP header, Open5GS PER starts with procedureCode.
-     * We already set procedure from first bytes. For IDs, use permissive
-     * scan of 24-bit / 32-bit values near NAS-PDU OCTET STRING. */
-    for (i = 0; i + 8 < len; i++) {
-        /* Look for plausible NAS PDU: EMM PD 0x07 at start of OCTET STRING */
-        if ((p[i] & 0x0f) == 0x07 && (p[i] >> 4) <= 4) {
-            uint8_t mt = (i + 1 < len) ? p[i + 1] : 0;
-            if (mt == 0x41 || mt == 0x42 || mt == 0x52 || mt == 0x53 ||
-                    mt == 0x5d || mt == 0x48 || mt == 0x4c || mt == 0x45) {
-                *nas = &p[i];
-                *nas_len = len - i;
-                /* Prefer shorter plausible NAS (cap 256) */
-                if (*nas_len > 256)
-                    *nas_len = 256;
-                break;
+static void add_teid(ptrace_event_t *evt, uint32_t teid)
+{
+    ptrace_ids_add_teid(&evt->ids, teid);
+}
+
+static void extract_nas(OCTET_STRING_t *nas_pdu, ptrace_event_t *base,
+        ptrace_event_t **extra, int *nextra)
+{
+    ptrace_event_t *ne;
+    if (!nas_pdu || !nas_pdu->buf || nas_pdu->size <= 0)
+        return;
+    if (*nextra >= PTRACE_MAX_EVENTS_PER_PKT)
+        return;
+    ne = ptrace_event_alloc();
+    if (!ne)
+        return;
+    ne->ts = base->ts;
+    ne->role = base->role;
+    ogs_cpystrn(ne->src_ip, base->src_ip, sizeof(ne->src_ip));
+    ogs_cpystrn(ne->dst_ip, base->dst_ip, sizeof(ne->dst_ip));
+    ne->src_port = base->src_port;
+    ne->dst_port = base->dst_port;
+    ogs_cpystrn(ne->packet_ref, base->packet_ref, sizeof(ne->packet_ref));
+    ne->ids = base->ids; /* inherit S1AP IDs for correlation */
+    if (ptrace_decode_nas(nas_pdu->buf, (int)nas_pdu->size, ne) == OGS_OK) {
+        /* propagate identities discovered in NAS back to S1AP event */
+        if (ne->ids.imsi[0] && !base->ids.imsi[0])
+            ogs_cpystrn(base->ids.imsi, ne->ids.imsi, sizeof(base->ids.imsi));
+        if (ne->ids.msisdn[0] && !base->ids.msisdn[0])
+            ogs_cpystrn(base->ids.msisdn, ne->ids.msisdn,
+                    sizeof(base->ids.msisdn));
+        if (ne->ids.imei[0] && !base->ids.imei[0])
+            ogs_cpystrn(base->ids.imei, ne->ids.imei, sizeof(base->ids.imei));
+        if (ne->ids.guti[0] && !base->ids.guti[0])
+            ogs_cpystrn(base->ids.guti, ne->ids.guti, sizeof(base->ids.guti));
+        if (ne->ids.m_tmsi[0] && !base->ids.m_tmsi[0])
+            ogs_cpystrn(base->ids.m_tmsi, ne->ids.m_tmsi,
+                    sizeof(base->ids.m_tmsi));
+        extra[(*nextra)++] = ne;
+    } else {
+        ptrace_event_free(ne);
+    }
+}
+
+static void handle_initial_ue(S1AP_InitialUEMessage_t *msg,
+        ptrace_event_t *base, ptrace_event_t **extra, int *nextra)
+{
+    int i;
+    for (i = 0; i < msg->protocolIEs.list.count; i++) {
+        S1AP_InitialUEMessage_IEs_t *ie = msg->protocolIEs.list.array[i];
+        if (!ie)
+            continue;
+        switch (ie->id) {
+        case S1AP_ProtocolIE_ID_id_eNB_UE_S1AP_ID:
+            base->ids.enb_ue_s1ap_id = (uint32_t)ie->value.choice.ENB_UE_S1AP_ID;
+            base->ids.has_enb_ue_s1ap_id = true;
+            break;
+        case S1AP_ProtocolIE_ID_id_NAS_PDU:
+            extract_nas(&ie->value.choice.NAS_PDU, base, extra, nextra);
+            break;
+        case S1AP_ProtocolIE_ID_id_TAI:
+            if (ie->value.choice.TAI.tAC.size >= 2) {
+                base->ids.tac = (uint16_t)(
+                        (ie->value.choice.TAI.tAC.buf[0] << 8) |
+                        ie->value.choice.TAI.tAC.buf[1]);
+                base->ids.has_tac = true;
             }
+            break;
+        case S1AP_ProtocolIE_ID_id_EUTRAN_CGI:
+            if (ie->value.choice.EUTRAN_CGI.cell_ID.size >= 4) {
+                uint8_t *b = ie->value.choice.EUTRAN_CGI.cell_ID.buf;
+                base->ids.cell_id = ((uint32_t)b[0] << 20) |
+                        ((uint32_t)b[1] << 12) |
+                        ((uint32_t)b[2] << 4) |
+                        ((uint32_t)b[3] >> 4);
+                base->ids.has_cell_id = true;
+            }
+            break;
+        default:
+            break;
         }
     }
+}
 
-    /* eNB/MME UE S1AP ID: scan for 4-byte values after procedure — best effort
-     * using first two uint32 after header for InitialUEMessage-like layouts. */
-    if (len > 20) {
-        /* Leave unset unless we find stronger signal; NAS correlation fills IDs */
-        (void)evt;
+static void handle_dl_nas(S1AP_DownlinkNASTransport_t *msg,
+        ptrace_event_t *base, ptrace_event_t **extra, int *nextra)
+{
+    int i;
+    for (i = 0; i < msg->protocolIEs.list.count; i++) {
+        S1AP_DownlinkNASTransport_IEs_t *ie = msg->protocolIEs.list.array[i];
+        if (!ie)
+            continue;
+        switch (ie->id) {
+        case S1AP_ProtocolIE_ID_id_MME_UE_S1AP_ID:
+            base->ids.mme_ue_s1ap_id =
+                    (uint32_t)ie->value.choice.MME_UE_S1AP_ID;
+            base->ids.has_mme_ue_s1ap_id = true;
+            break;
+        case S1AP_ProtocolIE_ID_id_eNB_UE_S1AP_ID:
+            base->ids.enb_ue_s1ap_id =
+                    (uint32_t)ie->value.choice.ENB_UE_S1AP_ID;
+            base->ids.has_enb_ue_s1ap_id = true;
+            break;
+        case S1AP_ProtocolIE_ID_id_NAS_PDU:
+            extract_nas(&ie->value.choice.NAS_PDU, base, extra, nextra);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+static void handle_ul_nas(S1AP_UplinkNASTransport_t *msg,
+        ptrace_event_t *base, ptrace_event_t **extra, int *nextra)
+{
+    int i;
+    for (i = 0; i < msg->protocolIEs.list.count; i++) {
+        S1AP_UplinkNASTransport_IEs_t *ie = msg->protocolIEs.list.array[i];
+        if (!ie)
+            continue;
+        switch (ie->id) {
+        case S1AP_ProtocolIE_ID_id_MME_UE_S1AP_ID:
+            base->ids.mme_ue_s1ap_id =
+                    (uint32_t)ie->value.choice.MME_UE_S1AP_ID;
+            base->ids.has_mme_ue_s1ap_id = true;
+            break;
+        case S1AP_ProtocolIE_ID_id_eNB_UE_S1AP_ID:
+            base->ids.enb_ue_s1ap_id =
+                    (uint32_t)ie->value.choice.ENB_UE_S1AP_ID;
+            base->ids.has_enb_ue_s1ap_id = true;
+            break;
+        case S1AP_ProtocolIE_ID_id_NAS_PDU:
+            extract_nas(&ie->value.choice.NAS_PDU, base, extra, nextra);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+static void handle_ics_req(S1AP_InitialContextSetupRequest_t *msg,
+        ptrace_event_t *base, ptrace_event_t **extra, int *nextra)
+{
+    int i, j, k;
+    for (i = 0; i < msg->protocolIEs.list.count; i++) {
+        S1AP_InitialContextSetupRequestIEs_t *ie =
+            msg->protocolIEs.list.array[i];
+        if (!ie)
+            continue;
+        switch (ie->id) {
+        case S1AP_ProtocolIE_ID_id_MME_UE_S1AP_ID:
+            base->ids.mme_ue_s1ap_id =
+                    (uint32_t)ie->value.choice.MME_UE_S1AP_ID;
+            base->ids.has_mme_ue_s1ap_id = true;
+            break;
+        case S1AP_ProtocolIE_ID_id_eNB_UE_S1AP_ID:
+            base->ids.enb_ue_s1ap_id =
+                    (uint32_t)ie->value.choice.ENB_UE_S1AP_ID;
+            base->ids.has_enb_ue_s1ap_id = true;
+            break;
+        case S1AP_ProtocolIE_ID_id_E_RABToBeSetupListCtxtSUReq: {
+            S1AP_E_RABToBeSetupListCtxtSUReq_t *list =
+                &ie->value.choice.E_RABToBeSetupListCtxtSUReq;
+            for (j = 0; j < list->list.count; j++) {
+                S1AP_E_RABToBeSetupItemCtxtSUReqIEs_t *item =
+                    (S1AP_E_RABToBeSetupItemCtxtSUReqIEs_t *)
+                        list->list.array[j];
+                S1AP_E_RABToBeSetupItemCtxtSUReq_t *erab;
+                uint32_t teid;
+                if (!item)
+                    continue;
+                erab = &item->value.choice.E_RABToBeSetupItemCtxtSUReq;
+                teid = teid_from_octet(&erab->gTP_TEID);
+                add_teid(base, teid); /* SGW S1-U TEID */
+                base->ids.bearer_id = (uint8_t)erab->e_RAB_ID;
+                base->ids.has_bearer_id = true;
+                if (erab->nAS_PDU)
+                    extract_nas(erab->nAS_PDU, base, extra, nextra);
+            }
+            break;
+        }
+        case S1AP_ProtocolIE_ID_id_Masked_IMEISV: {
+            S1AP_Masked_IMEISV_t *m = &ie->value.choice.Masked_IMEISV;
+            if (m->buf && m->size >= 4 && !base->ids.imei[0]) {
+                /* best-effort hex of masked IMEISV */
+                size_t n = m->size < 8 ? m->size : 8;
+                for (k = 0; k < (int)n &&
+                        2 * k + 2 < (int)sizeof(base->ids.imei); k++)
+                    sprintf(base->ids.imei + 2 * k, "%02x", m->buf[k]);
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+}
+
+static void handle_ics_rsp(S1AP_InitialContextSetupResponse_t *msg,
+        ptrace_event_t *base)
+{
+    int i, j;
+    for (i = 0; i < msg->protocolIEs.list.count; i++) {
+        S1AP_InitialContextSetupResponseIEs_t *ie =
+            msg->protocolIEs.list.array[i];
+        if (!ie)
+            continue;
+        switch (ie->id) {
+        case S1AP_ProtocolIE_ID_id_MME_UE_S1AP_ID:
+            base->ids.mme_ue_s1ap_id =
+                    (uint32_t)ie->value.choice.MME_UE_S1AP_ID;
+            base->ids.has_mme_ue_s1ap_id = true;
+            break;
+        case S1AP_ProtocolIE_ID_id_eNB_UE_S1AP_ID:
+            base->ids.enb_ue_s1ap_id =
+                    (uint32_t)ie->value.choice.ENB_UE_S1AP_ID;
+            base->ids.has_enb_ue_s1ap_id = true;
+            break;
+        case S1AP_ProtocolIE_ID_id_E_RABSetupListCtxtSURes: {
+            S1AP_E_RABSetupListCtxtSURes_t *list =
+                &ie->value.choice.E_RABSetupListCtxtSURes;
+            for (j = 0; j < list->list.count; j++) {
+                S1AP_E_RABSetupItemCtxtSUResIEs_t *item =
+                    (S1AP_E_RABSetupItemCtxtSUResIEs_t *)list->list.array[j];
+                S1AP_E_RABSetupItemCtxtSURes_t *erab;
+                uint32_t teid;
+                if (!item)
+                    continue;
+                erab = &item->value.choice.E_RABSetupItemCtxtSURes;
+                teid = teid_from_octet(&erab->gTP_TEID);
+                add_teid(base, teid); /* eNB S1-U TEID */
+                base->ids.bearer_id = (uint8_t)erab->e_RAB_ID;
+                base->ids.has_bearer_id = true;
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+}
+
+static void handle_ue_ids_only_init(S1AP_UEContextReleaseRequest_t *msg,
+        ptrace_event_t *base)
+{
+    int i;
+    for (i = 0; i < msg->protocolIEs.list.count; i++) {
+        S1AP_UEContextReleaseRequest_IEs_t *ie = msg->protocolIEs.list.array[i];
+        if (!ie)
+            continue;
+        if (ie->id == S1AP_ProtocolIE_ID_id_MME_UE_S1AP_ID) {
+            base->ids.mme_ue_s1ap_id =
+                    (uint32_t)ie->value.choice.MME_UE_S1AP_ID;
+            base->ids.has_mme_ue_s1ap_id = true;
+        } else if (ie->id == S1AP_ProtocolIE_ID_id_eNB_UE_S1AP_ID) {
+            base->ids.enb_ue_s1ap_id =
+                    (uint32_t)ie->value.choice.ENB_UE_S1AP_ID;
+            base->ids.has_enb_ue_s1ap_id = true;
+        }
     }
 }
 
 int ptrace_decode_s1ap(const uint8_t *data, int len,
         ptrace_event_t *base, ptrace_event_t **extra, int *nextra)
 {
-    uint32_t proc = 0;
+    ogs_s1ap_message_t message;
+    ogs_pkbuf_t *pkbuf;
     const char *name;
-    const uint8_t *nas = NULL;
-    int nas_len = 0;
-    int hdr = 0, vlen = 0;
+    int rv;
 
     if (!data || len < 2 || !base || !extra || !nextra)
         return OGS_ERROR;
     *nextra = 0;
 
-    /* S1AP initiatingMessage CHOICE often starts with 0x00 / 0x20 / 0x40 */
-    if (ber_len(data, len, &hdr, &vlen) == OGS_OK &&
-            (data[0] == 0x00 || data[0] == 0x20 || data[0] == 0x40)) {
-        const uint8_t *q = data + hdr;
-        int qlen = vlen;
-        /* procedureCode INTEGER typically next */
-        if (qlen >= 3 && q[0] == 0x02) {
-            int h2, l2;
-            if (ber_len(q, qlen, &h2, &l2) == OGS_OK && l2 >= 1 && l2 <= 3) {
-                int i;
-                for (i = 0; i < l2; i++)
-                    proc = (proc << 8) | q[h2 + i];
-            }
-        }
-    } else {
-        /* APER: first byte often contains procedure choice bits.
-         * Use low 8 bits as procedure code heuristic. */
-        proc = data[0] & 0x1f;
-        if (len > 1 && proc == 0)
-            proc = data[1];
-    }
+    pkbuf = ogs_pkbuf_alloc(NULL, len);
+    if (!pkbuf)
+        return OGS_ERROR;
+    ogs_pkbuf_put_data(pkbuf, (uint8_t *)data, len);
 
-    name = s1ap_proc_name(proc);
+    memset(&message, 0, sizeof(message));
+    rv = ogs_s1ap_decode(&message, pkbuf);
+    ogs_pkbuf_free(pkbuf);
+    if (rv != OGS_OK)
+        return OGS_ERROR;
+
     base->protocol = PTRACE_PROTO_S1AP;
-    base->msg_type = (uint8_t)proc;
+    name = pdu_proc_name(&message);
+    if (message.present == S1AP_S1AP_PDU_PR_initiatingMessage &&
+            message.choice.initiatingMessage)
+        base->msg_type = message.choice.initiatingMessage->procedureCode;
+    else if (message.present == S1AP_S1AP_PDU_PR_successfulOutcome &&
+            message.choice.successfulOutcome)
+        base->msg_type = message.choice.successfulOutcome->procedureCode;
+
     if (name)
         ogs_cpystrn(base->message, name, sizeof(base->message));
     else
-        snprintf(base->message, sizeof(base->message), "S1AP-proc-%u", proc);
+        snprintf(base->message, sizeof(base->message),
+                "S1AP-%u", base->msg_type);
 
-    scan_ies(data, len, base, &nas, &nas_len);
-
-    /* Extract eNB/MME IDs with a second pass: look for IE id bytes 0x00/0x08
-     * followed by INTEGER length 1..4 in BER open types. */
-    {
-        int i;
-        for (i = 0; i + 6 < len; i++) {
-            if (data[i] == 0x02 && data[i + 1] >= 1 && data[i + 1] <= 4) {
-                int L = data[i + 1];
-                uint32_t v = 0;
-                int j;
-                if (i + 2 + L > len)
-                    continue;
-                for (j = 0; j < L; j++)
-                    v = (v << 8) | data[i + 2 + j];
-                /* Classify by magnitude / preceding IE id byte */
-                if (i >= 1 && data[i - 1] == S1AP_IE_ENB_UE_S1AP_ID) {
-                    base->ids.enb_ue_s1ap_id = v;
-                    base->ids.has_enb_ue_s1ap_id = true;
-                } else if (i >= 1 && data[i - 1] == S1AP_IE_MME_UE_S1AP_ID) {
-                    base->ids.mme_ue_s1ap_id = v;
-                    base->ids.has_mme_ue_s1ap_id = true;
-                }
-            }
-            if (data[i] == S1AP_IE_TAI && i + 6 < len) {
-                base->ids.tac = (uint16_t)((data[i + 4] << 8) | data[i + 5]);
-                base->ids.has_tac = true;
-            }
+    if (message.present == S1AP_S1AP_PDU_PR_initiatingMessage &&
+            message.choice.initiatingMessage) {
+        S1AP_InitiatingMessage_t *im = message.choice.initiatingMessage;
+        switch (im->value.present) {
+        case S1AP_InitiatingMessage__value_PR_InitialUEMessage:
+            handle_initial_ue(&im->value.choice.InitialUEMessage,
+                    base, extra, nextra);
+            break;
+        case S1AP_InitiatingMessage__value_PR_DownlinkNASTransport:
+            handle_dl_nas(&im->value.choice.DownlinkNASTransport,
+                    base, extra, nextra);
+            break;
+        case S1AP_InitiatingMessage__value_PR_UplinkNASTransport:
+            handle_ul_nas(&im->value.choice.UplinkNASTransport,
+                    base, extra, nextra);
+            break;
+        case S1AP_InitiatingMessage__value_PR_InitialContextSetupRequest:
+            handle_ics_req(&im->value.choice.InitialContextSetupRequest,
+                    base, extra, nextra);
+            break;
+        case S1AP_InitiatingMessage__value_PR_UEContextReleaseRequest:
+            handle_ue_ids_only_init(
+                    &im->value.choice.UEContextReleaseRequest, base);
+            break;
+        default:
+            break;
+        }
+    } else if (message.present == S1AP_S1AP_PDU_PR_successfulOutcome &&
+            message.choice.successfulOutcome) {
+        S1AP_SuccessfulOutcome_t *so = message.choice.successfulOutcome;
+        if (so->value.present ==
+                S1AP_SuccessfulOutcome__value_PR_InitialContextSetupResponse) {
+            handle_ics_rsp(&so->value.choice.InitialContextSetupResponse,
+                    base);
         }
     }
 
     snprintf(base->fields, sizeof(base->fields),
-            "enb_ue=%u mme_ue=%u tac=%u",
+            "enb_ue=%u mme_ue=%u teid=%u nteid=%d tac=%u cell=%u "
+            "imsi=%s msisdn=%s imei=%s guti=%s",
             base->ids.has_enb_ue_s1ap_id ? base->ids.enb_ue_s1ap_id : 0,
             base->ids.has_mme_ue_s1ap_id ? base->ids.mme_ue_s1ap_id : 0,
-            base->ids.has_tac ? base->ids.tac : 0);
+            base->ids.has_teid ? base->ids.teid : 0,
+            base->ids.num_teids,
+            base->ids.has_tac ? base->ids.tac : 0,
+            base->ids.has_cell_id ? base->ids.cell_id : 0,
+            base->ids.imsi, base->ids.msisdn, base->ids.imei, base->ids.guti);
 
-    if (nas && nas_len > 0 && *nextra < PTRACE_MAX_EVENTS_PER_PKT) {
-        ptrace_event_t *ne = ptrace_event_alloc();
-        if (ne) {
-            ne->ts = base->ts;
-            ne->role = base->role;
-            ogs_cpystrn(ne->src_ip, base->src_ip, sizeof(ne->src_ip));
-            ogs_cpystrn(ne->dst_ip, base->dst_ip, sizeof(ne->dst_ip));
-            ne->src_port = base->src_port;
-            ne->dst_port = base->dst_port;
-            ogs_cpystrn(ne->packet_ref, base->packet_ref,
-                    sizeof(ne->packet_ref));
-            ne->ids = base->ids;
-            if (ptrace_decode_nas(nas, nas_len, ne) == OGS_OK)
-                extra[(*nextra)++] = ne;
-            else
-                ptrace_event_free(ne);
-        }
-    }
-
+    ogs_s1ap_free(&message);
     return OGS_OK;
 }

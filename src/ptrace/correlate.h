@@ -31,6 +31,8 @@ typedef struct ptrace_ue_s {
     int num_mme;
     uint16_t tacs[4];
     int num_tac;
+    char sessions[PTRACE_MAX_UE_SESSIONS][PTRACE_MAX_SESSION_LEN];
+    int num_sessions;
     char apn[PTRACE_MAX_APN_LEN];
     ogs_time_t last_seen;
 } ptrace_ue_t;
@@ -40,6 +42,8 @@ void ptrace_correlate_final(void);
 uint64_t ptrace_correlate_event(ptrace_event_t *evt);
 ptrace_ue_t *ptrace_correlate_find(const char *key);
 int ptrace_correlate_ue_json(ptrace_ue_t *ue, char *buf, size_t buflen);
+bool ptrace_correlate_event_matches_ue(const ptrace_event_t *evt,
+        const ptrace_ue_t *ue);
 
 #ifdef __cplusplus
 }

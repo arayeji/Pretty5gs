@@ -10,7 +10,13 @@ hiredis_dep = dependency('hiredis', required : false)
 libcurl_dep = dependency('libcurl', required : false)
 
 ptrace_c_args = []
-ptrace_deps = [libapp_dep, libpcap_dep, libmicrohttpd_dep, threads_dep]
+ptrace_deps = [
+    libapp_dep,
+    libs1ap_dep,
+    libpcap_dep,
+    libmicrohttpd_dep,
+    threads_dep,
+]
 
 if hiredis_dep.found()
     ptrace_c_args += ['-DHAVE_HIREDIS']

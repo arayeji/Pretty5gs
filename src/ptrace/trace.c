@@ -108,6 +108,55 @@ static void fmt_ts(ogs_time_t ts, char *buf, size_t buflen)
     strftime(buf, buflen, "%H:%M:%S", &tm);
 }
 
+static bool match_ue_cb(const ptrace_event_t *evt, void *user)
+{
+    return ptrace_correlate_event_matches_ue(evt, (const ptrace_ue_t *)user);
+}
+
+static ptrace_ue_t *trace_resolve_ue(ptrace_trace_t *tr)
+{
+    ptrace_ue_t *ue;
+
+    if (!tr)
+        return NULL;
+    ue = ptrace_correlate_find(tr->imsi);
+    if (ue) {
+        tr->ue_id = ue->ue_id;
+        ptrace_cache_pin_ue(tr->ue_id, tr->until);
+    }
+    return ue;
+}
+
+/* Collect events linked by ue_id OR any correlated identity (TEID,
+ * S1AP IDs, Diameter Session-Id, MSISDN, …). */
+static int trace_collect_events(ptrace_trace_t *tr, ptrace_ue_t *ue,
+        ptrace_event_t **evs, int max_out, bool signaling_only)
+{
+    ptrace_event_t *tmp[PTRACE_MAX_PCAP_REFS];
+    int m, i, n = 0;
+
+    if (!tr || !evs || max_out <= 0)
+        return 0;
+
+    if (ue) {
+        m = ptrace_cache_query_match(match_ue_cb, ue, 0, 0,
+                tmp, PTRACE_MAX_PCAP_REFS);
+    } else if (tr->ue_id) {
+        m = ptrace_cache_query_ue(tr->ue_id, 0, 0, tmp, PTRACE_MAX_PCAP_REFS);
+    } else {
+        m = ptrace_cache_query_ue(0, 0, 0, tmp, PTRACE_MAX_PCAP_REFS);
+    }
+
+    for (i = 0; i < m && n < max_out; i++) {
+        if (!ue && tr->imsi[0] && strcmp(tmp[i]->ids.imsi, tr->imsi))
+            continue;
+        if (signaling_only && !strcmp(tmp[i]->message, "G-PDU"))
+            continue;
+        evs[n++] = tmp[i];
+    }
+    return n;
+}
+
 int ptrace_trace_timeline_json(ptrace_trace_t *tr, char *buf, size_t buflen)
 {
     ptrace_event_t *evs[PTRACE_MAX_TIMELINE];
@@ -115,60 +164,41 @@ int ptrace_trace_timeline_json(ptrace_trace_t *tr, char *buf, size_t buflen)
     size_t off = 0;
     int w;
     ptrace_ue_t *ue;
-    char uejson[2048];
+    char uejson[4096];
 
     if (!tr || !buf || !buflen)
         return 0;
 
-    ue = ptrace_correlate_find(tr->imsi);
+    ue = trace_resolve_ue(tr);
     uejson[0] = '\0';
     if (ue)
         ptrace_correlate_ue_json(ue, uejson, sizeof(uejson));
 
-    n = ptrace_cache_query_ue(tr->ue_id, 0, 0, evs, PTRACE_MAX_TIMELINE);
-    /* Also match by IMSI if ue_id unknown */
-    if (!tr->ue_id && tr->imsi[0]) {
-        ptrace_event_t *all[PTRACE_MAX_TIMELINE];
-        int m = ptrace_cache_query_ue(0, 0, 0, all, PTRACE_MAX_TIMELINE);
-        n = 0;
-        for (i = 0; i < m; i++) {
-            if (!strcmp(all[i]->ids.imsi, tr->imsi))
-                evs[n++] = all[i];
-        }
-    }
+    n = trace_collect_events(tr, ue, evs, PTRACE_MAX_TIMELINE, true);
 
+    off = 0;
     w = snprintf(buf + off, buflen - off,
-            "{\"id\":\"%s\",\"status\":\"%s\",\"imsi\":\"%s\","
-            "\"ue\":%s,\"timeline\":[",
-            tr->id, tr->status, tr->imsi,
-            uejson[0] ? uejson : "null");
-    /* uejson ends with }\n — strip newline */
+            "{\"id\":\"%s\",\"status\":\"%s\",\"imsi\":\"%s\",\"ue\":",
+            tr->id, tr->status, tr->imsi);
     if (w < 0)
         return 0;
-    /* Fix null vs object: if uejson present it includes trailing }\n */
+    off += (size_t)w;
+
     if (uejson[0]) {
-        /* rebuild more carefully */
-        off = 0;
-        w = snprintf(buf + off, buflen - off,
-                "{\"id\":\"%s\",\"status\":\"%s\",\"imsi\":\"%s\",\"ue\":",
-                tr->id, tr->status, tr->imsi);
-        off += (size_t)w;
-        /* copy uejson without trailing newline */
-        {
-            size_t ulen = strlen(uejson);
-            while (ulen && (uejson[ulen - 1] == '\n' ||
-                    uejson[ulen - 1] == '\r'))
-                ulen--;
-            if (off + ulen < buflen) {
-                memcpy(buf + off, uejson, ulen);
-                off += ulen;
-            }
+        size_t ulen = strlen(uejson);
+        while (ulen && (uejson[ulen - 1] == '\n' || uejson[ulen - 1] == '\r'))
+            ulen--;
+        if (off + ulen < buflen) {
+            memcpy(buf + off, uejson, ulen);
+            off += ulen;
         }
-        w = snprintf(buf + off, buflen - off, ",\"timeline\":[");
-        if (w > 0) off += (size_t)w;
     } else {
-        off = (size_t)w;
+        w = snprintf(buf + off, buflen - off, "null");
+        if (w > 0) off += (size_t)w;
     }
+
+    w = snprintf(buf + off, buflen - off, ",\"timeline\":[");
+    if (w > 0) off += (size_t)w;
 
     for (i = 0; i < n && off < buflen; i++) {
         char tbuf[16];
@@ -197,25 +227,26 @@ int ptrace_trace_timeline_json(ptrace_trace_t *tr, char *buf, size_t buflen)
 
 int ptrace_trace_export_pcap(ptrace_trace_t *tr, const char *path)
 {
-    ptrace_event_t *evs[PTRACE_MAX_TIMELINE];
-    const char *refs[PTRACE_MAX_TIMELINE];
+    ptrace_event_t *evs[PTRACE_MAX_PCAP_REFS];
+    const char *refs[PTRACE_MAX_PCAP_REFS];
     int n, i, nref = 0;
+    ptrace_ue_t *ue;
 
     if (!tr || !path)
         return OGS_ERROR;
 
-    n = ptrace_cache_query_ue(tr->ue_id, 0, 0, evs, PTRACE_MAX_TIMELINE);
-    if (!tr->ue_id && tr->imsi[0]) {
-        ptrace_event_t *all[PTRACE_MAX_TIMELINE];
-        int m = ptrace_cache_query_ue(0, 0, 0, all, PTRACE_MAX_TIMELINE);
-        n = 0;
-        for (i = 0; i < m; i++)
-            if (!strcmp(all[i]->ids.imsi, tr->imsi))
-                evs[n++] = all[i];
-    }
+    ue = trace_resolve_ue(tr);
+    n = trace_collect_events(tr, ue, evs, PTRACE_MAX_PCAP_REFS, false);
 
     for (i = 0; i < n; i++) {
-        if (evs[i]->packet_ref[0])
+        int j;
+        if (!evs[i]->packet_ref[0])
+            continue;
+        for (j = 0; j < nref; j++) {
+            if (!strcmp(refs[j], evs[i]->packet_ref))
+                break;
+        }
+        if (j == nref && nref < PTRACE_MAX_PCAP_REFS)
             refs[nref++] = evs[i]->packet_ref;
     }
     return ptrace_ring_export(refs, nref, path);

@@ -31,9 +31,12 @@ extern "C" {
 #define PTRACE_MAX_UE_TEIDS         16
 #define PTRACE_MAX_UE_SEIDS         8
 #define PTRACE_MAX_UE_IPS           8
+#define PTRACE_MAX_UE_SESSIONS      8
+#define PTRACE_MAX_SESSION_LEN      128
 #define PTRACE_MAX_RULES            256
 #define PTRACE_MAX_TRACES           128
 #define PTRACE_MAX_TIMELINE         512
+#define PTRACE_MAX_PCAP_REFS        4096
 #define PTRACE_MAX_JSON             65536
 
 typedef enum {
@@ -73,8 +76,10 @@ typedef struct ptrace_ids_s {
     char m_tmsi[PTRACE_MAX_ID_LEN];
     char ue_ip[PTRACE_MAX_ID_LEN];
     char apn[PTRACE_MAX_APN_LEN];
-    char session_id[PTRACE_MAX_ID_LEN];
+    char session_id[PTRACE_MAX_SESSION_LEN];
     uint32_t teid;
+    uint32_t teids[PTRACE_MAX_UE_TEIDS];
+    int num_teids;
     uint64_t seid;
     uint32_t enb_ue_s1ap_id;
     uint32_t mme_ue_s1ap_id;
@@ -166,6 +171,22 @@ static inline ptrace_role_e ptrace_role_parse(const char *s)
     if (!strcmp(s, "n4")) return PTRACE_ROLE_N4;
     if (!strcmp(s, "diameter")) return PTRACE_ROLE_DIAMETER;
     return PTRACE_ROLE_UNKNOWN;
+}
+
+/* Record every TEID seen on a message (eNB + SGW S1-U, S11, S5, …). */
+static inline void ptrace_ids_add_teid(ptrace_ids_t *ids, uint32_t teid)
+{
+    int i;
+    if (!ids || !teid)
+        return;
+    ids->teid = teid;
+    ids->has_teid = true;
+    for (i = 0; i < ids->num_teids; i++) {
+        if (ids->teids[i] == teid)
+            return;
+    }
+    if (ids->num_teids < PTRACE_MAX_UE_TEIDS)
+        ids->teids[ids->num_teids++] = teid;
 }
 
 #ifdef __cplusplus
