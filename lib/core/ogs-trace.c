@@ -461,13 +461,28 @@ void ogs_trace_packet(const char *imsi, const char *proto, const char *dir,
     if (!trace_b64_encode(b64, sizeof(b64), (const uint8_t *)data, dump_len))
         return;
 
-    ogs_info("[IMSI:%s] PACKET: proto=%s dir=%s len=%zu%s b64=%s",
-            imsi,
-            proto && proto[0] ? proto : "-",
-            dir && dir[0] ? dir : "-",
-            len,
-            truncated ? " trunc=1" : "",
-            b64);
+    /*
+     * Install IMSI for the duration of the log line. HSS (and any NF that
+     * clears TLS context after each event) would otherwise drop INFO PACKET
+     * lines when the *core* domain is below info — ogs_log only elevates on
+     * thread-local filter match. MME often keeps IMSI sticky, so it looked
+     * fine there while HSS showed events but never PACKET.
+     */
+    {
+        ogs_trace_ctx_t hold = *ogs_trace_get();
+        ogs_trace_ctx_t ctx = hold;
+
+        ogs_cpystrn(ctx.imsi, imsi, sizeof(ctx.imsi));
+        ogs_trace_set(&ctx);
+        ogs_info("[IMSI:%s] PACKET: proto=%s dir=%s len=%zu%s b64=%s",
+                imsi,
+                proto && proto[0] ? proto : "-",
+                dir && dir[0] ? dir : "-",
+                len,
+                truncated ? " trunc=1" : "",
+                b64);
+        ogs_trace_set(&hold);
+    }
 }
 
 void ogs_trace_packet_ctx(const char *proto, const char *dir,

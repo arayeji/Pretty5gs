@@ -155,8 +155,11 @@ void hss_trace_diameter(
         return;
     }
 
+    /* Keep IMSI sticky across ogs_trace_packet (we clear after events). */
+    hss_trace_set(imsi_bcd, "diameter");
     ogs_trace_packet(imsi_bcd, "diameter", dir && dir[0] ? dir : "-",
             buf, len);
+    hss_trace_done();
     free(buf);
 }
 
