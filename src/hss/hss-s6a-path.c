@@ -24,6 +24,15 @@
 #include "hss-s6a-path.h"
 #include "hss-trace.h"
 
+/* Dump Diameter bytes then send; keeps PACKET on the same path as wire TX. */
+static int hss_s6a_send_traced(
+        struct msg **msg, const char *imsi_bcd)
+{
+    if (imsi_bcd && imsi_bcd[0] && msg && *msg)
+        hss_trace_diameter(imsi_bcd, "tx", *msg);
+    return fd_msg_send(msg, NULL, NULL);
+}
+
 /* handler for fallback cb */
 static struct disp_hdl *hdl_s6a_fb = NULL;
 /* handler for Authentication-Information-Request cb */
@@ -435,12 +444,13 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
     hss_s6a_copy_os_avp(qry, ogs_diam_origin_realm,
             origin_realm, sizeof(origin_realm));
 
-    if (imsi_bcd[0])
+    if (imsi_bcd[0]) {
         hss_trace_event(imsi_bcd, "S6a-AIR",
                 "Rx Authentication-Information-Request host=%s realm=%s",
                 origin_host[0] ? origin_host : "-",
                 origin_realm[0] ? origin_realm : "-");
-    else
+        hss_trace_diameter(imsi_bcd, "rx", qry);
+    } else
         ogs_debug("Rx Authentication-Information-Request (no IMSI yet)");
 
     /* Create answer header */
@@ -655,7 +665,7 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
         }
 
         /* Send the answer */
-        ret = fd_msg_send(msg, NULL, NULL);
+        ret = hss_s6a_send_traced(msg, imsi_bcd);
         if (ret != 0) {
             ogs_error("Failed to send message");
             error_occurred = 1;
@@ -703,7 +713,7 @@ out:
         ret = ogs_diam_message_vendor_specific_appid_set(
                 ans, OGS_DIAM_S6A_APPLICATION_ID);
 
-        ret = fd_msg_send(msg, NULL, NULL);
+        ret = hss_s6a_send_traced(msg, imsi_bcd);
         if (ret != 0) {
             ogs_error("Failed to send error response");
         }
@@ -1265,10 +1275,11 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
         }
     }
 
-    if (imsi_bcd[0])
+    if (imsi_bcd[0]) {
         hss_trace_event(imsi_bcd, "S6a-ULR",
                 "Rx Update-Location-Request");
-    else
+        hss_trace_diameter(imsi_bcd, "rx", qry);
+    } else
         ogs_debug("Rx Update-Location-Request (no IMSI yet)");
 
     /* Create answer header */
@@ -1792,7 +1803,7 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
         }
 
         /* Send the answer */
-        ret = fd_msg_send(msg, NULL, NULL);
+        ret = hss_s6a_send_traced(msg, imsi_bcd);
         if (ret != 0) {
             ogs_error("Failed to send message");
             error_occurred = 1;
@@ -1849,7 +1860,7 @@ out:
         ret = ogs_diam_message_vendor_specific_appid_set(
                 ans, OGS_DIAM_S6A_APPLICATION_ID);
 
-        ret = fd_msg_send(msg, NULL, NULL);
+        ret = hss_s6a_send_traced(msg, imsi_bcd);
         if (ret != 0) {
             ogs_error("Failed to send error response");
         }
@@ -1920,9 +1931,10 @@ static int hss_ogs_diam_s6a_pur_cb(struct msg **msg, struct avp *avp,
         }
     }
 
-    if (imsi_bcd[0])
+    if (imsi_bcd[0]) {
         hss_trace_event(imsi_bcd, "S6a-PUR", "Rx Purge-UE-Request");
-    else
+        hss_trace_diameter(imsi_bcd, "rx", qry);
+    } else
         ogs_debug("Rx Purge-UE-Request (no IMSI yet)");
 
     /* Create answer header */
@@ -2123,7 +2135,7 @@ static int hss_ogs_diam_s6a_pur_cb(struct msg **msg, struct avp *avp,
         }
 
         /* Send the answer */
-        ret = fd_msg_send(msg, NULL, NULL);
+        ret = hss_s6a_send_traced(msg, imsi_bcd);
         if (ret != 0) {
             ogs_error("Failed to send message");
             error_occurred = 1;
@@ -2174,7 +2186,7 @@ outnoexp:
         ret = ogs_diam_message_vendor_specific_appid_set(
                 ans, OGS_DIAM_S6A_APPLICATION_ID);
 
-        ret = fd_msg_send(msg, NULL, NULL);
+        ret = hss_s6a_send_traced(msg, imsi_bcd);
         if (ret != 0) {
             ogs_error("Failed to send error response");
         }
@@ -2319,6 +2331,8 @@ void hss_s6a_send_clr(char *imsi_bcd, char *mme_host, char *mme_realm,
     ogs_assert(sess_data == 0);
 
     /* Send the request */
+    if (imsi_bcd && imsi_bcd[0])
+        hss_trace_diameter(imsi_bcd, "tx", req);
     ret = fd_msg_send(&req, hss_s6a_cla_cb, svg);
     ogs_assert(ret == 0);
 
@@ -2617,6 +2631,8 @@ int hss_s6a_send_idr(char *imsi_bcd, uint32_t idr_flags, uint32_t subdata_mask)
     ogs_assert(sess_data == 0);
 
     /* Send the request */
+    if (imsi_bcd && imsi_bcd[0])
+        hss_trace_diameter(imsi_bcd, "tx", req);
     ret = fd_msg_send(&req, hss_s6a_ida_cb, svg);
     ogs_assert(ret == 0);
 
@@ -2773,7 +2789,7 @@ static int hss_ogs_diam_s6a_nor_cb(struct msg **msg, struct avp *avp,
         }
     }
 
-    if (have_imsi)
+    if (have_imsi) {
         hss_trace_event(imsi_bcd, "S6a-NOR",
                 "Rx Notify-Request host=%s flags=0x%x "
                 "ue_reachable_mme=%d ready_for_sm_mme=%d",
@@ -2785,7 +2801,8 @@ static int hss_ogs_diam_s6a_nor_cb(struct msg **msg, struct avp *avp,
                 (have_nor_flags &&
                  (nor_flags & OGS_DIAM_S6A_NOR_FLAGS_READY_FOR_SM_FROM_MME))
                         ? 1 : 0);
-    else
+        hss_trace_diameter(imsi_bcd, "rx", qry);
+    } else
         ogs_debug("[HSS] Rx Notify-Request (no IMSI)");
 
     ret = fd_msg_new_answer_from_req(fd_g_config->cnf_dict, msg, 0);
@@ -2810,7 +2827,7 @@ static int hss_ogs_diam_s6a_nor_cb(struct msg **msg, struct avp *avp,
     ret = fd_msg_rescode_set(ans, (char *)"DIAMETER_SUCCESS", NULL, NULL, 1);
     ogs_assert(ret == 0);
 
-    ret = fd_msg_send(msg, NULL, NULL);
+    ret = hss_s6a_send_traced(msg, imsi_bcd);
     ogs_assert(ret == 0);
 
     if (have_imsi)

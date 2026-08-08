@@ -58,6 +58,11 @@ void hss_trace_event(
         const char *imsi_bcd, const char *proc,
         const char *fmt, ...) OGS_GNUC_PRINTF(3, 4);
 
+/* Serialize freeDiameter msg → PACKET: proto=diameter (filter-gated). */
+struct msg;
+void hss_trace_diameter(
+        const char *imsi_bcd, const char *dir, struct msg *msg);
+
 /*
  * Install at the top of freeDiameter callbacks so sticky IMSI cannot
  * elevate unrelated DEBUG on the worker after the callback returns.

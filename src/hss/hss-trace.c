@@ -122,6 +122,30 @@ void hss_trace_event(
     hss_imsi_info(id, proc, "%s", msg);
 }
 
+void hss_trace_diameter(
+        const char *imsi_bcd, const char *dir, struct msg *msg)
+{
+    uint8_t *buf = NULL;
+    size_t len = 0;
+    int ret;
+
+    if (!imsi_bcd || !imsi_bcd[0] || !msg)
+        return;
+    /* Same empty-filter fast path as ogs_trace_packet(). */
+    if (ogs_trace_filter_count() == 0)
+        return;
+    if (!ogs_trace_filter_match(imsi_bcd))
+        return;
+
+    ret = fd_msg_bufferize(msg, &buf, &len);
+    if (ret != 0 || !buf || !len)
+        return;
+
+    ogs_trace_packet(imsi_bcd, "diameter", dir && dir[0] ? dir : "-",
+            buf, len);
+    free(buf);
+}
+
 static int hss_admin_trace_imsi(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len)
 {
