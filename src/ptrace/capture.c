@@ -159,12 +159,12 @@ static bool packet_is_signaling(const uint8_t *data, uint16_t len,
     }
     if (remain < 4)
         return false;
-    if (ipproto == 132) /* SCTP — treat as signaling (S1AP) */
-        return true;
-    if (ipproto != 17 && ipproto != 6) /* UDP/TCP */
-        return false;
     sport = (uint16_t)((p[0] << 8) | p[1]);
     dport = (uint16_t)((p[2] << 8) | p[3]);
+    if (ipproto == 132) /* SCTP: only S1AP port */
+        return (sport == 36412 || dport == 36412);
+    if (ipproto != 17 && ipproto != 6) /* UDP/TCP */
+        return false;
     if (sport == 2123 || dport == 2123)
         return true;
     if (sport == 3868 || dport == 3868)
@@ -172,8 +172,6 @@ static bool packet_is_signaling(const uint8_t *data, uint16_t len,
     if (sport == 8805 || dport == 8805)
         return true;
     if (include_gtpu && (sport == 2152 || dport == 2152))
-        return true;
-    if (sport == 36412 || dport == 36412)
         return true;
     return false;
 }
@@ -208,17 +206,27 @@ static void pcap_thread(void *data)
         ogs_info("ptrace replaying PCAP %s role=%s",
                 arg->path, ptrace_role_str(arg->role));
     } else {
-        p = pcap_open_live(arg->iface, PTRACE_MAX_PACKET, 1, 100, errbuf);
+        /* Larger ring buffer so signaling bursts are not dropped in pcap */
+        p = pcap_create(arg->iface, errbuf);
         if (!p) {
-            ogs_error("pcap_open_live(%s): %s", arg->iface, errbuf);
+            ogs_error("pcap_create(%s): %s", arg->iface, errbuf);
+            return;
+        }
+        (void)pcap_set_snaplen(p, PTRACE_MAX_PACKET);
+        (void)pcap_set_promisc(p, 1);
+        (void)pcap_set_timeout(p, 100);
+        (void)pcap_set_buffer_size(p, 16 * 1024 * 1024);
+        if (pcap_activate(p) < 0) {
+            ogs_error("pcap_activate(%s): %s", arg->iface, pcap_geterr(p));
+            pcap_close(p);
             return;
         }
         if (apply_bpf(p) != OGS_OK) {
             pcap_close(p);
             return;
         }
-        ogs_info("ptrace live capture on %s role=%s",
-                arg->iface, ptrace_role_str(arg->role));
+        ogs_info("ptrace live capture on %s role=%s snaplen=%d",
+                arg->iface, ptrace_role_str(arg->role), PTRACE_MAX_PACKET);
     }
 
     while (capture_running) {

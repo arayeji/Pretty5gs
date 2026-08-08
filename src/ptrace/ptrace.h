@@ -26,7 +26,7 @@ extern "C" {
 #define PTRACE_MAX_APN_LEN          64
 #define PTRACE_MAX_REF_LEN          128
 #define PTRACE_MAX_FIELDS_LEN       512
-#define PTRACE_MAX_PACKET           2048
+#define PTRACE_MAX_PACKET           4096
 #define PTRACE_MAX_EVENTS_PER_PKT   8
 #define PTRACE_MAX_UE_TEIDS         16
 #define PTRACE_MAX_UE_SEIDS         8

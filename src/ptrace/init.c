@@ -107,8 +107,9 @@ int ptrace_initialize(void)
         return rv;
 
     /* Required before any ogs_s1ap_decode() — otherwise decode-fail
-     * logging aborts on an uninitialized S1AP log domain. */
-    ogs_log_install_domain(&__ogs_s1ap_domain, "s1ap", ogs_core()->log.level);
+     * logging aborts on an uninitialized S1AP log domain.
+     * Keep at ERROR so incomplete SCTP chunks do not flood WARN. */
+    ogs_log_install_domain(&__ogs_s1ap_domain, "s1ap", OGS_LOG_ERROR);
     ptrace_decode_s1ap_init();
 
     rv = ptrace_context_parse_config();

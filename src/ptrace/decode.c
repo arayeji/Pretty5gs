@@ -39,11 +39,12 @@ static void ipv6_str(const uint8_t *addr, char *buf, size_t buflen)
 static int sctp_payload(const uint8_t *data, int len,
         const uint8_t **payload, int *plen)
 {
-    /* Minimal SCTP: common header (12) + DATA chunk; require S1AP PPID=18 */
+    /* SCTP common hdr (12) + DATA chunks. Only accept a complete
+     * (B+E) DATA chunk with S1AP PPID=18 — skip control/fragments. */
     const uint8_t *p;
     int remain;
     uint16_t chunk_len;
-    uint8_t type;
+    uint8_t type, flags;
     uint32_t ppid;
 
     if (len < 16)
@@ -53,23 +54,33 @@ static int sctp_payload(const uint8_t *data, int len,
 
     while (remain >= 4) {
         type = p[0];
+        flags = p[1];
         chunk_len = (uint16_t)((p[2] << 8) | p[3]);
         if (chunk_len < 4 || chunk_len > remain)
             return OGS_ERROR;
         if (type == 0) { /* DATA */
             if (chunk_len < 16)
-                return OGS_ERROR;
-            /* PPID is big-endian at offset 12 within DATA chunk */
+                goto next_chunk;
+            /* Beginning+Ending fragment bits => unfragmented user data */
+            if ((flags & 0x03) != 0x03)
+                goto next_chunk;
             ppid = ((uint32_t)p[12] << 24) | ((uint32_t)p[13] << 16) |
                     ((uint32_t)p[14] << 8) | p[15];
-            if (ppid != 18) /* S1AP */
-                return OGS_ERROR;
+            {
+                uint32_t ppid_le = (uint32_t)p[12] |
+                        ((uint32_t)p[13] << 8) |
+                        ((uint32_t)p[14] << 16) |
+                        ((uint32_t)p[15] << 24);
+                if (ppid != 18 && ppid_le != 18) /* OGS_SCTP_S1AP_PPID */
+                    goto next_chunk;
+            }
             *payload = p + 16;
             *plen = chunk_len - 16;
             if (*plen <= 0)
-                return OGS_ERROR;
+                goto next_chunk;
             return OGS_OK;
         }
+next_chunk:
         {
             int pad = (4 - (chunk_len & 3)) & 3;
             p += chunk_len + pad;
