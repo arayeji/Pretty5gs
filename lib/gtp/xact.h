@@ -123,6 +123,10 @@ typedef struct ogs_gtp_xact_s {
     uint32_t        local_teid;     /**< Local TEID,
                                          expected in reply from peer */
 
+    /* Optional IMSI for PACKET dumps on TX (incl. retransmits).
+     * Thread-local trace ctx is often empty at ogs_gtp_sendto time. */
+    char            imsi_bcd[16];
+
     ogs_pool_id_t   assoc_xact_id;  /**< Associated GTP transaction ID */
     void            *pfcp_xact;     /**< Associated PFCP transaction */
 
@@ -211,6 +215,9 @@ int ogs_gtp_xact_update_tx(ogs_gtp_xact_t *xact,
         ogs_gtp2_header_t *hdesc, ogs_pkbuf_t *pkbuf);
 
 int ogs_gtp_xact_commit(ogs_gtp_xact_t *xact);
+
+/** Bind IMSI onto a GTP xact so TX PACKET dumps work without thread-local ctx. */
+void ogs_gtp_xact_set_imsi(ogs_gtp_xact_t *xact, const char *imsi_bcd);
 
 int ogs_gtp1_xact_receive(ogs_gtp_node_t *gnode,
         ogs_gtp1_header_t *h, ogs_gtp_xact_t **xact);

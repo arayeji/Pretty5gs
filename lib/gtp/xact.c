@@ -28,6 +28,25 @@ typedef enum {
     GTP_XACT_FINAL_STAGE,
 } ogs_gtp_xact_stage_t;
 
+void ogs_gtp_xact_set_imsi(ogs_gtp_xact_t *xact, const char *imsi_bcd)
+{
+    if (!xact || !imsi_bcd || !imsi_bcd[0])
+        return;
+    ogs_cpystrn(xact->imsi_bcd, imsi_bcd, sizeof(xact->imsi_bcd));
+}
+
+/* Prefer xact-bound IMSI; fall back to thread-local trace ctx. */
+static void gtp_xact_trace_tx(ogs_gtp_xact_t *xact, ogs_pkbuf_t *pkbuf)
+{
+    if (!xact || !pkbuf || !pkbuf->data || !pkbuf->len)
+        return;
+    if (xact->imsi_bcd[0])
+        ogs_trace_packet(xact->imsi_bcd, "gtp", "tx",
+                pkbuf->data, pkbuf->len);
+    else
+        ogs_trace_packet_ctx("gtp", "tx", pkbuf->data, pkbuf->len);
+}
+
 /*
  * Transaction layer storage:
  *   - Main / IO thread (ogs_worker_self() == NULL): process-global pool.
@@ -856,6 +875,7 @@ static int ogs_gtp_xact_update_rx(ogs_gtp_xact_t *xact, uint8_t type)
                             OGS_ADDR(&xact->gnode->addr,
                                 buf),
                             OGS_PORT(&xact->gnode->addr));
+                    gtp_xact_trace_tx(xact, pkbuf);
                     ogs_expect(OGS_OK == ogs_gtp_sendto(xact->gnode, pkbuf));
                 } else {
                     ogs_warn("[%d] %s Request Duplicated. Discard!"
@@ -921,6 +941,7 @@ static int ogs_gtp_xact_update_rx(ogs_gtp_xact_t *xact, uint8_t type)
                             OGS_ADDR(&xact->gnode->addr,
                                 buf),
                             OGS_PORT(&xact->gnode->addr));
+                    gtp_xact_trace_tx(xact, pkbuf);
                     ogs_expect(OGS_OK == ogs_gtp_sendto(xact->gnode, pkbuf));
                 } else {
                     ogs_warn("[%d] %s Request Duplicated. Discard!"
@@ -993,6 +1014,14 @@ int ogs_gtp_xact_commit(ogs_gtp_xact_t *xact)
 
     ogs_assert(xact);
     ogs_assert(xact->gnode);
+
+    /* Capture IMSI from thread-local ctx if the NF set it before commit
+     * but did not call ogs_gtp_xact_set_imsi() (common for older paths). */
+    if (!xact->imsi_bcd[0]) {
+        const ogs_trace_ctx_t *ctx = ogs_trace_get();
+        if (ctx && ctx->imsi[0])
+            ogs_cpystrn(xact->imsi_bcd, ctx->imsi, sizeof(xact->imsi_bcd));
+    }
 
     ogs_debug("[%d] %s Commit  peer [%s]:%d",
             xact->xid,
@@ -1095,6 +1124,7 @@ int ogs_gtp_xact_commit(ogs_gtp_xact_t *xact)
     pkbuf = xact->seq[xact->step-1].pkbuf;
     ogs_assert(pkbuf);
 
+    gtp_xact_trace_tx(xact, pkbuf);
     if (ogs_gtp_sendto(xact->gnode, pkbuf) != OGS_OK) {
         ogs_error("[%d] ogs_gtp_sendto() failed peer [%s]:%d",
                 xact->xid,
@@ -1199,6 +1229,7 @@ static void response_timeout(void *data)
         pkbuf = xact->seq[xact->step-1].pkbuf;
         ogs_assert(pkbuf);
 
+        gtp_xact_trace_tx(xact, pkbuf);
         ogs_expect(OGS_OK == ogs_gtp_sendto(xact->gnode, pkbuf));
     } else {
         ogs_debug("[%d] %s No Reponse. Give up! "

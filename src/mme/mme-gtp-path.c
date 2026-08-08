@@ -34,6 +34,16 @@
 #include "mme-pgw-select.h"
 #include "metrics.h"
 
+/* Bind UE IMSI onto the GTP xact so Create Session / Modify / Delete TX
+ * PACKET lines are emitted even when thread-local trace ctx is empty
+ * (progress logs run after commit). */
+static void mme_gtp_xact_bind_ue(ogs_gtp_xact_t *xact, mme_ue_t *mme_ue)
+{
+    if (!xact || !mme_ue || !MME_UE_HAVE_IMSI(mme_ue))
+        return;
+    ogs_gtp_xact_set_imsi(xact, mme_ue->imsi_bcd);
+}
+
 static const char *mme_gtp2_message_type_name(uint8_t type)
 {
     switch (type) {
@@ -782,6 +792,7 @@ int mme_gtp_send_create_session_request(
     else
         xact->enb_ue_id = OGS_INVALID_POOL_ID;
 
+    mme_gtp_xact_bind_ue(xact, mme_ue);
     rv = ogs_gtp_xact_commit(xact);
     if (rv != OGS_OK) {
         ogs_error("[%s] S11 Create Session commit failed",
@@ -838,6 +849,7 @@ int mme_gtp_send_modify_bearer_request(
     else
         xact->enb_ue_id = OGS_INVALID_POOL_ID;
 
+    mme_gtp_xact_bind_ue(xact, mme_ue);
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -908,6 +920,7 @@ int mme_gtp_send_delete_session_request(
         xact->enb_ue_id = OGS_INVALID_POOL_ID;
     ogs_debug("delete_session_request - xact:%p, sess:%p", xact, sess);
 
+    mme_gtp_xact_bind_ue(xact, mme_ue);
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
     if (rv == OGS_OK)
@@ -1073,6 +1086,7 @@ int mme_gtp_send_create_bearer_response(
         return OGS_ERROR;
     }
 
+    mme_gtp_xact_bind_ue(xact, mme_ue);
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1142,6 +1156,7 @@ int mme_gtp_send_update_bearer_response(
         return OGS_ERROR;
     }
 
+    mme_gtp_xact_bind_ue(xact, mme_ue);
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1216,6 +1231,7 @@ int mme_gtp_send_delete_bearer_response(
         return OGS_ERROR;
     }
 
+    mme_gtp_xact_bind_ue(xact, mme_ue);
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1281,6 +1297,7 @@ int mme_gtp_send_release_access_bearers_request(
     xact->local_teid = mme_ue->gn.mme_gn_teid;
     xact->enb_ue_id = enb_ue_id;
 
+    mme_gtp_xact_bind_ue(xact, mme_ue);
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1546,6 +1563,7 @@ int mme_gtp_send_downlink_data_notification_ack(
         return OGS_ERROR;
     }
 
+    mme_gtp_xact_bind_ue(xact, mme_ue);
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1589,6 +1607,7 @@ int mme_gtp_send_create_indirect_data_forwarding_tunnel_request(
     xact->local_teid = mme_ue->gn.mme_gn_teid;
     xact->enb_ue_id = enb_ue->id;
 
+    mme_gtp_xact_bind_ue(xact, mme_ue);
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1633,6 +1652,7 @@ int mme_gtp_send_delete_indirect_data_forwarding_tunnel_request(
     xact->local_teid = mme_ue->gn.mme_gn_teid;
     xact->enb_ue_id = enb_ue->id;
 
+    mme_gtp_xact_bind_ue(xact, mme_ue);
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1677,6 +1697,7 @@ int mme_gtp_send_bearer_resource_command(
     xact->xid |= OGS_GTP_CMD_XACT_ID;
     xact->local_teid = mme_ue->gn.mme_gn_teid;
 
+    mme_gtp_xact_bind_ue(xact, mme_ue);
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1719,6 +1740,7 @@ int mme_gtp1_send_sgsn_context_request(
 
     mme_ue->gn.sgsn_context_pending = true;
 
+    mme_gtp_xact_bind_ue(xact, mme_ue);
     rv = ogs_gtp_xact_commit(xact);
     if (rv != OGS_OK) {
         mme_ue->gn.sgsn_context_pending = false;
@@ -1753,6 +1775,7 @@ int mme_gtp1_send_sgsn_context_response(
         return OGS_ERROR;
     }
 
+    mme_gtp_xact_bind_ue(xact, mme_ue);
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1785,6 +1808,7 @@ int mme_gtp1_send_sgsn_context_ack(
         return OGS_ERROR;
     }
 
+    mme_gtp_xact_bind_ue(xact, mme_ue);
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 

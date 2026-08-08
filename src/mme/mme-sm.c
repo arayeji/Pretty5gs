@@ -1180,6 +1180,15 @@ cleanup:
             mme_ue = mme_ue_find_by_s11_local_teid(xact->local_teid);
         }
 
+        /* Dump GTP RX with IMSI from TEID — do not wait for handler
+         * mme_ue_info()/trace_set (same class of bug as S1AP bind/on_imsi). */
+        if (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
+            ogs_gtp_xact_set_imsi(xact, mme_ue->imsi_bcd);
+            ogs_trace_packet(mme_ue->imsi_bcd, "gtp", "rx",
+                    pkbuf->data, pkbuf->len);
+            ogs_trace_packet_bind_rx(NULL, NULL, 0); /* avoid on_imsi dup */
+        }
+
         switch (gtp_message.h.type) {
         case OGS_GTP2_ECHO_REQUEST_TYPE:
             mme_s11_handle_echo_request(xact, &gtp_message.echo_request);

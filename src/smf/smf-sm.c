@@ -282,6 +282,18 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
              * locally stored in xact when sending the original request: */
             sess = smf_sess_find_active_by_teid(gtp_xact->local_teid);
 
+        /* Dump GTP RX once IMSI is known from the session (Create Session
+         * TEID=0 is handled after sess_add below). */
+        if (sess) {
+            smf_ue_t *trace_ue = smf_ue_find_by_id(sess->smf_ue_id);
+            if (trace_ue && trace_ue->imsi_bcd[0]) {
+                ogs_gtp_xact_set_imsi(gtp_xact, trace_ue->imsi_bcd);
+                ogs_trace_packet(trace_ue->imsi_bcd, "gtp", "rx",
+                        recvbuf->data, recvbuf->len);
+                ogs_trace_packet_bind_rx(NULL, NULL, 0);
+            }
+        }
+
         switch(gtp2_message.h.type) {
         case OGS_GTP2_ECHO_REQUEST_TYPE:
             smf_s5c_handle_echo_request(gtp_xact, &gtp2_message.echo_request);
@@ -335,6 +347,17 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                         OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
                         OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
                 break;
+            }
+
+            /* Create Session TEID=0: dump after sess/UE exist. */
+            {
+                smf_ue_t *trace_ue = smf_ue_find_by_id(sess->smf_ue_id);
+                if (trace_ue && trace_ue->imsi_bcd[0]) {
+                    ogs_gtp_xact_set_imsi(gtp_xact, trace_ue->imsi_bcd);
+                    ogs_trace_packet(trace_ue->imsi_bcd, "gtp", "rx",
+                            recvbuf->data, recvbuf->len);
+                    ogs_trace_packet_bind_rx(NULL, NULL, 0);
+                }
             }
 
             if (gtp2_sender_f_teid.teid_presence == true)

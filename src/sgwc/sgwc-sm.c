@@ -444,6 +444,15 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         if (sgwc_ue)
             OGS_SETUP_GTP_NODE(sgwc_ue, gnode);
 
+        /* Prefer TEID-resolved IMSI for PACKET dumps (handlers may return
+         * early before ogs_sgwc_trace_set / on_imsi). */
+        if (sgwc_ue && sgwc_ue->imsi_bcd[0]) {
+            ogs_gtp_xact_set_imsi(gtp_xact, sgwc_ue->imsi_bcd);
+            ogs_trace_packet(sgwc_ue->imsi_bcd, "gtp", "rx",
+                    recvbuf->data, recvbuf->len);
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
+        }
+
         switch(gtp_message.h.type) {
         case OGS_GTP2_ECHO_REQUEST_TYPE:
             sgwc_handle_echo_request(gtp_xact, &gtp_message.echo_request);
@@ -466,6 +475,13 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
             }
             if (sgwc_ue)
                 OGS_SETUP_GTP_NODE(sgwc_ue, gnode);
+            /* Create Session often arrives with TEID=0; dump after UE exists. */
+            if (sgwc_ue && sgwc_ue->imsi_bcd[0]) {
+                ogs_gtp_xact_set_imsi(gtp_xact, sgwc_ue->imsi_bcd);
+                ogs_trace_packet(sgwc_ue->imsi_bcd, "gtp", "rx",
+                        recvbuf->data, recvbuf->len);
+                ogs_trace_packet_bind_rx(NULL, NULL, 0);
+            }
             sgwc_s11_handle_create_session_request(
                     sgwc_ue, gtp_xact, recvbuf, &gtp_message);
             break;

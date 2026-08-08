@@ -121,8 +121,6 @@ int ogs_gtp_sendto(ogs_gtp_node_t *gnode, ogs_pkbuf_t *pkbuf)
     addr = &gnode->addr;
     ogs_assert(addr);
 
-    ogs_trace_packet_ctx("gtp", "tx", pkbuf->data, pkbuf->len);
-
     sent = ogs_sendto(sock->fd, pkbuf->data, pkbuf->len, 0, addr);
     if (sent < 0 || sent != pkbuf->len) {
         if (ogs_socket_errno != OGS_EAGAIN) {
