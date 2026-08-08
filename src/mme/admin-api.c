@@ -340,8 +340,32 @@ int mme_admin_trace_imsi(const ogs_metrics_query_t *q,
 
     status = ogs_metrics_admin_trace_imsi(use_q, body, body_cap, body_len);
 
-    if (use_q && use_q->sync && use_q->sync[0] && status == 200)
-        *body_len = mme_trace_sync_append(use_q, body, body_cap, *body_len);
+    /*
+     * Never block the MHD metrics thread on peer HTTP (sync=all).
+     * That used to stall/kill the whole admin API right after enabling
+     * trace. Queue peer propagation and return immediately.
+     */
+    if (use_q && use_q->sync && use_q->sync[0] && status == 200) {
+        size_t off = *body_len;
+
+        mme_trace_sync_async(use_q);
+
+        if (off > 0 && off < body_cap && body[off - 1] == '\n')
+            off--;
+        if (off > 0 && off < body_cap && body[off - 1] == '}')
+            off--;
+        if (off < body_cap) {
+            int n = snprintf(body + off, body_cap - off,
+                    ",\"sync\":\"queued\"}\n");
+            if (n > 0) {
+                if ((size_t)n >= body_cap - off)
+                    *body_len = body_cap - 1;
+                else
+                    *body_len = off + (size_t)n;
+                body[*body_len] = '\0';
+            }
+        }
+    }
 
     return status;
 }

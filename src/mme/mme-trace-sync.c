@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#include <pthread.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 
@@ -259,4 +260,69 @@ size_t mme_trace_sync_append(const ogs_metrics_query_t *q,
     off = admin_buf_append(body, body_cap, off, "}\n");
     body[off < body_cap ? off : body_cap - 1] = '\0';
     return off < body_cap ? off : body_cap - 1;
+}
+
+typedef struct {
+    char imsi[OGS_TRACE_IMSI_LEN];
+    char sync[64];
+    char match[16];
+    int force;
+    int remove;
+    int replace;
+} mme_trace_sync_job_t;
+
+static void *mme_trace_sync_pthread(void *arg)
+{
+    mme_trace_sync_job_t *job = arg;
+    ogs_metrics_query_t q;
+    char body[8192];
+    size_t len;
+
+    memset(&q, 0, sizeof(q));
+    if (job->imsi[0])
+        q.imsi = job->imsi;
+    q.sync = job->sync;
+    q.force = job->force;
+    q.remove = job->remove;
+    q.replace = job->replace;
+    if (job->match[0])
+        q.match = job->match;
+
+    len = (size_t)ogs_snprintf(body, sizeof(body),
+            "{\"ok\":true,\"detail\":\"async peer sync\"}");
+    (void)mme_trace_sync_append(&q, body, sizeof(body), len);
+    ogs_info("admin trace sync async finished");
+    ogs_free(job);
+    return NULL;
+}
+
+void mme_trace_sync_async(const ogs_metrics_query_t *q)
+{
+    mme_trace_sync_job_t *job;
+    pthread_t tid;
+    pthread_attr_t attr;
+
+    if (!q || !q->sync || !q->sync[0])
+        return;
+
+    job = ogs_calloc(1, sizeof(*job));
+    if (!job)
+        return;
+
+    if (q->imsi && q->imsi[0])
+        ogs_cpystrn(job->imsi, q->imsi, sizeof(job->imsi));
+    ogs_cpystrn(job->sync, q->sync, sizeof(job->sync));
+    if (q->match && q->match[0])
+        ogs_cpystrn(job->match, q->match, sizeof(job->match));
+    job->force = q->force;
+    job->remove = q->remove;
+    job->replace = q->replace;
+
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&tid, &attr, mme_trace_sync_pthread, job) != 0) {
+        ogs_error("trace sync async: pthread_create failed");
+        ogs_free(job);
+    }
+    pthread_attr_destroy(&attr);
 }

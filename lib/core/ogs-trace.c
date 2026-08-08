@@ -425,6 +425,9 @@ void ogs_trace_packet(const char *imsi, const char *proto, const char *dir,
     char b64[((OGS_TRACE_PACKET_MAX + 2) / 3) * 4 + 1];
     size_t dump_len;
     int truncated = 0;
+    static volatile uint32_t rate_sec;
+    static volatile uint32_t rate_count;
+    uint32_t now_sec, n;
 
     /* Lock-free empty-filter fast path — production default. */
     if (trace_filter.count == 0)
@@ -432,6 +435,21 @@ void ogs_trace_packet(const char *imsi, const char *proto, const char *dir,
     if (!imsi || !imsi[0] || !data || !len)
         return;
     if (!ogs_trace_filter_match(imsi))
+        return;
+
+    /*
+     * Cap PACKET log rate. Unbounded ogs_info(base64) after enabling
+     * trace saturated the process log lock and starved the MHD metrics
+     * thread — the whole admin/metrics API looked dead.
+     */
+#define OGS_TRACE_PACKET_PER_SEC  30
+    now_sec = (uint32_t)ogs_time_sec(ogs_time_now());
+    if (now_sec != rate_sec) {
+        rate_sec = now_sec;
+        rate_count = 0;
+    }
+    n = __atomic_add_fetch(&rate_count, 1, __ATOMIC_RELAXED);
+    if (n > OGS_TRACE_PACKET_PER_SEC)
         return;
 
     dump_len = len;
