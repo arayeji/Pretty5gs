@@ -2828,14 +2828,12 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
     union avp_value val;
     struct avp_hdr *hdr;
     char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
-    uint32_t result_code;
     mme_event_t *e;
     mme_ue_t *mme_ue;
     ogs_diam_s6a_message_t *s6a_message;
     ogs_diam_s6a_clr_message_t *clr_message;
 
     /* Initialize variables */
-    result_code = 0;
     ans = NULL;
     e = NULL;
     mme_ue = NULL;
@@ -2859,7 +2857,6 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
     s6a_message = ogs_calloc(1, sizeof(ogs_diam_s6a_message_t));
     if (!s6a_message) {
         ogs_error("Failed to allocate s6a_message");
-        result_code = OGS_DIAM_OUT_OF_SPACE;
         goto error_out;
     }
 
@@ -2874,7 +2871,6 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
     }
     if (!avp) {
         ogs_error("User-Name AVP not found");
-        result_code = OGS_DIAM_MISSING_AVP;
         goto error_out;
     }
 
@@ -2886,7 +2882,6 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
     if (!hdr->avp_value || !hdr->avp_value->os.data ||
             hdr->avp_value->os.len == 0) {
         ogs_error("Invalid User-Name AVP data");
-        result_code = OGS_DIAM_INVALID_AVP_VALUE;
         goto error_out;
     }
 
@@ -2895,9 +2890,15 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
 
     mme_ue = mme_ue_find_by_imsi_bcd(imsi_bcd);
     if (!mme_ue) {
-        ogs_error("Cancel Location for Unknown IMSI[%s]", imsi_bcd);
-        result_code = OGS_DIAM_S6A_ERROR_USER_UNKNOWN;
-        goto error_out;
+        /*
+         * 3GPP TS 29.272 §5.2.1.2.2: if the IMSI is not known, return
+         * DIAMETER_SUCCESS (already absent from this MME).
+         */
+        ogs_info("Cancel-Location for unknown IMSI[%s]: "
+                "DIAMETER_SUCCESS (no local UE)", imsi_bcd);
+        ogs_free(s6a_message);
+        s6a_message = NULL;
+        goto send_success;
     }
 
     /* Get Cancellation-Type AVP */
@@ -2908,7 +2909,6 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
     }
     if (!avp) {
         ogs_error("Cancellation-Type AVP not found");
-        result_code = OGS_DIAM_MISSING_AVP;
         goto error_out;
     }
 
@@ -2934,6 +2934,7 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
         clr_message->clr_flags = hdr->avp_value->i32;
     }
 
+send_success:
     /* Set the Origin-Host, Origin-Realm, and Result-Code AVPs */
     ret = fd_msg_rescode_set(ans, (char*)"DIAMETER_SUCCESS", NULL, NULL, 1);
     if (ret != 0) {
@@ -2986,6 +2987,10 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
             ogs_error("pthread_mutex_unlock() failed");
     }
 
+    /* No local UE: SUCCESS already sent; nothing to detach. */
+    if (!mme_ue)
+        return 0;
+
     /* Send event to MME */
     e = mme_event_new(MME_EVENT_S6A_MESSAGE);
     if (!e) {
@@ -3013,20 +3018,11 @@ error_out:
     if (!ans)
         return 0;
 
-    /* Set appropriate error result code */
-    if (result_code == OGS_DIAM_S6A_ERROR_USER_UNKNOWN) {
-        ret = ogs_diam_message_experimental_rescode_set(ans, result_code);
-        if (ret != 0) {
-            ogs_error("Diameter operation failed (ret=%d)", ret);
-            return 0;
-        }
-    } else {
-        ret = fd_msg_rescode_set(ans, (char*)"DIAMETER_UNABLE_TO_COMPLY",
-                                NULL, NULL, 1);
-        if (ret != 0) {
-            ogs_error("Diameter operation failed (ret=%d)", ret);
-            return 0;
-        }
+    ret = fd_msg_rescode_set(ans, (char*)"DIAMETER_UNABLE_TO_COMPLY",
+                            NULL, NULL, 1);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        return 0;
     }
 
     /* Set the Auth-Session-State AVP */
