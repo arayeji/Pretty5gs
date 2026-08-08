@@ -26,13 +26,15 @@ extern "C" {
 #define PTRACE_MAX_APN_LEN          64
 #define PTRACE_MAX_REF_LEN          128
 #define PTRACE_MAX_FIELDS_LEN       512
-#define PTRACE_MAX_PACKET           4096
+#define PTRACE_MAX_PACKET           8192
 #define PTRACE_MAX_EVENTS_PER_PKT   8
 #define PTRACE_MAX_UE_TEIDS         16
 #define PTRACE_MAX_UE_SEIDS         8
 #define PTRACE_MAX_UE_IPS           8
 #define PTRACE_MAX_UE_SESSIONS      8
+#define PTRACE_MAX_PDN_SESSIONS     8
 #define PTRACE_MAX_SESSION_LEN      128
+#define PTRACE_SESS_STALE_SEC       120
 #define PTRACE_MAX_RULES            256
 #define PTRACE_MAX_TRACES           128
 #define PTRACE_MAX_TIMELINE         512
@@ -86,6 +88,7 @@ typedef struct ptrace_ids_s {
     uint16_t tac;
     uint32_t cell_id;
     uint8_t bearer_id;
+    uint32_t diam_hbh;
     bool has_teid;
     bool has_seid;
     bool has_enb_ue_s1ap_id;
@@ -93,6 +96,7 @@ typedef struct ptrace_ids_s {
     bool has_tac;
     bool has_cell_id;
     bool has_bearer_id;
+    bool has_diam_hbh;
 } ptrace_ids_t;
 
 typedef struct ptrace_packet_s {

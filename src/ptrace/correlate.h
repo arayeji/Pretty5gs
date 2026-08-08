@@ -11,6 +11,31 @@
 extern "C" {
 #endif
 
+typedef enum {
+    PTRACE_SESS_ACTIVE = 0,
+    PTRACE_SESS_STALE = 1,
+    PTRACE_SESS_RELEASED = 2,
+} ptrace_sess_state_e;
+
+/* One PDN/PDU session under a UE (multi-APN, re-attach overlap). */
+typedef struct ptrace_pdn_sess_s {
+    uint64_t id;
+    ptrace_sess_state_e state;
+    char apn[PTRACE_MAX_APN_LEN];
+    char ue_ip[PTRACE_MAX_ID_LEN];
+    uint32_t teids[8];
+    int num_teids;
+    uint64_t seids[4];
+    int num_seids;
+    uint32_t enb_ue_s1ap_id;
+    uint32_t mme_ue_s1ap_id;
+    bool has_enb;
+    bool has_mme;
+    ogs_time_t created;
+    ogs_time_t last_seen;
+    ogs_time_t stale_until;
+} ptrace_pdn_sess_t;
+
 typedef struct ptrace_ue_s {
     ogs_lnode_t lnode;
     uint64_t ue_id;
@@ -25,15 +50,17 @@ typedef struct ptrace_ue_s {
     int num_teids;
     uint64_t seids[PTRACE_MAX_UE_SEIDS];
     int num_seids;
-    uint32_t enb_ue_s1ap_ids[4];
+    uint32_t enb_ue_s1ap_ids[8];
     int num_enb;
-    uint32_t mme_ue_s1ap_ids[4];
+    uint32_t mme_ue_s1ap_ids[8];
     int num_mme;
     uint16_t tacs[4];
     int num_tac;
     char sessions[PTRACE_MAX_UE_SESSIONS][PTRACE_MAX_SESSION_LEN];
     int num_sessions;
-    char apn[PTRACE_MAX_APN_LEN];
+    char apn[PTRACE_MAX_APN_LEN]; /* latest/primary APN (compat) */
+    ptrace_pdn_sess_t pdn[PTRACE_MAX_PDN_SESSIONS];
+    int num_pdn;
     ogs_time_t last_seen;
     /* After merge, drop nodes keep this redirect instead of being freed
      * so concurrent /ue and trace lookups cannot UAF. */

@@ -39,13 +39,16 @@ static void ipv6_str(const uint8_t *addr, char *buf, size_t buflen)
 static int sctp_payload(const uint8_t *data, int len,
         const uint8_t **payload, int *plen)
 {
-    /* SCTP common hdr (12) + DATA chunks. Only accept a complete
-     * (B+E) DATA chunk with S1AP PPID=18 — skip control/fragments. */
+    /* Prefer a complete (B+E) DATA chunk with S1AP PPID=18.
+     * Fall back to Beginning-fragment (B) so truncated snaplen /
+     * mid-association SPAN copies still yield Attach Request NAS. */
     const uint8_t *p;
     int remain;
     uint16_t chunk_len;
     uint8_t type, flags;
-    uint32_t ppid;
+    uint32_t ppid, ppid_le;
+    const uint8_t *fallback = NULL;
+    int fallback_len = 0;
 
     if (len < 16)
         return OGS_ERROR;
@@ -56,36 +59,47 @@ static int sctp_payload(const uint8_t *data, int len,
         type = p[0];
         flags = p[1];
         chunk_len = (uint16_t)((p[2] << 8) | p[3]);
-        if (chunk_len < 4 || chunk_len > remain)
+        if (chunk_len < 4)
             return OGS_ERROR;
+        /* Snaplen may truncate the last chunk — still try PPID/payload. */
+        if (chunk_len > remain)
+            chunk_len = (uint16_t)remain;
         if (type == 0) { /* DATA */
             if (chunk_len < 16)
                 goto next_chunk;
-            /* Beginning+Ending fragment bits => unfragmented user data */
-            if ((flags & 0x03) != 0x03)
-                goto next_chunk;
             ppid = ((uint32_t)p[12] << 24) | ((uint32_t)p[13] << 16) |
                     ((uint32_t)p[14] << 8) | p[15];
-            {
-                uint32_t ppid_le = (uint32_t)p[12] |
-                        ((uint32_t)p[13] << 8) |
-                        ((uint32_t)p[14] << 16) |
-                        ((uint32_t)p[15] << 24);
-                if (ppid != 18 && ppid_le != 18) /* OGS_SCTP_S1AP_PPID */
-                    goto next_chunk;
-            }
-            *payload = p + 16;
-            *plen = chunk_len - 16;
-            if (*plen <= 0)
+            ppid_le = (uint32_t)p[12] |
+                    ((uint32_t)p[13] << 8) |
+                    ((uint32_t)p[14] << 16) |
+                    ((uint32_t)p[15] << 24);
+            if (ppid != 18 && ppid_le != 18) /* OGS_SCTP_S1AP_PPID */
                 goto next_chunk;
-            return OGS_OK;
+            if ((flags & 0x03) == 0x03) {
+                *payload = p + 16;
+                *plen = chunk_len - 16;
+                if (*plen > 0)
+                    return OGS_OK;
+            } else if ((flags & 0x02) && !fallback) {
+                /* B bit set: start of user message */
+                fallback = p + 16;
+                fallback_len = chunk_len - 16;
+            }
         }
 next_chunk:
         {
             int pad = (4 - (chunk_len & 3)) & 3;
-            p += chunk_len + pad;
-            remain -= chunk_len + pad;
+            int step = chunk_len + pad;
+            if (step <= 0 || step > remain)
+                break;
+            p += step;
+            remain -= step;
         }
+    }
+    if (fallback && fallback_len > 0) {
+        *payload = fallback;
+        *plen = fallback_len;
+        return OGS_OK;
     }
     return OGS_ERROR;
 }
@@ -119,8 +133,8 @@ int ptrace_decode_packet(ptrace_packet_t *pkt,
     p += 14;
     len -= 14;
 
-    /* VLAN */
-    if (ethertype == 0x8100 && len >= 4) {
+    /* VLAN / QinQ */
+    while ((ethertype == 0x8100 || ethertype == 0x88a8) && len >= 4) {
         ethertype = (uint16_t)((p[2] << 8) | p[3]);
         p += 4;
         len -= 4;

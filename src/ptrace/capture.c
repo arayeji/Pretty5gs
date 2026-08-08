@@ -89,12 +89,18 @@ static void enqueue_packet(const uint8_t *data, uint16_t len,
 
 static const char *default_bpf(bool include_gtpu)
 {
-    /* S1AP + GTP-C + Diameter + PFCP; GTP-U optional (user plane flood). */
+    /* Match both untagged and 802.1Q frames. Plain "sctp port …" alone
+     * misses VLAN-tagged SPAN copies on many switches. */
     if (include_gtpu)
-        return "sctp port 36412 or udp port 2123 or udp port 2152 or "
-               "tcp port 3868 or udp port 3868 or udp port 8805";
-    return "sctp port 36412 or udp port 2123 or "
-           "tcp port 3868 or udp port 3868 or udp port 8805";
+        return "(vlan and (sctp port 36412 or udp port 2123 or "
+               "udp port 2152 or tcp port 3868 or udp port 3868 or "
+               "udp port 8805)) or "
+               "(sctp port 36412 or udp port 2123 or udp port 2152 or "
+               "tcp port 3868 or udp port 3868 or udp port 8805)";
+    return "(vlan and (sctp port 36412 or udp port 2123 or "
+           "tcp port 3868 or udp port 3868 or udp port 8805)) or "
+           "(sctp port 36412 or udp port 2123 or "
+           "tcp port 3868 or udp port 3868 or udp port 8805)";
 }
 
 static int apply_bpf(pcap_t *p)
@@ -136,7 +142,8 @@ static bool packet_is_signaling(const uint8_t *data, uint16_t len,
     ethertype = (uint16_t)((data[12] << 8) | data[13]);
     p = data + 14;
     remain = len - 14;
-    if (ethertype == 0x8100 && remain >= 4) {
+    /* Strip one or two VLAN tags (802.1Q / QinQ). */
+    while ((ethertype == 0x8100 || ethertype == 0x88a8) && remain >= 4) {
         ethertype = (uint16_t)((p[2] << 8) | p[3]);
         p += 4;
         remain -= 4;

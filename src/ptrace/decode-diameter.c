@@ -183,6 +183,11 @@ int ptrace_decode_diameter(const uint8_t *data, int len, ptrace_event_t *evt)
     cmd = ((uint32_t)(data[5] & 0xff) << 16) |
           ((uint32_t)data[6] << 8) | data[7];
 
+    /* Hop-by-Hop Identifier (correlates request/answer when Session-Id
+     * is missing from a truncated TCP segment). */
+    evt->ids.diam_hbh = rd32(data + 12);
+    evt->ids.has_diam_hbh = true;
+
     evt->protocol = PTRACE_PROTO_DIAMETER;
     evt->msg_type = (uint8_t)(cmd & 0xff);
     if (cmd == 316)

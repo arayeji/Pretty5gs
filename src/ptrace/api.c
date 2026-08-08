@@ -326,12 +326,26 @@ static _MHD_Result access_handler(void *cls,
 
     if (!strcmp(method, "GET") && !strncmp(url, "/ue/", 4)) {
         ptrace_ue_t *ue = ptrace_correlate_find(url + 4);
-        char buf[4096];
+        char *buf;
+        int n;
         if (!ue)
             return send_json(conn, MHD_HTTP_NOT_FOUND,
                     "{\"error\":\"ue not found\"}\n");
-        ptrace_correlate_ue_json(ue, buf, sizeof(buf));
-        return send_json(conn, MHD_HTTP_OK, buf);
+        buf = ogs_malloc(PTRACE_MAX_JSON);
+        if (!buf)
+            return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                    "{\"error\":\"oom\"}\n");
+        n = ptrace_correlate_ue_json(ue, buf, PTRACE_MAX_JSON);
+        if (n <= 0) {
+            ogs_free(buf);
+            return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                    "{\"error\":\"ue json failed\"}\n");
+        }
+        {
+            _MHD_Result r = send_json(conn, MHD_HTTP_OK, buf);
+            ogs_free(buf);
+            return r;
+        }
     }
 
     if (!strcmp(method, "GET") && !strncmp(url, "/trace/", 7)) {

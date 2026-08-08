@@ -18,8 +18,10 @@ static ogs_hash_t *by_seid;
 static ogs_hash_t *by_enb;
 static ogs_hash_t *by_mme;
 static ogs_hash_t *by_session;
+static ogs_hash_t *by_hbh;
 static ogs_thread_mutex_t lock;
 static bool ready;
+static uint64_t next_pdn_id = 1;
 
 static ptrace_ue_t *ue_resolve(ptrace_ue_t *ue)
 {
@@ -126,14 +128,14 @@ static void ue_merge_ids(ptrace_ue_t *ue, const ptrace_ids_t *ids)
         if (i == ue->num_seids && ue->num_seids < PTRACE_MAX_UE_SEIDS)
             ue->seids[ue->num_seids++] = ids->seid;
     }
-    if (ids->has_enb_ue_s1ap_id && ue->num_enb < 4) {
+    if (ids->has_enb_ue_s1ap_id && ue->num_enb < 8) {
         for (i = 0; i < ue->num_enb; i++)
             if (ue->enb_ue_s1ap_ids[i] == ids->enb_ue_s1ap_id)
                 break;
         if (i == ue->num_enb)
             ue->enb_ue_s1ap_ids[ue->num_enb++] = ids->enb_ue_s1ap_id;
     }
-    if (ids->has_mme_ue_s1ap_id && ue->num_mme < 4) {
+    if (ids->has_mme_ue_s1ap_id && ue->num_mme < 8) {
         for (i = 0; i < ue->num_mme; i++)
             if (ue->mme_ue_s1ap_ids[i] == ids->mme_ue_s1ap_id)
                 break;
@@ -157,6 +159,177 @@ static void ue_merge_ids(ptrace_ue_t *ue, const ptrace_ids_t *ids)
                     sizeof(ue->sessions[0]));
     }
     ue->last_seen = ogs_time_now();
+}
+
+static const char *sess_state_str(ptrace_sess_state_e s)
+{
+    switch (s) {
+    case PTRACE_SESS_ACTIVE: return "active";
+    case PTRACE_SESS_STALE: return "stale";
+    default: return "released";
+    }
+}
+
+static void pdn_add_teid(ptrace_pdn_sess_t *s, uint32_t teid)
+{
+    int i;
+    if (!s || !teid)
+        return;
+    for (i = 0; i < s->num_teids; i++)
+        if (s->teids[i] == teid)
+            return;
+    if (s->num_teids < 8)
+        s->teids[s->num_teids++] = teid;
+}
+
+static void pdn_add_seid(ptrace_pdn_sess_t *s, uint64_t seid)
+{
+    int i;
+    if (!s || !seid)
+        return;
+    for (i = 0; i < s->num_seids; i++)
+        if (s->seids[i] == seid)
+            return;
+    if (s->num_seids < 4)
+        s->seids[s->num_seids++] = seid;
+}
+
+static void ue_expire_pdn(ptrace_ue_t *ue)
+{
+    int i;
+    ogs_time_t now = ogs_time_now();
+    for (i = 0; i < ue->num_pdn; i++) {
+        if (ue->pdn[i].state == PTRACE_SESS_STALE &&
+                ue->pdn[i].stale_until && ue->pdn[i].stale_until < now)
+            ue->pdn[i].state = PTRACE_SESS_RELEASED;
+    }
+}
+
+static void ue_stale_active(ptrace_ue_t *ue)
+{
+    int i;
+    ogs_time_t until = ogs_time_now() +
+            ogs_time_from_sec(PTRACE_SESS_STALE_SEC);
+    for (i = 0; i < ue->num_pdn; i++) {
+        if (ue->pdn[i].state == PTRACE_SESS_ACTIVE) {
+            ue->pdn[i].state = PTRACE_SESS_STALE;
+            ue->pdn[i].stale_until = until;
+        }
+    }
+}
+
+static ptrace_pdn_sess_t *ue_new_pdn(ptrace_ue_t *ue)
+{
+    ptrace_pdn_sess_t *s;
+    if (ue->num_pdn >= PTRACE_MAX_PDN_SESSIONS) {
+        /* Drop oldest released, else oldest stale */
+        int i, victim = 0;
+        for (i = 0; i < ue->num_pdn; i++) {
+            if (ue->pdn[i].state == PTRACE_SESS_RELEASED) {
+                victim = i;
+                break;
+            }
+            if (ue->pdn[i].state == PTRACE_SESS_STALE &&
+                    ue->pdn[victim].state != PTRACE_SESS_STALE)
+                victim = i;
+            else if (ue->pdn[i].created < ue->pdn[victim].created)
+                victim = i;
+        }
+        memmove(&ue->pdn[victim], &ue->pdn[victim + 1],
+                (size_t)(ue->num_pdn - victim - 1) * sizeof(ue->pdn[0]));
+        ue->num_pdn--;
+    }
+    s = &ue->pdn[ue->num_pdn++];
+    memset(s, 0, sizeof(*s));
+    s->id = next_pdn_id++;
+    s->state = PTRACE_SESS_ACTIVE;
+    s->created = s->last_seen = ogs_time_now();
+    return s;
+}
+
+/* Pick / create PDN session: new eNB S1AP ID => re-attach (stale old).
+ * Same APN active session is reused; new APN gets another active session. */
+static void ue_touch_pdn(ptrace_ue_t *ue, const ptrace_ids_t *ids)
+{
+    ptrace_pdn_sess_t *s = NULL;
+    int i, t;
+    bool new_s1 = false;
+
+    ue_expire_pdn(ue);
+
+    if (ids->has_enb_ue_s1ap_id) {
+        for (i = 0; i < ue->num_pdn; i++) {
+            if (ue->pdn[i].state == PTRACE_SESS_ACTIVE &&
+                    ue->pdn[i].has_enb &&
+                    ue->pdn[i].enb_ue_s1ap_id == ids->enb_ue_s1ap_id) {
+                s = &ue->pdn[i];
+                break;
+            }
+        }
+        if (!s) {
+            /* Unknown eNB-UE-S1AP-ID on an attach-like message */
+            new_s1 = true;
+            for (i = 0; i < ue->num_pdn; i++) {
+                if (ue->pdn[i].state == PTRACE_SESS_ACTIVE &&
+                        ue->pdn[i].has_enb &&
+                        ue->pdn[i].enb_ue_s1ap_id != ids->enb_ue_s1ap_id)
+                    new_s1 = true;
+            }
+        }
+    }
+
+    if (!s && ids->apn[0]) {
+        for (i = 0; i < ue->num_pdn; i++) {
+            if (ue->pdn[i].state == PTRACE_SESS_ACTIVE &&
+                    ue->pdn[i].apn[0] && !strcmp(ue->pdn[i].apn, ids->apn)) {
+                s = &ue->pdn[i];
+                break;
+            }
+        }
+    }
+
+    if (!s && !new_s1) {
+        for (i = 0; i < ue->num_pdn; i++) {
+            if (ue->pdn[i].state == PTRACE_SESS_ACTIVE) {
+                s = &ue->pdn[i];
+                break;
+            }
+        }
+    }
+
+    if (new_s1 && ids->has_enb_ue_s1ap_id) {
+        ue_stale_active(ue);
+        s = NULL;
+    }
+
+    if (!s && (ids->has_enb_ue_s1ap_id || ids->apn[0] ||
+            ids->ue_ip[0] || ids->num_teids > 0 || ids->has_seid))
+        s = ue_new_pdn(ue);
+
+    if (!s)
+        return;
+
+    s->last_seen = ogs_time_now();
+    if (ids->apn[0])
+        ogs_cpystrn(s->apn, ids->apn, sizeof(s->apn));
+    if (ids->ue_ip[0])
+        ogs_cpystrn(s->ue_ip, ids->ue_ip, sizeof(s->ue_ip));
+    if (ids->has_enb_ue_s1ap_id) {
+        s->enb_ue_s1ap_id = ids->enb_ue_s1ap_id;
+        s->has_enb = true;
+    }
+    if (ids->has_mme_ue_s1ap_id) {
+        s->mme_ue_s1ap_id = ids->mme_ue_s1ap_id;
+        s->has_mme = true;
+    }
+    if (ids->num_teids > 0) {
+        for (t = 0; t < ids->num_teids; t++)
+            pdn_add_teid(s, ids->teids[t]);
+    } else if (ids->has_teid && ids->teid) {
+        pdn_add_teid(s, ids->teid);
+    }
+    if (ids->has_seid)
+        pdn_add_seid(s, ids->seid);
 }
 
 /* Fold drop into keep so S1AP-only and GTP/Diameter roots become one UE. */
@@ -233,6 +406,17 @@ static void ue_absorb(ptrace_ue_t *keep, ptrace_ue_t *drop)
         memset(&one, 0, sizeof(one));
         ogs_cpystrn(one.session_id, drop->sessions[i], sizeof(one.session_id));
         ue_merge_ids(keep, &one);
+    }
+    /* Move PDN sessions from drop into keep (mark drop's as stale). */
+    for (i = 0; i < drop->num_pdn && keep->num_pdn < PTRACE_MAX_PDN_SESSIONS;
+            i++) {
+        keep->pdn[keep->num_pdn] = drop->pdn[i];
+        if (keep->pdn[keep->num_pdn].state == PTRACE_SESS_ACTIVE) {
+            keep->pdn[keep->num_pdn].state = PTRACE_SESS_STALE;
+            keep->pdn[keep->num_pdn].stale_until = ogs_time_now() +
+                    ogs_time_from_sec(PTRACE_SESS_STALE_SEC);
+        }
+        keep->num_pdn++;
     }
 
     /* Cached events still carry the absorbed ue_id — retarget them. */
@@ -311,6 +495,7 @@ int ptrace_correlate_init(void)
     by_enb = ogs_hash_make();
     by_mme = ogs_hash_make();
     by_session = ogs_hash_make();
+    by_hbh = ogs_hash_make();
     ogs_thread_mutex_init(&lock);
     ready = true;
     return OGS_OK;
@@ -338,6 +523,7 @@ void ptrace_correlate_final(void)
     ogs_hash_destroy(by_enb);
     ogs_hash_destroy(by_mme);
     ogs_hash_destroy(by_session);
+    ogs_hash_destroy(by_hbh);
     ogs_thread_mutex_unlock(&lock);
     ogs_thread_mutex_destroy(&lock);
     ready = false;
@@ -378,6 +564,8 @@ uint64_t ptrace_correlate_event(ptrace_event_t *evt)
     if (ids->has_mme_ue_s1ap_id)
         consider_ue(cands, &nc, lookup_u32(by_mme, ids->mme_ue_s1ap_id));
     consider_ue(cands, &nc, lookup_str(by_session, ids->session_id));
+    if (ids->has_diam_hbh)
+        consider_ue(cands, &nc, lookup_u32(by_hbh, ids->diam_hbh));
 
     ue = prefer_ue(cands, nc);
     if (ue && nc > 1) {
@@ -399,6 +587,9 @@ uint64_t ptrace_correlate_event(ptrace_event_t *evt)
 
     if (ue) {
         ue_merge_ids(ue, ids);
+        ue_touch_pdn(ue, ids);
+        if (ids->has_diam_hbh)
+            index_u32(by_hbh, ids->diam_hbh, ue);
         ue_reindex(ue);
         evt->ue_id = ue->ue_id;
         /* Stamp subscriber IDs onto the event so export/timeline
@@ -502,6 +693,44 @@ int ptrace_correlate_ue_json(ptrace_ue_t *ue, char *buf, size_t buflen)
                 i ? "," : "", ue->sessions[i]);
         if (n < 0) break;
         off += (size_t)n;
+    }
+    n = snprintf(buf + off, buflen - off, "],\"pdn_sessions\":[");
+    if (n > 0) off += (size_t)n;
+    {
+        int first = 1, j;
+        for (i = 0; i < ue->num_pdn && off < buflen; i++) {
+            ptrace_pdn_sess_t *s = &ue->pdn[i];
+            if (s->state == PTRACE_SESS_RELEASED)
+                continue;
+            n = snprintf(buf + off, buflen - off,
+                    "%s{\"id\":%llu,\"state\":\"%s\",\"apn\":\"%s\","
+                    "\"ue_ip\":\"%s\",\"enb_ue_s1ap_id\":%u,"
+                    "\"mme_ue_s1ap_id\":%u,\"teids\":[",
+                    first ? "" : ",",
+                    (unsigned long long)s->id, sess_state_str(s->state),
+                    s->apn, s->ue_ip,
+                    s->has_enb ? s->enb_ue_s1ap_id : 0,
+                    s->has_mme ? s->mme_ue_s1ap_id : 0);
+            if (n < 0) break;
+            off += (size_t)n;
+            for (j = 0; j < s->num_teids && off < buflen; j++) {
+                n = snprintf(buf + off, buflen - off, "%s%u",
+                        j ? "," : "", s->teids[j]);
+                if (n < 0) break;
+                off += (size_t)n;
+            }
+            n = snprintf(buf + off, buflen - off, "],\"seids\":[");
+            if (n > 0) off += (size_t)n;
+            for (j = 0; j < s->num_seids && off < buflen; j++) {
+                n = snprintf(buf + off, buflen - off, "%s%llu",
+                        j ? "," : "", (unsigned long long)s->seids[j]);
+                if (n < 0) break;
+                off += (size_t)n;
+            }
+            n = snprintf(buf + off, buflen - off, "]}");
+            if (n > 0) off += (size_t)n;
+            first = 0;
+        }
     }
     n = snprintf(buf + off, buflen - off, "]}\n");
     if (n > 0) off += (size_t)n;
