@@ -391,6 +391,8 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
     bool req_utran = false;
     bool resync = false;
 
+    HSS_TRACE_SCOPE();
+
     /* Validate input parameters */
     if (!msg || !*msg) {
         ogs_error("Invalid message pointer");
@@ -1221,6 +1223,8 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
     ogs_plmn_id_t visited_plmn_id;
     int error_occurred = 0;
 
+    HSS_TRACE_SCOPE();
+
     /* Validate input parameters */
     if (!msg || !*msg) {
         ogs_error("Invalid message pointer");
@@ -1884,6 +1888,8 @@ static int hss_ogs_diam_s6a_pur_cb(struct msg **msg, struct avp *avp,
     int error_occurred = 0;
     int use_experimental_code = 1;
 
+    HSS_TRACE_SCOPE();
+
     /* Validate input parameters */
     if (!msg || !*msg) {
         ogs_error("Invalid message pointer");
@@ -2197,6 +2203,8 @@ void hss_s6a_send_clr(char *imsi_bcd, char *mme_host, char *mme_realm,
     struct sess_state *sess_data = NULL, *svg;
     struct session *session = NULL;
 
+    HSS_TRACE_SCOPE();
+
     ogs_debug("[HSS] Tx Cancel-Location-Request");
 
     /* Create the random value to store with the session */
@@ -2331,6 +2339,8 @@ static void hss_s6a_cla_cb(void *data, struct msg **msg)
     int new = 0;
     int error_occurred = 0;
 
+    HSS_TRACE_SCOPE();
+
     ogs_debug("[HSS] Rx Cancel-Location-Answer");
 
     /* Validate input parameters */
@@ -2427,6 +2437,8 @@ int hss_s6a_send_idr(char *imsi_bcd, uint32_t idr_flags, uint32_t subdata_mask)
     ogs_subscription_data_t subscription_data;
     char *dest_host = NULL;
     char *dest_realm = NULL;
+
+    HSS_TRACE_SCOPE();
 
     ogs_debug("[HSS] Tx Insert-Subscriber-Data-Request");
 
@@ -2628,6 +2640,8 @@ static void hss_s6a_ida_cb(void *data, struct msg **msg)
     int new = 0;
     int error_occurred = 0;
 
+    HSS_TRACE_SCOPE();
+
     ogs_debug("[HSS] Rx Insert-Subscriber-Data-Answer");
 
     /* Validate input parameters */
@@ -2728,6 +2742,8 @@ static int hss_ogs_diam_s6a_nor_cb(struct msg **msg, struct avp *avp,
     bool have_imsi = false;
     uint32_t nor_flags = 0;
     bool have_nor_flags = false;
+
+    HSS_TRACE_SCOPE();
 
     ogs_assert(msg);
 

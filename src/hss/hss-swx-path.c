@@ -58,6 +58,7 @@ static bool hss_swx_user_name_to_imsi_bcd(
 static int hss_ogs_diam_swx_fb_cb(struct msg **msg, struct avp *avp,
         struct session *session, void *opaque, enum disp_action *act)
 {
+    HSS_TRACE_SCOPE();
     /* This CB should never be called */
     ogs_warn("Unexpected message received!");
     OGS_DIAM_STATS_MTX(
@@ -71,6 +72,7 @@ static int hss_ogs_diam_swx_fb_cb(struct msg **msg, struct avp *avp,
 static int hss_ogs_diam_swx_mar_cb(struct msg **msg, struct avp *avp,
         struct session *session, void *opaque, enum disp_action *act)
 {
+    HSS_TRACE_SCOPE();
     int rv, ret;
     uint32_t result_code = 0;
     struct msg *ans = NULL, *qry = NULL;
@@ -628,6 +630,7 @@ out:
 static int hss_ogs_diam_swx_sar_cb(struct msg **msg, struct avp *avp,
         struct session *session, void *opaque, enum disp_action *act)
 {
+    HSS_TRACE_SCOPE();
     int rv, ret;
     uint32_t result_code = 0;
     int error_occurred = 0;

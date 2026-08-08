@@ -35,6 +35,11 @@ void hss_trace_set(const char *imsi_bcd, const char *proc)
     ogs_trace_set(&ctx);
 }
 
+void hss_trace_done(void)
+{
+    ogs_trace_clear();
+}
+
 void hss_imsi_log(
         const char *imsi_bcd, const char *proc, int level,
         const char *fmt, ...)
@@ -48,22 +53,25 @@ void hss_imsi_log(
 
     ogs_assert(fmt);
 
-    /* Per-IMSI trace lines are opt-in: emit only for filter-matched
-     * subscribers or a debug-enabled domain. */
+    /*
+     * Opt-in like mme_ue_log / sgwc_ue_log. Use the configured domain level
+     * for the "domain at debug" path — do NOT call ogs_log_domain_prints()
+     * here, because that helper itself elevates when TLS IMSI matches the
+     * filter and would let non-matched IMSIs through while a traced IMSI
+     * is still sticky on the freeDiameter worker.
+     */
     filter_hit = ogs_trace_filter_match(id);
-    if (!filter_hit &&
-            !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+    domain_level = ogs_log_get_domain_level(OGS_LOG_DOMAIN);
+
+    if (!filter_hit && domain_level < OGS_LOG_DEBUG)
         return;
 
     /*
      * Filter-matched lines must not share the thread-local ogs_log_guard
-     * with unrelated FD-thread INFO/WARN chatter — that was dropping
-     * S6a-ULR after S6a-AIR on busy HSS workers.
+     * with unrelated FD-thread INFO/WARN chatter.
      */
     if (!filter_hit && level != OGS_LOG_DEBUG && !ogs_log_guard())
         return;
-
-    domain_level = ogs_log_get_domain_level(OGS_LOG_DOMAIN);
 
     /*
      * When elevating past the domain level, cap with the process-wide
@@ -82,6 +90,14 @@ void hss_imsi_log(
 
     ogs_log_printf(level, OGS_LOG_DOMAIN,
             0, __FILE__, __LINE__, OGS_FUNC, 0, "%s %s", prefix, msg);
+
+    /*
+     * Do not leave IMSI sticky on freeDiameter workers. Sticky filter match
+     * makes ogs_log_domain_prints() elevate every ogs_debug/ogs_info on the
+     * thread (unlike MME/SGWC, which overwrite context on the next UE event).
+     * HSS_TRACE_SCOPE() is a safety net if a path returns early.
+     */
+    ogs_trace_clear();
 }
 
 void hss_trace_event(
@@ -97,11 +113,6 @@ void hss_trace_event(
     va_start(ap, fmt);
     ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
-
-    hss_trace_set(id, proc);
-
-    if (ogs_trace_filter_match(id))
-        ogs_error("[%s] %s %s", id, proc ? proc : "-", msg);
 
     hss_imsi_info(id, proc, "%s", msg);
 }

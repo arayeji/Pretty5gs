@@ -294,6 +294,7 @@ static char *hss_sh_build_sh_data(
 static int hss_ogs_diam_sh_fb_cb(struct msg **msg, struct avp *avp,
         struct session *session, void *opaque, enum disp_action *act)
 {
+    HSS_TRACE_SCOPE();
     ogs_warn("Unexpected Sh message received!");
     return ENOTSUP;
 }
@@ -339,6 +340,7 @@ static void hss_sh_get_user_identity(struct msg *qry,
 static int hss_ogs_diam_sh_udr_cb(struct msg **msg, struct avp *avp,
         struct session *session, void *opaque, enum disp_action *act)
 {
+    HSS_TRACE_SCOPE();
     int ret;
     uint32_t result_code = 0;
     struct msg *ans = NULL, *qry = NULL;
@@ -517,6 +519,7 @@ out:
 static int hss_ogs_diam_sh_snr_cb(struct msg **msg, struct avp *avp,
         struct session *session, void *opaque, enum disp_action *act)
 {
+    HSS_TRACE_SCOPE();
     int ret;
     uint32_t result_code = 0;
     struct msg *ans = NULL, *qry = NULL;

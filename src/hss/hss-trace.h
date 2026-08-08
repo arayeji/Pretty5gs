@@ -28,9 +28,13 @@ extern "C" {
 
 void hss_trace_set(const char *imsi_bcd, const char *proc);
 
+/* Clear thread-local trace context (call when leaving a Diameter callback). */
+void hss_trace_done(void);
+
 /*
- * Per-IMSI log: DEBUG is emitted when logger level is debug or
- * hss.trace_imsi / GET /admin/trace/imsi matches.
+ * Per-IMSI log: emit only when hss.trace_imsi / GET /admin/trace/imsi matches
+ * this subscriber, or when the domain is at debug. Same opt-in model as
+ * mme_ue_log / sgwc_ue_log — does not flood the process at INFO.
  * proc examples: "S6a-AIR", "Cx-UAR", "SWx-MAR", "Sh-UDR"
  */
 void hss_imsi_log(
@@ -47,13 +51,27 @@ void hss_imsi_log(
     hss_imsi_log(imsi, proc, OGS_LOG_DEBUG, __VA_ARGS__)
 
 /*
- * Procedure boundary for a traced IMSI: sets TLS context, emits an eager
- * ERROR line (never lazy-gated) when the filter matches, and also an INFO
- * hss_imsi line with the same text for the IMSI-prefixed UI.
+ * Procedure boundary for a traced IMSI: one opt-in INFO line (same gate as
+ * mme_ue_log). Does NOT use ogs_error and does NOT leave TLS IMSI sticky.
  */
 void hss_trace_event(
         const char *imsi_bcd, const char *proc,
         const char *fmt, ...) OGS_GNUC_PRINTF(3, 4);
+
+/*
+ * Install at the top of freeDiameter callbacks so sticky IMSI cannot
+ * elevate unrelated DEBUG on the worker after the callback returns.
+ */
+#if defined(__GNUC__)
+static inline void hss_trace_scope_cleanup(int *unused)
+{
+    hss_trace_done();
+}
+#define HSS_TRACE_SCOPE() \
+    int _hss_trace_scope __attribute__((cleanup(hss_trace_scope_cleanup))) = 0
+#else
+#define HSS_TRACE_SCOPE() do { } while (0)
+#endif
 
 void hss_admin_api_register(void);
 
