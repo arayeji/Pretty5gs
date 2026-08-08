@@ -442,7 +442,7 @@ void ogs_trace_packet(const char *imsi, const char *proto, const char *dir,
      * trace saturated the process log lock and starved the MHD metrics
      * thread — the whole admin/metrics API looked dead.
      */
-#define OGS_TRACE_PACKET_PER_SEC  30
+#define OGS_TRACE_PACKET_PER_SEC  200
     now_sec = (uint32_t)ogs_time_sec(ogs_time_now());
     if (now_sec != rate_sec) {
         rate_sec = now_sec;

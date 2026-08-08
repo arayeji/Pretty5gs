@@ -290,7 +290,7 @@ bool s1ap_shard_handle(mme_event_t *e)
         ogs_assert(im);
         switch (im->procedureCode) {
         case S1AP_ProcedureCode_id_uplinkNASTransport:
-            s1ap_handle_uplink_nas_transport(enb, pdu);
+            s1ap_handle_uplink_nas_transport(enb, pdu, e->pkbuf);
             break;
         case S1AP_ProcedureCode_id_UECapabilityInfoIndication:
             s1ap_handle_ue_capability_info_indication(enb, pdu);

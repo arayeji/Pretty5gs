@@ -760,7 +760,8 @@ void s1ap_initial_ue_stmsi_assoc_tail(enb_ue_t *enb_ue,
                 enb_ue, S1AP_ProcedureCode_id_initialUEMessage, &nas_pdu));
 }
 
-void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
+void s1ap_handle_initial_ue_message(
+        mme_enb_t *enb, ogs_s1ap_message_t *message, ogs_pkbuf_t *pkbuf)
 {
     int i, r;
     char buf[OGS_ADDRSTRLEN];
@@ -1105,12 +1106,20 @@ void s1ap_handle_initial_ue_message(mme_enb_t *enb, ogs_s1ap_message_t *message)
             ogs_mme_trace_set(enb_ue, NULL, NULL, "initial-ue");
     }
 
+    if (pkbuf) {
+        mme_ue_t *trace_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+
+        if (trace_ue && MME_UE_HAVE_IMSI(trace_ue))
+            ogs_trace_packet(trace_ue->imsi_bcd, "s1ap", "rx",
+                    pkbuf->data, pkbuf->len);
+    }
+
     ogs_expect(OGS_OK == s1ap_send_to_nas(
                 enb_ue, S1AP_ProcedureCode_id_initialUEMessage, NAS_PDU));
 }
 
 void s1ap_handle_uplink_nas_transport(
-        mme_enb_t *enb, ogs_s1ap_message_t *message)
+        mme_enb_t *enb, ogs_s1ap_message_t *message, ogs_pkbuf_t *pkbuf)
 {
     char buf[OGS_ADDRSTRLEN];
     int i, r;
@@ -1177,6 +1186,11 @@ void s1ap_handle_uplink_nas_transport(
         ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
         return;
     }
+
+    /* Dump on this thread (main/shard) before NAS is handed to UE worker. */
+    if (pkbuf && mme_ue && MME_UE_HAVE_IMSI(mme_ue))
+        ogs_trace_packet(mme_ue->imsi_bcd, "s1ap", "rx",
+                pkbuf->data, pkbuf->len);
 
     ogs_debug("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
             enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);

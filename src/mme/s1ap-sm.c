@@ -98,10 +98,10 @@ void s1ap_state_operational(ogs_fsm_t *s, mme_event_t *e)
                 s1ap_handle_enb_configuration_update(enb, pdu);
                 break;
             case S1AP_ProcedureCode_id_initialUEMessage :
-                s1ap_handle_initial_ue_message(enb, pdu);
+                s1ap_handle_initial_ue_message(enb, pdu, e->pkbuf);
                 break;
             case S1AP_ProcedureCode_id_uplinkNASTransport :
-                s1ap_handle_uplink_nas_transport(enb, pdu);
+                s1ap_handle_uplink_nas_transport(enb, pdu, e->pkbuf);
                 break;
             case S1AP_ProcedureCode_id_UECapabilityInfoIndication :
                 s1ap_handle_ue_capability_info_indication(enb, pdu);

@@ -32,9 +32,9 @@ void s1ap_handle_s1_setup_request(
 void s1ap_handle_enb_configuration_update(
         mme_enb_t *enb, ogs_s1ap_message_t *message);
 void s1ap_handle_initial_ue_message(
-        mme_enb_t *enb, ogs_s1ap_message_t *message);
+        mme_enb_t *enb, ogs_s1ap_message_t *message, ogs_pkbuf_t *pkbuf);
 void s1ap_handle_uplink_nas_transport(
-        mme_enb_t *enb, ogs_s1ap_message_t *message);
+        mme_enb_t *enb, ogs_s1ap_message_t *message, ogs_pkbuf_t *pkbuf);
 void s1ap_handle_ue_capability_info_indication(
         mme_enb_t *enb, ogs_s1ap_message_t *message);
 void s1ap_handle_initial_context_setup_response(
