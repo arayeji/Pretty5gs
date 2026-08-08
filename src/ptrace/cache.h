@@ -15,6 +15,7 @@ int ptrace_cache_init(int duration_minutes);
 void ptrace_cache_final(void);
 void ptrace_cache_put(ptrace_event_t *evt);
 void ptrace_cache_pin_ue(uint64_t ue_id, ogs_time_t until);
+bool ptrace_cache_ue_is_pinned(uint64_t ue_id);
 void ptrace_cache_remap_ue(uint64_t from_id, uint64_t to_id);
 int ptrace_cache_query_ue(uint64_t ue_id, ogs_time_t from, ogs_time_t to,
         ptrace_event_t **out, int max_out);

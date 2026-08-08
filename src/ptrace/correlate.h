@@ -75,6 +75,8 @@ int ptrace_correlate_ue_count(void);
 int ptrace_correlate_ue_json(ptrace_ue_t *ue, char *buf, size_t buflen);
 bool ptrace_correlate_event_matches_ue(const ptrace_event_t *evt,
         const ptrace_ue_t *ue);
+/* Evict idle roots: no-IMSI sooner, IMSI after cache window. */
+int ptrace_correlate_expire(void);
 
 #ifdef __cplusplus
 }

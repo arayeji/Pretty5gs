@@ -305,29 +305,42 @@ static _MHD_Result access_handler(void *cls,
     }
 
     if (!strcmp(method, "GET") && !strcmp(url, "/healthz")) {
-        char buf[512];
+        char buf[768];
+        ptrace_rates_update();
         snprintf(buf, sizeof(buf),
                 "{\"status\":\"ok\",\"packets\":%llu,\"dropped\":%llu,"
-                "\"ring_drop\":%llu,\"filtered\":%llu,\"events\":%llu,"
+                "\"ring_drop\":%llu,\"filtered\":%llu,\"filtered_noise\":%llu,"
+                "\"identity_in\":%llu,\"events\":%llu,"
                 "\"ue_count\":%d,\"ifaces\":%d,\"capture_threads\":%d,"
-                "\"workers\":%d,\"pool_avail\":%d,"
+                "\"workers\":%d,\"pool_avail\":%d,\"id_pool_avail\":%d,"
+                "\"packet_rate_10s\":%.1f,\"drop_rate_10s\":%.1f,"
+                "\"identity_rate_10s\":%.1f,\"filtered_noise_rate_10s\":%.1f,"
                 "\"s1ap_ok\":%llu,\"s1ap_fail\":%llu,\"s1ap_scan\":%llu,"
-                "\"s1ap_skip\":%llu,\"identity_inline\":%llu}\n",
+                "\"s1ap_skip\":%llu,\"identity_inline\":%llu,"
+                "\"asn_traced\":%llu}\n",
                 (unsigned long long)ctx->packets_in,
                 (unsigned long long)ctx->packets_drop,
                 (unsigned long long)ctx->packets_ring_drop,
                 (unsigned long long)ctx->packets_filtered,
+                (unsigned long long)ctx->filtered_noise,
+                (unsigned long long)ctx->identity_in,
                 (unsigned long long)ctx->events_out,
                 ptrace_correlate_ue_count(),
                 ctx->num_ifaces,
                 ctx->capture_threads,
                 ctx->workers,
                 ptrace_packet_pool_avail(),
+                ptrace_id_pool_avail(),
+                ctx->packet_rate_10s,
+                ctx->drop_rate_10s,
+                ctx->identity_rate_10s,
+                ctx->filtered_noise_rate_10s,
                 (unsigned long long)ctx->s1ap_ok,
                 (unsigned long long)ctx->s1ap_fail,
                 (unsigned long long)ctx->s1ap_scan_hit,
                 (unsigned long long)ctx->s1ap_skip_pressure,
-                (unsigned long long)ctx->identity_inline);
+                (unsigned long long)ctx->identity_inline,
+                (unsigned long long)ctx->asn_traced);
         return send_json(conn, MHD_HTTP_OK, buf);
     }
 

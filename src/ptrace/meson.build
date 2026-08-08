@@ -48,6 +48,8 @@ libptrace_sources = files('''
     decode-gtpu.c
     decode-pfcp.c
     decode-diameter.c
+    identity.h
+    identity.c
     correlate.h
     correlate.c
     cache.h

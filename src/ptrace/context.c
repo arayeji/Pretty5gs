@@ -9,12 +9,16 @@ int __ptrace_log_domain;
 static ptrace_context_t self;
 static bool initialized = false;
 
-#define PTRACE_PKT_POOL_SIZE    65536
-#define PTRACE_EVT_POOL_SIZE    65536
+/* Full-frame pool only for offline replay / rare ASN enrich — not hot path. */
+#define PTRACE_PKT_POOL_SIZE    512
+#define PTRACE_ID_POOL_SIZE_CTX PTRACE_ID_POOL_SIZE
+#define PTRACE_EVT_POOL_SIZE    16384
 
 static OGS_POOL(pkt_pool, ptrace_packet_t);
+static OGS_POOL(id_pool, ptrace_id_event_t);
 static OGS_POOL(evt_pool, ptrace_event_t);
 static ogs_thread_mutex_t pkt_lock;
+static ogs_thread_mutex_t id_lock;
 static ogs_thread_mutex_t evt_lock;
 
 ptrace_context_t *ptrace_self(void)
@@ -42,12 +46,17 @@ int ptrace_context_init(void)
     self.next_ue_id = 1;
 
     ogs_pool_init(&pkt_pool, PTRACE_PKT_POOL_SIZE);
+    ogs_pool_init(&id_pool, PTRACE_ID_POOL_SIZE_CTX);
     ogs_pool_init(&evt_pool, PTRACE_EVT_POOL_SIZE);
     ogs_thread_mutex_init(&pkt_lock);
+    ogs_thread_mutex_init(&id_lock);
     ogs_thread_mutex_init(&evt_lock);
 
+    self.id_queue = ogs_queue_create(PTRACE_ID_POOL_SIZE_CTX);
+    ogs_assert(self.id_queue);
     self.pkt_queue = ogs_queue_create(PTRACE_PKT_POOL_SIZE);
     ogs_assert(self.pkt_queue);
+    self.rate_prev.ts = ogs_time_now();
 
     initialized = true;
     return OGS_OK;
@@ -58,6 +67,11 @@ void ptrace_context_final(void)
     if (!initialized)
         return;
 
+    if (self.id_queue) {
+        ogs_queue_term(self.id_queue);
+        ogs_queue_destroy(self.id_queue);
+        self.id_queue = NULL;
+    }
     if (self.pkt_queue) {
         ogs_queue_term(self.pkt_queue);
         ogs_queue_destroy(self.pkt_queue);
@@ -65,8 +79,10 @@ void ptrace_context_final(void)
     }
 
     ogs_pool_final(&pkt_pool);
+    ogs_pool_final(&id_pool);
     ogs_pool_final(&evt_pool);
     ogs_thread_mutex_destroy(&pkt_lock);
+    ogs_thread_mutex_destroy(&id_lock);
     ogs_thread_mutex_destroy(&evt_lock);
 
     memset(&self, 0, sizeof(self));
@@ -262,6 +278,28 @@ void ptrace_packet_free(ptrace_packet_t *pkt)
     ogs_thread_mutex_unlock(&pkt_lock);
 }
 
+ptrace_id_event_t *ptrace_id_event_alloc(void)
+{
+    ptrace_id_event_t *id = NULL;
+
+    ogs_thread_mutex_lock(&id_lock);
+    ogs_pool_alloc(&id_pool, &id);
+    ogs_thread_mutex_unlock(&id_lock);
+    if (!id)
+        return NULL;
+    memset(id, 0, sizeof(*id));
+    return id;
+}
+
+void ptrace_id_event_free(ptrace_id_event_t *id)
+{
+    if (!id)
+        return;
+    ogs_thread_mutex_lock(&id_lock);
+    ogs_pool_free(&id_pool, id);
+    ogs_thread_mutex_unlock(&id_lock);
+}
+
 ptrace_event_t *ptrace_event_alloc(void)
 {
     ptrace_event_t *evt = NULL;
@@ -294,9 +332,51 @@ int ptrace_packet_pool_avail(void)
     return avail;
 }
 
+int ptrace_id_pool_avail(void)
+{
+    int avail;
+    ogs_thread_mutex_lock(&id_lock);
+    avail = id_pool.avail;
+    ogs_thread_mutex_unlock(&id_lock);
+    return avail;
+}
+
 bool ptrace_under_pressure(void)
 {
-    /* Skip heavy ASN while pool is below half — leave headroom for
-     * Attach/Identity bursts. */
-    return ptrace_packet_pool_avail() < (PTRACE_PKT_POOL_SIZE / 2);
+    /* Identity-first: pressure means id pool is half empty. */
+    return ptrace_id_pool_avail() < (PTRACE_ID_POOL_SIZE_CTX / 2);
+}
+
+void ptrace_rates_update(void)
+{
+    ptrace_rate_sample_t cur;
+    double dt;
+
+    cur.ts = ogs_time_now();
+    cur.packets_in = self.packets_in;
+    cur.packets_drop = self.packets_drop;
+    cur.filtered_noise = self.filtered_noise;
+    cur.identity_in = self.identity_in;
+    cur.events_out = self.events_out;
+
+    if (!self.rate_prev.ts) {
+        self.rate_prev = cur;
+        return;
+    }
+
+    dt = (double)(cur.ts - self.rate_prev.ts) / (double)OGS_USEC_PER_SEC;
+    if (dt < 1.0)
+        return;
+    if (dt > 60.0)
+        dt = 60.0;
+
+    self.packet_rate_10s =
+            (double)(cur.packets_in - self.rate_prev.packets_in) / dt;
+    self.drop_rate_10s =
+            (double)(cur.packets_drop - self.rate_prev.packets_drop) / dt;
+    self.filtered_noise_rate_10s =
+            (double)(cur.filtered_noise - self.rate_prev.filtered_noise) / dt;
+    self.identity_rate_10s =
+            (double)(cur.identity_in - self.rate_prev.identity_in) / dt;
+    self.rate_prev = cur;
 }

@@ -28,6 +28,9 @@ extern "C" {
 #define PTRACE_MAX_FIELDS_LEN       512
 #define PTRACE_MAX_PACKET           8192
 #define PTRACE_MAX_EVENTS_PER_PKT   8
+#define PTRACE_ID_POOL_SIZE         16384
+#define PTRACE_UE_IDLE_SEC          600
+#define PTRACE_UE_NO_IMSI_IDLE_SEC  120
 #define PTRACE_MAX_UE_TEIDS         16
 #define PTRACE_MAX_UE_SEIDS         8
 #define PTRACE_MAX_UE_IPS           8
@@ -108,6 +111,22 @@ typedef struct ptrace_packet_s {
     uint8_t data[PTRACE_MAX_PACKET];
     char packet_ref[PTRACE_MAX_REF_LEN];
 } ptrace_packet_t;
+
+/* Compact identity event — no full frame copy. */
+typedef struct ptrace_id_event_s {
+    ogs_lnode_t lnode;
+    ogs_time_t ts;
+    ptrace_proto_e protocol;
+    ptrace_role_e role;
+    char message[PTRACE_MAX_MSG_LEN];
+    char src_ip[PTRACE_MAX_ID_LEN];
+    char dst_ip[PTRACE_MAX_ID_LEN];
+    uint16_t src_port;
+    uint16_t dst_port;
+    ptrace_ids_t ids;
+    char packet_ref[PTRACE_MAX_REF_LEN];
+    uint16_t raw_len;
+} ptrace_id_event_t;
 
 typedef struct ptrace_event_s {
     ogs_lnode_t lnode;
@@ -191,6 +210,14 @@ static inline void ptrace_ids_add_teid(ptrace_ids_t *ids, uint32_t teid)
     }
     if (ids->num_teids < PTRACE_MAX_UE_TEIDS)
         ids->teids[ids->num_teids++] = teid;
+}
+
+static inline bool ptrace_ids_has_subscriber(const ptrace_ids_t *ids)
+{
+    if (!ids)
+        return false;
+    return ids->imsi[0] || ids->guti[0] || ids->msisdn[0] || ids->imei[0] ||
+            ids->session_id[0];
 }
 
 #ifdef __cplusplus

@@ -219,14 +219,8 @@ int ptrace_decode_packet(ptrace_packet_t *pkt,
             }
         }
 
-        /* Default: skip heavy ASN unless pool has plenty of headroom.
-         * IMSI indexing does not need ASN; TEID/S1AP-ID enrichment does. */
-        if (ptrace_under_pressure()) {
-            ptrace_self()->s1ap_skip_pressure++;
-            *nout = n;
-            return OGS_OK;
-        }
-
+        /* Identity-first live path does not call decode_packet. When used
+         * (bootstrap / traced ASN enrich), always attempt S1AP ASN. */
         while (sctp_next_s1ap(l4, l4len, &sctp_state, &payload, &plen) ==
                 OGS_OK) {
             ptrace_event_t *extra[PTRACE_MAX_EVENTS_PER_PKT];

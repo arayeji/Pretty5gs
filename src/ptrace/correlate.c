@@ -628,11 +628,10 @@ uint64_t ptrace_correlate_event(ptrace_event_t *evt)
     }
 
     if (!ue) {
-        /* Create only on subscriber / tunnel identity. S1AP IDs alone
-         * must not spawn roots — they recycle and explode ue_count. */
-        if (ids->imsi[0] || ids->msisdn[0] || ids->guti[0] ||
-                ids->ue_ip[0] || ids->num_teids > 0 ||
-                (ids->has_teid && ids->teid) || ids->has_seid)
+        /* Create only on subscriber identity. Tunnel IDs alone recycled
+         * and exploded ue_count under S1 storms. */
+        if (ids->imsi[0] || ids->msisdn[0] || ids->guti[0] || ids->imei[0] ||
+                ids->session_id[0])
             ue = ue_new();
     }
 
@@ -641,6 +640,7 @@ uint64_t ptrace_correlate_event(ptrace_event_t *evt)
         /* Always bind this message's IMSI if present (new root or empty). */
         if (ids->imsi[0] && !ue->imsi[0])
             ogs_cpystrn(ue->imsi, ids->imsi, sizeof(ue->imsi));
+        ue->last_seen = ogs_time_now();
         ue_touch_pdn(ue, ids);
         if (ids->has_diam_hbh)
             index_u32(by_hbh, ids->diam_hbh, ue);
@@ -875,4 +875,90 @@ bool ptrace_correlate_event_matches_ue(const ptrace_event_t *evt,
                 return true;
     }
     return false;
+}
+
+static void unindex_str(ogs_hash_t *h, const char *key)
+{
+    if (!key || !key[0])
+        return;
+    ogs_hash_set(h, key, OGS_HASH_KEY_STRING, NULL);
+}
+
+static void unindex_u32(ogs_hash_t *h, uint32_t key)
+{
+    ogs_hash_set(h, &key, sizeof(key), NULL);
+}
+
+static void unindex_u64(ogs_hash_t *h, uint64_t key)
+{
+    ogs_hash_set(h, &key, sizeof(key), NULL);
+}
+
+static void ue_unindex(ptrace_ue_t *ue)
+{
+    int i;
+    if (!ue)
+        return;
+    unindex_str(by_imsi, ue->imsi);
+    unindex_str(by_msisdn, ue->msisdn);
+    unindex_str(by_imei, ue->imei);
+    unindex_str(by_guti, ue->guti);
+    unindex_str(by_mtmsi, ue->m_tmsi);
+    for (i = 0; i < ue->num_ue_ips; i++)
+        unindex_str(by_ueip, ue->ue_ips[i]);
+    for (i = 0; i < ue->num_teids; i++)
+        unindex_u32(by_teid, ue->teids[i]);
+    for (i = 0; i < ue->num_seids; i++)
+        unindex_u64(by_seid, ue->seids[i]);
+    for (i = 0; i < ue->num_enb; i++)
+        unindex_u32(by_enb, ue->enb_ue_s1ap_ids[i]);
+    for (i = 0; i < ue->num_mme; i++)
+        unindex_u32(by_mme, ue->mme_ue_s1ap_ids[i]);
+    for (i = 0; i < ue->num_sessions; i++)
+        unindex_str(by_session, ue->sessions[i]);
+}
+
+int ptrace_correlate_expire(void)
+{
+    ptrace_ue_t *ue, *next;
+    ogs_time_t now;
+    ogs_time_t no_imsi_cut;
+    ogs_time_t idle_cut;
+    int removed = 0;
+
+    if (!ready)
+        return 0;
+
+    now = ogs_time_now();
+    no_imsi_cut = now - ogs_time_from_sec(PTRACE_UE_NO_IMSI_IDLE_SEC);
+    idle_cut = now - ogs_time_from_sec(PTRACE_UE_IDLE_SEC);
+
+    ogs_thread_mutex_lock(&lock);
+    for (ue = ogs_list_first(&ue_list); ue; ue = next) {
+        next = ogs_list_next(ue);
+        if (ue->canonical)
+            continue;
+        /* Skip pinned without taking cache lock under correlate lock —
+         * collect candidates first would be safer; short pin check is OK
+         * if cache never takes correlate lock (it does not). */
+        if (!ue->imsi[0] && ue->last_seen < no_imsi_cut) {
+            if (ptrace_cache_ue_is_pinned(ue->ue_id))
+                continue;
+            ue_unindex(ue);
+            ogs_list_remove(&ue_list, ue);
+            ogs_free(ue);
+            removed++;
+            continue;
+        }
+        if (ue->imsi[0] && ue->last_seen < idle_cut) {
+            if (ptrace_cache_ue_is_pinned(ue->ue_id))
+                continue;
+            ue_unindex(ue);
+            ogs_list_remove(&ue_list, ue);
+            ogs_free(ue);
+            removed++;
+        }
+    }
+    ogs_thread_mutex_unlock(&lock);
+    return removed;
 }

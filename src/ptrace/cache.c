@@ -102,6 +102,17 @@ void ptrace_cache_pin_ue(uint64_t ue_id, ogs_time_t until)
     ogs_thread_mutex_unlock(&lock);
 }
 
+bool ptrace_cache_ue_is_pinned(uint64_t ue_id)
+{
+    bool pinned;
+    if (!ready || !ue_id)
+        return false;
+    ogs_thread_mutex_lock(&lock);
+    pinned = is_pinned(ue_id, ogs_time_now());
+    ogs_thread_mutex_unlock(&lock);
+    return pinned;
+}
+
 void ptrace_cache_remap_ue(uint64_t from_id, uint64_t to_id)
 {
     cache_node_t *n;

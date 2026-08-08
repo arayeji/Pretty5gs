@@ -7,7 +7,7 @@
 
 #include "capture-ring.h"
 #include "context.h"
-#include "decode.h"
+#include "identity.h"
 #include "correlate.h"
 
 #include <stdio.h>
@@ -500,29 +500,18 @@ int ptrace_ring_export(const char *const *refs, int nrefs,
 static void bootstrap_one_packet(const uint8_t *data, uint16_t len,
         ogs_time_t ts)
 {
-    ptrace_packet_t pkt;
-    ptrace_event_t *evs[PTRACE_MAX_EVENTS_PER_PKT];
-    int n = 0, i;
+    ptrace_id_event_t id;
+    ptrace_event_t evt;
 
     if (!data || !len)
         return;
 
-    memset(&pkt, 0, sizeof(pkt));
-    pkt.ts = ts;
-    pkt.len = len > PTRACE_MAX_PACKET ? PTRACE_MAX_PACKET : len;
-    memcpy(pkt.data, data, pkt.len);
-    ogs_cpystrn(pkt.iface, "bootstrap", sizeof(pkt.iface));
-
-    if (ptrace_decode_packet(&pkt, evs, &n) != OGS_OK)
+    if (!ptrace_identity_extract(data, len, ts, PTRACE_ROLE_UNKNOWN, NULL, &id))
         return;
-    for (i = 0; i < n; i++) {
-        /* Only seed identity — skip store/API flood on startup. */
-        if (evs[i]->ids.imsi[0] || evs[i]->ids.guti[0] ||
-                evs[i]->ids.msisdn[0] || evs[i]->ids.has_enb_ue_s1ap_id ||
-                evs[i]->ids.has_teid || evs[i]->ids.num_teids > 0)
-            ptrace_correlate_event(evs[i]);
-        ptrace_event_free(evs[i]);
-    }
+
+    memset(&evt, 0, sizeof(evt));
+    ptrace_identity_to_event(&id, &evt);
+    ptrace_correlate_event(&evt);
 }
 
 static bool packet_maybe_identity(const uint8_t *d, uint16_t len)

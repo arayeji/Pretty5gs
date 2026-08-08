@@ -7,6 +7,7 @@
 #include "capture.h"
 #include "capture-ring.h"
 #include "decode.h"
+#include "identity.h"
 #include "context.h"
 
 #include <pcap/pcap.h>
@@ -43,53 +44,58 @@ static void enqueue_packet(const uint8_t *data, uint16_t len,
         ogs_time_t ts, ptrace_role_e role, const char *iface)
 {
     ptrace_context_t *ctx = ptrace_self();
-    ptrace_packet_t *pkt;
+    ptrace_id_event_t stack_id;
+    ptrace_id_event_t *id;
+    char ref[PTRACE_MAX_REF_LEN];
     static uint64_t drop_log_at;
+    bool offline;
 
     if (!data || !len || !capture_running)
         return;
     if (len > PTRACE_MAX_PACKET)
         len = PTRACE_MAX_PACKET;
 
+    offline = (iface && !strcmp(iface, "pcap"));
+
     /* Offline replay: do not apply live signaling filter. */
-    if (!iface || strcmp(iface, "pcap") != 0) {
+    if (!offline) {
         if (!packet_is_signaling(data, len, ctx->include_gtpu)) {
             ctx->packets_filtered++;
             return;
         }
     }
 
-    pkt = ptrace_packet_alloc();
-    if (!pkt) {
+    ctx->packets_in++;
+    ts = ts ? ts : ogs_time_now();
+    ref[0] = '\0';
+
+    /* Ring is source of truth for PCAP; never block capture on disk. */
+    ptrace_ring_write(data, len, ts, ref, sizeof(ref));
+
+    /* Identity-first: cheap extract only — no 8KB decode-pool copy. */
+    if (!ptrace_identity_extract(data, len, ts, role, ref, &stack_id)) {
+        ctx->filtered_noise++;
+        return;
+    }
+
+    id = ptrace_id_event_alloc();
+    if (!id) {
         ctx->packets_drop++;
-        /* Overload: still index cleartext Attach/Identity so /ue works. */
-        if (ptrace_bytes_look_like_identity(data, len))
-            ptrace_index_identity_inline(data, len, ts, role);
         if (ctx->packets_drop >= drop_log_at) {
-            ogs_warn("ptrace packet pool exhausted (dropped=%llu)",
+            ogs_warn("ptrace identity pool exhausted (dropped=%llu)",
                     (unsigned long long)ctx->packets_drop);
             drop_log_at = ctx->packets_drop + 10000;
         }
         return;
     }
-
-    pkt->ts = ts ? ts : ogs_time_now();
-    pkt->role = role;
-    pkt->len = len;
-    memcpy(pkt->data, data, len);
-    if (iface)
-        ogs_cpystrn(pkt->iface, iface, sizeof(pkt->iface));
-    pkt->packet_ref[0] = '\0';
-
-    /* Queue first — never block capture on disk PCAP ring I/O. */
-    if (ogs_queue_trypush(ctx->pkt_queue, pkt) != OGS_OK) {
-        ptrace_packet_free(pkt);
+    *id = stack_id;
+    if (ogs_queue_trypush(ctx->id_queue, id) != OGS_OK) {
+        ptrace_id_event_free(id);
         ctx->packets_drop++;
-        if (ptrace_bytes_look_like_identity(data, len))
-            ptrace_index_identity_inline(data, len, ts, role);
         return;
     }
-    ctx->packets_in++;
+    ctx->identity_in++;
+    ctx->identity_inline++;
 }
 
 static const char *default_bpf(bool include_gtpu)
