@@ -1003,7 +1003,9 @@ static int hss_s6a_avp_add_subscription_data(
                             &pdn_gw_allocation_type);
                 ogs_assert(ret == 0);
 
-                val.u32 = OGS_DIAM_S6A_PDN_GW_ALLOCATION_DYNAMIC;
+                /* Static SMF/PGW IP in subscription → Allocation-Type STATIC.
+                 * MME only treats MIP6 as permanent PGW when this is not DYNAMIC. */
+                val.u32 = OGS_DIAM_S6A_PDN_GW_ALLOCATION_STATIC;
                 ret = fd_msg_avp_setvalue(pdn_gw_allocation_type, &val);
                 ogs_assert(ret == 0);
 

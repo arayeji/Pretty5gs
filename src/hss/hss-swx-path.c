@@ -1459,7 +1459,9 @@ static int hss_ogs_diam_swx_sar_cb(struct msg **msg, struct avp *avp,
                     goto out;
                 }
 
-                val.u32 = OGS_DIAM_S6A_PDN_GW_ALLOCATION_DYNAMIC;
+                /* Static SMF/PGW IP in subscription → Allocation-Type STATIC.
+                 * MME only treats MIP6 as permanent PGW when this is not DYNAMIC. */
+                val.u32 = OGS_DIAM_S6A_PDN_GW_ALLOCATION_STATIC;
                 ret = fd_msg_avp_setvalue(pdn_gw_allocation_type, &val);
                 if (ret != 0) {
                     ogs_error("Failed to set PDN-GW-Allocation-Type value");
