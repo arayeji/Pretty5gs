@@ -35,6 +35,9 @@ typedef struct ptrace_ue_s {
     int num_sessions;
     char apn[PTRACE_MAX_APN_LEN];
     ogs_time_t last_seen;
+    /* After merge, drop nodes keep this redirect instead of being freed
+     * so concurrent /ue and trace lookups cannot UAF. */
+    struct ptrace_ue_s *canonical;
 } ptrace_ue_t;
 
 int ptrace_correlate_init(void);

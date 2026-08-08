@@ -39,11 +39,12 @@ static void ipv6_str(const uint8_t *addr, char *buf, size_t buflen)
 static int sctp_payload(const uint8_t *data, int len,
         const uint8_t **payload, int *plen)
 {
-    /* Minimal SCTP: skip common header (12) + first DATA chunk header */
+    /* Minimal SCTP: common header (12) + DATA chunk; require S1AP PPID=18 */
     const uint8_t *p;
     int remain;
     uint16_t chunk_len;
     uint8_t type;
+    uint32_t ppid;
 
     if (len < 16)
         return OGS_ERROR;
@@ -58,8 +59,15 @@ static int sctp_payload(const uint8_t *data, int len,
         if (type == 0) { /* DATA */
             if (chunk_len < 16)
                 return OGS_ERROR;
+            /* PPID is big-endian at offset 12 within DATA chunk */
+            ppid = ((uint32_t)p[12] << 24) | ((uint32_t)p[13] << 16) |
+                    ((uint32_t)p[14] << 8) | p[15];
+            if (ppid != 18) /* S1AP */
+                return OGS_ERROR;
             *payload = p + 16;
             *plen = chunk_len - 16;
+            if (*plen <= 0)
+                return OGS_ERROR;
             return OGS_OK;
         }
         {
@@ -199,9 +207,9 @@ int ptrace_decode_packet(ptrace_packet_t *pkt,
             out[n++] = evt;
         else
             ptrace_event_free(evt);
-    } else if (sport == PTRACE_PORT_SCTP_S1AP ||
+    } else if ((sport == PTRACE_PORT_SCTP_S1AP ||
             dport == PTRACE_PORT_SCTP_S1AP ||
-            pkt->role == PTRACE_ROLE_S1MME ||
+            pkt->role == PTRACE_ROLE_S1MME) &&
             ipproto == IPPROTO_SCTP) {
         ptrace_event_t *extra[PTRACE_MAX_EVENTS_PER_PKT];
         int nextra = 0;

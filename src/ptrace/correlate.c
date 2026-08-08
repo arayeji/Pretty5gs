@@ -21,6 +21,14 @@ static ogs_hash_t *by_session;
 static ogs_thread_mutex_t lock;
 static bool ready;
 
+static ptrace_ue_t *ue_resolve(ptrace_ue_t *ue)
+{
+    int guard = 0;
+    while (ue && ue->canonical && guard++ < 8)
+        ue = ue->canonical;
+    return ue;
+}
+
 static void index_str(ogs_hash_t *h, const char *key, ptrace_ue_t *ue)
 {
     if (!key || !key[0])
@@ -46,17 +54,17 @@ static ptrace_ue_t *lookup_str(ogs_hash_t *h, const char *key)
 {
     if (!key || !key[0])
         return NULL;
-    return ogs_hash_get(h, key, OGS_HASH_KEY_STRING);
+    return ue_resolve(ogs_hash_get(h, key, OGS_HASH_KEY_STRING));
 }
 
 static ptrace_ue_t *lookup_u32(ogs_hash_t *h, uint32_t key)
 {
-    return ogs_hash_get(h, &key, sizeof(key));
+    return ue_resolve(ogs_hash_get(h, &key, sizeof(key)));
 }
 
 static ptrace_ue_t *lookup_u64(ogs_hash_t *h, uint64_t key)
 {
-    return ogs_hash_get(h, &key, sizeof(key));
+    return ue_resolve(ogs_hash_get(h, &key, sizeof(key)));
 }
 
 static ptrace_ue_t *ue_new(void)
@@ -230,13 +238,15 @@ static void ue_absorb(ptrace_ue_t *keep, ptrace_ue_t *drop)
     /* Cached events still carry the absorbed ue_id — retarget them. */
     ptrace_cache_remap_ue(drop->ue_id, keep->ue_id);
 
-    ogs_list_remove(&ue_list, drop);
-    ogs_free(drop);
+    /* Do not free drop: other threads may hold the pointer from find().
+     * Leave it in the list as an alias that resolves to keep. */
+    drop->canonical = keep;
 }
 
 static void consider_ue(ptrace_ue_t **cands, int *nc, ptrace_ue_t *ue)
 {
     int i;
+    ue = ue_resolve(ue);
     if (!ue || *nc >= 8)
         return;
     for (i = 0; i < *nc; i++) {
@@ -381,7 +391,8 @@ uint64_t ptrace_correlate_event(ptrace_event_t *evt)
         /* Create on subscriber / tunnel / S1AP keys. Session-Id alone
          * only looks up (so AIA/ULA attach to the AIR/ULR UE). */
         if (ids->imsi[0] || ids->msisdn[0] || ids->guti[0] ||
-                ids->ue_ip[0] || ids->has_teid || ids->has_seid ||
+                ids->ue_ip[0] || ids->num_teids > 0 ||
+                (ids->has_teid && ids->teid) || ids->has_seid ||
                 ids->has_enb_ue_s1ap_id || ids->has_mme_ue_s1ap_id)
             ue = ue_new();
     }

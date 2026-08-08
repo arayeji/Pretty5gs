@@ -362,6 +362,8 @@ int ptrace_decode_s1ap(const uint8_t *data, int len,
     rv = ogs_s1ap_decode(&message, pkbuf);
     ogs_pkbuf_free(pkbuf);
     if (rv != OGS_OK) {
+        /* Failed decode may leave partial ASN contents — free safely. */
+        ogs_s1ap_free(&message);
         ogs_thread_mutex_unlock(&s1ap_lock);
         return OGS_ERROR;
     }
