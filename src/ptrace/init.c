@@ -29,11 +29,17 @@ static void process_packet(ptrace_packet_t *pkt)
     ptrace_rule_t *rule;
     char ref[PTRACE_MAX_REF_LEN];
 
+    memset(evs, 0, sizeof(evs));
+
     /* Decode/correlate first — never stall indexing behind PCAP I/O. */
     if (ptrace_decode_packet(pkt, evs, &n) != OGS_OK) {
         ptrace_packet_free(pkt);
         return;
     }
+    if (n < 0)
+        n = 0;
+    if (n > PTRACE_MAX_EVENTS_PER_PKT)
+        n = PTRACE_MAX_EVENTS_PER_PKT;
 
     /* Async disk ring (dedicated writer thread). */
     ref[0] = '\0';
@@ -42,6 +48,8 @@ static void process_packet(ptrace_packet_t *pkt)
         ogs_cpystrn(pkt->packet_ref, ref, sizeof(pkt->packet_ref));
 
     for (i = 0; i < n; i++) {
+        if (!evs[i])
+            continue;
         if (pkt->packet_ref[0] && !evs[i]->packet_ref[0])
             ogs_cpystrn(evs[i]->packet_ref, pkt->packet_ref,
                     sizeof(evs[i]->packet_ref));
@@ -63,6 +71,7 @@ static void process_packet(ptrace_packet_t *pkt)
             ptrace_api_publish(evs[i]);
 
         ptrace_event_free(evs[i]);
+        evs[i] = NULL;
     }
 
     ptrace_packet_free(pkt);

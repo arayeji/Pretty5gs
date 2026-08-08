@@ -223,6 +223,9 @@ int ptrace_decode_packet(ptrace_packet_t *pkt,
             ptrace_event_t *extra[PTRACE_MAX_EVENTS_PER_PKT];
             int nextra = 0;
 
+            if (n >= PTRACE_MAX_EVENTS_PER_PKT)
+                break;
+
             evt = ptrace_event_alloc();
             if (!evt)
                 break;

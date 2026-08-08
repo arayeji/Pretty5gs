@@ -166,24 +166,21 @@ static void ref_remember(uint64_t seq, const char *ref)
     if (!ref || !ref[0] || !ring.ref_by_seq)
         return;
 
-    rr = ogs_calloc(1, sizeof(*rr));
-    if (!rr)
-        return;
-    rr->seq = seq;
-    ogs_cpystrn(rr->ref, ref, sizeof(rr->ref));
-
     ogs_thread_mutex_lock(&ring.ref_lock);
     if (ring.ref_count >= PTRACE_RING_REF_MAP_MAX) {
-        /* Drop oldest-ish: clear map when full (export is best-effort). */
-        ogs_hash_index_t *hi;
-        for (hi = ogs_hash_first(ring.ref_by_seq); hi;
-                hi = ogs_hash_next(hi)) {
-            ring_ref_t *old = ogs_hash_this_val(hi);
-            ogs_free(old);
-        }
-        ogs_hash_clear(ring.ref_by_seq);
-        ring.ref_count = 0;
+        /* Map full — drop this ref (export best-effort). Do not free
+         * in-hash values while iterating (keys live inside values). */
+        ogs_thread_mutex_unlock(&ring.ref_lock);
+        return;
     }
+
+    rr = ogs_calloc(1, sizeof(*rr));
+    if (!rr) {
+        ogs_thread_mutex_unlock(&ring.ref_lock);
+        return;
+    }
+    rr->seq = seq;
+    ogs_cpystrn(rr->ref, ref, sizeof(rr->ref));
     ogs_hash_set(ring.ref_by_seq, &rr->seq, sizeof(rr->seq), rr);
     ring.ref_count++;
     ogs_thread_mutex_unlock(&ring.ref_lock);
