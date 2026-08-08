@@ -7,8 +7,6 @@
 
 #include "capture-ring.h"
 #include "context.h"
-#include "identity.h"
-#include "correlate.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -497,127 +495,11 @@ int ptrace_ring_export(const char *const *refs, int nrefs,
     return OGS_OK;
 }
 
-static void bootstrap_one_packet(const uint8_t *data, uint16_t len,
-        ogs_time_t ts)
-{
-    ptrace_id_event_t id;
-    ptrace_event_t evt;
-
-    if (!data || !len)
-        return;
-
-    if (!ptrace_identity_extract(data, len, ts, PTRACE_ROLE_UNKNOWN, NULL, &id))
-        return;
-
-    memset(&evt, 0, sizeof(evt));
-    ptrace_identity_to_event(&id, &evt);
-    ptrace_correlate_event(&evt);
-}
-
-static bool packet_maybe_identity(const uint8_t *d, uint16_t len)
-{
-    int i;
-    if (!d || len < 6)
-        return false;
-    for (i = 0; i + 1 < len; i++) {
-        /* Plain EMM Attach Request / Identity Response */
-        if (d[i] == 0x07 && (d[i + 1] == 0x41 || d[i + 1] == 0x56))
-            return true;
-        /* Integrity-protected then plain EMM */
-        if ((d[i] == 0x17 || d[i] == 0x37) && i + 7 < len &&
-                d[i + 6] == 0x07 &&
-                (d[i + 7] == 0x41 || d[i + 7] == 0x56))
-            return true;
-    }
-    return false;
-}
-
 int ptrace_ring_bootstrap(const char *dir)
 {
-    int order[PTRACE_RING_FILES];
-    time_t mtimes[PTRACE_RING_FILES];
-    int nfiles = 0;
-    int i, j;
-    int pkts = 0;
-    int decoded = 0;
-
-    if (!dir || !dir[0])
-        return OGS_ERROR;
-
-    ogs_info("ptrace: bootstrapping UE index from ring %s", dir);
-
-    for (i = 0; i < PTRACE_RING_FILES; i++) {
-        char path[PTRACE_RING_PATH_LEN];
-        struct stat st;
-        int n = snprintf(path, sizeof(path), "%s/ring-%02d.pcap", dir, i);
-        if (n < 0 || (size_t)n >= sizeof(path))
-            continue;
-        if (stat(path, &st) != 0 || st.st_size <= (off_t)sizeof(pcap_hdr_t))
-            continue;
-        order[nfiles] = i;
-        mtimes[nfiles] = st.st_mtime;
-        nfiles++;
-    }
-
-    /* Newest first */
-    for (i = 0; i < nfiles; i++) {
-        for (j = i + 1; j < nfiles; j++) {
-            if (mtimes[j] > mtimes[i]) {
-                time_t tm = mtimes[i];
-                int ti = order[i];
-                mtimes[i] = mtimes[j];
-                order[i] = order[j];
-                mtimes[j] = tm;
-                order[j] = ti;
-            }
-        }
-    }
-    if (nfiles > PTRACE_RING_BOOT_FILES)
-        nfiles = PTRACE_RING_BOOT_FILES;
-
-    for (i = 0; i < nfiles; i++) {
-        char path[PTRACE_RING_PATH_LEN];
-        FILE *fp;
-        pcap_hdr_t hdr;
-        int n = snprintf(path, sizeof(path), "%s/ring-%02d.pcap",
-                dir, order[i]);
-        if (n < 0 || (size_t)n >= sizeof(path))
-            continue;
-        fp = fopen(path, "rb");
-        if (!fp)
-            continue;
-        if (fread(&hdr, 1, sizeof(hdr), fp) != sizeof(hdr) ||
-                hdr.magic != PCAP_MAGIC) {
-            fclose(fp);
-            continue;
-        }
-        for (;;) {
-            pcaprec_hdr_t rec;
-            uint8_t buf[PTRACE_MAX_PACKET];
-            ogs_time_t ts;
-
-            if (fread(&rec, 1, sizeof(rec), fp) != sizeof(rec))
-                break;
-            if (rec.incl_len == 0 || rec.incl_len > PTRACE_MAX_PACKET) {
-                if (rec.incl_len > PTRACE_MAX_PACKET &&
-                        fseek(fp, (long)rec.incl_len, SEEK_CUR) != 0)
-                    break;
-                continue;
-            }
-            if (fread(buf, 1, rec.incl_len, fp) != rec.incl_len)
-                break;
-            pkts++;
-            if (!packet_maybe_identity(buf, (uint16_t)rec.incl_len))
-                continue;
-            ts = ogs_time_from_sec(rec.ts_sec) + rec.ts_usec;
-            bootstrap_one_packet(buf, (uint16_t)rec.incl_len, ts);
-            decoded++;
-        }
-        fclose(fp);
-    }
-
-    ogs_info("ptrace: ring bootstrap done scanned=%d identity_pkts=%d "
-            "ue_count=%d", pkts, decoded, ptrace_correlate_ue_count());
+    (void)dir;
+    /* Target-only mode: do not seed a global UE index from the ring. */
+    ogs_info("ptrace: ring bootstrap skipped (target-only mode)");
     return OGS_OK;
 }
 

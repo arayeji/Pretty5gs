@@ -269,7 +269,7 @@ int ptrace_initialize(void)
         return OGS_ERROR;
 
     started = true;
-    ogs_info("Pretty-Trace (ptrace) initialize...done (identity-first)");
+    ogs_info("Pretty-Trace (ptrace) initialize...done (target-only)");
     return OGS_OK;
 }
 

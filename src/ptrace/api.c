@@ -7,6 +7,7 @@
 #include "api.h"
 #include "context.h"
 #include "correlate.h"
+#include "target.h"
 #include "rules.h"
 #include "trace.h"
 #include "capture-ring.h"
@@ -311,13 +312,14 @@ static _MHD_Result access_handler(void *cls,
                 "{\"status\":\"ok\",\"packets\":%llu,\"dropped\":%llu,"
                 "\"ring_drop\":%llu,\"filtered\":%llu,\"filtered_noise\":%llu,"
                 "\"identity_in\":%llu,\"events\":%llu,"
-                "\"ue_count\":%d,\"ifaces\":%d,\"capture_threads\":%d,"
+                "\"ue_count\":%d,\"targets\":%d,\"ifaces\":%d,"
+                "\"capture_threads\":%d,"
                 "\"workers\":%d,\"pool_avail\":%d,\"id_pool_avail\":%d,"
                 "\"packet_rate_10s\":%.1f,\"drop_rate_10s\":%.1f,"
                 "\"identity_rate_10s\":%.1f,\"filtered_noise_rate_10s\":%.1f,"
                 "\"s1ap_ok\":%llu,\"s1ap_fail\":%llu,\"s1ap_scan\":%llu,"
                 "\"s1ap_skip\":%llu,\"identity_inline\":%llu,"
-                "\"asn_traced\":%llu}\n",
+                "\"asn_traced\":%llu,\"mode\":\"target-only\"}\n",
                 (unsigned long long)ctx->packets_in,
                 (unsigned long long)ctx->packets_drop,
                 (unsigned long long)ctx->packets_ring_drop,
@@ -326,6 +328,7 @@ static _MHD_Result access_handler(void *cls,
                 (unsigned long long)ctx->identity_in,
                 (unsigned long long)ctx->events_out,
                 ptrace_correlate_ue_count(),
+                ptrace_target_count(),
                 ctx->num_ifaces,
                 ctx->capture_threads,
                 ctx->workers,
@@ -354,12 +357,17 @@ static _MHD_Result access_handler(void *cls,
     }
 
     if (!strcmp(method, "GET") && !strncmp(url, "/ue/", 4)) {
-        ptrace_ue_t *ue = ptrace_correlate_find(url + 4);
+        ptrace_context_t *pctx = ptrace_self();
+        int dur = pctx->cache_minutes > 0 ?
+                pctx->cache_minutes * 60 : PTRACE_TARGET_DEFAULT_SEC;
+        ptrace_target_t *tgt = ptrace_target_activate(url + 4, dur);
+        ptrace_ue_t *ue = ptrace_target_ue(tgt);
         char *buf;
         int n;
-        if (!ue)
-            return send_json(conn, MHD_HTTP_NOT_FOUND,
-                    "{\"error\":\"ue not found\"}\n");
+        if (!tgt || !ue)
+            return send_json(conn, MHD_HTTP_BAD_REQUEST,
+                    "{\"error\":\"cannot activate target\","
+                    "\"hint\":\"use IMSI, MSISDN, or IMEI\"}\n");
         buf = ogs_malloc(PTRACE_MAX_JSON);
         if (!buf)
             return send_json(conn, MHD_HTTP_INTERNAL_SERVER_ERROR,

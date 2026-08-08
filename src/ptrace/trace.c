@@ -6,6 +6,7 @@
 #include "cache.h"
 #include "capture-ring.h"
 #include "correlate.h"
+#include "target.h"
 
 static ogs_list_t traces;
 static ogs_thread_mutex_t lock;
@@ -39,26 +40,23 @@ void ptrace_trace_final(void)
 ptrace_trace_t *ptrace_trace_start(const char *imsi, int duration_sec)
 {
     ptrace_trace_t *tr;
-    ptrace_ue_t *ue;
+    ptrace_target_t *tgt;
 
     if (!ready || !imsi || !imsi[0])
         return NULL;
     if (duration_sec <= 0)
         duration_sec = 300;
 
-    ue = ptrace_correlate_find(imsi);
+    tgt = ptrace_target_activate(imsi, duration_sec);
     tr = ogs_calloc(1, sizeof(*tr));
     if (!tr)
         return NULL;
     snprintf(tr->id, sizeof(tr->id), "t-%u", next_id++);
     ogs_cpystrn(tr->imsi, imsi, sizeof(tr->imsi));
-    tr->ue_id = ue ? ue->ue_id : 0;
+    tr->ue_id = tgt ? tgt->id : 0;
     tr->created = ogs_time_now();
     tr->until = tr->created + ogs_time_from_sec(duration_sec);
     ogs_cpystrn(tr->status, "active", sizeof(tr->status));
-
-    if (tr->ue_id)
-        ptrace_cache_pin_ue(tr->ue_id, tr->until);
 
     ogs_thread_mutex_lock(&lock);
     ogs_list_add(&traces, tr);
@@ -85,14 +83,20 @@ ptrace_trace_t *ptrace_trace_get(const char *id)
 bool ptrace_trace_stop(const char *id)
 {
     ptrace_trace_t *t;
+    char imsi[PTRACE_MAX_ID_LEN];
+
     if (!id || !ready)
         return false;
+    imsi[0] = '\0';
     ogs_thread_mutex_lock(&lock);
     ogs_list_for_each(&traces, t) {
         if (!strcmp(t->id, id)) {
             ogs_cpystrn(t->status, "stopped", sizeof(t->status));
             t->until = ogs_time_now();
+            ogs_cpystrn(imsi, t->imsi, sizeof(imsi));
             ogs_thread_mutex_unlock(&lock);
+            if (imsi[0])
+                ptrace_target_deactivate(imsi);
             return true;
         }
     }
@@ -116,14 +120,20 @@ static bool match_ue_cb(const ptrace_event_t *evt, void *user)
 static ptrace_ue_t *trace_resolve_ue(ptrace_trace_t *tr)
 {
     ptrace_ue_t *ue;
+    ptrace_target_t *tgt;
+    int remain;
 
     if (!tr)
         return NULL;
-    ue = ptrace_correlate_find(tr->imsi);
-    if (ue) {
+    remain = (int)ogs_time_sec(tr->until - ogs_time_now());
+    if (remain < 60)
+        remain = 60;
+    tgt = ptrace_target_activate(tr->imsi, remain);
+    if (!tgt)
+        tgt = ptrace_target_find(tr->imsi);
+    ue = ptrace_target_ue(tgt);
+    if (ue)
         tr->ue_id = ue->ue_id;
-        ptrace_cache_pin_ue(tr->ue_id, tr->until);
-    }
     return ue;
 }
 

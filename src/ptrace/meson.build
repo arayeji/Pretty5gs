@@ -50,6 +50,8 @@ libptrace_sources = files('''
     decode-diameter.c
     identity.h
     identity.c
+    target.h
+    target.c
     correlate.h
     correlate.c
     cache.h

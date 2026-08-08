@@ -8,6 +8,7 @@
 #include "capture-ring.h"
 #include "decode.h"
 #include "identity.h"
+#include "target.h"
 #include "context.h"
 
 #include <pcap/pcap.h>
@@ -69,13 +70,25 @@ static void enqueue_packet(const uint8_t *data, uint16_t len,
     ts = ts ? ts : ogs_time_now();
     ref[0] = '\0';
 
+    /* No active IMSI/MSISDN/IMEI targets → do nothing (max performance). */
+    if (!ptrace_target_any_active()) {
+        ctx->filtered_noise++;
+        return;
+    }
+
     /* Extract first — do not copy S1AP storms into the disk ring. */
     if (!ptrace_identity_extract(data, len, ts, role, NULL, &stack_id)) {
         ctx->filtered_noise++;
         return;
     }
 
-    /* Ring only for indexed packets (IMSI/TEID/Diameter/…). */
+    /* Only keep packets that hit an active target (IMSI or learned TEID/HBH). */
+    if (!ptrace_target_match_learn(&stack_id.ids, ts)) {
+        ctx->filtered_noise++;
+        return;
+    }
+
+    /* Ring only for target-matched packets. */
     ptrace_ring_write(data, len, ts, ref, sizeof(ref));
     if (ref[0])
         ogs_cpystrn(stack_id.packet_ref, ref, sizeof(stack_id.packet_ref));
