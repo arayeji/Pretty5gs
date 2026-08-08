@@ -43,6 +43,7 @@ typedef struct ptrace_context_s {
     uint64_t next_ue_id;
     uint64_t packets_in;
     uint64_t packets_drop;
+    uint64_t packets_filtered;  /* userspace non-signaling rejects */
     uint64_t events_out;
     uint64_t s1ap_ok;
     uint64_t s1ap_fail;

@@ -42,7 +42,6 @@ static void enqueue_packet(const uint8_t *data, uint16_t len,
 {
     ptrace_context_t *ctx = ptrace_self();
     ptrace_packet_t *pkt;
-    char ref[PTRACE_MAX_REF_LEN];
     static uint64_t drop_log_at;
 
     if (!data || !len || !capture_running)
@@ -50,11 +49,12 @@ static void enqueue_packet(const uint8_t *data, uint16_t len,
     if (len > PTRACE_MAX_PACKET)
         len = PTRACE_MAX_PACKET;
 
-    /* Kernel BPF should already filter; this is a cheap safety net
-     * (esp. AF_PACKET) so user-plane floods never enter the pool. */
-    if (!packet_is_signaling(data, len, ctx->include_gtpu)) {
-        ctx->packets_drop++;
-        return;
+    /* Offline replay: do not apply live signaling filter. */
+    if (!iface || strcmp(iface, "pcap") != 0) {
+        if (!packet_is_signaling(data, len, ctx->include_gtpu)) {
+            ctx->packets_filtered++;
+            return;
+        }
     }
 
     pkt = ptrace_packet_alloc();
@@ -74,11 +74,9 @@ static void enqueue_packet(const uint8_t *data, uint16_t len,
     memcpy(pkt->data, data, len);
     if (iface)
         ogs_cpystrn(pkt->iface, iface, sizeof(pkt->iface));
+    pkt->packet_ref[0] = '\0';
 
-    ref[0] = '\0';
-    ptrace_ring_write(data, len, pkt->ts, ref, sizeof(ref));
-    ogs_cpystrn(pkt->packet_ref, ref, sizeof(pkt->packet_ref));
-
+    /* Queue first — never block capture on disk PCAP ring I/O. */
     if (ogs_queue_trypush(ctx->pkt_queue, pkt) != OGS_OK) {
         ptrace_packet_free(pkt);
         ctx->packets_drop++;
@@ -254,7 +252,7 @@ static void pcap_thread(void *data)
         (void)pcap_set_snaplen(p, PTRACE_MAX_PACKET);
         (void)pcap_set_promisc(p, 1);
         (void)pcap_set_timeout(p, 100);
-        (void)pcap_set_buffer_size(p, 16 * 1024 * 1024);
+        (void)pcap_set_buffer_size(p, 64 * 1024 * 1024);
         if (pcap_activate(p) < 0) {
             ogs_error("pcap_activate(%s): %s", arg->iface, pcap_geterr(p));
             pcap_close(p);

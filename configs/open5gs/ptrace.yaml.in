@@ -29,18 +29,17 @@ ptrace:
     # Live capture: list each SPAN/TAP NIC explicitly. No default NIC —
     # leave empty (or only use pcap_file) until the host interfaces are set.
     # role selects protocol demux hints: s1mme|s1u|s11|s5|s8|n3|n4|diameter
+    # Live capture: list each SPAN/TAP NIC. Empty = no packets.
+    # role: s1mme|s1u|s11|s5|s8|n3|n4|diameter
     interface: []
 #   interface:
-#     - dev: ens1f0
-#       role: s1mme
-#     - dev: ens1f1
-#       role: s11
-#     - dev: ens2f0
-#       role: s1u
-#     - dev: ens2f1
-#       role: n4
 #     - dev: ens3f0
+#       role: s1mme
+#     # Diameter/S11 often NOT on the S1 SPAN — add them or IMSI is missed:
+#     - dev: lo
 #       role: diameter
+#     - dev: ens3f1
+#       role: s11
 
   cache:
     # Rolling metadata window: 1 | 5 | 10 | 15 | 60

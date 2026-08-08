@@ -27,6 +27,13 @@ static void process_packet(ptrace_packet_t *pkt)
     ptrace_event_t *evs[PTRACE_MAX_EVENTS_PER_PKT];
     int n = 0, i;
     ptrace_rule_t *rule;
+    char ref[PTRACE_MAX_REF_LEN];
+
+    /* Disk ring on the worker — keep capture thread non-blocking. */
+    ref[0] = '\0';
+    ptrace_ring_write(pkt->data, pkt->len, pkt->ts, ref, sizeof(ref));
+    if (ref[0])
+        ogs_cpystrn(pkt->packet_ref, ref, sizeof(pkt->packet_ref));
 
     if (ptrace_decode_packet(pkt, evs, &n) != OGS_OK) {
         ptrace_packet_free(pkt);
@@ -34,6 +41,9 @@ static void process_packet(ptrace_packet_t *pkt)
     }
 
     for (i = 0; i < n; i++) {
+        if (pkt->packet_ref[0] && !evs[i]->packet_ref[0])
+            ogs_cpystrn(evs[i]->packet_ref, pkt->packet_ref,
+                    sizeof(evs[i]->packet_ref));
         ptrace_correlate_event(evs[i]);
         ptrace_store_put(evs[i]);
 
@@ -45,7 +55,9 @@ static void process_packet(ptrace_packet_t *pkt)
                 strstr(evs[i]->message, "Reject") ||
                 strstr(evs[i]->message, "Detach") ||
                 strstr(evs[i]->message, "Create Session") ||
-                strstr(evs[i]->message, "Session Establishment"))
+                strstr(evs[i]->message, "Session Establishment") ||
+                strstr(evs[i]->message, "Attach Request") ||
+                strstr(evs[i]->message, "Initial UE"))
             ptrace_api_publish(evs[i]);
 
         ptrace_event_free(evs[i]);
