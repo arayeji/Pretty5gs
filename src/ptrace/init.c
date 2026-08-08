@@ -29,16 +29,17 @@ static void process_packet(ptrace_packet_t *pkt)
     ptrace_rule_t *rule;
     char ref[PTRACE_MAX_REF_LEN];
 
-    /* Disk ring on the worker — keep capture thread non-blocking. */
-    ref[0] = '\0';
-    ptrace_ring_write(pkt->data, pkt->len, pkt->ts, ref, sizeof(ref));
-    if (ref[0])
-        ogs_cpystrn(pkt->packet_ref, ref, sizeof(pkt->packet_ref));
-
+    /* Decode/correlate first — never stall indexing behind PCAP I/O. */
     if (ptrace_decode_packet(pkt, evs, &n) != OGS_OK) {
         ptrace_packet_free(pkt);
         return;
     }
+
+    /* Async disk ring (dedicated writer thread). */
+    ref[0] = '\0';
+    ptrace_ring_write(pkt->data, pkt->len, pkt->ts, ref, sizeof(ref));
+    if (ref[0])
+        ogs_cpystrn(pkt->packet_ref, ref, sizeof(pkt->packet_ref));
 
     for (i = 0; i < n; i++) {
         if (pkt->packet_ref[0] && !evs[i]->packet_ref[0])
@@ -57,7 +58,8 @@ static void process_packet(ptrace_packet_t *pkt)
                 strstr(evs[i]->message, "Create Session") ||
                 strstr(evs[i]->message, "Session Establishment") ||
                 strstr(evs[i]->message, "Attach Request") ||
-                strstr(evs[i]->message, "Initial UE"))
+                strstr(evs[i]->message, "Initial UE") ||
+                strstr(evs[i]->message, "NAS Attach"))
             ptrace_api_publish(evs[i]);
 
         ptrace_event_free(evs[i]);
@@ -150,6 +152,10 @@ int ptrace_initialize(void)
         ptrace_store_redis_init(ctx->redis_url);
     if (ctx->clickhouse_enabled)
         ptrace_store_clickhouse_init(ctx->clickhouse_url);
+
+    /* Seed IMSI/S1AP index from recent ring before live capture. */
+    if (ctx->pcap_ring_path[0])
+        ptrace_ring_bootstrap(ctx->pcap_ring_path);
 
     rv = ptrace_ring_open(ctx->pcap_ring_path, ctx->pcap_ring_size_gb);
     if (rv != OGS_OK)

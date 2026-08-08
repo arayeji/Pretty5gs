@@ -308,16 +308,19 @@ static _MHD_Result access_handler(void *cls,
         char buf[512];
         snprintf(buf, sizeof(buf),
                 "{\"status\":\"ok\",\"packets\":%llu,\"dropped\":%llu,"
-                "\"filtered\":%llu,\"events\":%llu,\"ue_count\":%d,"
-                "\"ifaces\":%d,\"capture_threads\":%d,"
+                "\"ring_drop\":%llu,\"filtered\":%llu,\"events\":%llu,"
+                "\"ue_count\":%d,\"ifaces\":%d,\"capture_threads\":%d,"
+                "\"workers\":%d,"
                 "\"s1ap_ok\":%llu,\"s1ap_fail\":%llu,\"s1ap_scan\":%llu}\n",
                 (unsigned long long)ctx->packets_in,
                 (unsigned long long)ctx->packets_drop,
+                (unsigned long long)ctx->packets_ring_drop,
                 (unsigned long long)ctx->packets_filtered,
                 (unsigned long long)ctx->events_out,
                 ptrace_correlate_ue_count(),
                 ctx->num_ifaces,
                 ctx->capture_threads,
+                ctx->workers,
                 (unsigned long long)ctx->s1ap_ok,
                 (unsigned long long)ctx->s1ap_fail,
                 (unsigned long long)ctx->s1ap_scan_hit);

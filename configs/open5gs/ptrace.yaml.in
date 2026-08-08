@@ -20,7 +20,7 @@ ptrace:
     backend: pcap
     # Set for offline replay; leave empty for live interfaces
     pcap_file: ""
-    workers: 4
+    workers: 8
     # Default BPF: untagged first, then vlan clause (order matters for libpcap).
     # Set include_gtpu: true only if you need S1-U user plane (very heavy).
     include_gtpu: false

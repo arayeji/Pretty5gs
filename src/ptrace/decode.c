@@ -194,6 +194,31 @@ int ptrace_decode_packet(ptrace_packet_t *pkt,
                 OGS_OK) {
             ptrace_event_t *extra[PTRACE_MAX_EVENTS_PER_PKT];
             int nextra = 0;
+
+            /* Lock-free IMSI seed: cleartext Attach/Identity in the
+             * SCTP chunk — index subscriber even when ASN.1 is backed up. */
+            if (n < PTRACE_MAX_EVENTS_PER_PKT) {
+                ptrace_event_t *seed = ptrace_event_alloc();
+                if (seed) {
+                    seed->ts = pkt->ts;
+                    seed->role = pkt->role;
+                    ogs_cpystrn(seed->src_ip, src_ip, sizeof(seed->src_ip));
+                    ogs_cpystrn(seed->dst_ip, dst_ip, sizeof(seed->dst_ip));
+                    seed->src_port = sport;
+                    seed->dst_port = dport;
+                    seed->raw_len = pkt->len;
+                    ogs_cpystrn(seed->packet_ref, pkt->packet_ref,
+                            sizeof(seed->packet_ref));
+                    if (ptrace_decode_nas_scan(payload, plen, seed) ==
+                            OGS_OK &&
+                            (seed->ids.imsi[0] || seed->ids.guti[0])) {
+                        out[n++] = seed;
+                    } else {
+                        ptrace_event_free(seed);
+                    }
+                }
+            }
+
             evt = ptrace_event_alloc();
             if (!evt)
                 break;

@@ -134,6 +134,17 @@ static void ue_merge_ids(ptrace_ue_t *ue, const ptrace_ids_t *ids)
                 break;
         if (i == ue->num_enb)
             ue->enb_ue_s1ap_ids[ue->num_enb++] = ids->enb_ue_s1ap_id;
+        /* Newest S1AP ID first — reattach must win over stale IDs. */
+        if (ue->enb_ue_s1ap_ids[0] != ids->enb_ue_s1ap_id) {
+            for (i = 0; i < ue->num_enb; i++) {
+                if (ue->enb_ue_s1ap_ids[i] == ids->enb_ue_s1ap_id) {
+                    uint32_t tmp = ue->enb_ue_s1ap_ids[0];
+                    ue->enb_ue_s1ap_ids[0] = ids->enb_ue_s1ap_id;
+                    ue->enb_ue_s1ap_ids[i] = tmp;
+                    break;
+                }
+            }
+        }
     }
     if (ids->has_mme_ue_s1ap_id && ue->num_mme < 8) {
         for (i = 0; i < ue->num_mme; i++)
@@ -141,6 +152,16 @@ static void ue_merge_ids(ptrace_ue_t *ue, const ptrace_ids_t *ids)
                 break;
         if (i == ue->num_mme)
             ue->mme_ue_s1ap_ids[ue->num_mme++] = ids->mme_ue_s1ap_id;
+        if (ue->mme_ue_s1ap_ids[0] != ids->mme_ue_s1ap_id) {
+            for (i = 0; i < ue->num_mme; i++) {
+                if (ue->mme_ue_s1ap_ids[i] == ids->mme_ue_s1ap_id) {
+                    uint32_t tmp = ue->mme_ue_s1ap_ids[0];
+                    ue->mme_ue_s1ap_ids[0] = ids->mme_ue_s1ap_id;
+                    ue->mme_ue_s1ap_ids[i] = tmp;
+                    break;
+                }
+            }
+        }
     }
     if (ids->has_tac && ue->num_tac < 4) {
         for (i = 0; i < ue->num_tac; i++)

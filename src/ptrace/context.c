@@ -9,8 +9,8 @@ int __ptrace_log_domain;
 static ptrace_context_t self;
 static bool initialized = false;
 
-#define PTRACE_PKT_POOL_SIZE    65536
-#define PTRACE_EVT_POOL_SIZE    65536
+#define PTRACE_PKT_POOL_SIZE    131072
+#define PTRACE_EVT_POOL_SIZE    131072
 
 static OGS_POOL(pkt_pool, ptrace_packet_t);
 static OGS_POOL(evt_pool, ptrace_event_t);
@@ -31,7 +31,7 @@ int ptrace_context_init(void)
             ogs_core()->log.level);
 
     self.backend = PTRACE_BACKEND_PCAP;
-    self.workers = 4;
+    self.workers = 8;
     self.cache_minutes = 10;
     self.pcap_ring_size_gb = 2;
     ogs_cpystrn(self.pcap_ring_path,

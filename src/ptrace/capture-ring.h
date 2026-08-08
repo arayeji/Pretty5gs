@@ -17,6 +17,9 @@ int ptrace_ring_write(const uint8_t *data, uint16_t len, ogs_time_t ts,
         char *ref_out, size_t ref_len);
 int ptrace_ring_export(const char *const *refs, int nrefs,
         const char *out_path);
+/* Rebuild UE identity index from newest ring files (Attach/Identity). */
+int ptrace_ring_bootstrap(const char *dir);
+uint64_t ptrace_ring_queue_drops(void);
 
 #ifdef __cplusplus
 }

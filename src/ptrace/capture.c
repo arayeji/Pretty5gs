@@ -252,7 +252,7 @@ static void pcap_thread(void *data)
         (void)pcap_set_snaplen(p, PTRACE_MAX_PACKET);
         (void)pcap_set_promisc(p, 1);
         (void)pcap_set_timeout(p, 100);
-        (void)pcap_set_buffer_size(p, 64 * 1024 * 1024);
+        (void)pcap_set_buffer_size(p, 128 * 1024 * 1024);
         if (pcap_activate(p) < 0) {
             ogs_error("pcap_activate(%s): %s", arg->iface, pcap_geterr(p));
             pcap_close(p);
