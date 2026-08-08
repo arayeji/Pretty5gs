@@ -1157,6 +1157,8 @@ static void _mme_s6a_send_air(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     stored = 1;
 
     /* Send the request */
+    if (MME_UE_HAVE_IMSI(mme_ue))
+        mme_trace_diameter(mme_ue->imsi_bcd, "tx", req);
     ret = fd_msg_send(&req, mme_s6a_aia_cb, svg);
     if (ret != 0) {
         ogs_error("fd_msg_send AIR failed (ret=%d) IMSI[%s]",
@@ -1276,6 +1278,9 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
                 mme_ue->imsi_bcd, sess_data->enb_ue_id);
         goto cleanup;
     }
+
+    if (MME_UE_HAVE_IMSI(mme_ue))
+        mme_trace_diameter(mme_ue->imsi_bcd, "rx", *msg);
 
     /* Allocate message structure early for proper cleanup */
     s6a_message = ogs_calloc(1, sizeof(ogs_diam_s6a_message_t));
@@ -1818,6 +1823,8 @@ void mme_s6a_send_ulr(enb_ue_t *enb_ue, mme_ue_t *mme_ue, uint32_t extra_ulr_fla
     stored = 1;
 
     /* Send the request */
+    if (MME_UE_HAVE_IMSI(mme_ue))
+        mme_trace_diameter(mme_ue->imsi_bcd, "tx", req);
     ret = fd_msg_send(&req, mme_s6a_ula_cb, svg);
     if (ret != 0) {
         ogs_error("fd_msg_send ULR failed (ret=%d) IMSI[%s]",
@@ -1919,6 +1926,9 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
                 mme_ue->imsi_bcd, sess_data->enb_ue_id);
         goto cleanup;
     }
+
+    if (MME_UE_HAVE_IMSI(mme_ue))
+        mme_trace_diameter(mme_ue->imsi_bcd, "rx", *msg);
 
     /* Allocate message structure early for proper cleanup */
     s6a_message = ogs_calloc(1, sizeof(ogs_diam_s6a_message_t));

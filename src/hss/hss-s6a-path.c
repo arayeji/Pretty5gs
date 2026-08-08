@@ -445,11 +445,11 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
             origin_realm, sizeof(origin_realm));
 
     if (imsi_bcd[0]) {
+        hss_trace_diameter(imsi_bcd, "rx", qry);
         hss_trace_event(imsi_bcd, "S6a-AIR",
                 "Rx Authentication-Information-Request host=%s realm=%s",
                 origin_host[0] ? origin_host : "-",
                 origin_realm[0] ? origin_realm : "-");
-        hss_trace_diameter(imsi_bcd, "rx", qry);
     } else
         ogs_debug("Rx Authentication-Information-Request (no IMSI yet)");
 
@@ -1276,9 +1276,9 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
     }
 
     if (imsi_bcd[0]) {
+        hss_trace_diameter(imsi_bcd, "rx", qry);
         hss_trace_event(imsi_bcd, "S6a-ULR",
                 "Rx Update-Location-Request");
-        hss_trace_diameter(imsi_bcd, "rx", qry);
     } else
         ogs_debug("Rx Update-Location-Request (no IMSI yet)");
 

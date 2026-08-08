@@ -441,3 +441,39 @@ void mme_log_radio(
             *enb_id = enb->enb_id;
     }
 }
+
+void mme_trace_diameter(
+        const char *imsi_bcd, const char *dir, struct msg *msg)
+{
+    uint8_t *buf = NULL;
+    size_t len = 0;
+    int ret;
+
+    if (!imsi_bcd || !imsi_bcd[0] || !msg)
+        return;
+    if (ogs_trace_filter_count() == 0)
+        return;
+    if (!ogs_trace_filter_match(imsi_bcd))
+        return;
+
+    ret = fd_msg_update_length(msg);
+    if (ret != 0) {
+        ogs_warn("[%s] PACKET diameter %s: fd_msg_update_length failed (%d)",
+                imsi_bcd, dir && dir[0] ? dir : "-", ret);
+        return;
+    }
+
+    ret = fd_msg_bufferize(msg, &buf, &len);
+    if (ret != 0 || !buf || !len) {
+        ogs_warn("[%s] PACKET diameter %s: fd_msg_bufferize failed "
+                "(ret=%d len=%zu)",
+                imsi_bcd, dir && dir[0] ? dir : "-", ret, len);
+        if (buf)
+            free(buf);
+        return;
+    }
+
+    ogs_trace_packet(imsi_bcd, "diameter", dir && dir[0] ? dir : "-",
+            buf, len);
+    free(buf);
+}
