@@ -2894,7 +2894,7 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
          * 3GPP TS 29.272 §5.2.1.2.2: if the IMSI is not known, return
          * DIAMETER_SUCCESS (already absent from this MME).
          */
-        ogs_info("Cancel-Location for unknown IMSI[%s]: "
+        ogs_warn("Cancel-Location for unknown IMSI[%s]: "
                 "DIAMETER_SUCCESS (no local UE)", imsi_bcd);
         ogs_free(s6a_message);
         s6a_message = NULL;
