@@ -163,7 +163,7 @@ static int hss_ogs_diam_swx_mar_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
-    hss_imsi_debug(imsi_bcd, "SWx-MAR", "Rx Multimedia-Auth-Request");
+    hss_trace_event(imsi_bcd, "SWx-MAR", "Rx Multimedia-Auth-Request");
 
     /* Get the SIP-Auth-Data-Item AVP (Mandatory) */
     ret = fd_msg_search_avp(
@@ -554,7 +554,7 @@ static int hss_ogs_diam_swx_mar_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Multimedia-Auth-Answer");
-        hss_imsi_debug(imsi_bcd, "SWx-MAR", "Tx Multimedia-Auth-Answer");
+        hss_trace_event(imsi_bcd, "SWx-MAR", "Tx Multimedia-Auth-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -710,7 +710,7 @@ static int hss_ogs_diam_swx_sar_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
-    hss_imsi_debug(imsi_bcd, "SWx-SAR", "Rx Server-Assignment-Request");
+    hss_trace_event(imsi_bcd, "SWx-SAR", "Rx Server-Assignment-Request");
 
     /* DB : HSS Subscription Data */
     rv = hss_db_subscription_data(imsi_bcd, &subscription_data);
@@ -1679,7 +1679,7 @@ static int hss_ogs_diam_swx_sar_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Server-Assignment-Answer");
-        hss_imsi_debug(imsi_bcd, "SWx-SAR", "Tx Server-Assignment-Answer");
+        hss_trace_event(imsi_bcd, "SWx-SAR", "Tx Server-Assignment-Answer");
 
         /* Add this value to the stats */
         OGS_DIAM_STATS_MTX(

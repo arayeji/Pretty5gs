@@ -46,6 +46,15 @@ void hss_imsi_log(
 #define hss_imsi_debug(imsi, proc, ...) \
     hss_imsi_log(imsi, proc, OGS_LOG_DEBUG, __VA_ARGS__)
 
+/*
+ * Procedure boundary for a traced IMSI: sets TLS context, emits an eager
+ * ERROR line (never lazy-gated) when the filter matches, and also an INFO
+ * hss_imsi line with the same text for the IMSI-prefixed UI.
+ */
+void hss_trace_event(
+        const char *imsi_bcd, const char *proc,
+        const char *fmt, ...) OGS_GNUC_PRINTF(3, 4);
+
 void hss_admin_api_register(void);
 
 #ifdef __cplusplus

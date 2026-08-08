@@ -386,7 +386,7 @@ static int hss_ogs_diam_sh_udr_cb(struct msg **msg, struct avp *avp,
         memset(udr_imsi, 0, sizeof(udr_imsi));
         (void)hss_sh_resolve_imsi(
                 public_identity, msisdn_bcd, udr_imsi, sizeof(udr_imsi));
-        hss_imsi_debug(udr_imsi[0] ? udr_imsi : NULL, "Sh-UDR",
+        hss_trace_event(udr_imsi[0] ? udr_imsi : NULL, "Sh-UDR",
                 "Rx User-Data-Request");
     }
 
@@ -477,7 +477,7 @@ static int hss_ogs_diam_sh_udr_cb(struct msg **msg, struct avp *avp,
         memset(udr_imsi, 0, sizeof(udr_imsi));
         (void)hss_sh_resolve_imsi(
                 public_identity, msisdn_bcd, udr_imsi, sizeof(udr_imsi));
-        hss_imsi_debug(udr_imsi[0] ? udr_imsi : NULL, "Sh-UDR",
+        hss_trace_event(udr_imsi[0] ? udr_imsi : NULL, "Sh-UDR",
                 "Tx User-Data-Answer");
     }
     OGS_DIAM_STATS_MTX( OGS_DIAM_STATS_INC(nb_echoed); )
@@ -603,7 +603,7 @@ static int hss_ogs_diam_sh_snr_cb(struct msg **msg, struct avp *avp,
     (void)hss_sh_resolve_imsi(
             public_identity, msisdn_bcd, imsi_bcd, sizeof(imsi_bcd));
 
-    hss_imsi_debug(imsi_bcd[0] ? imsi_bcd : NULL, "Sh-SNR",
+    hss_trace_event(imsi_bcd[0] ? imsi_bcd : NULL, "Sh-SNR",
             "Rx Subscribe-Notifications-Request");
 
     if (origin_host) {
@@ -644,7 +644,7 @@ static int hss_ogs_diam_sh_snr_cb(struct msg **msg, struct avp *avp,
     }
 
     ogs_debug("Tx Subscribe-Notifications-Answer");
-    hss_imsi_debug(imsi_bcd[0] ? imsi_bcd : NULL, "Sh-SNR",
+    hss_trace_event(imsi_bcd[0] ? imsi_bcd : NULL, "Sh-SNR",
             "Tx Subscribe-Notifications-Answer");
     OGS_DIAM_STATS_MTX( OGS_DIAM_STATS_INC(nb_echoed); )
 
@@ -816,7 +816,7 @@ static void hss_sh_send_pnr(sh_subscription_t *subs)
 
     ogs_debug("Tx Push-Notification-Request to [%s]",
             subs->origin_host ? subs->origin_host : "(realm)");
-    hss_imsi_debug(subs->imsi_bcd, "Sh-PNR",
+    hss_trace_event(subs->imsi_bcd, "Sh-PNR",
             "Tx Push-Notification-Request to [%s]",
             subs->origin_host ? subs->origin_host : "(realm)");
     OGS_DIAM_STATS_MTX( OGS_DIAM_STATS_INC(nb_sent); )
@@ -836,7 +836,7 @@ void hss_sh_notify_by_imsi(const char *imsi_bcd)
     if (!imsi_bcd || !imsi_bcd[0])
         return;
 
-    hss_imsi_debug(imsi_bcd, "Sh-PNR",
+    hss_trace_event(imsi_bcd, "Sh-PNR",
             "Notify subscribed ASs after S6a NOR");
 
     ogs_thread_mutex_lock(&sh_subscription_lock);

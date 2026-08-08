@@ -84,6 +84,28 @@ void hss_imsi_log(
             0, __FILE__, __LINE__, OGS_FUNC, 0, "%s %s", prefix, msg);
 }
 
+void hss_trace_event(
+        const char *imsi_bcd, const char *proc,
+        const char *fmt, ...)
+{
+    va_list ap;
+    char msg[OGS_HUGE_LEN];
+    const char *id = (imsi_bcd && imsi_bcd[0]) ? imsi_bcd : "-";
+
+    ogs_assert(fmt);
+
+    va_start(ap, fmt);
+    ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+
+    hss_trace_set(id, proc);
+
+    if (ogs_trace_filter_match(id))
+        ogs_error("[%s] %s %s", id, proc ? proc : "-", msg);
+
+    hss_imsi_info(id, proc, "%s", msg);
+}
+
 void hss_admin_api_register(void)
 {
     ogs_metrics_register_admin_ep(ogs_metrics_admin_trace_imsi,

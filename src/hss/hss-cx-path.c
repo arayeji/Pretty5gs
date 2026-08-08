@@ -228,7 +228,7 @@ static int hss_ogs_diam_cx_uar_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
-    hss_imsi_debug(msisdn_data.imsi.bcd, "Cx-UAR",
+    hss_trace_event(msisdn_data.imsi.bcd, "Cx-UAR",
             "Rx User-Authorization-Request");
 
     if (!error_occurred) {
@@ -317,7 +317,7 @@ static int hss_ogs_diam_cx_uar_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx User-Authorization-Answer");
-        hss_imsi_debug(msisdn_data.imsi.bcd, "Cx-UAR",
+        hss_trace_event(msisdn_data.imsi.bcd, "Cx-UAR",
                 "Tx User-Authorization-Answer");
 
         /* Add to stats */
@@ -560,7 +560,7 @@ static int hss_ogs_diam_cx_mar_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
-    hss_imsi_debug(imsi_bcd, "Cx-MAR", "Rx Multimedia-Auth-Request");
+    hss_trace_event(imsi_bcd, "Cx-MAR", "Rx Multimedia-Auth-Request");
 
     /* Get the SIP-Auth-Data-Item AVP (Mandatory) */
     ret = fd_msg_search_avp(
@@ -978,7 +978,7 @@ static int hss_ogs_diam_cx_mar_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Multimedia-Auth-Answer");
-        hss_imsi_debug(imsi_bcd, "Cx-MAR", "Tx Multimedia-Auth-Answer");
+        hss_trace_event(imsi_bcd, "Cx-MAR", "Tx Multimedia-Auth-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -1214,7 +1214,7 @@ static int hss_ogs_diam_cx_sar_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
-    hss_imsi_debug(imsi_bcd, "Cx-SAR", "Rx Server-Assignment-Request");
+    hss_trace_event(imsi_bcd, "Cx-SAR", "Rx Server-Assignment-Request");
 
     /* Check if Visited-Network-Identifier */
     visited_network_identifier =
@@ -1447,7 +1447,7 @@ static int hss_ogs_diam_cx_sar_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Server-Assignment-Answer");
-        hss_imsi_debug(imsi_bcd, "Cx-SAR", "Tx Server-Assignment-Answer");
+        hss_trace_event(imsi_bcd, "Cx-SAR", "Tx Server-Assignment-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -1584,7 +1584,7 @@ static int hss_ogs_diam_cx_lir_cb(struct msg **msg, struct avp *avp,
 
     {
         char *lir_imsi = hss_cx_get_imsi_bcd(public_identity);
-        hss_imsi_debug(lir_imsi, "Cx-LIR", "Rx Location-Info-Request");
+        hss_trace_event(lir_imsi, "Cx-LIR", "Rx Location-Info-Request");
     }
 
     if (!error_occurred) {
@@ -1657,7 +1657,7 @@ static int hss_ogs_diam_cx_lir_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Location-Info-Answer");
-        hss_imsi_debug(hss_cx_get_imsi_bcd(public_identity), "Cx-LIR",
+        hss_trace_event(hss_cx_get_imsi_bcd(public_identity), "Cx-LIR",
                 "Tx Location-Info-Answer");
 
         /* Add to stats */
