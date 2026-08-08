@@ -47,6 +47,7 @@ typedef struct ptrace_context_s {
     uint64_t s1ap_ok;
     uint64_t s1ap_fail;
     uint64_t s1ap_scan_hit;
+    int capture_threads;
 } ptrace_context_t;
 
 ptrace_context_t *ptrace_self(void);

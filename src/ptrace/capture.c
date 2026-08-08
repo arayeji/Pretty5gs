@@ -89,41 +89,73 @@ static void enqueue_packet(const uint8_t *data, uint16_t len,
 
 static const char *default_bpf(bool include_gtpu)
 {
-    /* Match both untagged and 802.1Q frames. Plain "sctp port …" alone
-     * misses VLAN-tagged SPAN copies on many switches. */
+    /* Untagged clause MUST come first. libpcap's "vlan" primitive is
+     * sticky and rewrites offsets for the remainder of the expression,
+     * so "(vlan and …) or (sctp port …)" silently matches nothing. */
     if (include_gtpu)
-        return "(vlan and (sctp port 36412 or udp port 2123 or "
+        return "(sctp port 36412 or udp port 2123 or udp port 2152 or "
+               "tcp port 3868 or udp port 3868 or udp port 8805) or "
+               "(vlan and (sctp port 36412 or udp port 2123 or "
                "udp port 2152 or tcp port 3868 or udp port 3868 or "
-               "udp port 8805)) or "
-               "(sctp port 36412 or udp port 2123 or udp port 2152 or "
-               "tcp port 3868 or udp port 3868 or udp port 8805)";
-    return "(vlan and (sctp port 36412 or udp port 2123 or "
-           "tcp port 3868 or udp port 3868 or udp port 8805)) or "
-           "(sctp port 36412 or udp port 2123 or "
-           "tcp port 3868 or udp port 3868 or udp port 8805)";
+               "udp port 8805))";
+    return "(sctp port 36412 or udp port 2123 or "
+           "tcp port 3868 or udp port 3868 or udp port 8805) or "
+           "(vlan and (sctp port 36412 or udp port 2123 or "
+           "tcp port 3868 or udp port 3868 or udp port 8805))";
 }
 
-static int apply_bpf(pcap_t *p)
+static const char *fallback_bpf(bool include_gtpu)
 {
-    ptrace_context_t *ctx = ptrace_self();
-    struct bpf_program fp;
-    const char *expr;
+    if (include_gtpu)
+        return "sctp port 36412 or udp port 2123 or udp port 2152 or "
+               "tcp port 3868 or udp port 3868 or udp port 8805";
+    return "sctp port 36412 or udp port 2123 or "
+           "tcp port 3868 or udp port 3868 or udp port 8805";
+}
 
-    if (!p)
-        return OGS_ERROR;
-    expr = ctx->bpf[0] ? ctx->bpf : default_bpf(ctx->include_gtpu);
+static int apply_bpf_expr(pcap_t *p, const char *expr)
+{
+    struct bpf_program fp;
+
     if (pcap_compile(p, &fp, expr, 1, PCAP_NETMASK_UNKNOWN) < 0) {
-        ogs_error("pcap_compile(%s): %s", expr, pcap_geterr(p));
+        ogs_warn("pcap_compile(%s): %s", expr, pcap_geterr(p));
         return OGS_ERROR;
     }
     if (pcap_setfilter(p, &fp) < 0) {
-        ogs_error("pcap_setfilter: %s", pcap_geterr(p));
+        ogs_warn("pcap_setfilter: %s", pcap_geterr(p));
         pcap_freecode(&fp);
         return OGS_ERROR;
     }
     pcap_freecode(&fp);
     ogs_info("ptrace BPF filter: %s", expr);
     return OGS_OK;
+}
+
+static int apply_bpf(pcap_t *p)
+{
+    ptrace_context_t *ctx = ptrace_self();
+    const char *expr;
+
+    if (!p)
+        return OGS_ERROR;
+
+    if (ctx->bpf[0]) {
+        if (apply_bpf_expr(p, ctx->bpf) == OGS_OK)
+            return OGS_OK;
+        ogs_warn("custom bpf failed — trying built-in");
+    }
+
+    expr = default_bpf(ctx->include_gtpu);
+    if (apply_bpf_expr(p, expr) == OGS_OK)
+        return OGS_OK;
+
+    expr = fallback_bpf(ctx->include_gtpu);
+    if (apply_bpf_expr(p, expr) == OGS_OK)
+        return OGS_OK;
+
+    ogs_warn("all BPF filters failed — capturing without filter "
+            "(rely on userspace signaling check)");
+    return OGS_OK; /* do not abort capture */
 }
 
 /* Cheap L3/L4 check used when BPF is absent (AF_PACKET). */
@@ -229,8 +261,8 @@ static void pcap_thread(void *data)
             return;
         }
         if (apply_bpf(p) != OGS_OK) {
-            pcap_close(p);
-            return;
+            ogs_warn("ptrace BPF setup soft-failed on %s — continuing",
+                    arg->iface);
         }
         ogs_info("ptrace live capture on %s role=%s snaplen=%d",
                 arg->iface, ptrace_role_str(arg->role), PTRACE_MAX_PACKET);
@@ -376,11 +408,14 @@ int ptrace_capture_open(void)
         if (!cap_threads[0])
             return OGS_ERROR;
         num_cap_threads = 1;
+        ctx->capture_threads = 1;
         return OGS_OK;
     }
 
     if (ctx->num_ifaces == 0) {
-        ogs_warn("ptrace: no capture interfaces configured");
+        ogs_warn("ptrace: no capture interfaces configured "
+                "(packets will stay 0 until interface: is set)");
+        ctx->capture_threads = 0;
         return OGS_OK;
     }
 
@@ -407,7 +442,8 @@ int ptrace_capture_open(void)
             return OGS_ERROR;
         num_cap_threads++;
     }
-
+    ctx->capture_threads = num_cap_threads;
+    ogs_info("ptrace capture started on %d interface(s)", num_cap_threads);
     return OGS_OK;
 }
 

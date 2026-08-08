@@ -21,11 +21,11 @@ ptrace:
     # Set for offline replay; leave empty for live interfaces
     pcap_file: ""
     workers: 4
-    # Default BPF keeps S1AP/GTP-C/Diameter/PFCP (VLAN + untagged).
+    # Default BPF: untagged first, then vlan clause (order matters for libpcap).
     # Set include_gtpu: true only if you need S1-U user plane (very heavy).
     include_gtpu: false
-    # Optional override (must include vlan clause if SPAN is tagged):
-    # bpf: "(vlan and (sctp port 36412 or udp port 2123)) or (sctp port 36412 or udp port 2123)"
+    # Optional override. Prefer untagged-first if you add vlan:
+    # bpf: "(sctp port 36412 or udp port 2123) or (vlan and (sctp port 36412 or udp port 2123))"
     # Live capture: list each SPAN/TAP NIC explicitly. No default NIC —
     # leave empty (or only use pcap_file) until the host interfaces are set.
     # role selects protocol demux hints: s1mme|s1u|s11|s5|s8|n3|n4|diameter
