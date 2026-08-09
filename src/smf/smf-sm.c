@@ -282,9 +282,12 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
              * locally stored in xact when sending the original request: */
             sess = smf_sess_find_active_by_teid(gtp_xact->local_teid);
 
-        /* Dump GTP RX once IMSI is known from the session (Create Session
-         * TEID=0 is handled after sess_add below). */
-        if (sess) {
+        /* Node Echo has no UE — never attribute via TEID / sticky on_imsi. */
+        if (gtp2_message.h.type == OGS_GTP2_ECHO_REQUEST_TYPE ||
+                gtp2_message.h.type == OGS_GTP2_ECHO_RESPONSE_TYPE) {
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
+        } else if (sess) {
+            /* Dump GTP RX once IMSI is known (CSR TEID=0 after sess_add). */
             smf_ue_t *trace_ue = smf_ue_find_by_id(sess->smf_ue_id);
             if (trace_ue && trace_ue->imsi_bcd[0]) {
                 ogs_gtp_xact_set_imsi(gtp_xact, trace_ue->imsi_bcd);

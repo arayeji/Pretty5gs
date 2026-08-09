@@ -452,9 +452,12 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         if (sgwc_ue)
             OGS_SETUP_GTP_NODE(sgwc_ue, gnode);
 
-        /* Prefer TEID-resolved IMSI for PACKET dumps (handlers may return
-         * early before ogs_sgwc_trace_set / on_imsi). */
-        if (sgwc_ue && sgwc_ue->imsi_bcd[0]) {
+        /* Node Echo has no UE — never attribute via TEID / sticky on_imsi. */
+        if (gtp_message.h.type == OGS_GTP2_ECHO_REQUEST_TYPE ||
+                gtp_message.h.type == OGS_GTP2_ECHO_RESPONSE_TYPE) {
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
+        } else if (sgwc_ue && sgwc_ue->imsi_bcd[0]) {
+            /* Prefer TEID-resolved IMSI (handlers may return before on_imsi). */
             ogs_gtp_xact_set_imsi(gtp_xact, sgwc_ue->imsi_bcd);
             ogs_trace_packet(sgwc_ue->imsi_bcd, "gtp", "rx",
                     recvbuf->data, recvbuf->len);

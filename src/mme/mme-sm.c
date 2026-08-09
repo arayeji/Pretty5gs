@@ -1184,10 +1184,11 @@ cleanup:
             mme_ue = mme_ue_find_by_s11_local_teid(xact->local_teid);
         }
 
-        /* Dump GTP RX with IMSI from TEID or from the originating xact
-         * (Create Session Response often matches before handler trace_set;
-         * xact IMSI was bound when we sent the request). */
-        if (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
+        /* Node Echo has no UE — never attribute via TEID / sticky on_imsi. */
+        if (gtp_message.h.type == OGS_GTP2_ECHO_REQUEST_TYPE ||
+                gtp_message.h.type == OGS_GTP2_ECHO_RESPONSE_TYPE) {
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
+        } else if (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
             ogs_gtp_xact_set_imsi(xact, mme_ue->imsi_bcd);
             ogs_trace_packet(mme_ue->imsi_bcd, "gtp", "rx",
                     pkbuf->data, pkbuf->len);
