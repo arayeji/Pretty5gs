@@ -1014,9 +1014,19 @@ int ogs_gtp_xact_commit(ogs_gtp_xact_t *xact)
     ogs_assert(xact);
     ogs_assert(xact->gnode);
 
-    /* Capture IMSI from thread-local ctx if the NF set it before commit
-     * but did not call ogs_gtp_xact_set_imsi() (common for older paths). */
-    if (!xact->imsi_bcd[0]) {
+    type = xact->seq[xact->step-1].type;
+
+    /*
+     * Capture IMSI from thread-local ctx if the NF set it before commit
+     * but did not call ogs_gtp_xact_set_imsi() (common for older paths).
+     * Never inherit sticky IMSI for node Echo — SMF/SGWC keep TLS IMSI
+     * from the last traced UE, which flooded IMSI PACKET with pings.
+     */
+    if (!xact->imsi_bcd[0] &&
+            type != OGS_GTP1_ECHO_REQUEST_TYPE &&
+            type != OGS_GTP1_ECHO_RESPONSE_TYPE &&
+            type != OGS_GTP2_ECHO_REQUEST_TYPE &&
+            type != OGS_GTP2_ECHO_RESPONSE_TYPE) {
         const ogs_trace_ctx_t *ctx = ogs_trace_get();
         if (ctx && ctx->imsi[0])
             ogs_cpystrn(xact->imsi_bcd, ctx->imsi, sizeof(xact->imsi_bcd));
@@ -1028,7 +1038,6 @@ int ogs_gtp_xact_commit(ogs_gtp_xact_t *xact)
             OGS_ADDR(&xact->gnode->addr, buf),
             OGS_PORT(&xact->gnode->addr));
 
-    type = xact->seq[xact->step-1].type;
     if (xact->gtp_version == 1)
         stage = ogs_gtp1_xact_get_stage(type, xact->xid);
     else

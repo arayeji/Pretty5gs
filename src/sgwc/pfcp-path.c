@@ -145,6 +145,17 @@ static int sgwc_pfcp_recv_one(ogs_socket_t fd)
         sgwc_event_free(e);
         return 1;
     }
+    /* Drop node-level bind before queueing — other events can call
+     * on_imsi and would attribute Heartbeats to the sticky IMSI. */
+    if (message->h.type == OGS_PFCP_HEARTBEAT_REQUEST_TYPE ||
+            message->h.type == OGS_PFCP_HEARTBEAT_RESPONSE_TYPE ||
+            message->h.type == OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE ||
+            message->h.type == OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE ||
+            message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_REQUEST_TYPE ||
+            message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE ||
+            message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE ||
+            message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE)
+        ogs_trace_packet_bind_rx(NULL, NULL, 0);
 
     pfcp_status = ogs_pfcp_extract_node_id(message, &node_id);
     switch (pfcp_status) {

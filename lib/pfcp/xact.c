@@ -692,7 +692,23 @@ int ogs_pfcp_xact_commit(ogs_pfcp_xact_t *xact)
     ogs_assert(xact);
     ogs_assert(xact->node);
 
-    if (!xact->imsi_bcd[0]) {
+    type = xact->seq[xact->step-1].type;
+
+    /*
+     * Inherit sticky TLS IMSI only for session messages. Heartbeat /
+     * Association have no UE; copying the last traced IMSI attributed
+     * node pings to IMSI PACKET views.
+     */
+    if (!xact->imsi_bcd[0] &&
+            type != OGS_PFCP_HEARTBEAT_REQUEST_TYPE &&
+            type != OGS_PFCP_HEARTBEAT_RESPONSE_TYPE &&
+            type != OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE &&
+            type != OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE &&
+            type != OGS_PFCP_ASSOCIATION_UPDATE_REQUEST_TYPE &&
+            type != OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE &&
+            type != OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE &&
+            type != OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE &&
+            type != OGS_PFCP_VERSION_NOT_SUPPORTED_RESPONSE_TYPE) {
         const ogs_trace_ctx_t *ctx = ogs_trace_get();
         if (ctx && ctx->imsi[0])
             ogs_cpystrn(xact->imsi_bcd, ctx->imsi, sizeof(xact->imsi_bcd));
@@ -703,7 +719,6 @@ int ogs_pfcp_xact_commit(ogs_pfcp_xact_t *xact)
             xact->org == OGS_PFCP_LOCAL_ORIGINATOR ? "LOCAL " : "REMOTE",
             ogs_sockaddr_to_string_static(xact->node->addr_list));
 
-    type = xact->seq[xact->step-1].type;
     stage = ogs_pfcp_xact_get_stage(type, xact->xid);
 
     if (xact->org == OGS_PFCP_LOCAL_ORIGINATOR) {
