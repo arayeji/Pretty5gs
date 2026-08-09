@@ -21,6 +21,7 @@
 #include "local-path.h"
 #include "gtp-path.h"
 #include "pfcp-path.h"
+#include "smf-trace.h"
 
 #include <openssl/evp.h>
 
@@ -144,6 +145,15 @@ static void sock_set_rcv_timeout(ogs_socket_t fd, unsigned ms)
     tv.tv_usec = (ms % 1000) * 1000;
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (void *)&tv, sizeof(tv));
 #endif
+}
+
+/* NMS PCAP rebuild: filter-gated PACKET dump (same shape as gtp/pfcp). */
+static void radius_trace_packet(const char *imsi, const char *dir,
+        const void *data, size_t len)
+{
+    if (!imsi || !imsi[0] || !data || !len)
+        return;
+    ogs_trace_packet(imsi, "radius", dir, data, len);
 }
 
 static const char *radius_username(smf_ue_t *ue)
@@ -1076,7 +1086,8 @@ static ogs_sockaddr_t *radius_server_peer_get(
 static int radius_udp_exchange(int srv_idx, uint16_t port,
         const uint8_t *req, size_t req_len,
         uint8_t *res, size_t res_max, size_t *res_len,
-        const uint8_t *acceptable_codes, unsigned num_codes)
+        const uint8_t *acceptable_codes, unsigned num_codes,
+        const char *imsi)
 {
     ogs_sockaddr_t *peer = NULL;
     int rv = OGS_ERROR;
@@ -1138,6 +1149,8 @@ static int radius_udp_exchange(int srv_idx, uint16_t port,
                     s->host, (int)snd, (unsigned)req_len);
             continue;
         }
+        /* Dump the exact on-wire request (incl. per-server authenticator). */
+        radius_trace_packet(imsi, "tx", req, req_len);
 
         rcv = ogs_recvfrom(s->sock->fd, res, res_max, 0, &from);
         if (rcv < RADIUS_HDR_LEN) {
@@ -1184,6 +1197,7 @@ static int radius_udp_exchange(int srv_idx, uint16_t port,
             }
         }
 
+        radius_trace_packet(imsi, "rx", res, *res_len);
         rv = OGS_OK;
         successes++;
         break;
@@ -1307,7 +1321,8 @@ static int radius_exchange_with_failover(
         uint8_t *res, size_t res_max, size_t *res_len,
         const uint8_t *acceptable_codes, unsigned num_codes,
         int *out_idx, const char **out_secret,
-        uint8_t *req_authenticator /* for accounting: recomputed per server */)
+        uint8_t *req_authenticator /* for accounting: recomputed per server */,
+        const char *imsi)
 {
     smf_radius_config_t *cfg = &smf_self()->radius;
     int i, rv = OGS_ERROR;
@@ -1332,7 +1347,7 @@ static int radius_exchange_with_failover(
 
         rv = radius_udp_exchange(idx, port,
                 send_buf, req_len, res, res_max, res_len,
-                acceptable_codes, num_codes);
+                acceptable_codes, num_codes, imsi);
 
         if (rv == OGS_OK) {
             if (out_idx)    *out_idx    = idx;
@@ -1437,7 +1452,7 @@ int smf_radius_authorize_for_session(smf_sess_t *sess)
                     false /* is_accounting */,
                     pkt, total_len, res, sizeof res, &res_len,
                     want, sizeof want,
-                    &picked_idx, &picked_secret, NULL) != OGS_OK) {
+                    &picked_idx, &picked_secret, NULL, user) != OGS_OK) {
             ogs_error("RADIUS Access-Request failed on all %d server(s)",
                     num_order);
             return OGS_ERROR;
@@ -1642,7 +1657,7 @@ static int radius_send_accounting(smf_sess_t *sess, uint32_t status_type)
                     true /* is_accounting */,
                     pkt, total_len, res, sizeof res, &res_len,
                     want, sizeof want,
-                    &picked_idx, &picked_secret, req_auth_saved) != OGS_OK) {
+                    &picked_idx, &picked_secret, req_auth_saved, user) != OGS_OK) {
             ogs_warn("RADIUS Accounting-Request (status=%u) failed on all "
                     "%d server(s)", (unsigned)status_type, num_order);
             return OGS_ERROR;
@@ -1901,7 +1916,7 @@ static smf_sess_t *pod_find_session(const uint8_t *attrs, size_t attrs_len)
 
 static void pod_send_response(int code, uint8_t id,
         const uint8_t *req_authenticator, ogs_sockaddr_t *to,
-        uint32_t error_cause, const char *secret)
+        uint32_t error_cause, const char *secret, const char *imsi)
 {
     uint8_t pkt[RADIUS_PACKET_MAX];
     uint8_t digest[16];
@@ -1952,6 +1967,8 @@ static void pod_send_response(int code, uint8_t id,
 
     if (ogs_sendto(s_pod_sock->fd, pkt, total_len, 0, to) != (ssize_t)total_len)
         ogs_warn("RADIUS PoD: failed to send response code=%d", code);
+    else
+        radius_trace_packet(imsi, "tx", pkt, total_len);
 }
 
 /*
@@ -2103,9 +2120,12 @@ static void pod_recv_cb(short when, ogs_socket_t fd, void *data)
     smf_sess_t *sess;
     smf_radius_config_t *cfg = &smf_self()->radius;
     uint8_t packet_copy[RADIUS_PACKET_MAX];
+    char pod_imsi[OGS_MAX_IMSI_BCD_LEN + 1];
 
     (void)when;
     (void)data;
+
+    pod_imsi[0] = '\0';
 
     n = ogs_recvfrom(fd, buf, sizeof buf, 0, &from);
     if (n < RADIUS_HDR_LEN) {
@@ -2190,11 +2210,29 @@ static void pod_recv_cb(short when, ogs_socket_t fd, void *data)
     attrs = buf + RADIUS_HDR_LEN;
     attrs_len = plen - RADIUS_HDR_LEN;
 
+    /* Prefer User-Name (IMSI) so PACKET can gate before session lookup. */
+    {
+        uint8_t alen = 0;
+        const uint8_t *v = radius_find_attr(attrs, attrs_len,
+                RADIUS_ATTR_USER_NAME, &alen);
+
+        if (v && alen > 2) {
+            size_t slen = alen - 2;
+
+            if (slen >= sizeof(pod_imsi))
+                slen = sizeof(pod_imsi) - 1;
+            memcpy(pod_imsi, v + 2, slen);
+            pod_imsi[slen] = '\0';
+        }
+    }
+    radius_trace_packet(pod_imsi[0] ? pod_imsi : NULL, "rx", buf, plen);
+
     /* CoA-Request not implemented: NAK with Unsupported-Service. */
     if (buf[0] == RADIUS_CODE_COA_REQUEST) {
         ogs_info("RADIUS CoA-Request received: unsupported");
         pod_send_response(RADIUS_CODE_COA_NAK, buf[1], saved_auth, &from,
-                RADIUS_ERR_CAUSE_UNSUPPORTED_SERVICE, secret);
+                RADIUS_ERR_CAUSE_UNSUPPORTED_SERVICE, secret,
+                pod_imsi[0] ? pod_imsi : NULL);
         return;
     }
 
@@ -2205,18 +2243,29 @@ static void pod_recv_cb(short when, ogs_socket_t fd, void *data)
         ogs_info("RADIUS Disconnect-Request: no matching session (from %s)",
                 OGS_ADDR(&from, ipbuf));
         pod_send_response(RADIUS_CODE_DISCONNECT_NAK, buf[1], saved_auth,
-                &from, RADIUS_ERR_CAUSE_SESSION_NOT_FOUND, secret);
+                &from, RADIUS_ERR_CAUSE_SESSION_NOT_FOUND, secret,
+                pod_imsi[0] ? pod_imsi : NULL);
         return;
     }
 
     {
         smf_ue_t *ue = smf_ue_find_by_id(sess->smf_ue_id);
         char ipbuf[OGS_ADDRSTRLEN];
+        const char *imsi = NULL;
+
+        if (ue)
+            imsi = radius_username(ue);
+        if (imsi && imsi[0] && !pod_imsi[0]) {
+            ogs_cpystrn(pod_imsi, imsi, sizeof(pod_imsi));
+            /* RX was skipped earlier (no User-Name); dump now with IMSI. */
+            radius_trace_packet(pod_imsi, "rx", buf, plen);
+        } else if (imsi && imsi[0]) {
+            ogs_cpystrn(pod_imsi, imsi, sizeof(pod_imsi));
+        }
 
         ogs_info("RADIUS Disconnect-Request accepted: "
                 "IMSI[%s] DNN[%s] session-id[%s] from %s",
-                ue ? (ue->imsi_bcd[0] ? ue->imsi_bcd :
-                      (ue->supi ? ue->supi : "?")) : "?",
+                pod_imsi[0] ? pod_imsi : "?",
                 sess->session.name ? sess->session.name : "",
                 sess->radius.acct_session_id ?
                     sess->radius.acct_session_id : "",
@@ -2224,7 +2273,7 @@ static void pod_recv_cb(short when, ogs_socket_t fd, void *data)
     }
 
     pod_send_response(RADIUS_CODE_DISCONNECT_ACK, buf[1], saved_auth, &from,
-            0, secret);
+            0, secret, pod_imsi[0] ? pod_imsi : NULL);
 
     ogs_info("RADIUS PoD: releasing session "
             "(epc=%d, sess_id=%d, sgw_s5c_teid=0x%x)",
