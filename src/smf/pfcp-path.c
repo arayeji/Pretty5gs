@@ -126,9 +126,15 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
      * Because ogs_pfcp_message_t is over 80kb in size,
      * it can cause stack overflow.
      * To avoid this, the pfcp_message structure uses heap memory.
+     *
+     * Bind the full PFCP PDU for PACKET dumps before parse pulls the
+     * header off pkbuf (otherwise RX dumps are IE-only / "malformed").
+     * The bind keeps the pre-pull pointer; pkbuf headroom stays valid.
      */
+    ogs_trace_packet_bind_rx("pfcp", pkbuf->data, pkbuf->len);
     if ((message = ogs_pfcp_parse_msg(pkbuf)) == NULL) {
         ogs_error("ogs_pfcp_parse_msg() failed");
+        ogs_trace_packet_bind_rx(NULL, NULL, 0);
         ogs_pkbuf_free(pkbuf);
         ogs_event_free(e);
         return;

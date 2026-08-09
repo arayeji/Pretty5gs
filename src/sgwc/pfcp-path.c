@@ -134,9 +134,13 @@ static int sgwc_pfcp_recv_one(ogs_socket_t fd)
      * Because ogs_pfcp_message_t is over 80kb in size,
      * it can cause stack overflow.
      * To avoid this, the pfcp_message structure uses heap memory.
+     *
+     * Bind the full PFCP PDU before parse pulls the header.
      */
+    ogs_trace_packet_bind_rx("pfcp", pkbuf->data, pkbuf->len);
     if ((message = ogs_pfcp_parse_msg(pkbuf)) == NULL) {
         ogs_error("ogs_pfcp_parse_msg() failed");
+        ogs_trace_packet_bind_rx(NULL, NULL, 0);
         ogs_pkbuf_free(pkbuf);
         sgwc_event_free(e);
         return 1;

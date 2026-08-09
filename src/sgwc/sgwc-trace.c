@@ -100,15 +100,17 @@ void sgwc_trace_pfcp_rx(ogs_pfcp_xact_t *xact, sgwc_sess_t *sess,
 {
     sgwc_ue_t *sgwc_ue;
 
-    if (!sess || !data || !len)
+    if (!sess)
         return;
     sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
     if (!sgwc_ue || !sgwc_ue->imsi_bcd[0])
         return;
     if (xact)
         ogs_pfcp_xact_set_imsi(xact, sgwc_ue->imsi_bcd);
-    ogs_trace_packet(sgwc_ue->imsi_bcd, "pfcp", "rx", data, len);
-    ogs_trace_packet_bind_rx(NULL, NULL, 0);
+    /* Full PDU was bound before header pull; do not dump IE-only body. */
+    (void)data;
+    (void)len;
+    ogs_trace_packet_on_imsi(sgwc_ue->imsi_bcd);
 }
 
 void sgwc_ue_log(

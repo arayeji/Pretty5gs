@@ -322,16 +322,14 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         ogs_assert(recvbuf);
         pfcp_message = e->pfcp_message;
         ogs_assert(pfcp_message);
-        if (pfcp_message->h.type != OGS_PFCP_HEARTBEAT_REQUEST_TYPE &&
-                pfcp_message->h.type != OGS_PFCP_HEARTBEAT_RESPONSE_TYPE &&
-                pfcp_message->h.type != OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE &&
-                pfcp_message->h.type != OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE &&
-                pfcp_message->h.type != OGS_PFCP_ASSOCIATION_UPDATE_REQUEST_TYPE &&
-                pfcp_message->h.type != OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE &&
-                pfcp_message->h.type != OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE &&
-                pfcp_message->h.type != OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE)
-            ogs_trace_packet_bind_rx("pfcp", recvbuf->data, recvbuf->len);
-        else
+        if (pfcp_message->h.type == OGS_PFCP_HEARTBEAT_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_HEARTBEAT_RESPONSE_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE)
             ogs_trace_packet_bind_rx(NULL, NULL, 0);
         pfcp_node = e->pfcp_node;
         ogs_assert(pfcp_node);

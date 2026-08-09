@@ -2408,6 +2408,8 @@ static void hss_s6a_cla_cb(void *data, struct msg **msg)
 
     hss_trace_event(sess_data->imsi_bcd, "S6a-CLR",
             "Rx Cancel-Location-Answer");
+    if (msg && *msg)
+        hss_trace_diameter(sess_data->imsi_bcd, "rx", *msg);
 
 cleanup:
     /* Always try to free the message if it exists */

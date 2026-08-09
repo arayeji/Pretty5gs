@@ -650,17 +650,17 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         pfcp_message = e->pfcp_message;
         ogs_assert(pfcp_message);
         /* Node-level PFCP must not sit in bind_rx — sticky IMSI on_imsi
-         * would otherwise attach Heartbeats to the last traced UE. */
-        if (pfcp_message->h.type != OGS_PFCP_HEARTBEAT_REQUEST_TYPE &&
-                pfcp_message->h.type != OGS_PFCP_HEARTBEAT_RESPONSE_TYPE &&
-                pfcp_message->h.type != OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE &&
-                pfcp_message->h.type != OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE &&
-                pfcp_message->h.type != OGS_PFCP_ASSOCIATION_UPDATE_REQUEST_TYPE &&
-                pfcp_message->h.type != OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE &&
-                pfcp_message->h.type != OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE &&
-                pfcp_message->h.type != OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE)
-            ogs_trace_packet_bind_rx("pfcp", recvbuf->data, recvbuf->len);
-        else
+         * would otherwise attach Heartbeats to the last traced UE.
+         * Session messages keep the full-PDU bind from pfcp-path.c
+         * (before header pull); do not re-bind the pulled IE body. */
+        if (pfcp_message->h.type == OGS_PFCP_HEARTBEAT_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_HEARTBEAT_RESPONSE_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE)
             ogs_trace_packet_bind_rx(NULL, NULL, 0);
         pfcp_node = e->pfcp_node;
         ogs_assert(pfcp_node);
