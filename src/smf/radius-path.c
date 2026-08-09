@@ -1037,6 +1037,10 @@ static void radius_server_transport_clear(smf_radius_server_t *s)
         ogs_freeaddrinfo(s->peer_acct);
         s->peer_acct = NULL;
     }
+    if (s->bound_nas_ip) {
+        ogs_free(s->bound_nas_ip);
+        s->bound_nas_ip = NULL;
+    }
     s->sock_timeout_ms = 0;
 }
 
@@ -1114,12 +1118,24 @@ static int radius_udp_exchange(int srv_idx, uint16_t port,
     /*
      * Open the UDP socket lazily on first use. If the family of the
      * resolved peer changed (rare; happens after IPv4->IPv6 DNS swap),
-     * drop the cached socket so the new one matches.
+     * or nas_ip (source bind) changed, drop the cached socket so the
+     * new one matches.
      */
-    if (s->sock && s->sock->family != peer->ogs_sa_family) {
-        ogs_sock_destroy(s->sock);
-        s->sock = NULL;
-        s->sock_timeout_ms = 0;
+    {
+        const char *want_bind = (cfg->nas_ip && cfg->nas_ip[0]) ?
+                cfg->nas_ip : "";
+        const char *have_bind = s->bound_nas_ip ? s->bound_nas_ip : "";
+
+        if (s->sock && (s->sock->family != peer->ogs_sa_family ||
+                strcmp(want_bind, have_bind) != 0)) {
+            ogs_sock_destroy(s->sock);
+            s->sock = NULL;
+            s->sock_timeout_ms = 0;
+            if (s->bound_nas_ip) {
+                ogs_free(s->bound_nas_ip);
+                s->bound_nas_ip = NULL;
+            }
+        }
     }
     if (!s->sock) {
         s->sock = ogs_sock_socket(peer->ogs_sa_family,
@@ -1129,6 +1145,44 @@ static int radius_udp_exchange(int srv_idx, uint16_t port,
             return OGS_ERROR;
         }
         s->sock_timeout_ms = 0;
+
+        /*
+         * Bind to radius.nas_ip so the UDP source address matches the
+         * NAS-IP-Address AVP. Many AAA clients.conf entries match on
+         * source IP; leaving the socket unbound makes the kernel pick
+         * the primary egress address instead.
+         */
+        if (cfg->nas_ip && cfg->nas_ip[0]) {
+            ogs_sockaddr_t *local = NULL;
+
+            if (ogs_getaddrinfo(&local, peer->ogs_sa_family,
+                        cfg->nas_ip, 0, AI_PASSIVE) != OGS_OK || !local) {
+                ogs_error("RADIUS: cannot resolve nas_ip '%s' for bind",
+                        cfg->nas_ip);
+                ogs_sock_destroy(s->sock);
+                s->sock = NULL;
+                if (local)
+                    ogs_freeaddrinfo(local);
+                return OGS_ERROR;
+            }
+
+            if (ogs_sock_bind(s->sock, local) != OGS_OK) {
+                char buf[OGS_ADDRSTRLEN];
+
+                ogs_error("RADIUS: bind to nas_ip %s failed "
+                        "(is the address configured on this host?)",
+                        OGS_ADDR(local, buf));
+                ogs_sock_destroy(s->sock);
+                s->sock = NULL;
+                ogs_freeaddrinfo(local);
+                return OGS_ERROR;
+            }
+
+            s->bound_nas_ip = ogs_strdup(cfg->nas_ip);
+            ogs_info("RADIUS: client UDP bound to nas_ip %s",
+                    s->bound_nas_ip);
+            ogs_freeaddrinfo(local);
+        }
     }
 
     /* Refresh receive timeout only when it actually changed; on every

@@ -116,11 +116,15 @@ typedef struct smf_radius_server_s {
      *   sock_timeout_ms       - tracks the timeout currently applied to
      *                           `sock`, lets us skip the setsockopt() when
      *                           cfg->timeout_ms has not moved.
+     *   bound_nas_ip          - local address sock was bound to (from
+     *                           radius.nas_ip), so a config change forces
+     *                           a rebind. NULL means unbound (kernel pick).
      */
     ogs_sockaddr_t *peer_auth;
     ogs_sockaddr_t *peer_acct;
     ogs_sock_t     *sock;
     unsigned        sock_timeout_ms;
+    char           *bound_nas_ip;
 } smf_radius_server_t;
 
 typedef struct smf_radius_config_s {
@@ -139,6 +143,12 @@ typedef struct smf_radius_config_s {
     const char *secret;
 
     const char *nas_id;
+    /*
+     * NAS-IP-Address AVP value AND UDP source bind for Access/Accounting
+     * client sockets. AAA servers often key clients by packet source IP;
+     * without binding here the kernel picks the egress interface address
+     * (which may not match nas_ip).
+     */
     const char *nas_ip;
     unsigned timeout_ms;
     int retry;
