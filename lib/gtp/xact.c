@@ -35,16 +35,15 @@ void ogs_gtp_xact_set_imsi(ogs_gtp_xact_t *xact, const char *imsi_bcd)
     ogs_cpystrn(xact->imsi_bcd, imsi_bcd, sizeof(xact->imsi_bcd));
 }
 
-/* Prefer xact-bound IMSI; fall back to thread-local trace ctx. */
+/* Prefer xact-bound IMSI only — never sticky TLS (node Echo/Heartbeat). */
 static void gtp_xact_trace_tx(ogs_gtp_xact_t *xact, ogs_pkbuf_t *pkbuf)
 {
     if (!xact || !pkbuf || !pkbuf->data || !pkbuf->len)
         return;
-    if (xact->imsi_bcd[0])
-        ogs_trace_packet(xact->imsi_bcd, "gtp", "tx",
-                pkbuf->data, pkbuf->len);
-    else
-        ogs_trace_packet_ctx("gtp", "tx", pkbuf->data, pkbuf->len);
+    if (!xact->imsi_bcd[0])
+        return;
+    ogs_trace_packet(xact->imsi_bcd, "gtp", "tx",
+            pkbuf->data, pkbuf->len);
 }
 
 /*

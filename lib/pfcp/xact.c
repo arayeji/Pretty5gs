@@ -41,11 +41,15 @@ static void pfcp_xact_trace_tx(ogs_pfcp_xact_t *xact, ogs_pkbuf_t *pkbuf)
 {
     if (!xact || !pkbuf || !pkbuf->data || !pkbuf->len)
         return;
-    if (xact->imsi_bcd[0])
-        ogs_trace_packet(xact->imsi_bcd, "pfcp", "tx",
-                pkbuf->data, pkbuf->len);
-    else
-        ogs_trace_packet_ctx("pfcp", "tx", pkbuf->data, pkbuf->len);
+    /*
+     * Only dump when this xact was explicitly bound to a UE. Falling back
+     * to thread-local IMSI attributed PFCP Heartbeat/Association (no IMSI)
+     * to whichever subscriber was last sticky — flooding NMS PACKET views.
+     */
+    if (!xact->imsi_bcd[0])
+        return;
+    ogs_trace_packet(xact->imsi_bcd, "pfcp", "tx",
+            pkbuf->data, pkbuf->len);
 }
 
 /*
