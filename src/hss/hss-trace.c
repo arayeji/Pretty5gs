@@ -125,13 +125,74 @@ void hss_trace_event(
 void hss_trace_diameter(
         const char *imsi_bcd, const char *dir, struct msg *msg)
 {
-    /*
-     * DISABLED: same abort risk as MME — freeDiameter fd_msg_bufferize()
-     * can ASSERT and kill the process. Keep the hook; do not serialize.
-     */
-    (void)imsi_bcd;
-    (void)dir;
-    (void)msg;
+    static const char b64tab[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    uint8_t *buf = NULL;
+    size_t len = 0, dump_len, i, o;
+    int ret, truncated = 0;
+    char b64[((OGS_TRACE_PACKET_MAX + 2) / 3) * 4 + 1];
+
+    if (!imsi_bcd || !imsi_bcd[0] || !msg)
+        return;
+    if (ogs_trace_filter_count() == 0)
+        return;
+    if (!ogs_trace_filter_match(imsi_bcd))
+        return;
+
+    ret = fd_msg_update_length(msg);
+    if (ret != 0) {
+        hss_imsi_warn(imsi_bcd, "diameter",
+                "PACKET diameter %s: fd_msg_update_length failed (%d)",
+                dir && dir[0] ? dir : "-", ret);
+        return;
+    }
+
+    ret = fd_msg_bufferize(msg, &buf, &len);
+    if (ret != 0 || !buf || !len) {
+        hss_imsi_warn(imsi_bcd, "diameter",
+                "PACKET diameter %s: fd_msg_bufferize failed "
+                "(ret=%d len=%zu) — no PACKET line",
+                dir && dir[0] ? dir : "-", ret, len);
+        if (buf)
+            free(buf);
+        return;
+    }
+
+    dump_len = len;
+    if (dump_len > OGS_TRACE_PACKET_MAX) {
+        dump_len = OGS_TRACE_PACKET_MAX;
+        truncated = 1;
+    }
+
+    o = 0;
+    for (i = 0; i + 2 < dump_len && o + 4 < sizeof(b64); i += 3) {
+        b64[o++] = b64tab[(buf[i] >> 2) & 0x3F];
+        b64[o++] = b64tab[((buf[i] & 0x3) << 4) | ((buf[i + 1] & 0xF0) >> 4)];
+        b64[o++] = b64tab[((buf[i + 1] & 0xF) << 2) | ((buf[i + 2] & 0xC0) >> 6)];
+        b64[o++] = b64tab[buf[i + 2] & 0x3F];
+    }
+    if (i < dump_len && o + 4 < sizeof(b64)) {
+        b64[o++] = b64tab[(buf[i] >> 2) & 0x3F];
+        if (i + 1 == dump_len) {
+            b64[o++] = b64tab[((buf[i] & 0x3) << 4)];
+            b64[o++] = '=';
+        } else {
+            b64[o++] = b64tab[((buf[i] & 0x3) << 4) |
+                    ((buf[i + 1] & 0xF0) >> 4)];
+            b64[o++] = b64tab[((buf[i + 1] & 0xF) << 2)];
+        }
+        b64[o++] = '=';
+    }
+    b64[o] = '\0';
+
+    /* Emit under [hss] like S6a events so NMS scrapes both RX and TX. */
+    hss_imsi_info(imsi_bcd, "diameter",
+            "PACKET: proto=diameter dir=%s len=%zu%s b64=%s",
+            dir && dir[0] ? dir : "-",
+            len,
+            truncated ? " trunc=1" : "",
+            b64);
+    free(buf);
 }
 
 static int hss_admin_trace_imsi(const ogs_metrics_query_t *q,
