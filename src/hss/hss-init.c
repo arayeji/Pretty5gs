@@ -21,6 +21,7 @@
 #include "hss-fd-path.h"
 #include "hss-sm.h"
 #include "hss-trace.h"
+#include "hss-admin.h"
 #include "hss-event.h"
 #include "metrics.h"
 

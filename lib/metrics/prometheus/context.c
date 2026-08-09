@@ -467,6 +467,24 @@ static void fill_query_from_connection(struct MHD_Connection *connection,
             q->replace = 1;
     }
 
+    /*
+     * HSS /admin/s6a/clr: ?reattach=0|1 (default when omitted: 1).
+     * Accept the same textual truthy/falsey forms as force.
+     */
+    const char *ra = MHD_lookup_connection_value(connection,
+            MHD_GET_ARGUMENT_KIND, "reattach");
+    if (ra && *ra) {
+        q->has_reattach = 1;
+        if (!strcasecmp(ra, "0") || !strcasecmp(ra, "false") ||
+                !strcasecmp(ra, "no") || !strcasecmp(ra, "off"))
+            q->reattach = 0;
+        else if (!strcasecmp(ra, "1") || !strcasecmp(ra, "true") ||
+                !strcasecmp(ra, "yes") || !strcasecmp(ra, "on"))
+            q->reattach = 1;
+        else
+            q->has_reattach = 0; /* leave default to the handler */
+    }
+
     q->match = MHD_lookup_connection_value(connection,
             MHD_GET_ARGUMENT_KIND, "match");
     q->sync = MHD_lookup_connection_value(connection,

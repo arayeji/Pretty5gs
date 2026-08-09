@@ -195,7 +195,7 @@ void hss_trace_diameter(
     free(buf);
 }
 
-static int hss_admin_trace_imsi(const ogs_metrics_query_t *q,
+int hss_admin_trace_imsi_ep(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len)
 {
     ogs_metrics_query_t resolved = { 0 };
@@ -228,11 +228,4 @@ static int hss_admin_trace_imsi(const ogs_metrics_query_t *q,
     }
 
     return ogs_metrics_admin_trace_imsi(use_q, body, body_cap, body_len);
-}
-
-void hss_admin_api_register(void)
-{
-    ogs_metrics_register_admin_ep(hss_admin_trace_imsi,
-            "/admin/trace/imsi",
-            OGS_METRICS_ADMIN_METHOD_GET);
 }

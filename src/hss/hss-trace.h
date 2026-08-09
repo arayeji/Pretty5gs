@@ -21,6 +21,7 @@
 #define HSS_TRACE_H
 
 #include "hss-context.h"
+#include "ogs-metrics.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -78,7 +79,9 @@ static inline void hss_trace_scope_cleanup(int *unused)
 #define HSS_TRACE_SCOPE() do { } while (0)
 #endif
 
-void hss_admin_api_register(void);
+/* Registered via hss_admin_api_register() for GET /admin/trace/imsi. */
+int hss_admin_trace_imsi_ep(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len);
 
 #ifdef __cplusplus
 }

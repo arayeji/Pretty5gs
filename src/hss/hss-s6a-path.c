@@ -2207,6 +2207,14 @@ outnoexp:
 void hss_s6a_send_clr(char *imsi_bcd, char *mme_host, char *mme_realm,
     uint32_t cancellation_type)
 {
+    /* Preserve historical behaviour: Reattach-Required only on withdrawal. */
+    hss_s6a_send_clr_ex(imsi_bcd, mme_host, mme_realm, cancellation_type,
+            cancellation_type == OGS_DIAM_S6A_CT_SUBSCRIPTION_WITHDRAWAL);
+}
+
+void hss_s6a_send_clr_ex(char *imsi_bcd, char *mme_host, char *mme_realm,
+    uint32_t cancellation_type, bool reattach_required)
+{
     int ret;
 
     struct msg *req = NULL;
@@ -2226,8 +2234,8 @@ void hss_s6a_send_clr(char *imsi_bcd, char *mme_host, char *mme_realm,
         ogs_cpystrn(sess_data->imsi_bcd, imsi_bcd, sizeof(sess_data->imsi_bcd));
 
     hss_trace_event(imsi_bcd, "S6a-CLR",
-            "Tx Cancel-Location-Request type=%u host=%s realm=%s",
-            cancellation_type,
+            "Tx Cancel-Location-Request type=%u reattach=%d host=%s realm=%s",
+            cancellation_type, reattach_required ? 1 : 0,
             mme_host ? mme_host : "-",
             mme_realm ? mme_realm : "-");
 
@@ -2296,12 +2304,9 @@ void hss_s6a_send_clr(char *imsi_bcd, char *mme_host, char *mme_realm,
     /* Set the CLR-Flags */
     ret = fd_msg_avp_new(ogs_diam_s6a_clr_flags, 0, &avp);
     ogs_assert(ret == 0);
-    if (cancellation_type == OGS_DIAM_S6A_CT_SUBSCRIPTION_WITHDRAWAL) {
-        val.u32 = (OGS_DIAM_S6A_CLR_FLAGS_REATTACH_REQUIRED |
-            OGS_DIAM_S6A_CLR_FLAGS_S6A_S6D_INDICATOR);
-    } else {
-        val.u32 = OGS_DIAM_S6A_CLR_FLAGS_S6A_S6D_INDICATOR;
-    }
+    val.u32 = OGS_DIAM_S6A_CLR_FLAGS_S6A_S6D_INDICATOR;
+    if (reattach_required)
+        val.u32 |= OGS_DIAM_S6A_CLR_FLAGS_REATTACH_REQUIRED;
     ret = fd_msg_avp_setvalue(avp, &val);
     ogs_assert(ret == 0);
     ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp);
