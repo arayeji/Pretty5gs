@@ -1152,6 +1152,22 @@ smf_sess_t *smf_sess_add_by_sm_context(ogs_sbi_message_t *message);
 smf_sess_t *smf_sess_add_by_pdu_session(ogs_sbi_message_t *message);
 smf_sess_t *smf_sess_add_by_psi(smf_ue_t *smf_ue, uint8_t psi);
 
+/*
+ * PFCP Network Instance toward UPF/VPP (PDR/FAR NWI, Session Establishment
+ * apn_dnn, GTP-U resource / FTUP selection). Outbound/inbound roam CSR
+ * carries a full APN (e.g. hiweb.mnc012.mcc432.gprs) stored in full_dnn;
+ * VPP keys distinct GTP-U endpoints by that NWI. Home NI-only sessions
+ * keep session.name. Subnet / RADIUS / UPF peer selection still use NI.
+ */
+static ogs_inline const char *smf_sess_nwi_for_pfcp(smf_sess_t *sess)
+{
+    ogs_assert(sess);
+    if (sess->full_dnn && sess->full_dnn[0])
+        return sess->full_dnn;
+    ogs_assert(sess->session.name);
+    return sess->session.name;
+}
+
 void smf_sess_select_upf(smf_sess_t *sess);
 uint8_t smf_sess_set_ue_ip(smf_sess_t *sess);
 void smf_sess_set_paging_n1n2message_location(

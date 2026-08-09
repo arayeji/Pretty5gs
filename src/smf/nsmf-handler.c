@@ -537,7 +537,7 @@ bool smf_nsmf_handle_create_sm_context(
 
         resource = ogs_pfcp_find_gtpu_resource(
                 &sess->pfcp_node->gtpu_resource_list,
-                sess->session.name, dl_pdr->src_if);
+                smf_sess_nwi_for_pfcp(sess), dl_pdr->src_if);
         if (resource) {
             ogs_user_plane_ip_resource_info_to_sockaddr(&resource->info,
                 &sess->local_dl_addr, &sess->local_dl_addr6);
@@ -571,7 +571,7 @@ bool smf_nsmf_handle_create_sm_context(
 
         resource = ogs_pfcp_find_gtpu_resource(
                 &sess->pfcp_node->gtpu_resource_list,
-                sess->session.name, ul_pdr->src_if);
+                smf_sess_nwi_for_pfcp(sess), ul_pdr->src_if);
         if (resource) {
             ogs_user_plane_ip_resource_info_to_sockaddr(&resource->info,
                 &sess->local_ul_addr, &sess->local_ul_addr6);

@@ -2368,8 +2368,9 @@ smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)
 }
 
 /*
- * Decode GTP APN IE and derive APN-NI for session.name (subnet, UPF, Gx).
- * Roaming CSR often carries a full APN (e.g. internet.mnc070.mcc999.gprs).
+ * Decode GTP APN IE and derive APN-NI for session.name (subnet, RADIUS, Gx).
+ * Roaming CSR often carries a full APN (e.g. hiweb.mnc012.mcc432.gprs);
+ * full_dnn is kept for PFCP NWI toward VPP (smf_sess_nwi_for_pfcp).
  */
 bool smf_gtp_apn_parse(
         char *apn_ni, char **full_apn_out,
@@ -3633,7 +3634,7 @@ smf_bearer_t *smf_qos_flow_add(smf_sess_t *sess)
     qos_flow->dl_pdr = dl_pdr;
 
     ogs_assert(sess->session.name);
-    dl_pdr->apn = ogs_strdup(sess->session.name);
+    dl_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(dl_pdr->apn);
 
     dl_pdr->src_if = OGS_PFCP_INTERFACE_CORE;
@@ -3646,7 +3647,7 @@ smf_bearer_t *smf_qos_flow_add(smf_sess_t *sess)
     qos_flow->ul_pdr = ul_pdr;
 
     ogs_assert(sess->session.name);
-    ul_pdr->apn = ogs_strdup(sess->session.name);
+    ul_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(ul_pdr->apn);
 
     ul_pdr->src_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -3667,7 +3668,7 @@ smf_bearer_t *smf_qos_flow_add(smf_sess_t *sess)
     qos_flow->dl_far = dl_far;
 
     ogs_assert(sess->session.name);
-    dl_far->apn = ogs_strdup(sess->session.name);
+    dl_far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(dl_far->apn);
 
     dl_far->dst_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -3689,7 +3690,7 @@ smf_bearer_t *smf_qos_flow_add(smf_sess_t *sess)
     qos_flow->ul_far = ul_far;
 
     ogs_assert(sess->session.name);
-    ul_far->apn = ogs_strdup(sess->session.name);
+    ul_far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(ul_far->apn);
 
     ul_far->dst_if = OGS_PFCP_INTERFACE_CORE;
@@ -3801,7 +3802,7 @@ smf_bearer_t *smf_vcn_tunnel_add(smf_sess_t *sess)
     qos_flow->dl_pdr = dl_pdr;
 
     ogs_assert(sess->session.name);
-    dl_pdr->apn = ogs_strdup(sess->session.name);
+    dl_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(dl_pdr->apn);
 
     dl_pdr->src_if = OGS_PFCP_INTERFACE_CORE;
@@ -3814,7 +3815,7 @@ smf_bearer_t *smf_vcn_tunnel_add(smf_sess_t *sess)
     qos_flow->ul_pdr = ul_pdr;
 
     ogs_assert(sess->session.name);
-    ul_pdr->apn = ogs_strdup(sess->session.name);
+    ul_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(ul_pdr->apn);
 
     ul_pdr->src_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -3828,7 +3829,7 @@ smf_bearer_t *smf_vcn_tunnel_add(smf_sess_t *sess)
     qos_flow->dl_far = dl_far;
 
     ogs_assert(sess->session.name);
-    dl_far->apn = ogs_strdup(sess->session.name);
+    dl_far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(dl_far->apn);
 
     dl_far->dst_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -3847,7 +3848,7 @@ smf_bearer_t *smf_vcn_tunnel_add(smf_sess_t *sess)
     qos_flow->ul_far = ul_far;
 
     ogs_assert(sess->session.name);
-    ul_far->apn = ogs_strdup(sess->session.name);
+    ul_far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(ul_far->apn);
 
     ul_far->dst_if = OGS_PFCP_INTERFACE_CORE;
@@ -3888,7 +3889,7 @@ void smf_sess_create_indirect_data_forwarding(smf_sess_t *sess)
         ogs_assert(pdr);
 
         ogs_assert(sess->session.name);
-        pdr->apn = ogs_strdup(sess->session.name);
+        pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
         ogs_assert(pdr->apn);
 
         pdr->src_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -3905,7 +3906,7 @@ void smf_sess_create_indirect_data_forwarding(smf_sess_t *sess)
         ogs_assert(far);
 
         ogs_assert(sess->session.name);
-        far->apn = ogs_strdup(sess->session.name);
+        far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
         ogs_assert(far->apn);
 
         far->dst_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -3966,7 +3967,7 @@ void smf_sess_create_indirect_data_forwarding(smf_sess_t *sess)
 
                 resource = ogs_pfcp_find_gtpu_resource(
                         &sess->pfcp_node->gtpu_resource_list,
-                        sess->session.name, pdr->src_if);
+                        smf_sess_nwi_for_pfcp(sess), pdr->src_if);
 
                 if (resource) {
                     ogs_user_plane_ip_resource_info_to_sockaddr(&resource->info,
@@ -4075,7 +4076,7 @@ void smf_sess_create_cp_up_data_forwarding(smf_sess_t *sess)
     sess->cp2up_pdr = cp2up_pdr;
 
     if (ogs_global_conf()->parameter.use_upg_vpp == true) {
-        cp2up_pdr->apn = ogs_strdup(sess->session.name);
+        cp2up_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
         ogs_assert(cp2up_pdr->apn);
     }
 
@@ -4089,7 +4090,7 @@ void smf_sess_create_cp_up_data_forwarding(smf_sess_t *sess)
     ogs_assert(up2cp_pdr);
     sess->up2cp_pdr = up2cp_pdr;
 
-    up2cp_pdr->apn = ogs_strdup(sess->session.name);
+    up2cp_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(up2cp_pdr->apn);
 
     up2cp_pdr->src_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -4119,7 +4120,7 @@ void smf_sess_create_cp_up_data_forwarding(smf_sess_t *sess)
     sess->up2cp_far = up2cp_far;
 
     if (ogs_global_conf()->parameter.use_upg_vpp == true) {
-        up2cp_far->apn = ogs_strdup(sess->session.name);
+        up2cp_far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
         ogs_assert(up2cp_far->apn);
     }
 
@@ -4216,7 +4217,7 @@ smf_bearer_t *smf_bearer_add(smf_sess_t *sess)
     bearer->dl_pdr = dl_pdr;
 
     ogs_assert(sess->session.name);
-    dl_pdr->apn = ogs_strdup(sess->session.name);
+    dl_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(dl_pdr->apn);
 
     dl_pdr->src_if = OGS_PFCP_INTERFACE_CORE;
@@ -4229,7 +4230,7 @@ smf_bearer_t *smf_bearer_add(smf_sess_t *sess)
     bearer->ul_pdr = ul_pdr;
 
     ogs_assert(sess->session.name);
-    ul_pdr->apn = ogs_strdup(sess->session.name);
+    ul_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(ul_pdr->apn);
 
     ul_pdr->src_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -4247,7 +4248,7 @@ smf_bearer_t *smf_bearer_add(smf_sess_t *sess)
     bearer->dl_far = dl_far;
 
     ogs_assert(sess->session.name);
-    dl_far->apn = ogs_strdup(sess->session.name);
+    dl_far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(dl_far->apn);
 
     dl_far->dst_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -4266,7 +4267,7 @@ smf_bearer_t *smf_bearer_add(smf_sess_t *sess)
     bearer->ul_far = ul_far;
 
     ogs_assert(sess->session.name);
-    ul_far->apn = ogs_strdup(sess->session.name);
+    ul_far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(ul_far->apn);
 
     ul_far->dst_if = OGS_PFCP_INTERFACE_CORE;
