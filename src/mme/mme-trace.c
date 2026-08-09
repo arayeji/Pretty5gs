@@ -445,35 +445,15 @@ void mme_log_radio(
 void mme_trace_diameter(
         const char *imsi_bcd, const char *dir, struct msg *msg)
 {
-    uint8_t *buf = NULL;
-    size_t len = 0;
-    int ret;
-
-    if (!imsi_bcd || !imsi_bcd[0] || !msg)
-        return;
-    if (ogs_trace_filter_count() == 0)
-        return;
-    if (!ogs_trace_filter_match(imsi_bcd))
-        return;
-
-    ret = fd_msg_update_length(msg);
-    if (ret != 0) {
-        ogs_warn("[%s] PACKET diameter %s: fd_msg_update_length failed (%d)",
-                imsi_bcd, dir && dir[0] ? dir : "-", ret);
-        return;
-    }
-
-    ret = fd_msg_bufferize(msg, &buf, &len);
-    if (ret != 0 || !buf || !len) {
-        ogs_warn("[%s] PACKET diameter %s: fd_msg_bufferize failed "
-                "(ret=%d len=%zu)",
-                imsi_bcd, dir && dir[0] ? dir : "-", ret, len);
-        if (buf)
-            free(buf);
-        return;
-    }
-
-    ogs_trace_packet(imsi_bcd, "diameter", dir && dir[0] ? dir : "-",
-            buf, len);
-    free(buf);
+    /*
+     * DISABLED: fd_msg_bufferize() / fd_msg_update_length() on a live
+     * freeDiameter msg can hit ASSERT(offset == msg_length) and abort()
+     * the whole MME. Do not serialize Diameter into PACKET until we have
+     * a copy-based or wire-tap path that cannot kill the process.
+     *
+     * Hooks remain so re-enabling is a one-function change.
+     */
+    (void)imsi_bcd;
+    (void)dir;
+    (void)msg;
 }
