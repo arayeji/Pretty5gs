@@ -294,11 +294,31 @@ char *ogs_dnn_oi_from_plmn_id(const ogs_plmn_id_t *plmn_id)
 char *ogs_dnn_oi_from_fqdn(char *fqdn)
 {
     char *mnc_pos = NULL;
+    size_t n;
+    char *p;
 
     ogs_assert(fqdn);
 
-    /* Find ".mnc" from right side */
-    mnc_pos = ogs_strrstr(fqdn, FQDN_MNC);
+    /*
+     * Find ".mnc" from the right, case-insensitive. Visited SGWs often
+     * send APN OI as .MNC012.MCC432.GPRS; a case-sensitive search left
+     * session.name as the full FQDN and UE IP pool lookup (dnn=hiweb)
+     * failed with NO_RESOURCES.
+     */
+    n = strlen(fqdn);
+    if (n >= 4) {
+        for (p = fqdn + n - 4; p >= fqdn; p--) {
+            if (p[0] == '.' &&
+                (p[1] == 'm' || p[1] == 'M') &&
+                (p[2] == 'n' || p[2] == 'N') &&
+                (p[3] == 'c' || p[3] == 'C')) {
+                mnc_pos = p;
+                break;
+            }
+            if (p == fqdn)
+                break;
+        }
+    }
     if (!mnc_pos)
         return NULL;
 
@@ -308,19 +328,19 @@ char *ogs_dnn_oi_from_fqdn(char *fqdn)
         return NULL;
 
     /* Validate that ".mnc" is followed by 3 digits */
-    if (!isdigit(mnc_pos[4]) ||
-        !isdigit(mnc_pos[5]) ||
-        !isdigit(mnc_pos[6]))
+    if (!isdigit((unsigned char)mnc_pos[4]) ||
+        !isdigit((unsigned char)mnc_pos[5]) ||
+        !isdigit((unsigned char)mnc_pos[6]))
         return NULL;
 
-    /* Check format ".mcc" after MNC */
-    if (strncmp(mnc_pos + 7, FQDN_MCC, strlen(FQDN_MCC)) != 0)
+    /* Check format ".mcc" after MNC (case-insensitive) */
+    if (ogs_strncasecmp(mnc_pos + 7, FQDN_MCC, strlen(FQDN_MCC)) != 0)
         return NULL;
 
     /* Validate MCC digits */
-    if (!isdigit(mnc_pos[11]) ||
-        !isdigit(mnc_pos[12]) ||
-        !isdigit(mnc_pos[13]))
+    if (!isdigit((unsigned char)mnc_pos[11]) ||
+        !isdigit((unsigned char)mnc_pos[12]) ||
+        !isdigit((unsigned char)mnc_pos[13]))
         return NULL;
 
     return mnc_pos+1;   /* caller will parse MNC, MCC from here */
