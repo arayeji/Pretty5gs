@@ -77,6 +77,9 @@ void mme_orphan_sweep_get_stats(mme_orphan_sweep_stats_t *stats);
 
 void mme_admin_detach_ue(mme_ue_t *mme_ue, bool force);
 
+/* Per-APN PDN disconnect (admin /admin/session/delete?imsi=&apn=). */
+void mme_admin_detach_sess(mme_sess_t *sess, bool force);
+
 /*
  * Batched maintenance drain (/admin/maintenance/drain). begin() bumps the
  * drain generation and processes the first batch; subsequent batches are

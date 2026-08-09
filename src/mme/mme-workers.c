@@ -314,6 +314,7 @@ static int mme_event_resolve_wid(mme_event_t *e)
         break;
 
     case MME_EVENT_ADMIN_DETACH_UE:
+    case MME_EVENT_ADMIN_DETACH_SESS:
     case MME_EVENT_ADMIN_PAGE_UE:
     case MME_EVENT_ADMIN_PURGE_UE:
     case MME_EVENT_S1AP_HO_TAIL:
@@ -665,6 +666,7 @@ static bool mme_event_is_ue_scoped(int id)
     case MME_EVENT_S6A_MESSAGE:
     case MME_EVENT_S6A_TIMER:
     case MME_EVENT_ADMIN_DETACH_UE:
+    case MME_EVENT_ADMIN_DETACH_SESS:
     case MME_EVENT_ADMIN_PAGE_UE:
     case MME_EVENT_ADMIN_PURGE_UE:
     case MME_EVENT_S1AP_HO_TAIL:

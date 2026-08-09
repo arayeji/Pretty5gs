@@ -163,6 +163,65 @@ static void smf_admin_detach_ue_sessions(smf_ue_t *ue, int admin_force)
             admin_force ? "removed" : "initiated for", count, ue->imsi_bcd);
 }
 
+/*
+ * Graceful: GTPv2 Delete Bearer Request for the default bearer (same as
+ * RADIUS PoD) so SGW/MME tear down the PDN; PFCP follows on DBR response.
+ * Force: PFCP best-effort + local remove.
+ */
+static void smf_admin_detach_one_session(smf_sess_t *sess, int admin_force)
+{
+    smf_ue_t *smf_ue;
+    smf_bearer_t *bearer;
+    int rv;
+
+    ogs_assert(sess);
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+
+    ogs_info("admin session delete: imsi=%s apn=%s mode=%s",
+            smf_ue && smf_ue->imsi_bcd[0] ? smf_ue->imsi_bcd : "-",
+            sess->session.name ? sess->session.name : "-",
+            admin_force ? "force" : "graceful");
+
+    if (admin_force) {
+        rv = smf_epc_pfcp_send_session_deletion_best_effort(sess);
+        ogs_expect(rv == OGS_OK);
+        smf_sess_remove(sess);
+        if (smf_ue && ogs_list_empty(&smf_ue->sess_list))
+            smf_ue_remove(smf_ue);
+        return;
+    }
+
+    if (!sess->epc) {
+        ogs_warn("admin session delete: non-EPC session id=%d — "
+                "forcing PFCP teardown", (int)sess->id);
+        rv = smf_epc_pfcp_send_session_deletion_best_effort(sess);
+        ogs_expect(rv == OGS_OK);
+        return;
+    }
+
+    bearer = smf_default_bearer_in_sess(sess);
+    if (!bearer || !sess->gnode) {
+        ogs_warn("admin session delete: half-state (bearer=%p gnode=%p) "
+                "sess_id=%d — PFCP teardown",
+                bearer, sess->gnode, (int)sess->id);
+        rv = smf_epc_pfcp_send_session_deletion_request(
+                sess, OGS_INVALID_POOL_ID);
+        ogs_expect(rv == OGS_OK);
+        return;
+    }
+
+    rv = smf_gtp2_send_delete_bearer_request(bearer,
+            OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED,
+            OGS_GTP2_CAUSE_REACTIVATION_REQUESTED);
+    if (rv != OGS_OK) {
+        ogs_error("admin session delete: Delete Bearer Request failed "
+                "(rv=%d) — PFCP teardown", rv);
+        rv = smf_epc_pfcp_send_session_deletion_request(
+                sess, OGS_INVALID_POOL_ID);
+        ogs_expect(rv == OGS_OK);
+    }
+}
+
 void smf_state_initial(ogs_fsm_t *s, smf_event_t *e)
 {
     smf_sm_debug(e);
@@ -1743,6 +1802,17 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             } else {
                 ogs_warn("admin session detach: UE already gone");
             }
+        }
+        break;
+
+    case SMF_EVT_ADMIN_DETACH_SESS_ONE:
+        {
+            smf_sess_t *admin_sess = smf_sess_find_by_id(e->admin_sess_id);
+            if (admin_sess)
+                smf_admin_detach_one_session(admin_sess, e->admin_force);
+            else
+                ogs_warn("admin session delete: sess id=%d already gone",
+                        (int)e->admin_sess_id);
         }
         break;
 

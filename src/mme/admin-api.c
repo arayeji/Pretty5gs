@@ -210,6 +210,86 @@ int mme_admin_ue_detach(const ogs_metrics_query_t *q,
     return ADMIN_HTTP_ACCEPTED;
 }
 
+/*
+ * DELETE /admin/session/delete?imsi=<IMSI>[&apn=<APN>][&force=1]
+ *
+ * No APN: full UE detach (same as /admin/ue/detach).
+ * With APN: network-initiated PDN disconnect for that APN only.
+ */
+static int mme_admin_session_delete(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    if (!q || !q->imsi || !*q->imsi) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_BAD_REQUEST, "missing ?imsi=...");
+        return ADMIN_HTTP_BAD_REQUEST;
+    }
+
+    if (!q->apn || !*q->apn)
+        return mme_admin_ue_detach(q, body, body_cap, body_len);
+
+    ogs_pool_id_t mme_ue_pool_id = OGS_INVALID_POOL_ID;
+    ogs_pool_id_t sess_id = OGS_INVALID_POOL_ID;
+    int owner_wid = -1;
+
+    mme_ctx_lock();
+    mme_ue_t *mme_ue = mme_ue_find_by_imsi_bcd(q->imsi);
+    if (mme_ue) {
+        char apn_ni[OGS_MAX_APN_LEN + 1];
+        mme_sess_t *sess;
+
+        mme_ue_pool_id = mme_ue->id;
+        owner_wid = mme_shard_from_teid(mme_ue->mme_s11_teid);
+
+        snprintf(apn_ni, sizeof(apn_ni), "%s", q->apn);
+        {
+            char *oi = ogs_dnn_oi_from_fqdn(apn_ni);
+            if (oi && oi > apn_ni && oi[-1] == '.')
+                oi[-1] = '\0';
+        }
+
+        sess = mme_sess_find_by_apn(mme_ue, apn_ni);
+        if (sess)
+            sess_id = sess->id;
+    }
+    mme_ctx_unlock();
+
+    if (mme_ue_pool_id == OGS_INVALID_POOL_ID) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_NOT_FOUND, "UE not found");
+        return ADMIN_HTTP_NOT_FOUND;
+    }
+    if (sess_id == OGS_INVALID_POOL_ID) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_NOT_FOUND, "session not found for imsi=%s apn=%s",
+                q->imsi, q->apn);
+        return ADMIN_HTTP_NOT_FOUND;
+    }
+
+    mme_event_t *e = mme_event_new(MME_EVENT_ADMIN_DETACH_SESS);
+    if (!e) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_INTERNAL_ERROR, "event_new failed");
+        return ADMIN_HTTP_INTERNAL_ERROR;
+    }
+    e->mme_ue_id = mme_ue_pool_id;
+    e->sess_id = sess_id;
+    e->owner_wid = owner_wid;
+    e->admin_force = q->force ? 1 : 0;
+
+    if (mme_event_push_to_ue_owner(e) != OGS_OK) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
+        return ADMIN_HTTP_SERVICE_UNAVAIL;
+    }
+
+    *body_len = fmt_json_status(body, body_cap,
+            ADMIN_HTTP_ACCEPTED,
+            "session delete queued for imsi=%s apn=%s mode=%s",
+            q->imsi, q->apn, e->admin_force ? "force" : "graceful");
+    return ADMIN_HTTP_ACCEPTED;
+}
+
 int mme_admin_ue_page(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len)
 {
@@ -805,6 +885,10 @@ void mme_admin_api_register(void)
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
     ogs_metrics_register_admin_ep(mme_admin_ue_detach,
             "/admin/ue/detach",
+            OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
+    /* Per-APN PDN disconnect (SGWC/SMF-compatible): ?imsi=&apn=[&force=1] */
+    ogs_metrics_register_admin_ep(mme_admin_session_delete,
+            "/admin/session/delete",
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
     ogs_metrics_register_admin_ep(mme_admin_ue_page,
             "/admin/ue/page",

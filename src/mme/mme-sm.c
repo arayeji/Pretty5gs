@@ -1629,6 +1629,18 @@ cleanup:
         break;
     }
 
+    case MME_EVENT_ADMIN_DETACH_SESS:
+    {
+        mme_sess_t *sess = mme_sess_find_by_id(e->sess_id);
+        if (!sess) {
+            ogs_warn("admin session delete: sess pool-id %d already gone",
+                    (int)e->sess_id);
+            break;
+        }
+        mme_admin_detach_sess(sess, e->admin_force ? true : false);
+        break;
+    }
+
     case MME_EVENT_ADMIN_PURGE_UE:
     {
         mme_ue = mme_ue_find_by_id(e->mme_ue_id);

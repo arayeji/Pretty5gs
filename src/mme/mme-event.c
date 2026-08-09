@@ -342,6 +342,8 @@ const char *mme_event_get_name(mme_event_t *e)
         return "MME_EVENT_ADMIN_DETACH_ENB";
     case MME_EVENT_ADMIN_DETACH_UE:
         return "MME_EVENT_ADMIN_DETACH_UE";
+    case MME_EVENT_ADMIN_DETACH_SESS:
+        return "MME_EVENT_ADMIN_DETACH_SESS";
     case MME_EVENT_ADMIN_PAGE_UE:
         return "MME_EVENT_ADMIN_PAGE_UE";
     case MME_EVENT_ADMIN_PURGE_UE:

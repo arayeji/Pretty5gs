@@ -72,6 +72,7 @@ typedef enum {
     SMF_EVT_ADMIN_MAINTENANCE_DISABLE,
     SMF_EVT_ADMIN_MAINTENANCE_DRAIN,
     SMF_EVT_ADMIN_DETACH_SESSION,
+    SMF_EVT_ADMIN_DETACH_SESS_ONE,  /* one PDN/APN (admin_sess_id) */
     SMF_EVT_ADMIN_PURGE_SEID,       /* delete one stale UPF SEID (NMS audit) */
 
     SMF_EVT_ORPHAN_SWEEP,           /* periodic orphan metric + optional purge */
@@ -119,9 +120,11 @@ typedef struct smf_event_s {
 
     ogs_pool_id_t sess_id;
 
-    /* SMF_EVT_ADMIN_MAINTENANCE_DRAIN / DETACH_SESSION: 0=graceful, 1=force */
+    /* SMF_EVT_ADMIN_MAINTENANCE_DRAIN / DETACH_*: 0=graceful, 1=force */
     int admin_force;
     ogs_pool_id_t smf_ue_id;
+    /* SMF_EVT_ADMIN_DETACH_SESS_ONE: specific session */
+    ogs_pool_id_t admin_sess_id;
 
     /* SMF_EVT_ADMIN_PURGE_SEID: raw UPF F-SEID to delete + optional UPF
      * address filter (NULL -> the single associated UPF peer). The handler

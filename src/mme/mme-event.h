@@ -84,6 +84,7 @@ typedef enum {
      */
     MME_EVENT_ADMIN_DETACH_ENB,
     MME_EVENT_ADMIN_DETACH_UE,
+    MME_EVENT_ADMIN_DETACH_SESS,  /* one PDN/APN (e->sess_id) */
     MME_EVENT_ADMIN_PAGE_UE,
     /*
      * Silent local UE reclaim on the OWNER shard

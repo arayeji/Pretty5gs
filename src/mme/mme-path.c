@@ -766,6 +766,88 @@ void mme_admin_detach_ue(mme_ue_t *mme_ue, bool force)
     }
 }
 
+/*
+ * Network-initiated PDN disconnect for one APN (admin).
+ * Graceful + ECM-CONNECTED: S11 Delete Session then NAS Deactivate.
+ * Graceful + ECM-IDLE / no S1: S11 Delete Session with NO_ACTION (clears
+ * on response) — NAS cannot be delivered without S1.
+ * Force: local MME_SESS_CLEAR; best-effort S11 Delete Session.
+ */
+void mme_admin_detach_sess(mme_sess_t *sess, bool force)
+{
+    mme_ue_t *mme_ue;
+    mme_bearer_t *bearer;
+    enb_ue_t *enb_ue;
+    sgw_ue_t *sgw_ue;
+    const char *apn;
+    int action;
+
+    ogs_assert(sess);
+    mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
+    if (!mme_ue) {
+        ogs_warn("admin session delete: mme_ue gone for sess id=%d",
+                (int)sess->id);
+        mme_sess_remove(sess);
+        return;
+    }
+
+    apn = sess->session && sess->session->name ? sess->session->name : "-";
+    bearer = mme_default_bearer_in_sess(sess);
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+
+    ogs_info("admin session delete: imsi=%s apn=%s mode=%s ecm=%s",
+            mme_ue->imsi_bcd, apn,
+            force ? "force" : "graceful",
+            ECM_CONNECTED(mme_ue) ? "CONNECTED" : "IDLE");
+
+    if (force) {
+        if (sgw_ue && sgw_ue->sgw_s11_teid) {
+            if (mme_gtp_send_delete_session_request(
+                        enb_ue, sgw_ue, sess, OGS_GTP_DELETE_NO_ACTION)
+                    != OGS_OK)
+                ogs_error("[%s] admin session delete force: DSR failed "
+                        "apn=%s", mme_ue->imsi_bcd, apn);
+        }
+        MME_SESS_CLEAR(sess);
+        return;
+    }
+
+    if (sgw_ue && sgw_ue->sgw_s11_teid) {
+        /*
+         * Connected: ask for NAS Deactivate after DSR (UE-initiated PDN
+         * disconnect path). Idle: NO_ACTION so DSR response clears local
+         * sess without needing S1 for NAS.
+         */
+        action = (ECM_CONNECTED(mme_ue) && enb_ue) ?
+                OGS_GTP_DELETE_SEND_DEACTIVATE_BEARER_CONTEXT_REQUEST :
+                OGS_GTP_DELETE_NO_ACTION;
+
+        if (mme_gtp_send_delete_session_request(
+                    enb_ue, sgw_ue, sess, action) != OGS_OK) {
+            ogs_error("[%s] admin session delete: DSR failed apn=%s",
+                    mme_ue->imsi_bcd, apn);
+            MME_SESS_CLEAR(sess);
+            return;
+        }
+
+        if (action == OGS_GTP_DELETE_SEND_DEACTIVATE_BEARER_CONTEXT_REQUEST &&
+                bearer)
+            OGS_FSM_TRAN(&bearer->sm, esm_state_pdn_will_disconnect);
+        return;
+    }
+
+    /* No S11 path — local NAS deactivate or clear */
+    if (ECM_CONNECTED(mme_ue) && bearer && enb_ue) {
+        int r = nas_eps_send_deactivate_bearer_context_request(
+                bearer, OGS_NAS_ESM_CAUSE_REGULAR_DEACTIVATION);
+        ogs_expect(r == OGS_OK);
+        OGS_FSM_TRAN(&bearer->sm, esm_state_pdn_will_disconnect);
+    } else {
+        MME_SESS_CLEAR(sess);
+    }
+}
+
 void mme_send_eps_detach_with_session_delete(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
 {
     ogs_assert(mme_ue);
