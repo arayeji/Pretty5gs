@@ -459,7 +459,18 @@ ogs_pkbuf_t *mme_s11_build_modify_bearer_request(
     ogs_assert(mme_ue);
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     ogs_assert(sgw_ue);
-    ogs_assert(ogs_list_count(&mme_ue->bearer_to_modify_list));
+    /*
+     * Never abort the MME on an empty list. Concurrent ICS Response and
+     * Activate-Default-Bearer-Accept both list_init() bearer_to_modify_list;
+     * one path can clear the list after the other already decided to send.
+     */
+    if (ogs_list_count(&mme_ue->bearer_to_modify_list) == 0) {
+        ogs_warn("[%s] Modify Bearer Request skipped: "
+                "bearer_to_modify_list empty "
+                "(ICS/attach-complete race or no active S1-U bearers)",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+        return NULL;
+    }
 
     /* Initialize message */
     memset(&gtp_message, 0, sizeof(ogs_gtp2_message_t));

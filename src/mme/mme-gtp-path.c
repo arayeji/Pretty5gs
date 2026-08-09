@@ -822,7 +822,17 @@ int mme_gtp_send_modify_bearer_request(
 
     ogs_assert(mme_ue);
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        ogs_error("[%s] Modify Bearer Request: SGW-UE gone",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+        return OGS_ERROR;
+    }
+    if (ogs_list_count(&mme_ue->bearer_to_modify_list) == 0) {
+        ogs_warn("[%s] Modify Bearer Request not sent: "
+                "bearer_to_modify_list empty",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+        return OGS_ERROR;
+    }
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
     h.type = OGS_GTP2_MODIFY_BEARER_REQUEST_TYPE;
