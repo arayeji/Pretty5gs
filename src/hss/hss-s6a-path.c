@@ -1557,38 +1557,46 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
                     skip_subscriber_data ? 1 : 0,
                     imeisv_bcd[0] ? imeisv_bcd : "-");
 
-            if (!skip_subscriber_data) {
-                /* Set the Subscription Data */
-                ret = fd_msg_avp_new(ogs_diam_s6a_subscription_data, 0, &avp);
-                if (ret != 0) {
-                    ogs_error("Failed to create Subscription-Data AVP");
-                    error_occurred = 1;
-                    goto out;
-                }
-
-                rv = hss_s6a_avp_add_subscription_data(&subscription_data,
-                    avp, OGS_DIAM_S6A_SUBDATA_ALL);
-                if (rv != OGS_OK) {
-                    ogs_error("Failed to add subscription data");
-                    result_code = OGS_DIAM_S6A_ERROR_UNKNOWN_EPS_SUBSCRIPTION;
-                    error_occurred = 1;
-                    goto out;
-                }
-
-                ret = fd_msg_avp_add(ans, MSG_BRW_LAST_CHILD, avp);
-                if (ret != 0) {
-                    ogs_error("Failed to add Subscription-Data AVP");
-                    error_occurred = 1;
-                    goto out;
-                }
-
+            /*
+             * Always include Subscription-Data in ULA.
+             * Visited MMEs often set Skip-Subscriber-Data on Initial Attach
+             * after a prior registration elsewhere; omitting subdata then
+             * leaves them without APN / static-IP profile. Operator policy:
+             * ignore ULR Skip-Subscriber-Data (TS 29.272 allows skip only as
+             * an optimization when MME already has current data).
+             */
+            if (skip_subscriber_data) {
                 hss_trace_event(imsi_bcd, "S6a-ULR",
-                        "ULA includes Subscription-Data");
-            } else {
-                hss_trace_event(imsi_bcd, "S6a-ULR",
-                        "ULA omits Subscription-Data "
-                        "(MME set Skip-Subscriber-Data)");
+                        "ignoring Skip-Subscriber-Data; "
+                        "ULA will include Subscription-Data");
             }
+
+            /* Set the Subscription Data */
+            ret = fd_msg_avp_new(ogs_diam_s6a_subscription_data, 0, &avp);
+            if (ret != 0) {
+                ogs_error("Failed to create Subscription-Data AVP");
+                error_occurred = 1;
+                goto out;
+            }
+
+            rv = hss_s6a_avp_add_subscription_data(&subscription_data,
+                avp, OGS_DIAM_S6A_SUBDATA_ALL);
+            if (rv != OGS_OK) {
+                ogs_error("Failed to add subscription data");
+                result_code = OGS_DIAM_S6A_ERROR_UNKNOWN_EPS_SUBSCRIPTION;
+                error_occurred = 1;
+                goto out;
+            }
+
+            ret = fd_msg_avp_add(ans, MSG_BRW_LAST_CHILD, avp);
+            if (ret != 0) {
+                ogs_error("Failed to add Subscription-Data AVP");
+                error_occurred = 1;
+                goto out;
+            }
+
+            hss_trace_event(imsi_bcd, "S6a-ULR",
+                    "ULA includes Subscription-Data");
         }
     }
 
