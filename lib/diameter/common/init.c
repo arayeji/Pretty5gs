@@ -106,6 +106,7 @@ static void diam_log_func(int printlevel, const char *format, va_list ap)
 {
     char *buffer = NULL;
     int  ret = 0;
+    size_t len;
 
     buffer = ogs_calloc(1, OGS_MAX_SDU_LEN);
     ogs_assert(buffer);
@@ -120,24 +121,38 @@ static void diam_log_func(int printlevel, const char *format, va_list ap)
         return;
     }
 
+    /* Trim trailing whitespace/newlines; skip empty FD lines that used
+     * to show up as bare "((null):0)" in collectors (NULL __FILE__). */
+    len = strlen(buffer);
+    while (len > 0 &&
+            (buffer[len - 1] == '\n' || buffer[len - 1] == '\r' ||
+             buffer[len - 1] == ' ' || buffer[len - 1] == '\t'))
+        buffer[--len] = '\0';
+    if (!len) {
+        ogs_free(buffer);
+        return;
+    }
+
+    /* Pass a real file label — NULL becomes "((null):0)" via %s:%d. */
 #define diam_log_printf(level, ...) \
-    ogs_log_printf(level, OGS_LOG_DOMAIN, 0, NULL, 0, NULL, 0, __VA_ARGS__)
+    ogs_log_printf(level, OGS_LOG_DOMAIN, 0, \
+            "freeDiameter", 0, NULL, 0, __VA_ARGS__)
 
     switch(printlevel) {
     case FD_LOG_ANNOYING:
-        diam_log_printf(OGS_LOG_TRACE, "[%d] %s\n", printlevel, buffer);
+        diam_log_printf(OGS_LOG_TRACE, "[%d] %s", printlevel, buffer);
         break;
     case FD_LOG_DEBUG:
-        diam_log_printf(OGS_LOG_TRACE, "[%d] %s\n", printlevel, buffer);
+        diam_log_printf(OGS_LOG_TRACE, "[%d] %s", printlevel, buffer);
         break;
     case FD_LOG_INFO:
-        diam_log_printf(OGS_LOG_TRACE, "[%d] %s\n", printlevel, buffer);
+        diam_log_printf(OGS_LOG_TRACE, "[%d] %s", printlevel, buffer);
         break;
     case FD_LOG_NOTICE:
-        diam_log_printf(OGS_LOG_DEBUG, "%s\n", buffer);
+        diam_log_printf(OGS_LOG_DEBUG, "%s", buffer);
         break;
     case FD_LOG_ERROR:
-        diam_log_printf(OGS_LOG_ERROR, "%s\n", buffer);
+        diam_log_printf(OGS_LOG_ERROR, "%s", buffer);
         if (!strcmp(buffer, " - The certificate is expired.")) {
             ogs_error("You can renew CERT as follows:");
             ogs_error("./support/freeDiameter/make_certs.sh "
@@ -145,10 +160,10 @@ static void diam_log_func(int printlevel, const char *format, va_list ap)
         }
         break;
     case FD_LOG_FATAL:
-        diam_log_printf(OGS_LOG_FATAL, "%s\n", buffer);
+        diam_log_printf(OGS_LOG_FATAL, "%s", buffer);
         break;
     default:
-        diam_log_printf(OGS_LOG_ERROR, "[%d] %s\n", printlevel, buffer);
+        diam_log_printf(OGS_LOG_ERROR, "[%d] %s", printlevel, buffer);
         break;
     }
 

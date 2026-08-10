@@ -534,9 +534,11 @@ void ogs_log_vprintf(ogs_log_level_e level, int id,
 
         if (!content_only) {
             if (log->print.fileline)
-                p = ogs_slprintf(p, last, " (%s:%d)", file, line);
+                p = ogs_slprintf(p, last, " (%s:%d)",
+                        file ? file : "-", line);
             if (log->print.function)
-                p = ogs_slprintf(p, last, " %s()", func);
+                p = ogs_slprintf(p, last, " %s()",
+                        func ? func : "-");
             if (log->print.linefeed) 
                 p = log_linefeed(p, last);
         }
@@ -563,8 +565,8 @@ void ogs_log_vprintf(ogs_log_level_e level, int id,
         }
         p = log_content(p, last, format, ap);
         if (!content_only) {
-            p = ogs_slprintf(p, last, " (%s:%d)", file, line);
-            p = ogs_slprintf(p, last, " %s()", func);
+            p = ogs_slprintf(p, last, " (%s:%d)", file ? file : "-", line);
+            p = ogs_slprintf(p, last, " %s()", func ? func : "-");
             p = log_linefeed(p, last);
         }
 
