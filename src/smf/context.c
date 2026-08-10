@@ -5091,6 +5091,11 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
         case OGS_PCO_ID_P_CSCF_RE_SELECTION_SUPPORT:
             /* TODO */
             break;
+        case OGS_PCO_ID_PDU_SESSION_ID:
+        case OGS_PCO_ID_QOS_RULES_TWO_OCTET_LENGTH_SUPPORT:
+        case OGS_PCO_ID_QOS_FLOW_DESCRIPTIONS_TWO_OCTET_LENGTH_SUPPORT:
+            /* UE capability indications (TS 24.008) — no EPC action needed */
+            break;
         default:
             ogs_warn("Unknown PCO ID:(0x%x)", ue.ids[i].id);
         }
