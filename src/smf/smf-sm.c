@@ -303,7 +303,22 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         ogs_trace_packet_bind_rx("gtp", recvbuf->data, recvbuf->len);
 
         smf_gnode = e->gnode;
-        ogs_assert(smf_gnode);
+        if (!smf_gnode) {
+            uint8_t msg_type = 0;
+            uint32_t teid = 0;
+
+            if (recvbuf->len >= 8) {
+                ogs_gtp2_header_t *h = (ogs_gtp2_header_t *)recvbuf->data;
+                msg_type = h->type;
+                if (h->teid_presence && recvbuf->len >= 12)
+                    teid = be32toh(h->teid);
+            }
+            ogs_error("S5C message with no GTP node — dropping "
+                    "type[%u] teid[0x%x] len[%d]",
+                    msg_type, teid, (int)recvbuf->len);
+            ogs_pkbuf_free(recvbuf);
+            break;
+        }
 
         if (ogs_gtp2_parse_msg(&gtp2_message, recvbuf) != OGS_OK) {
             ogs_error("ogs_gtp2_parse_msg() failed");
@@ -521,7 +536,22 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         ogs_assert(recvbuf);
 
         smf_gnode = e->gnode;
-        ogs_assert(smf_gnode);
+        if (!smf_gnode) {
+            uint8_t msg_type = 0;
+            uint32_t teid = 0;
+
+            if (recvbuf->len >= 8) {
+                ogs_gtp1_header_t *h = (ogs_gtp1_header_t *)recvbuf->data;
+                msg_type = h->type;
+                /* GTPv1 always carries TEID after flags/type/length */
+                teid = be32toh(h->teid);
+            }
+            ogs_error("Gn message with no GTP node — dropping "
+                    "type[%u] teid[0x%x] len[%d]",
+                    msg_type, teid, (int)recvbuf->len);
+            ogs_pkbuf_free(recvbuf);
+            break;
+        }
 
         if (ogs_gtp1_parse_msg(&gtp1_message, recvbuf) != OGS_OK) {
             ogs_error("ogs_gtp2_parse_msg() failed");
