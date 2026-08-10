@@ -3020,7 +3020,9 @@ int ogs_nas_eps_decode_ue_radio_capability_id_availability(ogs_nas_ue_radio_capa
     size = ue_radio_capability_id_availability->length + sizeof(ue_radio_capability_id_availability->length);
 
     if (ogs_pkbuf_pull(pkbuf, size) == NULL) {
-       ogs_error("ogs_pkbuf_pull() failed [size:%d]", (int)size);
+       /* Optional IE with bogus length — UE quirk, drop at TAU decode */
+       ogs_warn("ogs_pkbuf_pull() failed [size:%d] "
+                "(ue_radio_capability_id_availability)", (int)size);
        return -1;
     }
 

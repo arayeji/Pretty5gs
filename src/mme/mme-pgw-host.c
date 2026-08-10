@@ -180,7 +180,7 @@ static int pgw_host_dns_resolve(const char *fqdn, ogs_ip_t *smf_ip)
 
     rv = ogs_getaddrinfo(&sa_list, AF_UNSPEC, fqdn, 0, 0);
     if (rv != OGS_OK || !sa_list) {
-        ogs_error("DNS failed for PGW host [%s]", fqdn);
+        ogs_warn("DNS failed for PGW host [%s]", fqdn);
         return OGS_ERROR;
     }
 
@@ -397,7 +397,8 @@ void mme_pgw_host_resolve_pending_sessions(ogs_slice_data_t *slice_data)
                     sess->mip_home_agent_realm,
                     (int)strlen(sess->mip_home_agent_realm),
                     &sess->smf_ip) != OGS_OK) {
-            ogs_error("MIP-Home-Agent-Host resolution failed [%s]",
+            ogs_warn("MIP-Home-Agent-Host resolution failed [%s] "
+                    "(fall back to APN DNS / YAML PGW)",
                     sess->mip_home_agent_host);
         }
 

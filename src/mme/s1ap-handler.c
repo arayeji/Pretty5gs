@@ -2444,8 +2444,9 @@ void s1ap_handle_ue_context_release_request(
     }
 
     if (enb_ue->enb_ue_s1ap_id != *ENB_UE_S1AP_ID) {
-        ogs_error("Invalid ENB_UE_S1AP_ID[%lld] for "
-                "MME_UE_S1AP_ID[%lld] [expected:%u]",
+        ogs_warn("Invalid ENB_UE_S1AP_ID[%lld] for "
+                "MME_UE_S1AP_ID[%lld] [expected:%u] "
+                "(stale UEContextRelease / S1 race)",
                 (long long)*ENB_UE_S1AP_ID,
                 (long long)*MME_UE_S1AP_ID,
                 enb_ue->enb_ue_s1ap_id);
@@ -3544,7 +3545,7 @@ void s1ap_handle_path_switch_request(
     }
 
     if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
-        ogs_error("No Security Context");
+        ogs_warn("No Security Context (path switch / HO race)");
         mme_metrics_ho_fail(mme_ue, "path_switch",
                 s1ap_cause_group_name(S1AP_Cause_PR_nas),
                 S1AP_CauseNas_authentication_failure);
@@ -4093,7 +4094,7 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
     }
 
     if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
-        ogs_error("No Security Context");
+        ogs_warn("No Security Context (handover race)");
         r = s1ap_send_handover_preparation_failure(source_ue,
                 S1AP_Cause_PR_nas, S1AP_CauseNas_authentication_failure);
         ogs_expect(r == OGS_OK);
@@ -4101,7 +4102,8 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
     }
 
     if (!SESSION_CONTEXT_IS_AVAILABLE(mme_ue)) {
-        ogs_error("No Session Context : IMSI[%s]", mme_ue->imsi_bcd);
+        ogs_warn("No Session Context : IMSI[%s] (handover race)",
+                mme_ue->imsi_bcd);
         r = s1ap_send_handover_preparation_failure(source_ue,
                 S1AP_Cause_PR_nas, S1AP_CauseNas_authentication_failure);
         ogs_expect(r == OGS_OK);
@@ -4464,7 +4466,7 @@ void s1ap_handle_handover_request_ack(
 
     source_ue = enb_ue_find_by_id(target_ue->source_ue_id);
     if (!source_ue) {
-        ogs_error("No Source UE");
+        ogs_warn("No Source UE (HO cancel / S1 race)");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -4726,7 +4728,7 @@ void s1ap_handle_handover_failure(mme_enb_t *enb, ogs_s1ap_message_t *message)
 
     source_ue = enb_ue_find_by_id(target_ue->source_ue_id);
     if (!source_ue) {
-        ogs_error("No Source UE");
+        ogs_warn("No Source UE (HO cancel / S1 race)");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, NULL,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -5100,7 +5102,7 @@ void s1ap_handle_handover_notification(
 
     source_ue = enb_ue_find_by_id(target_ue->source_ue_id);
     if (!source_ue) {
-        ogs_error("No Source UE");
+        ogs_warn("No Source UE (HO cancel / S1 race)");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);

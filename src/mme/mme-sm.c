@@ -489,7 +489,8 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         }
 
         if (ogs_nas_emm_decode(&nas_message, pkbuf) != OGS_OK) {
-            ogs_error("ogs_nas_emm_decode() failed");
+            ogs_warn("ogs_nas_emm_decode() failed "
+                    "(malformed/truncated NAS from UE/eNB)");
             ogs_pkbuf_free(pkbuf);
             return;
         }
@@ -660,10 +661,11 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
 #define ESM_MESSAGE_CHECK \
     do { \
-        ogs_error("emm_state_exception"); \
-        ogs_error("nas_type:%d, create_action:%d", \
-                e->nas_type, e->create_action); \
-        ogs_error("esm.message[EBI:%d,PTI:%d,TYPE:%d]", \
+        /* Detach/attach race: queued ESM after UE left attach FSM */ \
+        ogs_warn("emm_state_exception: drop queued ESM "
+                "nas_type:%d create_action:%d "
+                "esm.message[EBI:%d,PTI:%d,TYPE:%d]", \
+                e->nas_type, e->create_action, \
                 nas_message.esm.h.eps_bearer_identity, \
                 nas_message.esm.h.procedure_transaction_identity, \
                 nas_message.esm.h.message_type); \

@@ -1352,7 +1352,8 @@ int ogs_nas_eps_decode_tracking_area_update_request(ogs_nas_eps_message_t *messa
         case OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_UE_RADIO_CAPABILITY_ID_AVAILABILITY_TYPE:
             size = ogs_nas_eps_decode_ue_radio_capability_id_availability(&tracking_area_update_request->ue_radio_capability_id_availability, pkbuf);
             if (size < 0) {
-               ogs_error("ogs_nas_eps_decode_ue_radio_capability_id_availability() failed");
+               ogs_warn("ogs_nas_eps_decode_ue_radio_capability_id_availability() failed "
+                        "(optional IE truncated/corrupt)");
                return size;
             }
 
@@ -4767,7 +4768,8 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
     case OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST:
         size = ogs_nas_eps_decode_tracking_area_update_request(message, pkbuf);
         if (size < 0) {
-           ogs_error("ogs_nas_5gs_decode_tracking_area_update_request() failed");
+           ogs_warn("ogs_nas_eps_decode_tracking_area_update_request() failed "
+                    "(malformed/truncated TAU from UE)");
            return size;
         }
 

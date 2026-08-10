@@ -312,7 +312,7 @@ static void io_request_teardown(io_sock_t *ctx, const char *why)
 
     io_mark_assoc_dead(ctx, why);
 
-    ogs_error("s1ap-io: tearing down eNB[%s] sock:%p (%s) — "
+    ogs_warn("s1ap-io: tearing down eNB[%s] sock:%p (%s) — "
             "clear TX queue + S1 CONNREFUSED",
             io_sock_peer_str(ctx, peer), (void *)ctx->sock,
             why ? why : "?");

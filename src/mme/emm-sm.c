@@ -985,7 +985,8 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             }
 
             if (!MME_UE_HAVE_IMSI(mme_ue)) {
-                ogs_error("No IMSI");
+                ogs_warn("Identity response without usable IMSI "
+                        "(race / abort)");
                 MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
                 break;
             }

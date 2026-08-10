@@ -369,8 +369,8 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
     if (procedureCode == S1AP_ProcedureCode_id_initialUEMessage) {
         if (h->protocol_discriminator != OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM) {
 
-            ogs_error("Invalid protocol_discriminator [%d] "
-                    "(not EMM — garbled NAS on Initial UE Message) "
+            ogs_warn("Invalid protocol_discriminator [%d] "
+                    "(not EMM — garbled/corrupt NAS on Initial UE Message) "
                     "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
                     h->protocol_discriminator, enb_ip[0] ? enb_ip : "-",
                     enb_id, enb_ue->enb_ue_s1ap_id, imsi);

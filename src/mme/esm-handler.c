@@ -58,7 +58,8 @@ static int esm_resolve_pdn_type(mme_ue_t *mme_ue, mme_sess_t *sess)
     derived = mme_apn_policy_pdn_type(
             mme_ue, sess->session, sess->ue_request_type.type);
     if (derived == 0) {
-        ogs_error("[%s] Cannot derive PDN Type [UE:%d,HSS:%d]",
+        /* UE/HSS PDN-type mismatch — reject with ESM cause, not an MME fault */
+        ogs_warn("[%s] Cannot derive PDN Type [UE:%d,HSS:%d]",
                 mme_ue->imsi_bcd, sess->ue_request_type.type,
                 sess->session->session_type);
         return OGS_ERROR;
@@ -204,7 +205,9 @@ int esm_handle_pdn_connectivity_request(
             if (!sess->session) {
                 r = nas_eps_send_pdn_connectivity_reject(
                         sess, esm_cause, create_action);
-                ogs_expect(r == OGS_OK);
+                if (r != OGS_OK)
+                    ogs_warn("[%s] PDN reject send failed (no S1?)",
+                            mme_ue->imsi_bcd);
                 mme_ue_warn(mme_ue, NULL, "esm",
                         apn, "Invalid APN requested[%s]", apn);
                 return OGS_ERROR;
@@ -214,7 +217,9 @@ int esm_handle_pdn_connectivity_request(
         if (esm_resolve_pdn_type(mme_ue, sess) != OGS_OK) {
             r = nas_eps_send_pdn_connectivity_reject(
                     sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE, create_action);
-            ogs_expect(r == OGS_OK);
+            if (r != OGS_OK)
+                ogs_warn("[%s] PDN reject send failed (no S1?)",
+                        mme_ue->imsi_bcd);
             return OGS_ERROR;
         }
     }
@@ -276,7 +281,9 @@ int esm_handle_pdn_connectivity_request(
                         roam_cause);
                 r = nas_eps_send_pdn_connectivity_reject(
                         sess, roam_cause, create_action);
-                ogs_expect(r == OGS_OK);
+                if (r != OGS_OK)
+                    ogs_warn("[%s] PDN reject send failed (no S1?)",
+                            mme_ue->imsi_bcd);
                 return OGS_ERROR;
             }
         }
@@ -301,7 +308,9 @@ int esm_handle_pdn_connectivity_request(
                 r = nas_eps_send_pdn_connectivity_reject(sess,
                         OGS_NAS_ESM_CAUSE_MULTIPLE_PDN_CONNECTIONS_FOR_A_GIVEN_APN_NOT_ALLOWED,
                         create_action);
-                ogs_expect(r == OGS_OK);
+                if (r != OGS_OK)
+                    ogs_warn("[%s] PDN reject send failed (no S1?)",
+                            mme_ue->imsi_bcd);
                 return OGS_ERROR;
             }
         }
@@ -311,7 +320,9 @@ int esm_handle_pdn_connectivity_request(
                 esm_resolve_pdn_type(mme_ue, sess) != OGS_OK) {
             r = nas_eps_send_pdn_connectivity_reject(
                     sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE, create_action);
-            ogs_expect(r == OGS_OK);
+            if (r != OGS_OK)
+                ogs_warn("[%s] PDN reject send failed (no S1?)",
+                        mme_ue->imsi_bcd);
             return OGS_ERROR;
         }
 
