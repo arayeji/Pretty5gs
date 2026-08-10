@@ -1079,7 +1079,8 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             mme_s6a_handle_idr(mme_ue, s6a_message);
             break;
         default:
-            ogs_error("Invalid Type[%d]", s6a_message->cmd_code);
+            ogs_error("[%s] Invalid S6a cmd_code[%d]",
+                    mme_ue->imsi_bcd, s6a_message->cmd_code);
             break;
         }
 

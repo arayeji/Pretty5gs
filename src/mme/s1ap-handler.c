@@ -756,8 +756,27 @@ void s1ap_initial_ue_stmsi_assoc_tail(enb_ue_t *enb_ue,
     nas_pdu.buf = nasbuf->data;
     nas_pdu.size = nasbuf->len;
 
-    ogs_expect(OGS_OK == s1ap_send_to_nas(
-                enb_ue, S1AP_ProcedureCode_id_initialUEMessage, &nas_pdu));
+    /*
+     * Bad/corrupt NAS is already logged inside s1ap_send_to_nas() with
+     * eNB IP. Do not ogs_expect() — that emits a second ERROR without
+     * identity. Capture ids before the call: send_to_nas may free enb_ue.
+     */
+    {
+        mme_enb_t *enb = mme_enb_find_by_id(enb_ue->enb_id);
+        char buf[OGS_ADDRSTRLEN];
+        uint32_t enb_ue_s1ap_id = enb_ue->enb_ue_s1ap_id;
+        uint32_t log_enb_id = (enb && enb->enb_id_presence) ? enb->enb_id : 0;
+        const char *enb_addr = (enb && enb->sctp.addr) ?
+                OGS_ADDR(enb->sctp.addr, buf) : "-";
+        const char *imsi = (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) ?
+                mme_ue->imsi_bcd : "-";
+
+        if (s1ap_send_to_nas(enb_ue,
+                    S1AP_ProcedureCode_id_initialUEMessage, &nas_pdu) != OGS_OK)
+            ogs_warn("InitialUEMessage: NAS drop/reject "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                    enb_addr, log_enb_id, enb_ue_s1ap_id, imsi);
+    }
 }
 
 void s1ap_handle_initial_ue_message(
@@ -1124,8 +1143,24 @@ void s1ap_handle_initial_ue_message(
                     pkbuf->data, pkbuf->len);
     }
 
-    ogs_expect(OGS_OK == s1ap_send_to_nas(
-                enb_ue, S1AP_ProcedureCode_id_initialUEMessage, NAS_PDU));
+    /*
+     * Corrupt NAS already logged in s1ap_send_to_nas(); avoid ogs_expect
+     * double-ERROR without eNB identity. Capture ids first — enb_ue may
+     * be freed on reject.
+     */
+    {
+        mme_ue_t *ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+        uint32_t enb_ue_s1ap_id = enb_ue->enb_ue_s1ap_id;
+        uint32_t log_enb_id = enb->enb_id;
+        const char *enb_addr = OGS_ADDR(enb->sctp.addr, buf);
+        const char *imsi = (ue && MME_UE_HAVE_IMSI(ue)) ? ue->imsi_bcd : "-";
+
+        if (s1ap_send_to_nas(enb_ue,
+                    S1AP_ProcedureCode_id_initialUEMessage, NAS_PDU) != OGS_OK)
+            ogs_warn("InitialUEMessage: NAS drop/reject "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                    enb_addr, log_enb_id, enb_ue_s1ap_id, imsi);
+    }
 }
 
 void s1ap_handle_uplink_nas_transport(
@@ -1358,8 +1393,19 @@ void s1ap_handle_uplink_nas_transport(
         mme_ue->ue_location_timestamp = ogs_time_now();
     }
 
-    ogs_expect(OGS_OK == s1ap_send_to_nas(
-                enb_ue, S1AP_ProcedureCode_id_uplinkNASTransport, NAS_PDU));
+    {
+        uint32_t enb_ue_s1ap_id = enb_ue->enb_ue_s1ap_id;
+        uint32_t log_enb_id = enb->enb_id;
+        const char *enb_addr = OGS_ADDR(enb->sctp.addr, buf);
+        const char *imsi = (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) ?
+                mme_ue->imsi_bcd : "-";
+
+        if (s1ap_send_to_nas(enb_ue,
+                    S1AP_ProcedureCode_id_uplinkNASTransport, NAS_PDU) != OGS_OK)
+            ogs_warn("UplinkNASTransport: NAS drop/reject "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                    enb_addr, log_enb_id, enb_ue_s1ap_id, imsi);
+    }
 }
 
 void s1ap_handle_ue_capability_info_indication(

@@ -34,6 +34,35 @@
 #include "mme-workers.h"
 #include "metrics.h"
 
+/*
+ * Identity helpers for NAS drop / decode failure logs. Initial UE Message
+ * often has no IMSI yet — eNB peer IP is the only stable handle then.
+ */
+static const char *s1ap_nas_log_ids(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        char *enb_ip, uint32_t *enb_id)
+{
+    mme_enb_t *enb = NULL;
+
+    if (enb_id)
+        *enb_id = 0;
+    if (enb_ip)
+        enb_ip[0] = '\0';
+
+    if (enb_ue) {
+        enb = mme_enb_find_by_id(enb_ue->enb_id);
+        if (enb) {
+            if (enb_id && enb->enb_id_presence)
+                *enb_id = enb->enb_id;
+            if (enb_ip && enb->sctp.addr)
+                OGS_ADDR(enb->sctp.addr, enb_ip);
+        }
+    }
+
+    if (mme_ue && MME_UE_HAVE_IMSI(mme_ue))
+        return mme_ue->imsi_bcd;
+    return "-";
+}
+
 int s1ap_open(void)
 {
     ogs_socknode_t *node = NULL;
@@ -212,6 +241,9 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
     int rv;
 
     mme_ue_t *mme_ue = NULL;
+    char enb_ip[OGS_ADDRSTRLEN];
+    uint32_t enb_id = 0;
+    const char *imsi;
 
     ogs_nas_eps_security_header_t *sh = NULL;
     ogs_nas_security_header_type_t security_header_type;
@@ -223,13 +255,17 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
     ogs_assert(enb_ue);
     ogs_assert(nasPdu);
 
+    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+    imsi = s1ap_nas_log_ids(enb_ue, mme_ue, enb_ip, &enb_id);
+
     if (nasPdu->size < sizeof(ogs_nas_emm_header_t)) {
-        ogs_error("NAS PDU too short [%d]", (int)nasPdu->size);
+        ogs_error("NAS PDU too short [%d] "
+                "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                (int)nasPdu->size, enb_ip[0] ? enb_ip : "-",
+                enb_id, enb_ue->enb_ue_s1ap_id, imsi);
         enb_ue_remove(enb_ue);
         return OGS_ERROR;
     }
-
-    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
 
     /* The Packet Buffer(pkbuf_t) for NAS message MUST make a HEADROOM.
      * When calculating AES_CMAC, we need to use the headroom of the packet. */
@@ -268,8 +304,10 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
         /* Spare/reserved security header (e.g. 0xf) — corrupt or
          * non-EPS NAS from UE/eNB; drop Initial UE Message. */
         ogs_error("Bad NAS security header type:0x%x "
-                "(spare/reserved — corrupt PDU from UE or eNB)",
-                sh->security_header_type);
+                "(spare/reserved — corrupt PDU from UE or eNB) "
+                "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                sh->security_header_type, enb_ip[0] ? enb_ip : "-",
+                enb_id, enb_ue->enb_ue_s1ap_id, imsi);
         ogs_pkbuf_free(nasbuf);
         enb_ue_remove(enb_ue);
         return OGS_ERROR;
@@ -287,8 +325,10 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
      */
     if (security_header_type.integrity_protected) {
         if (!ogs_pkbuf_pull(nasbuf, sizeof(ogs_nas_eps_security_header_t))) {
-            ogs_error("NAS PDU too short for security header [%d]",
-                    (int)nasPdu->size);
+            ogs_error("NAS PDU too short for security header [%d] "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                    (int)nasPdu->size, enb_ip[0] ? enb_ip : "-",
+                    enb_id, enb_ue->enb_ue_s1ap_id, imsi);
             ogs_pkbuf_free(nasbuf);
             enb_ue_remove(enb_ue);
             return OGS_ERROR;
@@ -301,7 +341,10 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
      * covers ciphered messages: the length is unchanged by decoding.
      */
     if (nasbuf->len < sizeof(ogs_nas_emm_header_t)) {
-        ogs_error("NAS PDU too short for EMM header [%d]", (int)nasbuf->len);
+        ogs_error("NAS PDU too short for EMM header [%d] "
+                "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                (int)nasbuf->len, enb_ip[0] ? enb_ip : "-",
+                enb_id, enb_ue->enb_ue_s1ap_id, imsi);
         ogs_pkbuf_free(nasbuf);
         enb_ue_remove(enb_ue);
         return OGS_ERROR;
@@ -310,7 +353,10 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
     if (mme_ue) {
         if (nas_eps_security_decode(mme_ue,
                 security_header_type, nasbuf) != OGS_OK) {
-            ogs_error("nas_eps_security_decode failed()");
+            ogs_error("nas_eps_security_decode failed "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                    enb_ip[0] ? enb_ip : "-",
+                    enb_id, enb_ue->enb_ue_s1ap_id, imsi);
             ogs_pkbuf_free(nasbuf);
             enb_ue_remove(enb_ue);
             return OGS_ERROR;
@@ -324,8 +370,10 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
         if (h->protocol_discriminator != OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM) {
 
             ogs_error("Invalid protocol_discriminator [%d] "
-                    "(not EMM — garbled NAS on Initial UE Message)",
-                    h->protocol_discriminator);
+                    "(not EMM — garbled NAS on Initial UE Message) "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                    h->protocol_discriminator, enb_ip[0] ? enb_ip : "-",
+                    enb_id, enb_ue->enb_ue_s1ap_id, imsi);
 
             ogs_pkbuf_free(nasbuf);
             enb_ue_remove(enb_ue);
@@ -340,7 +388,10 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
             h->message_type != OGS_NAS_EPS_EXTENDED_SERVICE_REQUEST &&
             h->message_type != OGS_NAS_EPS_DETACH_REQUEST) {
 
-            ogs_error("Invalid EMM message type [%d]", h->message_type);
+            ogs_error("Invalid EMM message type [%d] "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                    h->message_type, enb_ip[0] ? enb_ip : "-",
+                    enb_id, enb_ue->enb_ue_s1ap_id, imsi);
 
             ogs_pkbuf_free(nasbuf);
             enb_ue_remove(enb_ue);
@@ -353,7 +404,10 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
         int rv;
         e = mme_event_new(MME_EVENT_EMM_MESSAGE);
         if (!e) {
-            ogs_error("s1ap_send_to_nas() failed");
+            ogs_error("s1ap_send_to_nas() failed (no event) "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                    enb_ip[0] ? enb_ip : "-",
+                    enb_id, enb_ue->enb_ue_s1ap_id, imsi);
             ogs_pkbuf_free(nasbuf);
             return OGS_ERROR;
         }
@@ -371,12 +425,18 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
         e->nas_location_present = true;
         rv = mme_event_push_to_ue_owner(e);
         if (rv != OGS_OK)
-            ogs_error("s1ap_send_to_nas() failed:%d", (int)rv);
+            ogs_error("s1ap_send_to_nas() push failed:%d "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                    (int)rv, enb_ip[0] ? enb_ip : "-",
+                    enb_id, enb_ue->enb_ue_s1ap_id, imsi);
         return rv;
     } else if (h->protocol_discriminator ==
             OGS_NAS_PROTOCOL_DISCRIMINATOR_ESM) {
         if (!mme_ue) {
-            ogs_error("No UE Context");
+            ogs_error("No UE Context for ESM "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u]",
+                    enb_ip[0] ? enb_ip : "-",
+                    enb_id, enb_ue->enb_ue_s1ap_id);
             ogs_pkbuf_free(nasbuf);
             return OGS_ERROR;
         }
@@ -386,8 +446,10 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
         ogs_expect(rv == OGS_OK);
         return rv;
     } else {
-        ogs_error("Unknown/Unimplemented NAS Protocol discriminator 0x%02x",
-                  h->protocol_discriminator);
+        ogs_error("Unknown/Unimplemented NAS Protocol discriminator 0x%02x "
+                "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                h->protocol_discriminator, enb_ip[0] ? enb_ip : "-",
+                enb_id, enb_ue->enb_ue_s1ap_id, imsi);
 
         ogs_pkbuf_free(nasbuf);
         enb_ue_remove(enb_ue);

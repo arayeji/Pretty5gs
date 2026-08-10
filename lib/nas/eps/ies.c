@@ -3634,10 +3634,15 @@ int ogs_nas_eps_decode_access_point_name(ogs_nas_access_point_name_t *access_poi
              * we can see whether the UE sent empty APN, plain ASCII
              * (no label lengths), or truncated labels — "UE not APN
              * setting" alone is useless for root-cause.
+             * IMSI/enb_id come from thread-local trace when set.
              */
+            const ogs_trace_ctx_t *tr = ogs_trace_get();
             ogs_error("APN decode failed: ie_len=%d parse_rv=%d "
-                    "(UE sent empty/invalid DNS labels — often 0x00..)",
-                    access_point_name->length, apn_len);
+                    "(UE sent empty/invalid DNS labels — often 0x00..) "
+                    "IMSI[%s] enb_id[%u]",
+                    access_point_name->length, apn_len,
+                    (tr && tr->imsi[0]) ? tr->imsi : "-",
+                    tr ? tr->enb_id : 0);
             if (access_point_name->length > 0)
                 ogs_log_hexdump(OGS_LOG_ERROR,
                         (unsigned char *)access_point_name->apn,
