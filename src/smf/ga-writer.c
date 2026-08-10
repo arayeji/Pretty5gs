@@ -66,6 +66,9 @@ static struct {
     uint32_t cur_records;
     uint32_t cur_bytes;
     ogs_time_t cur_opened;
+    /* Monotonic file id — avoid second-resolution name collisions that
+     * CGF multi-workers then clobber in done/. */
+    uint32_t file_seq;
 } g;
 
 /* ================================================================== */
@@ -887,15 +890,21 @@ static int open_current_file(void)
 
     if (g.fp) return OGS_OK;
 
-    ogs_snprintf(name, sizeof(name), "%s/%s-%llu.cdr",
-            g.current_dir, node,
-            (unsigned long long)(ogs_time_now() / OGS_USEC_PER_SEC));
+    for (;;) {
+        ogs_time_t now = ogs_time_now();
+
+        g.file_seq++;
+        ogs_snprintf(name, sizeof(name), "%s/%s-%lld-%u.cdr",
+                g.current_dir, node, (long long)now, g.file_seq);
+        if (access(name, F_OK) != 0)
+            break;
+    }
 
     if (g.current_path) { ogs_free(g.current_path); g.current_path = NULL; }
     g.current_path = ogs_strdup(name);
     ogs_assert(g.current_path);
 
-    g.fp = fopen(g.current_path, "ab");
+    g.fp = fopen(g.current_path, "wb");
     if (!g.fp) {
         ogs_warn("smf_ga_writer: cannot open spool file '%s': %s",
                 g.current_path, strerror(errno));

@@ -448,20 +448,55 @@ static size_t offset_after_records(
     return off;
 }
 
+/* Unique suffix for done/failed destinations (multi-worker safe). */
+static unsigned long g_finish_seq;
+
+static int worker_id_from_processing_path(const char *path)
+{
+    const char *p;
+
+    if (!path) return -1;
+    /* .../processing/<id>/basename */
+    p = strstr(path, "processing");
+    if (!p) return -1;
+    p += strlen("processing");
+    if (*p != '/' && *p != '\\') return -1;
+    p++;
+    if (*p < '0' || *p > '9') return -1;
+    return atoi(p);
+}
+
 static void move_to(cgf_spool_file_t *file, const char *dstdir)
 {
     const char *base = strrchr(file->path, '/');
+    int worker_id;
+    unsigned long seq;
+    char dst[512];
 #ifdef _WIN32
     { const char *bb = strrchr(file->path, '\\'); if (bb > base) base = bb; }
 #endif
     base = base ? base + 1 : file->path;
-    {
-        char dst[512];
-        ogs_snprintf(dst, sizeof(dst), "%s/%s", dstdir, base);
-        if (rename(file->path, dst) != 0) {
-            ogs_warn("cgf: rename '%s' -> '%s' failed: %s",
-                    file->path, dst, strerror(errno));
-        }
+
+    /*
+     * Multi-worker CGF claims ready/foo.cdr into processing/<id>/foo.cdr.
+     * Writers historically reused the same basename within one second, so
+     * several workers could finish different contents that all mapped to
+     * done/foo.cdr — rename(2) then silently clobbered earlier ACKed
+     * files. Always land on a unique destination (worker + seq).
+     */
+    worker_id = worker_id_from_processing_path(file->path);
+    seq = (unsigned long)__sync_add_and_fetch(&g_finish_seq, 1);
+    if (worker_id >= 0) {
+        ogs_snprintf(dst, sizeof(dst), "%s/w%d-%lu-%s",
+                dstdir, worker_id, seq, base);
+    } else {
+        ogs_snprintf(dst, sizeof(dst), "%s/%lu-%s", dstdir, seq, base);
+    }
+    if (rename(file->path, dst) != 0) {
+        ogs_warn("cgf: rename '%s' -> '%s' failed: %s",
+                file->path, dst, strerror(errno));
+    } else {
+        ogs_debug("cgf: moved '%s' -> '%s'", file->path, dst);
     }
 }
 

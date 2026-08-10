@@ -49,6 +49,10 @@ static struct {
     uint32_t cur_records;
     uint32_t cur_bytes;
     ogs_time_t cur_opened;
+    /* Monotonic per-process file id — second-resolution names collide
+     * under multi-worker CGF (same basename in processing/N/ then
+     * clobbers done/ on move). */
+    uint32_t file_seq;
 } g;
 
 /*
@@ -652,16 +656,23 @@ static int open_current_file(void)
 
     if (g.fp) return OGS_OK;
 
-    ogs_snprintf(name, sizeof(name), "%s/%s-%llu-%d.cdr",
-            g.current_dir, node,
-            (unsigned long long)(ogs_time_now() / OGS_USEC_PER_SEC),
-            (int)sgwc_getpid());
+    /* usec + seq + pid: unique even with many rotates in the same second. */
+    for (;;) {
+        ogs_time_t now = ogs_time_now();
+
+        g.file_seq++;
+        ogs_snprintf(name, sizeof(name), "%s/%s-%lld-%u-%d.cdr",
+                g.current_dir, node,
+                (long long)now, g.file_seq, (int)sgwc_getpid());
+        if (access(name, F_OK) != 0)
+            break;
+    }
 
     if (g.current_path) { ogs_free(g.current_path); g.current_path = NULL; }
     g.current_path = ogs_strdup(name);
     ogs_assert(g.current_path);
 
-    g.fp = fopen(g.current_path, "ab");
+    g.fp = fopen(g.current_path, "wb");
     if (!g.fp) {
         ogs_warn("sgwc_ga_writer: cannot open '%s': %s",
                 g.current_path, strerror(errno));
