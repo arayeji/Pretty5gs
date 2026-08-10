@@ -4960,8 +4960,20 @@ int ogs_nas_emm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
         decoded += size;
         break;
     default:
-        ogs_error("Unknown message type (0x%x) or not implemented", 
-                message->emm.h.message_type);
+        /*
+         * Not a missing Open5GS feature: TS 24.301 EMM types are in the
+         * 0x41–0x68 / 0x64–0x68 ranges (attach/TAU/auth/…). Values like
+         * 0x14 are undefined for EMM — usually garbled/deciphered-wrong
+         * NAS or a non-EMM PDU. Drop; do not treat as ERROR.
+         */
+        {
+            const ogs_trace_ctx_t *tr = ogs_trace_get();
+            ogs_warn("Unknown/undefined EMM message type 0x%x "
+                    "(not a TS 24.301 EMM type — often corrupt NAS) "
+                    "IMSI[%s]",
+                    message->emm.h.message_type,
+                    (tr && tr->imsi[0]) ? tr->imsi : "-");
+        }
         break;
     }
 
@@ -5181,8 +5193,14 @@ int ogs_nas_esm_decode(ogs_nas_eps_message_t *message, ogs_pkbuf_t *pkbuf)
         decoded += size;
         break;
     default:
-        ogs_error("Unknown message type (0x%x) or not implemented", 
-               message->esm.h.message_type);
+        {
+            const ogs_trace_ctx_t *tr = ogs_trace_get();
+            ogs_warn("Unknown/undefined ESM message type 0x%x "
+                    "(not a TS 24.301 ESM type — often corrupt NAS) "
+                    "IMSI[%s]",
+                    message->esm.h.message_type,
+                    (tr && tr->imsi[0]) ? tr->imsi : "-");
+        }
         break;
     }
 

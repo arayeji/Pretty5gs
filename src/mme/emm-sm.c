@@ -865,7 +865,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             /* perf: 1.7% of production CPU was NAS hexdumps on these
              * chronic error paths — rate-guard the dump, not the line */
             if (ogs_log_guard())
-                ogs_log_hexdump(OGS_LOG_ERROR,
+                ogs_log_hexdump(OGS_LOG_WARN,
                         e->pkbuf->data, e->pkbuf->len);
             break;
         }
@@ -1719,7 +1719,7 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
             /* perf: 1.7% of production CPU was NAS hexdumps on these
              * chronic error paths — rate-guard the dump, not the line */
             if (ogs_log_guard())
-                ogs_log_hexdump(OGS_LOG_ERROR,
+                ogs_log_hexdump(OGS_LOG_WARN,
                         e->pkbuf->data, e->pkbuf->len);
             break;
         }
@@ -1965,7 +1965,7 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
             /* perf: 1.7% of production CPU was NAS hexdumps on these
              * chronic error paths — rate-guard the dump, not the line */
             if (ogs_log_guard())
-                ogs_log_hexdump(OGS_LOG_ERROR,
+                ogs_log_hexdump(OGS_LOG_WARN,
                         e->pkbuf->data, e->pkbuf->len);
             break;
         }
@@ -2280,7 +2280,7 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
             /* perf: 1.7% of production CPU was NAS hexdumps on these
              * chronic error paths — rate-guard the dump, not the line */
             if (ogs_log_guard())
-                ogs_log_hexdump(OGS_LOG_ERROR,
+                ogs_log_hexdump(OGS_LOG_WARN,
                         e->pkbuf->data, e->pkbuf->len);
             break;
         }
@@ -2710,7 +2710,7 @@ void emm_state_exception(ogs_fsm_t *s, mme_event_t *e)
             /* perf: 1.7% of production CPU was NAS hexdumps on these
              * chronic error paths — rate-guard the dump, not the line */
             if (ogs_log_guard())
-                ogs_log_hexdump(OGS_LOG_ERROR,
+                ogs_log_hexdump(OGS_LOG_WARN,
                         e->pkbuf->data, e->pkbuf->len);
             break;
         }
