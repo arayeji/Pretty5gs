@@ -662,8 +662,8 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 #define ESM_MESSAGE_CHECK \
     do { \
         /* Detach/attach race: queued ESM after UE left attach FSM */ \
-        ogs_warn("emm_state_exception: drop queued ESM "
-                "nas_type:%d create_action:%d "
+        ogs_warn("emm_state_exception: drop queued ESM " \
+                "nas_type:%d create_action:%d " \
                 "esm.message[EBI:%d,PTI:%d,TYPE:%d]", \
                 e->nas_type, e->create_action, \
                 nas_message.esm.h.eps_bearer_identity, \
