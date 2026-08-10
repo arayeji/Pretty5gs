@@ -591,14 +591,38 @@ ogs_pkbuf_t *mme_s11_build_delete_session_request(
     mme_bearer_t *bearer = NULL;
     mme_ue_t *mme_ue = NULL;
     sgw_ue_t *sgw_ue = NULL;
+    uint8_t linked_ebi = 0;
 
     ogs_assert(sess);
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
-    ogs_assert(mme_ue);
+    /*
+     * Teardown races can free UE / empty the bearer list while detach
+     * or admin delete still builds Delete Session. Hard-asserting here
+     * SIGABRTed production MME (2026-08-10 21:28).
+     */
+    if (!mme_ue) {
+        ogs_error("Delete Session Request: UE gone (sess id=%d)",
+                (int)sess->id);
+        return NULL;
+    }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        ogs_error("[%s] Delete Session Request: SGW-UE gone",
+                mme_ue->imsi_bcd);
+        return NULL;
+    }
     bearer = mme_default_bearer_in_sess(sess);
-    ogs_assert(bearer);
+    linked_ebi = bearer ? bearer->ebi : sess->linked_ebi;
+    if (!linked_ebi) {
+        ogs_error("[%s] Delete Session Request: no Linked EBI "
+                "(sess id=%d bearer_list empty, linked_ebi unset)",
+                mme_ue->imsi_bcd, (int)sess->id);
+        return NULL;
+    }
+    if (!bearer)
+        ogs_warn("[%s] Delete Session Request: bearer list empty; "
+                "using cached Linked EBI[%d]",
+                mme_ue->imsi_bcd, linked_ebi);
 
     ogs_debug("Delete Session Request");
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
@@ -607,7 +631,7 @@ ogs_pkbuf_t *mme_s11_build_delete_session_request(
     memset(&gtp_message, 0, sizeof(ogs_gtp2_message_t));
 
     req->linked_eps_bearer_id.presence = 1;
-    req->linked_eps_bearer_id.u8 = bearer->ebi;
+    req->linked_eps_bearer_id.u8 = linked_ebi;
 
     /* User Location Information(ULI) */
     memset(&uli, 0, sizeof(ogs_gtp2_uli_t));

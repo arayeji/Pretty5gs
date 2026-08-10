@@ -866,8 +866,10 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             }
             default_bearer = mme_default_bearer_in_sess(sess);
             if (!default_bearer) {
-                ogs_warn("ESM timer: no default bearer in sess id=%d",
-                        sess->id);
+                ogs_warn("ESM timer: no default bearer in sess id=%d — "
+                        "clear zombie session", sess->id);
+                if (!sess->delete_session_pending)
+                    MME_SESS_CLEAR(sess);
                 break;
             }
             if (default_bearer->ebi == bearer->ebi) {

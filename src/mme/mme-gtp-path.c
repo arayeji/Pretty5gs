@@ -910,7 +910,16 @@ int mme_gtp_send_delete_session_request(
 
     s11buf = mme_s11_build_delete_session_request(h.type, sess, action);
     if (!s11buf) {
-        ogs_error("mme_s11_build_delete_session_request() failed");
+        ogs_error("[%s] mme_s11_build_delete_session_request() failed "
+                "(sess id=%d) — clear local to avoid zombie session",
+                mme_ue->imsi_bcd, (int)sess->id);
+        /*
+         * Build soft-fails on missing UE/SGW/Linked-EBI under teardown
+         * races. Leaving the sess would re-hit delete-all / detach paths.
+         * Prefer local clear over aborting the process; SGW may still
+         * hold the PDN until its own idle cleanup if S11 never went out.
+         */
+        MME_SESS_CLEAR(sess);
         return OGS_ERROR;
     }
 

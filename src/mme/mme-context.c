@@ -9313,6 +9313,9 @@ mme_bearer_t *mme_bearer_add(mme_sess_t *sess)
      * sess->bearer_list on the MHD worker thread.
      */
     mme_ctx_lock();
+    /* First bearer is the default / Linked EPS Bearer ID for S11 DSR. */
+    if (ogs_list_empty(&sess->bearer_list))
+        sess->linked_ebi = bearer->ebi;
     ogs_list_add(&sess->bearer_list, bearer);
     mme_ctx_unlock();
     /* Keep the EBI -> bearer-id lookup table in sync so subsequent

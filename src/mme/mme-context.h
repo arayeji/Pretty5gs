@@ -1631,6 +1631,14 @@ typedef struct mme_sess_s {
     /* mme_bearer_first(sess) : Default Bearer Context */
     ogs_list_t      bearer_list;
 
+    /*
+     * Linked (default) EPS Bearer ID, frozen when the first bearer is
+     * added. Delete Session Request needs this IE even after the bearer
+     * list has been emptied by a teardown race — without it the MME
+     * used to ogs_assert-abort in mme_s11_build_delete_session_request.
+     */
+    uint8_t         linked_ebi;
+
     /* Related Context */
     ogs_pool_id_t   mme_ue_id;
 
