@@ -3635,7 +3635,8 @@ int ogs_nas_eps_decode_access_point_name(ogs_nas_access_point_name_t *access_poi
              * (no label lengths), or truncated labels — "UE not APN
              * setting" alone is useless for root-cause.
              */
-            ogs_error("APN decode failed: ie_len=%d parse_rv=%d",
+            ogs_error("APN decode failed: ie_len=%d parse_rv=%d "
+                    "(UE sent empty/invalid DNS labels — often 0x00..)",
                     access_point_name->length, apn_len);
             if (access_point_name->length > 0)
                 ogs_log_hexdump(OGS_LOG_ERROR,

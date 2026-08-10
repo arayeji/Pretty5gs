@@ -265,7 +265,10 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
         security_header_type.new_security_context = 1;
         break;
     default:
-        ogs_error("Not implemented(security header type:0x%x)",
+        /* Spare/reserved security header (e.g. 0xf) — corrupt or
+         * non-EPS NAS from UE/eNB; drop Initial UE Message. */
+        ogs_error("Bad NAS security header type:0x%x "
+                "(spare/reserved — corrupt PDU from UE or eNB)",
                 sh->security_header_type);
         ogs_pkbuf_free(nasbuf);
         enb_ue_remove(enb_ue);
@@ -320,7 +323,8 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
     if (procedureCode == S1AP_ProcedureCode_id_initialUEMessage) {
         if (h->protocol_discriminator != OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM) {
 
-            ogs_error("Invalid protocol_discriminator [%d]",
+            ogs_error("Invalid protocol_discriminator [%d] "
+                    "(not EMM — garbled NAS on Initial UE Message)",
                     h->protocol_discriminator);
 
             ogs_pkbuf_free(nasbuf);

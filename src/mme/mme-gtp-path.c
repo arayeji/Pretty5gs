@@ -324,7 +324,7 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
 
             suppressed++;
             if (log_now - last_log >= ogs_time_from_sec(1)) {
-                ogs_error("GTP timeout: MME-UE[%u] removed type[%u:%s] "
+                ogs_warn("GTP timeout: MME-UE[%u] removed type[%u:%s] "
                         "SGW[%s]:%d (%lu in last window)",
                         mme_ue_id, type, mme_gtp2_message_type_name(type),
                         xact && xact->gnode ?

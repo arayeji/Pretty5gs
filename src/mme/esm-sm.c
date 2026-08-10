@@ -379,11 +379,15 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
                 r = nas_eps_send_pdn_connectivity_reject(sess,
                         OGS_NAS_ESM_CAUSE_ESM_INFORMATION_NOT_RECEIVED,
                         e->create_action);
-                ogs_expect(r == OGS_OK);
+                if (r != OGS_OK)
+                    ogs_warn("[%s] PDN connectivity reject send failed "
+                            "(no S1?)", mme_ue->imsi_bcd);
             } else {
                 bearer->t3489.retry_count++;
                 r = nas_eps_send_esm_information_request(bearer);
-                ogs_expect(r == OGS_OK);
+                if (r != OGS_OK)
+                    ogs_warn("[%s] ESM information request retransmit failed "
+                            "(no S1?)", mme_ue->imsi_bcd);
             }
             break;
         case MME_TIMER_BEARER_SETUP:

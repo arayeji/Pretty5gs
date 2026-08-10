@@ -637,7 +637,9 @@ void emm_state_registered(ogs_fsm_t *s, mme_event_t *e)
                  * So, we just set CNDomain to 0
                  */
                 r = s1ap_send_paging(mme_ue, 0);
-                ogs_expect(r == OGS_OK);
+                if (r != OGS_OK)
+                    ogs_warn("[%s] paging retransmit failed (eNB/S1 gone?)",
+                            mme_ue->imsi_bcd);
             }
             break;
 
@@ -841,7 +843,7 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
         if (!enb_ue)
             enb_ue = enb_ue_find_by_id(e->enb_ue_id);
         if (!enb_ue) {
-            ogs_error("No S1 Context IMSI[%s] NAS-Type[%d] "
+            ogs_warn("No S1 Context IMSI[%s] NAS-Type[%d] "
                     "ENB-UE-ID[%d:%d][%p:%p]",
                     mme_ue->imsi_bcd, message->emm.h.message_type,
                     e->enb_ue_id, mme_ue->enb_ue_id,
@@ -1602,7 +1604,8 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             break;
 
         case OGS_NAS_EPS_ATTACH_COMPLETE:
-            ogs_error("[%s] Attach complete in INVALID-STATE",
+            ogs_warn("[%s] Attach complete in INVALID-STATE "
+                    "(attach already finished or aborted)",
                         mme_ue->imsi_bcd);
             break;
 
@@ -1706,7 +1709,7 @@ void emm_state_authentication(ogs_fsm_t *s, mme_event_t *e)
 
         enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
         if (!enb_ue) {
-            ogs_error("No S1 Context IMSI[%s] NAS-Type[%d] "
+            ogs_warn("No S1 Context IMSI[%s] NAS-Type[%d] "
                     "ENB-UE-ID[%d:%d][%p:%p]",
                     mme_ue->imsi_bcd, message->emm.h.message_type,
                     e->enb_ue_id, mme_ue->enb_ue_id,
@@ -1952,7 +1955,7 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
 
         enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
         if (!enb_ue) {
-            ogs_error("No S1 Context IMSI[%s] NAS-Type[%d] "
+            ogs_warn("No S1 Context IMSI[%s] NAS-Type[%d] "
                     "ENB-UE-ID[%d:%d][%p:%p]",
                     mme_ue->imsi_bcd, message->emm.h.message_type,
                     e->enb_ue_id, mme_ue->enb_ue_id,
@@ -2267,7 +2270,7 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
 
         enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
         if (!enb_ue) {
-            ogs_error("No S1 Context IMSI[%s] NAS-Type[%d] "
+            ogs_warn("No S1 Context IMSI[%s] NAS-Type[%d] "
                     "ENB-UE-ID[%d:%d][%p:%p]",
                     mme_ue->imsi_bcd, message->emm.h.message_type,
                     e->enb_ue_id, mme_ue->enb_ue_id,
@@ -2691,7 +2694,7 @@ void emm_state_exception(ogs_fsm_t *s, mme_event_t *e)
         if (!enb_ue)
             enb_ue = enb_ue_find_by_id(e->enb_ue_id);
         if (!enb_ue) {
-            ogs_error("No S1 Context IMSI[%s] NAS-Type[%d] "
+            ogs_warn("No S1 Context IMSI[%s] NAS-Type[%d] "
                     "ENB-UE-ID[%d:%d][%p:%p]",
                     mme_ue->imsi_bcd, message->emm.h.message_type,
                     e->enb_ue_id, mme_ue->enb_ue_id,

@@ -981,8 +981,15 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                     r = nas_eps_send_tau_reject(
                             enb_ue, mme_ue, emm_cause);
                     ogs_expect(r == OGS_OK);
+                } else if (mme_ue->nas_eps.type ==
+                                MME_EPS_TYPE_DETACH_REQUEST_FROM_UE ||
+                        mme_ue->nas_eps.type ==
+                                MME_EPS_TYPE_DETACH_REQUEST_TO_UE) {
+                    ogs_warn("[%s] S6a fail during detach (type=%d) — skip",
+                            mme_ue->imsi_bcd, mme_ue->nas_eps.type);
                 } else
-                    ogs_error("Invalid Type[%d]", mme_ue->nas_eps.type);
+                    ogs_warn("[%s] S6a fail with unexpected NAS type[%d]",
+                            mme_ue->imsi_bcd, mme_ue->nas_eps.type);
 
                 r = s1ap_send_ue_context_release_command(enb_ue,
                         S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
@@ -1026,8 +1033,15 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                     r = nas_eps_send_tau_reject(
                             enb_ue, mme_ue, emm_cause);
                     ogs_expect(r == OGS_OK);
+                } else if (mme_ue->nas_eps.type ==
+                                MME_EPS_TYPE_DETACH_REQUEST_FROM_UE ||
+                        mme_ue->nas_eps.type ==
+                                MME_EPS_TYPE_DETACH_REQUEST_TO_UE) {
+                    ogs_warn("[%s] ULA reject during detach (type=%d) — skip",
+                            mme_ue->imsi_bcd, mme_ue->nas_eps.type);
                 } else
-                    ogs_error("Invalid Type[%d]", mme_ue->nas_eps.type);
+                    ogs_warn("[%s] ULA reject with unexpected NAS type[%d]",
+                            mme_ue->imsi_bcd, mme_ue->nas_eps.type);
 
                 /*
                  * enb_ue may be NULL: the S1 connection can be released

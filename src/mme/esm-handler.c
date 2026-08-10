@@ -113,7 +113,7 @@ int esm_handle_pdn_connectivity_request(
     }
 
     if (!SECURITY_CONTEXT_IS_VALID(mme_ue)) {
-        ogs_error("No Security Context : IMSI[%s]", mme_ue->imsi_bcd);
+        ogs_warn("No Security Context : IMSI[%s]", mme_ue->imsi_bcd);
         r = nas_eps_send_pdn_connectivity_reject(
                 sess, OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                 create_action);

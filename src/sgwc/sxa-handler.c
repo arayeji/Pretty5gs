@@ -959,13 +959,14 @@ void sgwc_sxa_handle_session_modification_response(
         if (!sess) {
             ogs_pool_id_t sess_id = OGS_INVALID_POOL_ID;
 
-            ogs_error("No Session Context");
+            ogs_warn("No Session Context (already torn down)");
 
             sess_id = OGS_POINTER_TO_UINT(pfcp_xact->data);
             if (sess_id >= OGS_MIN_POOL_ID && sess_id <= OGS_MAX_POOL_ID) {
                 sess = sgwc_sess_find_by_id(sess_id);
                 if (!sess) {
-                    ogs_error("Session not found [%d]", sess_id);
+                    ogs_warn("Session not found [%d] "
+                            "(already torn down)", sess_id);
                     cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
                 }
             } else {
@@ -995,7 +996,8 @@ void sgwc_sxa_handle_session_modification_response(
 
                     sess = sgwc_sess_find_by_id(bearer->sess_id);
                     if (!sess) {
-                        ogs_error("Session not found [%d]", bearer->sess_id);
+                        ogs_warn("Session not found [%d] "
+                                "(already torn down)", bearer->sess_id);
                         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
                     }
                 }
@@ -1027,14 +1029,30 @@ void sgwc_sxa_handle_session_modification_response(
                 vpp_detail[0] = '\0';
 
             /* Always-on: sgwc_ue_error is filter-gated and would hide IMSI */
-            ogs_error("[%s] SGW-U rejected PFCP Session Modification "
-                    "APN[%s] PFCP cause[%u:%s] -> S11 cause[%u] vpp[%s]",
-                    sgwc_ue && sgwc_ue->imsi_bcd[0] ? sgwc_ue->imsi_bcd : "-",
-                    sess && sess->session.name ? sess->session.name : "-",
-                    pfcp_rsp->cause.u8,
-                    ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8),
-                    gtp_cause_from_pfcp(pfcp_rsp->cause.u8),
-                    vpp_detail[0] ? vpp_detail : "-");
+            if (pfcp_rsp->cause.u8 ==
+                    OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND)
+                ogs_warn("[%s] SGW-U PFCP Session Modification: "
+                        "session already gone APN[%s] PFCP cause[%u:%s] "
+                        "-> S11 cause[%u] vpp[%s]",
+                        sgwc_ue && sgwc_ue->imsi_bcd[0] ?
+                            sgwc_ue->imsi_bcd : "-",
+                        sess && sess->session.name ?
+                            sess->session.name : "-",
+                        pfcp_rsp->cause.u8,
+                        ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8),
+                        gtp_cause_from_pfcp(pfcp_rsp->cause.u8),
+                        vpp_detail[0] ? vpp_detail : "-");
+            else
+                ogs_error("[%s] SGW-U rejected PFCP Session Modification "
+                        "APN[%s] PFCP cause[%u:%s] -> S11 cause[%u] vpp[%s]",
+                        sgwc_ue && sgwc_ue->imsi_bcd[0] ?
+                            sgwc_ue->imsi_bcd : "-",
+                        sess && sess->session.name ?
+                            sess->session.name : "-",
+                        pfcp_rsp->cause.u8,
+                        ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8),
+                        gtp_cause_from_pfcp(pfcp_rsp->cause.u8),
+                        vpp_detail[0] ? vpp_detail : "-");
 
             if (ogs_pfcp_cause_no_association(pfcp_rsp->cause.u8) && sess)
                 sgwc_pfcp_request_reassociation(sess->pfcp_node);
@@ -2536,7 +2554,8 @@ void sgwc_sxa_handle_session_report_request(
             }
         }
 
-        ogs_error("Cannot find the PDR-ID[%d]", pdr_id);
+        ogs_warn("Cannot find the PDR-ID[%d] "
+                "(stale downlink data report after session gone)", pdr_id);
 
     } else if (report_type.error_indication_report) {
         far = ogs_pfcp_far_find_by_pfcp_session_report(

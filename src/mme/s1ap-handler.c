@@ -2613,7 +2613,7 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
         ogs_debug("    Action: UE context remove");
         enb_ue_remove(enb_ue);
         if (!mme_ue)
-            ogs_error("No UE(mme-ue) context");
+            ogs_warn("No UE(mme-ue) context");
         break;
     case S1AP_UE_CTX_REL_S1_HANDOVER_COMPLETE:
     case S1AP_UE_CTX_REL_S1_HANDOVER_CANCEL:
@@ -2629,12 +2629,12 @@ void s1ap_handle_ue_context_release_action(enb_ue_t *enb_ue)
             rel_flags |= MME_UE_REL_F_HO_PEER_GONE;
         enb_ue_remove(enb_ue);
         if (!mme_ue)
-            ogs_error("No UE(mme-ue) context");
+            ogs_warn("No UE(mme-ue) context");
         break;
     case S1AP_UE_CTX_REL_S1_PAGING:
         ogs_debug("    Action: S1 paging");
         if (!mme_ue)
-            ogs_error("No UE(mme-ue) context");
+            ogs_warn("No UE(mme-ue) context");
         enb_ue_remove(enb_ue);
         break;
     default:
@@ -3377,7 +3377,7 @@ void s1ap_handle_path_switch_request(
     }
     enb_ue = enb_ue_find_by_mme_ue_s1ap_id(*MME_UE_S1AP_ID);
     if (!enb_ue) {
-        ogs_error("Cannot find UE from sourceMME-UE-S1AP-ID[%d] and eNB[%s:%d]",
+        ogs_warn("Cannot find UE from sourceMME-UE-S1AP-ID[%d] and eNB[%s:%d]",
                 (int)*MME_UE_S1AP_ID,
                 OGS_ADDR(enb->sctp.addr, buf), enb->enb_id);
 
@@ -3460,7 +3460,7 @@ void s1ap_handle_path_switch_request(
 
     mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("No UE(mme-ue) context");
+        ogs_warn("No UE(mme-ue) context");
         return;
     }
 
@@ -3976,7 +3976,7 @@ static void s1ap_handle_handover_required_intralte(enb_ue_t *source_ue,
 
     mme_ue = mme_ue_find_by_id(source_ue->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("No UE(mme-ue) context");
+        ogs_warn("No UE(mme-ue) context");
         return;
     }
 
@@ -4427,7 +4427,7 @@ void s1ap_handle_handover_request_ack(
 
     mme_ue = mme_ue_find_by_id(source_ue->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("No UE(mme-ue) context");
+        ogs_warn("No UE(mme-ue) context");
         return;
     }
 
@@ -5063,7 +5063,7 @@ void s1ap_handle_handover_notification(
 
     mme_ue = mme_ue_find_by_id(source_ue->mme_ue_id);
     if (!mme_ue) {
-        ogs_error("No UE(mme-ue) context");
+        ogs_warn("No UE(mme-ue) context");
         return;
     }
 

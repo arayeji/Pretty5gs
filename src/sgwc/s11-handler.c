@@ -27,6 +27,16 @@
 
 #include "s11-handler.h"
 
+static void sgwc_log_gtp_cause(uint8_t cause_value)
+{
+    if (cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED)
+        return;
+    if (cause_value == OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE)
+        ogs_warn("GTP Cause [Value:%d] Unable to page UE", cause_value);
+    else
+        ogs_error("GTP Cause [Value:%d]", cause_value);
+}
+
 static bool sgwc_s11_message_recovery(
         ogs_gtp2_message_t *message, uint8_t *recovery)
 {
@@ -1512,7 +1522,7 @@ void sgwc_s11_handle_create_bearer_response(
         cause = rsp->cause.data;
         ogs_assert(cause);
         if (cause->value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-            ogs_error("GTP Cause [Value:%d]", cause->value);
+            sgwc_log_gtp_cause(cause->value);
             cause_value = cause->value;
             if (bearer) {
                 ogs_debug("    bearer[EBI=%d]", bearer->ebi);
@@ -1575,7 +1585,7 @@ void sgwc_s11_handle_create_bearer_response(
     ogs_assert(cause);
     cause_value = cause->value;
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-        ogs_error("GTP Cause [Value:%d]", cause_value);
+        sgwc_log_gtp_cause(cause_value);
         ogs_debug("    bearer[EBI=%d]", bearer->ebi);
         ogs_assert(OGS_OK ==
             sgwc_pfcp_send_bearer_modification_request(
@@ -1821,7 +1831,7 @@ void sgwc_s11_handle_update_bearer_response(
     ogs_assert(cause);
     cause_value = cause->value;
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-        ogs_error("GTP Cause [Value:%d]", cause_value);
+        sgwc_log_gtp_cause(cause_value);
         goto cleanup;
     }
 
@@ -2000,10 +2010,7 @@ void sgwc_s11_handle_delete_bearer_response(
             ogs_assert(cause);
 
             cause_value = cause->value;
-            if (cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-            } else {
-                ogs_error("GTP Cause [Value:%d]", cause_value);
-            }
+            sgwc_log_gtp_cause(cause_value);
         } else {
             ogs_error("No Cause");
         }
@@ -2045,13 +2052,13 @@ void sgwc_s11_handle_delete_bearer_response(
 
                     if (cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
                     } else {
-                        ogs_error("GTP Cause [Value:%d]", cause_value);
+                        sgwc_log_gtp_cause(cause_value);
                     }
                 } else {
                     ogs_error("No Cause");
                 }
             } else {
-                ogs_error("GTP Cause [Value:%d]", cause_value);
+                sgwc_log_gtp_cause(cause_value);
             }
         } else {
             ogs_error("No Cause");

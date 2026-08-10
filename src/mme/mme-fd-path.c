@@ -3153,7 +3153,7 @@ static int mme_s6a_idr_cb(struct msg **msg, struct avp *avp,
 
     mme_ue = mme_ue_find_by_imsi_bcd(imsi_bcd);
     if (!mme_ue) {
-        ogs_error("Insert Subscriber Data for Unknown IMSI[%s]", imsi_bcd);
+        ogs_warn("Insert Subscriber Data for Unknown IMSI[%s]", imsi_bcd);
         result_code = OGS_DIAM_S6A_ERROR_USER_UNKNOWN;
         goto error_out;
     }

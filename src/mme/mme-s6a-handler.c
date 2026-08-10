@@ -255,8 +255,14 @@ uint8_t mme_s6a_handle_ula(
                     mme_ue->tracking_area_update_accept_proc);
             ogs_expect(r == OGS_OK);
         }
+    } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_DETACH_REQUEST_FROM_UE ||
+            mme_ue->nas_eps.type == MME_EPS_TYPE_DETACH_REQUEST_TO_UE) {
+        ogs_warn("[%s] ULA while detach in progress (type=%d) — ignore",
+                mme_ue->imsi_bcd, mme_ue->nas_eps.type);
+        return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
     } else {
-        ogs_error("Invalid Type[%d]", mme_ue->nas_eps.type);
+        ogs_warn("[%s] ULA with unexpected NAS type[%d]",
+                mme_ue->imsi_bcd, mme_ue->nas_eps.type);
         return OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED;
     }
 

@@ -1213,7 +1213,10 @@ void mme_s11_handle_delete_session_response(
                 r = s1ap_send_ue_context_release_command(enb_ue,
                     S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                     S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
-                ogs_expect(r == OGS_OK);
+                if (r != OGS_OK)
+                    ogs_warn("[%s] UE context release after Delete Session "
+                            "failed (S1 already gone?)",
+                            mme_ue->imsi_bcd);
             }
         }
 
