@@ -913,6 +913,18 @@ static int mme_s6a_subscription_data_from_avp(struct avp *avp,
                         ogs_assert(ret == 0);
                         switch(hdr->avp_code) {
                         case OGS_DIAM_S6A_AVP_CODE_MIP_HOME_AGENT_ADDRESS:
+                            /*
+                             * DYNAMIC MIP6 is not a permanent PGW bind for
+                             * initial request (TS 23.401 4.3.8.1); selection
+                             * ignores it. Do not load Address into smf_ip so
+                             * CSR uses APN DNS / YAML instead.
+                             */
+                            if (session->pdn_gw_allocation_type ==
+                                    OGS_PDN_GW_ALLOCATION_DYNAMIC) {
+                                ogs_debug("MIP-Home-Agent-Address ignored "
+                                        "(PDN-GW-Allocation-Type=DYNAMIC)");
+                                break;
+                            }
                             memset(&addr, 0, sizeof(addr));
                             ret = fd_msg_avp_value_interpret(avpch4,
                                     &addr.sa);
@@ -938,7 +950,17 @@ static int mme_s6a_subscription_data_from_avp(struct avp *avp,
                             break;
                         case OGS_DIAM_S6A_AVP_CODE_MIP_HOME_AGENT_HOST:
                             if (!session->smf_ip.ipv4 && !session->smf_ip.ipv6) {
-                                if (!mme_self()->mip_home_agent_host_dns) {
+                                /*
+                                 * DYNAMIC: do not queue Host for DNS; MME
+                                 * re-selects PGW on initial request
+                                 * (TS 23.401 4.3.8.1). STATIC / unset still
+                                 * resolves when mip_home_agent_host_dns.
+                                 */
+                                if (session->pdn_gw_allocation_type ==
+                                        OGS_PDN_GW_ALLOCATION_DYNAMIC) {
+                                    ogs_debug("MIP-Home-Agent-Host ignored "
+                                            "(PDN-GW-Allocation-Type=DYNAMIC)");
+                                } else if (!mme_self()->mip_home_agent_host_dns) {
                                     ogs_debug("MIP-Home-Agent-Host ignored "
                                             "(mip_home_agent_host_dns:false)");
                                 } else if (mme_s6a_mip_home_agent_host_to_session(
