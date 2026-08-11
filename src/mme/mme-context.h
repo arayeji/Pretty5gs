@@ -1574,12 +1574,15 @@ struct mme_ue_s {
         mme_ue_remove(__mME_ue); \
     } while(0)
 
+/*
+ * Do NOT expand this to a double sgw_ue_find_by_id() with a naked
+ * ->sgw_s11_teid on the second call. That TOCTOU SIGSEGV'd MME in
+ * s1ap_handle_initial_context_setup_failure when the UE was removed
+ * between the two unlocked lookups (2026-08-11).
+ */
+bool mme_session_context_is_available(const mme_ue_t *mme_ue);
 #define SESSION_CONTEXT_IS_AVAILABLE(__mME) \
-    ((__mME) && \
-     ((__mME)->sgw_ue_id >= OGS_MIN_POOL_ID) && \
-     ((__mME)->sgw_ue_id <= OGS_MAX_POOL_ID) && \
-     (sgw_ue_find_by_id((__mME)->sgw_ue_id)) && \
-     (sgw_ue_find_by_id((__mME)->sgw_ue_id)->sgw_s11_teid))
+    mme_session_context_is_available(__mME)
 
 #define CLEAR_SESSION_CONTEXT(__mME) \
     do { \

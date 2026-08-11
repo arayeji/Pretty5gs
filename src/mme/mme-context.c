@@ -7273,6 +7273,28 @@ sgw_ue_t *sgw_ue_find_by_id(ogs_pool_id_t id)
     return sgw_ue;
 }
 
+bool mme_session_context_is_available(const mme_ue_t *mme_ue)
+{
+    sgw_ue_t *sgw_ue = NULL;
+    uint32_t teid = 0;
+
+    if (!mme_ue)
+        return false;
+    if (mme_ue->sgw_ue_id < OGS_MIN_POOL_ID ||
+            mme_ue->sgw_ue_id > OGS_MAX_POOL_ID)
+        return false;
+
+    /* Find + read TEID under one lock so we never deref a NULL from a
+     * second unlocked lookup (see SESSION_CONTEXT_IS_AVAILABLE comment). */
+    mme_ctx_lock();
+    sgw_ue = ogs_pool_find_by_id(&sgw_ue_pool, mme_ue->sgw_ue_id);
+    if (sgw_ue)
+        teid = sgw_ue->sgw_s11_teid;
+    mme_ctx_unlock();
+
+    return teid != 0;
+}
+
 sgw_relocation_e sgw_ue_check_if_relocated(
         mme_ue_t *mme_ue, enb_ue_t *enb_ue)
 {
