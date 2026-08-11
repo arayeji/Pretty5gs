@@ -214,17 +214,33 @@ static void ber_duration_ctx(ber_t *b, uint32_t tag, uint64_t secs)
 
 static void pgw_plmn_for_pgw_cdr(const smf_sess_t *sess, ogs_plmn_id_t *out)
 {
-    ogs_assert(sess && out);
+    smf_ue_t *smf_ue;
 
-    if (ogs_local_conf()->num_of_serving_plmn_id > 0) {
-        memcpy(out, &ogs_local_conf()->serving_plmn_id[0], OGS_PLMN_ID_LEN);
-        return;
-    }
-    if (sess->home_plmn_id.mcc1 || sess->home_plmn_id.mcc2) {
+    ogs_assert(sess && out);
+    memset(out, 0, sizeof(*out));
+
+    /*
+     * TS 32.298 [37] p-GWPLMNIdentifier is the PGW/home PLMN — not the
+     * visited Serving Network. EPC Create Session never filled
+     * sess->home_plmn_id, and this SMF has no global serving_plmn_id, so
+     * we used to fall through to sess->serving_plmn_id and stamp VPLMN
+     * into [37] for roamers (live: IMSI 43212* with [37]=43235/43246).
+     * Match SGWC: derive from IMSI first.
+     */
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+    if (smf_ue && smf_ue->imsi_bcd[0])
+        smf_home_plmn_from_imsi_bcd(smf_ue->imsi_bcd, out);
+    else if (sess->home_plmn_id.mcc1 || sess->home_plmn_id.mcc2 ||
+            sess->home_plmn_id.mcc3)
         memcpy(out, &sess->home_plmn_id, OGS_PLMN_ID_LEN);
-        return;
+
+    if (!out->mcc1 && !out->mcc2 && !out->mcc3) {
+        if (ogs_local_conf()->num_of_serving_plmn_id > 0)
+            memcpy(out, &ogs_local_conf()->serving_plmn_id[0],
+                    OGS_PLMN_ID_LEN);
+        else
+            memcpy(out, &sess->serving_plmn_id, OGS_PLMN_ID_LEN);
     }
-    memcpy(out, &sess->serving_plmn_id, OGS_PLMN_ID_LEN);
 }
 
 /* Reserve space for a constructed header and return a marker used by

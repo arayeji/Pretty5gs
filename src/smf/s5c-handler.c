@@ -411,6 +411,11 @@ uint8_t smf_s5c_handle_create_session_request(
     /* Serving Network */
     ogs_nas_to_plmn_id(&sess->serving_plmn_id, req->serving_network.data);
 
+    /* Home PLMN from IMSI — needed for PGW-CDR [37] and metrics. EPC used
+     * to leave home_plmn_id zero and fall back to Serving Network. */
+    if (smf_ue->imsi_bcd[0])
+        smf_home_plmn_from_imsi_bcd(smf_ue->imsi_bcd, &sess->home_plmn_id);
+
     /*
      * Serving PLMN is now known: take the per-PLMN session count here (rather
      * than at session-add, where the PLMN is still 000000) so this inc and the
