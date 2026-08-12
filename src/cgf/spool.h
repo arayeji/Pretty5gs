@@ -61,21 +61,38 @@ typedef struct cgf_spool_file_s {
     bool send_possibly_dup;
 } cgf_spool_file_t;
 
+/*
+ * Main-thread (workers==1) active-file set. Multiple files may be open
+ * at once so the GTP' window stays full while earlier files wait for
+ * ACKs. Drain workers do NOT use this set — they keep their own arrays.
+ */
+uint32_t cgf_spool_active_count(void);
+cgf_spool_file_t *cgf_spool_active_at(uint32_t idx);
+
+/* Compatibility: first active file, or NULL. Prefer active_at/count. */
 cgf_spool_file_t *cgf_spool_get_active(void);
+
+/*
+ * Open more ready/ files into the main-thread active set until `max`
+ * files are held or ready/ is empty. No-op when already at capacity.
+ * Used by the workers==1 drain path.
+ */
+void cgf_spool_try_open_more(uint32_t max);
+
+/* Legacy name: open one file if the active set is empty. */
 void cgf_spool_refill(void);
 
 /*
  * Slurp + validate + return a spool file WITHOUT touching the
- * single-threaded `g_active` slot. Used by drain workers, which own
- * their own `cgf_spool_file_t *active` pointer instead. On a bad
- * header the file is quarantined into failed/ (same as the internal
- * open path) and NULL is returned.
+ * main-thread active set. Used by drain workers, which own their own
+ * file arrays. On a bad header the file is quarantined into failed/
+ * (same as the internal open path) and NULL is returned.
  */
 cgf_spool_file_t *cgf_spool_open_path(const char *path);
 
 /* Free an in-memory file handle WITHOUT touching the file on disk or
- * `g_active`. Used by a drain worker that is shutting down while
- * still holding an active file — the on-disk copy stays under
+ * the main-thread active set. Used by a drain worker that is shutting
+ * down while still holding files — the on-disk copy stays under
  * processing/<id>/ and is reclaimed into ready/ on next startup. */
 void cgf_spool_release(cgf_spool_file_t *file);
 
@@ -108,10 +125,10 @@ bool cgf_spool_ack_batch(cgf_spool_file_t *file,
 /*
  * Same as cgf_spool_ack_batch(), but also reports whether the ack
  * caused the file to be fully delivered and freed. Callers that hold
- * a persistent pointer to `file` beyond this call (drain workers —
- * `worker->active`) MUST use this variant and clear their pointer
- * when `*out_freed` comes back true, or they will dereference freed
- * memory on the next drain attempt. `out_freed` may be NULL.
+ * a persistent pointer to `file` beyond this call (drain workers)
+ * MUST use this variant and clear their pointer when `*out_freed`
+ * comes back true, or they will dereference freed memory on the next
+ * drain attempt. `out_freed` may be NULL.
  */
 bool cgf_spool_ack_batch_ex(cgf_spool_file_t *file,
         size_t batch_start, uint32_t records, bool *out_freed);

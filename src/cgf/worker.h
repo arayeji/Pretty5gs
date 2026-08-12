@@ -26,9 +26,11 @@
  *     §6.1.1 — peers must tolerate multiple associations from the
  *     same CGF-forwarder host),
  *   - its own pollset + timer manager (echo / RTO / spool-poll ticks),
- *   - its own single active spool file, claimed by atomically renaming
- *     a file out of ready/ into processing/<worker_id>/ so workers
- *     never contend for the same file.
+ *   - its own set of active spool files (up to max_active_files),
+ *     claimed by atomically renaming out of ready/ into
+ *     processing/<worker_id>/ so workers never contend for the same
+ *     file. Multiple open files keep the GTP' window full while
+ *     earlier files wait for ACKs.
  *
  * `workers: 1` (the default) never touches this file's runtime state —
  * cgf_workers_start()/cgf_gtpp_open() is a straight either/or in
@@ -63,20 +65,18 @@ bool cgf_workers_enabled(void);
 /* The worker owning the calling thread, or NULL on the main thread. */
 cgf_worker_t *cgf_worker_self(void);
 
-/* Attempt to drain worker `w`'s active spool file to its active peer.
- * cgf-sm.c's cgf_sm_try_drain() delegates here when called on a
- * worker thread (echo/DTRR responses arrive on the worker's own recv
- * path, which reuses cgf_sm_on_echo_response()/on_dtrr_response()). */
+/* Attempt to drain worker `w`'s open spool files to peers with spare
+ * window capacity. cgf-sm.c's cgf_sm_try_drain() delegates here when
+ * called on a worker thread. */
 void cgf_worker_try_drain(cgf_worker_t *w);
 
 /*
  * cgf_sm_on_dtrr_response() (shared between main and worker threads)
  * calls this right after an ack fully delivers `file`. On a worker
- * thread it nulls out `w->active` if that was the file it pointed at
- * — required because cgf_spool_ack_batch_ex() may have just freed it,
- * and unlike the main thread (which re-reads cgf_spool_get_active()
- * fresh every drain loop iteration) a worker caches the pointer
- * across ticks. No-op on the main thread.
+ * thread it removes `file` from the worker's open-file set — required
+ * because cgf_spool_ack_batch_ex() may have just freed it. No-op on
+ * the main thread (main uses the spool active array, which removes
+ * itself inside maybe_finish_file).
  */
 void cgf_worker_on_file_gone(cgf_spool_file_t *file);
 

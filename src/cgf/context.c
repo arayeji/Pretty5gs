@@ -58,6 +58,7 @@ int cgf_context_init(void)
     self.max_records_per_packet = 255;
     self.max_bytes_per_packet = CGF_DEFAULT_MAX_BYTES_PER_PACKET;
     self.max_inflight = CGF_DEFAULT_MAX_INFLIGHT;
+    self.max_active_files = 0; /* resolved after parse: default = max_inflight */
     self.purge_on_success = false;
     self.workers = 1;
     self.send_mode = CGF_SEND_MODE_FAILOVER;
@@ -344,6 +345,8 @@ int cgf_context_parse_config(void)
                         self.max_bytes_per_packet = (uint32_t)atoi(bv);
                     else if (!strcmp(bk, "max_inflight"))
                         self.max_inflight = (uint32_t)atoi(bv);
+                    else if (!strcmp(bk, "max_active_files"))
+                        self.max_active_files = (uint32_t)atoi(bv);
                     else ogs_warn("cgf: unknown batch `%s`", bk);
                 }
             } else if (!strcmp(k, "drp")) {
@@ -380,6 +383,14 @@ int cgf_context_parse_config(void)
 
     if (!self.max_inflight || self.max_inflight > CGF_MAX_INFLIGHT)
         self.max_inflight = CGF_MAX_INFLIGHT;
+
+    /* Default active-file cap tracks the DTRR window so one drain
+     * pipeline can keep the GTP' pipe full across many small spool
+     * files while earlier ones wait for ACKs. */
+    if (!self.max_active_files)
+        self.max_active_files = self.max_inflight;
+    if (self.max_active_files > CGF_MAX_INFLIGHT)
+        self.max_active_files = CGF_MAX_INFLIGHT;
 
     if (self.workers == 0) self.workers = 1;
     if (self.workers > CGF_MAX_WORKERS) {
@@ -442,6 +453,9 @@ int cgf_context_parse_config(void)
                 "pin each spool file to one peer, rotate on new files)",
                 self.num_of_peers);
     }
+    ogs_info("cgf: batch max_inflight=%u max_active_files=%u "
+            "(multi-file drain keeps GTP' window full across ACK waits)",
+            self.max_inflight, self.max_active_files);
 
     return OGS_OK;
 }

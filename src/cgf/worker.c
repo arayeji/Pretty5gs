@@ -38,7 +38,9 @@ typedef struct cgf_worker_s {
     uint32_t num_of_peers;
     uint32_t active_peer_idx;
 
-    cgf_spool_file_t *active;   /* this worker's one in-flight file */
+    /* Open files this worker is draining (send + wait-for-ACK). */
+    cgf_spool_file_t *files[CGF_MAX_INFLIGHT];
+    uint32_t num_files;
 
     volatile bool running;
 } cgf_worker_t;
@@ -51,10 +53,27 @@ static OGS_THREAD_LOCAL cgf_worker_t *cgf_tls_worker = NULL;
 bool cgf_workers_enabled(void) { return g_cgf_worker_count > 0; }
 cgf_worker_t *cgf_worker_self(void) { return cgf_tls_worker; }
 
+static void worker_forget_file(cgf_worker_t *w, cgf_spool_file_t *file)
+{
+    uint32_t i;
+
+    if (!w || !file) return;
+    for (i = 0; i < w->num_files; i++) {
+        if (w->files[i] != file) continue;
+        if (i + 1 < w->num_files) {
+            memmove(&w->files[i], &w->files[i + 1],
+                    (w->num_files - i - 1) * sizeof(w->files[0]));
+        }
+        w->num_files--;
+        w->files[w->num_files] = NULL;
+        return;
+    }
+}
+
 void cgf_worker_on_file_gone(cgf_spool_file_t *file)
 {
-    if (cgf_tls_worker && cgf_tls_worker->active == file)
-        cgf_tls_worker->active = NULL;
+    if (cgf_tls_worker)
+        worker_forget_file(cgf_tls_worker, file);
 }
 
 /* ------------------------------------------------------------------ */
@@ -170,29 +189,41 @@ static void worker_abort_file_pipeline(cgf_peer_t *peer,
         cgf_spool_mark_possibly_dup(file);
 }
 
-/* A worker only ever has one active file, so aborting all in-flight
- * xacts against a peer only ever needs to nack that one file (unlike
- * cgf-sm.c's abort_in_flight(), which defensively handles the main
- * thread's g_active having changed underneath a batch of xacts). */
+/* Abort every in-flight xact on `peer` and nack each distinct file
+ * those xacts referenced (a worker may hold many open files). */
 static void worker_abort_in_flight(cgf_worker_t *w, cgf_peer_t *peer,
         const char *reason)
 {
     uint32_t i;
-    bool any = false;
+    cgf_spool_file_t *nacked[CGF_MAX_INFLIGHT];
+    uint32_t n_nacked = 0;
 
     if (cgf_gtpp_inflight_count(peer) == 0) return;
     ogs_warn("cgf: worker %d aborting in-flight xacts to '%s': %s",
             w->id, peer->address_str, reason);
     for (i = 0; i < CGF_MAX_INFLIGHT; i++) {
         cgf_xact_t *x = &peer->xacts[i];
+        cgf_spool_file_t *f;
+        uint32_t j;
+        bool seen;
+
         if (!x->active) continue;
-        if (x->file) any = true;
+        f = x->file;
+        if (f) {
+            seen = false;
+            for (j = 0; j < n_nacked; j++) {
+                if (nacked[j] == f) { seen = true; break; }
+            }
+            if (!seen && n_nacked < CGF_MAX_INFLIGHT)
+                nacked[n_nacked++] = f;
+        }
         cgf_gtpp_free_xact(x);
     }
-    if (any && w->active) {
-        cgf_spool_nack_batch(w->active);
-        cgf_spool_mark_possibly_dup(w->active);
+    for (i = 0; i < n_nacked; i++) {
+        cgf_spool_nack_batch(nacked[i]);
+        cgf_spool_mark_possibly_dup(nacked[i]);
     }
+    (void)w;
 }
 
 /* ------------------------------------------------------------------ */
@@ -239,12 +270,27 @@ static void worker_recv_cb(short when, ogs_socket_t fd, void *data)
 /*  File claiming                                                     */
 /* ------------------------------------------------------------------ */
 
+static bool worker_any_peer_has_room(cgf_worker_t *w, uint32_t window)
+{
+    uint32_t i;
+
+    for (i = 0; i < w->num_of_peers; i++) {
+        cgf_peer_t *p = &w->peers[i];
+        if (!p->sock || !worker_peer_may_send(p)) continue;
+        if (cgf_gtpp_inflight_count(p) < window) return true;
+    }
+    return false;
+}
+
 static int worker_claim_next_file(cgf_worker_t *w)
 {
     char claimed[512];
     cgf_spool_file_t *f;
+    uint32_t max_files = cgf_self()->max_active_files;
 
-    if (w->active) return OGS_OK;
+    if (!max_files) max_files = 1;
+    if (max_files > CGF_MAX_INFLIGHT) max_files = CGF_MAX_INFLIGHT;
+    if (w->num_files >= max_files) return OGS_ERROR;
 
     if (cgf_spool_claim_for_worker(w->id, claimed, sizeof(claimed)) != OGS_OK)
         return OGS_ERROR;
@@ -257,9 +303,31 @@ static int worker_claim_next_file(cgf_worker_t *w)
         return OGS_ERROR;
     }
 
-    w->active = f;
-    ogs_debug("cgf: worker %d claimed '%s'", w->id, claimed);
+    w->files[w->num_files++] = f;
+    ogs_debug("cgf: worker %d claimed '%s' (%u open)",
+            w->id, claimed, w->num_files);
     return OGS_OK;
+}
+
+/* Pick an open file that still has unsent bytes and whose peer has
+ * spare window capacity. Returns NULL when nothing is sendable right
+ * now (caller may claim another file or stop). */
+static cgf_spool_file_t *worker_pick_sendable_file(cgf_worker_t *w,
+        uint32_t window, cgf_peer_t **out_peer)
+{
+    uint32_t i;
+
+    for (i = 0; i < w->num_files; i++) {
+        cgf_spool_file_t *f = w->files[i];
+        cgf_peer_t *p;
+
+        if (!f || f->send_offset >= f->data_len) continue;
+        p = worker_select_peer_for_file(w, f, window);
+        if (!p) continue;
+        if (out_peer) *out_peer = p;
+        return f;
+    }
+    return NULL;
 }
 
 /* ------------------------------------------------------------------ */
@@ -272,6 +340,7 @@ void cgf_worker_try_drain(cgf_worker_t *w)
     cgf_peer_t *p;
     cgf_spool_file_t *f;
     uint32_t window;
+    uint32_t max_files;
     uint8_t batch[CGF_WORKER_BATCH_BUF_SIZE];
 
     ogs_assert(w);
@@ -280,23 +349,27 @@ void cgf_worker_try_drain(cgf_worker_t *w)
     if (!window) window = 1;
     if (window > CGF_MAX_INFLIGHT) window = CGF_MAX_INFLIGHT;
 
+    max_files = self->max_active_files;
+    if (!max_files) max_files = 1;
+    if (max_files > CGF_MAX_INFLIGHT) max_files = CGF_MAX_INFLIGHT;
+
     for (;;) {
         size_t used = 0;
         size_t cap = self->max_bytes_per_packet;
         uint32_t n;
         int rv;
 
-        f = w->active;
+        p = NULL;
+        f = worker_pick_sendable_file(w, window, &p);
         if (!f) {
+            /* No open file with unsent data + peer room. Claim another
+             * while peers still have window capacity so ACKs in flight
+             * on earlier files do not stall the pipeline. */
+            if (w->num_files >= max_files) break;
+            if (!worker_any_peer_has_room(w, window)) break;
             if (worker_claim_next_file(w) != OGS_OK) break;
-            f = w->active;
-            if (!f) break;
+            continue;
         }
-
-        if (f->send_offset >= f->data_len) break;
-
-        p = worker_select_peer_for_file(w, f, window);
-        if (!p) break;
 
         if (cap > sizeof(batch)) cap = sizeof(batch);
 
@@ -304,10 +377,10 @@ void cgf_worker_try_drain(cgf_worker_t *w)
                 self->max_records_per_packet, cap);
         if (n == 0) {
             if (f->send_offset < f->data_len) {
+                worker_forget_file(w, f);
                 cgf_spool_quarantine(f);
-                w->active = NULL;
             }
-            break;
+            continue;
         }
 
         rv = cgf_gtpp_send_data_record_transfer(p, batch, used, n, f,
@@ -523,18 +596,17 @@ static void cgf_worker_thread_fini(ogs_worker_t *ow)
         if (p->addr) { ogs_freeaddrinfo(p->addr); p->addr = NULL; }
     }
 
-    if (w->active) {
-        /*
-         * Leave the on-disk file exactly where it is, under
-         * processing/<id>/ — cgf_context_parse_config() reclaims it
-         * into ready/ on the next start. Dropping the in-memory handle
-         * here loses only the ack/inflight bookkeeping for the
-         * portion already sent-but-unconfirmed, which is exactly what
-         * "uncertain delivery" (Send-possibly-duplicated) exists to
-         * handle on the resend.
-         */
-        cgf_spool_release(w->active);
-        w->active = NULL;
+    /*
+     * Leave on-disk files under processing/<id>/ —
+     * cgf_context_parse_config() reclaims them into ready/ on the next
+     * start. Dropping in-memory handles loses only unconfirmed-ack
+     * bookkeeping, which Send-possibly-duplicated covers on resend.
+     */
+    while (w->num_files > 0) {
+        cgf_spool_file_t *f = w->files[w->num_files - 1];
+        w->num_files--;
+        w->files[w->num_files] = NULL;
+        cgf_spool_release(f);
     }
 
     if (w->t_echo) { ogs_timer_delete(w->t_echo); w->t_echo = NULL; }

@@ -347,12 +347,9 @@ void cgf_sm_on_dtrr_response(cgf_peer_t *peer, uint16_t seq, uint8_t cause)
         }
         /*
          * On a drain worker thread, `file` may be a stale/freed
-         * pointer past this point — the worker caches it in
-         * worker->active across ticks (unlike the main thread, which
-         * always re-fetches cgf_spool_get_active()). Let the worker
-         * null its cached pointer before we touch anything else that
-         * (indirectly) reads worker->active, i.e. cgf_sm_try_drain()
-         * below.
+         * pointer past this point — the worker caches open files in
+         * its local array. Drop that slot before cgf_sm_try_drain()
+         * runs again on this thread.
          */
         if (freed) cgf_worker_on_file_gone(file);
 
@@ -495,12 +492,11 @@ void cgf_sm_on_rto_tick(void)
 void cgf_sm_on_spool_tick(void)
 {
     /* Workers claim files themselves (atomic rename out of ready/);
-     * letting the main thread's cgf_spool_refill() also scan ready/
-     * here would race their claims and could open (via g_active) a
-     * file a worker is trying to claim at the same time. */
+     * letting the main thread also scan ready/ here would race their
+     * claims. */
     if (cgf_workers_enabled()) return;
 
-    cgf_spool_refill();
+    cgf_spool_try_open_more(cgf_self()->max_active_files);
     cgf_sm_try_drain();
 }
 
@@ -508,12 +504,44 @@ void cgf_sm_on_spool_tick(void)
 /*  Drain                                                             */
 /* ------------------------------------------------------------------ */
 
+static bool any_peer_has_room(uint32_t window)
+{
+    cgf_context_t *self = cgf_self();
+    uint32_t i;
+
+    for (i = 0; i < self->num_of_peers; i++) {
+        cgf_peer_t *p = &self->peers[i];
+        if (!p->sock || !peer_may_send(p)) continue;
+        if (cgf_gtpp_inflight_count(p) < window) return true;
+    }
+    return false;
+}
+
+/* Pick an open main-thread file with unsent bytes whose peer has room. */
+static cgf_spool_file_t *pick_sendable_file(uint32_t window, cgf_peer_t **out_peer)
+{
+    uint32_t i, n = cgf_spool_active_count();
+
+    for (i = 0; i < n; i++) {
+        cgf_spool_file_t *f = cgf_spool_active_at(i);
+        cgf_peer_t *p;
+
+        if (!f || f->send_offset >= f->data_len) continue;
+        p = select_peer_for_file(f, window);
+        if (!p) continue;
+        if (out_peer) *out_peer = p;
+        return f;
+    }
+    return NULL;
+}
+
 void cgf_sm_try_drain(void)
 {
     cgf_context_t *self = cgf_self();
     cgf_peer_t *p;
     cgf_spool_file_t *f;
     uint32_t window;
+    uint32_t max_files;
     static uint8_t batch[CGF_BATCH_BUF_SIZE];
 
     /*
@@ -534,23 +562,31 @@ void cgf_sm_try_drain(void)
     if (!window) window = 1;
     if (window > CGF_MAX_INFLIGHT) window = CGF_MAX_INFLIGHT;
 
+    max_files = self->max_active_files;
+    if (!max_files) max_files = 1;
+    if (max_files > CGF_MAX_INFLIGHT) max_files = CGF_MAX_INFLIGHT;
+
     for (;;) {
         size_t used = 0;
         size_t cap = self->max_bytes_per_packet;
         uint32_t n;
         int rv;
 
-        f = cgf_spool_get_active();
+        p = NULL;
+        f = pick_sendable_file(window, &p);
         if (!f) {
-            cgf_spool_refill();
-            f = cgf_spool_get_active();
-            if (!f) break;
+            /* Keep the GTP' window full: open more files while peers
+             * still have spare inflight slots, even if every currently
+             * open file is only waiting on ACKs. */
+            if (cgf_spool_active_count() >= max_files) break;
+            if (!any_peer_has_room(window)) break;
+            {
+                uint32_t before = cgf_spool_active_count();
+                cgf_spool_try_open_more(max_files);
+                if (cgf_spool_active_count() <= before) break;
+            }
+            continue;
         }
-
-        if (f->send_offset >= f->data_len) break;
-
-        p = select_peer_for_file(f, window);
-        if (!p) break;
 
         if (cap > sizeof(batch)) cap = sizeof(batch);
 
@@ -559,7 +595,7 @@ void cgf_sm_try_drain(void)
         if (n == 0) {
             if (f->send_offset < f->data_len)
                 cgf_spool_quarantine(f);
-            break;
+            continue;
         }
 
         rv = cgf_gtpp_send_data_record_transfer(p, batch, used, n, f,

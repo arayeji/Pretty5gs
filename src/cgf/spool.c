@@ -42,7 +42,13 @@
 #define CDR_FILE_VERSION    OGS_CDR_FILE_VERSION
 #define CDR_RECORD_HDR_LEN  OGS_CDR_RECORD_HDR_LEN
 
-static cgf_spool_file_t *g_active = NULL;
+/*
+ * Main-thread (workers==1) set of open spool files. Sized to the DTRR
+ * window so a single drain pipeline can keep max_inflight packets in
+ * flight across many small files while earlier ones wait for ACKs.
+ */
+static cgf_spool_file_t *g_active_files[CGF_MAX_INFLIGHT];
+static uint32_t g_active_count = 0;
 
 /*
  * Spool scan state — ready/ can hold 100k+ files. Scanning the whole
@@ -59,7 +65,43 @@ static uint32_t g_pending_idx = 0;
 
 /* ------------------------------------------------------------------ */
 
-cgf_spool_file_t *cgf_spool_get_active(void) { return g_active; }
+static void active_remove(cgf_spool_file_t *file)
+{
+    uint32_t i;
+
+    if (!file) return;
+    for (i = 0; i < g_active_count; i++) {
+        if (g_active_files[i] != file) continue;
+        if (i + 1 < g_active_count) {
+            memmove(&g_active_files[i], &g_active_files[i + 1],
+                    (g_active_count - i - 1) * sizeof(g_active_files[0]));
+        }
+        g_active_count--;
+        g_active_files[g_active_count] = NULL;
+        return;
+    }
+}
+
+static bool active_add(cgf_spool_file_t *file)
+{
+    if (!file) return false;
+    if (g_active_count >= CGF_MAX_INFLIGHT) return false;
+    g_active_files[g_active_count++] = file;
+    return true;
+}
+
+uint32_t cgf_spool_active_count(void) { return g_active_count; }
+
+cgf_spool_file_t *cgf_spool_active_at(uint32_t idx)
+{
+    if (idx >= g_active_count) return NULL;
+    return g_active_files[idx];
+}
+
+cgf_spool_file_t *cgf_spool_get_active(void)
+{
+    return g_active_count ? g_active_files[0] : NULL;
+}
 
 static const char *path_basename(const char *path)
 {
@@ -344,33 +386,50 @@ static bool open_spool_file(const char *path)
         spool_clear_cached_next();
         return false;
     }
-    g_active = f;
+    if (!active_add(f)) {
+        ogs_warn("cgf: active-file set full, releasing '%s'", path);
+        free_file(f);
+        spool_clear_cached_next();
+        return false;
+    }
     spool_clear_cached_next();
     return true;
 }
 
-void cgf_spool_refill(void)
+void cgf_spool_try_open_more(uint32_t max)
 {
     char path[512];
-    int attempts;
+    int attempts = 0;
+    uint32_t cap = max;
 
-    if (g_active) return;
+    if (!cap || cap > CGF_MAX_INFLIGHT) cap = CGF_MAX_INFLIGHT;
+    if (g_active_count >= cap) return;
     if (g_empty_until && ogs_time_now() < g_empty_until) return;
 
-    /* Try several candidates in one timer tick when early files are
-     * unreadable or corrupt — avoids a full readdir every spool_poll. */
-    for (attempts = 0; attempts < 8; attempts++) {
+    /* Try several candidates per call when early files are unreadable
+     * or corrupt — avoids a full readdir every spool_poll. */
+    while (g_active_count < cap && attempts < 16) {
         if (pick_next_path(path, sizeof(path)) != OGS_OK) {
             spool_mark_empty();
             return;
         }
-
+        attempts++;
         if (open_spool_file(path))
-            return;
+            continue;
     }
 
-    ogs_warn("cgf: spool refill skipped %d unreadable/corrupt files in "
-            "ready/", attempts);
+    if (attempts >= 16 && g_active_count < cap) {
+        ogs_warn("cgf: spool open skipped %d unreadable/corrupt files in "
+                "ready/", attempts);
+    }
+}
+
+void cgf_spool_refill(void)
+{
+    uint32_t max = cgf_self()->max_active_files;
+
+    if (!max) max = 1;
+    cgf_spool_try_open_more(max);
 }
 
 uint32_t cgf_spool_stage_batch(cgf_spool_file_t *file,
@@ -566,7 +625,7 @@ static bool maybe_finish_file(cgf_spool_file_t *file)
                 file->path);
         move_to(file, cgf_self()->done_dir);
     }
-    if (file == g_active) g_active = NULL;
+    active_remove(file);
     spool_clear_cached_next();
     spool_clear_empty_backoff();
     free_file(file);
@@ -672,17 +731,20 @@ void cgf_spool_quarantine(cgf_spool_file_t *file)
     if (!file) return;
     ogs_warn("cgf: quarantining '%s'", file->path);
     move_to(file, cgf_self()->failed_dir);
-    if (file == g_active) {
-        g_active = NULL;
-        spool_clear_cached_next();
-    }
+    active_remove(file);
+    spool_clear_cached_next();
     spool_clear_empty_backoff();
     free_file(file);
 }
 
 void cgf_spool_close(void)
 {
-    if (g_active) { free_file(g_active); g_active = NULL; }
+    while (g_active_count > 0) {
+        cgf_spool_file_t *f = g_active_files[g_active_count - 1];
+        g_active_count--;
+        g_active_files[g_active_count] = NULL;
+        free_file(f);
+    }
     spool_reset_scan_state();
 }
 

@@ -166,6 +166,14 @@ typedef struct cgf_context_s {
     uint32_t max_records_per_packet;
     uint32_t max_bytes_per_packet;
     uint32_t max_inflight;      /* pipelined DTRRs per peer (1..CGF_MAX_INFLIGHT) */
+    /*
+     * How many spool files a drain pipeline (main thread or one worker)
+     * may hold open at once. Keeping more than one file open lets the
+     * GTP' window stay full while earlier files wait for ACKs — without
+     * this, send_offset==EOF stalls the whole drain until every ACK
+     * returns. Defaults to max_inflight; clamped to CGF_MAX_INFLIGHT.
+     */
+    uint32_t max_active_files;
 
     /*
      * Data Record Packet sub-header fields (TS 32.295 §6.2.4.2, wire

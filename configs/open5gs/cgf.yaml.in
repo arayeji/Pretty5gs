@@ -110,10 +110,18 @@ cgf:
 
   batch:
     # MTU-safe GTP' datagram size (no IP fragmentation). Throughput comes
-    # from pipelining max_inflight DTRRs per peer, not oversized UDP.
+    # from pipelining max_inflight DTRRs across max_active_files, not
+    # oversized UDP. Round-robin only balances peers; these three knobs
+    # (plus workers) are what drain a large ready/ queue.
     max_records_per_packet: 255
     max_bytes_per_packet: 1400
     max_inflight: 16
+    # How many spool files one drain pipeline (main thread, or each
+    # worker) may hold open at once. Defaults to max_inflight. Without
+    # this >1, a file that has been fully sent but is still waiting for
+    # ACKs stalls the whole pipeline — the main cause of ready/ backlog
+    # when GA peers themselves are not overloaded.
+    #max_active_files: 32
 
   # Data Record Packet IE sub-header. Four octets sitting between the
   # `fc <len>` TLIV header and the list of length-prefixed BER records:
