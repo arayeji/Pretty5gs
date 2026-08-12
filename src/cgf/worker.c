@@ -67,6 +67,8 @@ static cgf_peer_t *worker_active_peer(cgf_worker_t *w)
     return &w->peers[w->active_peer_idx];
 }
 
+static bool worker_peer_may_send(const cgf_peer_t *peer);
+
 static void worker_switch_to_next_peer(cgf_worker_t *w)
 {
     uint32_t i, start = w->active_peer_idx;
@@ -89,6 +91,65 @@ static bool worker_peer_may_send(const cgf_peer_t *peer)
 {
     return peer->state == CGF_PEER_STATE_UP ||
             peer->state == CGF_PEER_STATE_PROBING;
+}
+
+static cgf_peer_t *worker_peer_holding_file(cgf_worker_t *w,
+        cgf_spool_file_t *file)
+{
+    uint32_t i, j;
+
+    if (!file) return NULL;
+    for (i = 0; i < w->num_of_peers; i++) {
+        cgf_peer_t *p = &w->peers[i];
+        for (j = 0; j < CGF_MAX_INFLIGHT; j++) {
+            if (p->xacts[j].active && p->xacts[j].file == file)
+                return p;
+        }
+    }
+    return NULL;
+}
+
+static cgf_peer_t *worker_rr_pick_peer(cgf_worker_t *w, uint32_t window)
+{
+    uint32_t i, start;
+
+    if (!w->num_of_peers) return NULL;
+    start = w->active_peer_idx % w->num_of_peers;
+
+    for (i = 0; i < w->num_of_peers; i++) {
+        uint32_t idx = (start + i) % w->num_of_peers;
+        cgf_peer_t *p = &w->peers[idx];
+
+        if (!p->sock || !worker_peer_may_send(p)) continue;
+        if (cgf_gtpp_inflight_count(p) >= window) continue;
+
+        w->active_peer_idx = (idx + 1) % w->num_of_peers;
+        return p;
+    }
+    return NULL;
+}
+
+static cgf_peer_t *worker_select_peer_for_file(cgf_worker_t *w,
+        cgf_spool_file_t *file, uint32_t window)
+{
+    cgf_peer_t *p;
+
+    if (cgf_self()->send_mode == CGF_SEND_MODE_ROUND_ROBIN) {
+        p = worker_peer_holding_file(w, file);
+        if (p) {
+            if (!worker_peer_may_send(p) ||
+                    cgf_gtpp_inflight_count(p) >= window)
+                return NULL;
+            return p;
+        }
+        return worker_rr_pick_peer(w, window);
+    }
+
+    p = worker_active_peer(w);
+    if (!p || !worker_peer_may_send(p) ||
+            cgf_gtpp_inflight_count(p) >= window)
+        return NULL;
+    return p;
 }
 
 /* Tear down in-flight DTRRs for `file` on `peer` and rewind to the
@@ -215,14 +276,11 @@ void cgf_worker_try_drain(cgf_worker_t *w)
 
     ogs_assert(w);
 
-    p = worker_active_peer(w);
-    if (!p || !worker_peer_may_send(p)) return;
-
     window = self->max_inflight;
     if (!window) window = 1;
     if (window > CGF_MAX_INFLIGHT) window = CGF_MAX_INFLIGHT;
 
-    while (cgf_gtpp_inflight_count(p) < window) {
+    for (;;) {
         size_t used = 0;
         size_t cap = self->max_bytes_per_packet;
         uint32_t n;
@@ -236,6 +294,9 @@ void cgf_worker_try_drain(cgf_worker_t *w)
         }
 
         if (f->send_offset >= f->data_len) break;
+
+        p = worker_select_peer_for_file(w, f, window);
+        if (!p) break;
 
         if (cap > sizeof(batch)) cap = sizeof(batch);
 
@@ -254,10 +315,12 @@ void cgf_worker_try_drain(cgf_worker_t *w)
         if (rv == OGS_RETRY)
             break;
         if (rv != OGS_OK) {
-            ogs_warn("cgf: worker %d send failed, backing off", w->id);
+            ogs_warn("cgf: worker %d send failed to '%s', backing off",
+                    w->id, p->address_str);
             worker_abort_file_pipeline(p, f, true);
             p->state = CGF_PEER_STATE_DOWN;
-            worker_switch_to_next_peer(w);
+            if (self->send_mode != CGF_SEND_MODE_ROUND_ROBIN)
+                worker_switch_to_next_peer(w);
             break;
         }
 
@@ -290,9 +353,11 @@ static void worker_on_echo_tick(cgf_worker_t *w)
                 ogs_warn("cgf: worker %d peer '%s' marked DOWN",
                         w->id, p->address_str);
                 p->state = CGF_PEER_STATE_DOWN;
-                if (i == w->active_peer_idx) {
+                if (self->send_mode == CGF_SEND_MODE_ROUND_ROBIN ||
+                        i == w->active_peer_idx) {
                     worker_abort_in_flight(w, p, "peer went down");
-                    worker_switch_to_next_peer(w);
+                    if (self->send_mode != CGF_SEND_MODE_ROUND_ROBIN)
+                        worker_switch_to_next_peer(w);
                 }
             }
         }
@@ -301,16 +366,14 @@ static void worker_on_echo_tick(cgf_worker_t *w)
     }
 }
 
-static void worker_on_rto_tick(cgf_worker_t *w)
+static bool worker_peer_rto_tick(cgf_worker_t *w, cgf_peer_t *p,
+        ogs_time_t now, ogs_time_t rto)
 {
     cgf_context_t *self = cgf_self();
-    cgf_peer_t *p = worker_active_peer(w);
-    ogs_time_t now = ogs_time_now();
-    ogs_time_t rto = ogs_time_from_msec(self->request_rto_ms);
     uint32_t i;
     bool gave_up = false;
 
-    if (!p) return;
+    if (!p) return false;
 
     for (i = 0; i < CGF_MAX_INFLIGHT; i++) {
         cgf_xact_t *x = &p->xacts[i];
@@ -334,9 +397,32 @@ static void worker_on_rto_tick(cgf_worker_t *w)
 
     if (gave_up) {
         p->state = CGF_PEER_STATE_DOWN;
-        worker_switch_to_next_peer(w);
-        cgf_worker_try_drain(w);
+        if (self->send_mode != CGF_SEND_MODE_ROUND_ROBIN)
+            worker_switch_to_next_peer(w);
     }
+    return gave_up;
+}
+
+static void worker_on_rto_tick(cgf_worker_t *w)
+{
+    cgf_context_t *self = cgf_self();
+    ogs_time_t now = ogs_time_now();
+    ogs_time_t rto = ogs_time_from_msec(self->request_rto_ms);
+    bool any_gave_up = false;
+
+    if (self->send_mode == CGF_SEND_MODE_ROUND_ROBIN) {
+        uint32_t i;
+        for (i = 0; i < w->num_of_peers; i++) {
+            if (worker_peer_rto_tick(w, &w->peers[i], now, rto))
+                any_gave_up = true;
+        }
+    } else {
+        any_gave_up = worker_peer_rto_tick(w, worker_active_peer(w),
+                now, rto);
+    }
+
+    if (any_gave_up)
+        cgf_worker_try_drain(w);
 }
 
 static void worker_echo_timer_expired(void *data)
@@ -497,6 +583,16 @@ int cgf_workers_start(void)
                 w->active_peer_idx = j;
                 break;
             }
+        }
+        /*
+         * Stagger the RR cursor across workers so parallel drains
+         * naturally spread across peers instead of all starting on
+         * the same primary.
+         */
+        if (self->send_mode == CGF_SEND_MODE_ROUND_ROBIN &&
+                w->num_of_peers > 0) {
+            w->active_peer_idx =
+                    (w->active_peer_idx + (uint32_t)w->id) % w->num_of_peers;
         }
 
         w->ow = ogs_worker_create((int)i,

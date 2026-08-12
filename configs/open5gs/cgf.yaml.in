@@ -43,6 +43,24 @@ cgf:
   # changing `workers` itself needs a daemon restart.
   #workers: 4
 
+  # How DTRRs are distributed across configured peers.
+  #
+  #   failover (default): only the primary (active) peer receives CDRs;
+  #                       secondaries are used only when the active peer
+  #                       is marked DOWN (missed echoes / DTRR give-up).
+  #   round_robin:        active-active load balancing. Each newly
+  #                       opened spool file is pinned to the next UP
+  #                       peer in round-robin order for its lifetime
+  #                       (or until that peer dies, then the file fails
+  #                       over with Send-possibly-duplicated). Role
+  #                       (primary/secondary) only picks the initial
+  #                       RR cursor. Pair with `workers: N` (N >=
+  #                       number of peers) so multiple files drain in
+  #                       parallel across peers.
+  #
+  # Accepts: failover | round_robin | rr
+  #send_mode: round_robin
+
   # Retention for fully-delivered CDR files.
   #
   #   false (default): on full ACK from a CGF peer, the spool file is
@@ -60,8 +78,12 @@ cgf:
   # Also hot-editable via the Admin API settings kind `cgfd:gtpp`.
   purge_on_success: false
 
-  # One or more CGF peers. The first "primary" entry wins the active
-  # slot; secondaries are tried in declaration order on failover.
+  # One or more CGF peers.
+  #
+  # With send_mode=failover (default): the first "primary" entry wins
+  # the active slot; secondaries are tried in declaration order on
+  # failover. With send_mode=round_robin every UP peer is an equal
+  # send target (see send_mode above).
   #
   # These fields (peer list + timers + batch) can also be hot-edited at
   # runtime via the Admin API settings kind `cgfd:gtpp`. The daemon
@@ -70,6 +92,7 @@ cgf:
   # for peers that stay in the new list (matched by host+port), new
   # peers are dialed, and removed peers are closed. See
   # tools/admin-api/README for the PUT /settings/cgfd:gtpp contract.
+  # Note: send_mode itself is YAML-only (restart to change).
   peer:
     - address: 127.0.0.1
       port: 3386

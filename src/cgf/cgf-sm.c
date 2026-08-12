@@ -36,6 +36,8 @@ static cgf_peer_t *active_peer(void)
     return &self->peers[self->active_peer_idx];
 }
 
+static bool peer_may_send(const cgf_peer_t *peer);
+
 static void switch_to_next_peer(void)
 {
     cgf_context_t *self = cgf_self();
@@ -51,6 +53,75 @@ static void switch_to_next_peer(void)
             return;
         }
     }
+}
+
+/* Peer that already has in-flight DTRRs for `file`, or NULL. Used to
+ * keep a spool file pinned to one peer (required by spool nack which
+ * rewinds the whole file's inflight window). */
+static cgf_peer_t *peer_holding_file(cgf_spool_file_t *file)
+{
+    cgf_context_t *self = cgf_self();
+    uint32_t i, j;
+
+    if (!file) return NULL;
+    for (i = 0; i < self->num_of_peers; i++) {
+        cgf_peer_t *p = &self->peers[i];
+        for (j = 0; j < CGF_MAX_INFLIGHT; j++) {
+            if (p->xacts[j].active && p->xacts[j].file == file)
+                return p;
+        }
+    }
+    return NULL;
+}
+
+/*
+ * Round-robin: pick the next UP/PROBING peer with spare window capacity
+ * starting at active_peer_idx, then advance the cursor so the following
+ * new file lands on the next peer. Returns NULL when every peer is
+ * DOWN or full.
+ */
+static cgf_peer_t *rr_pick_peer(uint32_t window)
+{
+    cgf_context_t *self = cgf_self();
+    uint32_t i, start;
+
+    if (!self->num_of_peers) return NULL;
+    start = self->active_peer_idx % self->num_of_peers;
+
+    for (i = 0; i < self->num_of_peers; i++) {
+        uint32_t idx = (start + i) % self->num_of_peers;
+        cgf_peer_t *p = &self->peers[idx];
+
+        if (!p->sock || !peer_may_send(p)) continue;
+        if (cgf_gtpp_inflight_count(p) >= window) continue;
+
+        /* Next new assignment starts after this peer. */
+        self->active_peer_idx = (idx + 1) % self->num_of_peers;
+        return p;
+    }
+    return NULL;
+}
+
+/* Select the peer that should carry the next DTRR for `file`. */
+static cgf_peer_t *select_peer_for_file(cgf_spool_file_t *file, uint32_t window)
+{
+    cgf_context_t *self = cgf_self();
+    cgf_peer_t *p;
+
+    if (self->send_mode == CGF_SEND_MODE_ROUND_ROBIN) {
+        p = peer_holding_file(file);
+        if (p) {
+            if (!peer_may_send(p) || cgf_gtpp_inflight_count(p) >= window)
+                return NULL;
+            return p;
+        }
+        return rr_pick_peer(window);
+    }
+
+    p = active_peer();
+    if (!p || !peer_may_send(p) || cgf_gtpp_inflight_count(p) >= window)
+        return NULL;
+    return p;
 }
 
 /*
@@ -342,9 +413,18 @@ void cgf_sm_on_echo_tick(void)
                     p->state != CGF_PEER_STATE_DOWN) {
                 ogs_warn("cgf: peer '%s' marked DOWN", p->address_str);
                 p->state = CGF_PEER_STATE_DOWN;
-                if ((uint32_t)(p - self->peers) == self->active_peer_idx) {
+                /*
+                 * Failover mode: only abandon the active peer's pipeline
+                 * and rotate the active slot. Round-robin: every peer
+                 * may hold files, so always abort this peer's xacts;
+                 * survivors keep draining on the remaining UP peers.
+                 */
+                if (self->send_mode == CGF_SEND_MODE_ROUND_ROBIN ||
+                        (uint32_t)(p - self->peers) ==
+                                self->active_peer_idx) {
                     abort_in_flight(p, "peer went down");
-                    switch_to_next_peer();
+                    if (self->send_mode != CGF_SEND_MODE_ROUND_ROBIN)
+                        switch_to_next_peer();
                 }
             }
         }
@@ -353,19 +433,13 @@ void cgf_sm_on_echo_tick(void)
     }
 }
 
-void cgf_sm_on_rto_tick(void)
+static bool peer_rto_tick(cgf_peer_t *p, ogs_time_t now, ogs_time_t rto)
 {
     cgf_context_t *self = cgf_self();
-    cgf_peer_t *p;
-    ogs_time_t now = ogs_time_now();
-    ogs_time_t rto = ogs_time_from_msec(self->request_rto_ms);
     uint32_t i;
     bool gave_up = false;
 
-    if (cgf_workers_enabled()) return;
-
-    p = active_peer();
-    if (!p) return;
+    if (!p) return false;
 
     for (i = 0; i < CGF_MAX_INFLIGHT; i++) {
         cgf_xact_t *x = &p->xacts[i];
@@ -389,9 +463,33 @@ void cgf_sm_on_rto_tick(void)
 
     if (gave_up) {
         p->state = CGF_PEER_STATE_DOWN;
-        switch_to_next_peer();
-        cgf_sm_try_drain();
+        if (self->send_mode != CGF_SEND_MODE_ROUND_ROBIN)
+            switch_to_next_peer();
     }
+    return gave_up;
+}
+
+void cgf_sm_on_rto_tick(void)
+{
+    cgf_context_t *self = cgf_self();
+    ogs_time_t now = ogs_time_now();
+    ogs_time_t rto = ogs_time_from_msec(self->request_rto_ms);
+    bool any_gave_up = false;
+
+    if (cgf_workers_enabled()) return;
+
+    if (self->send_mode == CGF_SEND_MODE_ROUND_ROBIN) {
+        uint32_t i;
+        for (i = 0; i < self->num_of_peers; i++) {
+            if (peer_rto_tick(&self->peers[i], now, rto))
+                any_gave_up = true;
+        }
+    } else {
+        any_gave_up = peer_rto_tick(active_peer(), now, rto);
+    }
+
+    if (any_gave_up)
+        cgf_sm_try_drain();
 }
 
 void cgf_sm_on_spool_tick(void)
@@ -432,14 +530,11 @@ void cgf_sm_try_drain(void)
         return;
     }
 
-    p = active_peer();
-    if (!p || !peer_may_send(p)) return;
-
     window = self->max_inflight;
     if (!window) window = 1;
     if (window > CGF_MAX_INFLIGHT) window = CGF_MAX_INFLIGHT;
 
-    while (cgf_gtpp_inflight_count(p) < window) {
+    for (;;) {
         size_t used = 0;
         size_t cap = self->max_bytes_per_packet;
         uint32_t n;
@@ -453,6 +548,9 @@ void cgf_sm_try_drain(void)
         }
 
         if (f->send_offset >= f->data_len) break;
+
+        p = select_peer_for_file(f, window);
+        if (!p) break;
 
         if (cap > sizeof(batch)) cap = sizeof(batch);
 
@@ -469,10 +567,12 @@ void cgf_sm_try_drain(void)
         if (rv == OGS_RETRY)
             break;
         if (rv != OGS_OK) {
-            ogs_warn("cgf: send failed, backing off");
+            ogs_warn("cgf: send failed to '%s', backing off",
+                    p->address_str);
             abort_file_pipeline(p, f, true);
             p->state = CGF_PEER_STATE_DOWN;
-            switch_to_next_peer();
+            if (self->send_mode != CGF_SEND_MODE_ROUND_ROBIN)
+                switch_to_next_peer();
             break;
         }
 

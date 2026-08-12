@@ -61,11 +61,25 @@ typedef struct cgf_xact_s {
 } cgf_xact_t;
 
 /* Peer role. Only the primary is used under normal conditions; failover
- * switches to a secondary when the primary stops answering echoes. */
+ * switches to a secondary when the primary stops answering echoes.
+ * In send_mode=round_robin every UP peer is an equal send target and
+ * role only picks the initial RR cursor. */
 typedef enum {
     CGF_PEER_ROLE_PRIMARY = 0,
     CGF_PEER_ROLE_SECONDARY = 1
 } cgf_peer_role_e;
+
+/* How DTRRs are distributed across configured peers. */
+typedef enum {
+    /* Legacy: only active_peer_idx receives CDRs; secondaries are
+     * used solely when the active peer is marked DOWN. */
+    CGF_SEND_MODE_FAILOVER = 0,
+    /* Active-active: each newly opened spool file is assigned to the
+     * next UP peer (round-robin). A file stays pinned to that peer
+     * for its lifetime (or until the peer dies, then it fails over).
+     * Use workers >= number of peers for parallel drain across peers. */
+    CGF_SEND_MODE_ROUND_ROBIN = 1
+} cgf_send_mode_e;
 
 typedef enum {
     CGF_PEER_STATE_DOWN = 0,   /* never alive, or gave up */
@@ -133,7 +147,8 @@ typedef struct cgf_context_s {
     /* Peers (primary first, then secondaries in declaration order). */
     cgf_peer_t peers[CGF_MAX_PEERS];
     uint32_t num_of_peers;
-    uint32_t active_peer_idx;   /* the peer being used right now */
+    uint32_t active_peer_idx;   /* failover active / RR cursor */
+    cgf_send_mode_e send_mode;  /* failover (default) or round_robin */
 
     /* Timers. */
     ogs_timer_t *t_echo;        /* fires every echo_interval_s */

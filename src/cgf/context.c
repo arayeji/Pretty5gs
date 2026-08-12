@@ -60,6 +60,7 @@ int cgf_context_init(void)
     self.max_inflight = CGF_DEFAULT_MAX_INFLIGHT;
     self.purge_on_success = false;
     self.workers = 1;
+    self.send_mode = CGF_SEND_MODE_FAILOVER;
 
     /* DRP IE sub-header defaults. Matches the working peer capture:
      *   01        Data Record Format = BER
@@ -279,6 +280,21 @@ int cgf_context_parse_config(void)
             } else if (!strcmp(k, "workers")) {
                 const char *v = ogs_yaml_iter_value(&cgf_iter);
                 self.workers = v ? (uint32_t)atoi(v) : 1;
+            } else if (!strcmp(k, "send_mode")) {
+                const char *v = ogs_yaml_iter_value(&cgf_iter);
+                if (v && (!strcasecmp(v, "round_robin") ||
+                          !strcasecmp(v, "round-robin") ||
+                          !strcasecmp(v, "rr")))
+                    self.send_mode = CGF_SEND_MODE_ROUND_ROBIN;
+                else if (v && (!strcasecmp(v, "failover") ||
+                               !strcasecmp(v, "primary_failover")))
+                    self.send_mode = CGF_SEND_MODE_FAILOVER;
+                else {
+                    ogs_warn("cgf: unknown send_mode `%s` "
+                            "(expected failover|round_robin); "
+                            "keeping failover", v ? v : "");
+                    self.send_mode = CGF_SEND_MODE_FAILOVER;
+                }
             } else if (!strcmp(k, "purge_on_success")) {
                 const char *v = ogs_yaml_iter_value(&cgf_iter);
                 /* Accept the usual YAML truthy spellings. */
@@ -408,8 +424,8 @@ int cgf_context_parse_config(void)
      * claimed files from a previous run back into ready/. */
     reclaim_processing_leftovers();
 
-    /* Primary always wins the initial active slot, regardless of order
-     * in the config file. */
+    /* Primary always wins the initial active / RR cursor slot,
+     * regardless of order in the config file. */
     {
         uint32_t i;
         self.active_peer_idx = 0;
@@ -419,6 +435,12 @@ int cgf_context_parse_config(void)
                 break;
             }
         }
+    }
+
+    if (self.send_mode == CGF_SEND_MODE_ROUND_ROBIN) {
+        ogs_info("cgf: send_mode=round_robin (%u peer(s); "
+                "pin each spool file to one peer, rotate on new files)",
+                self.num_of_peers);
     }
 
     return OGS_OK;
