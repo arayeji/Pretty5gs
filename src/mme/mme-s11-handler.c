@@ -33,6 +33,7 @@
 
 #include "mme-s11-build.h"
 #include "mme-s11-handler.h"
+#include "mme-ambr.h"
 #include "metrics.h"
 
 static uint8_t esm_cause_from_gtp(uint8_t gtp_cause)
@@ -1653,8 +1654,24 @@ void mme_s11_handle_update_bearer_request(
         xact->update_flags |=  OGS_GTP_MODIFY_TFT_UPDATE;
     }
 
+    /* TS 29.274 §7.2.15: APN-AMBR is mandatory on Update Bearer Request.
+     * PGW Initiated Bearer Modification without Bearer QoS Update carries
+     * AMBR with neither QoS nor TFT — must still Modify EPS Bearer Context. */
+    if (req->aggregate_maximum_bit_rate.presence &&
+            req->aggregate_maximum_bit_rate.data &&
+            sess->session) {
+        ogs_gtp2_ambr_t *ambr = req->aggregate_maximum_bit_rate.data;
+
+        sess->session->ambr.downlink = be32toh(ambr->downlink) * 1000;
+        sess->session->ambr.uplink = be32toh(ambr->uplink) * 1000;
+        mme_ambr_apply_config(&sess->session->ambr);
+        mme_ambr_complete_directions(&sess->session->ambr);
+        xact->update_flags |= OGS_GTP_MODIFY_AMBR_UPDATE;
+    }
+
     if (req->bearer_contexts.bearer_level_qos.presence == 1 ||
-        req->bearer_contexts.tft.presence == 1) {
+        req->bearer_contexts.tft.presence == 1 ||
+        (xact->update_flags & OGS_GTP_MODIFY_AMBR_UPDATE)) {
         if (ECM_IDLE(mme_ue)) {
             MME_STORE_PAGING_INFO(mme_ue,
                 MME_PAGING_TYPE_UPDATE_BEARER, bearer->id);
@@ -1672,13 +1689,14 @@ void mme_s11_handle_update_bearer_request(
             MME_CLEAR_PAGING_INFO(mme_ue);
             r = nas_eps_send_modify_bearer_context_request(bearer,
                     req->bearer_contexts.bearer_level_qos.presence,
-                    req->bearer_contexts.tft.presence);
+                    req->bearer_contexts.tft.presence,
+                    (xact->update_flags & OGS_GTP_MODIFY_AMBR_UPDATE) ? 1 : 0);
             ogs_expect(r == OGS_OK);
         }
     } else {
         MME_CLEAR_PAGING_INFO(mme_ue);
         ogs_error("[IGNORE] Update Bearer Request : "
-                "Both QoS and TFT is NULL");
+                "QoS, TFT and APN-AMBR all absent");
 
         if (xact->xid & OGS_GTP_CMD_XACT_ID) {
             /* MME received Bearer Resource Modification Request */

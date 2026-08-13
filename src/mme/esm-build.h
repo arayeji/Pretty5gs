@@ -34,7 +34,8 @@ ogs_pkbuf_t *esm_build_activate_default_bearer_context_request(
 ogs_pkbuf_t *esm_build_activate_dedicated_bearer_context_request(
         mme_bearer_t *bearer);
 ogs_pkbuf_t *esm_build_modify_bearer_context_request(
-        mme_bearer_t *bearer, int qos_presence, int tft_presence);
+        mme_bearer_t *bearer, int qos_presence, int tft_presence,
+        int ambr_presence);
 ogs_pkbuf_t *esm_build_deactivate_bearer_context_request(
         mme_bearer_t *bearer, ogs_nas_esm_cause_t esm_cause);
 ogs_pkbuf_t *esm_build_bearer_resource_allocation_reject(

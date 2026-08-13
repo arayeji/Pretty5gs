@@ -1192,7 +1192,9 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
                     (xact->update_flags &
                         OGS_GTP_MODIFY_QOS_UPDATE) ? 1 : 0,
                     (xact->update_flags &
-                        OGS_GTP_MODIFY_TFT_UPDATE) ? 1 : 0);
+                        OGS_GTP_MODIFY_TFT_UPDATE) ? 1 : 0,
+                    (xact->update_flags &
+                        OGS_GTP_MODIFY_AMBR_UPDATE) ? 1 : 0);
             ogs_expect(r == OGS_OK);
         }
         break;

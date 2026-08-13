@@ -440,10 +440,12 @@ ogs_pkbuf_t *esm_build_activate_dedicated_bearer_context_request(
 }
 
 ogs_pkbuf_t *esm_build_modify_bearer_context_request(
-        mme_bearer_t *bearer, int qos_presence, int tft_presence)
+        mme_bearer_t *bearer, int qos_presence, int tft_presence,
+        int ambr_presence)
 {
     mme_ue_t *mme_ue = NULL;
     mme_sess_t *sess = NULL;
+    ogs_session_t *session = NULL;
 
     ogs_nas_eps_message_t message;
     ogs_nas_eps_modify_eps_bearer_context_request_t 
@@ -453,12 +455,15 @@ ogs_pkbuf_t *esm_build_modify_bearer_context_request(
         &modify_eps_bearer_context_request->new_eps_qos;
     ogs_nas_traffic_flow_template_t *tft =
         &modify_eps_bearer_context_request->tft;
+    ogs_nas_apn_aggregate_maximum_bit_rate_t *apn_ambr =
+        &modify_eps_bearer_context_request->apn_ambr;
 
     ogs_assert(bearer);
     sess = mme_sess_find_by_id(bearer->sess_id);
     ogs_assert(sess);
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     ogs_assert(mme_ue);
+    session = sess->session;
 
     ogs_debug("Modify bearer context request");
     ogs_debug("    IMSI[%s] PTI[%d] EBI[%d]",
@@ -488,6 +493,20 @@ ogs_pkbuf_t *esm_build_modify_bearer_context_request(
         ogs_assert(tft->length);
         ogs_assert(bearer->tft.data);
         memcpy(tft->buffer, bearer->tft.data, tft->length);
+    }
+
+    /* TS 24.301: APN-AMBR in Modify EPS Bearer Context Request — used for
+     * PGW Initiated Bearer Modification without Bearer QoS Update. */
+    if (ambr_presence == 1 && session) {
+        ogs_bitrate_t sess_ambr = mme_sess_ambr_for_pdn(mme_ue, session);
+
+        mme_ambr_apply_config(&sess_ambr);
+        mme_ambr_complete_directions(&sess_ambr);
+        if (sess_ambr.uplink && sess_ambr.downlink) {
+            modify_eps_bearer_context_request->presencemask |=
+                OGS_NAS_EPS_MODIFY_EPS_BEARER_CONTEXT_REQUEST_APN_AMBR_PRESENT;
+            apn_ambr_build(apn_ambr, sess_ambr.downlink, sess_ambr.uplink);
+        }
     }
 
     return nas_eps_security_encode(mme_ue, &message);

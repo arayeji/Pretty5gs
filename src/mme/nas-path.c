@@ -937,7 +937,8 @@ void nas_eps_send_activate_all_dedicated_bearers(mme_bearer_t *default_bearer)
 }
 
 int nas_eps_send_modify_bearer_context_request(
-        mme_bearer_t *bearer, int qos_presence, int tft_presence)
+        mme_bearer_t *bearer, int qos_presence, int tft_presence,
+        int ambr_presence)
 {
     int rv;
     ogs_pkbuf_t *s1apbuf = NULL;
@@ -960,7 +961,7 @@ int nas_eps_send_modify_bearer_context_request(
     }
 
     esmbuf = esm_build_modify_bearer_context_request(
-            bearer, qos_presence, tft_presence);
+            bearer, qos_presence, tft_presence, ambr_presence);
     if (!esmbuf) {
         ogs_error("esm_build_modify_bearer_context_request() failed");
         return OGS_ERROR;
@@ -985,6 +986,7 @@ int nas_eps_send_modify_bearer_context_request(
         rv = nas_eps_send_to_enb(mme_ue, s1apbuf);
         ogs_expect(rv == OGS_OK);
     } else {
+        /* TFT-only and/or APN-AMBR-only: NAS via Downlink NAS Transport */
         rv = nas_eps_send_to_downlink_nas_transport(enb_ue, esmbuf);
         ogs_expect(rv == OGS_OK);
     }

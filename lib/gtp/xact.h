@@ -134,6 +134,7 @@ typedef struct ogs_gtp_xact_s {
 
 #define OGS_GTP_MODIFY_TFT_UPDATE ((uint64_t)1<<0)
 #define OGS_GTP_MODIFY_QOS_UPDATE ((uint64_t)1<<1)
+#define OGS_GTP_MODIFY_AMBR_UPDATE ((uint64_t)1<<2)
     uint64_t        update_flags;
 
 #define OGS_GTP_DELETE_NO_ACTION                                1
