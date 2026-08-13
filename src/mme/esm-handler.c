@@ -118,7 +118,10 @@ int esm_handle_pdn_connectivity_request(
         r = nas_eps_send_pdn_connectivity_reject(
                 sess, OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                 create_action);
-        ogs_expect(r == OGS_OK);
+        if (r != OGS_OK)
+            ogs_warn("[%s] PDN Connectivity Reject not sent "
+                    "(no security context and S1 already gone)",
+                    mme_ue->imsi_bcd);
         return OGS_ERROR;
     }
 

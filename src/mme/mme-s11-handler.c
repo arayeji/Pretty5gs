@@ -1184,7 +1184,11 @@ void mme_s11_handle_delete_session_response(
     } else if (action == OGS_GTP_DELETE_SEND_DETACH_ACCEPT) {
         if (mme_sess_count(mme_ue) == 1) /* Last Session */ {
             r = nas_eps_send_detach_accept(mme_ue);
-            ogs_expect(r == OGS_OK);
+            if (r != OGS_OK)
+                ogs_warn("[%s] Delete Session Response: Detach Accept not "
+                        "sent (S1 already gone during detach teardown; "
+                        "sessions cleared anyway)",
+                        mme_ue->imsi_bcd);
         }
 
     } else if (action ==
@@ -1695,8 +1699,14 @@ void mme_s11_handle_update_bearer_request(
         }
     } else {
         MME_CLEAR_PAGING_INFO(mme_ue);
-        ogs_error("[IGNORE] Update Bearer Request : "
-                "QoS, TFT and APN-AMBR all absent");
+        /*
+         * Peer sent Update Bearer with no actionable change (no Bearer QoS,
+         * no TFT, no APN-AMBR). ACK and drop — nothing to signal to the UE.
+         */
+        ogs_warn("[%s] [IGNORE] Update Bearer Request EBI[%d]: "
+                "QoS, TFT and APN-AMBR all absent "
+                "(no-op UBR from SGW/PGW; ACK only, no NAS Modify)",
+                mme_ue->imsi_bcd, bearer->ebi);
 
         if (xact->xid & OGS_GTP_CMD_XACT_ID) {
             /* MME received Bearer Resource Modification Request */

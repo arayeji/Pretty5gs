@@ -4986,7 +4986,11 @@ void s1ap_handle_enb_status_transfer(
 
     r = s1ap_send_mme_status_transfer(target_ue,
             ENB_StatusTransfer_TransparentContainer);
-    ogs_expect(r == OGS_OK);
+    if (r != OGS_OK)
+        ogs_warn("eNB Status Transfer: forward to target failed "
+                "(rv=%d) — HO race or bad transparent container; "
+                "UE may briefly lose PDCP SN continuity",
+                r);
     /* ogs_asn_copy_ie() could be failed from received packet.
      * So we should not use ogs_assert(r != OGS_ERROR).*/
 }

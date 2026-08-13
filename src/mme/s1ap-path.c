@@ -205,7 +205,11 @@ int s1ap_delayed_send_to_enb_ue(
         return OGS_OK;
     } else {
         int rv = s1ap_send_to_enb_ue(enb_ue, pkbuf);
-        ogs_expect(rv == OGS_OK);
+        if (rv != OGS_OK)
+            ogs_warn("s1ap_delayed_send: S1 send failed "
+                    "(enb_ue_s1ap_id=%u rv=%d) — eNB/S1 context already "
+                    "gone during release/teardown; ignore",
+                    enb_ue->enb_ue_s1ap_id, rv);
 
         return rv;
     }
@@ -388,9 +392,26 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
             h->message_type != OGS_NAS_EPS_EXTENDED_SERVICE_REQUEST &&
             h->message_type != OGS_NAS_EPS_DETACH_REQUEST) {
 
-            ogs_error("Invalid EMM message type [%d] "
-                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
-                    h->message_type, enb_ip[0] ? enb_ip : "-",
+            /*
+             * Initial UE Message may only carry Attach/TAU/Service/
+             * Extended Service/Detach. Type 83 = Authentication Response
+             * belongs on an existing S1 (Uplink NAS), not a new Initial UE
+             * — typical eNB race after S1 reset or context mismatch.
+             */
+            ogs_error("Invalid EMM on Initial UE Message type[%d%s] "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s] "
+                    "(only Attach/TAU/Service/Detach allowed here; "
+                    "dropping S1 — eNB/UE race or stale NAS)",
+                    h->message_type,
+                    h->message_type == OGS_NAS_EPS_AUTHENTICATION_RESPONSE
+                        ? ":AuthenticationResponse" :
+                    h->message_type == OGS_NAS_EPS_AUTHENTICATION_REQUEST
+                        ? ":AuthenticationRequest" :
+                    h->message_type == OGS_NAS_EPS_SECURITY_MODE_COMPLETE
+                        ? ":SecurityModeComplete" :
+                    h->message_type == OGS_NAS_EPS_ATTACH_COMPLETE
+                        ? ":AttachComplete" : "",
+                    enb_ip[0] ? enb_ip : "-",
                     enb_id, enb_ue->enb_ue_s1ap_id, imsi);
 
             ogs_pkbuf_free(nasbuf);
@@ -708,7 +729,11 @@ int s1ap_send_ue_context_release_command(
     }
 
     rv = s1ap_delayed_send_to_enb_ue(enb_ue, s1apbuf, duration);
-    ogs_expect(rv == OGS_OK);
+    if (rv != OGS_OK)
+        ogs_warn("UE Context Release Command not sent "
+                "(enb_ue_s1ap_id=%u group=%d cause=%ld rv=%d) — "
+                "S1/eNB already gone; local cleanup continues",
+                enb_ue->enb_ue_s1ap_id, group, cause, rv);
 
     ogs_timer_start(enb_ue->t_s1_holding,
             mme_timer_cfg(MME_TIMER_S1_HOLDING)->duration);
@@ -1254,12 +1279,18 @@ int s1ap_send_mme_status_transfer(
     s1apbuf = s1ap_build_mme_status_transfer(target_ue,
             enb_statustransfer_transparentContainer);
     if (!s1apbuf) {
-        ogs_error("s1ap_build_mme_status_transfer() failed");
+        ogs_error("MME Status Transfer build/ASN encode failed "
+                "(target enb_ue_s1ap_id=%u) — eNB Status Transfer "
+                "container empty/corrupt during HO; PDCP SN sync skipped",
+                target_ue->enb_ue_s1ap_id);
         return OGS_ERROR;
     }
 
     rv = s1ap_send_to_enb_ue(target_ue, s1apbuf);
-    ogs_expect(rv == OGS_OK);
+    if (rv != OGS_OK)
+        ogs_warn("MME Status Transfer not sent "
+                "(target enb_ue_s1ap_id=%u rv=%d) — target S1 gone mid-HO",
+                target_ue->enb_ue_s1ap_id, rv);
 
     return rv;
 }

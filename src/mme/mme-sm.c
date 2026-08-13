@@ -534,7 +534,11 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                             S1AP_Cause_PR_misc,
                             S1AP_CauseMisc_control_processing_overload,
                             S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
-                    ogs_expect(r == OGS_OK);
+                    if (r != OGS_OK)
+                        ogs_warn("mme_ue_add failed (pool/overload) and "
+                                "UE Context Release Command also failed "
+                                "(rv=%d) — S1/eNB already gone; drop",
+                                r);
                     ogs_pkbuf_free(pkbuf);
                     return;
                 }

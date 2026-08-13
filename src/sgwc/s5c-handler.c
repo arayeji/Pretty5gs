@@ -1014,7 +1014,9 @@ void sgwc_s5c_handle_update_bearer_request(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sess) {
-        ogs_error("Update Bearer Request: No Context in TEID [0x%x]",
+        ogs_warn("Update Bearer Request: No SGW-C session for TEID [0x%x] "
+                "(session already deleted — late/stale UBR from PGW after "
+                "Detach/Delete Session; reply Context Not Found)",
                 message->h.teid);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else if (message->h.teid &&

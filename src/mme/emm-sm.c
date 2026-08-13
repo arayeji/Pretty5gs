@@ -275,8 +275,15 @@ static void emm_handle_s6a_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
          * in the FSM dispatch loop that invoked this handler, avoiding a
          * use-after-free of the EMM FSM.
          */
-        ogs_error("[%s] S6a timeout but no S1 context (cmd=%u); releasing UE",
-                mme_ue->imsi_bcd, cmd);
+        ogs_error("[%s] S6a timeout but no S1 context "
+                "(cmd=%u%s); HSS/Diameter slow and eNB S1 already gone "
+                "(reset/HO/release) so NAS reject cannot be delivered — "
+                "dropping half-built UE context",
+                mme_ue->imsi_bcd, cmd,
+                cmd == OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION
+                    ? ":AIR" :
+                cmd == OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION
+                    ? ":ULR" : "");
         /*
          * Previously only removed when sess_list was empty, so leftover
          * sessions (CSR fail / half-attach) pinned all EBIs (bitmap 0xffe0)

@@ -363,7 +363,11 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
             OGS_FSM_TRAN(s, esm_state_exception);
             break;
         default:
-            ogs_error("Unknown message(type:%d)", message->esm.h.message_type);
+            ogs_error("[%s] Unknown/unsupported ESM type[%d] in inactive "
+                    "state PTI[%d] EBI[%d] — ignoring "
+                    "(garbled NAS or unexpected procedure; no action)",
+                    mme_ue->imsi_bcd, message->esm.h.message_type,
+                    sess->pti, bearer->ebi);
             break;
         }
         break;
@@ -553,8 +557,11 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
             CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
             break;
         default:
-            ogs_error("Unknown message(type:%d)",
-                    message->esm.h.message_type);
+            ogs_error("[%s] Unknown/unsupported ESM type[%d] in active "
+                    "state PTI[%d] EBI[%d] — ignoring "
+                    "(garbled NAS or unexpected procedure; no action)",
+                    mme_ue->imsi_bcd, message->esm.h.message_type,
+                    sess->pti, bearer->ebi);
             break;
         }
         break;
@@ -691,8 +698,11 @@ void esm_state_pdn_will_disconnect(ogs_fsm_t *s, mme_event_t *e)
                     mme_ue->imsi_bcd, sess->pti, bearer->ebi);
             break;
         default:
-            ogs_error("Unknown message(type:%d)", 
-                    message->esm.h.message_type);
+            ogs_error("[%s] Unknown/unsupported ESM type[%d] "
+                    "PTI[%d] EBI[%d] — ignoring "
+                    "(garbled NAS or unexpected procedure; no action)",
+                    mme_ue->imsi_bcd, message->esm.h.message_type,
+                    sess->pti, bearer->ebi);
             break;
         }
         break;

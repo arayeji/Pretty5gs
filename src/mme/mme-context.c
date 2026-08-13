@@ -9885,7 +9885,10 @@ mme_bearer_t *mme_bearer_find_or_add_by_message(
             r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                     OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                     OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
-            ogs_expect(r == OGS_OK);
+            if (r != OGS_OK)
+                ogs_warn("[%s] Attach Reject not sent for orphan ESM "
+                        "PTI[%d] type[%d] (S1 already gone)",
+                        mme_ue->imsi_bcd, pti, message->esm.h.message_type);
             mme_send_s1_release_after_emm_failure(mme_ue);
             return NULL;
         }
