@@ -467,13 +467,13 @@ void sgwc_sxa_handle_session_establishment_response(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sess) {
-        ogs_error("No Context");
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
         /*
          * The SGWC session was removed while the establishment was in
          * flight (UE detached or re-attached meanwhile), but the SGW-U
          * accepted the request and created the user-plane session.
          * Nobody owns it now: delete it right away.
+         * (Rich error line is emitted below — do not log bare "No Context".)
          */
         if (rsp_up_seid && pfcp_node) {
             ogs_warn("Purging orphaned SGW-U session created for a removed "
@@ -593,6 +593,10 @@ void sgwc_sxa_handle_session_establishment_response(
         char pgw_peer[OGS_ADDRSTRLEN];
         char vpp_detail[512];
         uint16_t offending_ie = 0;
+        bool upf_accepted = pfcp_rsp->cause.presence &&
+                pfcp_rsp->cause.u8 == OGS_PFCP_CAUSE_REQUEST_ACCEPTED;
+        bool no_sgwc_sess = (sess == NULL);
+        const char *what;
 
         vpp_detail[0] = '\0';
         if (pfcp_pkbuf &&
@@ -607,16 +611,26 @@ void sgwc_sxa_handle_session_establishment_response(
         sgwc_log_sgwu_peer(sgwu_peer, sizeof(sgwu_peer), sess);
         sgwc_log_mme_peer(mme_peer, sizeof(mme_peer), sgwc_ue);
         sgwc_log_pgw_peer(pgw_peer, sizeof(pgw_peer), sess);
+
+        if (no_sgwc_sess && upf_accepted)
+            what = "SGW-C session gone after SGW-U accepted PFCP "
+                    "Session Establishment (race)";
+        else if (!upf_accepted)
+            what = "SGW-U rejected PFCP Session Establishment";
+        else
+            what = "PFCP Session Establishment failed after SGW-U accept "
+                    "(local/F-SEID)";
+
         /*
          * Always-on ogs_error (not sgwc_ue_error): the per-IMSI helper is
          * filter-gated for CPU, so production only ever saw the anonymous
          * "No UP F-SEID" / "PFCP Cause" lines with no subscriber identity.
          */
-        ogs_error("[%s] SGW-U rejected PFCP Session Establishment "
-                "APN[%s] SGW-U[%s] MME[%s] PGW[%s] "
+        ogs_error("[%s] %s APN[%s] SGW-U[%s] MME[%s] PGW[%s] "
                 "PFCP cause[%u:%s] -> S11 cause[%u] "
-                "sess_id[%d] offending_ie[%u] vpp[%s]",
+                "sess_id[%d] UP-SEID[0x%llx] offending_ie[%u] vpp[%s]",
                 sgwc_ue && sgwc_ue->imsi_bcd[0] ? sgwc_ue->imsi_bcd : "-",
+                what,
                 sess && sess->session.name ? sess->session.name : "-",
                 sgwu_peer[0] ? sgwu_peer : "-",
                 mme_peer[0] ? mme_peer : "-",
@@ -625,6 +639,7 @@ void sgwc_sxa_handle_session_establishment_response(
                 pfcp_rsp->cause.presence ?
                     ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8) : "-",
                 cause_value, sess ? sess->id : 0,
+                (unsigned long long)rsp_up_seid,
                 offending_ie,
                 vpp_detail[0] ? vpp_detail : "-");
         sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact, cause_value);
