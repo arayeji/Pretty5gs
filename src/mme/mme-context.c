@@ -7404,7 +7404,8 @@ void mme_ue_confirm_guti(mme_ue_t *mme_ue)
         ogs_hash_unset_if_owner(self.guti_ue_hash,
                 &mme_ue->current.guti, sizeof(ogs_nas_eps_guti_t), mme_ue);
         mme_ctx_unlock();
-        ogs_assert(mme_m_tmsi_free(mme_ue->current.m_tmsi) == OGS_OK);
+        (void)mme_m_tmsi_free(mme_ue->current.m_tmsi);
+        mme_ue->current.m_tmsi = NULL;
     }
 
     /* Copying from Next to Current Guti */
@@ -8134,11 +8135,13 @@ void mme_ue_remove(mme_ue_t *mme_ue)
     if (sgw_ue) sgw_ue_remove(sgw_ue);
 
     if (MME_CURRENT_GUTI_IS_AVAILABLE(mme_ue)) {
-        ogs_assert(mme_m_tmsi_free(mme_ue->current.m_tmsi) == OGS_OK);
+        (void)mme_m_tmsi_free(mme_ue->current.m_tmsi);
+        mme_ue->current.m_tmsi = NULL;
     }
 
     if (MME_NEXT_GUTI_IS_AVAILABLE(mme_ue)) {
-        ogs_assert(mme_m_tmsi_free(mme_ue->next.m_tmsi) == OGS_OK);
+        (void)mme_m_tmsi_free(mme_ue->next.m_tmsi);
+        mme_ue->next.m_tmsi = NULL;
     }
 
     /* Clear the saved PDN Connectivity Request */
@@ -10283,8 +10286,10 @@ mme_m_tmsi_t *mme_m_tmsi_alloc(void)
 
     mme_ctx_lock();
     ogs_pool_alloc(&m_tmsi_pool, &m_tmsi);
-    mme_ctx_unlock();
-    ogs_assert(m_tmsi);
+    if (!m_tmsi) {
+        mme_ctx_unlock();
+        return NULL;
+    }
 
     /* TS23.003
      * 2.8.2.1.2 Mapping in the UE
@@ -10315,27 +10320,59 @@ mme_m_tmsi_t *mme_m_tmsi_alloc(void)
      * draw a large index). Bits 23..16 are legitimate: TS 23.003
      * 2.8.2.1.2 maps them into the 8 MSBs of the <P-TMSI signature> and
      * they survive the GERAN/UTRAN round-trip.
+     *
+     * Pool cells must hold the 30-bit index form. A cell with bits
+     * 31:30 set is wire-form leftover (typical cause: double-free put
+     * an in-use cell back on the freelist). Invert like free does and
+     * continue — never abort the whole MME on one bad cell.
      */
-    ogs_assert(*m_tmsi <= 0x3fffffff);
+    if (*m_tmsi > 0x3fffffff) {
+        ogs_error("mme_m_tmsi_alloc: pool cell in wire form 0x%x "
+                "(double-free/race?); repairing", (unsigned)*m_tmsi);
+        *m_tmsi &= 0x3fffffff;
+        *m_tmsi = (*m_tmsi & 0xffff) |
+            ((*m_tmsi & 0x3f000000) >> 8) |
+            ((*m_tmsi & 0x00ff0000) << 6);
+    }
 
     *m_tmsi = 0xc0000000 |
         ((*m_tmsi & 0x3fc00000) >> 6) |     /* index[29:22] -> [23:16] */
         ((*m_tmsi & 0x003f0000) << 8) |     /* index[21:16] -> [29:24] */
         (*m_tmsi & 0xffff);
 
+    mme_ctx_unlock();
     return m_tmsi;
 }
 
 int mme_m_tmsi_free(mme_m_tmsi_t *m_tmsi)
 {
+    ogs_pool_id_t idx;
+
     ogs_assert(m_tmsi);
+
+    mme_ctx_lock();
+
+    /*
+     * Reject double-free: ogs_pool_free() does not detect duplicates and
+     * will put the same cell on the freelist twice. The next alloc can
+     * then hand out a cell that is still wire-encoded for another UE,
+     * which used to FATAL in mme_m_tmsi_alloc().
+     */
+    idx = ogs_pool_index(&m_tmsi_pool, m_tmsi);
+    if (idx < OGS_MIN_POOL_ID || idx > m_tmsi_pool.size ||
+            m_tmsi_pool.index[idx - 1] != m_tmsi) {
+        ogs_error("mme_m_tmsi_free: double-free or stale M-TMSI ptr "
+                "(val=0x%x idx=%d); ignored",
+                (unsigned)*m_tmsi, (int)idx);
+        mme_ctx_unlock();
+        return OGS_ERROR;
+    }
 
     /* Restore M-TMSI by Issue #2307 (inverse of mme_m_tmsi_alloc) */
     *m_tmsi &= 0x3fffffff;
     *m_tmsi = (*m_tmsi & 0xffff) |
         ((*m_tmsi & 0x3f000000) >> 8) |     /* [29:24] -> index[21:16] */
         ((*m_tmsi & 0x00ff0000) << 6);      /* [23:16] -> index[29:22] */
-    mme_ctx_lock();
     ogs_pool_free(&m_tmsi_pool, m_tmsi);
     mme_ctx_unlock();
 
