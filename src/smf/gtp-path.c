@@ -76,34 +76,57 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
 
     ogs_pkbuf_trim(pkbuf, size);
 
+    /*
+     * Match SGW/SGSN by IP first. Some peers (and NAT) send GTP-C from
+     * ephemeral UDP source ports; keying on IP:port created one gnode per
+     * port and exhausted smf_gtp_node_pool (live: 5.x.x.x:12xxx mempool full
+     * while gtp_peers_active sat at 64). Refresh gnode->addr so replies
+     * follow the latest source port.
+     */
     gnode = ogs_gtp_node_find_by_addr(&smf_self()->sgw_s5c_list, &from);
-    if (!gnode) {
+    if (!gnode)
+        gnode = ogs_gtp_node_find_by_addr_only(
+                &smf_self()->sgw_s5c_list, &from);
+    if (gnode) {
+        if (!ogs_sockaddr_is_equal(&gnode->addr, &from)) {
+            memcpy(&gnode->addr, &from, sizeof(gnode->addr));
+            gnode->addr.next = NULL;
+        }
+        gnode->sock = data;
+        if (!gnode->data_ptr) {
+            /* Peer existed without SMF wrapper (prior alloc failure / cleanup). */
+            if (!smf_gtp_node_new(gnode)) {
+                ogs_error("Failed to attach smf_gnode(%s:%u), "
+                          "smf_gtp_node pool full (capacity=%llu); "
+                          "ignoring msg",
+                          OGS_ADDR(&from, frombuf), OGS_PORT(&from),
+                          (unsigned long long)ogs_app()->pool.gtp_node);
+                ogs_pkbuf_free(pkbuf);
+                return;
+            }
+        }
+    } else {
         gnode = ogs_gtp_node_add_by_addr(&smf_self()->sgw_s5c_list, &from);
         if (!gnode) {
-            ogs_error("Failed to create new gnode(%s:%u), mempool full, ignoring msg!",
-                      OGS_ADDR(&from, frombuf), OGS_PORT(&from));
+            ogs_error("Failed to create new gnode(%s:%u), "
+                      "libgtp node pool full (capacity=%llu); ignoring msg",
+                      OGS_ADDR(&from, frombuf), OGS_PORT(&from),
+                      (unsigned long long)ogs_app()->pool.gtp_node);
             ogs_pkbuf_free(pkbuf);
             return;
         }
         gnode->sock = data;
         if (!smf_gtp_node_new(gnode)) {
-            ogs_error("Failed to create smf_gnode(%s:%u), mempool full, "
-                      "ignoring msg!",
-                      OGS_ADDR(&from, frombuf), OGS_PORT(&from));
+            ogs_error("Failed to create smf_gnode(%s:%u), "
+                      "smf_gtp_node pool full (capacity=%llu) — "
+                      "new peer IP (not just a new UDP port); ignoring msg",
+                      OGS_ADDR(&from, frombuf), OGS_PORT(&from),
+                      (unsigned long long)ogs_app()->pool.gtp_node);
             ogs_gtp_node_remove(&smf_self()->sgw_s5c_list, gnode);
             ogs_pkbuf_free(pkbuf);
             return;
         }
         smf_metrics_inst_global_inc(SMF_METR_GLOB_GAUGE_GTP_PEERS_ACTIVE);
-    } else if (!gnode->data_ptr) {
-        /* Peer existed without SMF wrapper (prior alloc failure / cleanup). */
-        if (!smf_gtp_node_new(gnode)) {
-            ogs_error("Failed to attach smf_gnode(%s:%u), mempool full, "
-                      "ignoring msg!",
-                      OGS_ADDR(&from, frombuf), OGS_PORT(&from));
-            ogs_pkbuf_free(pkbuf);
-            return;
-        }
     }
 
     gtp_ver = ((ogs_gtp2_header_t *)pkbuf->data)->version;

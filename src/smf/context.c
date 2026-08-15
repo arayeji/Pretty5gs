@@ -207,7 +207,14 @@ void smf_context_init(void)
     ogs_log_install_domain(&__smf_log_domain, "smf", ogs_core()->log.level);
     ogs_log_install_domain(&__gsm_log_domain, "gsm", ogs_core()->log.level);
 
-    ogs_pool_init(&smf_gtp_node_pool, ogs_app()->pool.nf);
+    /*
+     * GTP-C peer wrappers must track max.gtp_peer (pool.gtp_node), not
+     * max.peer (pool.nf). Otherwise smf.yaml gtp_peer:32000 is ignored and
+     * the wrapper pool stays at the default peer=64 while libgtp itself
+     * allows 32000 — live symptom: gtp_peers_active stuck at 64 + mempool
+     * full when a peer opens many UDP source ports.
+     */
+    ogs_pool_init(&smf_gtp_node_pool, ogs_app()->pool.gtp_node);
     ogs_pool_init(&smf_ue_pool, ogs_global_conf()->max.ue);
     ogs_pool_init(&smf_bearer_pool, ogs_app()->pool.bearer);
     ogs_pool_init(&smf_pf_pool,
@@ -1768,7 +1775,9 @@ smf_gtp_node_t *smf_gtp_node_new(ogs_gtp_node_t *gnode)
 
     ogs_pool_alloc(&smf_gtp_node_pool, &smf_gnode);
     if (!smf_gnode) {
-        ogs_error("ogs_pool_alloc() failed");
+        ogs_error("ogs_pool_alloc() failed: smf_gtp_node pool full "
+                "(capacity=%llu from max.gtp_peer / max.peer)",
+                (unsigned long long)ogs_app()->pool.gtp_node);
         return NULL;
     }
     memset(smf_gnode, 0, sizeof(smf_gtp_node_t));
