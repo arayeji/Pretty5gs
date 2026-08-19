@@ -1953,7 +1953,15 @@ cleanup:
         max_num_of_ostreams = e->max_num_of_ostreams;
 
         vlr = mme_vlr_find_by_sock(sock);
-        ogs_assert(vlr);
+        if (!vlr) {
+            /*
+             * Stale COMM_UP after mme_vlr_close() nulled sock, or after
+             * a fast reconnect replaced the fd. Do not abort the MME.
+             */
+            ogs_warn("SGsAP SCTP_COMM_UP: no VLR for sock:%p (stale)",
+                    sock);
+            break;
+        }
         ogs_assert(OGS_FSM_STATE(&vlr->sm));
 
         vlr->max_num_of_ostreams =
@@ -1971,8 +1979,18 @@ cleanup:
         sock = e->sock;
         ogs_assert(sock);
 
+        /*
+         * SCTP_SEND_FAILED / COMM_LOST can enqueue many CONNREFUSED
+         * events for the same association. The first close nulls
+         * vlr->sock, so later lookups return NULL — same race S1AP
+         * already tolerates. Never FATAL the MME on a lost VLR link.
+         */
         vlr = mme_vlr_find_by_sock(sock);
-        ogs_assert(vlr);
+        if (!vlr) {
+            ogs_warn("SGsAP CONNREFUSED: VLR already closed/removed "
+                    "(sock:%p)", sock);
+            break;
+        }
         ogs_assert(OGS_FSM_STATE(&vlr->sm));
 
         if (OGS_FSM_CHECK(&vlr->sm, sgsap_state_connected)) {
@@ -2007,7 +2025,13 @@ cleanup:
         ogs_assert(sock);
 
         vlr = mme_vlr_find_by_sock(sock);
-        ogs_assert(vlr);
+        if (!vlr) {
+            ogs_warn("SGsAP MESSAGE: no VLR for sock:%p "
+                    "(association already closed); dropping", sock);
+            e->pkbuf = NULL;
+            ogs_pkbuf_free(pkbuf);
+            break;
+        }
         ogs_assert(OGS_FSM_STATE(&vlr->sm));
 
         /*
