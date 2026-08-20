@@ -1110,10 +1110,24 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
 {
     int r;
     mme_bearer_t *bearer = NULL;
+    uint8_t paging_type;
 
     ogs_assert(mme_ue);
 
-    switch (mme_ue->paging.type) {
+    /*
+     * paging.type == 0 means info was already cleared (common under
+     * workers: Service Request / S1 release / UE remove all race into
+     * this helper). Treat as a no-op — never abort the MME.
+     */
+    paging_type = mme_ue->paging.type;
+    if (!paging_type) {
+        ogs_warn("[%s] mme_send_after_paging: no paging in progress "
+                "(failed=%d); ignoring",
+                mme_ue->imsi_bcd[0] ? mme_ue->imsi_bcd : "-", failed);
+        return;
+    }
+
+    switch (paging_type) {
     case MME_PAGING_TYPE_DOWNLINK_DATA_NOTIFICATION:
         bearer = mme_bearer_find_by_id(
                 OGS_POINTER_TO_UINT(mme_ue->paging.data));
@@ -1316,8 +1330,10 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
          */
         break;
     default:
-        ogs_fatal("Invalid Paging Type[%d]", mme_ue->paging.type);
-        ogs_assert_if_reached();
+        ogs_error("[%s] Invalid Paging Type[%d] (failed=%d); clearing",
+                mme_ue->imsi_bcd[0] ? mme_ue->imsi_bcd : "-",
+                paging_type, failed);
+        break;
     }
 
     /*
