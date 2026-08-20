@@ -1,8 +1,8 @@
 # Pretty5GS
 
-Pretty5GS is a production-oriented fork of [Open5GS](https://open5gs.org/) for LTE/EPC deployments. It rebases on current upstream Open5GS and adds operator-focused changes for attach diagnostics, PLMN-aware GTP selection, RADIUS, roaming, and scale.
+Pretty5GS is a production-oriented fork of [Open5GS](https://open5gs.org/) for LTE/EPC deployments. It rebases on current upstream Open5GS and adds operator-focused features for scale (SMP workers), attach diagnostics, PLMN-aware GTP selection, RADIUS, roaming, CDR/CGF throughput, NMS admin APIs, and optional collapsed SAEGW-C.
 
-Upstream docs: [open5gs.org](https://open5gs.org/open5gs/docs/). This README describes **what Pretty5GS adds** and how to turn optional features on.
+Upstream docs: [open5gs.org](https://open5gs.org/open5gs/docs/). This README describes **what Pretty5GS adds** (vs `open5gs/open5gs`) and how to turn optional features on. Deep dives: `docs/smp-workers.md`, `docs/collapsed-saegw.md`, `docs/nms-sighup-reload.md`, `docs/lawful-interception.md`.
 
 ## What changed vs upstream Open5GS
 
@@ -10,28 +10,77 @@ Upstream docs: [open5gs.org](https://open5gs.org/open5gs/docs/). This README des
 |------|----------|-------------|
 | **RADIUS (SMF)** | Basic support | Multi-server RADIUS, framed IP, Framed-Route / Framed-IPv6-Route, accounting, admin API controls |
 | **PFCP / SMF pools** | Standard pools | Multi-DNN subnets sharing one UE pool; pool-exhaustion logs with IMSI/DNN |
-| **Admin HTTP API** | Limited | MME/SMF/SGWC/HSS `:9090` — metrics under load, per-IMSI trace, RADIUS/subnet tuning |
-| **Production metrics** | Global gauges only on MME; SMF/UPF 5G-style | Per-PLMN attach/auth/registered UE (MME), SGWC UE/session by PGW, SMF UE by PLMN, UPF sessions by CP peer (SGWU/PGWU) |
+| **Admin HTTP API** | Limited | MME/SMF/SGWC/HSS `:9090` — metrics, per-IMSI trace, RADIUS/subnet tuning, maintenance/drain, session delete, HSS CLR, queues |
+| **Production metrics** | Global gauges only on MME; SMF/UPF 5G-style | Per-PLMN attach/auth/registered UE (MME), SGWC UE/session by PGW, SMF UE by PLMN, UPF sessions by CP peer (SGWU/PGWU); PFCP peer state |
+| **MME / SGWC SMP** | Single-threaded hot path | Optional `mme.workers` / Stage C, S1AP RX/TX offload, SGsAP TX I/O, GTP-C RX thread; `sgwc.workers` session shards (**default off**) — see `docs/smp-workers.md` |
+| **Collapsed SAEGW-C** | Always MME→SGW-C→SMF | Optional `smf.collapsed` — MME S11 terminates on SMF (no SGW-C/U); S8 relay for home-routed roamers (**default off**) — `docs/collapsed-saegw.md` |
+| **CGF (Ga / GTP')** | Single drain path | Parallel `cgf.workers`, `send_mode: round_robin` across UP peers, multi-file drain (`max_active_files`) |
+| **NMS PACKET dumps** | Hexdump / log level only | Per-traced-IMSI `PACKET: proto=… dir=… b64=…` (S1AP/GTP/PFCP/Diameter/RADIUS) for PCAP rebuild |
 | **MME scale** | Fixed large pools | Configurable per-UE pool multipliers, peak stats, SIGUSR1 pool dump, soft-cap LRU |
-| **MME lookups** | Linear scans | O(1) `enb_ue` by S1AP-ID; EBI → bearer map |
+| **MME lookups** | Linear scans | O(1) `enb_ue` by S1AP-ID; served-TAI hash; EBI → bearer map; O(1) sock maps |
 | **SCTP** | Reconnect edge cases | Stale eNB/gNB SCTP context replaced on reconnect |
 | **TAI / PLMN** | Standard caps | Higher TAI limits; serving-only TAI; ePLMN; S1 PLMN preference |
-| **SGWC / SMF (GTP-C)** | First matching peer | Selection by `serving_plmn_id`, `imsi_plmn_id`, `plmn_id`; inbound roam uses IMSI PLMN by default |
-| **PGW / SMF (MME)** | First configured SMF | Same PLMN rules as SGWC under `mme.gtpc.client.smf` |
-| **Roaming** | Baseline | Inbound roam GTP APN/OI, home-PGW interop, SGW-U NWI wildcard, EPLMN serving-only, ULA tolerance, configurable T3450 |
-| **SGs (CSFB)** | No Ts6-1 | Per-UE **Ts6-1** on SGs Location Update → EPS-only attach accept on timeout (default 10 s) |
+| **SGWC / SMF (GTP-C)** | First matching peer | Selection by `serving_plmn_id`, `imsi_plmn_id`, `plmn_id`, `order`; inbound roam uses IMSI PLMN by default |
+| **PGW / SMF (MME)** | First configured SMF | Same PLMN rules as SGWC under `mme.gtpc.client.smf`; MIP host DNS cache invalidate API |
+| **Roaming** | Baseline | Inbound roam GTP APN/OI, home-PGW interop, SGW-U NWI wildcard, EPLMN serving-only, ULA tolerance, configurable T3450 / T3346 |
+| **SGs (CSFB)** | No Ts6-1 | Per-UE **Ts6-1** on SGs Location Update → EPS-only attach accept on timeout; optional `fake_csfb` SMS-only Combined |
 | **GTP CSR interop** | Always sends Indication IE | Optional global `omit_indication_on_gtp_csr` for vendor PGW/SGWC |
-| **Attach cleanup** | Limited | S11 Delete Session when Attach Accept cannot be sent after CSR ok; safe OLD→NEW UE session merge on re-attach |
-| **SGWC roam S5** | TEID offset fallback only | Stale Update Bearer TEID validated; late PGW CSR no longer aborts SGWC |
-| **Tracing** | Global log level | Per-IMSI DEBUG without restart; correlated MME/SGWC/SMF attach logs |
-| **Attach visibility** | Mostly INFO/DEBUG | `ATTACH step:` funnel (INFO + ERROR on failures); SGW/PGW pick logs; **GTP timeout shows S11 peer** |
+| **Attach cleanup** | Limited | S11 Delete Session when Attach Accept cannot be sent after CSR ok; safe OLD→NEW UE session merge; orphan sweeps |
+| **SGWC roam S5** | TEID offset fallback only | Stale Update Bearer TEID validated; late PGW CSR no longer aborts SGWC; PFCP RESTI / DROBU idle buffering |
+| **SGWC Gn** | Not present | Optional GTPv1 Gn toward legacy GGSNs |
+| **HSS Sh / CS** | S6a-centric | 3GPP **Sh** server + S6a NOR; CS-domain via IWF **S6d** ULR |
+| **Tracing** | Global log level | Per-IMSI DEBUG without restart; correlated MME/SGWC/SMF/HSS logs; MSISDN/IMEI alias resolve |
+| **Attach visibility** | Mostly INFO/DEBUG | `ATTACH step:` funnel; SGW/PGW pick logs; **GTP timeout shows S11 peer**; demoted race/churn noise |
 | **HSS / S6a ACL** | Attach-only PLMN check; unmapped IMSIs still hit default DRA realm | Block AIR/ULR before Diameter when IMSI fails `access_control`, `imsi_acl`, or `hss_map` (auto-enforced) |
-| **CDR (4G)** | Partial ULI | ULI in MME/SMF/SGWC CDRs; SGWC `servedMSISDN`; higher APN / SGsAP caps |
+| **CDR (4G)** | Partial ULI | ULI in MME/SMF/SGWC CDRs; SGWC `servedMSISDN`; serving-node / advertise-IP fixes; partial CDR `recordOpeningTime` |
+| **Lawful interception** | Not present | Optional HI event reporting on MME/SMF (**off by default**) — `docs/lawful-interception.md` |
 | **Milenage K4** | Not present | Optional Huawei HSS9860 K/OPc unwrap (**off by default**) |
 | **PCRF / Gx + PyHSS** | MongoDB `db_uri` | Optional PyHSS MySQL policy (**off by default**); YAML policy unchanged |
-| **Runtime config reload (MME)** | Restart for any YAML change | **SIGHUP** reload: timers, GTP echo interval, full-replace lists (TAI, ACL, peers, trace), **logger** without dropping UEs |
-| **Runtime config reload (SMF / SGWC)** | Restart for bind addresses | **SIGHUP** reload: SMF session subnets/APN pools, UPF peers, CDR/RADIUS; SGWC roam/TEID/**CDR spool_dir**/NWI/SGW-U peers, **logger** (add/remove lists) |
+| **URRP / T-ADS** | Limited | S6a URRP-MME UE reachability + admin paging API |
+| **Maintenance** | Restart / manual | Maintenance mode + graceful drain on MME/SGWC/SMF |
+| **Crash hardening** | Many `ogs_assert` aborts | Soft-fail races (stale SGs CONNREFUSED, empty paging type, empty bearer lists, late DSR, …) |
+| **Runtime config reload (MME)** | Restart for any YAML change | **SIGHUP** reload: timers, GTP echo, full-replace lists (TAI, ACL, peers, trace), **logger** without dropping UEs |
+| **Runtime config reload (SMF / SGWC)** | Restart for bind addresses | **SIGHUP** reload: SMF session subnets/APN pools, UPF peers, CDR/RADIUS; SGWC roam/TEID/**CDR spool_dir**/NWI/SGW-U peers, **logger** |
 | **Runtime config reload (HSS)** | Restart for any YAML change | **SIGHUP** reload: `hss.trace_imsi` + **logger** |
+
+### Features (new capabilities)
+
+- **Collapsed SAEGW-C** — `smf.collapsed: true`: MME talks S11 to SMF; UPF terminates S1-U; home-routed roamers use S8 relay (`docs/collapsed-saegw.md`). Classic MME→SGW-C→SMF path unchanged when collapsed is off.
+- **SMP / Stage C** — optional MME UE shards (`mme.workers`, `stage_c`), S1AP RX/TX workers, SGsAP I/O thread, GTP-C RX thread; SGW-C session workers (`sgwc.workers`). All default **0 / off**.
+- **CGF scale-out** — `cgf.workers`, `send_mode: round_robin`, `batch.max_active_files` for multi-peer Ga drain.
+- **NMS PACKET line** — IMSI-filtered base64 wire dumps (`/admin/trace/imsi`) for PrettyNMS PCAP rebuild (S1AP, GTP, PFCP, Diameter, RADIUS).
+- **Admin ops** — maintenance enable/drain, `/admin/session/delete` (MME/SMF/SGWC), HSS `POST /admin/s6a/clr`, UE page, `/admin/queues`, PGW-host DNS cache clear, reload audit + `/admin/config`.
+- **HSS Sh + CS** — Sh interface; S6a Notify; IWF S6d path for VLR/MSC.
+- **SGWC Gn** — GTPv1 toward legacy GGSNs.
+- **URRP-MME / T-ADS** — arm/report UE reachability; admin paging.
+- **fake_csfb** — protocol-complete SMS-only Combined Accept without a live MSC (does not override HSS packet-only NAM).
+- **Lawful interception (HI)** — optional MME/SMF event reporting (**off by default**).
+- **Enterprise metrics** — per-PLMN / per-SGW / per-PGW / per-CP-peer gauges (see metrics section below).
+
+### Improvements (ops, interop, reliability)
+
+- Attach/TAU funnel logging, richer IMSI/peer/TAC/TEID context on errors; race/churn demoted from ERROR→WARN.
+- Inbound-roam ACL (IMSI prefix + optional TAC/eNB), `hss_map` enforcement, APN allow-lists / correction policies.
+- S11 recovery / GTP echo, SGWC restart purge, orphan UE/eNB sweeps, held-DDN and TX-hold watchdogs.
+- PFCP idle buffering: DROP / REARM / **DROBU** (TS 23.401 paging-fail), RESTI on restore paths.
+- Countless production crash guards (null VLR on SGs down, stale paging type 0, empty modify lists, late Delete Session, …).
+- CDR field correctness (serving-node IP, advertise IP, partial CDR opening time, Ga seq / Possibly-Dup).
+
+### Integrations
+
+- **PrettyNMS** — metrics + admin HTTP on `:9090`, SIGHUP reload matrix (`docs/nms-sighup-reload.md`), IMSI trace sync, PACKET dumps.
+- **PyHSS** — optional PCRF Gx MySQL; K4 for Milenage unwrap when enabled.
+- **Huawei / vendor PGW** — K4, `omit_indication_on_gtp_csr`, roam TEID offset / NWI rewrite.
+- **RADIUS farms** — multi-server auth/acct + PoD; admin/SIGHUP apply.
+- **CGF / Ga billing** — spool + multi-worker GTP' toward charging peers.
+
+### Performance
+
+- Dropped global `ogs_malloc` allocator mutex (plain heap) under SMP load.
+- O(1) MME served-TAI and SCTP sock lookups; bounded event queues; non-blocking main-thread queue posts.
+- Optional S1AP RX decode + TX encode offload; SGsAP send offload; ASN.1 free offload.
+- SGW-C owner-sharded workers; CGF parallel drain + multi-file Ga window fill.
+- Lazy `ogs_debug`/`ogs_trace` formatting; skip discarded log format cost; rate-limited IMSI-trace / PACKET lines.
 
 ## Build and install
 
@@ -57,6 +106,29 @@ See **`build.md`** for the full server recipe (PyHSS MySQL, debug vs release, ve
 After any change under `lib/app/` or `lib/crypt/`, always run **`ninja install`** from the same build. Partial installs cause missing `libogsapp`/`libogscrypt` symbols on every daemon.
 
 ## Optional features (disabled by default)
+
+### Collapsed SAEGW-C (no SGW-C / SGW-U)
+
+```yaml
+smf:
+  collapsed: true   # MME S11 → this SMF; restart smfd after change
+```
+
+Point `mme.gtpc.client.sgwc` at the SMF GTP-C address. Details: `docs/collapsed-saegw.md`.
+
+### SMP workers (MME / SGWC)
+
+```yaml
+mme:
+  workers: 0              # UE shards; 0 = off
+  stage_c: 0
+  s1ap_rx_workers: 0
+  s1ap_tx_workers: 0
+sgwc:
+  workers: 0              # session shards; 0 = off
+```
+
+See `docs/smp-workers.md`. Leave at 0 unless you have soak-tested the deployment.
 
 ### Milenage K4 (Huawei stored credentials)
 
