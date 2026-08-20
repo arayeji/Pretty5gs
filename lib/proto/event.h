@@ -62,7 +62,7 @@ typedef struct ogs_event_s {
 
 } ogs_event_t;
 
-#define OGS_EVENT_SIZE 256
+#define OGS_EVENT_SIZE 320
 
 void *ogs_event_size(int id, size_t size);
 ogs_event_t *ogs_event_new(int id);

@@ -28,6 +28,7 @@ extern "C" {
 
 typedef struct mme_ue_s mme_ue_t;
 typedef struct enb_ue_s enb_ue_t;
+typedef struct mme_enb_s mme_enb_t;
 typedef struct mme_access_control_s mme_access_control_t;
 
 void mme_access_control_free_all(void);
@@ -38,9 +39,26 @@ bool mme_access_control_enb_add(mme_access_control_t *ac, uint32_t enb_id);
  * Inbound roam only: IMSI prefix / PLMN whitelist plus optional TAC / eNB-ID
  * allow-lists on access_control entries.
  * Returns OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED when allowed or not applicable.
+ *
+ * Uses the UE's current TAI and the eNB from enb_ue (Attach / TAU).
  */
 uint8_t mme_inbound_roam_access_emm_cause(
         mme_ue_t *mme_ue, enb_ue_t *enb_ue);
+
+/*
+ * Same policy against an explicit target cell (Path Switch / S1 HO).
+ * target_tai NULL => mme_ue->tai; target_enb NULL => no eNB-ID check data.
+ */
+uint8_t mme_inbound_roam_access_emm_cause_at(
+        mme_ue_t *mme_ue, const ogs_eps_tai_t *target_tai,
+        mme_enb_t *target_enb);
+
+/*
+ * When attach_accept.equivalent_plmn_access_control_tac is enabled, call this
+ * before including the EPLMN IE. Uses the UE's matched access_control entry
+ * and that entry's TAC allow-list (see mme_access_control_eplmn_tac_allowed_for).
+ */
+bool mme_access_control_eplmn_tac_allowed(mme_ue_t *mme_ue);
 
 #ifdef __cplusplus
 }

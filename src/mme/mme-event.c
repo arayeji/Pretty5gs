@@ -34,11 +34,15 @@
  * early so mme_event_term() can terminate the queue on shutdown.
  */
 #define MME_S1AP_CONNREFUSED_QUEUE  8192
+#define MME_S1AP_TX_READY_QUEUE     65536
 
 static ogs_queue_t *s1ap_cr_queue = NULL;
 static ogs_hash_t *s1ap_cr_pending = NULL; /* key: &e->sock while queued */
 static ogs_thread_mutex_t s1ap_cr_lock;
 static bool s1ap_cr_ready = false;
+
+static ogs_queue_t *s1ap_tx_ready_queue = NULL;
+static bool s1ap_tx_ready_q_ready = false;
 
 static bool mme_event_belongs_to_mme_ue(
         mme_event_t *e, ogs_pool_id_t mme_ue_id)
@@ -190,6 +194,8 @@ void mme_event_term(void)
     ogs_queue_term(ogs_app()->queue);
     if (s1ap_cr_ready)
         ogs_queue_term(s1ap_cr_queue);
+    if (s1ap_tx_ready_q_ready)
+        ogs_queue_term(s1ap_tx_ready_queue);
     ogs_pollset_notify(ogs_app()->pollset);
 }
 
@@ -197,20 +203,75 @@ mme_event_t *mme_event_new(mme_event_e id)
 {
     mme_event_t *e = NULL;
 
-    /* ogs_calloc already zeroes; the extra memset here doubled the
-     * per-event zeroing cost (~3% of CPU was memset under load) */
-    e = ogs_calloc(1, sizeof *e);
+    /*
+     * Plain calloc/free, NOT ogs_calloc/ogs_free.
+     *
+     * ogs_talloc_* takes one process-global mutex, so every event
+     * alloc + free cost two round-trips on the hottest lock in the
+     * process (see ogs_mem_init). An mme_event_t is a small, flat,
+     * self-contained struct with no talloc children, so glibc malloc
+     * serves it from the per-thread tcache with no lock at all.
+     * Payload members (addr / s6a_message / s1ap_message / pkbuf) are
+     * allocated separately and still use their own allocators.
+     * mme_event_free() is the ONLY place events are released.
+     */
+    e = calloc(1, sizeof *e);
     ogs_assert(e);
 
     e->id = id;
+    e->owner_wid = -1;
+    e->created_at = ogs_get_monotonic_time();
 
     return e;
+}
+
+/*
+ * Rises immediately to the worst lag seen and decays geometrically, so a
+ * backlog is reported the moment it appears and clears only once dispatch
+ * has actually caught up.
+ */
+static int64_t event_lag_usec = 0;
+
+void mme_event_lag_observe(const mme_event_t *e)
+{
+    ogs_time_t lag;
+    int64_t prev, next;
+
+    if (!e || !e->created_at)
+        return;
+
+    lag = ogs_get_monotonic_time() - e->created_at;
+    if (lag < 0)
+        lag = 0;
+
+    prev = __atomic_load_n(&event_lag_usec, __ATOMIC_RELAXED);
+    next = ((int64_t)lag > prev) ? (int64_t)lag : prev - (prev - (int64_t)lag) / 8;
+    __atomic_store_n(&event_lag_usec, next, __ATOMIC_RELAXED);
+
+    if (next >= MME_UE_TIMER_LAG_DEFER_THRESHOLD) {
+        static int64_t last_warn = 0;
+        ogs_time_t now = ogs_get_monotonic_time();
+        int64_t seen = __atomic_load_n(&last_warn, __ATOMIC_RELAXED);
+
+        if (now - seen >= ogs_time_from_sec(10) &&
+            __atomic_compare_exchange_n(&last_warn, &seen, (int64_t)now,
+                false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            ogs_warn("Event queue lag %dms - NAS retransmission timers "
+                    "deferred (MME is behind, peers are not)",
+                    (int)(next / 1000));
+    }
+}
+
+ogs_time_t mme_event_lag(void)
+{
+    return (ogs_time_t)__atomic_load_n(&event_lag_usec, __ATOMIC_RELAXED);
 }
 
 void mme_event_free(mme_event_t *e)
 {
     ogs_assert(e);
-    ogs_free(e);
+    /* paired with calloc() in mme_event_new() -- see the note there */
+    free(e);
 }
 
 const char *mme_event_get_name(mme_event_t *e)
@@ -240,6 +301,8 @@ const char *mme_event_get_name(mme_event_t *e)
         return "MME_EVENT_S1AP_RX_WATCH_FAILED";
     case MME_EVENT_S1AP_TX_READY:
         return "MME_EVENT_S1AP_TX_READY";
+    case MME_EVENT_S1AP_IO_CONGESTED:
+        return "MME_EVENT_S1AP_IO_CONGESTED";
 
     case MME_EVENT_EMM_MESSAGE:
         return "MME_EVENT_EMM_MESSAGE";
@@ -279,6 +342,8 @@ const char *mme_event_get_name(mme_event_t *e)
         return "MME_EVENT_ADMIN_DETACH_ENB";
     case MME_EVENT_ADMIN_DETACH_UE:
         return "MME_EVENT_ADMIN_DETACH_UE";
+    case MME_EVENT_ADMIN_DETACH_SESS:
+        return "MME_EVENT_ADMIN_DETACH_SESS";
     case MME_EVENT_ADMIN_PAGE_UE:
         return "MME_EVENT_ADMIN_PAGE_UE";
     case MME_EVENT_ADMIN_PURGE_UE:
@@ -295,6 +360,8 @@ const char *mme_event_get_name(mme_event_t *e)
         return "MME_EVENT_ORPHAN_SWEEP";
     case MME_EVENT_S1AP_HO_TAIL:
         return "MME_EVENT_S1AP_HO_TAIL";
+    case MME_EVENT_PGW_DNS_DONE:
+        return "MME_EVENT_PGW_DNS_DONE";
     default:
        break;
     }
@@ -348,6 +415,53 @@ static void mme_event_drop_log(const char *what, int id, int rv)
     ogs_thread_mutex_unlock(&drop_log_lock);
 }
 
+/*
+ * Identity of the mme_main() thread, i.e. the single consumer of
+ * ogs_app()->queue. Everything that runs inside its poll/timer callbacks
+ * inherits the flag, which is exactly the set of contexts that must never
+ * block waiting for that queue to drain.
+ */
+static OGS_THREAD_LOCAL bool thread_is_main = false;
+
+void mme_event_mark_main_thread(void)
+{
+    thread_is_main = true;
+}
+
+bool mme_event_on_main_thread(void)
+{
+    return thread_is_main;
+}
+
+/* ~20ms at 100us; only ever spent on non-main threads. */
+#define MME_MAIN_PUSH_MAX_TRIES 200
+
+int mme_queue_push_main(void *event)
+{
+    int rv, tries = 0;
+
+    ogs_assert(event);
+
+    for (;;) {
+        rv = ogs_queue_trypush(ogs_app()->queue, event);
+        if (rv == OGS_OK) {
+            ogs_pollset_notify(ogs_app()->pollset);
+            return OGS_OK;
+        }
+        if (rv != OGS_RETRY)
+            return rv; /* terminated */
+
+        /*
+         * Full. Waking main is the only thing that can help, and on main
+         * itself there is nobody left to wait for.
+         */
+        ogs_pollset_notify(ogs_app()->pollset);
+        if (thread_is_main || ++tries > MME_MAIN_PUSH_MAX_TRIES)
+            return OGS_RETRY;
+        ogs_usleep(100);
+    }
+}
+
 void mme_event_s1ap_connrefused_init(void)
 {
     if (s1ap_cr_ready)
@@ -379,6 +493,12 @@ void mme_event_s1ap_connrefused_final(void)
     s1ap_cr_ready = false;
 }
 
+/* diagnostic (torn read acceptable): CONNREFUSED side-queue depth */
+unsigned int mme_event_s1ap_connrefused_depth(void)
+{
+    return s1ap_cr_ready ? ogs_queue_size(s1ap_cr_queue) : 0;
+}
+
 int mme_event_s1ap_connrefused_trypop(mme_event_t **e)
 {
     int rv;
@@ -396,6 +516,54 @@ int mme_event_s1ap_connrefused_trypop(mme_event_t **e)
     }
     ogs_thread_mutex_unlock(&s1ap_cr_lock);
     return rv;
+}
+
+void mme_event_s1ap_tx_ready_init(void)
+{
+    ogs_assert(s1ap_tx_ready_queue == NULL);
+    s1ap_tx_ready_queue = ogs_queue_create(MME_S1AP_TX_READY_QUEUE);
+    ogs_assert(s1ap_tx_ready_queue);
+    s1ap_tx_ready_q_ready = true;
+}
+
+void mme_event_s1ap_tx_ready_final(void)
+{
+    if (!s1ap_tx_ready_q_ready)
+        return;
+    ogs_queue_destroy(s1ap_tx_ready_queue);
+    s1ap_tx_ready_queue = NULL;
+    s1ap_tx_ready_q_ready = false;
+}
+
+unsigned int mme_event_s1ap_tx_ready_depth(void)
+{
+    return s1ap_tx_ready_q_ready ? ogs_queue_size(s1ap_tx_ready_queue) : 0;
+}
+
+int mme_event_s1ap_tx_ready_trypop(mme_event_t **e)
+{
+    ogs_assert(e);
+    *e = NULL;
+    if (!s1ap_tx_ready_q_ready)
+        return OGS_RETRY;
+    return ogs_queue_trypop(s1ap_tx_ready_queue, (void **)e);
+}
+
+int mme_event_s1ap_tx_ready_push(mme_event_t *e)
+{
+    int rv;
+
+    ogs_assert(e);
+    if (!s1ap_tx_ready_q_ready)
+        return mme_queue_push_main(e);
+
+    rv = ogs_queue_trypush(s1ap_tx_ready_queue, e);
+    if (rv == OGS_OK) {
+        ogs_pollset_notify(ogs_app()->pollset);
+        return OGS_OK;
+    }
+    /* Side-queue full: fall back to main so pending still decrements. */
+    return mme_queue_push_main(e);
 }
 
 static void mme_sctp_connrefused_enqueue(mme_event_t *e)
@@ -541,14 +709,39 @@ void mme_sctp_event_push(mme_event_e id,
         return;
     }
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        mme_event_drop_log("mme_sctp_event_push (main)", id, (int)rv);
         mme_event_discard_s1ap_push(e);
         return;
     }
+}
 
-#if HAVE_USRSCTP
-    ogs_pollset_notify(ogs_app()->pollset);
-#endif
+void s1ap_io_congestion_event_push(void *sock, int wq_depth)
+{
+    mme_event_t *e = NULL;
+    int rv;
+
+    ogs_assert(sock);
+
+    e = mme_event_new(MME_EVENT_S1AP_IO_CONGESTED);
+    ogs_assert(e);
+    e->sock = sock;
+    e->io_wq_depth = wq_depth;
+
+    /*
+     * Best effort by design: this is a repeated heartbeat, so dropping
+     * one on a full queue costs at most a second of throttling. Silent
+     * on failure — a congestion report that logs an error on every
+     * drop would be loudest exactly when the MME is busiest.
+     */
+    rv = ogs_worker_self() ?
+        ogs_queue_trypush(ogs_app()->queue, e) : mme_queue_push_main(e);
+    if (rv != OGS_OK) {
+        mme_event_free(e);
+        return;
+    }
+
+    if (ogs_worker_self())
+        ogs_pollset_notify(ogs_app()->pollset);
 }

@@ -87,8 +87,8 @@ static void eplmn_config_count_test(abts_case *tc, void *data)
             &num_of_eplmn, eplmn);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
     ABTS_INT_EQUAL(tc, 1, num_of_eplmn);
-    ABTS_INT_EQUAL(tc, 432, ogs_plmn_id_mcc(&eplmn[0]));
-    ABTS_INT_EQUAL(tc, 11, ogs_plmn_id_mnc(&eplmn[0]));
+    ABTS_INT_EQUAL(tc, 999, ogs_plmn_id_mcc(&eplmn[0]));
+    ABTS_INT_EQUAL(tc, 71, ogs_plmn_id_mnc(&eplmn[0]));
 
     snprintf(yaml, sizeof(yaml), "mme:\n  equivalent_plmn:\n");
     for (i = 0; i < 8; i++)
@@ -129,7 +129,7 @@ static void eplmn_nas_encoding_test(abts_case *tc, void *data)
     ogs_nas_plmn_list_t nas_list;
     ogs_nas_plmn_id_t *nas_plmn;
     ogs_pkbuf_t *pkbuf = NULL;
-    uint8_t expected[3];
+    uint8_t *encoded = NULL;
     int rv;
 
     ogs_plmn_id_build(&plmn_id, 432, 12, 2);
@@ -137,27 +137,29 @@ static void eplmn_nas_encoding_test(abts_case *tc, void *data)
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
     ABTS_INT_EQUAL(tc, 3, nas_list.length);
 
+    /*
+     * Assert the NAS wire bytes directly. Deriving them from the source
+     * ogs_plmn_id_t is wrong: that struct is laid out
+     *   mcc2|mcc1, mnc1|mcc3, mnc3|mnc2
+     * whereas the NAS/BCD wire order (TS 23.003 12.1) is
+     *   MCC2|MCC1, MNC3|MCC3, MNC2|MNC1
+     * The two coincide only for 2-digit MNCs, where ogs_plmn_id_build()
+     * parks the 0xf filler in mnc1 - which is why the 432-12 case below
+     * used to pass while any 3-digit MNC did not.
+     */
     nas_plmn = &nas_list.nas_plmn_id[0];
-    expected[0] = (plmn_id.mcc2 << 4) | plmn_id.mcc1;
-    expected[1] = (plmn_id.mnc1 << 4) | plmn_id.mcc3;
-    expected[2] = (plmn_id.mnc3 << 4) | plmn_id.mnc2;
-    ABTS_INT_EQUAL(tc, expected[0], *((uint8_t *)nas_plmn));
-    ABTS_INT_EQUAL(tc, expected[1], *((uint8_t *)nas_plmn + 1));
-    ABTS_INT_EQUAL(tc, expected[2], *((uint8_t *)nas_plmn + 2));
     ABTS_INT_EQUAL(tc, 0x34, *((uint8_t *)nas_plmn));
     ABTS_INT_EQUAL(tc, 0xf2, *((uint8_t *)nas_plmn + 1));
     ABTS_INT_EQUAL(tc, 0x21, *((uint8_t *)nas_plmn + 2));
 
+    /* 3-digit MNC: MCC 310 / MNC 260 encodes as 13 00 62 */
     ogs_plmn_id_build(&plmn_id, 310, 260, 3);
     rv = mme_eplmn_build_nas_list(&nas_list, 1, &plmn_id);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
     nas_plmn = &nas_list.nas_plmn_id[0];
-    expected[0] = (plmn_id.mcc2 << 4) | plmn_id.mcc1;
-    expected[1] = (plmn_id.mnc1 << 4) | plmn_id.mcc3;
-    expected[2] = (plmn_id.mnc3 << 4) | plmn_id.mnc2;
-    ABTS_INT_EQUAL(tc, expected[0], *((uint8_t *)nas_plmn));
-    ABTS_INT_EQUAL(tc, expected[1], *((uint8_t *)nas_plmn + 1));
-    ABTS_INT_EQUAL(tc, expected[2], *((uint8_t *)nas_plmn + 2));
+    ABTS_INT_EQUAL(tc, 0x13, *((uint8_t *)nas_plmn));
+    ABTS_INT_EQUAL(tc, 0x00, *((uint8_t *)nas_plmn + 1));
+    ABTS_INT_EQUAL(tc, 0x62, *((uint8_t *)nas_plmn + 2));
 
     memset(&nas_list, 0, sizeof(nas_list));
     ogs_plmn_id_build(&plmn_id, 432, 12, 2);
@@ -167,11 +169,17 @@ static void eplmn_nas_encoding_test(abts_case *tc, void *data)
     ogs_assert(pkbuf);
     ogs_pkbuf_put(pkbuf, OGS_MAX_SDU_LEN);
 
+    /*
+     * The encoders pull pkbuf->data forward and write at the old
+     * position, so the encoded bytes live at the pointer taken *before*
+     * the call - reading pkbuf->data afterwards lands past them.
+     */
+    encoded = pkbuf->data;
     ABTS_INT_EQUAL(tc, 4, ogs_nas_eps_encode_plmn_list(pkbuf, &nas_list));
-    ABTS_INT_EQUAL(tc, 3, pkbuf->data[0]);
-    ABTS_INT_EQUAL(tc, 0x34, pkbuf->data[1]);
-    ABTS_INT_EQUAL(tc, 0xf2, pkbuf->data[2]);
-    ABTS_INT_EQUAL(tc, 0x21, pkbuf->data[3]);
+    ABTS_INT_EQUAL(tc, 3, encoded[0]);      /* length octet */
+    ABTS_INT_EQUAL(tc, 0x34, encoded[1]);
+    ABTS_INT_EQUAL(tc, 0xf2, encoded[2]);
+    ABTS_INT_EQUAL(tc, 0x21, encoded[3]);
 
     ogs_pkbuf_free(pkbuf);
 }
@@ -219,6 +227,41 @@ static void eplmn_serving_only_test(abts_case *tc, void *data)
     ABTS_INT_EQUAL(tc, 9, nas_list.length);
 }
 
+/* Attach/TAU path: filter by IMSI home PLMN, not visited TAI PLMN. */
+static void eplmn_imsi_only_test(abts_case *tc, void *data)
+{
+    ogs_plmn_id_t eplmn[OGS_NAS_MAX_PLMN];
+    ogs_nas_plmn_list_t nas_list, expected;
+    int rv;
+
+    ogs_plmn_id_build(&eplmn[0], 432, 12, 2);
+    ogs_plmn_id_build(&eplmn[1], 432, 11, 2);
+    ogs_plmn_id_build(&eplmn[2], 432, 35, 2);
+
+    /* IMSI home 432-11 while camping on 432-12 → send 432-11 only */
+    ABTS_INT_EQUAL(tc, 1, mme_eplmn_count_for_imsi(
+                "432112940251599", true, 3, eplmn));
+    rv = mme_eplmn_build_nas_list_for_imsi(
+            &nas_list, "432112940251599", true, 3, eplmn);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    rv = mme_eplmn_build_nas_list(&expected, 1, &eplmn[1]);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    ABTS_INT_EQUAL(tc, expected.length, nas_list.length);
+    ABTS_TRUE(tc, memcmp(&expected, &nas_list, sizeof(nas_list)) == 0);
+
+    /* Home PLMN not in list → full list */
+    ABTS_INT_EQUAL(tc, 3, mme_eplmn_count_for_imsi(
+                "432990123456789", true, 3, eplmn));
+    rv = mme_eplmn_build_nas_list_for_imsi(
+            &nas_list, "432990123456789", true, 3, eplmn);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    ABTS_INT_EQUAL(tc, 9, nas_list.length);
+
+    /* imsi_plmn_only off → always full list */
+    ABTS_INT_EQUAL(tc, 3, mme_eplmn_count_for_imsi(
+                "432112940251599", false, 3, eplmn));
+}
+
 abts_suite *test_eplmn(abts_suite *suite)
 {
     suite = ADD_SUITE(suite)
@@ -226,6 +269,7 @@ abts_suite *test_eplmn(abts_suite *suite)
     abts_run_test(suite, eplmn_config_count_test, NULL);
     abts_run_test(suite, eplmn_nas_encoding_test, NULL);
     abts_run_test(suite, eplmn_serving_only_test, NULL);
+    abts_run_test(suite, eplmn_imsi_only_test, NULL);
 
     return suite;
 }

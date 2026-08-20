@@ -355,6 +355,37 @@ int hss_context_parse_config(void)
 #endif
                 } else if (!strcmp(hss_key, "metrics")) {
                     /* handle config in metrics library */
+                } else if (!strcmp(hss_key, "trace_imsi")) {
+                    ogs_yaml_iter_t trace_array, trace_iter;
+
+                    ogs_yaml_iter_recurse(&hss_iter, &trace_array);
+                    do {
+                        if (ogs_yaml_iter_type(&trace_array) ==
+                                YAML_MAPPING_NODE) {
+                            break;
+                        } else if (ogs_yaml_iter_type(&trace_array) ==
+                                YAML_SEQUENCE_NODE) {
+                            if (!ogs_yaml_iter_next(&trace_array))
+                                break;
+                            ogs_yaml_iter_recurse(&trace_array, &trace_iter);
+                        } else if (ogs_yaml_iter_type(&trace_array) ==
+                                YAML_SCALAR_NODE) {
+                            ogs_yaml_iter_recurse(&hss_iter, &trace_iter);
+                        } else
+                            ogs_assert_if_reached();
+
+                        while (ogs_yaml_iter_next(&trace_iter)) {
+                            const char *v = ogs_yaml_iter_value(&trace_iter);
+
+                            if (v && ogs_trace_filter_add(v) != OGS_OK)
+                                ogs_warn("trace_imsi: could not add `%s'", v);
+                        }
+                    } while (ogs_yaml_iter_type(&trace_array) ==
+                            YAML_SEQUENCE_NODE &&
+                            ogs_yaml_iter_next(&trace_array));
+
+                    ogs_info("trace_imsi: %d prefix(es) loaded",
+                            ogs_trace_filter_count());
                 } else
                     ogs_warn("unknown key `%s`", hss_key);
             }
@@ -365,6 +396,107 @@ int hss_context_parse_config(void)
     if (rv != OGS_OK) return rv;
 
     return OGS_OK;
+}
+
+static int hss_reload_trace_imsi_replace(ogs_yaml_iter_t *hss_iter)
+{
+    ogs_yaml_iter_t trace_array, trace_iter;
+    int count = 0;
+
+    ogs_trace_filter_clear();
+
+    ogs_yaml_iter_recurse(hss_iter, &trace_array);
+    do {
+        if (ogs_yaml_iter_type(&trace_array) == YAML_MAPPING_NODE)
+            break;
+        if (ogs_yaml_iter_type(&trace_array) == YAML_SEQUENCE_NODE) {
+            if (!ogs_yaml_iter_next(&trace_array))
+                break;
+            ogs_yaml_iter_recurse(&trace_array, &trace_iter);
+        } else if (ogs_yaml_iter_type(&trace_array) == YAML_SCALAR_NODE) {
+            ogs_yaml_iter_recurse(hss_iter, &trace_iter);
+        } else {
+            break;
+        }
+
+        while (ogs_yaml_iter_next(&trace_iter)) {
+            const char *v = ogs_yaml_iter_value(&trace_iter);
+
+            if (!v || !v[0])
+                continue;
+            if (ogs_trace_filter_add(v) != OGS_OK) {
+                ogs_reload_audit_warn("trace_imsi could not add `%s'", v);
+                continue;
+            }
+            count++;
+        }
+    } while (ogs_yaml_iter_type(&trace_array) == YAML_SEQUENCE_NODE &&
+            ogs_yaml_iter_next(&trace_array));
+
+    ogs_reload_audit_note(" trace_imsi replaced (%d entries)", count);
+    return count;
+}
+
+void hss_context_reload_runtime(void)
+{
+    yaml_document_t *document = NULL;
+    ogs_yaml_iter_t root_iter;
+    bool yaml_ok = false;
+    bool found = false;
+
+    ogs_reload_audit_begin();
+
+    if (ogs_app_config_reload() != OGS_OK) {
+        ogs_warn("Configuration reload failed; keeping previous config");
+        ogs_reload_audit_warn("YAML parse failed; previous config kept");
+        ogs_reload_audit_finish("HSS", false);
+        ogs_log_cycle();
+        return;
+    }
+
+    yaml_ok = true;
+
+    document = ogs_app()->document;
+    if (!document) {
+        ogs_warn("No configuration document for runtime reload");
+        ogs_reload_audit_warn("no configuration document after reload");
+        ogs_reload_audit_finish("HSS", false);
+        ogs_log_cycle();
+        return;
+    }
+
+    ogs_yaml_iter_init(&root_iter, document);
+    while (ogs_yaml_iter_next(&root_iter)) {
+        const char *root_key = ogs_yaml_iter_key(&root_iter);
+        ogs_assert(root_key);
+
+        if (strcmp(root_key, "hss"))
+            continue;
+
+        ogs_yaml_iter_t hss_iter;
+        ogs_yaml_iter_recurse(&root_iter, &hss_iter);
+        while (ogs_yaml_iter_next(&hss_iter)) {
+            const char *hss_key = ogs_yaml_iter_key(&hss_iter);
+            ogs_assert(hss_key);
+
+            if (!strcmp(hss_key, "trace_imsi")) {
+                (void)hss_reload_trace_imsi_replace(&hss_iter);
+                found = true;
+            } else if (!strcmp(hss_key, "freeDiameter") ||
+                    !strcmp(hss_key, "metrics") ||
+                    !strcmp(hss_key, "sms_over_ims") ||
+                    !strcmp(hss_key, "use_mongodb_change_stream") ||
+                    !strcmp(hss_key, "diameter_stats_interval")) {
+                ogs_reload_audit_warn(
+                        "hss.%s ignored on SIGHUP (restart required)",
+                        hss_key);
+            }
+        }
+    }
+
+    (void)found;
+    ogs_reload_audit_finish("HSS", yaml_ok);
+    ogs_log_cycle();
 }
 
 int hss_db_auth_info(char *imsi_bcd, ogs_dbi_auth_info_t *auth_info)

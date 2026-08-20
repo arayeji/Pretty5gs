@@ -22,6 +22,7 @@
 #include "gn-handler.h"
 #include "metrics.h"
 #include "sgwc-workers.h"
+#include "sgwc-trace.h"
 
 static void pfcp_restoration(ogs_pfcp_node_t *node);
 static void node_timeout(ogs_pfcp_xact_t *xact, void *data);
@@ -179,6 +180,10 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
     case OGS_FSM_ENTRY_SIG:
         ogs_info("PFCP associated %s",
             ogs_sockaddr_to_string_static(node->addr_list));
+        /* Association may already have a timer event queued; stop so it
+         * cannot keep retrying Association Setup against an up peer. */
+        if (node->t_association)
+            ogs_timer_stop(node->t_association);
         ogs_timer_start(node->t_no_heartbeat,
                 ogs_local_conf()->time.message.pfcp.no_heartbeat_duration);
         ogs_assert(OGS_OK ==
@@ -230,6 +235,9 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
             if (sess_id >= OGS_MIN_POOL_ID && sess_id <= OGS_MAX_POOL_ID)
                 sess = sgwc_sess_find_by_id(sess_id);
         }
+
+        if (sess && e->pkbuf)
+            sgwc_trace_pfcp_rx(xact, sess, e->pkbuf->data, e->pkbuf->len);
 
         switch (message->h.type) {
         case OGS_PFCP_HEARTBEAT_REQUEST_TYPE:
@@ -441,6 +449,14 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
         case OGS_PFCP_SESSION_REPORT_REQUEST_TYPE:
             if (!message->h.seid_presence) ogs_error("No SEID");
 
+            /* Report for a session we already deleted: benign race
+             * (the CONTEXT_NOT_FOUND answer also tells the SGW-U to
+             * drop its orphan session). */
+            if (!sess)
+                ogs_warn("Session Report Request for unknown/removed "
+                        "session SEID[0x%lx]; replying CONTEXT_NOT_FOUND",
+                        (unsigned long)message->h.seid);
+
             sgwc_sxa_handle_session_report_request(
                 sess, xact, &message->pfcp_session_report_request);
             break;
@@ -461,29 +477,50 @@ void sgwc_pfcp_state_associated(ogs_fsm_t *s, sgwc_event_t *e)
             ogs_assert(OGS_OK ==
                 ogs_pfcp_send_heartbeat_request(node, node_timeout));
             break;
+        case SGWC_TIMER_PFCP_ASSOCIATION:
+            /*
+             * Race: association succeeded while a retry timer event was
+             * already on the queue. Ignore — do not send another Setup.
+             */
+            node = e->pfcp_node;
+            ogs_assert(node);
+            if (node->t_association)
+                ogs_timer_stop(node->t_association);
+            ogs_warn("PFCP association retry timer ignored "
+                    "(already associated) peer %s",
+                    ogs_sockaddr_to_string_static(node->addr_list));
+            break;
         default:
-            ogs_error("Unknown timer[%s:%d]",
-                    sgwc_timer_get_name(e->timer_id), e->timer_id);
+            ogs_warn("Unknown PFCP timer[%s:%d] peer %s",
+                    sgwc_timer_get_name(e->timer_id), e->timer_id,
+                    node ? ogs_sockaddr_to_string_static(node->addr_list)
+                         : "-");
             break;
         }
         break;
     case SGWC_EVT_SXA_NO_HEARTBEAT:
         ogs_warn("No Heartbeat from SGW-U %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
-        /* 3GPP TS 23.007 19A: when re-associating, the UP function deletes
-         * the existing PFCP association and all associated PFCP sessions
-         * upon receiving the new Association Setup Request. The sessions
-         * must therefore be re-established with PFCPSEReq-Flags RESTI
-         * (TS 29.244 8.2.116) once the association is up again. */
-        node->restoration_required = true;
+        /* Do NOT set node->restoration_required here. A heartbeat timeout
+         * is NOT proof the SGW-U restarted: under load one late/lost
+         * heartbeat response used to trigger a full pfcp_restoration()
+         * fan-out against a UPF that still held every session, so each
+         * re-establish came back "Duplicate F-SEID" and the reject path
+         * tore down perfectly healthy (and brand-new) subscribers. The
+         * storm then delayed the next heartbeat and the cycle repeated
+         * every few seconds. Real restarts are detected authoritatively
+         * in lib/pfcp/handler.c by the Recovery Time Stamp comparison
+         * (heartbeats + association setup), which sets
+         * restoration_required only when the peer's RTS advances. */
         OGS_FSM_TRAN(s, sgwc_pfcp_state_will_associate);
         break;
     case SGWC_EVT_SXA_REASSOCIATE:
         ogs_warn("PFCP re-association required with SGW-U %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
-        /* See TS 23.007 19A note above: sessions are deleted on the UP
-         * function by the new association; restore them after setup. */
-        node->restoration_required = true;
+        /* Same rationale as NO_HEARTBEAT above: cause 72 from the peer
+         * means the association is gone, not that its sessions are. If it
+         * really restarted, the RTS in the new Association Setup Response
+         * triggers restoration via lib/pfcp/handler.c. */
         OGS_FSM_TRAN(s, sgwc_pfcp_state_will_associate);
         break;
     default:

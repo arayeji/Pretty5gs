@@ -29,6 +29,9 @@ global:
 #    no_hss: true
 
 mme:
+  # Route all VLR (SGsAP) sends through the dedicated sgsap-io thread so
+  # the whole CSFB suite exercises the offloaded TX path.
+  sgsap_io_thread: 1
   freeDiameter:
     identity: mme.localdomain
     realm: localdomain

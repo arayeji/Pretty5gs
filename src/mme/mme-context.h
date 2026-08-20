@@ -30,6 +30,7 @@
 #include "ogs-sctp.h"
 #include "metrics.h"
 #include "mme-inbound-roam-apn.h"
+#include "mme-access-control-match.h"
 
 /* S1AP */
 #include "S1AP_Cause.h"
@@ -77,16 +78,6 @@ typedef struct served_gummei_s {
     uint8_t         mme_code[CODE_PER_MME];
 } served_gummei_t;
 
-typedef struct mme_access_control_s {
-    int reject_cause;
-    ogs_plmn_id_t plmn_id;
-    bool plmn_id_configured;
-    char imsi_prefix[OGS_MAX_IMSI_BCD_LEN + 1];
-    int selection_order;
-    ogs_hash_t *tac_hash;
-    ogs_hash_t *enb_id_hash;
-} mme_access_control_t;
-
 typedef struct mme_context_s {
     const char          *diam_conf_path;  /* MME Diameter conf path */
     ogs_diam_config_t   *diam_config;     /* MME Diameter config */
@@ -125,6 +116,13 @@ typedef struct mme_context_s {
 
     ogs_list_t      vlr_list;       /* VLR SGsAP Client List */
     ogs_list_t      csmap_list;     /* TAI-LAI Map List */
+    /*
+     * TAI-LAI maps dropped by a SIGHUP reload. An attached UE keeps a raw
+     * mme_ue->csmap pointer for its whole lifetime, so a retired entry is
+     * unlinked from every lookup path but only freed once no UE refers to
+     * it (see mme_csmap_reclaim_retired()).
+     */
+    ogs_list_t      csmap_retired_list;
     ogs_list_t      hssmap_list;    /* PLMN HSS Map List */
 
     ogs_list_t      emerg_list;     /* Emergency number list */
@@ -150,6 +148,9 @@ typedef struct mme_context_s {
         bool tai_list_serving_only;
         bool equivalent_plmn;
         bool equivalent_plmn_serving_only;
+        /* When true, send EPLMN only if UE matches access_control and TAC
+         * is allowed on that entry (see mme_access_control_eplmn_tac_allowed). */
+        bool equivalent_plmn_access_control_tac;
         bool ims_voice_over_ps;
         bool t3402;
         bool esm_cause_pdn_type_mismatch;
@@ -177,6 +178,14 @@ typedef struct mme_context_s {
         /* pgw_selection.rules — see mme_pgw_sel_rule_t. */
         ogs_list_t rule_list;
     } pgw_selection;
+
+    /*
+     * mme.apn_correction — per subscriber range / requested APN policy
+     * for what happens when the UE-requested APN or PDN type does not
+     * match the S6a subscription. Empty list = strict 3GPP behaviour.
+     * See mme_apn_policy_t. SIGHUP reloadable.
+     */
+    ogs_list_t      apn_policy_list;
 
     /*
      * Inbound roam / home PGW: GTP APN on S11 (SGWC forwards on S5).
@@ -275,8 +284,8 @@ typedef struct mme_context_s {
     ogs_nas_network_name_t short_name; /* Network short name */
     ogs_nas_network_name_t full_name; /* Network Full Name */
 
-    /* MME Name */
-    const char *mme_name;
+    /* MME Name (owned; strdup'd from YAML so SIGHUP cannot dangle it) */
+    char *mme_name;
 
     /* S1SetupResponse */
     uint8_t         relative_capacity;
@@ -284,13 +293,105 @@ typedef struct mme_context_s {
     /* S1AP RX decode offload worker threads (0 = single-threaded) */
     int             s1ap_rx_workers;
     int             s1ap_tx_workers;
-    /* dedicated S1AP SCTP send thread (0/1, default 0) — s1ap-io.c */
+    /*
+     * TX workers hand encoded PDUs straight to the IO thread(s)
+     * instead of round-tripping through main's TX_READY handler.
+     * Requires s1ap_tx_workers > 0 and s1ap_io_thread >= 1.
+     * (0/1, default 0, startup-only) — s1ap-tx.c
+     */
+    int             s1ap_tx_direct;
+    /* dedicated S1AP SCTP send thread(s) (0..4, default 0) — s1ap-io.c */
     int             s1ap_io_thread;
+    /*
+     * Dedicated GTP-C RX thread (0/1, default 0) — mme-gtp-path.c.
+     * On main, GTP-C reads compete with 1000s of eNB SCTP fds and the
+     * event-queue drain: under an attach storm S11 replies rot in the
+     * kernel socket buffer (12MB Recv-Q seen) and become false "GTP
+     * timeout" despite the SGW answering in ms. The RX thread only
+     * recvfroms + classifies + pushes events; all handling stays on
+     * the owner shard / main exactly as before.
+     */
+    int             gtpc_rx_thread;
+    /*
+     * Dedicated SGsAP (VLR) SCTP send thread (0/1, default 0,
+     * startup-only) — sgsap-io.c. With mme.workers > 0 the CSFB/SMS
+     * senders run on UE owner shards while main owns the VLR socket
+     * lifecycle; this thread serializes all VLR sends so no shard
+     * writes to a socket main is destroying.
+     */
+    int             sgsap_io_thread;
     /*
      * Per-eNB-association outbound PDU cap on the S1AP IO thread.
      * PDUs beyond this are dropped (soft backpressure). 0 = default.
      */
     int             s1ap_io_write_queue_max;
+    /*
+     * Seconds the per-eNB write queue may stay full before we tear that
+     * S1 association down (clear TX queue + CONNREFUSED). 0 = default
+     * (10). Negative = disable stall teardown (ETIMEDOUT still tears
+     * down). SIGHUP reloadable.
+     */
+    int             s1ap_io_stall_teardown_sec;
+    /*
+     * Per-eNB write-queue depth at which the IO thread reports the
+     * association as TX-congested to main (overload control). 0 =
+     * default (a quarter of s1ap_io_write_queue_max). Watched well
+     * below "full" on purpose: OVERLOAD START must reach the eNB
+     * while its queue can still carry a PDU. SIGHUP reloadable.
+     */
+    int             s1ap_io_congest_depth;
+
+    /*
+     * S1AP overload control / ingress admission (s1ap-overload.c).
+     *
+     * The MME's only real defence against one misbehaving cell is to
+     * stop accepting new work from it: SCTP congestion control is
+     * byte-level and says nothing about which eNB is wedged, and by
+     * the time a write queue is full the Attach Accepts we already
+     * produced are being dropped, so every UE retries and the cost is
+     * paid again on shared workers.
+     */
+    struct {
+        /* master switch (default on) */
+        bool        enabled;
+        /* send 3GPP TS 36.413 OVERLOAD START/STOP (default on) */
+        bool        signal_enb;
+        /*
+         * Max InitialUEMessage/s accepted per eNB (token bucket).
+         * 0 = unlimited. burst 0 = 2x rate (min 20).
+         */
+        int         enb_initial_ue_rate;
+        int         enb_initial_ue_burst;
+        /*
+         * How long one TX-congestion heartbeat from the IO thread
+         * keeps an eNB marked congested. Heartbeats repeat every
+         * second while congested, so this is a lease, not a timeout:
+         * a dropped heartbeat can only clear the state early, never
+         * latch it forever. 0 = default (3).
+         */
+        int         congest_lease_sec;
+        /*
+         * Event-queue lag (ms) marking the MME itself as overloaded:
+         * high = moderate (shed background access), critical = shed
+         * everything but emergency/MT. 0 = defaults (500 / 2000).
+         */
+        int         lag_high_ms;
+        int         lag_critical_ms;
+        /*
+         * Seconds a lag level must hold before it throttles anything.
+         * The lag metric is a peak-with-decay, so without this a single
+         * slow dispatch would broadcast OVERLOAD START network-wide.
+         * 0 = default (3).
+         */
+        int         global_sustain_sec;
+        /* TrafficLoadReductionIndication percent, 1..99. 0 = 50 */
+        int         traffic_reduction;
+        /* min seconds between OVERLOAD START re-sends. 0 = 10 */
+        int         resend_interval_sec;
+        /* seconds of calm before OVERLOAD STOP. 0 = 5 */
+        int         recovery_sec;
+    } overload;
+
     /*
      * Smart paging: first S1 Paging wave goes only to the eNB the UE
      * last camped on (from stored eCGI); T3413 retries fan out to the
@@ -299,6 +400,14 @@ typedef struct mme_context_s {
     bool            paging_first_wave_last_enb;
     /* UE-shard workers (Stage A bounce router, 0 = off) — mme-workers.c */
     int             workers;
+    /*
+     * Stage C: RX workers route UE-scoped S1AP procedures (uplink NAS,
+     * UE capability, ICS/UECtxMod/E-RAB-Setup responses) directly to
+     * the owning UE shard, bypassing main. Requires workers > 0 (and
+     * therefore s1ap_io_thread >= 1). (0/1, default 0, startup-only)
+     * — s1ap-shard.c
+     */
+    int             stage_c;
     /*
      * Per-thread pkbuf pool size (0 = off, startup-only). When > 0,
      * mme_main and every shard/RX/TX/IO worker allocates pkbufs from
@@ -396,6 +505,12 @@ typedef struct mme_sgw_s {
     char            imsi_prefix[OGS_MAX_IMSI_BCD_LEN + 1];
     int             selection_order;
 
+    /*
+     * Cached OGS_ADDR(sa_list) for metrics labels. Formatted once at
+     * mme_sgw_add so gauge updates avoid sockaddr conversion per bump.
+     */
+    char            addr_str[OGS_ADDRSTRLEN];
+
     ogs_list_t      sgw_ue_list;
 
     /* TS 29.274 Recovery: peer restart detection on S11 */
@@ -485,6 +600,8 @@ typedef struct mme_vlr_s {
     ogs_sock_t      *sock;      /* VLR SGsAP Socket */
     ogs_sockopt_t   *option;    /* VLR SGsAP Socket Option */
     ogs_poll_t      *poll;      /* VLR SGsAP Poll */
+
+    bool            seen;       /* still present in the reloaded config */
 } mme_vlr_t;
 
 typedef struct mme_csmap_s {
@@ -495,6 +612,10 @@ typedef struct mme_csmap_s {
     uint16_t        tac_end;    /* inclusive; 0 = only tai.tac */
     ogs_nas_lai_t   lai;
     char            imsi_prefix[6];   /* optional; empty = any IMSI on this TAI */
+
+    bool            seen;       /* matched by the reload in progress */
+    bool            retired;    /* dropped from config, awaiting reclaim */
+    bool            referenced; /* scratch flag for the reclaim scan */
 
     mme_vlr_t       *vlr;
 } mme_csmap_t;
@@ -591,12 +712,86 @@ typedef struct mme_enb_s {
      * s1ap_tx_hold is SHARED: UE-shard workers park pkbufs on it from
      * s1ap_send_to_enb() while main drains it in the TX_READY handler
      * and mme_enb_remove(). Every access — including the pending>0
-     * test that decides to park — must hold mme_ctx_lock(); it used to
-     * be main-thread-only, and the unlocked list surgery double-freed
-     * pkbufs (talloc bad-magic abort) once UE shards were enabled.
+     * test that decides to park — must hold s1ap_tx_hold_lock below;
+     * it used to be main-thread-only, and the unlocked list surgery
+     * double-freed pkbufs (talloc bad-magic abort) once UE shards were
+     * enabled.
      */
     int             s1ap_tx_pending;
     ogs_list_t      s1ap_tx_hold;
+
+    /*
+     * When s1ap_tx_hold went empty -> non-empty (0 = empty). Guarded by
+     * s1ap_tx_hold_lock. The orphan-sweep watchdog force-flushes the
+     * hold list if it has stayed non-empty far longer than any encode
+     * job can take — i.e. s1ap_tx_pending leaked and this eNB's
+     * synchronous downlink is wedged (s1ap_tx_hold_watchdog()).
+     */
+    ogs_time_t      s1ap_tx_hold_since;
+
+    /*
+     * When s1ap_tx_pending went 0 -> >0 (0 = idle). Distinguishes a
+     * legitimate in-flight encode (pending=1, hold empty, last_ready
+     * old because the cell was quiet) from a leaked pending that has
+     * blocked sync sends for many seconds with no TX_READY.
+     */
+    ogs_time_t      s1ap_tx_pending_since;
+
+    /*
+     * Last TX_READY handled for this eNB (main thread). Watchdog uses
+     * this to tell a leaked pending (no progress) from a real encode
+     * backlog on THIS association — a global TX-worker queue check
+     * wrongly blocked all eNBs while any other cell stayed busy.
+     */
+    ogs_time_t      s1ap_tx_last_ready;
+
+    /*
+     * Guards s1ap_tx_hold. This was the global mme_ctx_lock(), which put a
+     * process-wide mutex on main's hot path: main takes it per downlink
+     * message to flush the hold list, contending with every worker and the
+     * admin thread. Per-eNB removes that coupling - two eNBs' flushes have
+     * nothing to serialise against each other.
+     *
+     * Lock order: mme_ctx_lock() may be held while taking this (see
+     * mme_enb_remove); never the reverse.
+     */
+    ogs_thread_mutex_t s1ap_tx_hold_lock;
+
+    /*
+     * Ingress admission + overload control state (s1ap-overload.c).
+     * Main-thread only: written from the S1AP FSM, the IO-congestion
+     * event handler and the 1 s overload tick, all of which run on
+     * mme_main. The /enb-info dumper reads it from the MHD thread —
+     * single ints/times, a torn diagnostic read is acceptable.
+     */
+    struct {
+        /* InitialUEMessage token bucket */
+        double      tokens;
+        ogs_time_t  tokens_at;
+
+        /*
+         * Last TX-congestion heartbeat from the IO thread and the
+         * write-queue depth it reported. congested_at is a lease
+         * (mme.overload.congest_lease_sec).
+         */
+        ogs_time_t  congested_at;
+        int         congested_depth;
+
+        /* current level driving this eNB: 0 none, 1 moderate, 2 severe */
+        int         level;
+        /* last time level was non-zero (drives OVERLOAD STOP hysteresis) */
+        ogs_time_t  hot_at;
+        /* level advertised by the last OVERLOAD START we sent (0 = none) */
+        int         signalled_level;
+        ogs_time_t  signalled_at;
+
+        /* rate-limited shed logging + lifetime totals for /enb-info */
+        uint32_t    shed_window_count;
+        ogs_time_t  shed_window;
+        uint64_t    shed_total;
+        uint64_t    rate_shed_total;
+        ogs_time_t  rate_shed_at;   /* last token-bucket rejection */
+    } overload;
 
 } mme_enb_t;
 
@@ -774,6 +969,14 @@ struct mme_ue_s {
     ogs_pool_id_t   id;
     ogs_fsm_t       sm;     /* A state machine */
 
+    /*
+     * Set once inside mme_ue_remove() under mme_ctx_lock. Makes removal
+     * exactly-once: a second (racing or stale-pointer) mme_ue_remove()
+     * returns early instead of feeding freed TEID/IMSI/GUTI key pointers
+     * into ogs_hash_set (ogs_hash stores KEY POINTERS, not copies).
+     */
+    bool            being_removed;
+
     struct {
 #define MME_EPS_TYPE_ATTACH_REQUEST                 1
 #define MME_EPS_TYPE_TAU_REQUEST                    2
@@ -793,6 +996,8 @@ struct mme_ue_s {
         ogs_nas_eps_update_type_t update;
         ogs_nas_service_type_t service;
         ogs_nas_detach_type_t detach;
+        /* Additional update type: SMS only (TS 24.301 9.9.3.0B) */
+        bool sms_only;
     } nas_eps;
 
     uint64_t tracking_area_update_request_presencemask;
@@ -1216,6 +1421,7 @@ struct mme_ue_s {
         CLEAR_MME_UE_TIMER((__mME)->t_mobile_reachable); \
         CLEAR_MME_UE_TIMER((__mME)->t_implicit_detach); \
         (__mME)->sgs_lu_pending = false; \
+        (__mME)->sgs_cs_unavailable = false; \
         ogs_timer_stop((__mME)->t_sgs_ts6_1); \
         (__mME)->s6a_pending_cmd = 0; \
         ogs_timer_stop((__mME)->t_s6a); \
@@ -1245,11 +1451,39 @@ struct mme_ue_s {
         if (_ogs_ut_pkbuf) \
             ogs_pkbuf_free(_ogs_ut_pkbuf); \
         (__mME_UE_TIMER).retry_count = 0; \
+        (__mME_UE_TIMER).send_failure_count = 0; \
+        (__mME_UE_TIMER).defer_count = 0; \
     } while(0);
+
+/*
+ * A NAS retransmission timer expiry may only spend the UE's retry budget
+ * when the message actually left the MME. While the downlink path is
+ * congested the command never reaches the eNB, and charging those attempts
+ * to the UE made the MME reject subscribers for its own backlog - EMM #24
+ * "security mode rejected" and #9 "identity cannot be derived". Sends that
+ * fail are counted separately so a permanently broken path still gives up
+ * rather than re-arming the timer forever.
+ */
+#define MME_UE_TIMER_MAX_SEND_FAILURE 4
+
+/*
+ * A NAS retransmission timer is only evidence that the peer is silent if the
+ * MME was able to process the peer's reply within the timer's budget. When
+ * the event queue is deeper than this, replies that already arrived are still
+ * waiting to be dispatched, and firing the timer retransmits to a UE that has
+ * answered - which costs an encode plus a queue slot and deepens the very
+ * backlog that caused it. Defer instead, bounded so a genuinely silent UE is
+ * still given up on.
+ */
+#define MME_UE_TIMER_LAG_DEFER_THRESHOLD ogs_time_from_msec(1500)
+#define MME_UE_TIMER_MAX_DEFER 8
+
     struct {
         ogs_pkbuf_t     *pkbuf;
         ogs_timer_t     *timer;
         uint32_t        retry_count;;
+        uint32_t        send_failure_count;
+        uint32_t        defer_count;
     } t3413, t3422, t3450, t3460, t3470, t_mobile_reachable,
         t_implicit_detach;
 
@@ -1313,9 +1547,15 @@ struct mme_ue_s {
 
     ogs_timer_t     *t_sgs_ts6_1;
     bool            sgs_lu_pending;
+    /* Set when SGs LU reject/timeout; Attach/TAU Accept forces EPS-only + #18 */
+    bool            sgs_cs_unavailable;
 
     ogs_timer_t     *t_s6a;
-    uint16_t        s6a_pending_cmd;
+    /*
+     * Cleared by the freeDiameter worker as soon as an answer arrives, so the
+     * watchdog measures HSS latency rather than event-queue latency.
+     */
+    volatile uint16_t s6a_pending_cmd;
 
     mme_csmap_t     *csmap;
     mme_hssmap_t    *hssmap;
@@ -1323,20 +1563,26 @@ struct mme_ue_s {
 
 #define MME_UE_REMOVE_WITH_PAGING_FAIL(__mME) \
     do { \
-        if (MME_PAGING_ONGOING(__mME)) { \
+        mme_ue_t *__mME_ue = (__mME); \
+        if (!__mME_ue || __mME_ue->being_removed) \
+            break; \
+        if (MME_PAGING_ONGOING(__mME_ue)) { \
             /* expected when a UE is torn down mid-paging */ \
-            ogs_warn("Paging is ON-Going [%d]", (__mME)->paging.type); \
-            mme_send_after_paging(__mME, false); \
+            ogs_warn("Paging is ON-Going [%d]", (__mME_ue)->paging.type); \
+            mme_send_after_paging(__mME_ue, false); \
         } \
-        mme_ue_remove(__mME); \
+        mme_ue_remove(__mME_ue); \
     } while(0)
 
+/*
+ * Do NOT expand this to a double sgw_ue_find_by_id() with a naked
+ * ->sgw_s11_teid on the second call. That TOCTOU SIGSEGV'd MME in
+ * s1ap_handle_initial_context_setup_failure when the UE was removed
+ * between the two unlocked lookups (2026-08-11).
+ */
+bool mme_session_context_is_available(const mme_ue_t *mme_ue);
 #define SESSION_CONTEXT_IS_AVAILABLE(__mME) \
-    ((__mME) && \
-     ((__mME)->sgw_ue_id >= OGS_MIN_POOL_ID) && \
-     ((__mME)->sgw_ue_id <= OGS_MAX_POOL_ID) && \
-     (sgw_ue_find_by_id((__mME)->sgw_ue_id)) && \
-     (sgw_ue_find_by_id((__mME)->sgw_ue_id)->sgw_s11_teid))
+    mme_session_context_is_available(__mME)
 
 #define CLEAR_SESSION_CONTEXT(__mME) \
     do { \
@@ -1351,7 +1597,14 @@ struct mme_ue_s {
         mme_ue_t *mme_ue = NULL; \
         ogs_assert(__sESS); \
         mme_ue = mme_ue_find_by_id((__sESS)->mme_ue_id); \
-        ogs_assert(mme_ue); \
+        /* Late Delete Session Response can outlive mme_ue (multi-PDN
+         * teardown / will_remove). Never abort the MME on that race. */ \
+        if (!mme_ue) { \
+            ogs_warn("MME_SESS_CLEAR: MME-UE already gone (sess id:%d)", \
+                    (int)((__sESS)->id)); \
+            mme_sess_remove(__sESS); \
+            break; \
+        } \
         mme_sess_removed_log(mme_ue, \
                 (__sESS)->session ? (__sESS)->session->name : NULL); \
         if (mme_sess_count(mme_ue) == 1) /* Last Session */ \
@@ -1372,16 +1625,44 @@ typedef struct mme_sess_s {
     uint32_t        pgw_s5c_teid;
     ogs_ip_t        pgw_s5c_ip;
 
+    /* Async APN-FQDN PGW DNS outstanding for Create Session */
+    bool            pgw_dns_pending;
+
     /* PDN Connectivity Request */
     ogs_nas_request_type_t ue_request_type;
 
     /* mme_bearer_first(sess) : Default Bearer Context */
     ogs_list_t      bearer_list;
 
+    /*
+     * Linked (default) EPS Bearer ID, frozen when the first bearer is
+     * added. Delete Session Request needs this IE even after the bearer
+     * list has been emptied by a teardown race — without it the MME
+     * used to ogs_assert-abort in mme_s11_build_delete_session_request.
+     */
+    uint8_t         linked_ebi;
+
     /* Related Context */
     ogs_pool_id_t   mme_ue_id;
 
     ogs_session_t   *session;
+
+    /*
+     * True when the UE supplied a non-empty APN IE in PDN Connectivity
+     * Request / ESM Information Response. False when APN was omitted or
+     * empty and the MME selected the HSS/S6a default. inbound_roam
+     * allowed_apn always applies to the resolved APN either way.
+     */
+    bool            ue_provided_apn;
+
+    /*
+     * PDN type to put on the GTP Create Session Request: the UE request
+     * intersected with the subscription, then corrected/clamped by
+     * mme.apn_correction. 0 until resolved, in which case the raw UE
+     * request is used. ue_request_type keeps what the UE actually asked
+     * for, so Activate Default Bearer can still return ESM #50/#51.
+     */
+    uint8_t         policy_pdn_type;
 
     /* PDN Address Allocation (PAA) */
     ogs_paa_t       paa;
@@ -1415,6 +1696,23 @@ typedef struct mme_sess_s {
     char            metrics_sgw_addr[OGS_ADDRSTRLEN];
     ogs_plmn_id_t   metrics_plmn_id;
     char            metrics_apn[OGS_MAX_APN_LEN+1];
+
+    /*
+     * Double-remove guard. The mme_session global gauge went negative
+     * during an admin drain and in steady state trails the sum of
+     * mme_session_active_by_sgw (which IS double-dec-protected by
+     * metrics_sess_counted above): symptoms of mme_sess_remove()
+     * running twice on the same sess, which would also double-free the
+     * pool slot. Block and log the second call instead.
+     */
+    bool            sess_removing;
+
+    /*
+     * Set when Delete Session Request has been committed on S11. The
+     * Response handler owns MME_SESS_CLEAR; ESM exception / other local
+     * paths must not clear in parallel or they race the DSR.
+     */
+    bool            delete_session_pending;
 } mme_sess_t;
 
 #define MME_HAVE_ENB_S1U_PATH(__bEARER) \
@@ -1426,14 +1724,16 @@ typedef struct mme_sess_s {
     } while(0)
 
 #define MME_HAVE_SGW_S1U_PATH(__sESS) \
-    ((__sESS) && (mme_bearer_first(__sESS)) && \
-     ((mme_default_bearer_in_sess(__sESS)->sgw_s1u_teid)))
+    ((__sESS) && mme_default_bearer_in_sess(__sESS) && \
+     (mme_default_bearer_in_sess(__sESS)->sgw_s1u_teid))
+/* Null-safe: bearer list may already be empty under teardown races. */
 #define CLEAR_SGW_S1U_PATH(__sESS) \
     do { \
         mme_bearer_t *__bEARER = NULL; \
         ogs_assert((__sESS)); \
         __bEARER = mme_default_bearer_in_sess(__sESS); \
-        __bEARER->sgw_s1u_teid = 0; \
+        if (__bEARER) \
+            __bEARER->sgw_s1u_teid = 0; \
     } while(0)
 
 #define MME_HAVE_ENB_DL_INDIRECT_TUNNEL(__bEARER) \
@@ -1611,6 +1911,16 @@ void mme_sgw_remove(mme_sgw_t *sgw);
 void mme_sgw_remove_all(void);
 bool mme_sgw_in_use(const mme_sgw_t *sgw);
 mme_sgw_t *mme_sgw_find_by_addr(const ogs_sockaddr_t *addr);
+/*
+ * Guards sgw_list link/unlink against concurrent readers. Needed only
+ * because the GTP-C RX thread (mme.gtpc_rx_thread) walks the list per
+ * datagram while a SIGHUP reload on main may add/remove/resort peers.
+ * Lock discipline: reload holds it around list mutations; the RX path
+ * holds it from lookup through event push (so the peer cannot be freed
+ * while e->gnode still points into it). find() itself does NOT lock.
+ */
+void mme_sgw_list_lock(void);
+void mme_sgw_list_unlock(void);
 bool mme_sgw_recovery_update(mme_sgw_t *sgw, uint8_t recovery);
 void mme_sgw_echo_schedule(mme_sgw_t *sgw);
 
@@ -1641,10 +1951,29 @@ void mme_vlr_remove(mme_vlr_t *vlr);
 void mme_vlr_remove_all(void);
 void mme_vlr_close(mme_vlr_t *vlr);
 mme_vlr_t *mme_vlr_find_by_sock(const ogs_sock_t *sock);
+mme_vlr_t *mme_vlr_find_by_addr(const ogs_sockaddr_t *sa_list);
 
 mme_csmap_t *mme_csmap_add(mme_vlr_t *vlr);
 void mme_csmap_remove(mme_csmap_t *csmap);
 void mme_csmap_remove_all(void);
+/*
+ * Free retired maps that no attached UE points at any more. Cheap enough
+ * to run from the reload path: one pass over mme_ue_list, then one over
+ * the retired list.
+ */
+int mme_csmap_reclaim_retired(void);
+
+/*
+ * Parse 'mme.sgsap'. 'mme_iter' must sit on the sgsap key.
+ *
+ * At startup this builds the VLR and TAI-LAI map lists from scratch. On a
+ * SIGHUP reload it is add/update-only: VLRs are matched by address and
+ * their SCTP association is left untouched, map entries are updated in
+ * place, brand-new VLRs are connected, and entries no longer in the file
+ * are retired rather than freed. Changing or deleting an existing VLR
+ * address still needs a restart and is reported as such.
+ */
+int mme_sgsap_config_parse(ogs_yaml_iter_t *mme_iter, bool reload);
 
 mme_csmap_t *mme_csmap_find_by_tai(const ogs_eps_tai_t *tai);
 mme_csmap_t *mme_csmap_find_by_tai_and_imsi(
@@ -1689,6 +2018,23 @@ enb_ue_t *enb_ue_find_by_enb_ue_s1ap_id(
 enb_ue_t *enb_ue_find(uint32_t index);
 enb_ue_t *enb_ue_find_by_mme_ue_s1ap_id(uint32_t mme_ue_s1ap_id);
 enb_ue_t *enb_ue_find_by_id(ogs_pool_id_t id);
+
+/*
+ * Stage-C / hot S1AP: resolve under a single mme_ctx_lock so callers do
+ * not pay one lock round-trip per pool/hash find.
+ *
+ * mme_stagec_resolve_enb_ue: enb_ue by MME_UE_S1AP_ID + parent eNB,
+ * validating sock and S1-setup. Returns false → bounce to main.
+ *
+ * mme_resolve_enb_ue_mme_ue: enb_ue by message UE IDs + optional mme_ue.
+ * Returns false if enb_ue is missing; *out_mme_ue may still be NULL
+ * (stale S1 with no NAS UE).
+ */
+bool mme_stagec_resolve_enb_ue(uint32_t mme_ue_s1ap_id, ogs_sock_t *sock,
+        enb_ue_t **out_enb_ue, mme_enb_t **out_enb);
+bool mme_resolve_enb_ue_mme_ue(mme_enb_t *enb,
+        const uint32_t *mme_ue_s1ap_id, const uint32_t *enb_ue_s1ap_id,
+        enb_ue_t **out_enb_ue, mme_ue_t **out_mme_ue);
 
 sgw_ue_t *sgw_ue_add(mme_sgw_t *sgw);
 void sgw_ue_remove(sgw_ue_t *sgw_ue);
@@ -1864,8 +2210,9 @@ ogs_session_t *mme_default_session(mme_ue_t *mme_ue);
 int mme_find_served_tai(ogs_eps_tai_t *tai);
 
 /* Served-TAI lookup index: writers (config parse, SIGHUP reload, admin
- * TAC hot-add) must invalidate; rebuild is lazy on next lookup (main
- * thread only). */
+ * TAC hot-add) must call invalidate *before* mutating served_tai[] so
+ * hot-path find (served_tai_mutex only) cannot race teardown. Rebuild
+ * is lazy on the next lookup. */
 void mme_served_tai_map_invalidate(void);
 void mme_served_tai_map_final(void);
 

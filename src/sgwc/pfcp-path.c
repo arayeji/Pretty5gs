@@ -26,11 +26,30 @@
 #include "event.h"
 #include "sgwc-workers.h"
 
+/*
+ * Dedicated PFCP RX helper (sgwc.pfcp_rx_thread). Not a protocol shard.
+ */
+static ogs_worker_t *pfcp_rx_worker = NULL;
+static uint64_t pfcp_rx_drop_count = 0;
+
+static void sgwc_pfcp_rx_drop(void)
+{
+    __atomic_fetch_add(&pfcp_rx_drop_count, 1, __ATOMIC_RELAXED);
+}
+
+uint64_t sgwc_pfcp_rx_drops(void)
+{
+    return __atomic_load_n(&pfcp_rx_drop_count, __ATOMIC_RELAXED);
+}
+
 static void pfcp_node_fsm_init(ogs_pfcp_node_t *node, bool try_to_associate)
 {
     sgwc_event_t e;
 
     ogs_assert(node);
+
+    /* FSM + heartbeat timer belong on main (ogs_app()->timer_mgr). */
+    ogs_assert(!ogs_worker_self());
 
     memset(&e, 0, sizeof(e));
     e.pfcp_node = node;
@@ -42,6 +61,27 @@ static void pfcp_node_fsm_init(ogs_pfcp_node_t *node, bool try_to_associate)
     }
 
     ogs_fsm_init(&node->sm, sgwc_pfcp_state_initial, sgwc_pfcp_state_final, &e);
+}
+
+void sgwc_pfcp_node_ensure_fsm(ogs_pfcp_node_t *node)
+{
+    ogs_assert(node);
+
+    if (OGS_FSM_STATE(&node->sm))
+        return;
+
+    /*
+     * Timer/FSM init is main-owned. Session messages on shards must
+     * already have an associated peer (config/RX→main path). Never
+     * abort a worker here — that took SGW-C down under workers>0.
+     */
+    if (ogs_worker_self()) {
+        ogs_error("PFCP node has no FSM on shard worker; "
+                "association must complete on main first");
+        return;
+    }
+
+    pfcp_node_fsm_init(node, false);
 }
 
 static void pfcp_node_fsm_fini(ogs_pfcp_node_t *node)
@@ -59,7 +99,11 @@ static void pfcp_node_fsm_fini(ogs_pfcp_node_t *node)
         ogs_timer_delete(node->t_association);
 }
 
-static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
+/*
+ * Read ONE PFCP datagram; returns 1 if a datagram was consumed (keep
+ * draining), 0 when the socket is empty / on error (stop for this wakeup).
+ */
+static int sgwc_pfcp_recv_one(ogs_socket_t fd)
 {
     int rv;
 
@@ -76,8 +120,9 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
 
     pkbuf = ogs_pfcp_recvfrom(fd, &from);
     if (!pkbuf) {
-        ogs_error("ogs_pfcp_recvfrom() failed");
-        return;
+        /* empty socket (EAGAIN) or receive/parse error; either way stop —
+         * a level-triggered pollset re-fires if datagrams remain */
+        return 0;
     }
 
     e = sgwc_event_new(SGWC_EVT_SXA_MESSAGE);
@@ -89,13 +134,28 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
      * Because ogs_pfcp_message_t is over 80kb in size,
      * it can cause stack overflow.
      * To avoid this, the pfcp_message structure uses heap memory.
+     *
+     * Bind the full PFCP PDU before parse pulls the header.
      */
+    ogs_trace_packet_bind_rx("pfcp", pkbuf->data, pkbuf->len);
     if ((message = ogs_pfcp_parse_msg(pkbuf)) == NULL) {
         ogs_error("ogs_pfcp_parse_msg() failed");
+        ogs_trace_packet_bind_rx(NULL, NULL, 0);
         ogs_pkbuf_free(pkbuf);
         sgwc_event_free(e);
-        return;
+        return 1;
     }
+    /* Drop node-level bind before queueing — other events can call
+     * on_imsi and would attribute Heartbeats to the sticky IMSI. */
+    if (message->h.type == OGS_PFCP_HEARTBEAT_REQUEST_TYPE ||
+            message->h.type == OGS_PFCP_HEARTBEAT_RESPONSE_TYPE ||
+            message->h.type == OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE ||
+            message->h.type == OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE ||
+            message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_REQUEST_TYPE ||
+            message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE ||
+            message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE ||
+            message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE)
+        ogs_trace_packet_bind_rx(NULL, NULL, 0);
 
     pfcp_status = ogs_pfcp_extract_node_id(message, &node_id);
     switch (pfcp_status) {
@@ -144,7 +204,13 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
             ogs_debug("Added PFCP-Node: addr_list %s",
                     ogs_sockaddr_to_string_static(node->addr_list));
 
-            pfcp_node_fsm_init(node, false);
+            /*
+             * RX helper must not run FSM init (creates main timer_mgr
+             * heartbeat + state entry). Main calls
+             * sgwc_pfcp_node_ensure_fsm() before dispatch.
+             */
+            if (!ogs_worker_self())
+                pfcp_node_fsm_init(node, false);
 
         } else {
             ogs_error("Cannot find PFCP-Node: type [%d] node_id %s from %s",
@@ -155,13 +221,16 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
                     ogs_sockaddr_to_string_static(&from));
             goto cleanup;
         }
-    } else {
+        } else {
         ogs_debug("Found PFCP-Node: addr_list %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
+        /* merge mutates addr_list; serialize with peer lock vs main/reload */
+        ogs_pfcp_peer_lock();
         ogs_expect(OGS_OK == ogs_pfcp_node_merge(
                     node,
                     pfcp_status == OGS_PFCP_STATUS_SUCCESS ?  &node_id : NULL,
                     &from));
+        ogs_pfcp_peer_unlock();
         ogs_debug("Merged PFCP-Node: addr_list %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
     }
@@ -171,13 +240,16 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
     e->pfcp_message = message;
 
     if (!sgwc_workers_active()) {
-        /* trypush: RX runs on the same thread that drains this queue */
+        /* trypush: never block the RX poll thread */
         rv = ogs_queue_trypush(ogs_app()->queue, e);
         if (rv != OGS_OK) {
             ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
+            sgwc_pfcp_rx_drop();
             goto cleanup;
         }
-        return;
+        if (pfcp_rx_worker)
+            ogs_pollset_notify(ogs_app()->pollset);
+        return 1;
     }
 
     /*
@@ -231,43 +303,71 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
             rv = ogs_queue_trypush(ogs_app()->queue, e);
             if (rv != OGS_OK) {
                 ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
+                sgwc_pfcp_rx_drop();
                 goto cleanup;
             }
-            return;
+            if (pfcp_rx_worker)
+                ogs_pollset_notify(ogs_app()->pollset);
+            return 1;
         }
 
-        if (sgwc_event_push_to_worker(wid, e) != OGS_OK)
-            return; /* push_to_worker already freed e + buffers */
-        return;
+        if (sgwc_event_push_to_worker(wid, e) != OGS_OK) {
+            sgwc_pfcp_rx_drop();
+            return 1; /* push_to_worker already freed e + buffers */
+        }
+        return 1;
     }
 
 cleanup:
     ogs_pkbuf_free(pkbuf);
     ogs_pfcp_message_free(message);
     sgwc_event_free(e);
+    return 1;
+}
+
+/*
+ * Drain the PFCP socket per poll wakeup (bounded) instead of reading one
+ * datagram per main-loop iteration — same fix as the MME GTP-C RX path:
+ * under a Session Establishment/Modification storm SGW-U answers faster
+ * than one-datagram-per-iteration, the kernel socket buffer fills and
+ * dropped replies become false PFCP timeouts.
+ */
+#define SGWC_PFCP_RECV_BUDGET   512
+
+static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
+{
+    int budget = SGWC_PFCP_RECV_BUDGET;
+
+    while (budget-- > 0 && sgwc_pfcp_recv_one(fd) > 0)
+        ;
 }
 
 int sgwc_pfcp_open(void)
 {
     ogs_socknode_t *node = NULL;
     ogs_sock_t *sock = NULL;
+    bool rx_offload = sgwc_self()->pfcp_rx_thread != 0;
 
     /* PFCP Server */
     ogs_list_for_each(&ogs_pfcp_self()->pfcp_list, node) {
         sock = ogs_pfcp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, pfcp_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!rx_offload) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, pfcp_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
     ogs_list_for_each(&ogs_pfcp_self()->pfcp_list6, node) {
         sock = ogs_pfcp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, pfcp_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!rx_offload) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, pfcp_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
 
     OGS_SETUP_PFCP_SERVER;
@@ -275,9 +375,90 @@ int sgwc_pfcp_open(void)
     return OGS_OK;
 }
 
+static void pfcp_rx_dispatch(ogs_worker_t *worker, void *data)
+{
+    (void)worker;
+    (void)data;
+}
+
+static void pfcp_rx_thread_init(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_list, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, pfcp_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_list6, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, pfcp_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+
+    ogs_info("SGW-C PFCP RX thread started");
+}
+
+static void pfcp_rx_thread_fini(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    (void)worker;
+
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_list, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_list6, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+}
+
+int sgwc_pfcp_rx_start(void)
+{
+    if (!sgwc_self()->pfcp_rx_thread)
+        return OGS_OK;
+
+    ogs_assert(!pfcp_rx_worker);
+
+    pfcp_rx_worker = ogs_worker_create(0, 64, 8, 64,
+            pfcp_rx_dispatch, NULL);
+    ogs_assert(pfcp_rx_worker);
+    ogs_worker_hooks(pfcp_rx_worker,
+            pfcp_rx_thread_init, pfcp_rx_thread_fini);
+    ogs_worker_set_name(pfcp_rx_worker, "pfcp-rx");
+    ogs_worker_start(pfcp_rx_worker);
+
+    return OGS_OK;
+}
+
+void sgwc_pfcp_rx_stop(void)
+{
+    if (!pfcp_rx_worker)
+        return;
+
+    ogs_worker_destroy(pfcp_rx_worker);
+    pfcp_rx_worker = NULL;
+}
+
+bool sgwc_pfcp_rx_active(void)
+{
+    return pfcp_rx_worker != NULL;
+}
+
 void sgwc_pfcp_close(void)
 {
     ogs_pfcp_node_t *pfcp_node = NULL;
+
+    /* Idempotent: terminate() may have stopped the RX helper already. */
+    sgwc_pfcp_rx_stop();
 
     ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, pfcp_node)
         pfcp_node_fsm_fini(pfcp_node);
@@ -330,6 +511,9 @@ static void sess_timeout(ogs_pfcp_xact_t *xact, void *data)
     case OGS_PFCP_SESSION_ESTABLISHMENT_REQUEST_TYPE: {
         sgwc_ue_t *sgwc_ue = NULL;
         ogs_gtp_xact_t *s11_xact = NULL;
+
+        /* Establish gave up: release the admission in-flight slot */
+        sgwc_admission_establish_done(sess);
 
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         if (sess->pfcp_node) {
@@ -498,6 +682,72 @@ static void bearer_timeout(ogs_pfcp_xact_t *xact, void *data)
     }
 }
 
+void sgwc_bearer_unlink_to_modify(
+        sgwc_bearer_t *bearer, ogs_pfcp_node_t *node)
+{
+    ogs_pfcp_xact_t *xact = NULL;
+
+    ogs_assert(bearer);
+    if (!node)
+        return;
+
+    ogs_list_for_each(&node->local_list[ogs_worker_self_id()], xact) {
+        if (ogs_list_exists(&xact->bearer_to_modify_list,
+                    &bearer->to_modify_node)) {
+            ogs_list_remove(&xact->bearer_to_modify_list,
+                    &bearer->to_modify_node);
+            ogs_warn("Unlinked bearer_id[%d] EBI[%d] from in-flight PFCP "
+                    "modify xid=%u flags=0x%llx before new link",
+                    bearer->id, bearer->ebi, xact->xid,
+                    (unsigned long long)xact->modify_flags);
+            return; /* single embedded lnode: at most one list */
+        }
+    }
+}
+
+/*
+ * True when this session already has a Session Modification in flight
+ * on the owning shard (session-scoped or bearer-scoped). Used to defer
+ * background DROP/REARM/DROBU so they do not steal to_modify_node from
+ * an ACTIVATE/DEACTIVATE that a GTP peer is waiting on.
+ */
+static bool sgwc_sess_pfcp_modify_in_flight(sgwc_sess_t *sess)
+{
+    ogs_pfcp_xact_t *xact = NULL;
+
+    ogs_assert(sess);
+    if (!sess->pfcp_node)
+        return false;
+
+    ogs_list_for_each(&sess->pfcp_node->local_list[ogs_worker_self_id()],
+            xact) {
+        sgwc_bearer_t *bearer = NULL;
+
+        if (xact->seq[0].type !=
+                OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE)
+            continue;
+
+        if (xact->modify_flags & OGS_PFCP_MODIFY_SESSION) {
+            ogs_pool_id_t sess_id = OGS_POINTER_TO_UINT(xact->data);
+
+            if (sess_id == sess->id)
+                return true;
+            continue;
+        }
+
+        ogs_list_for_each(&sess->bearer_list, bearer) {
+            if (ogs_list_exists(&xact->bearer_to_modify_list,
+                        &bearer->to_modify_node))
+                return true;
+        }
+    }
+
+    return false;
+}
+
+#define SGWC_PFCP_MODIFY_SOFT \
+    (OGS_PFCP_MODIFY_DROP|OGS_PFCP_MODIFY_REARM|OGS_PFCP_MODIFY_DROBU)
+
 int sgwc_pfcp_send_bearer_to_modify_list(
         sgwc_sess_t *sess, ogs_pfcp_xact_t *xact)
 {
@@ -511,6 +761,7 @@ int sgwc_pfcp_send_bearer_to_modify_list(
     sgwc_sess_sync_pfcp_pdr_nwi(sess);
 
     xact->local_seid = sess->sgwc_sxa_seid;
+    sgwc_trace_bind_pfcp(xact, sess);
     ogs_debug("PFCP Session Modification xact: "
             "sess_id=%d xact=%p local_seid=0x%llx bearer_to_modify_count=%d",
             sess->id, xact, (unsigned long long)xact->local_seid,
@@ -532,6 +783,7 @@ int sgwc_pfcp_send_bearer_to_modify_list(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -568,6 +820,7 @@ int sgwc_pfcp_send_session_establishment_request(
         }
     }
     xact->local_seid = sess->sgwc_sxa_seid;
+    sgwc_trace_bind_pfcp(xact, sess);
     xact->create_flags = flags;
 
     memset(&h, 0, sizeof(ogs_pfcp_header_t));
@@ -604,7 +857,7 @@ int sgwc_pfcp_send_session_establishment_request(
  */
     h.seid = sess->sgwu_sxa_seid;
 
-    sxabuf = sgwc_sxa_build_session_establishment_request(h.type, sess);
+    sxabuf = sgwc_sxa_build_session_establishment_request(h.type, sess, xact);
     if (!sxabuf) {
         ogs_error("sgwc_sxa_build_session_establishment_request() failed");
         return OGS_ERROR;
@@ -616,8 +869,17 @@ int sgwc_pfcp_send_session_establishment_request(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
+
+    /*
+     * Count toward the admission in-flight cap only for real Create
+     * Sessions (a GTP transaction is waiting); PFCP restoration
+     * re-establishes (no S11/Gn xact) must not starve new attaches.
+     */
+    if (rv == OGS_OK && gtp_xact_id != OGS_INVALID_POOL_ID)
+        sgwc_admission_establish_started(sess);
 
     return rv;
 }
@@ -634,6 +896,20 @@ int sgwc_pfcp_send_session_modification_request(
     ogs_debug("PFCP Session Modification from session: "
             "sess_id=%d gtp_xact_id=%d flags=0x%llx",
             sess->id, gtp_xact_id, (unsigned long long)flags);
+
+    /*
+     * Background FAR maintenance (DROP / REARM / DROBU) must not race an
+     * in-flight GTP-driven modify: both paths share bearer->to_modify_node.
+     * Return OGS_RETRY so callers leave CP state alone; buffer_idle /
+     * holddown sweep will try again.
+     */
+    if ((flags & SGWC_PFCP_MODIFY_SOFT) &&
+            sgwc_sess_pfcp_modify_in_flight(sess)) {
+        ogs_info("Defer PFCP soft-modify flags=0x%llx sess_id[%d]: "
+                "modify already in flight",
+                (unsigned long long)flags, sess->id);
+        return OGS_RETRY;
+    }
 
     xact = ogs_pfcp_xact_local_create(
             sess->pfcp_node, sess_timeout, OGS_UINT_TO_POINTER(sess->id));
@@ -653,9 +929,12 @@ int sgwc_pfcp_send_session_modification_request(
         }
     }
     xact->local_seid = sess->sgwc_sxa_seid;
+    sgwc_trace_bind_pfcp(xact, sess);
 
-    ogs_list_for_each(&sess->bearer_list, bearer)
+    ogs_list_for_each(&sess->bearer_list, bearer) {
+        sgwc_bearer_unlink_to_modify(bearer, sess->pfcp_node);
         ogs_list_add(&xact->bearer_to_modify_list, &bearer->to_modify_node);
+    }
 
     return sgwc_pfcp_send_bearer_to_modify_list(sess, xact);
 }
@@ -695,7 +974,9 @@ int sgwc_pfcp_send_bearer_modification_request(
         }
     }
     xact->local_seid = sess->sgwc_sxa_seid;
+    sgwc_trace_bind_pfcp(xact, sess);
 
+    sgwc_bearer_unlink_to_modify(bearer, sess->pfcp_node);
     ogs_list_add(&xact->bearer_to_modify_list, &bearer->to_modify_node);
 
     sgwc_sess_sync_pfcp_pdr_nwi(sess);
@@ -716,6 +997,7 @@ int sgwc_pfcp_send_bearer_modification_request(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -749,6 +1031,7 @@ int sgwc_pfcp_send_session_deletion_request(
         }
     }
     xact->local_seid = sess->sgwc_sxa_seid;
+    sgwc_trace_bind_pfcp(xact, sess);
 
     memset(&h, 0, sizeof(ogs_pfcp_header_t));
     h.type = OGS_PFCP_SESSION_DELETION_REQUEST_TYPE;
@@ -768,6 +1051,7 @@ int sgwc_pfcp_send_session_deletion_request(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -824,6 +1108,7 @@ static int sgwc_pfcp_send_orphan_session_purge(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -984,6 +1269,7 @@ int sgwc_pfcp_send_session_report_response(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_pfcp(xact, sess);
     rv = ogs_pfcp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 

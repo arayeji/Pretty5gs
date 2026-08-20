@@ -58,12 +58,23 @@ extern "C" {
  *
  * eNB teardown: mme_enb_remove() drains the hold list; TX_READY for a
  * removed eNB just frees the pkbuf (enb pool id lookup fails).
+ *
+ * DIRECT MODE (mme.s1ap_tx_direct, requires s1ap_io_thread >= 1): the
+ * TX worker skips TX_READY entirely — it posts the encoded PDU to the
+ * IO thread itself and flushes the hold list under mme_ctx_lock. The
+ * lock also guarantees SEND-before-DRAIN against mme_enb_remove()
+ * (whole teardown runs under the same recursive lock), so the IO
+ * thread can never receive a SEND for a destroyed socket.
  */
 
-int s1ap_tx_workers_start(int count);
+int s1ap_tx_workers_start(int count, bool direct);
 void s1ap_tx_workers_stop(void);
 
 bool s1ap_tx_active(void);
+
+/* diagnostics for /admin/queues */
+int s1ap_tx_worker_count(void);
+unsigned int s1ap_tx_queue_depth(int idx);
 
 /* Post a DownlinkNASTransport build+encode job. Main thread only.
  * Takes ownership of emmbuf ONLY on OGS_OK; on failure the caller
@@ -74,6 +85,21 @@ int s1ap_tx_post_dlnas(enb_ue_t *enb_ue, ogs_pkbuf_t *emmbuf);
  * (or free it if the eNB is gone) and flush that eNB's hold list.
  * Main thread only. */
 void s1ap_tx_ready_handle(mme_event_t *e);
+
+/* Periodic self-heal (orphan sweep, main thread): force-flush any eNB
+ * whose hold list has been non-empty for far longer than an encode job
+ * can take — the signature of a leaked s1ap_tx_pending count, which
+ * otherwise black-holes that eNB's synchronous downlink until restart. */
+void s1ap_tx_hold_watchdog(void);
+
+/*
+ * Opportunistic self-heal on the send path (UE-shard safe). If THIS eNB's
+ * hold looks stalled (leaked pending / TX_READY starved behind a deep
+ * main queue), flush it now so Attach Accept / ICS is not parked forever
+ * waiting for an orphan-sweep event that itself cannot run while main
+ * never returns to poll.
+ */
+void s1ap_tx_hold_recover_stalled(mme_enb_t *enb);
 
 #ifdef __cplusplus
 }

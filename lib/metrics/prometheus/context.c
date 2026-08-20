@@ -467,6 +467,24 @@ static void fill_query_from_connection(struct MHD_Connection *connection,
             q->replace = 1;
     }
 
+    /*
+     * HSS /admin/s6a/clr: ?reattach=0|1 (default when omitted: 1).
+     * Accept the same textual truthy/falsey forms as force.
+     */
+    const char *ra = MHD_lookup_connection_value(connection,
+            MHD_GET_ARGUMENT_KIND, "reattach");
+    if (ra && *ra) {
+        q->has_reattach = 1;
+        if (!strcasecmp(ra, "0") || !strcasecmp(ra, "false") ||
+                !strcasecmp(ra, "no") || !strcasecmp(ra, "off"))
+            q->reattach = 0;
+        else if (!strcasecmp(ra, "1") || !strcasecmp(ra, "true") ||
+                !strcasecmp(ra, "yes") || !strcasecmp(ra, "on"))
+            q->reattach = 1;
+        else
+            q->has_reattach = 0; /* leave default to the handler */
+    }
+
     q->match = MHD_lookup_connection_value(connection,
             MHD_GET_ARGUMENT_KIND, "match");
     q->sync = MHD_lookup_connection_value(connection,
@@ -490,6 +508,8 @@ static void fill_query_from_connection(struct MHD_Connection *connection,
             MHD_GET_ARGUMENT_KIND, "liid");
     q->msisdn = MHD_lookup_connection_value(connection,
             MHD_GET_ARGUMENT_KIND, "msisdn");
+    q->imei = MHD_lookup_connection_value(connection,
+            MHD_GET_ARGUMENT_KIND, "imei");
 
     q->fqdn = MHD_lookup_connection_value(connection,
             MHD_GET_ARGUMENT_KIND, "fqdn");
@@ -640,23 +660,57 @@ static _MHD_Result serve_admin(struct MHD_Connection *connection,
     ogs_info("admin: %s from %s (force=%d)",
             ep->endpoint, peer[0] ? peer : "unknown", q.force);
 
-    char body[1024];
+    /*
+     * Admin JSON used to be a 1 KB stack buffer. Endpoints that embed
+     * peer replies (MME /admin/trace/imsi?sync=...) can exceed that;
+     * snprintf's C99 return value was then added into body_len and
+     * MHD copied past the buffer — corrupting/killing the MHD thread
+     * so the entire metrics/admin API stopped responding.
+     */
+    enum { ADMIN_BODY_CAP = 64 * 1024 };
+    char *body = (char *)ogs_malloc(ADMIN_BODY_CAP);
     size_t body_len = 0;
-    int status = ep->handler(&q, body, sizeof(body), &body_len);
+    int status;
+
+    if (!body)
+        return reply_text(connection, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                "Out of memory\n");
+
+    status = ep->handler(&q, body, ADMIN_BODY_CAP, &body_len);
     if (status <= 0) status = MHD_HTTP_INTERNAL_SERVER_ERROR;
+    if (body_len >= ADMIN_BODY_CAP)
+        body_len = ADMIN_BODY_CAP - 1;
+    body[body_len] = '\0';
 
     if (body_len == 0) {
         const char *def = (status >= 200 && status < 300) ? "OK\n" : "Error\n";
+        ogs_free(body);
         return reply_text(connection, (unsigned int)status, def);
     }
 
-    struct MHD_Response *rsp =
-        MHD_create_response_from_buffer(body_len, body, MHD_RESPMEM_MUST_COPY);
-    if (!rsp) return (_MHD_Result)MHD_NO;
-    MHD_add_response_header(rsp, "Content-Type", "application/json");
-    int ret = MHD_queue_response(connection, (unsigned int)status, rsp);
-    MHD_destroy_response(rsp);
-    return (_MHD_Result)ret;
+    {
+        struct MHD_Response *rsp;
+#if MHD_VERSION >= 0x00096100
+        rsp = MHD_create_response_from_buffer_with_free_callback(
+                body_len, (void *)body, free_callback);
+        body = NULL; /* ownership moved to MHD */
+#else
+        rsp = MHD_create_response_from_buffer(
+                body_len, body, MHD_RESPMEM_MUST_COPY);
+#endif
+        if (!rsp) {
+            if (body)
+                ogs_free(body);
+            return (_MHD_Result)MHD_NO;
+        }
+        MHD_add_response_header(rsp, "Content-Type", "application/json");
+        int ret = MHD_queue_response(connection, (unsigned int)status, rsp);
+        MHD_destroy_response(rsp);
+#if MHD_VERSION < 0x00096100
+        ogs_free(body);
+#endif
+        return (_MHD_Result)ret;
+    }
 }
 
 static _MHD_Result
@@ -710,13 +764,26 @@ mhd_server_access_handler(void *cls, struct MHD_Connection *connection,
         ogs_time_t t0 = ogs_time_now();
 
         /*
-         * prom_collector_registry_bridge() can return NULL if an
+         * The bridge walks every collector's prom_map of label samples.
+         * NFs create new labelled instances (ogs_metrics_inst_new() +
+         * hash insert) from their worker threads under
+         * ogs_metrics_dump_lock(), and an insert can rehash the very map
+         * being traversed here - libprom takes no lock that covers both
+         * sides, so the scrape walked freed buckets and died with SIGSEGV
+         * inside prom_map_get_index_internal(). New label values appear
+         * constantly in production (each new PLMN, cause, TAC or APN), so
+         * this fires whenever a scrape overlaps a first-seen label.
+         *
+         * Hold the same mutex the writers use for the whole traversal.
+         *
+         * prom_collector_registry_bridge() can also return NULL if an
          * internal allocation fails. Calling strlen(NULL) here would
          * crash the MHD worker thread and present client-side as
-         * "connection reset" / "empty response" - exactly the
-         * symptom we have been chasing. Guard it.
+         * "connection reset" / "empty response" - guard it too.
          */
+        ogs_metrics_dump_lock();
         buf = prom_collector_registry_bridge(PROM_COLLECTOR_REGISTRY_DEFAULT);
+        ogs_metrics_dump_unlock();
         if (!buf) {
             ogs_error("/metrics: prom_collector_registry_bridge returned NULL");
             return reply_text(connection,

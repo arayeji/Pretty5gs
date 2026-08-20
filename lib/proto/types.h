@@ -256,6 +256,7 @@ bool ogs_pdu_session_id_is_valid(int psi);
 #define OGS_DESCRIPTION_STRING "description"
 
 #define OGS_SMF_STRING "smf"
+#define OGS_PGW_STRING "pgw"
 #define OGS_IPV4_STRING "ipv4"
 #define OGS_IPV6_STRING "ipv6"
 #define OGS_UE_STRING "ue"

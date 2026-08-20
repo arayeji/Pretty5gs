@@ -20,6 +20,7 @@
 #include "cgf-sm.h"
 #include "gtpp-path.h"
 #include "spool.h"
+#include "worker.h"
 
 /* Stack buffer for one MTU-safe DTRR payload (+ GTP'/IE overhead). */
 #define CGF_BATCH_BUF_SIZE 4096
@@ -34,6 +35,8 @@ static cgf_peer_t *active_peer(void)
     if (self->active_peer_idx >= self->num_of_peers) return NULL;
     return &self->peers[self->active_peer_idx];
 }
+
+static bool peer_may_send(const cgf_peer_t *peer);
 
 static void switch_to_next_peer(void)
 {
@@ -52,7 +55,84 @@ static void switch_to_next_peer(void)
     }
 }
 
-static void abort_file_pipeline(cgf_peer_t *peer, cgf_spool_file_t *file)
+/* Peer that already has in-flight DTRRs for `file`, or NULL. Used to
+ * keep a spool file pinned to one peer (required by spool nack which
+ * rewinds the whole file's inflight window). */
+static cgf_peer_t *peer_holding_file(cgf_spool_file_t *file)
+{
+    cgf_context_t *self = cgf_self();
+    uint32_t i, j;
+
+    if (!file) return NULL;
+    for (i = 0; i < self->num_of_peers; i++) {
+        cgf_peer_t *p = &self->peers[i];
+        for (j = 0; j < CGF_MAX_INFLIGHT; j++) {
+            if (p->xacts[j].active && p->xacts[j].file == file)
+                return p;
+        }
+    }
+    return NULL;
+}
+
+/*
+ * Round-robin: pick the next UP/PROBING peer with spare window capacity
+ * starting at active_peer_idx, then advance the cursor so the following
+ * new file lands on the next peer. Returns NULL when every peer is
+ * DOWN or full.
+ */
+static cgf_peer_t *rr_pick_peer(uint32_t window)
+{
+    cgf_context_t *self = cgf_self();
+    uint32_t i, start;
+
+    if (!self->num_of_peers) return NULL;
+    start = self->active_peer_idx % self->num_of_peers;
+
+    for (i = 0; i < self->num_of_peers; i++) {
+        uint32_t idx = (start + i) % self->num_of_peers;
+        cgf_peer_t *p = &self->peers[idx];
+
+        if (!p->sock || !peer_may_send(p)) continue;
+        if (cgf_gtpp_inflight_count(p) >= window) continue;
+
+        /* Next new assignment starts after this peer. */
+        self->active_peer_idx = (idx + 1) % self->num_of_peers;
+        return p;
+    }
+    return NULL;
+}
+
+/* Select the peer that should carry the next DTRR for `file`. */
+static cgf_peer_t *select_peer_for_file(cgf_spool_file_t *file, uint32_t window)
+{
+    cgf_context_t *self = cgf_self();
+    cgf_peer_t *p;
+
+    if (self->send_mode == CGF_SEND_MODE_ROUND_ROBIN) {
+        p = peer_holding_file(file);
+        if (p) {
+            if (!peer_may_send(p) || cgf_gtpp_inflight_count(p) >= window)
+                return NULL;
+            return p;
+        }
+        return rr_pick_peer(window);
+    }
+
+    p = active_peer();
+    if (!p || !peer_may_send(p) || cgf_gtpp_inflight_count(p) >= window)
+        return NULL;
+    return p;
+}
+
+/*
+ * Tear down in-flight DTRRs for one spool file and rewind to the last
+ * confirmed offset. When `uncertain` is true the prior packets may have
+ * reached the CGF without an ACK (timeout / failover / peer restart), so
+ * the next send must use Send-possibly-duplicated (TS 32.295 §6.2.4.5.2).
+ * Explicit CGF rejects are not uncertain.
+ */
+static void abort_file_pipeline(cgf_peer_t *peer, cgf_spool_file_t *file,
+        bool uncertain)
 {
     uint32_t i;
 
@@ -64,6 +144,8 @@ static void abort_file_pipeline(cgf_peer_t *peer, cgf_spool_file_t *file)
             cgf_gtpp_free_xact(x);
     }
     cgf_spool_nack_batch(file);
+    if (uncertain)
+        cgf_spool_mark_possibly_dup(file);
 }
 
 static void abort_in_flight(cgf_peer_t *peer, const char *reason)
@@ -94,8 +176,10 @@ static void abort_in_flight(cgf_peer_t *peer, const char *reason)
         }
         cgf_gtpp_free_xact(x);
     }
-    for (i = 0; i < n_nacked; i++)
+    for (i = 0; i < n_nacked; i++) {
         cgf_spool_nack_batch(nacked[i]);
+        cgf_spool_mark_possibly_dup(nacked[i]);
+    }
 }
 
 static bool peer_may_send(const cgf_peer_t *peer)
@@ -200,6 +284,8 @@ void cgf_sm_on_echo_response(cgf_peer_t *peer, uint16_t seq,
                     peer->address_str,
                     peer->peer_restart_counter, recovery);
             abort_in_flight(peer, "peer restarted");
+            /* CGF restarted: restart our outbound sequence space too. */
+            cgf_gtpp_reset_seq(peer);
         }
         peer->peer_restart_counter = recovery;
         peer->peer_restart_counter_valid = true;
@@ -212,6 +298,9 @@ void cgf_sm_on_dtrr_response(cgf_peer_t *peer, uint16_t seq, uint8_t cause)
 {
     cgf_xact_t *xact = cgf_gtpp_find_xact(peer, seq);
     cgf_spool_file_t *file;
+    uint8_t ptc;
+    uint16_t released_seq = 0;
+    bool need_release = false;
 
     if (!xact) {
         ogs_debug("cgf: stale DTRR response seq=%u from '%s'",
@@ -220,12 +309,13 @@ void cgf_sm_on_dtrr_response(cgf_peer_t *peer, uint16_t seq, uint8_t cause)
     }
 
     file = xact->file;
+    ptc = xact->ptc;
 
     if (cause < 128) {
-        ogs_warn("cgf: DTRR seq=%u rejected by '%s' (cause=%u)",
-                seq, peer->address_str, cause);
+        ogs_warn("cgf: DTRR seq=%u ptc=%u rejected by '%s' (cause=%u)",
+                seq, ptc, peer->address_str, cause);
         if (file)
-            abort_file_pipeline(peer, file);
+            abort_file_pipeline(peer, file, false);
         cgf_gtpp_free_xact(xact);
         cgf_sm_try_drain();
         return;
@@ -237,19 +327,57 @@ void cgf_sm_on_dtrr_response(cgf_peer_t *peer, uint16_t seq, uint8_t cause)
         peer->state = CGF_PEER_STATE_UP;
     }
 
+    if (ptc == CGF_GTPP_PTC_RELEASE_DATA_REC) {
+        ogs_info("cgf: Release seq=%u accepted by '%s'",
+                seq, peer->address_str);
+        cgf_gtpp_free_xact(xact);
+        cgf_sm_try_drain();
+        return;
+    }
+
     if (file) {
-        if (!cgf_spool_ack_batch(file, xact->batch_start,
-                xact->records_in_batch)) {
-            abort_file_pipeline(peer, file);
+        bool freed = false;
+
+        if (!cgf_spool_ack_batch_ex(file, xact->batch_start,
+                xact->records_in_batch, &freed)) {
+            abort_file_pipeline(peer, file, true);
             cgf_gtpp_free_xact(xact);
             cgf_sm_try_drain();
             return;
         }
-        ogs_debug("cgf: DTRR seq=%u accepted by '%s' (cause=%u, %u records)",
-                seq, peer->address_str, cause, xact->records_in_batch);
+        /*
+         * On a drain worker thread, `file` may be a stale/freed
+         * pointer past this point — the worker caches open files in
+         * its local array. Drop that slot before cgf_sm_try_drain()
+         * runs again on this thread.
+         */
+        if (freed) cgf_worker_on_file_gone(file);
+
+        ogs_debug("cgf: DTRR seq=%u ptc=%u accepted by '%s' "
+                "(cause=%u, %u records)",
+                seq, ptc, peer->address_str, cause, xact->records_in_batch);
+
+        /*
+         * Spec: after Possibly-Duplicated is accepted, CGF holds CDRs until
+         * Release. Authorize forward to BD now that we treat this peer as
+         * the delivery path for these packets.
+         */
+        if (ptc == CGF_GTPP_PTC_SEND_POSS_DUP) {
+            need_release = true;
+            released_seq = xact->seq;
+        }
     }
 
     cgf_gtpp_free_xact(xact);
+
+    if (need_release) {
+        int rv = cgf_gtpp_send_release(peer, released_seq);
+        if (rv != OGS_OK)
+            ogs_warn("cgf: Release for seq=%u failed (%d); "
+                    "CGF may hold Possibly-Dup CDRs until retry",
+                    released_seq, rv);
+    }
+
     cgf_sm_try_drain();
 }
 
@@ -261,6 +389,12 @@ void cgf_sm_on_echo_tick(void)
 {
     cgf_context_t *self = cgf_self();
     uint32_t i;
+
+    /* Drain workers own the real peer sockets and run their own echo
+     * tick (see worker.c); the main thread's peers[] entries have no
+     * socket in that mode, so this loop would be a no-op anyway, but
+     * skip it explicitly for clarity. */
+    if (cgf_workers_enabled()) return;
 
     for (i = 0; i < self->num_of_peers; i++) {
         cgf_peer_t *p = &self->peers[i];
@@ -276,9 +410,18 @@ void cgf_sm_on_echo_tick(void)
                     p->state != CGF_PEER_STATE_DOWN) {
                 ogs_warn("cgf: peer '%s' marked DOWN", p->address_str);
                 p->state = CGF_PEER_STATE_DOWN;
-                if ((uint32_t)(p - self->peers) == self->active_peer_idx) {
+                /*
+                 * Failover mode: only abandon the active peer's pipeline
+                 * and rotate the active slot. Round-robin: every peer
+                 * may hold files, so always abort this peer's xacts;
+                 * survivors keep draining on the remaining UP peers.
+                 */
+                if (self->send_mode == CGF_SEND_MODE_ROUND_ROBIN ||
+                        (uint32_t)(p - self->peers) ==
+                                self->active_peer_idx) {
                     abort_in_flight(p, "peer went down");
-                    switch_to_next_peer();
+                    if (self->send_mode != CGF_SEND_MODE_ROUND_ROBIN)
+                        switch_to_next_peer();
                 }
             }
         }
@@ -287,16 +430,13 @@ void cgf_sm_on_echo_tick(void)
     }
 }
 
-void cgf_sm_on_rto_tick(void)
+static bool peer_rto_tick(cgf_peer_t *p, ogs_time_t now, ogs_time_t rto)
 {
     cgf_context_t *self = cgf_self();
-    cgf_peer_t *p = active_peer();
-    ogs_time_t now = ogs_time_now();
-    ogs_time_t rto = ogs_time_from_msec(self->request_rto_ms);
     uint32_t i;
     bool gave_up = false;
 
-    if (!p) return;
+    if (!p) return false;
 
     for (i = 0; i < CGF_MAX_INFLIGHT; i++) {
         cgf_xact_t *x = &p->xacts[i];
@@ -305,10 +445,10 @@ void cgf_sm_on_rto_tick(void)
         if (now - x->sent_at < rto) continue;
 
         if (x->retries >= self->request_retries) {
-            ogs_warn("cgf: DTRR seq=%u gave up after %u retries",
-                    x->seq, x->retries);
+            ogs_warn("cgf: DTRR seq=%u ptc=%u gave up after %u retries",
+                    x->seq, x->ptc, x->retries);
             if (x->file)
-                abort_file_pipeline(p, x->file);
+                abort_file_pipeline(p, x->file, true);
             else
                 cgf_gtpp_free_xact(x);
             gave_up = true;
@@ -320,14 +460,43 @@ void cgf_sm_on_rto_tick(void)
 
     if (gave_up) {
         p->state = CGF_PEER_STATE_DOWN;
-        switch_to_next_peer();
-        cgf_sm_try_drain();
+        if (self->send_mode != CGF_SEND_MODE_ROUND_ROBIN)
+            switch_to_next_peer();
     }
+    return gave_up;
+}
+
+void cgf_sm_on_rto_tick(void)
+{
+    cgf_context_t *self = cgf_self();
+    ogs_time_t now = ogs_time_now();
+    ogs_time_t rto = ogs_time_from_msec(self->request_rto_ms);
+    bool any_gave_up = false;
+
+    if (cgf_workers_enabled()) return;
+
+    if (self->send_mode == CGF_SEND_MODE_ROUND_ROBIN) {
+        uint32_t i;
+        for (i = 0; i < self->num_of_peers; i++) {
+            if (peer_rto_tick(&self->peers[i], now, rto))
+                any_gave_up = true;
+        }
+    } else {
+        any_gave_up = peer_rto_tick(active_peer(), now, rto);
+    }
+
+    if (any_gave_up)
+        cgf_sm_try_drain();
 }
 
 void cgf_sm_on_spool_tick(void)
 {
-    cgf_spool_refill();
+    /* Workers claim files themselves (atomic rename out of ready/);
+     * letting the main thread also scan ready/ here would race their
+     * claims. */
+    if (cgf_workers_enabled()) return;
+
+    cgf_spool_try_open_more(cgf_self()->max_active_files);
     cgf_sm_try_drain();
 }
 
@@ -335,35 +504,89 @@ void cgf_sm_on_spool_tick(void)
 /*  Drain                                                             */
 /* ------------------------------------------------------------------ */
 
+static bool any_peer_has_room(uint32_t window)
+{
+    cgf_context_t *self = cgf_self();
+    uint32_t i;
+
+    for (i = 0; i < self->num_of_peers; i++) {
+        cgf_peer_t *p = &self->peers[i];
+        if (!p->sock || !peer_may_send(p)) continue;
+        if (cgf_gtpp_inflight_count(p) < window) return true;
+    }
+    return false;
+}
+
+/* Pick an open main-thread file with unsent bytes whose peer has room. */
+static cgf_spool_file_t *pick_sendable_file(uint32_t window, cgf_peer_t **out_peer)
+{
+    uint32_t i, n = cgf_spool_active_count();
+
+    for (i = 0; i < n; i++) {
+        cgf_spool_file_t *f = cgf_spool_active_at(i);
+        cgf_peer_t *p;
+
+        if (!f || f->send_offset >= f->data_len) continue;
+        p = select_peer_for_file(f, window);
+        if (!p) continue;
+        if (out_peer) *out_peer = p;
+        return f;
+    }
+    return NULL;
+}
+
 void cgf_sm_try_drain(void)
 {
     cgf_context_t *self = cgf_self();
     cgf_peer_t *p;
     cgf_spool_file_t *f;
     uint32_t window;
+    uint32_t max_files;
     static uint8_t batch[CGF_BATCH_BUF_SIZE];
 
-    p = active_peer();
-    if (!p || !peer_may_send(p)) return;
+    /*
+     * Called from cgf_sm_on_echo_response()/on_dtrr_response(), which
+     * are shared between the main thread and every drain worker
+     * thread (worker.c's recv callback calls cgf_gtpp_handle_recv()
+     * directly). On a worker thread, drain worker-local state instead
+     * of this function's `static batch` / cgf_self()->peers — that
+     * buffer is not safe to share across concurrently-running worker
+     * threads, and the active peer/file live on the worker, not here.
+     */
+    if (cgf_worker_self()) {
+        cgf_worker_try_drain(cgf_worker_self());
+        return;
+    }
 
     window = self->max_inflight;
     if (!window) window = 1;
     if (window > CGF_MAX_INFLIGHT) window = CGF_MAX_INFLIGHT;
 
-    while (cgf_gtpp_inflight_count(p) < window) {
+    max_files = self->max_active_files;
+    if (!max_files) max_files = 1;
+    if (max_files > CGF_MAX_INFLIGHT) max_files = CGF_MAX_INFLIGHT;
+
+    for (;;) {
         size_t used = 0;
         size_t cap = self->max_bytes_per_packet;
         uint32_t n;
         int rv;
 
-        f = cgf_spool_get_active();
+        p = NULL;
+        f = pick_sendable_file(window, &p);
         if (!f) {
-            cgf_spool_refill();
-            f = cgf_spool_get_active();
-            if (!f) break;
+            /* Keep the GTP' window full: open more files while peers
+             * still have spare inflight slots, even if every currently
+             * open file is only waiting on ACKs. */
+            if (cgf_spool_active_count() >= max_files) break;
+            if (!any_peer_has_room(window)) break;
+            {
+                uint32_t before = cgf_spool_active_count();
+                cgf_spool_try_open_more(max_files);
+                if (cgf_spool_active_count() <= before) break;
+            }
+            continue;
         }
-
-        if (f->send_offset >= f->data_len) break;
 
         if (cap > sizeof(batch)) cap = sizeof(batch);
 
@@ -372,7 +595,7 @@ void cgf_sm_try_drain(void)
         if (n == 0) {
             if (f->send_offset < f->data_len)
                 cgf_spool_quarantine(f);
-            break;
+            continue;
         }
 
         rv = cgf_gtpp_send_data_record_transfer(p, batch, used, n, f,
@@ -380,10 +603,12 @@ void cgf_sm_try_drain(void)
         if (rv == OGS_RETRY)
             break;
         if (rv != OGS_OK) {
-            ogs_warn("cgf: send failed, backing off");
-            abort_file_pipeline(p, f);
+            ogs_warn("cgf: send failed to '%s', backing off",
+                    p->address_str);
+            abort_file_pipeline(p, f, true);
             p->state = CGF_PEER_STATE_DOWN;
-            switch_to_next_peer();
+            if (self->send_mode != CGF_SEND_MODE_ROUND_ROBIN)
+                switch_to_next_peer();
             break;
         }
 

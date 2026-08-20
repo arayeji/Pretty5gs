@@ -22,6 +22,7 @@
 #include "cgf-sm.h"
 #include "gtpp-path.h"
 #include "spool.h"
+#include "worker.h"
 
 #ifdef OPEN5GS_ADMIN_WATCHER
 #include "cgf-admin-watcher.h"
@@ -75,8 +76,17 @@ int cgf_initialize(void)
     rv = cgf_context_parse_config();
     if (rv != OGS_OK) return rv;
 
-    rv = cgf_gtpp_open();
-    if (rv != OGS_OK) return OGS_ERROR;
+    if (cgf_self()->workers > 1) {
+        /* Drain workers own the real peer sockets/associations — the
+         * main thread's peers[] stays a config-only template so admin
+         * hot-reload can still update it (see cgf_gtpp_apply_runtime()
+         * in gtpp-path.c, which restarts the worker pool on change). */
+        rv = cgf_workers_start();
+        if (rv != OGS_OK) return OGS_ERROR;
+    } else {
+        rv = cgf_gtpp_open();
+        if (rv != OGS_OK) return OGS_ERROR;
+    }
 
     cgf_self()->t_echo = ogs_timer_add(ogs_app()->timer_mgr,
             echo_timer_expired, NULL);
@@ -112,6 +122,9 @@ void cgf_terminate(void)
     ogs_queue_term(ogs_app()->queue);
     ogs_pollset_notify(ogs_app()->pollset);
     ogs_thread_destroy(thread);
+
+    /* No-op when workers were never started. */
+    cgf_workers_stop();
 
     if (cgf_self()->t_echo)  ogs_timer_delete(cgf_self()->t_echo);
     if (cgf_self()->t_rto)   ogs_timer_delete(cgf_self()->t_rto);

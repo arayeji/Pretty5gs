@@ -56,7 +56,6 @@ void sbc_handle_write_replace_warning_request(sbc_pws_data_t *sbc_pws)
             /* Send to enb */
             r = s1ap_send_to_enb(enb, s1apbuf, S1AP_NON_UE_SIGNALLING);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
     }
 }
@@ -95,7 +94,6 @@ void sbc_handle_stop_warning_request(sbc_pws_data_t *sbc_pws)
             /* Send to enb */
             r = s1ap_send_to_enb(enb, s1apbuf, S1AP_NON_UE_SIGNALLING);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
     }
 }

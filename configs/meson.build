@@ -34,6 +34,7 @@ example_conf = '''
     sample.yaml
     attach.yaml
     collapsed.yaml
+    load.yaml
     310014.yaml
     csfb.yaml
     volte.yaml

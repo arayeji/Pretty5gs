@@ -219,6 +219,81 @@ static int smf_admin_session_detach(const ogs_metrics_query_t *q,
 }
 
 /*
+ * DELETE /admin/session/delete?imsi=<IMSI>[&apn=<APN>][&force=1]
+ *
+ * No APN: all sessions for the IMSI (same as /admin/session/detach).
+ * With APN: only that PDN. Graceful = GTPv2 Delete Bearer Request to
+ * SGW/MME (same chain as RADIUS PoD); force = local/PFCP remove.
+ */
+static int smf_admin_session_delete(const ogs_metrics_query_t *q,
+        char *body, size_t body_cap, size_t *body_len)
+{
+    if (!q || !q->imsi || !*q->imsi) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_BAD_REQUEST, "missing ?imsi=...");
+        return ADMIN_HTTP_BAD_REQUEST;
+    }
+
+    if (!q->apn || !*q->apn)
+        return smf_admin_session_detach(q, body, body_cap, body_len);
+
+    ogs_pool_id_t sess_id = OGS_INVALID_POOL_ID;
+
+    ogs_metrics_dump_lock();
+    smf_ue_t *smf_ue = smf_ue_find_by_imsi_bcd(q->imsi);
+    if (smf_ue) {
+        char apn_ni[OGS_MAX_APN_LEN + 1];
+        smf_sess_t *sess = NULL;
+
+        snprintf(apn_ni, sizeof(apn_ni), "%s", q->apn);
+        {
+            char *oi = ogs_dnn_oi_from_fqdn(apn_ni);
+            if (oi && oi > apn_ni && oi[-1] == '.')
+                oi[-1] = '\0';
+        }
+
+        ogs_list_for_each(&smf_ue->sess_list, sess) {
+            if (sess->session.name &&
+                    ogs_strcasecmp(sess->session.name, apn_ni) == 0) {
+                sess_id = sess->id;
+                break;
+            }
+        }
+    }
+    ogs_metrics_dump_unlock();
+
+    if (sess_id == OGS_INVALID_POOL_ID) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_NOT_FOUND, "session not found for imsi=%s apn=%s",
+                q->imsi, q->apn);
+        return ADMIN_HTTP_NOT_FOUND;
+    }
+
+    smf_event_t *e = smf_event_new(SMF_EVT_ADMIN_DETACH_SESS_ONE);
+    if (!e) {
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_INTERNAL_ERROR, "event_new failed");
+        return ADMIN_HTTP_INTERNAL_ERROR;
+    }
+    e->admin_sess_id = sess_id;
+    e->admin_force = q->force ? 1 : 0;
+
+    if (ogs_queue_push(ogs_app()->queue, e) != OGS_OK) {
+        ogs_event_free(e);
+        *body_len = fmt_json_status(body, body_cap,
+                ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
+        return ADMIN_HTTP_SERVICE_UNAVAIL;
+    }
+
+    ogs_pollset_notify(ogs_app()->pollset);
+
+    *body_len = fmt_json_status(body, body_cap, ADMIN_HTTP_ACCEPTED,
+            "session delete queued for imsi=%s apn=%s mode=%s",
+            q->imsi, q->apn, e->admin_force ? "force" : "graceful");
+    return ADMIN_HTTP_ACCEPTED;
+}
+
+/*
  * GET /admin/seids
  *
  * Lightweight companion for the NMS stale-session audit: emits ONLY the UPF
@@ -350,6 +425,10 @@ void smf_admin_api_register(void)
             OGS_METRICS_ADMIN_METHOD_GET);
     ogs_metrics_register_admin_ep(smf_admin_session_detach,
             "/admin/session/detach",
+            OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
+    /* Per-APN PDN teardown (SGWC-compatible): ?imsi=&apn=[&force=1] */
+    ogs_metrics_register_admin_ep(smf_admin_session_delete,
+            "/admin/session/delete",
             OGS_METRICS_ADMIN_METHOD_GET | OGS_METRICS_ADMIN_METHOD_POST);
 
     /* SEID-only listing for the NMS stale-session audit (lightweight). */

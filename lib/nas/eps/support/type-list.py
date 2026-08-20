@@ -71,11 +71,32 @@ type_list["Short MAC"]["encode"] = \
 type_list["Access point name"]["decode"] = \
 "    {\n" \
 "        char apn[OGS_MAX_APN_LEN+1];\n" \
-"        access_point_name->length = ogs_fqdn_parse(apn, access_point_name->apn, ogs_min(access_point_name->length, OGS_MAX_APN_LEN));\n" \
-"        if (access_point_name->length > 0) {\n" \
-"            ogs_cpystrn(access_point_name->apn, apn, ogs_min(access_point_name->length, OGS_MAX_APN_LEN)+1);\n" \
+"        int apn_len;\n" \
+"\n" \
+"        apn_len = ogs_fqdn_parse(apn, access_point_name->apn,\n" \
+"                ogs_min(access_point_name->length, OGS_MAX_APN_LEN));\n" \
+"        if (apn_len <= 0) {\n" \
+"            /*\n" \
+"             * Empty/invalid DNS labels (e.g. 0x00 0x00): TS 23.401 treats\n" \
+"             * as absent APN → default / apn_correction. WARN only.\n" \
+"             */\n" \
+"            const ogs_trace_ctx_t *tr = ogs_trace_get();\n" \
+"            ogs_warn(\"APN empty/invalid DNS labels (ie_len=%d parse_rv=%d) \"\n" \
+"                    \"— treat as empty; default/apn_correction applies \"\n" \
+"                    \"IMSI[%s] enb_id[%u]\",\n" \
+"                    access_point_name->length, apn_len,\n" \
+"                    (tr && tr->imsi[0]) ? tr->imsi : \"-\",\n" \
+"                    tr ? tr->enb_id : 0);\n" \
+"            if (access_point_name->length > 0)\n" \
+"                ogs_log_hexdump(OGS_LOG_WARN,\n" \
+"                        (unsigned char *)access_point_name->apn,\n" \
+"                        ogs_min(access_point_name->length, OGS_MAX_APN_LEN));\n" \
+"            access_point_name->length = 0;\n" \
+"            access_point_name->apn[0] = '\\0';\n" \
 "        } else {\n" \
-"            ogs_error(\"UE not APN setting\");\n" \
+"            access_point_name->length = apn_len;\n" \
+"            ogs_cpystrn(access_point_name->apn, apn,\n" \
+"                    ogs_min(access_point_name->length, OGS_MAX_APN_LEN)+1);\n" \
 "        }\n" \
 "    }\n\n"
 

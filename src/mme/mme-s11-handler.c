@@ -33,6 +33,7 @@
 
 #include "mme-s11-build.h"
 #include "mme-s11-handler.h"
+#include "mme-ambr.h"
 #include "metrics.h"
 
 static uint8_t esm_cause_from_gtp(uint8_t gtp_cause)
@@ -283,7 +284,7 @@ static const char *mme_s11_create_session_cause_text(uint8_t cause)
     }
 }
 
-static void mme_s11_create_session_fail(
+void mme_s11_create_session_fail(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         int create_action, uint8_t fail_cause,
         const char *reason)
@@ -311,27 +312,85 @@ static void mme_s11_create_session_fail(
 
     mme_metrics_s11_create_session_fail(mme_ue, fail_cause);
 
-    if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST) {
-        if (enb_ue) {
-            mme_sess_t *sess = mme_sess_first(mme_ue);
-            ogs_mme_trace_set(enb_ue, mme_ue,
-                    (sess && sess->session) ? sess->session->name : NULL, "attach-reject");
+    /*
+     * SGW congestion / SGW-U unreachable (SGWC admission shed or PFCP
+     * dead): reject with EMM #22 Congestion so mme.time.t3346 makes
+     * UEs back off instead of re-attacking every GTP timeout. Other
+     * failures keep #17 Network Failure.
+     */
+    {
+        uint8_t emm_cause = OGS_NAS_EMM_CAUSE_NETWORK_FAILURE;
+        uint8_t esm_cause = OGS_NAS_ESM_CAUSE_NETWORK_FAILURE;
+
+        if (fail_cause == OGS_GTP2_CAUSE_GTP_C_ENTITY_CONGESTION ||
+            fail_cause == OGS_GTP2_CAUSE_APN_CONGESTION ||
+            fail_cause == OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING) {
+            emm_cause = OGS_NAS_EMM_CAUSE_CONGESTION;
+            esm_cause = OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES;
         }
-        OGS_TLOG_INFO("Attach reject [GTPv2-Cause:%d EMM:17 ESM:17]",
-                fail_cause);
-        r = nas_eps_send_attach_reject(enb_ue, mme_ue,
-                OGS_NAS_EMM_CAUSE_NETWORK_FAILURE,
-                OGS_NAS_ESM_CAUSE_NETWORK_FAILURE);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-    } else if (create_action == OGS_GTP_CREATE_IN_TRACKING_AREA_UPDATE) {
-        r = nas_eps_send_tau_reject(enb_ue, mme_ue,
-                OGS_NAS_EMM_CAUSE_NETWORK_FAILURE);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
+
+        if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST) {
+            if (enb_ue) {
+                mme_sess_t *sess = mme_sess_first(mme_ue);
+                ogs_mme_trace_set(enb_ue, mme_ue,
+                        (sess && sess->session) ?
+                        sess->session->name : NULL, "attach-reject");
+            }
+            OGS_TLOG_INFO("Attach reject [GTPv2-Cause:%d EMM:%d ESM:%d]",
+                    fail_cause, emm_cause, esm_cause);
+            r = nas_eps_send_attach_reject(enb_ue, mme_ue,
+                    emm_cause, esm_cause);
+            ogs_expect(r == OGS_OK);
+        } else if (create_action == OGS_GTP_CREATE_IN_TRACKING_AREA_UPDATE) {
+            r = nas_eps_send_tau_reject(enb_ue, mme_ue, emm_cause);
+            ogs_expect(r == OGS_OK);
+        }
     }
 
     mme_send_delete_session_or_mme_ue_context_release(enb_ue, mme_ue);
+}
+
+/*
+ * An ACCEPTED Create Session Response whose MME-side context (sess / S1 /
+ * UE) is already gone leaves a fully-established PDN at the SGW and PGW
+ * that nothing will ever delete: the SGW S11 F-TEID in this response was
+ * never stored, so all later cleanup takes the local-only MME_SESS_CLEAR
+ * path. Delete the just-created SGW session using the response itself.
+ */
+static void csrsp_teardown_unclaimed_sgw_session(
+        ogs_gtp_node_t *gnode,
+        ogs_gtp2_create_session_response_t *rsp, const char *why)
+{
+    ogs_gtp2_cause_t *cause = NULL;
+    ogs_gtp2_f_teid_t *sgw_f_teid = NULL;
+    uint8_t ebi = 0;
+
+    if (!gnode || !rsp)
+        return;
+
+    if (!rsp->cause.presence || !rsp->cause.data)
+        return;
+    cause = rsp->cause.data;
+    if (!OGS_GTP2_CAUSE_IS_SUCCESS(cause->value))
+        return; /* rejected create leaves nothing behind at the SGW */
+
+    if (!rsp->sender_f_teid_for_control_plane.presence ||
+            !rsp->sender_f_teid_for_control_plane.data)
+        return;
+    sgw_f_teid = rsp->sender_f_teid_for_control_plane.data;
+
+    if (rsp->bearer_contexts_created[0].presence &&
+            rsp->bearer_contexts_created[0].eps_bearer_id.presence)
+        ebi = rsp->bearer_contexts_created[0].eps_bearer_id.u8;
+
+    ogs_warn("Create Session accepted but %s - "
+            "deleting unclaimed SGW session [SGW-S11-TEID:0x%x EBI:%d]",
+            why, be32toh(sgw_f_teid->teid), ebi);
+
+    if (mme_gtp_send_orphan_delete_session(
+                gnode, be32toh(sgw_f_teid->teid), ebi) != OGS_OK)
+        ogs_error("orphan Delete Session not sent [SGW-S11-TEID:0x%x]",
+                be32toh(sgw_f_teid->teid));
 }
 
 void mme_s11_handle_create_session_response(
@@ -358,6 +417,7 @@ void mme_s11_handle_create_session_response(
     uint16_t decoded = 0;
     int create_action = 0;
     const char *fail_reason = NULL;
+    ogs_gtp_node_t *csrsp_gnode = NULL;
 
     ogs_assert(rsp);
 
@@ -368,6 +428,21 @@ void mme_s11_handle_create_session_response(
      ********************/
     ogs_assert(xact);
     create_action = xact->create_action;
+    /*
+     * Same orphan/stale-xact hazard as Delete Session / Release Access
+     * Bearers / Delete Indirect responses: under S11 storms a late
+     * Create Session Response can match a reused or mistagged xact with
+     * create_action==0. The final create_action switch has no case for
+     * 0 and aborted the whole MME (ogs_assert_if_reached). Drop safely.
+     */
+    if (!create_action) {
+        ogs_error("Create Session Response: missing create_action "
+                "(orphan/stale xact) - ignore");
+        rv = ogs_gtp_xact_commit(xact);
+        if (rv != OGS_OK)
+            ogs_error("ogs_gtp_xact_commit() failed");
+        return;
+    }
 
     sess = mme_sess_find_by_id(OGS_POINTER_TO_UINT(xact->data));
     if (sess)
@@ -376,6 +451,10 @@ void mme_s11_handle_create_session_response(
         mme_ue = mme_ue_from_teid;
 
     enb_ue = enb_ue_find_by_id(xact->enb_ue_id);
+
+    /* Keep the peer node across ogs_gtp_xact_commit() (it may free xact);
+     * needed for the unclaimed-session teardown on the early returns. */
+    csrsp_gnode = xact->gnode;
 
     if (mme_ue && MME_UE_HAVE_IMSI(mme_ue))
         mme_ue_info(mme_ue, enb_ue, "s11",
@@ -393,18 +472,32 @@ void mme_s11_handle_create_session_response(
     if (!sess) {
         mme_ue_warn(mme_ue, enb_ue, "s11", NULL,
                 "Session Context has already been removed");
+        csrsp_teardown_unclaimed_sgw_session(csrsp_gnode, rsp,
+                "Session Context already removed");
         return;
     }
 
     if (!enb_ue) {
         mme_ran_warn(NULL, NULL, mme_ue ? mme_ue : mme_ue_from_teid,
                 "s11", NULL, "ENB-S1 Context has already been removed");
+        /*
+         * Local sess/UE are reclaimed later by the normal machinery
+         * (attach reject cleanup / implicit detach), but those paths
+         * local-clear only because sgw_s11_teid was never stored here.
+         * Tear the SGW side down now; leave local state untouched (in
+         * TAU/path-switch relocation the sess is shared with the old,
+         * still-working SGW association).
+         */
+        csrsp_teardown_unclaimed_sgw_session(csrsp_gnode, rsp,
+                "ENB-S1 Context already removed");
         return;
     }
 
     if (!mme_ue) {
         mme_ran_warn(NULL, enb_ue, NULL, "s11", NULL,
                 "MME-UE Context has already been removed");
+        csrsp_teardown_unclaimed_sgw_session(csrsp_gnode, rsp,
+                "MME-UE Context already removed");
         return;
     }
 
@@ -712,6 +805,7 @@ void mme_s11_handle_create_session_response(
         mme_ue->csmap = csmap;
 
         if (!csmap ||
+            ogs_global_conf()->parameter.ignore_sgs == true ||
             mme_ue->network_access_mode ==
                 OGS_NETWORK_ACCESS_MODE_ONLY_PACKET ||
             mme_ue->nas_eps.attach.value ==
@@ -739,7 +833,6 @@ void mme_s11_handle_create_session_response(
         r = nas_eps_send_activate_default_bearer_context_request(
                 bearer, create_action);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else if (create_action == OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST) {
 
         GTP_COUNTER_CHECK(mme_ue, GTP_COUNTER_CREATE_SESSION_BY_PATH_SWITCH,
@@ -756,12 +849,13 @@ void mme_s11_handle_create_session_response(
             }
             r = s1ap_send_path_switch_ack(mme_ue, true);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         );
 
     } else {
-        ogs_fatal("Invalid Create Session Action[%d]", create_action);
-        ogs_assert_if_reached();
+        /* Session state is already updated above; an unexpected action
+         * must not abort the daemon (was ogs_assert_if_reached). */
+        ogs_error("Invalid Create Session Action[%d] - ignore",
+                create_action);
     }
 
 
@@ -923,12 +1017,10 @@ void mme_s11_handle_modify_bearer_response(
     case OGS_GTP_MODIFY_IN_PATH_SWITCH_REQUEST:
         r = s1ap_send_path_switch_ack(mme_ue, false);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         break;
     case OGS_GTP_MODIFY_IN_E_RAB_MODIFICATION:
         r = s1ap_send_e_rab_modification_confirm(mme_ue);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         break;
     default:
         if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST) {
@@ -936,6 +1028,15 @@ void mme_s11_handle_modify_bearer_response(
                     "S11 Modify Bearer Response accepted");
             mme_ue_service_progress(mme_ue, enb_ue, "mbr_ok");
         }
+        /*
+         * DDN held during Service Request (before ICS stored eNB TEID)
+         * is usually released from ICS completion. If DDN arrived after
+         * ICS but the hold was still pending, finish it here.
+         */
+        if (MME_PAGING_ONGOING(mme_ue) &&
+            mme_ue->paging.type ==
+                MME_PAGING_TYPE_DOWNLINK_DATA_NOTIFICATION)
+            mme_send_after_paging(mme_ue, false);
         break;
     }
 }
@@ -961,7 +1062,14 @@ void mme_s11_handle_delete_session_response(
      ********************/
     ogs_assert(xact);
     action = xact->delete_action;
-    ogs_assert(action);
+    if (!action) {
+        ogs_error("Delete Session Response: missing delete_action "
+                "(orphan/stale xact) - ignore");
+        rv = ogs_gtp_xact_commit(xact);
+        if (rv != OGS_OK)
+            ogs_error("ogs_gtp_xact_commit() failed");
+        return;
+    }
     sess = mme_sess_find_by_id(OGS_POINTER_TO_UINT(xact->data));
     if (sess)
         mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
@@ -989,8 +1097,11 @@ void mme_s11_handle_delete_session_response(
         mme_ue_warn(mme_ue, enb_ue, "s11",
                 sess->session ? sess->session->name : NULL,
                 "SGW-UE Context has already been removed "
-                "(late Delete Session Response, action=%d)",
+                "(late Delete Session Response, action=%d); "
+                "clear local session to free EBIs",
                 action);
+        /* SGW already tore down; keep local sess and EBI bits would leak. */
+        MME_SESS_CLEAR(sess);
         return;
     }
 
@@ -1005,8 +1116,10 @@ void mme_s11_handle_delete_session_response(
         mme_ue_warn(mme_ue, enb_ue, "s11",
                 sess->session ? sess->session->name : NULL,
                 "SGW-UE source context gone "
-                "(late Delete Session Response, action=%d)",
+                "(late Delete Session Response, action=%d); "
+                "clear local session to free EBIs",
                 action);
+        MME_SESS_CLEAR(sess);
         return;
     }
 
@@ -1048,10 +1161,13 @@ void mme_s11_handle_delete_session_response(
     /********************
      * Check ALL Context
      ********************/
-    ogs_assert(sess);
-    ogs_assert(mme_ue);
-    ogs_assert(target_ue);
-    ogs_assert(source_ue);
+    if (!sess || !mme_ue || !target_ue || !source_ue) {
+        ogs_warn("Delete Session Response: context disappeared mid-handler "
+                "(sess=%p mme_ue=%p target=%p source=%p action=%d) - ignore",
+                (void *)sess, (void *)mme_ue, (void *)target_ue,
+                (void *)source_ue, action);
+        return;
+    }
 
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
             mme_ue->mme_s11_teid, source_ue->sgw_s11_teid);
@@ -1068,8 +1184,11 @@ void mme_s11_handle_delete_session_response(
     } else if (action == OGS_GTP_DELETE_SEND_DETACH_ACCEPT) {
         if (mme_sess_count(mme_ue) == 1) /* Last Session */ {
             r = nas_eps_send_detach_accept(mme_ue);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
+            if (r != OGS_OK)
+                ogs_warn("[%s] Delete Session Response: Detach Accept not "
+                        "sent (S1 already gone during detach teardown; "
+                        "sessions cleared anyway)",
+                        mme_ue->imsi_bcd);
         }
 
     } else if (action ==
@@ -1083,7 +1202,6 @@ void mme_s11_handle_delete_session_response(
         r = nas_eps_send_deactivate_bearer_context_request(
                 bearer, OGS_NAS_ESM_CAUSE_REGULAR_DEACTIVATION);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         /* mme_sess_remove() should not be called here. */
         return;
@@ -1100,8 +1218,10 @@ void mme_s11_handle_delete_session_response(
                 r = s1ap_send_ue_context_release_command(enb_ue,
                     S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                     S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
-                ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
+                if (r != OGS_OK)
+                    ogs_warn("[%s] UE context release after Delete Session "
+                            "failed (S1 already gone?)",
+                            mme_ue->imsi_bcd);
             }
         }
 
@@ -1112,7 +1232,6 @@ void mme_s11_handle_delete_session_response(
                     S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                     S1AP_UE_CTX_REL_S1_REMOVE_AND_UNLINK, 0);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
 
     } else if (action == OGS_GTP_DELETE_HANDLE_PDN_CONNECTIVITY_REQUEST) {
@@ -1125,7 +1244,6 @@ void mme_s11_handle_delete_session_response(
                         OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                         OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
         }
 
@@ -1399,12 +1517,10 @@ void mme_s11_handle_create_bearer_request(
                 MME_PAGING_TYPE_CREATE_BEARER, bearer->id);
             r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         } else {
             MME_CLEAR_PAGING_INFO(mme_ue);
             r = nas_eps_send_activate_dedicated_bearer_context_request(bearer);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
     } else {
         MME_CLEAR_PAGING_INFO(mme_ue);
@@ -1542,14 +1658,29 @@ void mme_s11_handle_update_bearer_request(
         xact->update_flags |=  OGS_GTP_MODIFY_TFT_UPDATE;
     }
 
+    /* TS 29.274 §7.2.15: APN-AMBR is mandatory on Update Bearer Request.
+     * PGW Initiated Bearer Modification without Bearer QoS Update carries
+     * AMBR with neither QoS nor TFT — must still Modify EPS Bearer Context. */
+    if (req->aggregate_maximum_bit_rate.presence &&
+            req->aggregate_maximum_bit_rate.data &&
+            sess->session) {
+        ogs_gtp2_ambr_t *ambr = req->aggregate_maximum_bit_rate.data;
+
+        sess->session->ambr.downlink = be32toh(ambr->downlink) * 1000;
+        sess->session->ambr.uplink = be32toh(ambr->uplink) * 1000;
+        mme_ambr_apply_config(&sess->session->ambr);
+        mme_ambr_complete_directions(&sess->session->ambr);
+        xact->update_flags |= OGS_GTP_MODIFY_AMBR_UPDATE;
+    }
+
     if (req->bearer_contexts.bearer_level_qos.presence == 1 ||
-        req->bearer_contexts.tft.presence == 1) {
+        req->bearer_contexts.tft.presence == 1 ||
+        (xact->update_flags & OGS_GTP_MODIFY_AMBR_UPDATE)) {
         if (ECM_IDLE(mme_ue)) {
             MME_STORE_PAGING_INFO(mme_ue,
                 MME_PAGING_TYPE_UPDATE_BEARER, bearer->id);
             r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         } else {
             /*
              * MME must wait for Modify Bearer Context Accept
@@ -1562,14 +1693,20 @@ void mme_s11_handle_update_bearer_request(
             MME_CLEAR_PAGING_INFO(mme_ue);
             r = nas_eps_send_modify_bearer_context_request(bearer,
                     req->bearer_contexts.bearer_level_qos.presence,
-                    req->bearer_contexts.tft.presence);
+                    req->bearer_contexts.tft.presence,
+                    (xact->update_flags & OGS_GTP_MODIFY_AMBR_UPDATE) ? 1 : 0);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
     } else {
         MME_CLEAR_PAGING_INFO(mme_ue);
-        ogs_error("[IGNORE] Update Bearer Request : "
-                "Both QoS and TFT is NULL");
+        /*
+         * Peer sent Update Bearer with no actionable change (no Bearer QoS,
+         * no TFT, no APN-AMBR). ACK and drop — nothing to signal to the UE.
+         */
+        ogs_warn("[%s] [IGNORE] Update Bearer Request EBI[%d]: "
+                "QoS, TFT and APN-AMBR all absent "
+                "(no-op UBR from SGW/PGW; ACK only, no NAS Modify)",
+                mme_ue->imsi_bcd, bearer->ebi);
 
         if (xact->xid & OGS_GTP_CMD_XACT_ID) {
             /* MME received Bearer Resource Modification Request */
@@ -1577,12 +1714,12 @@ void mme_s11_handle_update_bearer_request(
                     mme_ue, sess->pti,
                     OGS_NAS_ESM_CAUSE_SERVICE_OPTION_NOT_SUPPORTED);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
 
-        ogs_assert(OGS_OK ==
-            mme_gtp_send_update_bearer_response(
-                bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED));
+        if (mme_gtp_send_update_bearer_response(
+                    bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+            ogs_error("[%s] Update Bearer Response failed EBI[%d]",
+                    mme_ue->imsi_bcd, bearer->ebi);
     }
 }
 
@@ -1609,12 +1746,21 @@ void mme_s11_handle_delete_bearer_request(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!mme_ue) {
-        ogs_error("No Context in TEID");
+        /* Normal churn: the SMF-initiated delete raced with a detach
+         * that already removed the UE. CONTEXT_NOT_FOUND is the
+         * correct answer and the SGWC completes its own cleanup. */
+        ogs_warn("Delete Bearer Request for already-removed UE "
+                "linked-EBI[%d] EBI[%d]; replying CONTEXT_NOT_FOUND",
+                req->linked_eps_bearer_id.presence ?
+                    req->linked_eps_bearer_id.u8 : -1,
+                req->eps_bearer_ids.presence ?
+                    req->eps_bearer_ids.u8 : -1);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
         if (!sgw_ue) {
-            ogs_error("Delete Bearer: No SGW UE Context");
+            ogs_error("[%s] Delete Bearer: No SGW UE Context",
+                    mme_ue->imsi_bcd);
             cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
         } else if (req->linked_eps_bearer_id.presence == 1) {
            /*
@@ -1661,8 +1807,7 @@ void mme_s11_handle_delete_bearer_request(
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
         ogs_gtp2_send_error_message(xact, sgw_ue ? sgw_ue->sgw_s11_teid : 0,
-                OGS_GTP2_DELETE_BEARER_RESPONSE_TYPE,
-                OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
+                OGS_GTP2_DELETE_BEARER_RESPONSE_TYPE, cause_value);
         return;
     }
 
@@ -1696,25 +1841,118 @@ void mme_s11_handle_delete_bearer_request(
     ogs_assert(xact->id >= OGS_MIN_POOL_ID && xact->id <= OGS_MAX_POOL_ID);
     bearer->delete.xact_id = xact->id;
 
-    if (req->cause.presence && req->cause.data &&
-            req->linked_eps_bearer_id.presence) {
-        ogs_gtp2_cause_t *cause = req->cause.data;
-        if (cause->value == OGS_GTP2_CAUSE_REACTIVATION_REQUESTED)
-            esm_cause = OGS_NAS_ESM_CAUSE_REACTIVATION_REQUESTED;
-    }
+    {
+        uint8_t gtp_cause = 0;
+        bool reactivation = false;
+        bool default_bearer_delete =
+            (req->linked_eps_bearer_id.presence == 1);
+        bool last_pdn = false;
+        bool skip_idle_nas = false;
 
-    if (ECM_IDLE(mme_ue)) {
-        MME_STORE_PAGING_INFO(mme_ue,
-            MME_PAGING_TYPE_DELETE_BEARER, bearer->id);
-        mme_ue->paging.esm_cause = esm_cause;
-        r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
-    } else {
-        MME_CLEAR_PAGING_INFO(mme_ue);
-        r = nas_eps_send_deactivate_bearer_context_request(bearer, esm_cause);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
+        if (req->cause.presence && req->cause.data) {
+            ogs_gtp2_cause_t *cause = req->cause.data;
+
+            gtp_cause = cause->value;
+            if (gtp_cause == OGS_GTP2_CAUSE_REACTIVATION_REQUESTED) {
+                reactivation = true;
+                esm_cause = OGS_NAS_ESM_CAUSE_REACTIVATION_REQUESTED;
+            }
+        }
+
+        /*
+         * Default-bearer delete tears down the PDN. If this is the UE's
+         * only session, it is the last PDN connection (TS 23.401 4a/4b).
+         */
+        if (default_bearer_delete && mme_sess_count(mme_ue) <= 1)
+            last_pdn = true;
+
+        /*
+         * TS 23.401 §5.4.4.1 — PGW-initiated bearer deactivation:
+         *
+         * Steps 4-7 (page / S1+NAS Deactivate) are NOT performed when
+         * the UE is ECM-IDLE and any of:
+         *  (i)  last PDN is not being deleted AND cause is not
+         *       "reactivation requested";
+         *  (ii) last PDN deleted due to ISR deactivation;
+         *  (iii) last PDN deleted due to handover to non-3GPP.
+         * Bearer state is then synced at the next IDLE→CONNECTED
+         * transition. Delete Bearer Response is still required now.
+         *
+         * Otherwise (last PDN needing detach, or reactivation):
+         * page first, then NAS, then Delete Bearer Response; if the
+         * UE cannot be paged → cause Unable to page UE.
+         *
+         * ECM-CONNECTED: NAS Deactivate; Response follows Accept
+         * (or NAS-deactivate watchdog / S1-gone paths).
+         */
+        if (ECM_IDLE(mme_ue)) {
+            if (gtp_cause == OGS_GTP2_CAUSE_ISR_DEACTIVATION ||
+                gtp_cause ==
+                    OGS_GTP2_CAUSE_RAT_CHANGED_FROM_3GPP_TO_NON_3GPP) {
+                skip_idle_nas = true;
+            } else if (!last_pdn && !reactivation) {
+                skip_idle_nas = true;
+            }
+
+            if (skip_idle_nas) {
+                MME_CLEAR_PAGING_INFO(mme_ue);
+                ogs_info("[%s] Delete Bearer ECM-IDLE: skip page/NAS "
+                        "(TS 23.401 5.4.4.1); Delete Bearer Response "
+                        "Accepted EBI[%d]%s",
+                        mme_ue->imsi_bcd, bearer->ebi,
+                        default_bearer_delete ? " (PDN)" : "");
+                if (mme_gtp_send_delete_bearer_response(
+                        bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+                    ogs_error("[%s] Delete Bearer Response not sent EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
+                if (default_bearer_delete)
+                    MME_SESS_CLEAR(sess);
+                else
+                    mme_bearer_remove(bearer);
+                return;
+            }
+
+            MME_STORE_PAGING_INFO(mme_ue,
+                MME_PAGING_TYPE_DELETE_BEARER, bearer->id);
+            mme_ue->paging.esm_cause = esm_cause;
+            r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
+            if (r != OGS_OK) {
+                /* No eNB for TAI / build-send failure: do not start T3413
+                 * (s1ap_send_paging already avoided that). Answer now. */
+                ogs_warn("[%s] Delete Bearer: cannot page UE rv=%d EBI[%d]; "
+                        "Delete Bearer Response cause Unable to page UE",
+                        mme_ue->imsi_bcd, r, bearer->ebi);
+                MME_CLEAR_PAGING_INFO(mme_ue);
+                if (mme_gtp_send_delete_bearer_response(
+                        bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE) != OGS_OK)
+                    ogs_error("[%s] Delete Bearer Response not sent EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
+            }
+        } else {
+            MME_CLEAR_PAGING_INFO(mme_ue);
+            r = nas_eps_send_deactivate_bearer_context_request(
+                    bearer, esm_cause);
+            if (r == OGS_NOTFOUND) {
+                /* S1 released between the ECM check and the send; answer
+                 * SGW/SMF directly so the teardown does not stall (the
+                 * NAS-Deactivate watchdog is not armed on this path). */
+                ogs_warn("[%s] S1 released before NAS Deactivate could be "
+                        "sent EBI[%d]; answering SGW/SMF directly",
+                        mme_ue->imsi_bcd, bearer->ebi);
+                if (mme_gtp_send_delete_bearer_response(
+                        bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+                    ogs_error("[%s] Delete Bearer Response not sent EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
+            } else if (r != OGS_OK) {
+                ogs_error("[%s] NAS Deactivate Bearer send failed rv=%d "
+                        "EBI[%d]; Delete Bearer Response cause System failure",
+                        mme_ue->imsi_bcd, r, bearer->ebi);
+                if (mme_gtp_send_delete_bearer_response(
+                        bearer, OGS_GTP2_CAUSE_SYSTEM_FAILURE) != OGS_OK)
+                    ogs_error("[%s] Delete Bearer Response not sent EBI[%d]",
+                            mme_ue->imsi_bcd, bearer->ebi);
+            }
+        }
     }
 }
 
@@ -1722,15 +1960,13 @@ void mme_s11_handle_release_access_bearers_response(
         ogs_gtp_xact_t *xact, mme_ue_t *mme_ue_from_teid,
         ogs_gtp2_release_access_bearers_response_t *rsp)
 {
-    int r, rv;
+    int rv;
     uint8_t cause_value = OGS_GTP2_CAUSE_UNDEFINED_VALUE;
     int action = 0;
     enb_ue_t *enb_ue = NULL;
 
-    sgw_ue_t *sgw_ue = NULL;;
+    sgw_ue_t *sgw_ue = NULL;
     mme_ue_t *mme_ue = NULL;
-    mme_sess_t *sess = NULL;
-    mme_bearer_t *bearer = NULL;
 
     ogs_assert(rsp);
 
@@ -1741,7 +1977,19 @@ void mme_s11_handle_release_access_bearers_response(
      ********************/
     ogs_assert(xact);
     action = xact->release_action;
-    ogs_assert(action);
+    /*
+     * Under S11 storms an orphan / mistagged RAB Response can arrive with
+     * release_action==0 (xact reuse, peer retry, or response after local
+     * skip). Aborting the MME here took production down; drop safely.
+     */
+    if (!action) {
+        ogs_error("Release Access Bearers Response: missing release_action "
+                "(orphan/stale xact) - ignore");
+        rv = ogs_gtp_xact_commit(xact);
+        if (rv != OGS_OK)
+            ogs_error("ogs_gtp_xact_commit() failed");
+        return;
+    }
 
     mme_ue = mme_ue_find_by_id(OGS_POINTER_TO_UINT(xact->data));
     enb_ue = enb_ue_find_by_id(xact->enb_ue_id);
@@ -1775,8 +2023,22 @@ void mme_s11_handle_release_access_bearers_response(
 
         cause_value = cause->value;
         if (cause_value == OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND) {
-            ogs_debug("SGW CONTEXT_NOT_FOUND (TEID=0) [ACTION:%d]", action);
-            mme_s11_handle_sgw_context_lost(mme_ue, cause_value);
+            mme_sess_t *sess = NULL, *next_sess = NULL;
+
+            /*
+             * SGW already dropped this S11 TEID (prior Delete Session,
+             * failed attach cleanup, or restart). Do NOT implicit-detach
+             * via more Delete Sessions — that amplified Context-Not-Found
+             * storms. Drop local PDN state without S11 and finish the S1
+             * release as if RAB succeeded; UE re-attaches on next activity.
+             */
+            ogs_info("[%s] Release Access Bearers: SGW CONTEXT_NOT_FOUND "
+                    "(action=%d) - clear local sessions, finish S1 release",
+                    mme_ue->imsi_bcd, action);
+            CLEAR_SESSION_CONTEXT(mme_ue);
+            ogs_list_for_each_safe(&mme_ue->sess_list, next_sess, sess)
+                MME_SESS_CLEAR(sess);
+            mme_s11_finish_release_access_bearers(mme_ue, enb_ue, action);
             return;
         }
         if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
@@ -1800,6 +2062,28 @@ void mme_s11_handle_release_access_bearers_response(
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
             mme_ue->mme_s11_teid, sgw_ue->sgw_s11_teid);
 
+    mme_s11_finish_release_access_bearers(mme_ue, enb_ue, action);
+}
+
+void mme_s11_finish_release_access_bearers(
+        mme_ue_t *mme_ue, enb_ue_t *enb_ue, int action)
+{
+    int r;
+    mme_sess_t *sess = NULL;
+    mme_bearer_t *bearer = NULL;
+
+    ogs_assert(mme_ue);
+    if (!action) {
+        ogs_error("[%s] finish Release Access Bearers: missing action - "
+                "clear S1-U paths only", mme_ue->imsi_bcd);
+        ogs_list_for_each(&mme_ue->sess_list, sess) {
+            ogs_list_for_each(&sess->bearer_list, bearer) {
+                CLEAR_ENB_S1U_PATH(bearer);
+            }
+        }
+        return;
+    }
+
     ogs_list_for_each(&mme_ue->sess_list, sess) {
         ogs_list_for_each(&sess->bearer_list, bearer) {
             CLEAR_ENB_S1U_PATH(bearer);
@@ -1808,12 +2092,23 @@ void mme_s11_handle_release_access_bearers_response(
 
     if (action == OGS_GTP_RELEASE_SEND_UE_CONTEXT_RELEASE_COMMAND) {
         if (enb_ue) {
-            ogs_assert(enb_ue->relcause.group);
+            /*
+             * A caller that requested this action without setting relcause
+             * used to abort the MME here. Releasing S1 with a generic cause
+             * is always better than dying, so fall back instead.
+             */
+            if (!enb_ue->relcause.group) {
+                ogs_warn("[%s] Release Access Bearers Response with no "
+                        "release cause; using eutran-generated-reason",
+                        mme_ue->imsi_bcd);
+                enb_ue->relcause.group = S1AP_Cause_PR_radioNetwork;
+                enb_ue->relcause.cause =
+                    S1AP_CauseRadioNetwork_release_due_to_eutran_generated_reason;
+            }
             r = s1ap_send_ue_context_release_command(enb_ue,
                     enb_ue->relcause.group, enb_ue->relcause.cause,
                     S1AP_UE_CTX_REL_S1_REMOVE_AND_UNLINK, 0);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         } else {
             ogs_warn("ENB-S1 Context has already been removed");
         }
@@ -1856,7 +2151,6 @@ void mme_s11_handle_release_access_bearers_response(
             if (r) {
                 r = s1ap_send_s1_reset_ack(enb, NULL);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
         } else {
             ogs_warn("ENB-S1 Context has already been removed");
@@ -1944,7 +2238,13 @@ void mme_s11_handle_downlink_data_notification(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!mme_ue) {
-        ogs_error("No UE Context");
+        /*
+         * Stale DDN after UE removed (attach fail / detach race). Still
+         * Ack so SGW-C stops retransmitting; use Sender F-TEID when
+         * present so the Ack TEID is not 0 (pcap showed thousands of
+         * unanswered DDNs under churn).
+         */
+        ogs_warn("DDN: No UE Context — Ack CONTEXT_NOT_FOUND");
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
@@ -1952,11 +2252,30 @@ void mme_s11_handle_downlink_data_notification(
             ogs_error("Downlink Data Notification: No SGW UE Context");
             cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
         } else if (noti->eps_bearer_id.presence == 0) {
-            mme_ue_warn(mme_ue, NULL, "s11", NULL, "No Bearer ID");
-            cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
-        }
+            /*
+             * TS 29.274 §7.2.11.1: EBI is Conditional-Optional, not
+             * Mandatory. Some SGWs omit it; rejecting with IE-missing /
+             * Context-Not-Found caused them to tear down live sessions.
+             * Match common MME behaviour: pick a default bearer and
+             * continue (page / Ack) so DL can be delivered.
+             */
+            mme_sess_t *sess = NULL;
 
-        if (cause_value == OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
+            ogs_list_for_each(&mme_ue->sess_list, sess) {
+                bearer = mme_default_bearer_in_sess(sess);
+                if (bearer)
+                    break;
+            }
+            if (!bearer) {
+                mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                        "DDN without EBI and no bearer context");
+                cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+            } else {
+                mme_ue_warn(mme_ue, NULL, "s11", NULL,
+                        "DDN without EBI; using default EBI[%d]",
+                        bearer->ebi);
+            }
+        } else {
             bearer = mme_bearer_find_by_ue_ebi(mme_ue, noti->eps_bearer_id.u8);
             if (!bearer) {
                 mme_ue_warn(mme_ue, NULL, "s11", NULL,
@@ -1968,9 +2287,21 @@ void mme_s11_handle_downlink_data_notification(
     }
 
     if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
-        ogs_gtp2_send_error_message(xact, sgw_ue ? sgw_ue->sgw_s11_teid : 0,
+        uint32_t peer_teid = 0;
+
+        if (sgw_ue)
+            peer_teid = sgw_ue->sgw_s11_teid;
+        else if (noti->sender_f_teid_for_control_plane.presence &&
+                noti->sender_f_teid_for_control_plane.data &&
+                noti->sender_f_teid_for_control_plane.len >= 5) {
+            ogs_gtp2_f_teid_t *f =
+                noti->sender_f_teid_for_control_plane.data;
+            peer_teid = be32toh(f->teid);
+        }
+
+        ogs_gtp2_send_error_message(xact, peer_teid,
                 OGS_GTP2_DOWNLINK_DATA_NOTIFICATION_ACKNOWLEDGE_TYPE,
-                OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
+                cause_value);
         return;
     }
 
@@ -2007,9 +2338,9 @@ void mme_s11_handle_downlink_data_notification(
         ogs_warn("[%s] PDN connection inactivity reported by SGW",
                 mme_ue->imsi_bcd);
         mme_mobile_reachable_start(mme_ue);
-        ogs_assert(OGS_OK ==
-            mme_gtp_send_downlink_data_notification_ack(
-                bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED));
+        if (mme_gtp_send_downlink_data_notification_ack(
+                bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+            ogs_error("[%s] DDN Ack not sent", mme_ue->imsi_bcd);
         return;
     }
 /*
@@ -2024,21 +2355,43 @@ void mme_s11_handle_downlink_data_notification(
  * to the eNodeB and hence it triggers a Downlink Data Notification message.
  *
  * If the MME receives a Downlink Data Notification after step 2 and
- * before step 9, the MME shall not send S1 interface paging messages
+ * before step 9, the MME shall not send S1 interface paging messages.
+ *
+ * Previously we Ack'd cause 115 (UE already re-attached) as soon as the UE
+ * was ECM-CONNECTED. That races the Service Request / Modify Bearer path
+ * and drops buffered DL. Hold the DDN xact instead; ICS / MBR completion
+ * calls mme_send_after_paging() with Request accepted.
  */
     if (ECM_IDLE(mme_ue)) {
         MME_STORE_PAGING_INFO(mme_ue,
             MME_PAGING_TYPE_DOWNLINK_DATA_NOTIFICATION, bearer->id);
         r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
-        ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
+        if (r != OGS_OK) {
+            /*
+             * Paging could not even be sent (e.g. no eNB serves the
+             * UE's TAI). Without an answer the SGW's DDN transaction
+             * would only die by timeout and retransmit into a loaded
+             * S11 socket. Tell it we cannot page (TS 23.401 5.3.4.3),
+             * which now discards buffered packets (DROBU) while
+             * keeping the session pageable for the next DL packet.
+             */
+            ogs_warn("[%s] paging send failed: DDN Ack Unable-to-page",
+                    mme_ue->imsi_bcd);
+            MME_CLEAR_PAGING_INFO(mme_ue);
+            if (mme_gtp_send_downlink_data_notification_ack(
+                    bearer, OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE) != OGS_OK)
+                ogs_error("[%s] DDN Ack not sent", mme_ue->imsi_bcd);
+        }
     } else if (ECM_CONNECTED(mme_ue)) {
-        MME_CLEAR_PAGING_INFO(mme_ue);
-        ogs_assert(OGS_OK ==
-            mme_gtp_send_downlink_data_notification_ack(
-                bearer, OGS_GTP2_CAUSE_UE_ALREADY_RE_ATTACHED));
+        bool service_request_in_flight =
+            (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST ||
+             mme_ue->nas_eps.type == MME_EPS_TYPE_EXTENDED_SERVICE_REQUEST);
 
         if (cause_value == OGS_GTP2_CAUSE_ERROR_INDICATION_RECEIVED) {
+            MME_CLEAR_PAGING_INFO(mme_ue);
+            if (mme_gtp_send_downlink_data_notification_ack(
+                    bearer, OGS_GTP2_CAUSE_UE_ALREADY_RE_ATTACHED) != OGS_OK)
+                ogs_error("[%s] DDN Ack not sent", mme_ue->imsi_bcd);
 
 /*
  * TS23.007 22. Downlink Data Notification Handling at MME/S4 SGSN
@@ -2056,24 +2409,34 @@ void mme_s11_handle_downlink_data_notification(
  *   Notification message, the MME shall perform S1 Release procedure and
  *   perform Network Triggered Service Request procedure as specified
  *   in 3GPP TS 23.401 [15].
- * - If the UE is in CONNECTED state, upon receipt of the Downlink Data
- *   Notification message and Direct Tunnel is used, the S4-SGSN shall
- *   perform Iu Release procedure and perform Network Triggered Service
- *   Request procedure as specified in 3GPP TS 23.060 [5]
- *   if the cause value included in Downlink Data Notification is
- *   "Error Indication received from RNC/eNodeB/S4-SGSN",
- * - If the UE is in CONNECTED state, upon receipt of the Downlink Data
- *   Notification message and Direct Tunnel is not used, the S4-SGSN should
- *   re-establish all of the S4-U bearers of this UE if the cause value
- *   included in Downlink Data Notification is "Error Indication received
- *   from RNC/eNodeB/S4-SGSN"
  */
             r = s1ap_send_ue_context_release_command(
                     enb_ue_find_by_id(mme_ue->enb_ue_id),
                     S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                     S1AP_UE_CTX_REL_S1_PAGING, 0);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
+        } else if (service_request_in_flight) {
+            if (bearer->enb_s1u_teid) {
+                /*
+                 * ICS already stored the new eNB TEID; MBR is in flight or
+                 * about to be. Ack accepted so SGW keeps buffering until MBR.
+                 */
+                MME_CLEAR_PAGING_INFO(mme_ue);
+                if (mme_gtp_send_downlink_data_notification_ack(
+                        bearer, OGS_GTP2_CAUSE_REQUEST_ACCEPTED) != OGS_OK)
+                    ogs_error("[%s] DDN Ack not sent", mme_ue->imsi_bcd);
+            } else {
+                MME_STORE_PAGING_INFO(mme_ue,
+                    MME_PAGING_TYPE_DOWNLINK_DATA_NOTIFICATION, bearer->id);
+                ogs_info("[%s] DDN during Service Request before user-plane "
+                        "ready: hold Ack (no page, no cause 115)",
+                        mme_ue->imsi_bcd);
+            }
+        } else {
+            MME_CLEAR_PAGING_INFO(mme_ue);
+            if (mme_gtp_send_downlink_data_notification_ack(
+                    bearer, OGS_GTP2_CAUSE_UE_ALREADY_RE_ATTACHED) != OGS_OK)
+                ogs_error("[%s] DDN Ack not sent", mme_ue->imsi_bcd);
         }
     }
 }
@@ -2240,7 +2603,6 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
 
     r = s1ap_send_handover_command(source_ue);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 }
 
 void mme_s11_handle_delete_indirect_data_forwarding_tunnel_response(
@@ -2264,7 +2626,14 @@ void mme_s11_handle_delete_indirect_data_forwarding_tunnel_response(
      ********************/
     ogs_assert(xact);
     action = xact->delete_indirect_action;
-    ogs_assert(action);
+    if (!action) {
+        ogs_error("Delete Indirect Data Forwarding Tunnel Response: "
+                "missing action (orphan/stale xact) - ignore");
+        rv = ogs_gtp_xact_commit(xact);
+        if (rv != OGS_OK)
+            ogs_error("ogs_gtp_xact_commit() failed");
+        return;
+    }
     mme_ue = mme_ue_find_by_id(OGS_POINTER_TO_UINT(xact->data));
     enb_ue = enb_ue_find_by_id(xact->enb_ue_id);
 
@@ -2371,7 +2740,6 @@ void mme_s11_handle_delete_indirect_data_forwarding_tunnel_response(
         }
         r = s1ap_send_handover_cancel_ack(enb_ue);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else {
         ogs_fatal("Invalid action = %d", action);
         ogs_assert_if_reached();
@@ -2463,7 +2831,6 @@ void mme_s11_handle_bearer_resource_failure_indication(
     r = nas_eps_send_bearer_resource_modification_reject(
             mme_ue, sess->pti, esm_cause_from_gtp(cause_value));
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 
     if (!sgw_ue ||
         cause_value == OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND) {

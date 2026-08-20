@@ -187,6 +187,9 @@ uint8_t smf_gn_handle_create_pdp_context_request(
     /* default: should not happen */
     }
 
+    if (smf_ue->imsi_bcd[0])
+        smf_home_plmn_from_imsi_bcd(smf_ue->imsi_bcd, &sess->home_plmn_id);
+
     /*
      * Serving PLMN is now known from the ULI: take the per-PLMN session count
      * here (rather than at session-add, where the PLMN is still 000000) so this

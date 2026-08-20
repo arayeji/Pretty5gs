@@ -64,6 +64,12 @@ static void mem_talloc_abort(const char *reason)
 
 void ogs_mem_init(void)
 {
+    /*
+     * The mutex now only guards the few residual REAL talloc users
+     * (sgwu/upf packet_pool setup, final leak report) via
+     * ogs_mem_get_mutex(). The ogs_malloc/ogs_free hot path no longer
+     * touches it at all -- see the comment above ogs_talloc_size().
+     */
     ogs_thread_mutex_init(&mutex);
 
     talloc_enable_null_tracking();
@@ -89,16 +95,41 @@ void *ogs_mem_get_mutex(void)
     return &mutex;
 }
 
+/*
+ * PLAIN GLIBC HEAP, NOT TALLOC, AND NO GLOBAL MUTEX.
+ *
+ * These wrappers used to call talloc under one process-global mutex.
+ * talloc itself is not thread-safe, so every ogs_malloc / ogs_calloc /
+ * ogs_realloc / ogs_free / ogs_strdup / ogs_msprintf in the process --
+ * including the thousands of ASN.1 CALLOC/FREEMEM per decoded S1AP
+ * message across all s1ap-rx/tx/free and shard worker threads --
+ * serialized on that single lock.
+ *
+ * Production DWARF profiling (MME, ~30 active threads, 841k samples)
+ * showed ~40% of ALL cycles in pthread_mutex_lock/unlock + futex under
+ * ogs_talloc_free/size/zero_size/realloc_size: a lock convoy that got
+ * WORSE with every thread added. An ADAPTIVE_NP spin mutex was tried
+ * first and did not help (the section is too hot for 20+ contenders).
+ *
+ * Nothing in the tree uses the talloc hierarchy for these allocations:
+ * every call sites parents to the single global __ogs_talloc_core, so
+ * talloc only ever provided the exit-time leak report. glibc malloc is
+ * fully thread-safe with per-thread tcache/arenas, which removes the
+ * global lock entirely. The ctx/name/location arguments are kept so
+ * the ABI and every call site stay unchanged.
+ *
+ * Real talloc remains only for __ogs_talloc_core itself and the
+ * vestigial sgwu/upf packet_pool (created once, single-threaded).
+ */
 void *ogs_talloc_size(const void *ctx, size_t size, const char *name)
 {
     void *ptr = NULL;
 
-    ogs_thread_mutex_lock(&mutex);
+    (void)ctx;
+    (void)name;
 
-    ptr = talloc_named_const(ctx, size, name);
+    ptr = malloc(size);
     ogs_expect(ptr);
-
-    ogs_thread_mutex_unlock(&mutex);
 
     return ptr;
 }
@@ -107,12 +138,11 @@ void *ogs_talloc_zero_size(const void *ctx, size_t size, const char *name)
 {
     void *ptr = NULL;
 
-    ogs_thread_mutex_lock(&mutex);
+    (void)ctx;
+    (void)name;
 
-    ptr = _talloc_zero(ctx, size, name);
+    ptr = calloc(1, size);
     ogs_expect(ptr);
-
-    ogs_thread_mutex_unlock(&mutex);
 
     return ptr;
 }
@@ -122,27 +152,28 @@ void *ogs_talloc_realloc_size(
 {
     void *ptr = NULL;
 
-    ogs_thread_mutex_lock(&mutex);
+    (void)context;
+    (void)name;
 
-    ptr = _talloc_realloc(context, oldptr, size, name);
+    /* match talloc_realloc(): size 0 frees */
+    if (size == 0) {
+        free(oldptr);
+        return NULL;
+    }
+
+    ptr = realloc(oldptr, size);
     ogs_expect(ptr);
-
-    ogs_thread_mutex_unlock(&mutex);
 
     return ptr;
 }
 
 int ogs_talloc_free(void *ptr, const char *location)
 {
-    int ret;
+    (void)location;
 
-    ogs_thread_mutex_lock(&mutex);
+    free(ptr);
 
-    ret = _talloc_free(ptr, location);
-
-    ogs_thread_mutex_unlock(&mutex);
-
-    return ret;
+    return 0;
 }
 
 /*****************************************

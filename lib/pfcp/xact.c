@@ -30,6 +30,28 @@ typedef enum {
     PFCP_XACT_FINAL_STAGE,
 } ogs_pfcp_xact_stage_t;
 
+void ogs_pfcp_xact_set_imsi(ogs_pfcp_xact_t *xact, const char *imsi_bcd)
+{
+    if (!xact || !imsi_bcd || !imsi_bcd[0])
+        return;
+    ogs_cpystrn(xact->imsi_bcd, imsi_bcd, sizeof(xact->imsi_bcd));
+}
+
+static void pfcp_xact_trace_tx(ogs_pfcp_xact_t *xact, ogs_pkbuf_t *pkbuf)
+{
+    if (!xact || !pkbuf || !pkbuf->data || !pkbuf->len)
+        return;
+    /*
+     * Only dump when this xact was explicitly bound to a UE. Falling back
+     * to thread-local IMSI attributed PFCP Heartbeat/Association (no IMSI)
+     * to whichever subscriber was last sticky — flooding NMS PACKET views.
+     */
+    if (!xact->imsi_bcd[0])
+        return;
+    ogs_trace_packet(xact->imsi_bcd, "pfcp", "tx",
+            pkbuf->data, pkbuf->len);
+}
+
 /*
  * Same storage model as lib/gtp/xact.c: process-global pool on the main
  * / IO thread (shared by initialize + nf_main), TLS pool on SMP workers.
@@ -496,6 +518,7 @@ static int ogs_pfcp_xact_update_rx(ogs_pfcp_xact_t *xact, uint8_t type)
                             xact->step, type,
                             ogs_sockaddr_to_string_static(
                                 xact->node->addr_list));
+                    pfcp_xact_trace_tx(xact, pkbuf);
                     ogs_expect(OGS_OK == ogs_pfcp_sendto(xact->node, pkbuf));
                 } else {
                     ogs_warn("[%d] %s Request Duplicated. Discard!"
@@ -525,7 +548,11 @@ static int ogs_pfcp_xact_update_rx(ogs_pfcp_xact_t *xact, uint8_t type)
 
         case PFCP_XACT_FINAL_STAGE:
             if (xact->step != 1) {
-                ogs_error("invalid step[%d] type[%d]", xact->step, type);
+                ogs_error("[%d] invalid step[%d] type[%d] org=LOCAL peer %s",
+                        xact->xid, xact->step, type,
+                        xact->node ?
+                            ogs_sockaddr_to_string_static(
+                                xact->node->addr_list) : "-");
                 return OGS_ERROR;
             }
             /*
@@ -583,6 +610,7 @@ static int ogs_pfcp_xact_update_rx(ogs_pfcp_xact_t *xact, uint8_t type)
                             xact->step, type,
                             ogs_sockaddr_to_string_static(
                                 xact->node->addr_list));
+                    pfcp_xact_trace_tx(xact, pkbuf);
                     ogs_expect(OGS_OK == ogs_pfcp_sendto(xact->node, pkbuf));
                 } else {
                     ogs_warn("[%d] %s Request Duplicated. Discard!"
@@ -599,7 +627,13 @@ static int ogs_pfcp_xact_update_rx(ogs_pfcp_xact_t *xact, uint8_t type)
             }
 
             if (xact->step != 0) {
-                ogs_error("invalid step[%d] type[%d]", xact->step, type);
+                ogs_error("[%d] invalid step[%d] type[%d] org=%s peer %s",
+                        xact->xid, xact->step, type,
+                        xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
+                            "LOCAL" : "REMOTE",
+                        xact->node ?
+                            ogs_sockaddr_to_string_static(
+                                xact->node->addr_list) : "-");
                 return OGS_ERROR;
             }
             if (xact->tm_holding)
@@ -615,7 +649,13 @@ static int ogs_pfcp_xact_update_rx(ogs_pfcp_xact_t *xact, uint8_t type)
 
         case PFCP_XACT_FINAL_STAGE:
             if (xact->step != 2) {
-                ogs_error("invalid step[%d] type[%d]", xact->step, type);
+                ogs_error("[%d] invalid step[%d] type[%d] org=%s peer %s",
+                        xact->xid, xact->step, type,
+                        xact->org == OGS_PFCP_LOCAL_ORIGINATOR ?
+                            "LOCAL" : "REMOTE",
+                        xact->node ?
+                            ogs_sockaddr_to_string_static(
+                                xact->node->addr_list) : "-");
                 return OGS_ERROR;
             }
 
@@ -652,12 +692,33 @@ int ogs_pfcp_xact_commit(ogs_pfcp_xact_t *xact)
     ogs_assert(xact);
     ogs_assert(xact->node);
 
+    type = xact->seq[xact->step-1].type;
+
+    /*
+     * Inherit sticky TLS IMSI only for session messages. Heartbeat /
+     * Association have no UE; copying the last traced IMSI attributed
+     * node pings to IMSI PACKET views.
+     */
+    if (!xact->imsi_bcd[0] &&
+            type != OGS_PFCP_HEARTBEAT_REQUEST_TYPE &&
+            type != OGS_PFCP_HEARTBEAT_RESPONSE_TYPE &&
+            type != OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE &&
+            type != OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE &&
+            type != OGS_PFCP_ASSOCIATION_UPDATE_REQUEST_TYPE &&
+            type != OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE &&
+            type != OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE &&
+            type != OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE &&
+            type != OGS_PFCP_VERSION_NOT_SUPPORTED_RESPONSE_TYPE) {
+        const ogs_trace_ctx_t *ctx = ogs_trace_get();
+        if (ctx && ctx->imsi[0])
+            ogs_cpystrn(xact->imsi_bcd, ctx->imsi, sizeof(xact->imsi_bcd));
+    }
+
     ogs_debug("[%d] %s Commit  peer %s",
             xact->xid,
             xact->org == OGS_PFCP_LOCAL_ORIGINATOR ? "LOCAL " : "REMOTE",
             ogs_sockaddr_to_string_static(xact->node->addr_list));
 
-    type = xact->seq[xact->step-1].type;
     stage = ogs_pfcp_xact_get_stage(type, xact->xid);
 
     if (xact->org == OGS_PFCP_LOCAL_ORIGINATOR) {
@@ -745,6 +806,7 @@ int ogs_pfcp_xact_commit(ogs_pfcp_xact_t *xact)
     pkbuf = xact->seq[xact->step-1].pkbuf;
     ogs_assert(pkbuf);
 
+    pfcp_xact_trace_tx(xact, pkbuf);
     ogs_expect(OGS_OK == ogs_pfcp_sendto(xact->node, pkbuf));
 
     return OGS_OK;
@@ -757,6 +819,54 @@ void ogs_pfcp_xact_delayed_commit(ogs_pfcp_xact_t *xact, ogs_time_t duration)
     ogs_assert(xact->tm_delayed_commit);
 
     ogs_timer_start(xact->tm_delayed_commit, duration);
+}
+
+/*
+ * Registered by the NF (e.g. SGW-C: sgwc_event_lag). Written once at
+ * startup before workers exist, read from every thread with PFCP timers.
+ */
+static ogs_time_t (*xact_lag_cb)(void) = NULL;
+
+void ogs_pfcp_xact_set_lag_cb(ogs_time_t (*cb)(void))
+{
+    xact_lag_cb = cb;
+}
+
+static bool xact_response_lag_defer(ogs_pfcp_xact_t *xact)
+{
+    ogs_time_t lag;
+
+    if (!xact_lag_cb || !xact->tm_response)
+        return false;
+
+    lag = xact_lag_cb();
+    if (lag < OGS_PFCP_XACT_LAG_DEFER_THRESHOLD)
+        return false;
+    if (xact->lag_defer_count >= OGS_PFCP_XACT_LAG_MAX_DEFER)
+        return false;
+
+    xact->lag_defer_count++;
+    ogs_timer_start(xact->tm_response, OGS_PFCP_XACT_LAG_DEFER_INTERVAL);
+
+    {
+        /* one line per second across all transactions, not one per xact */
+        static OGS_THREAD_LOCAL ogs_time_t last_log = 0;
+        static OGS_THREAD_LOCAL unsigned long suppressed = 0;
+        ogs_time_t now = ogs_get_monotonic_time();
+
+        suppressed++;
+        if (now - last_log >= ogs_time_from_sec(1)) {
+            ogs_warn("PFCP response timer deferred: event lag %dms - "
+                    "reply is likely queued locally, not lost by the peer "
+                    "(%lu deferral(s) in last window, this xact %d/%d)",
+                    (int)(lag / 1000), suppressed,
+                    xact->lag_defer_count, OGS_PFCP_XACT_LAG_MAX_DEFER);
+            last_log = now;
+            suppressed = 0;
+        }
+    }
+
+    return true;
 }
 
 static void response_timeout(void *data)
@@ -782,6 +892,14 @@ static void response_timeout(void *data)
             xact->step, xact->seq[xact->step-1].type,
             ogs_sockaddr_to_string_static(xact->node->addr_list));
 
+    /*
+     * If OUR event queue is lagging, the reply may already be sitting in
+     * it: retransmitting duplicates peer work, and the final give-up
+     * turns our backlog into a false "peer no response".
+     */
+    if (xact_response_lag_defer(xact))
+        return;
+
     if (--xact->response_rcount > 0) {
         ogs_pkbuf_t *pkbuf = NULL;
 
@@ -792,6 +910,7 @@ static void response_timeout(void *data)
         pkbuf = xact->seq[xact->step-1].pkbuf;
         ogs_assert(pkbuf);
 
+        pfcp_xact_trace_tx(xact, pkbuf);
         ogs_expect(OGS_OK == ogs_pfcp_sendto(xact->node, pkbuf));
     } else {
         ogs_warn("[%d] %s No Reponse. Give up! "
@@ -941,7 +1060,11 @@ int ogs_pfcp_xact_receive(
 
     rv = ogs_pfcp_xact_update_rx(new, type);
     if (rv == OGS_ERROR) {
-        ogs_error("ogs_pfcp_xact_update_rx() failed");
+        ogs_error("[%d] ogs_pfcp_xact_update_rx() failed type[%d] "
+                "org=%s peer %s",
+                new->xid, type,
+                new->org == OGS_PFCP_LOCAL_ORIGINATOR ? "LOCAL" : "REMOTE",
+                ogs_sockaddr_to_string_static(node->addr_list));
         ogs_pfcp_xact_delete(new);
         return rv;
     } else if (rv == OGS_RETRY) {

@@ -495,9 +495,18 @@ int ogs_sctp_recvmsg(ogs_sock_t *sock, void *msg, size_t len,
 #if defined(ENOTSOCK)
                     && err != ENOTSOCK
 #endif
+#if defined(ETIMEDOUT)
+                    && err != ETIMEDOUT
+#endif
                     ) {
                 ogs_log_message(OGS_LOG_ERROR, err,
                         "sctp_recvmsg(%d) failed", size);
+#if defined(ETIMEDOUT)
+            } else if (err == ETIMEDOUT) {
+                /* eNB slow / path flap — expected under RAN churn. */
+                ogs_log_message(OGS_LOG_WARN, err,
+                        "sctp_recvmsg(%d) timed out", size);
+#endif
             }
         }
         return size;

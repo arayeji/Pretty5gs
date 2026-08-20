@@ -116,11 +116,15 @@ typedef struct smf_radius_server_s {
      *   sock_timeout_ms       - tracks the timeout currently applied to
      *                           `sock`, lets us skip the setsockopt() when
      *                           cfg->timeout_ms has not moved.
+     *   bound_nas_ip          - local address sock was bound to (from
+     *                           radius.nas_ip), so a config change forces
+     *                           a rebind. NULL means unbound (kernel pick).
      */
     ogs_sockaddr_t *peer_auth;
     ogs_sockaddr_t *peer_acct;
     ogs_sock_t     *sock;
     unsigned        sock_timeout_ms;
+    char           *bound_nas_ip;
 } smf_radius_server_t;
 
 typedef struct smf_radius_config_s {
@@ -139,6 +143,12 @@ typedef struct smf_radius_config_s {
     const char *secret;
 
     const char *nas_id;
+    /*
+     * NAS-IP-Address AVP value AND UDP source bind for Access/Accounting
+     * client sockets. AAA servers often key clients by packet source IP;
+     * without binding here the kernel picks the egress interface address
+     * (which may not match nas_ip).
+     */
     const char *nas_ip;
     unsigned timeout_ms;
     int retry;
@@ -268,7 +278,19 @@ typedef struct smf_cdr_config_s {
 
     const char *spool_dir;      /* e.g. /var/spool/open5gs/cdr */
     const char *node_id;        /* value of CDR [18] nodeID, ASCII */
-    const char *local_address;  /* value of CDR [4] p-GWAddress (IPv4) */
+    /*
+     * CDR [4] p-GWAddress selection (IPv4):
+     *   1) gtpc.server.advertise (ogs_gtp_self()->gtpc_ip)
+     *   2) address / pgw_address (manual override below)
+     *   3) local_address (last-resort fallback)
+     *
+     * CDR [6] servingNodeAddress (SGW S5-C / SGSN Gn peer):
+     *   1) peer IP from Create Session / Create PDP signalling
+     *   2) serving_node_address / sgsn_address / sgw_serving_address
+     */
+    const char *address;        /* manual CDR [4] override (alias: pgw_address) */
+    const char *local_address;  /* last-resort CDR [4] fallback */
+    const char *serving_node_address; /* manual CDR [6] fallback */
 
     /* Rotation thresholds. Whichever is hit first closes the active file
      * and renames it into <spool_dir>/ready/. 0 means disabled. */
@@ -1180,6 +1202,22 @@ smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type);
 smf_sess_t *smf_sess_add_by_sm_context(ogs_sbi_message_t *message);
 smf_sess_t *smf_sess_add_by_pdu_session(ogs_sbi_message_t *message);
 smf_sess_t *smf_sess_add_by_psi(smf_ue_t *smf_ue, uint8_t psi);
+
+/*
+ * PFCP Network Instance toward UPF/VPP (PDR/FAR NWI, Session Establishment
+ * apn_dnn, GTP-U resource / FTUP selection). Outbound/inbound roam CSR
+ * carries a full APN (e.g. hiweb.mnc012.mcc432.gprs) stored in full_dnn;
+ * VPP keys distinct GTP-U endpoints by that NWI. Home NI-only sessions
+ * keep session.name. Subnet / RADIUS / UPF peer selection still use NI.
+ */
+static ogs_inline const char *smf_sess_nwi_for_pfcp(smf_sess_t *sess)
+{
+    ogs_assert(sess);
+    if (sess->full_dnn && sess->full_dnn[0])
+        return sess->full_dnn;
+    ogs_assert(sess->session.name);
+    return sess->session.name;
+}
 
 void smf_sess_select_upf(smf_sess_t *sess);
 uint8_t smf_sess_set_ue_ip(smf_sess_t *sess);

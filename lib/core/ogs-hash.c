@@ -398,7 +398,9 @@ bool ogs_hash_unset_if_owner_debug(ogs_hash_t *ht,
      * while this context was still being torn down). Leave the entry alone so
      * the live context stays findable; clearing it would orphan that entry.
      */
-    ogs_error("%s: hash unset skipped: entry not owned by expected context",
+    ogs_error("%s: hash unset skipped: key already owned by a newer "
+            "context (same IMSI/GUTI/TEID re-attached while this UE was "
+            "still being torn down — leave live entry; old remove races)",
             file_line);
     return false;
 }

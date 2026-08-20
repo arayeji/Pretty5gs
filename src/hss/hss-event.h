@@ -31,6 +31,7 @@ typedef enum {
 
     HSS_EVENT_DBI_POLL_TIMER,
     HSS_EVENT_DBI_MESSAGE,
+    HSS_EVT_CONFIG_RELOAD,
 
     HSS_EVT_TOP,
 } hss_event_e;

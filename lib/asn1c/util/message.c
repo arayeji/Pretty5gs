@@ -66,7 +66,9 @@ int ogs_asn_decode(const asn_TYPE_descriptor_t *td,
             pkbuf->data, pkbuf->len, 0, 0);
 
     if (dec_ret.code != RC_OK) {
-        ogs_warn("Failed to decode ASN-PDU [code:%d,consumed:%d]",
+        /* Debug only — callers (S1AP/NGAP/…) decide whether to WARN.
+         * Passive probes (ptrace) see many truncated SPAN/SCTP chunks. */
+        ogs_debug("Failed to decode ASN-PDU [code:%d,consumed:%d]",
                 dec_ret.code, (int)dec_ret.consumed);
         return OGS_ERROR;
     }

@@ -22,7 +22,12 @@ global:
 #    enabled: true
 #    spool_dir: @localstatedir@/spool/open5gs/cdr
 #    node_id: open5gs-sgwc-1
+#    # CDR [4]: gtpc.server.advertise > address/sgw_address > local_address
+#    address: 127.0.0.3
 #    local_address: 127.0.0.3
+#    # CDR [6] servingNodeAddress fallback if peer signalling IP is unknown:
+#    # serving_node_address / sgsn_address / mme_address
+#    # serving_node_address: 10.0.0.2
 #    interim_interval_s: 300
 #    max_records: 100
 #    max_bytes: 65536
@@ -30,7 +35,9 @@ global:
 #    triggers: start,interim,stop
 #
 sgwc:
-#  workers: 0   # SMP session shards (0=off/default, max 8). Trial on staging first.
+#  workers: 0   # SMP session shards (0=off/default, max 15 with 4-bit ids). Trial on staging first.
+#  gtpc_rx_thread: 0   # 1 = dedicated GTP-C/Gn RX thread (default 0 = main)
+#  pfcp_rx_thread: 0   # 1 = dedicated PFCP RX thread (default 0 = main)
   metrics:
     server:
       - address: 127.0.0.3
@@ -98,6 +105,13 @@ sgwc:
       sgwu:
         - address: 127.0.0.6
 #    send_user_id: true   # PFCP User ID (IMSI/MSISDN) to SGW-U (default: true)
+#  admission:             # attach-storm protection (reject, never queue)
+#    max_outstanding: 50000  # max in-flight Create Session -> PFCP establish
+#                            # (0 = unlimited); over cap or all SGW-U PFCP
+#                            # down -> GTP-C entity congestion (cause 120);
+#                            # MME maps this to EMM #22 + T3346 backoff
+#    rate_per_sec: 0         # optional accepted Create Sessions/sec
+#                            # token bucket (0 = disabled)
 #  trace_imsi:          # IMSI prefix list (also GET /admin/trace/imsi on :9090)
 #    - "999700000000001"
 

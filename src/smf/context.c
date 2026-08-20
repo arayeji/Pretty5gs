@@ -207,7 +207,14 @@ void smf_context_init(void)
     ogs_log_install_domain(&__smf_log_domain, "smf", ogs_core()->log.level);
     ogs_log_install_domain(&__gsm_log_domain, "gsm", ogs_core()->log.level);
 
-    ogs_pool_init(&smf_gtp_node_pool, ogs_app()->pool.nf);
+    /*
+     * GTP-C peer wrappers must track max.gtp_peer (pool.gtp_node), not
+     * max.peer (pool.nf). Otherwise smf.yaml gtp_peer:32000 is ignored and
+     * the wrapper pool stays at the default peer=64 while libgtp itself
+     * allows 32000 — live symptom: gtp_peers_active stuck at 64 + mempool
+     * full when a peer opens many UDP source ports.
+     */
+    ogs_pool_init(&smf_gtp_node_pool, ogs_app()->pool.gtp_node);
     ogs_pool_init(&smf_ue_pool, ogs_global_conf()->max.ue);
     ogs_pool_init(&smf_bearer_pool, ogs_app()->pool.bearer);
     ogs_pool_init(&smf_pf_pool,
@@ -513,7 +520,9 @@ static int smf_context_prepare(void)
     self.cdr.enabled = false;
     self.cdr.spool_dir = NULL;
     self.cdr.node_id = NULL;
+    self.cdr.address = NULL;
     self.cdr.local_address = NULL;
+    self.cdr.serving_node_address = NULL;
     self.cdr.rotate_max_records = 100;
     self.cdr.rotate_max_bytes = 65536;
     self.cdr.rotate_max_seconds = 30;
@@ -1144,9 +1153,15 @@ int smf_context_parse_config(void)
                         } else if (!strcmp(ck, "node_id") ||
                                 !strcmp(ck, "nodeid")) {
                             self.cdr.node_id = cv;
-                        } else if (!strcmp(ck, "local_address") ||
+                        } else if (!strcmp(ck, "address") ||
                                 !strcmp(ck, "pgw_address")) {
+                            self.cdr.address = cv;
+                        } else if (!strcmp(ck, "local_address")) {
                             self.cdr.local_address = cv;
+                        } else if (!strcmp(ck, "serving_node_address") ||
+                                !strcmp(ck, "sgsn_address") ||
+                                !strcmp(ck, "sgw_serving_address")) {
+                            self.cdr.serving_node_address = cv;
                         } else if (!strcmp(ck, "max_records")) {
                             if (cv) self.cdr.rotate_max_records =
                                 (uint32_t)atoi(cv);
@@ -1762,7 +1777,9 @@ smf_gtp_node_t *smf_gtp_node_new(ogs_gtp_node_t *gnode)
 
     ogs_pool_alloc(&smf_gtp_node_pool, &smf_gnode);
     if (!smf_gnode) {
-        ogs_error("ogs_pool_alloc() failed");
+        ogs_error("ogs_pool_alloc() failed: smf_gtp_node pool full "
+                "(capacity=%llu from max.gtp_peer / max.peer)",
+                (unsigned long long)ogs_app()->pool.gtp_node);
         return NULL;
     }
     memset(smf_gnode, 0, sizeof(smf_gtp_node_t));
@@ -2362,8 +2379,9 @@ smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)
 }
 
 /*
- * Decode GTP APN IE and derive APN-NI for session.name (subnet, UPF, Gx).
- * Roaming CSR often carries a full APN (e.g. internet.mnc070.mcc999.gprs).
+ * Decode GTP APN IE and derive APN-NI for session.name (subnet, RADIUS, Gx).
+ * Roaming CSR often carries a full APN (e.g. hiweb.mnc012.mcc432.gprs);
+ * full_dnn is kept for PFCP NWI toward VPP (smf_sess_nwi_for_pfcp).
  */
 bool smf_gtp_apn_parse(
         char *apn_ni, char **full_apn_out,
@@ -3627,7 +3645,7 @@ smf_bearer_t *smf_qos_flow_add(smf_sess_t *sess)
     qos_flow->dl_pdr = dl_pdr;
 
     ogs_assert(sess->session.name);
-    dl_pdr->apn = ogs_strdup(sess->session.name);
+    dl_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(dl_pdr->apn);
 
     dl_pdr->src_if = OGS_PFCP_INTERFACE_CORE;
@@ -3640,7 +3658,7 @@ smf_bearer_t *smf_qos_flow_add(smf_sess_t *sess)
     qos_flow->ul_pdr = ul_pdr;
 
     ogs_assert(sess->session.name);
-    ul_pdr->apn = ogs_strdup(sess->session.name);
+    ul_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(ul_pdr->apn);
 
     ul_pdr->src_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -3661,7 +3679,7 @@ smf_bearer_t *smf_qos_flow_add(smf_sess_t *sess)
     qos_flow->dl_far = dl_far;
 
     ogs_assert(sess->session.name);
-    dl_far->apn = ogs_strdup(sess->session.name);
+    dl_far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(dl_far->apn);
 
     dl_far->dst_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -3683,7 +3701,7 @@ smf_bearer_t *smf_qos_flow_add(smf_sess_t *sess)
     qos_flow->ul_far = ul_far;
 
     ogs_assert(sess->session.name);
-    ul_far->apn = ogs_strdup(sess->session.name);
+    ul_far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(ul_far->apn);
 
     ul_far->dst_if = OGS_PFCP_INTERFACE_CORE;
@@ -3795,7 +3813,7 @@ smf_bearer_t *smf_vcn_tunnel_add(smf_sess_t *sess)
     qos_flow->dl_pdr = dl_pdr;
 
     ogs_assert(sess->session.name);
-    dl_pdr->apn = ogs_strdup(sess->session.name);
+    dl_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(dl_pdr->apn);
 
     dl_pdr->src_if = OGS_PFCP_INTERFACE_CORE;
@@ -3808,7 +3826,7 @@ smf_bearer_t *smf_vcn_tunnel_add(smf_sess_t *sess)
     qos_flow->ul_pdr = ul_pdr;
 
     ogs_assert(sess->session.name);
-    ul_pdr->apn = ogs_strdup(sess->session.name);
+    ul_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(ul_pdr->apn);
 
     ul_pdr->src_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -3822,7 +3840,7 @@ smf_bearer_t *smf_vcn_tunnel_add(smf_sess_t *sess)
     qos_flow->dl_far = dl_far;
 
     ogs_assert(sess->session.name);
-    dl_far->apn = ogs_strdup(sess->session.name);
+    dl_far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(dl_far->apn);
 
     dl_far->dst_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -3841,7 +3859,7 @@ smf_bearer_t *smf_vcn_tunnel_add(smf_sess_t *sess)
     qos_flow->ul_far = ul_far;
 
     ogs_assert(sess->session.name);
-    ul_far->apn = ogs_strdup(sess->session.name);
+    ul_far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(ul_far->apn);
 
     ul_far->dst_if = OGS_PFCP_INTERFACE_CORE;
@@ -3882,7 +3900,7 @@ void smf_sess_create_indirect_data_forwarding(smf_sess_t *sess)
         ogs_assert(pdr);
 
         ogs_assert(sess->session.name);
-        pdr->apn = ogs_strdup(sess->session.name);
+        pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
         ogs_assert(pdr->apn);
 
         pdr->src_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -3899,7 +3917,7 @@ void smf_sess_create_indirect_data_forwarding(smf_sess_t *sess)
         ogs_assert(far);
 
         ogs_assert(sess->session.name);
-        far->apn = ogs_strdup(sess->session.name);
+        far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
         ogs_assert(far->apn);
 
         far->dst_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -3960,7 +3978,7 @@ void smf_sess_create_indirect_data_forwarding(smf_sess_t *sess)
 
                 resource = ogs_pfcp_find_gtpu_resource(
                         &sess->pfcp_node->gtpu_resource_list,
-                        sess->session.name, pdr->src_if);
+                        smf_sess_nwi_for_pfcp(sess), pdr->src_if);
 
                 if (resource) {
                     ogs_user_plane_ip_resource_info_to_sockaddr(&resource->info,
@@ -4069,7 +4087,7 @@ void smf_sess_create_cp_up_data_forwarding(smf_sess_t *sess)
     sess->cp2up_pdr = cp2up_pdr;
 
     if (ogs_global_conf()->parameter.use_upg_vpp == true) {
-        cp2up_pdr->apn = ogs_strdup(sess->session.name);
+        cp2up_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
         ogs_assert(cp2up_pdr->apn);
     }
 
@@ -4083,7 +4101,7 @@ void smf_sess_create_cp_up_data_forwarding(smf_sess_t *sess)
     ogs_assert(up2cp_pdr);
     sess->up2cp_pdr = up2cp_pdr;
 
-    up2cp_pdr->apn = ogs_strdup(sess->session.name);
+    up2cp_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(up2cp_pdr->apn);
 
     up2cp_pdr->src_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -4113,7 +4131,7 @@ void smf_sess_create_cp_up_data_forwarding(smf_sess_t *sess)
     sess->up2cp_far = up2cp_far;
 
     if (ogs_global_conf()->parameter.use_upg_vpp == true) {
-        up2cp_far->apn = ogs_strdup(sess->session.name);
+        up2cp_far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
         ogs_assert(up2cp_far->apn);
     }
 
@@ -4210,7 +4228,7 @@ smf_bearer_t *smf_bearer_add(smf_sess_t *sess)
     bearer->dl_pdr = dl_pdr;
 
     ogs_assert(sess->session.name);
-    dl_pdr->apn = ogs_strdup(sess->session.name);
+    dl_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(dl_pdr->apn);
 
     dl_pdr->src_if = OGS_PFCP_INTERFACE_CORE;
@@ -4223,7 +4241,7 @@ smf_bearer_t *smf_bearer_add(smf_sess_t *sess)
     bearer->ul_pdr = ul_pdr;
 
     ogs_assert(sess->session.name);
-    ul_pdr->apn = ogs_strdup(sess->session.name);
+    ul_pdr->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(ul_pdr->apn);
 
     ul_pdr->src_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -4241,7 +4259,7 @@ smf_bearer_t *smf_bearer_add(smf_sess_t *sess)
     bearer->dl_far = dl_far;
 
     ogs_assert(sess->session.name);
-    dl_far->apn = ogs_strdup(sess->session.name);
+    dl_far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(dl_far->apn);
 
     dl_far->dst_if = OGS_PFCP_INTERFACE_ACCESS;
@@ -4260,7 +4278,7 @@ smf_bearer_t *smf_bearer_add(smf_sess_t *sess)
     bearer->ul_far = ul_far;
 
     ogs_assert(sess->session.name);
-    ul_far->apn = ogs_strdup(sess->session.name);
+    ul_far->apn = ogs_strdup(smf_sess_nwi_for_pfcp(sess));
     ogs_assert(ul_far->apn);
 
     ul_far->dst_if = OGS_PFCP_INTERFACE_CORE;
@@ -5087,6 +5105,11 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
             break;
         case OGS_PCO_ID_P_CSCF_RE_SELECTION_SUPPORT:
             /* TODO */
+            break;
+        case OGS_PCO_ID_PDU_SESSION_ID:
+        case OGS_PCO_ID_QOS_RULES_TWO_OCTET_LENGTH_SUPPORT:
+        case OGS_PCO_ID_QOS_FLOW_DESCRIPTIONS_TWO_OCTET_LENGTH_SUPPORT:
+            /* UE capability indications (TS 24.008) — no EPC action needed */
             break;
         default:
             ogs_warn("Unknown PCO ID:(0x%x)", ue.ids[i].id);

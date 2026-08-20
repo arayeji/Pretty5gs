@@ -102,13 +102,26 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         goto error;
     }
 
-    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-    if (!enb_ue) {
-        ogs_error("!enb_ue");
-        goto error;
+    /*
+     * Late / duplicate LU Accept after Ts6-1, Service Request, or S1
+     * release must not drive Attach/TAU Accept again.
+     */
+    if (!mme_ue->sgs_lu_pending) {
+        ogs_warn("[%s] Ignoring stale SGsAP Location-Update-Accept "
+                "(EPS-Type[%d])",
+                mme_ue->imsi_bcd, mme_ue->nas_eps.type);
+        return;
     }
 
     mme_sgs_ts6_1_timer_stop(mme_ue);
+    mme_ue->sgs_cs_unavailable = false;
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (!enb_ue) {
+        ogs_warn("[%s] SGsAP LU Accept: S1 context already removed",
+                mme_ue->imsi_bcd);
+        return;
+    }
 
     ogs_info("[%s] SGSAP: Location-Update-Accept", mme_ue->imsi_bcd);
     if (lai) {
@@ -169,7 +182,7 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
             mme_send_tau_accept_and_check_release(enb_ue, mme_ue);
         }
     } else {
-        ogs_error("[%s] Invalid EPS-Type[%d]",
+        ogs_warn("[%s] SGsAP LU Accept ignored: unexpected EPS-Type[%d]",
                 mme_ue->imsi_bcd, mme_ue->nas_eps.type);
     }
 
@@ -194,13 +207,11 @@ error:
                 OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                 OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
         r = nas_eps_send_tau_reject(
                 enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else {
         ogs_error("[%s] Invalid EPS-Type[%d]",
                 mme_ue->imsi_bcd, mme_ue->nas_eps.type);
@@ -277,17 +288,30 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (!mme_ue) {
-        ogs_error("No UE(mme-ue) context");
+        /* VLR LU-Reject after MME already dropped the UE — expected. */
+        ogs_warn("[SGSAP] LOCATION-UPDATE-REJECT: no UE context IMSI[%s]",
+                imsi_bcd);
         return;
     }
 
-    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-    if (!enb_ue) {
-        ogs_error("!enb_ue");
-        goto error;
+    if (!mme_ue->sgs_lu_pending) {
+        ogs_warn("[%s] Ignoring stale SGsAP Location-Update-Reject "
+                "(Cause:%d EPS-Type[%d])",
+                mme_ue->imsi_bcd, emm_cause, mme_ue->nas_eps.type);
+        return;
     }
 
     mme_sgs_ts6_1_timer_stop(mme_ue);
+    /* Combined attach/TAU continues as EPS-only with EMM #18 */
+    mme_ue->sgs_cs_unavailable = true;
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (!enb_ue) {
+        ogs_warn("[%s] SGsAP LU Reject: S1 context already removed "
+                "(Cause:%d)",
+                mme_ue->imsi_bcd, emm_cause);
+        return;
+    }
 
     ogs_info("[%s] SGSAP: Location-Update-Reject [Cause:%d]",
             mme_ue->imsi_bcd, emm_cause);
@@ -353,8 +377,9 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
             mme_send_release_access_bearer_or_ue_context_release(enb_ue);
         }
     } else {
-        ogs_error("[%s] Invalid EPS-Type[%d]",
-                mme_ue->imsi_bcd, mme_ue->nas_eps.type);
+        ogs_warn("[%s] SGsAP LU Reject ignored: unexpected EPS-Type[%d] "
+                "(Cause:%d)",
+                mme_ue->imsi_bcd, mme_ue->nas_eps.type, emm_cause);
     }
 
     return;
@@ -428,7 +453,8 @@ void sgsap_handle_alert_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     mme_ue = mme_ue_find_by_imsi_bcd(imsi_bcd);
 
     if (!mme_ue) {
-       ogs_error("No UE(mme-ue) context");
+       /* ALERT for an IMSI we no longer hold — reply IMSI unknown. */
+       ogs_warn("[SGSAP] ALERT-REQUEST: no UE context IMSI[%s]", imsi_bcd);
        sgs_cause = SGSAP_SGS_CAUSE_IMSI_UNKNOWN;
        goto alert_reject;
     }
@@ -524,17 +550,46 @@ void sgsap_handle_detach_ack(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (!mme_ue) {
-        ogs_error("No UE(mme-ue) context");
+        /*
+         * DETACH-ACK after MME already removed the UE (local detach
+         * finished first). Harmless — nothing left to clear.
+         */
+        ogs_warn("[SGSAP] %s: no UE context IMSI[%s] "
+                "(late ACK after local detach)",
+                type == SGSAP_EPS_DETACH_ACK ? "EPS-DETACH-ACK" :
+                type == SGSAP_IMSI_DETACH_ACK ? "IMSI-DETACH-ACK" : "DETACH-ACK",
+                imsi_bcd);
         return;
     }
 
     ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
 
+    /*
+     * DETACH-ACK can race with local cleanup that already cleared
+     * detach_type. Default to implicit so we never abort the MME.
+     */
+    if (mme_ue->detach_type == 0) {
+        ogs_warn("[%s] SGsAP DETACH-ACK with unset detach_type; "
+                "using MME implicit detach", mme_ue->imsi_bcd);
+        mme_ue->detach_type = MME_DETACH_TYPE_MME_IMPLICIT;
+    }
+
+    /*
+     * S1 may already be gone (CLEAR_S1_CONTEXT before SGs indication).
+     * Still Delete Session if PDN remains — skipping DSR here was an
+     * SGW/PGW leak. If detach already started DSR, sessions/xacts show
+     * that and we skip the duplicate.
+     */
+    if (ogs_list_empty(&mme_ue->sess_list) ||
+            MME_SESSION_RELEASE_PENDING(mme_ue) ||
+            mme_ue_xact_count(mme_ue, OGS_GTP_LOCAL_ORIGINATOR) > 0)
+        return;
+
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-    if (enb_ue)
-        mme_send_delete_session_or_detach(enb_ue, mme_ue);
-    else
-        ogs_warn("ENB-S1 Context has already been removed");
+    if (!enb_ue)
+        ogs_warn("[%s] SGsAP DETACH-ACK: no S1 context - Delete Session anyway",
+                mme_ue->imsi_bcd);
+    mme_send_delete_session_or_detach(enb_ue, mme_ue);
 }
 
 void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
@@ -669,14 +724,12 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
                     MME_PAGING_TYPE_CS_CALL_SERVICE, NULL);
                 r = s1ap_send_paging(mme_ue, S1AP_CNDomain_cs);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             } else if (SMS_SERVICE_INDICATOR(mme_ue)) {
                 /* UE will respond Service Request in PS CNDomain*/
                 MME_STORE_PAGING_INFO(mme_ue,
                     MME_PAGING_TYPE_SMS_SERVICE, NULL);
                 r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             } else {
                 sgs_cause = SGSAP_SGS_CAUSE_MT_CS_FALLBACK_REJECT_BY_USER;
                 goto paging_reject;
@@ -686,7 +739,6 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
             if (CS_CALL_SERVICE_INDICATOR(mme_ue)) {
                 r = nas_eps_send_cs_service_notification(mme_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             } else if (SMS_SERVICE_INDICATOR(mme_ue)) {
                 /* Was ogs_assert() - SGs/VLR down must not abort MME */
                 if (sgsap_send_service_request(
@@ -777,7 +829,9 @@ void sgsap_handle_downlink_unitdata(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (!mme_ue) {
-        ogs_error("No UE(mme-ue) context");
+        /* DOWNLINK-UNITDATA for an IMSI already gone — drop. */
+        ogs_warn("[SGSAP] DOWNLINK-UNITDATA: no UE context IMSI[%s]",
+                imsi_bcd);
         return;
     }
 
@@ -789,7 +843,6 @@ void sgsap_handle_downlink_unitdata(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     r = nas_eps_send_downlink_nas_transport(mme_ue,
             nas_message_container_buffer, nas_message_container_length);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 }
 
 void sgsap_handle_reset_indication(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)

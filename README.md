@@ -10,7 +10,7 @@ Upstream docs: [open5gs.org](https://open5gs.org/open5gs/docs/). This README des
 |------|----------|-------------|
 | **RADIUS (SMF)** | Basic support | Multi-server RADIUS, framed IP, Framed-Route / Framed-IPv6-Route, accounting, admin API controls |
 | **PFCP / SMF pools** | Standard pools | Multi-DNN subnets sharing one UE pool; pool-exhaustion logs with IMSI/DNN |
-| **Admin HTTP API** | Limited | MME/SMF/SGWC `:9090` — metrics under load, per-IMSI trace, RADIUS/subnet tuning |
+| **Admin HTTP API** | Limited | MME/SMF/SGWC/HSS `:9090` — metrics under load, per-IMSI trace, RADIUS/subnet tuning |
 | **Production metrics** | Global gauges only on MME; SMF/UPF 5G-style | Per-PLMN attach/auth/registered UE (MME), SGWC UE/session by PGW, SMF UE by PLMN, UPF sessions by CP peer (SGWU/PGWU) |
 | **MME scale** | Fixed large pools | Configurable per-UE pool multipliers, peak stats, SIGUSR1 pool dump, soft-cap LRU |
 | **MME lookups** | Linear scans | O(1) `enb_ue` by S1AP-ID; EBI → bearer map |
@@ -31,6 +31,7 @@ Upstream docs: [open5gs.org](https://open5gs.org/open5gs/docs/). This README des
 | **PCRF / Gx + PyHSS** | MongoDB `db_uri` | Optional PyHSS MySQL policy (**off by default**); YAML policy unchanged |
 | **Runtime config reload (MME)** | Restart for any YAML change | **SIGHUP** reload: timers, GTP echo interval, full-replace lists (TAI, ACL, peers, trace), **logger** without dropping UEs |
 | **Runtime config reload (SMF / SGWC)** | Restart for bind addresses | **SIGHUP** reload: SMF session subnets/APN pools, UPF peers, CDR/RADIUS; SGWC roam/TEID/**CDR spool_dir**/NWI/SGW-U peers, **logger** (add/remove lists) |
+| **Runtime config reload (HSS)** | Restart for any YAML change | **SIGHUP** reload: `hss.trace_imsi` + **logger** |
 
 ## Build and install
 
@@ -97,7 +98,7 @@ Order: YAML `pcrf.policy` → MySQL (if enabled) → MongoDB (if `mongodb: true`
 **Per-IMSI debug (no restart)**
 
 ```yaml
-mme:
+mme:   # also smf / sgwc / hss
   trace_imsi:
     - 001010000000001
 ```
@@ -106,6 +107,8 @@ mme:
 curl 'http://127.0.0.1:9090/admin/trace/imsi?imsi=001010000000001'
 curl 'http://127.0.0.1:9090/admin/trace/imsi?imsi=list'
 ```
+
+HSS traces S6a / Cx / SWx / Sh Diameter exchanges for matching IMSIs (PROC=`S6a-AIR`, `Cx-UAR`, `SWx-MAR`, `Sh-UDR`, …). YAML `hss.trace_imsi` loads at start and on **SIGHUP** (`systemctl reload open5gs-hssd`); runtime add/list/clear also via the metrics port.
 
 **HSS ACL — block unknown IMSIs before S6a (AIR/ULR)**
 
@@ -268,6 +271,22 @@ sudo systemctl reload open5gs-sgwcd
 **Not reloadable:** `sgwc.gtpc.server`, `sgwc.pfcp.server`, `sgwc.metrics.server`, `sgwc.inbound_roam.gtpc.source_port` (extra S5 bind socket), **`sgwc.gn.server`** (GTPv1 Gn bind).
 
 SMF RADIUS/Ga and CGF GTP' peer changes can also be pushed through the **admin API** file watcher — see `tools/admin-api/README.md`.
+
+**Runtime config reload (HSS)**
+
+Edit `/etc/open5gs/hss.yaml`, then:
+
+```bash
+sudo systemctl reload open5gs-hssd
+# or: sudo kill -HUP "$(pidof open5gs-hssd)"
+```
+
+| Kind | Keys | Behaviour |
+|------|------|-----------|
+| **Full replace** | `hss.trace_imsi` | Rebuilt from YAML on each reload (`trace_imsi: []` clears) |
+| **Logger** | `logger.level`, `logger.domain`, `logger.file`, timestamps | Applied on every SIGHUP |
+
+**Not reloadable:** `hss.freeDiameter`, `hss.metrics`, `hss.sms_over_ims`, `hss.use_mongodb_change_stream`. Per-IMSI filters can also be changed live via `GET /admin/trace/imsi` on the metrics port.
 
 **Prometheus metrics (MME / SGWC / SMF / UPF)**
 

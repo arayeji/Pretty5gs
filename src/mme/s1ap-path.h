@@ -52,6 +52,14 @@ int s1ap_send_s1_setup_response(mme_enb_t *enb);
 int s1ap_send_s1_setup_failure(
         mme_enb_t *enb, S1AP_Cause_PR group, long cause);
 
+/*
+ * TS 36.413 8.9 Overload. level 1 = moderate (reject non-emergency
+ * mobile-originated data, carrying the traffic-reduction percentage),
+ * level >= 2 = severe (permit emergency and MT services only).
+ */
+int s1ap_send_overload_start(mme_enb_t *enb, int level, int traffic_reduction);
+int s1ap_send_overload_stop(mme_enb_t *enb);
+
 int s1ap_send_enb_configuration_update_ack(mme_enb_t *enb);
 int s1ap_send_enb_configuration_update_failure(
         mme_enb_t *enb, S1AP_Cause_PR group, long cause);

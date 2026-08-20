@@ -41,15 +41,22 @@ ogs_sock_t *sgsap_client(mme_vlr_t *vlr)
     sock = ogs_sctp_client(SOCK_STREAM,
             vlr->sa_list, vlr->local_sa_list, vlr->option);
     if (sock) {
-        vlr->sock = sock;
+        /* Non-blocking: sgsap-io holds mme_ctx_lock across sendmsg so a
+         * blocking send would stall every ctx-lock user (shards / main). */
 #if HAVE_USRSCTP
         usrsctp_set_non_blocking((struct socket *)sock, 1);
         usrsctp_set_upcall((struct socket *)sock, usrsctp_recv_handler, NULL);
 #else
+        ogs_nonblocking(sock->fd);
         vlr->poll = ogs_pollset_add(ogs_app()->pollset,
                 OGS_POLLIN, sock->fd, lksctp_recv_handler, sock);
         ogs_assert(vlr->poll);
 #endif
+        /* paired with the sgsap-io thread reading vlr->sock under the
+         * same lock (see mme_vlr_close / sgsap-io.c) */
+        mme_ctx_lock();
+        vlr->sock = sock;
+        mme_ctx_unlock();
         ogs_info("sgsap client() %s",
                 ogs_sockaddr_to_string_static(vlr->sa_list));
     }

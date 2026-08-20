@@ -76,17 +76,56 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
 
     ogs_pkbuf_trim(pkbuf, size);
 
+    /*
+     * Match SGW/SGSN by IP first. Some peers (and NAT) send GTP-C from
+     * ephemeral UDP source ports; keying on IP:port created one gnode per
+     * port and exhausted smf_gtp_node_pool (live: 5.x.x.x:12xxx mempool full
+     * while gtp_peers_active sat at 64). Refresh gnode->addr so replies
+     * follow the latest source port.
+     */
     gnode = ogs_gtp_node_find_by_addr(&smf_self()->sgw_s5c_list, &from);
-    if (!gnode) {
+    if (!gnode)
+        gnode = ogs_gtp_node_find_by_addr_only(
+                &smf_self()->sgw_s5c_list, &from);
+    if (gnode) {
+        if (!ogs_sockaddr_is_equal(&gnode->addr, &from)) {
+            memcpy(&gnode->addr, &from, sizeof(gnode->addr));
+            gnode->addr.next = NULL;
+        }
+        gnode->sock = data;
+        if (!gnode->data_ptr) {
+            /* Peer existed without SMF wrapper (prior alloc failure / cleanup). */
+            if (!smf_gtp_node_new(gnode)) {
+                ogs_error("Failed to attach smf_gnode(%s:%u), "
+                          "smf_gtp_node pool full (capacity=%llu); "
+                          "ignoring msg",
+                          OGS_ADDR(&from, frombuf), OGS_PORT(&from),
+                          (unsigned long long)ogs_app()->pool.gtp_node);
+                ogs_pkbuf_free(pkbuf);
+                return;
+            }
+        }
+    } else {
         gnode = ogs_gtp_node_add_by_addr(&smf_self()->sgw_s5c_list, &from);
         if (!gnode) {
-            ogs_error("Failed to create new gnode(%s:%u), mempool full, ignoring msg!",
-                      OGS_ADDR(&from, frombuf), OGS_PORT(&from));
+            ogs_error("Failed to create new gnode(%s:%u), "
+                      "libgtp node pool full (capacity=%llu); ignoring msg",
+                      OGS_ADDR(&from, frombuf), OGS_PORT(&from),
+                      (unsigned long long)ogs_app()->pool.gtp_node);
             ogs_pkbuf_free(pkbuf);
             return;
         }
         gnode->sock = data;
-        smf_gtp_node_new(gnode);
+        if (!smf_gtp_node_new(gnode)) {
+            ogs_error("Failed to create smf_gnode(%s:%u), "
+                      "smf_gtp_node pool full (capacity=%llu) — "
+                      "new peer IP (not just a new UDP port); ignoring msg",
+                      OGS_ADDR(&from, frombuf), OGS_PORT(&from),
+                      (unsigned long long)ogs_app()->pool.gtp_node);
+            ogs_gtp_node_remove(&smf_self()->sgw_s5c_list, gnode);
+            ogs_pkbuf_free(pkbuf);
+            return;
+        }
         smf_metrics_inst_global_inc(SMF_METR_GLOB_GAUGE_GTP_PEERS_ACTIVE);
     }
 
@@ -105,6 +144,26 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
     }
     ogs_assert(e);
     e->gnode = gnode->data_ptr; /* smf_gtp_node_t */
+    if (!e->gnode) {
+        uint8_t msg_type = 0;
+        uint32_t teid = 0;
+
+        if (pkbuf->len >= 8) {
+            ogs_gtp2_header_t *h = (ogs_gtp2_header_t *)pkbuf->data;
+            msg_type = h->type;
+            if (gtp_ver == 2 && h->teid_presence && pkbuf->len >= 12)
+                teid = be32toh(h->teid);
+            else if (gtp_ver == 1 && pkbuf->len >= 8)
+                teid = be32toh(((ogs_gtp1_header_t *)pkbuf->data)->teid);
+        }
+        ogs_error("S5C/Gn RX without smf_gnode (%s:%u) — dropping "
+                  "ver[%u] type[%u] teid[0x%x]",
+                  OGS_ADDR(&from, frombuf), OGS_PORT(&from),
+                  gtp_ver, msg_type, teid);
+        ogs_pkbuf_free(pkbuf);
+        ogs_event_free(e);
+        return;
+    }
     e->pkbuf = pkbuf;
 
     rv = ogs_queue_push(ogs_app()->queue, e);
@@ -321,6 +380,18 @@ int smf_gtp1_send_create_pdp_context_response(
         return OGS_ERROR;
     }
 
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
+
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -352,6 +423,18 @@ int smf_gtp1_send_delete_pdp_context_response(
         ogs_error("ogs_gtp1_xact_update_tx() failed");
         return OGS_ERROR;
     }
+
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
 
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
@@ -394,6 +477,18 @@ int smf_gtp1_send_update_pdp_context_request(
         return OGS_ERROR;
     }
 
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
+
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -433,6 +528,18 @@ int smf_gtp1_send_update_pdp_context_response(
         return OGS_ERROR;
     }
 
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
+
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -464,6 +571,18 @@ int smf_gtp2_send_create_session_response(
         ogs_error("ogs_gtp_xact_update_tx() failed");
         return OGS_ERROR;
     }
+
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
 
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
@@ -510,6 +629,18 @@ int smf_gtp2_send_modify_bearer_response(
         return OGS_ERROR;
     }
 
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
+
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -541,6 +672,18 @@ int smf_gtp2_send_delete_session_response(
         ogs_error("ogs_gtp_xact_update_tx() failed");
         return OGS_ERROR;
     }
+
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
 
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
@@ -586,6 +729,18 @@ int smf_gtp2_send_delete_bearer_request(
         return OGS_ERROR;
     }
     xact->local_teid = sess->smf_n4_teid;
+
+    {
+
+
+        smf_ue_t *_tue = smf_ue_find_by_id(sess->smf_ue_id);
+
+
+        smf_trace_bind_gtp(xact, _tue);
+
+
+    }
+
 
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);

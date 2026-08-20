@@ -22,6 +22,16 @@
 #include "hss-context.h"
 #include "hss-fd-path.h"
 #include "hss-s6a-path.h"
+#include "hss-trace.h"
+
+/* Dump Diameter bytes then send; keeps PACKET on the same path as wire TX. */
+static int hss_s6a_send_traced(
+        struct msg **msg, const char *imsi_bcd)
+{
+    if (imsi_bcd && imsi_bcd[0] && msg && *msg)
+        hss_trace_diameter(imsi_bcd, "tx", *msg);
+    return fd_msg_send(msg, NULL, NULL);
+}
 
 /* handler for fallback cb */
 static struct disp_hdl *hdl_s6a_fb = NULL;
@@ -92,6 +102,84 @@ static bool hss_s6a_user_name_to_imsi_bcd(
 done:
     ogs_free(user_name);
     return rc;
+}
+
+static void hss_s6a_plmn_str(
+        const ogs_plmn_id_t *plmn, char *buf, size_t buflen)
+{
+    ogs_assert(buf);
+    ogs_assert(buflen);
+
+    if (!plmn) {
+        ogs_snprintf(buf, buflen, "-");
+        return;
+    }
+
+    if (ogs_plmn_id_mnc_len(plmn) == 2)
+        ogs_snprintf(buf, buflen, "%03d%02d",
+                ogs_plmn_id_mcc(plmn), ogs_plmn_id_mnc(plmn));
+    else
+        ogs_snprintf(buf, buflen, "%03d%03d",
+                ogs_plmn_id_mcc(plmn), ogs_plmn_id_mnc(plmn));
+}
+
+static void hss_s6a_ulr_flags_str(uint32_t f, char *buf, size_t buflen)
+{
+    char *p, *last;
+
+    ogs_assert(buf);
+    ogs_assert(buflen);
+
+    p = buf;
+    last = buf + buflen;
+    *p = '\0';
+
+#define HSS_ULR_FLAG_APPEND(bit, name) do { \
+    if ((f) & (bit)) { \
+        if (p != buf) \
+            p = ogs_slprintf(p, last, ","); \
+        p = ogs_slprintf(p, last, "%s", (name)); \
+    } \
+} while (0)
+
+    HSS_ULR_FLAG_APPEND(OGS_DIAM_S6A_ULR_SINGLE_REGISTRATION_IND, "single_reg");
+    HSS_ULR_FLAG_APPEND(OGS_DIAM_S6A_ULR_S6A_S6D_INDICATOR, "s6a");
+    HSS_ULR_FLAG_APPEND(OGS_DIAM_S6A_ULR_SKIP_SUBSCRIBER_DATA, "skip_sub");
+    HSS_ULR_FLAG_APPEND(OGS_DIAM_S6A_ULR_GPRS_SUBSCRIPTION_DATA_IND, "gprs");
+    HSS_ULR_FLAG_APPEND(OGS_DIAM_S6A_ULR_NODE_TYPE_IND, "node_type");
+    HSS_ULR_FLAG_APPEND(OGS_DIAM_S6A_ULR_INITIAL_ATTACH_IND, "initial_attach");
+    HSS_ULR_FLAG_APPEND(OGS_DIAM_S6A_ULR_PS_LCS_SUPPORTED_BY_UE, "ps_lcs");
+#undef HSS_ULR_FLAG_APPEND
+
+    if (buf[0] == '\0')
+        ogs_snprintf(buf, buflen, "-");
+}
+
+/* Best-effort Origin-Host / Origin-Realm copy for trace lines (non-fatal). */
+static void hss_s6a_copy_os_avp(
+        struct msg *msg, struct dict_object *obj, char *buf, size_t buflen)
+{
+    int ret;
+    struct avp *avp = NULL;
+    struct avp_hdr *hdr = NULL;
+
+    ogs_assert(buf);
+    ogs_assert(buflen);
+    buf[0] = '\0';
+
+    if (!msg || !obj)
+        return;
+
+    ret = fd_msg_search_avp(msg, obj, &avp);
+    if (ret != 0 || !avp)
+        return;
+    ret = fd_msg_avp_hdr(avp, &hdr);
+    if (ret != 0 || !hdr || !hdr->avp_value || !hdr->avp_value->os.data ||
+            hdr->avp_value->os.len == 0)
+        return;
+
+    ogs_cpystrn(buf, (char *)hdr->avp_value->os.data,
+            ogs_min(hdr->avp_value->os.len, buflen - 1) + 1);
 }
 
 static int hss_s6a_air_add_os_avp(struct avp *group, struct dict_object *avp_obj,
@@ -303,11 +391,16 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
     int rv;
     uint32_t result_code = 0;
     uint8_t visited_plmn_bytes[OGS_PLMN_ID_LEN];
+    ogs_plmn_id_t visited_plmn_id;
+    char plmn_str[16];
+    char origin_host[OGS_MAX_FQDN_LEN+1];
+    char origin_realm[OGS_MAX_FQDN_LEN+1];
     int error_occurred = 0;
     bool req_eutran = false;
     bool req_utran = false;
+    bool resync = false;
 
-    ogs_debug("Rx Authentication-Information-Request");
+    HSS_TRACE_SCOPE();
 
     /* Validate input parameters */
     if (!msg || !*msg) {
@@ -318,48 +411,58 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
     /* Initialize variables */
     memset(imsi_bcd, 0, sizeof(imsi_bcd));
     memset(&auth_info, 0, sizeof(auth_info));
+    memset(&visited_plmn_id, 0, sizeof(visited_plmn_id));
+    memset(origin_host, 0, sizeof(origin_host));
+    memset(origin_realm, 0, sizeof(origin_realm));
+    plmn_str[0] = '\0';
+
+    /*
+     * Parse IMSI and install trace context BEFORE creating the answer and
+     * before any ogs_debug — same bug as ULR: DEBUG is silent until TLS IMSI
+     * is set, so an early "Rx AIR" looked like the message never arrived.
+     */
+    qry = *msg;
+    ret = fd_msg_search_avp(qry, ogs_diam_user_name, &avp);
+    if (ret != 0 || !avp) {
+        ogs_error("Failed to search User-Name AVP on AIR");
+        result_code = OGS_DIAM_MISSING_AVP;
+        error_occurred = 1;
+    } else {
+        ret = fd_msg_avp_hdr(avp, &hdr);
+        if (ret != 0 || !hdr ||
+                hss_s6a_user_name_to_imsi_bcd(
+                    hdr, imsi_bcd, sizeof(imsi_bcd)) == false) {
+            ogs_error("Invalid User-Name IMSI on AIR");
+            result_code = OGS_DIAM_INVALID_AVP_VALUE;
+            error_occurred = 1;
+            imsi_bcd[0] = '\0';
+        }
+    }
+
+    hss_s6a_copy_os_avp(qry, ogs_diam_origin_host,
+            origin_host, sizeof(origin_host));
+    hss_s6a_copy_os_avp(qry, ogs_diam_origin_realm,
+            origin_realm, sizeof(origin_realm));
+
+    if (imsi_bcd[0]) {
+        hss_trace_diameter(imsi_bcd, "rx", qry);
+        hss_trace_event(imsi_bcd, "S6a-AIR",
+                "Rx Authentication-Information-Request host=%s realm=%s",
+                origin_host[0] ? origin_host : "-",
+                origin_realm[0] ? origin_realm : "-");
+    } else
+        ogs_debug("Rx Authentication-Information-Request (no IMSI yet)");
 
     /* Create answer header */
-    qry = *msg;
     ret = fd_msg_new_answer_from_req(fd_g_config->cnf_dict, msg, 0);
     if (ret != 0) {
         ogs_error("Failed to create answer message");
-        error_occurred = 1;
-        goto out;
+        return EINVAL;
     }
     ans = *msg;
 
-    /* Get User-Name AVP */
-    ret = fd_msg_search_avp(qry, ogs_diam_user_name, &avp);
-    if (ret != 0) {
-        ogs_error("Failed to search User-Name AVP");
-        result_code = OGS_DIAM_MISSING_AVP;
-        error_occurred = 1;
+    if (error_occurred)
         goto out;
-    }
-
-    if (!avp) {
-        ogs_error("No User-Name AVP found");
-        result_code = OGS_DIAM_MISSING_AVP;
-        error_occurred = 1;
-        goto out;
-    }
-
-    ret = fd_msg_avp_hdr(avp, &hdr);
-    if (ret != 0 || !hdr) {
-        ogs_error("Failed to get User-Name AVP header");
-        result_code = OGS_DIAM_INVALID_AVP_VALUE;
-        error_occurred = 1;
-        goto out;
-    }
-
-    if (hss_s6a_user_name_to_imsi_bcd(
-                hdr, imsi_bcd, sizeof(imsi_bcd)) == false) {
-        ogs_error("Invalid User-Name IMSI");
-        result_code = OGS_DIAM_INVALID_AVP_VALUE;
-        error_occurred = 1;
-        goto out;
-    }
 
     /* Get authentication info from database */
     rv = hss_db_auth_info(imsi_bcd, &auth_info);
@@ -401,6 +504,7 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
 
     /* Re-synchronization (E-UTRAN or UTRAN/GERAN request) */
     if (hss_s6a_air_resync_present(avp_req_eutran)) {
+        resync = true;
         rv = hss_s6a_air_handle_resync(avp_req_eutran, imsi_bcd, opc,
                 auth_info.k, auth_info.rand, &auth_info.sqn, &result_code);
         if (rv != OGS_OK) {
@@ -408,6 +512,7 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
             goto out;
         }
     } else if (hss_s6a_air_resync_present(avp_req_utran)) {
+        resync = true;
         rv = hss_s6a_air_handle_resync(avp_req_utran, imsi_bcd, opc,
                 auth_info.k, auth_info.rand, &auth_info.sqn, &result_code);
         if (rv != OGS_OK) {
@@ -467,6 +572,14 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
     }
     memcpy(visited_plmn_bytes, hdr->avp_value->os.data,
             sizeof(visited_plmn_bytes));
+    memcpy(&visited_plmn_id, visited_plmn_bytes, sizeof(visited_plmn_id));
+    hss_s6a_plmn_str(&visited_plmn_id, plmn_str, sizeof(plmn_str));
+
+    hss_trace_event(imsi_bcd, "S6a-AIR",
+            "serving_plmn=%s eutran=%d utran=%d resync=%d host=%s",
+            plmn_str[0] ? plmn_str : "-",
+            req_eutran ? 1 : 0, req_utran ? 1 : 0, resync ? 1 : 0,
+            origin_host[0] ? origin_host : "-");
 
     /* Generate authentication vectors (Milenage) */
     milenage_generate(opc, auth_info.amf, auth_info.k,
@@ -552,7 +665,7 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
         }
 
         /* Send the answer */
-        ret = fd_msg_send(msg, NULL, NULL);
+        ret = hss_s6a_send_traced(msg, imsi_bcd);
         if (ret != 0) {
             ogs_error("Failed to send message");
             error_occurred = 1;
@@ -560,6 +673,11 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Authentication-Information-Answer");
+        hss_trace_event(imsi_bcd, "S6a-AIR",
+                "Tx Authentication-Information-Answer SUCCESS "
+                "serving_plmn=%s eutran=%d utran=%d resync=%d",
+                plmn_str[0] ? plmn_str : "-",
+                req_eutran ? 1 : 0, req_utran ? 1 : 0, resync ? 1 : 0);
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -595,7 +713,7 @@ out:
         ret = ogs_diam_message_vendor_specific_appid_set(
                 ans, OGS_DIAM_S6A_APPLICATION_ID);
 
-        ret = fd_msg_send(msg, NULL, NULL);
+        ret = hss_s6a_send_traced(msg, imsi_bcd);
         if (ret != 0) {
             ogs_error("Failed to send error response");
         }
@@ -998,13 +1116,39 @@ static int hss_s6a_avp_add_subscription_data(
                             &pdn_gw_allocation_type);
                 ogs_assert(ret == 0);
 
-                val.u32 = OGS_DIAM_S6A_PDN_GW_ALLOCATION_DYNAMIC;
+                /* Static SMF/PGW IP in subscription → Allocation-Type STATIC.
+                 * MME only treats MIP6 as permanent PGW when this is not DYNAMIC. */
+                val.u32 = OGS_DIAM_S6A_PDN_GW_ALLOCATION_STATIC;
                 ret = fd_msg_avp_setvalue(pdn_gw_allocation_type, &val);
                 ogs_assert(ret == 0);
 
                 ret = fd_msg_avp_add(apn_configuration,
                         MSG_BRW_LAST_CHILD, pdn_gw_allocation_type);
                 ogs_assert(ret == 0);
+
+                if (subscription_data->imsi &&
+                        ogs_trace_filter_match(subscription_data->imsi)) {
+                    if (session->smf_ip.ipv4) {
+                        char ipstr[OGS_ADDRSTRLEN];
+
+                        OGS_INET_NTOP(&session->smf_ip.addr, ipstr);
+                        ogs_error("[%s] S6a-ULA APN[%s] static PGW/SMF %s "
+                                "(MIP6 + Allocation-Type=STATIC)",
+                                subscription_data->imsi,
+                                session->name ? session->name : "-", ipstr);
+                    } else {
+                        ogs_error("[%s] S6a-ULA APN[%s] static PGW/SMF IPv6 "
+                                "(MIP6 + Allocation-Type=STATIC)",
+                                subscription_data->imsi,
+                                session->name ? session->name : "-");
+                    }
+                }
+            } else if (subscription_data->imsi &&
+                    ogs_trace_filter_match(subscription_data->imsi)) {
+                ogs_error("[%s] S6a-ULA APN[%s] no static SMF/PGW in DB "
+                        "(set slice[].session[].smf.ipv4)",
+                        subscription_data->imsi,
+                        session->name ? session->name : "-");
             }
 
             /* Set VPLMN-Dynamic-Address-Allowed */
@@ -1076,7 +1220,12 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
     char *mme_host = NULL;
     char *mme_realm = NULL;
     char vlr_number[OGS_MAX_MSISDN_BCD_LEN*2+1];
+    char plmn_str[16];
+    char ulr_flags_str[128];
     bool is_cs_update = false;
+    bool skip_subscriber_data = false;
+    bool have_ulr_flags = false;
+    uint32_t ulr_flags = 0;
 
     int rv;
     uint32_t result_code = 0;
@@ -1084,7 +1233,7 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
     ogs_plmn_id_t visited_plmn_id;
     int error_occurred = 0;
 
-    ogs_debug("Rx Update-Location-Request");
+    HSS_TRACE_SCOPE();
 
     /* Validate input parameters */
     if (!msg || !*msg) {
@@ -1097,48 +1246,52 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
     memset(imsi_bcd, 0, sizeof(imsi_bcd));
     memset(imeisv_bcd, 0, sizeof(imeisv_bcd));
     memset(&visited_plmn_id, 0, sizeof(visited_plmn_id));
+    plmn_str[0] = '\0';
+    ulr_flags_str[0] = '\0';
+
+    /*
+     * Parse IMSI and install trace context BEFORE creating the answer and
+     * before any ogs_debug. With domain=info, DEBUG only elevates when the
+     * thread-local IMSI is already set (AIR's AIA lines work that way).
+     * The old leading ogs_debug("Rx Update-Location-Request") had no IMSI
+     * yet, so it was silent and looked like "ULR never arrived".
+     */
+    qry = *msg;
+    ret = fd_msg_search_avp(qry, ogs_diam_user_name, &avp);
+    if (ret != 0 || !avp) {
+        ogs_error("Failed to search User-Name AVP on ULR");
+        result_code = OGS_DIAM_MISSING_AVP;
+        error_occurred = 1;
+        /* Still try to build an error answer below */
+    } else {
+        ret = fd_msg_avp_hdr(avp, &hdr);
+        if (ret != 0 || !hdr ||
+                hss_s6a_user_name_to_imsi_bcd(
+                    hdr, imsi_bcd, sizeof(imsi_bcd)) == false) {
+            ogs_error("Invalid User-Name IMSI on ULR");
+            result_code = OGS_DIAM_INVALID_AVP_VALUE;
+            error_occurred = 1;
+            imsi_bcd[0] = '\0';
+        }
+    }
+
+    if (imsi_bcd[0]) {
+        hss_trace_diameter(imsi_bcd, "rx", qry);
+        hss_trace_event(imsi_bcd, "S6a-ULR",
+                "Rx Update-Location-Request");
+    } else
+        ogs_debug("Rx Update-Location-Request (no IMSI yet)");
 
     /* Create answer header */
-    qry = *msg;
     ret = fd_msg_new_answer_from_req(fd_g_config->cnf_dict, msg, 0);
     if (ret != 0) {
         ogs_error("Failed to create answer message");
-        error_occurred = 1;
-        goto out;
+        return EINVAL;
     }
     ans = *msg;
 
-    /* Get User-Name AVP */
-    ret = fd_msg_search_avp(qry, ogs_diam_user_name, &avp);
-    if (ret != 0) {
-        ogs_error("Failed to search User-Name AVP");
-        result_code = OGS_DIAM_MISSING_AVP;
-        error_occurred = 1;
+    if (error_occurred)
         goto out;
-    }
-
-    if (avp) {
-        ret = fd_msg_avp_hdr(avp, &hdr);
-        if (ret != 0 || !hdr) {
-            ogs_error("Failed to get User-Name AVP header");
-            result_code = OGS_DIAM_INVALID_AVP_VALUE;
-            error_occurred = 1;
-            goto out;
-        }
-
-        if (hss_s6a_user_name_to_imsi_bcd(
-                hdr, imsi_bcd, sizeof(imsi_bcd)) == false) {
-            ogs_error("Invalid User-Name IMSI");
-            result_code = OGS_DIAM_INVALID_AVP_VALUE;
-            error_occurred = 1;
-            goto out;
-        }
-    } else {
-        ogs_error("No User-Name AVP found");
-        result_code = OGS_DIAM_MISSING_AVP;
-        error_occurred = 1;
-        goto out;
-    }
 
     /* Get subscription data from database */
     rv = hss_db_subscription_data(imsi_bcd, &subscription_data);
@@ -1148,6 +1301,9 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
         error_occurred = 1;
         goto out;
     }
+    /* Ensure IMSI is set for static-PGW / APN trace lines in the builder */
+    if (!subscription_data.imsi)
+        subscription_data.imsi = ogs_strdup(imsi_bcd);
 
     /* Get Origin-Host */
     ret = fd_msg_search_avp(qry, ogs_diam_origin_host, &avp);
@@ -1361,6 +1517,7 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
         }
         memcpy(&visited_plmn_id, hdr->avp_value->os.data,
                 ogs_min(hdr->avp_value->os.len, sizeof(visited_plmn_id)));
+        hss_s6a_plmn_str(&visited_plmn_id, plmn_str, sizeof(plmn_str));
     }
 
     /* Check ULR-Flags */
@@ -1381,7 +1538,39 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
             goto out;
         }
 
-        if (!(hdr->avp_value->u32 & OGS_DIAM_S6A_ULR_SKIP_SUBSCRIBER_DATA)) {
+        {
+            ulr_flags = hdr->avp_value->u32;
+            have_ulr_flags = true;
+            skip_subscriber_data = !!(ulr_flags &
+                    OGS_DIAM_S6A_ULR_SKIP_SUBSCRIBER_DATA);
+            hss_s6a_ulr_flags_str(ulr_flags, ulr_flags_str,
+                    sizeof(ulr_flags_str));
+
+            hss_trace_event(imsi_bcd, "S6a-ULR",
+                    "detail domain=%s host=%s realm=%s serving_plmn=%s "
+                    "flags=0x%x(%s) skip_subscriber_data=%d imeisv=%s",
+                    is_cs_update ? "CS" : "PS",
+                    mme_host ? mme_host : "-",
+                    mme_realm ? mme_realm : "-",
+                    plmn_str[0] ? plmn_str : "-",
+                    ulr_flags, ulr_flags_str,
+                    skip_subscriber_data ? 1 : 0,
+                    imeisv_bcd[0] ? imeisv_bcd : "-");
+
+            /*
+             * Always include Subscription-Data in ULA.
+             * Visited MMEs often set Skip-Subscriber-Data on Initial Attach
+             * after a prior registration elsewhere; omitting subdata then
+             * leaves them without APN / static-IP profile. Operator policy:
+             * ignore ULR Skip-Subscriber-Data (TS 29.272 allows skip only as
+             * an optimization when MME already has current data).
+             */
+            if (skip_subscriber_data) {
+                hss_trace_event(imsi_bcd, "S6a-ULR",
+                        "ignoring Skip-Subscriber-Data; "
+                        "ULA will include Subscription-Data");
+            }
+
             /* Set the Subscription Data */
             ret = fd_msg_avp_new(ogs_diam_s6a_subscription_data, 0, &avp);
             if (ret != 0) {
@@ -1405,6 +1594,9 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
                 error_occurred = 1;
                 goto out;
             }
+
+            hss_trace_event(imsi_bcd, "S6a-ULR",
+                    "ULA includes Subscription-Data");
         }
     }
 
@@ -1619,7 +1811,7 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
         }
 
         /* Send the answer */
-        ret = fd_msg_send(msg, NULL, NULL);
+        ret = hss_s6a_send_traced(msg, imsi_bcd);
         if (ret != 0) {
             ogs_error("Failed to send message");
             error_occurred = 1;
@@ -1627,6 +1819,15 @@ static int hss_ogs_diam_s6a_ulr_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Update-Location-Answer");
+        hss_trace_event(imsi_bcd, "S6a-ULR",
+                "Tx Update-Location-Answer SUCCESS domain=%s "
+                "serving_plmn=%s flags=0x%x skip_subscriber_data=%d "
+                "host=%s",
+                is_cs_update ? "CS" : "PS",
+                plmn_str[0] ? plmn_str : "-",
+                have_ulr_flags ? ulr_flags : 0,
+                skip_subscriber_data ? 1 : 0,
+                mme_host ? mme_host : "-");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -1667,7 +1868,7 @@ out:
         ret = ogs_diam_message_vendor_specific_appid_set(
                 ans, OGS_DIAM_S6A_APPLICATION_ID);
 
-        ret = fd_msg_send(msg, NULL, NULL);
+        ret = hss_s6a_send_traced(msg, imsi_bcd);
         if (ret != 0) {
             ogs_error("Failed to send error response");
         }
@@ -1706,7 +1907,7 @@ static int hss_ogs_diam_s6a_pur_cb(struct msg **msg, struct avp *avp,
     int error_occurred = 0;
     int use_experimental_code = 1;
 
-    ogs_debug("Rx Purge-UE-Request");
+    HSS_TRACE_SCOPE();
 
     /* Validate input parameters */
     if (!msg || !*msg) {
@@ -1720,47 +1921,40 @@ static int hss_ogs_diam_s6a_pur_cb(struct msg **msg, struct avp *avp,
     memset(mme_host, 0, sizeof(mme_host));
     memset(mme_realm, 0, sizeof(mme_realm));
 
-    /* Create answer header */
     qry = *msg;
+    ret = fd_msg_search_avp(qry, ogs_diam_user_name, &avp);
+    if (ret != 0 || !avp) {
+        ogs_error("Failed to search User-Name AVP on PUR");
+        result_code = OGS_DIAM_MISSING_AVP;
+        error_occurred = 1;
+    } else {
+        ret = fd_msg_avp_hdr(avp, &hdr);
+        if (ret != 0 || !hdr ||
+                hss_s6a_user_name_to_imsi_bcd(
+                    hdr, imsi_bcd, sizeof(imsi_bcd)) == false) {
+            ogs_error("Invalid User-Name IMSI on PUR");
+            result_code = OGS_DIAM_INVALID_AVP_VALUE;
+            error_occurred = 1;
+            imsi_bcd[0] = '\0';
+        }
+    }
+
+    if (imsi_bcd[0]) {
+        hss_trace_event(imsi_bcd, "S6a-PUR", "Rx Purge-UE-Request");
+        hss_trace_diameter(imsi_bcd, "rx", qry);
+    } else
+        ogs_debug("Rx Purge-UE-Request (no IMSI yet)");
+
+    /* Create answer header */
     ret = fd_msg_new_answer_from_req(fd_g_config->cnf_dict, msg, 0);
     if (ret != 0) {
         ogs_error("Failed to create answer message");
-        error_occurred = 1;
-        goto out;
+        return EINVAL;
     }
     ans = *msg;
 
-    /* Get User-Name AVP */
-    ret = fd_msg_search_avp(qry, ogs_diam_user_name, &avp);
-    if (ret != 0) {
-        ogs_error("Failed to search User-Name AVP");
-        result_code = OGS_DIAM_MISSING_AVP;
-        error_occurred = 1;
+    if (error_occurred)
         goto out;
-    }
-
-    if (!avp) {
-        ogs_error("No User-Name AVP found");
-        result_code = OGS_DIAM_MISSING_AVP;
-        error_occurred = 1;
-        goto out;
-    }
-
-    ret = fd_msg_avp_hdr(avp, &hdr);
-    if (ret != 0 || !hdr) {
-        ogs_error("Failed to get User-Name AVP header");
-        result_code = OGS_DIAM_INVALID_AVP_VALUE;
-        error_occurred = 1;
-        goto out;
-    }
-
-    if (hss_s6a_user_name_to_imsi_bcd(
-                hdr, imsi_bcd, sizeof(imsi_bcd)) == false) {
-        ogs_error("Invalid User-Name IMSI");
-        result_code = OGS_DIAM_INVALID_AVP_VALUE;
-        error_occurred = 1;
-        goto out;
-    }
 
     /* Get subscription data from database */
     rv = hss_db_subscription_data(imsi_bcd, &subscription_data);
@@ -1825,6 +2019,13 @@ static int hss_ogs_diam_s6a_pur_cb(struct msg **msg, struct avp *avp,
     ogs_cpystrn(mme_realm, (char*)hdr->avp_value->os.data,
         ogs_min(hdr->avp_value->os.len, OGS_MAX_FQDN_LEN)+1);
 
+    hss_trace_event(imsi_bcd, "S6a-PUR",
+            "detail host=%s realm=%s stored_mme=%s stored_vlr=%s",
+            mme_host[0] ? mme_host : "-",
+            mme_realm[0] ? mme_realm : "-",
+            subscription_data.mme_host ? subscription_data.mme_host : "-",
+            subscription_data.vlr_host ? subscription_data.vlr_host : "-");
+
     /*
      * If the purge comes from the CS IWF (Origin-Host matches the stored
      * vlr_host), treat it as a CS detach: set cs_purge_flag so the Sh UDR
@@ -1845,7 +2046,8 @@ static int hss_ogs_diam_s6a_pur_cb(struct msg **msg, struct avp *avp,
             error_occurred = 1;
             goto outnoexp;
         }
-        ogs_info("[%s] CS detach (purge) from IWF host %s", imsi_bcd, mme_host);
+        hss_trace_event(imsi_bcd, "S6a-PUR",
+                "CS detach (purge) from IWF host %s", mme_host);
 
     /* Check if the MME matches the one in subscription data */
     } else if (subscription_data.mme_host && subscription_data.mme_realm &&
@@ -1864,6 +2066,11 @@ static int hss_ogs_diam_s6a_pur_cb(struct msg **msg, struct avp *avp,
             error_occurred = 1;
             goto outnoexp;
         }
+        hss_trace_event(imsi_bcd, "S6a-PUR",
+                "PS detach (purge) from MME host %s", mme_host);
+    } else {
+        hss_trace_event(imsi_bcd, "S6a-PUR",
+                "purge host mismatch - no purge flag update");
     }
 
     if (!error_occurred) {
@@ -1936,7 +2143,7 @@ static int hss_ogs_diam_s6a_pur_cb(struct msg **msg, struct avp *avp,
         }
 
         /* Send the answer */
-        ret = fd_msg_send(msg, NULL, NULL);
+        ret = hss_s6a_send_traced(msg, imsi_bcd);
         if (ret != 0) {
             ogs_error("Failed to send message");
             error_occurred = 1;
@@ -1944,6 +2151,9 @@ static int hss_ogs_diam_s6a_pur_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Purge-UE-Answer");
+        hss_trace_event(imsi_bcd, "S6a-PUR",
+                "Tx Purge-UE-Answer SUCCESS host=%s",
+                mme_host[0] ? mme_host : "-");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -1984,7 +2194,7 @@ outnoexp:
         ret = ogs_diam_message_vendor_specific_appid_set(
                 ans, OGS_DIAM_S6A_APPLICATION_ID);
 
-        ret = fd_msg_send(msg, NULL, NULL);
+        ret = hss_s6a_send_traced(msg, imsi_bcd);
         if (ret != 0) {
             ogs_error("Failed to send error response");
         }
@@ -2005,6 +2215,14 @@ outnoexp:
 void hss_s6a_send_clr(char *imsi_bcd, char *mme_host, char *mme_realm,
     uint32_t cancellation_type)
 {
+    /* Preserve historical behaviour: Reattach-Required only on withdrawal. */
+    hss_s6a_send_clr_ex(imsi_bcd, mme_host, mme_realm, cancellation_type,
+            cancellation_type == OGS_DIAM_S6A_CT_SUBSCRIPTION_WITHDRAWAL);
+}
+
+void hss_s6a_send_clr_ex(char *imsi_bcd, char *mme_host, char *mme_realm,
+    uint32_t cancellation_type, bool reattach_required)
+{
     int ret;
 
     struct msg *req = NULL;
@@ -2013,11 +2231,21 @@ void hss_s6a_send_clr(char *imsi_bcd, char *mme_host, char *mme_realm,
     struct sess_state *sess_data = NULL, *svg;
     struct session *session = NULL;
 
+    HSS_TRACE_SCOPE();
+
     ogs_debug("[HSS] Tx Cancel-Location-Request");
 
     /* Create the random value to store with the session */
     sess_data = ogs_calloc(1, sizeof(*sess_data));
     ogs_assert(sess_data);
+    if (imsi_bcd)
+        ogs_cpystrn(sess_data->imsi_bcd, imsi_bcd, sizeof(sess_data->imsi_bcd));
+
+    hss_trace_event(imsi_bcd, "S6a-CLR",
+            "Tx Cancel-Location-Request type=%u reattach=%d host=%s realm=%s",
+            cancellation_type, reattach_required ? 1 : 0,
+            mme_host ? mme_host : "-",
+            mme_realm ? mme_realm : "-");
 
     /* Create the request */
     ret = fd_msg_new(ogs_diam_s6a_cmd_clr, MSGFL_ALLOC_ETEID, &req);
@@ -2084,12 +2312,9 @@ void hss_s6a_send_clr(char *imsi_bcd, char *mme_host, char *mme_realm,
     /* Set the CLR-Flags */
     ret = fd_msg_avp_new(ogs_diam_s6a_clr_flags, 0, &avp);
     ogs_assert(ret == 0);
-    if (cancellation_type == OGS_DIAM_S6A_CT_SUBSCRIPTION_WITHDRAWAL) {
-        val.u32 = (OGS_DIAM_S6A_CLR_FLAGS_REATTACH_REQUIRED |
-            OGS_DIAM_S6A_CLR_FLAGS_S6A_S6D_INDICATOR);
-    } else {
-        val.u32 = OGS_DIAM_S6A_CLR_FLAGS_S6A_S6D_INDICATOR;
-    }
+    val.u32 = OGS_DIAM_S6A_CLR_FLAGS_S6A_S6D_INDICATOR;
+    if (reattach_required)
+        val.u32 |= OGS_DIAM_S6A_CLR_FLAGS_REATTACH_REQUIRED;
     ret = fd_msg_avp_setvalue(avp, &val);
     ogs_assert(ret == 0);
     ret = fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp);
@@ -2119,6 +2344,8 @@ void hss_s6a_send_clr(char *imsi_bcd, char *mme_host, char *mme_realm,
     ogs_assert(sess_data == 0);
 
     /* Send the request */
+    if (imsi_bcd && imsi_bcd[0])
+        hss_trace_diameter(imsi_bcd, "tx", req);
     ret = fd_msg_send(&req, hss_s6a_cla_cb, svg);
     ogs_assert(ret == 0);
 
@@ -2138,6 +2365,8 @@ static void hss_s6a_cla_cb(void *data, struct msg **msg)
     struct session *session = NULL;
     int new = 0;
     int error_occurred = 0;
+
+    HSS_TRACE_SCOPE();
 
     ogs_debug("[HSS] Rx Cancel-Location-Answer");
 
@@ -2190,6 +2419,11 @@ static void hss_s6a_cla_cb(void *data, struct msg **msg)
         goto cleanup;
     }
 
+    hss_trace_event(sess_data->imsi_bcd, "S6a-CLR",
+            "Rx Cancel-Location-Answer");
+    if (msg && *msg)
+        hss_trace_diameter(sess_data->imsi_bcd, "rx", *msg);
+
 cleanup:
     /* Always try to free the message if it exists */
     if (msg && *msg) {
@@ -2232,6 +2466,8 @@ int hss_s6a_send_idr(char *imsi_bcd, uint32_t idr_flags, uint32_t subdata_mask)
     ogs_subscription_data_t subscription_data;
     char *dest_host = NULL;
     char *dest_realm = NULL;
+
+    HSS_TRACE_SCOPE();
 
     ogs_debug("[HSS] Tx Insert-Subscriber-Data-Request");
 
@@ -2299,6 +2535,13 @@ int hss_s6a_send_idr(char *imsi_bcd, uint32_t idr_flags, uint32_t subdata_mask)
     /* Create the random value to store with the session */
     sess_data = ogs_calloc(1, sizeof(*sess_data));
     ogs_assert(sess_data);
+    if (imsi_bcd)
+        ogs_cpystrn(sess_data->imsi_bcd, imsi_bcd, sizeof(sess_data->imsi_bcd));
+
+    hss_trace_event(imsi_bcd, "S6a-IDR",
+            "Tx Insert-Subscriber-Data-Request flags=0x%x host=%s "
+            "subdata_mask=0x%x",
+            idr_flags, dest_host ? dest_host : "-", subdata_mask);
 
     /* Create the request */
     ret = fd_msg_new(ogs_diam_s6a_cmd_idr, MSGFL_ALLOC_ETEID, &req);
@@ -2403,6 +2646,8 @@ int hss_s6a_send_idr(char *imsi_bcd, uint32_t idr_flags, uint32_t subdata_mask)
     ogs_assert(sess_data == 0);
 
     /* Send the request */
+    if (imsi_bcd && imsi_bcd[0])
+        hss_trace_diameter(imsi_bcd, "tx", req);
     ret = fd_msg_send(&req, hss_s6a_ida_cb, svg);
     ogs_assert(ret == 0);
 
@@ -2425,6 +2670,8 @@ static void hss_s6a_ida_cb(void *data, struct msg **msg)
     struct session *session = NULL;
     int new = 0;
     int error_occurred = 0;
+
+    HSS_TRACE_SCOPE();
 
     ogs_debug("[HSS] Rx Insert-Subscriber-Data-Answer");
 
@@ -2477,6 +2724,9 @@ static void hss_s6a_ida_cb(void *data, struct msg **msg)
         goto cleanup;
     }
 
+    hss_trace_event(sess_data->imsi_bcd, "S6a-IDR",
+            "Rx Insert-Subscriber-Data-Answer");
+
 cleanup:
     /* Always try to free the message if it exists */
     if (msg && *msg) {
@@ -2519,20 +2769,21 @@ static int hss_ogs_diam_s6a_nor_cb(struct msg **msg, struct avp *avp,
     union avp_value val;
 
     char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+    char origin_host[OGS_MAX_FQDN_LEN+1];
     bool have_imsi = false;
+    uint32_t nor_flags = 0;
+    bool have_nor_flags = false;
+
+    HSS_TRACE_SCOPE();
 
     ogs_assert(msg);
 
-    ogs_debug("[HSS] Rx Notify-Request");
-
     memset(imsi_bcd, 0, sizeof(imsi_bcd));
+    memset(origin_host, 0, sizeof(origin_host));
 
     qry = *msg;
-    ret = fd_msg_new_answer_from_req(fd_g_config->cnf_dict, msg, 0);
-    ogs_assert(ret == 0);
-    ans = *msg;
 
-    /* User-Name (IMSI) */
+    /* User-Name (IMSI) — before answer / debug so IMSI filter elevates logs */
     ret = fd_msg_search_avp(qry, ogs_diam_user_name, &avpch);
     if (ret == 0 && avpch) {
         ret = fd_msg_avp_hdr(avpch, &hdr);
@@ -2540,6 +2791,38 @@ static int hss_ogs_diam_s6a_nor_cb(struct msg **msg, struct avp *avp,
             have_imsi = hss_s6a_user_name_to_imsi_bcd(
                     hdr, imsi_bcd, sizeof(imsi_bcd));
     }
+
+    hss_s6a_copy_os_avp(qry, ogs_diam_origin_host,
+            origin_host, sizeof(origin_host));
+
+    ret = fd_msg_search_avp(qry, ogs_diam_s6a_nor_flags, &avpch);
+    if (ret == 0 && avpch) {
+        ret = fd_msg_avp_hdr(avpch, &hdr);
+        if (ret == 0 && hdr) {
+            nor_flags = hdr->avp_value->u32;
+            have_nor_flags = true;
+        }
+    }
+
+    if (have_imsi) {
+        hss_trace_event(imsi_bcd, "S6a-NOR",
+                "Rx Notify-Request host=%s flags=0x%x "
+                "ue_reachable_mme=%d ready_for_sm_mme=%d",
+                origin_host[0] ? origin_host : "-",
+                have_nor_flags ? nor_flags : 0,
+                (have_nor_flags &&
+                 (nor_flags & OGS_DIAM_S6A_NOR_FLAGS_UE_REACHABLE_FROM_MME))
+                        ? 1 : 0,
+                (have_nor_flags &&
+                 (nor_flags & OGS_DIAM_S6A_NOR_FLAGS_READY_FOR_SM_FROM_MME))
+                        ? 1 : 0);
+        hss_trace_diameter(imsi_bcd, "rx", qry);
+    } else
+        ogs_debug("[HSS] Rx Notify-Request (no IMSI)");
+
+    ret = fd_msg_new_answer_from_req(fd_g_config->cnf_dict, msg, 0);
+    ogs_assert(ret == 0);
+    ans = *msg;
 
     /* Set Vendor-Specific-Application-Id */
     ret = ogs_diam_message_vendor_specific_appid_set(
@@ -2559,10 +2842,13 @@ static int hss_ogs_diam_s6a_nor_cb(struct msg **msg, struct avp *avp,
     ret = fd_msg_rescode_set(ans, (char *)"DIAMETER_SUCCESS", NULL, NULL, 1);
     ogs_assert(ret == 0);
 
-    ret = fd_msg_send(msg, NULL, NULL);
+    ret = hss_s6a_send_traced(msg, imsi_bcd);
     ogs_assert(ret == 0);
 
-    ogs_debug("[HSS] Tx Notify-Answer");
+    if (have_imsi)
+        hss_trace_event(imsi_bcd, "S6a-NOR", "Tx Notify-Answer SUCCESS");
+    else
+        ogs_debug("[HSS] Tx Notify-Answer");
 
     /* Map MME Notify to Sh PNR for subscribed Application Servers */
     if (have_imsi)

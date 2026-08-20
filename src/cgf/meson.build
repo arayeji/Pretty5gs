@@ -31,6 +31,9 @@ libcgf_sources = files('''
     cgf-sm.h
     cgf-sm.c
 
+    worker.h
+    worker.c
+
     init.c
 '''.split())
 

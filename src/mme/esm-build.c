@@ -210,14 +210,34 @@ ogs_pkbuf_t *esm_build_activate_default_bearer_context_request(
     mme_bearer_t *bearer = NULL;
     ogs_session_t *session = NULL;
 
-    ogs_assert(sess);
+    if (!sess) {
+        ogs_error("Activate default bearer: sess is NULL");
+        return NULL;
+    }
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
-    ogs_assert(mme_ue);
+    if (!mme_ue) {
+        ogs_error("Activate default bearer: UE context already removed");
+        return NULL;
+    }
+    /*
+     * Under attach/PDN storms, Create Session can time out / tear down
+     * while Attach Accept or E-RAB Setup still tries to encode ADBCR.
+     * Hard-asserting here used to SIGABRT the whole MME.
+     */
     session = sess->session;
-    ogs_assert(session);
-    ogs_assert(session->name);
+    if (!session || !session->name) {
+        ogs_error("[%s] Activate default bearer: no session/APN "
+                "(PTI=%d create_action=%d)",
+                mme_ue->imsi_bcd, sess->pti, create_action);
+        return NULL;
+    }
     bearer = mme_default_bearer_in_sess(sess);
-    ogs_assert(bearer);
+    if (!bearer) {
+        ogs_error("[%s] Activate default bearer: no default bearer "
+                "(PTI=%d APN[%s])",
+                mme_ue->imsi_bcd, sess->pti, session->name);
+        return NULL;
+    }
 
     ogs_debug("Activate default bearer context request");
     ogs_debug("    IMSI[%s] PTI[%d] EBI[%d]",
@@ -420,10 +440,12 @@ ogs_pkbuf_t *esm_build_activate_dedicated_bearer_context_request(
 }
 
 ogs_pkbuf_t *esm_build_modify_bearer_context_request(
-        mme_bearer_t *bearer, int qos_presence, int tft_presence)
+        mme_bearer_t *bearer, int qos_presence, int tft_presence,
+        int ambr_presence)
 {
     mme_ue_t *mme_ue = NULL;
     mme_sess_t *sess = NULL;
+    ogs_session_t *session = NULL;
 
     ogs_nas_eps_message_t message;
     ogs_nas_eps_modify_eps_bearer_context_request_t 
@@ -433,12 +455,15 @@ ogs_pkbuf_t *esm_build_modify_bearer_context_request(
         &modify_eps_bearer_context_request->new_eps_qos;
     ogs_nas_traffic_flow_template_t *tft =
         &modify_eps_bearer_context_request->tft;
+    ogs_nas_apn_aggregate_maximum_bit_rate_t *apn_ambr =
+        &modify_eps_bearer_context_request->apn_ambr;
 
     ogs_assert(bearer);
     sess = mme_sess_find_by_id(bearer->sess_id);
     ogs_assert(sess);
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     ogs_assert(mme_ue);
+    session = sess->session;
 
     ogs_debug("Modify bearer context request");
     ogs_debug("    IMSI[%s] PTI[%d] EBI[%d]",
@@ -470,6 +495,20 @@ ogs_pkbuf_t *esm_build_modify_bearer_context_request(
         memcpy(tft->buffer, bearer->tft.data, tft->length);
     }
 
+    /* TS 24.301: APN-AMBR in Modify EPS Bearer Context Request — used for
+     * PGW Initiated Bearer Modification without Bearer QoS Update. */
+    if (ambr_presence == 1 && session) {
+        ogs_bitrate_t sess_ambr = mme_sess_ambr_for_pdn(mme_ue, session);
+
+        mme_ambr_apply_config(&sess_ambr);
+        mme_ambr_complete_directions(&sess_ambr);
+        if (sess_ambr.uplink && sess_ambr.downlink) {
+            modify_eps_bearer_context_request->presencemask |=
+                OGS_NAS_EPS_MODIFY_EPS_BEARER_CONTEXT_REQUEST_APN_AMBR_PRESENT;
+            apn_ambr_build(apn_ambr, sess_ambr.downlink, sess_ambr.uplink);
+        }
+    }
+
     return nas_eps_security_encode(mme_ue, &message);
 }
 
@@ -485,10 +524,24 @@ ogs_pkbuf_t *esm_build_deactivate_bearer_context_request(
             &message.esm.deactivate_eps_bearer_context_request;
     
     ogs_assert(bearer);
+    /*
+     * Teardown race: the session (or UE) can be removed while a
+     * Deactivate for one of its bearers is still queued/dispatching
+     * (e.g. Delete Bearer vs. Delete Session crossing). Aborting the
+     * MME here took production down (2026-07-31); drop safely instead.
+     */
     sess = mme_sess_find_by_id(bearer->sess_id);
-    ogs_assert(sess);
+    if (!sess) {
+        ogs_warn("esm_build_deactivate_bearer_context_request: "
+                "session has already been removed (EBI[%d])", bearer->ebi);
+        return NULL;
+    }
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
-    ogs_assert(mme_ue);
+    if (!mme_ue) {
+        ogs_warn("esm_build_deactivate_bearer_context_request: "
+                "UE context has already been removed (EBI[%d])", bearer->ebi);
+        return NULL;
+    }
 
     ogs_debug("Deactivate bearer context request");
     ogs_debug("    IMSI[%s] PTI[%d] EBI[%d]",
@@ -519,7 +572,11 @@ ogs_pkbuf_t *esm_build_bearer_resource_allocation_reject(
             &message.esm.bearer_resource_allocation_reject;
 
     ogs_assert(mme_ue);
-    ogs_assert(pti != OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED);
+    if (pti == OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED) {
+        ogs_error("[%s] Bearer resource allocation reject: PTI unassigned",
+                mme_ue->imsi_bcd);
+        return NULL;
+    }
 
     ogs_debug("Bearer resource allocation reject");
     ogs_debug("    IMSI[%s] PTI[%d] Cause[%d]",
@@ -540,6 +597,34 @@ ogs_pkbuf_t *esm_build_bearer_resource_allocation_reject(
     return nas_eps_security_encode(mme_ue, &message);
 }
 
+ogs_pkbuf_t *esm_build_status(
+        mme_ue_t *mme_ue, uint8_t ebi, uint8_t pti,
+        ogs_nas_esm_cause_t esm_cause)
+{
+    ogs_nas_eps_message_t message;
+    ogs_nas_eps_esm_status_t *esm_status = &message.esm.esm_status;
+
+    ogs_assert(mme_ue);
+
+    ogs_debug("ESM status");
+    ogs_debug("    IMSI[%s] EBI[%d] PTI[%d] Cause[%d]",
+            mme_ue->imsi_bcd, ebi, pti, esm_cause);
+
+    memset(&message, 0, sizeof(message));
+    message.h.security_header_type =
+       OGS_NAS_SECURITY_HEADER_INTEGRITY_PROTECTED_AND_CIPHERED;
+    message.h.protocol_discriminator = OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM;
+
+    message.esm.h.eps_bearer_identity = ebi;
+    message.esm.h.protocol_discriminator = OGS_NAS_PROTOCOL_DISCRIMINATOR_ESM;
+    message.esm.h.procedure_transaction_identity = pti;
+    message.esm.h.message_type = OGS_NAS_EPS_ESM_STATUS;
+
+    esm_status->esm_cause = esm_cause;
+
+    return nas_eps_security_encode(mme_ue, &message);
+}
+
 ogs_pkbuf_t *esm_build_bearer_resource_modification_reject(
         mme_ue_t *mme_ue, uint8_t pti, ogs_nas_esm_cause_t esm_cause)
 {
@@ -549,7 +634,11 @@ ogs_pkbuf_t *esm_build_bearer_resource_modification_reject(
             &message.esm.bearer_resource_modification_reject;
 
     ogs_assert(mme_ue);
-    ogs_assert(pti != OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED);
+    if (pti == OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED) {
+        ogs_error("[%s] Bearer resource modification reject: PTI unassigned",
+                mme_ue->imsi_bcd);
+        return NULL;
+    }
 
     ogs_debug("Bearer resource modification reject");
     ogs_debug("    IMSI[%s] PTI[%d] Cause[%d]",

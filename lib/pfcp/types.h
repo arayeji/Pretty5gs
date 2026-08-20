@@ -1142,6 +1142,16 @@ ED7(uint8_t     spare:2;,
 } __attribute__ ((packed)) ogs_pfcp_smreq_flags_t;
 
 /*
+ * 8.2.32 PFCPSRRsp-Flags
+ *
+ * Octet 5, Bit 1 - DROBU (Drop Buffered Packets): when set to "1",
+ * this indicates that the UP function shall drop the packets currently
+ * buffered for the PFCP session (the buffering state itself, i.e. the
+ * FAR Apply Action, is not changed).
+ */
+#define OGS_PFCP_SRRSP_FLAGS_DROP_BUFFERED_PACKETS 0x01
+
+/*
  * 8.2.40 Measurement Method
  *
  * Octet 5 shall be encoded as follows:

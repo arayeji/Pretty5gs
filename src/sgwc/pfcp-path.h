@@ -29,8 +29,26 @@ extern "C" {
 int sgwc_pfcp_open(void);
 void sgwc_pfcp_close(void);
 
+/* Dedicated PFCP RX thread (sgwc.pfcp_rx_thread, default off). */
+int sgwc_pfcp_rx_start(void);
+void sgwc_pfcp_rx_stop(void);
+bool sgwc_pfcp_rx_active(void);
+uint64_t sgwc_pfcp_rx_drops(void);
+
+/* Main-thread only: init PFCP node FSM if RX created the peer. */
+void sgwc_pfcp_node_ensure_fsm(ogs_pfcp_node_t *node);
+
 int sgwc_pfcp_send_bearer_to_modify_list(
         sgwc_sess_t *sess, ogs_pfcp_xact_t *xact);
+
+/*
+ * bearer->to_modify_node is a single embedded lnode. Before linking it
+ * into a new PFCP xact's bearer_to_modify_list, unlink it from any
+ * in-flight xact that already owns it — otherwise ogs_list_add()
+ * corrupts both lists (heap smash → talloc "Bad talloc magic").
+ */
+void sgwc_bearer_unlink_to_modify(
+        sgwc_bearer_t *bearer, ogs_pfcp_node_t *node);
 
 int sgwc_pfcp_send_session_establishment_request(
         sgwc_sess_t *sess, ogs_pool_id_t gtp_xact_id, ogs_pkbuf_t *gtpbuf,

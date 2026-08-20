@@ -144,9 +144,12 @@ smf:
 #    # PoD accepts any configured secret (per-server or pod_secret).
 #    select: primary_failover
 #    nas_identifier: open5gs-smf
-#    # NAS-IP-Address (attribute 4). If unset, the first IPv4 SBI server
-#    # address is used; as a last resort 127.0.0.1 is sent so the
-#    # attribute is never missing (some AAA servers reject otherwise).
+#    # NAS-IP-Address (attribute 4) and UDP source bind for client
+#    # sockets. AAA often keys clients.conf by packet source IP — without
+#    # bind the kernel uses the egress address, which may not match.
+#    # Address must exist on this host. If unset, attribute falls back to
+#    # the first IPv4 SBI server address (then 127.0.0.1); socket stays
+#    # unbound (kernel picks egress).
 #    nas_ip: 127.0.0.4
 #    timeout: 3000
 #    retry: 3
@@ -202,9 +205,13 @@ smf:
 #    spool_dir: /var/spool/open5gs/cdr
 #    # Value of CDR [18] nodeID; also used as filename prefix.
 #    node_id: open5gs-smf-1
-#    # IPv4 address emitted as CDR [4] p-GWAddress. If unset the field
-#    # is omitted.
+#    # CDR [4] p-GWAddress:
+#    #   1) gtpc.server.advertise  2) address/pgw_address  3) local_address
+#    address: 10.0.0.1
 #    local_address: 10.0.0.1
+#    # CDR [6] servingNodeAddress fallback (SGW S5-C / SGSN) if peer IP unknown:
+#    # serving_node_address / sgsn_address / sgw_serving_address
+#    # serving_node_address: 10.0.0.3
 #    # Rotate the active file when any of these is first hit. Set to 0
 #    # to disable an individual trigger.
 #    max_records: 100

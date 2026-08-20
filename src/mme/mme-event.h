@@ -48,6 +48,13 @@ typedef enum {
      * (write queue + POLLOUT). Main may destroy the socket once all
      * registered confirmations arrive (see s1ap-io.c close registry) */
     MME_EVENT_S1AP_IO_DRAINED,
+    /*
+     * IO thread heartbeat: e->sock's write queue is above the
+     * congestion watermark, depth in e->io_wq_depth. Repeated once a
+     * second while it lasts; main treats it as a short lease
+     * (s1ap-overload.c). Safe to drop — the next one arrives in 1 s.
+     */
+    MME_EVENT_S1AP_IO_CONGESTED,
 
     MME_EVENT_EMM_MESSAGE,
     MME_EVENT_EMM_TIMER,
@@ -77,6 +84,7 @@ typedef enum {
      */
     MME_EVENT_ADMIN_DETACH_ENB,
     MME_EVENT_ADMIN_DETACH_UE,
+    MME_EVENT_ADMIN_DETACH_SESS,  /* one PDN/APN (e->sess_id) */
     MME_EVENT_ADMIN_PAGE_UE,
     /*
      * Silent local UE reclaim on the OWNER shard
@@ -101,6 +109,12 @@ typedef enum {
      * e->ho_kind selects the tail.
      */
     MME_EVENT_S1AP_HO_TAIL,
+
+    /*
+     * APN-FQDN PGW DNS finished on a DNS worker thread. Posted to the
+     * UE owner to resume Create Session (or reject). See mme-pgw-dns.c.
+     */
+    MME_EVENT_PGW_DNS_DONE,
 
     MAX_NUM_OF_MME_EVENT,
 
@@ -128,6 +142,16 @@ typedef enum {
  * the OGS_GTP_RELEASE_* action.
  */
 #define MME_HO_TAIL_REL_AB          5
+/*
+ * InitialUEMessage S-TMSI association deferred to the UE owner shard
+ * (Stage C-full). Main resolves the S-TMSI to a shard-owned mme_ue via
+ * the GUTI hash but must not read its FSM state (validity check) nor
+ * mutate it (HOLDING_S1_CONTEXT, enb_ue_associate_mme_ue, mobile
+ * reachable timer). The owner re-validates and associates, then feeds
+ * the NAS PDU (e->pkbuf, raw NAS bytes) into the normal EMM path.
+ * e->enb_ue_id names the NEW enb_ue created by main for this message.
+ */
+#define MME_HO_TAIL_STMSI_ASSOC     6
 
 #define MME_UE_REL_F_HO_PEER_GONE   0x1
 
@@ -186,6 +210,9 @@ typedef struct mme_event_s {
     /* MME_EVENT_S1AP_TX_READY: SCTP stream for the encoded pkbuf */
     uint16_t tx_stream_no;
 
+    /* MME_EVENT_S1AP_IO_CONGESTED: per-eNB write-queue depth */
+    int io_wq_depth;
+
     uint8_t nas_type;
     int create_action;
     ogs_nas_eps_message_t *nas_message;
@@ -210,6 +237,13 @@ typedef struct mme_event_s {
     ogs_pool_id_t bearer_id;
     ogs_pool_id_t gtp_xact_id;
 
+    /*
+     * Cached UE-owner shard (>= 0) when the creator already resolved
+     * the UE. mme_event_push_to_ue_owner skips pool finds when set.
+     * -1 = unknown (default from mme_event_new).
+     */
+    int owner_wid;
+
     ogs_timer_t *timer;
 
     /*
@@ -225,17 +259,41 @@ typedef struct mme_event_s {
     char admin_mnc[4];
     int admin_tac;
 
+    /* Set at creation; the dispatching thread turns it into queue lag */
+    ogs_time_t created_at;
+
     /* MME_EVENT_S1AP_HO_TAIL: MME_HO_TAIL_* discriminator */
     int ho_kind;
     /* MME_HO_TAIL_UE_REL: S1AP_UE_CTX_REL_* action + MME_UE_REL_F_* */
     int rel_action;
     int rel_flags;
 
+    /* MME_EVENT_PGW_DNS_DONE */
+    ogs_pool_id_t sess_id;
+    int pgw_dns_rv;
+    ogs_ip_t pgw_dns_ip;
+
 } mme_event_t;
 
 OGS_STATIC_ASSERT(OGS_EVENT_SIZE >= sizeof(mme_event_t));
 
 void mme_event_term(void);
+
+/*
+ * The mme_main() thread is the ONLY consumer of ogs_app()->queue. A
+ * blocking ogs_queue_push() issued from that same thread (poll callback,
+ * timer callback, signal handler) therefore waits on a drain that can
+ * never happen: mme_main() stops polling, every socket it owns stops
+ * being read, and the S11 UDP Recv-Q overflows until all GTP
+ * transactions time out. Push through mme_queue_push_main() instead --
+ * it never blocks the main thread and only retries briefly elsewhere.
+ *
+ * Returns OGS_OK (queued, pollset notified), OGS_RETRY (queue full,
+ * caller must drop and free the event) or OGS_DONE (queue terminated).
+ */
+void mme_event_mark_main_thread(void);
+bool mme_event_on_main_thread(void);
+int mme_queue_push_main(void *event);
 
 /*
  * S1AP CONNREFUSED side-channel: teardowns must not compete with a
@@ -246,8 +304,32 @@ void mme_event_s1ap_connrefused_init(void);
 void mme_event_s1ap_connrefused_final(void);
 int mme_event_s1ap_connrefused_trypop(mme_event_t **e);
 
+/* diagnostic for /admin/queues */
+unsigned int mme_event_s1ap_connrefused_depth(void);
+
+/*
+ * S1AP TX_READY side-channel: encode completions must not sit behind a
+ * multi-thousand S1AP/GTP event backlog. While TX_READY is delayed,
+ * s1ap_tx_pending stays > 0 and every sync downlink (ICS / Attach
+ * Accept) parks on the per-eNB hold list → cell-level wedge.
+ */
+void mme_event_s1ap_tx_ready_init(void);
+void mme_event_s1ap_tx_ready_final(void);
+int mme_event_s1ap_tx_ready_push(mme_event_t *e);
+int mme_event_s1ap_tx_ready_trypop(mme_event_t **e);
+unsigned int mme_event_s1ap_tx_ready_depth(void);
+
 mme_event_t *mme_event_new(mme_event_e id);
 void mme_event_free(mme_event_t *e);
+
+/*
+ * Event-queue lag: how long a dispatched event waited between creation and
+ * dispatch. Timers whose budget is smaller than this are measuring the MME's
+ * own backlog rather than the peer, so retransmitting on them is wrong.
+ * Observed by every dispatching thread, read from anywhere.
+ */
+void mme_event_lag_observe(const mme_event_t *e);
+ogs_time_t mme_event_lag(void);
 
 /*
  * Drop queued events targeting a MME-UE that is being removed (main app
@@ -267,6 +349,9 @@ void s1ap_event_push_decoded(void *sock, ogs_sockaddr_t *addr,
 void mme_sctp_event_push(mme_event_e id,
         void *sock, ogs_sockaddr_t *addr, ogs_pkbuf_t *pkbuf,
         uint16_t max_num_of_istreams, uint16_t max_num_of_ostreams);
+
+/* IO thread -> main: TX congestion heartbeat for sock (see s1ap-io.c) */
+void s1ap_io_congestion_event_push(void *sock, int wq_depth);
 
 #ifdef __cplusplus
 }

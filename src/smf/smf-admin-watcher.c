@@ -158,7 +158,12 @@ static void clear_pending_cdr_strings_locked(void)
     smf_cdr_config_t *c = &g_pending_cdr.cfg;
     if (c->spool_dir)     { ogs_free((void *)c->spool_dir);     c->spool_dir = NULL; }
     if (c->node_id)       { ogs_free((void *)c->node_id);       c->node_id = NULL; }
+    if (c->address) { ogs_free((void *)c->address); c->address = NULL; }
     if (c->local_address) { ogs_free((void *)c->local_address); c->local_address = NULL; }
+    if (c->serving_node_address) {
+        ogs_free((void *)c->serving_node_address);
+        c->serving_node_address = NULL;
+    }
 }
 
 static void on_smf_cdr_update(
@@ -180,8 +185,12 @@ static void on_smf_cdr_update(
             ? ogs_strdup(cfg->spool_dir) : NULL;
     g_pending_cdr.cfg.node_id            = cfg->node_id
             ? ogs_strdup(cfg->node_id) : NULL;
+    g_pending_cdr.cfg.address            = cfg->address
+            ? ogs_strdup(cfg->address) : NULL;
     g_pending_cdr.cfg.local_address      = cfg->local_address
             ? ogs_strdup(cfg->local_address) : NULL;
+    g_pending_cdr.cfg.serving_node_address = cfg->serving_node_address
+            ? ogs_strdup(cfg->serving_node_address) : NULL;
     g_pending_cdr.cfg.rotate_max_records = cfg->rotate_max_records;
     g_pending_cdr.cfg.rotate_max_bytes   = cfg->rotate_max_bytes;
     g_pending_cdr.cfg.rotate_max_seconds = cfg->rotate_max_seconds;
@@ -515,7 +524,10 @@ static void drain_cb(void *data)
         /* Free the heap strings we took ownership of under the lock. */
         if (cdr_cfg.spool_dir)     ogs_free((void *)cdr_cfg.spool_dir);
         if (cdr_cfg.node_id)       ogs_free((void *)cdr_cfg.node_id);
+        if (cdr_cfg.address)       ogs_free((void *)cdr_cfg.address);
         if (cdr_cfg.local_address) ogs_free((void *)cdr_cfg.local_address);
+        if (cdr_cfg.serving_node_address)
+            ogs_free((void *)cdr_cfg.serving_node_address);
     }
 
     if (radius_pending) {

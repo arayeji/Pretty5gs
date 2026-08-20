@@ -127,8 +127,10 @@ static void mme_s6a_post_failure(
      * Do not call mme_s6a_timer_stop() here. ogs_timer_* is owned by the
      * UE owner thread (main, or an mme.workers shard); stopping from a
      * freeDiameter worker races the timer rbtree and can SIGSEGV. The
-     * owner stops the timer when it handles MME_EVENT_S6A_MESSAGE.
+     * owner stops the timer when it handles MME_EVENT_S6A_MESSAGE; clearing
+     * the pending marker is all that is safe to do from here.
      */
+    mme_s6a_answer_received(mme_ue);
 
     s6a_message = ogs_calloc(1, sizeof(*s6a_message));
     if (!s6a_message) {
@@ -167,6 +169,20 @@ void mme_s6a_timer_start(mme_ue_t *mme_ue, uint16_t cmd_code)
 
     mme_ue->s6a_pending_cmd = cmd_code;
     ogs_timer_start(mme_ue->t_s6a, mme_timer_cfg(MME_TIMER_S6A)->duration);
+}
+
+/*
+ * Callable from a freeDiameter worker: only clears the pending marker, never
+ * touches ogs_timer_*. A watchdog that expires afterwards sees no pending
+ * command and returns without rejecting the UE; the owner thread stops the
+ * timer when it handles MME_EVENT_S6A_MESSAGE.
+ */
+void mme_s6a_answer_received(mme_ue_t *mme_ue)
+{
+    if (!mme_ue)
+        return;
+
+    mme_ue->s6a_pending_cmd = 0;
 }
 
 void mme_s6a_timer_stop(mme_ue_t *mme_ue)
@@ -897,6 +913,18 @@ static int mme_s6a_subscription_data_from_avp(struct avp *avp,
                         ogs_assert(ret == 0);
                         switch(hdr->avp_code) {
                         case OGS_DIAM_S6A_AVP_CODE_MIP_HOME_AGENT_ADDRESS:
+                            /*
+                             * DYNAMIC MIP6 is not a permanent PGW bind for
+                             * initial request (TS 23.401 4.3.8.1); selection
+                             * ignores it. Do not load Address into smf_ip so
+                             * CSR uses APN DNS / YAML instead.
+                             */
+                            if (session->pdn_gw_allocation_type ==
+                                    OGS_PDN_GW_ALLOCATION_DYNAMIC) {
+                                ogs_debug("MIP-Home-Agent-Address ignored "
+                                        "(PDN-GW-Allocation-Type=DYNAMIC)");
+                                break;
+                            }
                             memset(&addr, 0, sizeof(addr));
                             ret = fd_msg_avp_value_interpret(avpch4,
                                     &addr.sa);
@@ -922,7 +950,17 @@ static int mme_s6a_subscription_data_from_avp(struct avp *avp,
                             break;
                         case OGS_DIAM_S6A_AVP_CODE_MIP_HOME_AGENT_HOST:
                             if (!session->smf_ip.ipv4 && !session->smf_ip.ipv6) {
-                                if (!mme_self()->mip_home_agent_host_dns) {
+                                /*
+                                 * DYNAMIC: do not queue Host for DNS; MME
+                                 * re-selects PGW on initial request
+                                 * (TS 23.401 4.3.8.1). STATIC / unset still
+                                 * resolves when mip_home_agent_host_dns.
+                                 */
+                                if (session->pdn_gw_allocation_type ==
+                                        OGS_PDN_GW_ALLOCATION_DYNAMIC) {
+                                    ogs_debug("MIP-Home-Agent-Host ignored "
+                                            "(PDN-GW-Allocation-Type=DYNAMIC)");
+                                } else if (!mme_self()->mip_home_agent_host_dns) {
                                     ogs_debug("MIP-Home-Agent-Host ignored "
                                             "(mip_home_agent_host_dns:false)");
                                 } else if (mme_s6a_mip_home_agent_host_to_session(
@@ -1141,6 +1179,8 @@ static void _mme_s6a_send_air(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     stored = 1;
 
     /* Send the request */
+    if (MME_UE_HAVE_IMSI(mme_ue))
+        mme_trace_diameter(mme_ue->imsi_bcd, "tx", req);
     ret = fd_msg_send(&req, mme_s6a_aia_cb, svg);
     if (ret != 0) {
         ogs_error("fd_msg_send AIR failed (ret=%d) IMSI[%s]",
@@ -1261,6 +1301,9 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
         goto cleanup;
     }
 
+    if (MME_UE_HAVE_IMSI(mme_ue))
+        mme_trace_diameter(mme_ue->imsi_bcd, "rx", *msg);
+
     /* Allocate message structure early for proper cleanup */
     s6a_message = ogs_calloc(1, sizeof(ogs_diam_s6a_message_t));
     if (!s6a_message) {
@@ -1268,6 +1311,8 @@ static void mme_s6a_aia_cb(void *data, struct msg **msg)
         error++;
         goto cleanup;
     }
+
+    mme_s6a_answer_received(mme_ue);
 
     /* Set Authentication-Information Command */
     s6a_message->cmd_code = OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION;
@@ -1800,6 +1845,8 @@ void mme_s6a_send_ulr(enb_ue_t *enb_ue, mme_ue_t *mme_ue, uint32_t extra_ulr_fla
     stored = 1;
 
     /* Send the request */
+    if (MME_UE_HAVE_IMSI(mme_ue))
+        mme_trace_diameter(mme_ue->imsi_bcd, "tx", req);
     ret = fd_msg_send(&req, mme_s6a_ula_cb, svg);
     if (ret != 0) {
         ogs_error("fd_msg_send ULR failed (ret=%d) IMSI[%s]",
@@ -1902,6 +1949,9 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
         goto cleanup;
     }
 
+    if (MME_UE_HAVE_IMSI(mme_ue))
+        mme_trace_diameter(mme_ue->imsi_bcd, "rx", *msg);
+
     /* Allocate message structure early for proper cleanup */
     s6a_message = ogs_calloc(1, sizeof(ogs_diam_s6a_message_t));
     if (!s6a_message) {
@@ -1909,6 +1959,8 @@ static void mme_s6a_ula_cb(void *data, struct msg **msg)
         error++;
         goto cleanup;
     }
+
+    mme_s6a_answer_received(mme_ue);
 
     /* Set Update-Location Command */
     s6a_message->cmd_code = OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION;
@@ -2808,14 +2860,12 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
     union avp_value val;
     struct avp_hdr *hdr;
     char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
-    uint32_t result_code;
     mme_event_t *e;
     mme_ue_t *mme_ue;
     ogs_diam_s6a_message_t *s6a_message;
     ogs_diam_s6a_clr_message_t *clr_message;
 
     /* Initialize variables */
-    result_code = 0;
     ans = NULL;
     e = NULL;
     mme_ue = NULL;
@@ -2839,7 +2889,6 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
     s6a_message = ogs_calloc(1, sizeof(ogs_diam_s6a_message_t));
     if (!s6a_message) {
         ogs_error("Failed to allocate s6a_message");
-        result_code = OGS_DIAM_OUT_OF_SPACE;
         goto error_out;
     }
 
@@ -2854,7 +2903,6 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
     }
     if (!avp) {
         ogs_error("User-Name AVP not found");
-        result_code = OGS_DIAM_MISSING_AVP;
         goto error_out;
     }
 
@@ -2866,7 +2914,6 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
     if (!hdr->avp_value || !hdr->avp_value->os.data ||
             hdr->avp_value->os.len == 0) {
         ogs_error("Invalid User-Name AVP data");
-        result_code = OGS_DIAM_INVALID_AVP_VALUE;
         goto error_out;
     }
 
@@ -2875,9 +2922,15 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
 
     mme_ue = mme_ue_find_by_imsi_bcd(imsi_bcd);
     if (!mme_ue) {
-        ogs_error("Cancel Location for Unknown IMSI[%s]", imsi_bcd);
-        result_code = OGS_DIAM_S6A_ERROR_USER_UNKNOWN;
-        goto error_out;
+        /*
+         * 3GPP TS 29.272 §5.2.1.2.2: if the IMSI is not known, return
+         * DIAMETER_SUCCESS (already absent from this MME).
+         */
+        ogs_warn("Cancel-Location for unknown IMSI[%s]: "
+                "DIAMETER_SUCCESS (no local UE)", imsi_bcd);
+        ogs_free(s6a_message);
+        s6a_message = NULL;
+        goto send_success;
     }
 
     /* Get Cancellation-Type AVP */
@@ -2888,7 +2941,6 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
     }
     if (!avp) {
         ogs_error("Cancellation-Type AVP not found");
-        result_code = OGS_DIAM_MISSING_AVP;
         goto error_out;
     }
 
@@ -2914,6 +2966,7 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
         clr_message->clr_flags = hdr->avp_value->i32;
     }
 
+send_success:
     /* Set the Origin-Host, Origin-Realm, and Result-Code AVPs */
     ret = fd_msg_rescode_set(ans, (char*)"DIAMETER_SUCCESS", NULL, NULL, 1);
     if (ret != 0) {
@@ -2966,6 +3019,10 @@ static int mme_s6a_clr_cb(struct msg **msg, struct avp *avp,
             ogs_error("pthread_mutex_unlock() failed");
     }
 
+    /* No local UE: SUCCESS already sent; nothing to detach. */
+    if (!mme_ue)
+        return 0;
+
     /* Send event to MME */
     e = mme_event_new(MME_EVENT_S6A_MESSAGE);
     if (!e) {
@@ -2993,20 +3050,11 @@ error_out:
     if (!ans)
         return 0;
 
-    /* Set appropriate error result code */
-    if (result_code == OGS_DIAM_S6A_ERROR_USER_UNKNOWN) {
-        ret = ogs_diam_message_experimental_rescode_set(ans, result_code);
-        if (ret != 0) {
-            ogs_error("Diameter operation failed (ret=%d)", ret);
-            return 0;
-        }
-    } else {
-        ret = fd_msg_rescode_set(ans, (char*)"DIAMETER_UNABLE_TO_COMPLY",
-                                NULL, NULL, 1);
-        if (ret != 0) {
-            ogs_error("Diameter operation failed (ret=%d)", ret);
-            return 0;
-        }
+    ret = fd_msg_rescode_set(ans, (char*)"DIAMETER_UNABLE_TO_COMPLY",
+                            NULL, NULL, 1);
+    if (ret != 0) {
+        ogs_error("Diameter operation failed (ret=%d)", ret);
+        return 0;
     }
 
     /* Set the Auth-Session-State AVP */
@@ -3127,7 +3175,7 @@ static int mme_s6a_idr_cb(struct msg **msg, struct avp *avp,
 
     mme_ue = mme_ue_find_by_imsi_bcd(imsi_bcd);
     if (!mme_ue) {
-        ogs_error("Insert Subscriber Data for Unknown IMSI[%s]", imsi_bcd);
+        ogs_warn("Insert Subscriber Data for Unknown IMSI[%s]", imsi_bcd);
         result_code = OGS_DIAM_S6A_ERROR_USER_UNKNOWN;
         goto error_out;
     }

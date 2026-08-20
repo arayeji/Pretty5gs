@@ -50,6 +50,8 @@ void ogs_pfcp_build_create_far(
     ogs_pfcp_tlv_create_far_t *message, int i, ogs_pfcp_far_t *far);
 void ogs_pfcp_build_update_far_deactivate(
     ogs_pfcp_tlv_update_far_t *message, int i, ogs_pfcp_far_t *far);
+void ogs_pfcp_build_update_far_drop(
+    ogs_pfcp_tlv_update_far_t *message, int i, ogs_pfcp_far_t *far);
 void ogs_pfcp_build_update_far_activate(
     ogs_pfcp_tlv_update_far_t *message, int i, ogs_pfcp_far_t *far);
 

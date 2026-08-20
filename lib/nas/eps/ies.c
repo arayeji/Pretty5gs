@@ -3020,7 +3020,9 @@ int ogs_nas_eps_decode_ue_radio_capability_id_availability(ogs_nas_ue_radio_capa
     size = ue_radio_capability_id_availability->length + sizeof(ue_radio_capability_id_availability->length);
 
     if (ogs_pkbuf_pull(pkbuf, size) == NULL) {
-       ogs_error("ogs_pkbuf_pull() failed [size:%d]", (int)size);
+       /* Optional IE with bogus length — UE quirk, drop at TAU decode */
+       ogs_warn("ogs_pkbuf_pull() failed [size:%d] "
+                "(ue_radio_capability_id_availability)", (int)size);
        return -1;
     }
 
@@ -3628,7 +3630,26 @@ int ogs_nas_eps_decode_access_point_name(ogs_nas_access_point_name_t *access_poi
         apn_len = ogs_fqdn_parse(apn, access_point_name->apn,
                 ogs_min(access_point_name->length, OGS_MAX_APN_LEN));
         if (apn_len <= 0) {
-            ogs_error("UE not APN setting");
+            /*
+             * ogs_fqdn_parse() returns 0 for empty labels (e.g. 0x00 0x00),
+             * or -EINVAL for non-DNS-label encoding. TS 23.401 / 24.301:
+             * treat as absent/empty APN → MME selects S6a default, then
+             * mme.apn_correction may still rewrite. WARN only — this is
+             * a UE encoding quirk, not an MME fault.
+             */
+            const ogs_trace_ctx_t *tr = ogs_trace_get();
+            ogs_warn("APN empty/invalid DNS labels (ie_len=%d parse_rv=%d) "
+                    "— treat as empty; default/apn_correction applies "
+                    "IMSI[%s] enb_id[%u]",
+                    access_point_name->length, apn_len,
+                    (tr && tr->imsi[0]) ? tr->imsi : "-",
+                    tr ? tr->enb_id : 0);
+            if (access_point_name->length > 0)
+                ogs_log_hexdump(OGS_LOG_WARN,
+                        (unsigned char *)access_point_name->apn,
+                        ogs_min(access_point_name->length, OGS_MAX_APN_LEN));
+            access_point_name->length = 0;
+            access_point_name->apn[0] = '\0';
         } else {
             access_point_name->length = apn_len;
             ogs_cpystrn(access_point_name->apn, apn,

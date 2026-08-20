@@ -92,7 +92,60 @@ sgwc_metrics_spec_def_t sgwc_metrics_spec_def_global[_SGWC_METR_GLOB_MAX] = {
     .name = "sgwc_pfcp_peers_active",
     .description = "Number of PFCP-associated SGW-U peers",
 },
+[SGWC_METR_GLOB_GAUGE_ADMISSION_OUTSTANDING] = {
+    .type = OGS_METRICS_METRIC_TYPE_GAUGE,
+    .name = "sgwc_admission_outstanding",
+    .description = "In-flight Create Sessions awaiting PFCP Session "
+        "Establishment Response (sgwc.admission.max_outstanding cap)",
+},
+[SGWC_METR_GLOB_CTR_ADMISSION_REJECT_CAP] = {
+    .type = OGS_METRICS_METRIC_TYPE_COUNTER,
+    .name = "sgwc_admission_reject_cap_total",
+    .description = "Create Sessions rejected: in-flight cap reached",
+},
+[SGWC_METR_GLOB_CTR_ADMISSION_REJECT_RATE] = {
+    .type = OGS_METRICS_METRIC_TYPE_COUNTER,
+    .name = "sgwc_admission_reject_rate_total",
+    .description = "Create Sessions rejected: rate limit exceeded",
+},
+[SGWC_METR_GLOB_CTR_ADMISSION_REJECT_PFCP_DOWN] = {
+    .type = OGS_METRICS_METRIC_TYPE_COUNTER,
+    .name = "sgwc_admission_reject_pfcp_down_total",
+    .description = "Create Sessions rejected: no PFCP-associated SGW-U",
+},
+[SGWC_METR_GLOB_GAUGE_SESSIONS_DL_FAR_BUFF] = {
+    .type = OGS_METRICS_METRIC_TYPE_GAUGE,
+    .name = "sgwc_sessions_dl_far_buff",
+    .description = "SGWC sessions with at least one DL FAR in BUFF|NOCP "
+        "(idle buffering toward UPF)",
+},
 };
+
+void sgwc_metrics_admission_reject(sgwc_admission_reject_reason_t reason)
+{
+    sgwc_metric_type_global_t t;
+
+    switch (reason) {
+    case SGWC_ADMISSION_REJECT_CAP:
+        t = SGWC_METR_GLOB_CTR_ADMISSION_REJECT_CAP;
+        break;
+    case SGWC_ADMISSION_REJECT_RATE:
+        t = SGWC_METR_GLOB_CTR_ADMISSION_REJECT_RATE;
+        break;
+    case SGWC_ADMISSION_REJECT_PFCP_DOWN:
+        t = SGWC_METR_GLOB_CTR_ADMISSION_REJECT_PFCP_DOWN;
+        break;
+    default:
+        return;
+    }
+
+    sgwc_metrics_inst_global_inc(t);
+}
+
+void sgwc_metrics_admission_outstanding_set(int val)
+{
+    sgwc_metrics_global_set(SGWC_METR_GLOB_GAUGE_ADMISSION_OUTSTANDING, val);
+}
 
 typedef struct sgwc_metric_key_by_pfcp_peer_s {
     char addr[OGS_ADDRSTRLEN];
@@ -439,10 +492,31 @@ void sgwc_metrics_ue_active_dec(sgwc_ue_t *sgwc_ue)
     sgwc_ue->metrics_ue_counted = 0;
 }
 
+static const char *sgwc_metrics_pgw_addr_str(
+        sgwc_sess_t *sess, char *tmp, size_t tmplen)
+{
+    sgwc_pgw_peer_t *peer;
+
+    ogs_assert(sess);
+    ogs_assert(sess->gnode);
+    ogs_assert(tmp);
+    ogs_assert(tmplen > 0);
+
+    peer = sgwc_pgw_peer_get(sess->gnode);
+    if (peer && peer->addr_str[0])
+        return peer->addr_str;
+
+    OGS_ADDR(&sess->gnode->addr, tmp);
+    if (peer && tmp[0])
+        ogs_cpystrn(peer->addr_str, tmp, sizeof(peer->addr_str));
+    return tmp;
+}
+
 void sgwc_metrics_session_active_inc(sgwc_sess_t *sess)
 {
     ogs_plmn_id_t plmn_id;
     char ipbuf[OGS_ADDRSTRLEN];
+    const char *pgw_addr;
     const char *rat = NULL, *gtp_if = NULL;
 
     ogs_assert(sess);
@@ -454,8 +528,10 @@ void sgwc_metrics_session_active_inc(sgwc_sess_t *sess)
     if (!sgwc_metrics_plmn_from_sess(sess, &plmn_id))
         return;
 
-    OGS_ADDR(&sess->gnode->addr, ipbuf);
-    sgwc_metrics_inst_by_plmn_pgw_add(&plmn_id, ipbuf,
+    pgw_addr = sgwc_metrics_pgw_addr_str(sess, ipbuf, sizeof(ipbuf));
+    ogs_cpystrn(sess->metrics_pgw_addr, pgw_addr,
+            sizeof(sess->metrics_pgw_addr));
+    sgwc_metrics_inst_by_plmn_pgw_add(&plmn_id, sess->metrics_pgw_addr,
             SGWC_METR_BY_PLMN_PGW_GAUGE_SESSION_ACTIVE, 1);
 
     if (sess->session.name && sess->session.name[0]) {
@@ -505,15 +581,14 @@ static void sgwc_metrics_session_apn_dec(sgwc_sess_t *sess,
 void sgwc_metrics_session_active_dec(sgwc_sess_t *sess)
 {
     ogs_plmn_id_t plmn_id;
-    char ipbuf[OGS_ADDRSTRLEN];
 
     ogs_assert(sess);
 
     if (!sess->metrics_session_counted)
         return;
 
-    if (!sess->gnode) {
-        ogs_warn("SGWC session metrics dec skipped: no PGW gnode");
+    if (!sess->metrics_pgw_addr[0]) {
+        ogs_warn("SGWC session metrics dec skipped: no cached PGW addr");
         sgwc_metrics_session_rat_dec(sess);
         sess->metrics_apn_labeled = 0;
         sess->metrics_session_counted = 0;
@@ -524,16 +599,18 @@ void sgwc_metrics_session_active_dec(sgwc_sess_t *sess)
         ogs_warn("SGWC session metrics dec skipped: no PLMN");
         sgwc_metrics_session_rat_dec(sess);
         sess->metrics_apn_labeled = 0;
+        sess->metrics_pgw_addr[0] = '\0';
         sess->metrics_session_counted = 0;
         return;
     }
 
-    OGS_ADDR(&sess->gnode->addr, ipbuf);
-    sgwc_metrics_inst_by_plmn_pgw_add(&plmn_id, ipbuf,
+    /* Use the label stored at inc — no sockaddr conversion on teardown. */
+    sgwc_metrics_inst_by_plmn_pgw_add(&plmn_id, sess->metrics_pgw_addr,
             SGWC_METR_BY_PLMN_PGW_GAUGE_SESSION_ACTIVE, -1);
 
     sgwc_metrics_session_apn_dec(sess, &plmn_id);
     sgwc_metrics_session_rat_dec(sess);
+    sess->metrics_pgw_addr[0] = '\0';
     sess->metrics_session_counted = 0;
 }
 

@@ -88,11 +88,13 @@ int ogs_metrics_admin_trace_imsi(const ogs_metrics_query_t *q,
         return TRACE_ADMIN_HTTP_OK;
     }
 
+    /* Bare GET /admin/trace/imsi → list current filters (ok:true). */
     if (!imsi || !imsi[0]) {
-        *body_len = trace_admin_fmt(body, body_cap, false,
-                "use ?imsi=<prefix>|list, ?force=1, ?remove=1, or ?replace=1",
-                TRACE_ADMIN_HTTP_BAD_REQUEST);
-        return TRACE_ADMIN_HTTP_BAD_REQUEST;
+        ogs_snprintf(detail, sizeof(detail), "listed %d prefix(es)",
+                ogs_trace_filter_count());
+        *body_len = trace_admin_fmt(body, body_cap, true, detail,
+                TRACE_ADMIN_HTTP_OK);
+        return TRACE_ADMIN_HTTP_OK;
     }
 
     if (q->remove) {

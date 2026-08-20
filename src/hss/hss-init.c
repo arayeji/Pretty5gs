@@ -20,11 +20,32 @@
 #include "hss-context.h"
 #include "hss-fd-path.h"
 #include "hss-sm.h"
+#include "hss-trace.h"
+#include "hss-admin.h"
+#include "hss-event.h"
 #include "metrics.h"
 
 
 static ogs_thread_t *thread;
 static void hss_main(void *data);
+
+static void hss_sighup_handler(void)
+{
+    hss_event_t *e = NULL;
+    int rv;
+
+    e = hss_event_new(HSS_EVT_CONFIG_RELOAD);
+    ogs_assert(e);
+
+    rv = ogs_queue_push(ogs_app()->queue, e);
+    if (rv != OGS_OK) {
+        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        hss_event_free(e);
+        return;
+    }
+
+    ogs_pollset_notify(ogs_app()->pollset);
+}
 
 static int initialized = 0;
 
@@ -52,12 +73,15 @@ int hss_initialize(void)
     if (rv != OGS_OK) return rv;
 
     ogs_metrics_context_open(ogs_metrics_self());
+    hss_admin_api_register();
 
     rv = ogs_dbi_init(ogs_app()->db_uri);
     if (rv != OGS_OK) return rv;
 
     rv = hss_fd_init();
     if (rv != OGS_OK) return OGS_ERROR;
+
+    ogs_app_sighup_handler_set(hss_sighup_handler);
 
     thread = ogs_thread_create(hss_main, NULL);
     if (!thread) return OGS_ERROR;

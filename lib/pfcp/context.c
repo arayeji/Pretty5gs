@@ -2401,9 +2401,42 @@ ogs_pfcp_far_t *ogs_pfcp_far_find_by_teid(uint32_t teid)
     return far;
 }
 
+/*
+ * TS 29.244 5.2.4.3 / 8.2.31+8.2.32: DROBU (Drop Buffered Packets).
+ * Frees the packets currently buffered for the FAR without touching the
+ * Apply Action. Emptying the buffer also re-arms the first-packet
+ * Downlink Data Report in ogs_pfcp_up_handle_pdr() (which only reports
+ * on the empty -> non-empty transition), so a later DL packet can
+ * trigger a new notification / paging attempt.
+ */
+void ogs_pfcp_far_drop_buffered_gtpu(ogs_pfcp_far_t *far)
+{
+    uint32_t i;
+
+    ogs_assert(far);
+
+    for (i = 0; i < far->num_of_buffered_gtpu; i++)
+        ogs_pkbuf_free(far->buffered_gtpu[i]);
+    far->num_of_buffered_gtpu = 0;
+}
+
+int ogs_pfcp_sess_drop_buffered_gtpu(ogs_pfcp_sess_t *sess)
+{
+    ogs_pfcp_far_t *far = NULL;
+    int dropped = 0;
+
+    ogs_assert(sess);
+
+    ogs_list_for_each(&sess->far_list, far) {
+        dropped += far->num_of_buffered_gtpu;
+        ogs_pfcp_far_drop_buffered_gtpu(far);
+    }
+
+    return dropped;
+}
+
 void ogs_pfcp_far_remove(ogs_pfcp_far_t *far)
 {
-    int i;
     ogs_pfcp_sess_t *sess = NULL;
 
     ogs_assert(far);
@@ -2425,8 +2458,7 @@ void ogs_pfcp_far_remove(ogs_pfcp_far_t *far)
     if (far->dnn)
         ogs_free(far->dnn);
 
-    for (i = 0; i < far->num_of_buffered_gtpu; i++)
-        ogs_pkbuf_free(far->buffered_gtpu[i]);
+    ogs_pfcp_far_drop_buffered_gtpu(far);
 
     if (far->id_node)
         ogs_pool_free(&far->sess->far_id_pool, far->id_node);

@@ -669,7 +669,20 @@ static int tlv_parse_compound(void *msg, ogs_tlv_desc_t *parent_desc,
             return OGS_ERROR;
         desc = tlv_find_desc_by_type_inst(&index, &offset, parent_desc, tlv->type, tlv->instance, curr_count->count);
         if (desc == NULL) {
-            ogs_warn("Unknown TLV type [%d]", tlv->type);
+            /*
+             * PFCP IE type with bit 15 set is vendor-specific (TS 29.244
+             * 8.1.1): an implementation that does not understand it shall
+             * ignore it silently. UPG-VPP tags every Usage Report with
+             * Travelping enterprise IEs (32771-32774), which at one
+             * Session Report per session per URR period is thousands of
+             * warnings per second - enough log volume to matter on its own.
+             * Keep the warning for standards IEs we genuinely do not know.
+             */
+            if (tlv->type < OGS_TLV_VENDOR_SPECIFIC_TYPE_MIN)
+                ogs_warn("Unknown TLV type [%d]", tlv->type);
+            else
+                ogs_debug("Ignoring vendor-specific TLV type [%d]",
+                        tlv->type);
             tlv = tlv->next;
             continue;
         }

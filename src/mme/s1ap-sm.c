@@ -75,6 +75,9 @@ void s1ap_state_operational(ogs_fsm_t *s, mme_event_t *e)
         pdu = e->s1ap_message;
         ogs_assert(pdu);
 
+        if (e->pkbuf)
+            ogs_trace_packet_bind_rx("s1ap", e->pkbuf->data, e->pkbuf->len);
+
         if (!enb->state.s1_setup_success &&
             !(pdu->present == S1AP_S1AP_PDU_PR_initiatingMessage &&
                 pdu->choice.initiatingMessage->procedureCode ==
@@ -95,16 +98,16 @@ void s1ap_state_operational(ogs_fsm_t *s, mme_event_t *e)
                 s1ap_handle_enb_configuration_update(enb, pdu);
                 break;
             case S1AP_ProcedureCode_id_initialUEMessage :
-                s1ap_handle_initial_ue_message(enb, pdu);
+                s1ap_handle_initial_ue_message(enb, pdu, e->pkbuf);
                 break;
             case S1AP_ProcedureCode_id_uplinkNASTransport :
-                s1ap_handle_uplink_nas_transport(enb, pdu);
+                s1ap_handle_uplink_nas_transport(enb, pdu, e->pkbuf);
                 break;
             case S1AP_ProcedureCode_id_UECapabilityInfoIndication :
                 s1ap_handle_ue_capability_info_indication(enb, pdu);
                 break;
             case S1AP_ProcedureCode_id_UEContextReleaseRequest:
-                s1ap_handle_ue_context_release_request(enb, pdu);
+                s1ap_handle_ue_context_release_request(enb, pdu, e->pkbuf);
                 break;
             case S1AP_ProcedureCode_id_PathSwitchRequest:
                 s1ap_handle_path_switch_request(enb, pdu);
@@ -142,6 +145,26 @@ void s1ap_state_operational(ogs_fsm_t *s, mme_event_t *e)
             case S1AP_ProcedureCode_id_E_RABModificationIndication:
                 s1ap_handle_e_rab_modification_indication(enb, pdu);
                 break;
+            case S1AP_ProcedureCode_id_E_RABReleaseIndication:
+                s1ap_handle_e_rab_release_indication(enb, pdu);
+                break;
+            case S1AP_ProcedureCode_id_PWSRestartIndication:
+            case S1AP_ProcedureCode_id_PWSFailureIndication:
+                /*
+                 * TS 36.413 8.14/8.15: the eNB reports that cells lost or
+                 * failed their Public Warning System state. The MME's only
+                 * role is to forward this to a CBC over SBc, which we do
+                 * not implement, and both are class 2 (no response). So
+                 * absorbing is the complete correct behaviour - it was only
+                 * reaching the "Not implemented" default and logging at
+                 * ERROR on every eNB restart.
+                 */
+                ogs_debug("eNB-id[0x%x] PWS %s Indication ignored "
+                        "(no SBc/CBC)", enb->enb_id,
+                        initiatingMessage->procedureCode ==
+                            S1AP_ProcedureCode_id_PWSRestartIndication ?
+                                "Restart" : "Failure");
+                break;
             default:
                 ogs_error("Not implemented(choice:%d, proc:%d)",
                         pdu->present, (int)initiatingMessage->procedureCode);
@@ -154,14 +177,14 @@ void s1ap_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
             switch (successfulOutcome->procedureCode) {
             case S1AP_ProcedureCode_id_InitialContextSetup:
-                s1ap_handle_initial_context_setup_response(enb, pdu);
+                s1ap_handle_initial_context_setup_response(enb, pdu, e->pkbuf);
                 break;
             case S1AP_ProcedureCode_id_UEContextModification:
                 s1ap_handle_ue_context_modification_response(enb, pdu);
                 break;
             case S1AP_ProcedureCode_id_UEContextRelease:
                 s1ap_handle_ue_context_release_complete(
-                        enb, pdu);
+                        enb, pdu, e->pkbuf);
                 break;
             case S1AP_ProcedureCode_id_E_RABSetup:
                 s1ap_handle_e_rab_setup_response(enb, pdu);
@@ -191,7 +214,7 @@ void s1ap_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
             switch (unsuccessfulOutcome->procedureCode) {
             case S1AP_ProcedureCode_id_InitialContextSetup :
-                s1ap_handle_initial_context_setup_failure(enb, pdu);
+                s1ap_handle_initial_context_setup_failure(enb, pdu, e->pkbuf);
                 break;
             case S1AP_ProcedureCode_id_UEContextModification:
                 s1ap_handle_ue_context_modification_failure(enb, pdu);

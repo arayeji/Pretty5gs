@@ -14,8 +14,22 @@ typedef enum sgwc_metric_type_global_s {
     SGWC_METR_GLOB_GAUGE_SESSIONS_ORPHAN = 0,
     SGWC_METR_GLOB_GAUGE_UE_ORPHAN,
     SGWC_METR_GLOB_GAUGE_PFCP_PEERS_ACTIVE,
+    SGWC_METR_GLOB_GAUGE_ADMISSION_OUTSTANDING,
+    SGWC_METR_GLOB_CTR_ADMISSION_REJECT_CAP,
+    SGWC_METR_GLOB_CTR_ADMISSION_REJECT_RATE,
+    SGWC_METR_GLOB_CTR_ADMISSION_REJECT_PFCP_DOWN,
+    SGWC_METR_GLOB_GAUGE_SESSIONS_DL_FAR_BUFF,
     _SGWC_METR_GLOB_MAX,
 } sgwc_metric_type_global_t;
+
+typedef enum sgwc_admission_reject_reason_s {
+    SGWC_ADMISSION_REJECT_CAP = 0,
+    SGWC_ADMISSION_REJECT_RATE,
+    SGWC_ADMISSION_REJECT_PFCP_DOWN,
+} sgwc_admission_reject_reason_t;
+
+void sgwc_metrics_admission_reject(sgwc_admission_reject_reason_t reason);
+void sgwc_metrics_admission_outstanding_set(int val);
 
 typedef enum sgwc_metric_type_pfcp_peer_s {
     SGWC_METR_PFCP_PEER_GAUGE_UP = 0,

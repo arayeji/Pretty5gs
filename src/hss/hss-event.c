@@ -72,6 +72,8 @@ const char *hss_event_get_name(hss_event_t *e)
         return "HSS_EVENT_DBI_POLL_TIMER";
     case HSS_EVENT_DBI_MESSAGE:
         return "HSS_EVENT_DBI_MESSAGE";
+    case HSS_EVT_CONFIG_RELOAD:
+        return "HSS_EVT_CONFIG_RELOAD";
 
     default:
        break;

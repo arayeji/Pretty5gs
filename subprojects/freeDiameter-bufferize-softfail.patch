@@ -1,0 +1,22 @@
+--- a/libfdproto/messages.c
++++ b/libfdproto/messages.c
+@@ -1895,7 +1895,15 @@ int fd_msg_bufferize ( struct msg * msg, unsigned char ** buffer, size_t * len )
+ 			free(buf);
+ 			return ret;
+ 		}  );
+ 	
+-	ASSERT(offset == msg->msg_public.msg_length); /* or the msg_update_length is buggy */
++	/* Soft-fail instead of assert/abort — Open5GS PACKET dumps call
++	 * fd_msg_bufferize on live messages; a length mismatch must not
++	 * kill HSS/MME. */
++	if (offset != msg->msg_public.msg_length) {
++		free(buf);
++		TRACE_DEBUG(INFO, "fd_msg_bufferize: length mismatch "
++				"offset=%zu msg_length=%u",
++				offset, msg->msg_public.msg_length);
++		return EINVAL;
++	}
+ 		
+ 	if (len) {
+ 		*len = offset;
+ 	}

@@ -21,6 +21,7 @@
 
 #include "hss-context.h"
 #include "hss-fd-path.h"
+#include "hss-trace.h"
 
 /* handler for fallback cb */
 static struct disp_hdl *hdl_swx_fb = NULL;
@@ -57,6 +58,7 @@ static bool hss_swx_user_name_to_imsi_bcd(
 static int hss_ogs_diam_swx_fb_cb(struct msg **msg, struct avp *avp,
         struct session *session, void *opaque, enum disp_action *act)
 {
+    HSS_TRACE_SCOPE();
     /* This CB should never be called */
     ogs_warn("Unexpected message received!");
     OGS_DIAM_STATS_MTX(
@@ -70,6 +72,7 @@ static int hss_ogs_diam_swx_fb_cb(struct msg **msg, struct avp *avp,
 static int hss_ogs_diam_swx_mar_cb(struct msg **msg, struct avp *avp,
         struct session *session, void *opaque, enum disp_action *act)
 {
+    HSS_TRACE_SCOPE();
     int rv, ret;
     uint32_t result_code = 0;
     struct msg *ans = NULL, *qry = NULL;
@@ -161,6 +164,8 @@ static int hss_ogs_diam_swx_mar_cb(struct msg **msg, struct avp *avp,
         error_occurred = 1;
         goto out;
     }
+
+    hss_trace_event(imsi_bcd, "SWx-MAR", "Rx Multimedia-Auth-Request");
 
     /* Get the SIP-Auth-Data-Item AVP (Mandatory) */
     ret = fd_msg_search_avp(
@@ -551,6 +556,7 @@ static int hss_ogs_diam_swx_mar_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Multimedia-Auth-Answer");
+        hss_trace_event(imsi_bcd, "SWx-MAR", "Tx Multimedia-Auth-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -624,6 +630,7 @@ out:
 static int hss_ogs_diam_swx_sar_cb(struct msg **msg, struct avp *avp,
         struct session *session, void *opaque, enum disp_action *act)
 {
+    HSS_TRACE_SCOPE();
     int rv, ret;
     uint32_t result_code = 0;
     int error_occurred = 0;
@@ -705,6 +712,8 @@ static int hss_ogs_diam_swx_sar_cb(struct msg **msg, struct avp *avp,
         error_occurred = 1;
         goto out;
     }
+
+    hss_trace_event(imsi_bcd, "SWx-SAR", "Rx Server-Assignment-Request");
 
     /* DB : HSS Subscription Data */
     rv = hss_db_subscription_data(imsi_bcd, &subscription_data);
@@ -1453,7 +1462,9 @@ static int hss_ogs_diam_swx_sar_cb(struct msg **msg, struct avp *avp,
                     goto out;
                 }
 
-                val.u32 = OGS_DIAM_S6A_PDN_GW_ALLOCATION_DYNAMIC;
+                /* Static SMF/PGW IP in subscription → Allocation-Type STATIC.
+                 * MME only treats MIP6 as permanent PGW when this is not DYNAMIC. */
+                val.u32 = OGS_DIAM_S6A_PDN_GW_ALLOCATION_STATIC;
                 ret = fd_msg_avp_setvalue(pdn_gw_allocation_type, &val);
                 if (ret != 0) {
                     ogs_error("Failed to set PDN-GW-Allocation-Type value");
@@ -1671,6 +1682,7 @@ static int hss_ogs_diam_swx_sar_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Server-Assignment-Answer");
+        hss_trace_event(imsi_bcd, "SWx-SAR", "Tx Server-Assignment-Answer");
 
         /* Add this value to the stats */
         OGS_DIAM_STATS_MTX(

@@ -67,6 +67,14 @@ int ogs_so_linger(ogs_socket_t fd, int l_linger);
 int ogs_bind_to_device(ogs_socket_t fd, const char *device);
 int ogs_sock_buffer(ogs_socket_t fd, int rcvbuf, int sndbuf);
 
+/*
+ * Bytes currently sitting unread in the socket's kernel receive queue
+ * (what `ss` shows as Recv-Q). Diagnostic: a growing backlog means the
+ * application is not draining the socket as fast as peers send.
+ * Returns 0 when unsupported (non-Linux) or on error.
+ */
+uint64_t ogs_socket_rx_backlog(ogs_socket_t fd);
+
 #ifdef __cplusplus
 }
 #endif

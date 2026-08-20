@@ -28,6 +28,11 @@ extern "C" {
 
 int mme_gtp_open(void);
 void mme_gtp_close(void);
+
+/* Dedicated GTP-C RX thread (mme.gtpc_rx_thread, default off). Start
+ * AFTER mme_workers_start() — see the comment at the definition. */
+int mme_gtpc_rx_start(void);
+bool mme_gtpc_rx_active(void);
 void mme_timer_sgw_echo(void *data);
 void mme_gtp_send_sgw_echo(mme_sgw_t *sgw);
 
@@ -38,6 +43,8 @@ int mme_gtp_send_modify_bearer_request(
         int uli_presence, int modify_action);
 int mme_gtp_send_delete_session_request(
         enb_ue_t *enb_ue, sgw_ue_t *sgw_ue, mme_sess_t *sess, int action);
+int mme_gtp_send_orphan_delete_session(
+        ogs_gtp_node_t *gnode, uint32_t sgw_s11_teid, uint8_t ebi);
 void mme_gtp_send_delete_all_sessions(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue, int action);
 int mme_gtp_send_create_bearer_response(

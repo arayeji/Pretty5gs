@@ -79,3 +79,20 @@ tools/admin-api/scripts/publish-linux.sh
 
 # Local WSL2 pre-push compile-check helper (kept local, not tracked)
 /wsl-build.sh
+
+# Agent scratch scripts / filter helpers (never commit)
+.tmp*
+.git-filter*
+.git-redact*
+.reportout.txt
+
+tools/_epc_analyzer/
+tools/epc_audit_reports/
+tools/analyze_epc_1h.sh
+tools/extract_epc_signaling.sh
+
+# Local SPAN/PCAP ptrace daemon (kept local; not built or shipped)
+src/ptrace/
+configs/open5gs/ptrace.yaml.in
+configs/systemd/open5gs-ptraced.service.in
+

@@ -61,6 +61,7 @@ int ogs_queue_timedpush(ogs_queue_t *queue, void *data, ogs_time_t timeout);
 int ogs_queue_timedpop(ogs_queue_t *queue, void **data, ogs_time_t timeout);
 
 unsigned int ogs_queue_size(ogs_queue_t *queue);
+unsigned int ogs_queue_capacity(ogs_queue_t *queue);
 
 int ogs_queue_interrupt_all(ogs_queue_t *queue);
 int ogs_queue_term(ogs_queue_t *queue);

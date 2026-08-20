@@ -25,7 +25,25 @@
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __sgwc_log_domain
 #include "sgwc-workers.h"
+#include "sgwc-trace.h"
 #include "event.h"
+
+/*
+ * Dedicated GTP-C RX helper (sgwc.gtpc_rx_thread). Not a protocol
+ * shard — never calls ogs_worker_shards_enable().
+ */
+static ogs_worker_t *gtpc_rx_worker = NULL;
+static uint64_t gtpc_rx_drop_count = 0;
+
+static void sgwc_gtpc_rx_drop(void)
+{
+    __atomic_fetch_add(&gtpc_rx_drop_count, 1, __ATOMIC_RELAXED);
+}
+
+uint64_t sgwc_gtpc_rx_drops(void)
+{
+    return __atomic_load_n(&gtpc_rx_drop_count, __ATOMIC_RELAXED);
+}
 
 /*
  * Deliver a GTP event to the owning shard (or the main queue when
@@ -45,15 +63,18 @@ static int sgwc_gtp_deliver(sgwc_event_t *e, ogs_pkbuf_t *pkbuf)
     ogs_assert(pkbuf);
 
     if (!sgwc_workers_active()) {
-        /* trypush: RX runs on the same thread that drains this queue */
+        /* trypush: never block the RX poll thread */
         rv = ogs_queue_trypush(ogs_app()->queue, e);
         if (rv != OGS_OK) {
             ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
+            sgwc_gtpc_rx_drop();
             ogs_pkbuf_free(pkbuf);
             e->pkbuf = NULL;
             sgwc_event_free(e);
             return -1;
         }
+        if (gtpc_rx_worker)
+            ogs_pollset_notify(ogs_app()->pollset);
         return 1;
     }
 
@@ -125,15 +146,23 @@ static int sgwc_gtp_deliver(sgwc_event_t *e, ogs_pkbuf_t *pkbuf)
         rv = ogs_queue_trypush(ogs_app()->queue, e);
         if (rv != OGS_OK) {
             ogs_error("ogs_queue_trypush() failed:%d", (int)rv);
+            sgwc_gtpc_rx_drop();
             ogs_pkbuf_free(pkbuf);
             e->pkbuf = NULL;
             sgwc_event_free(e);
             return -1;
         }
+        if (gtpc_rx_worker)
+            ogs_pollset_notify(ogs_app()->pollset);
         return 1;
     }
 
-    return sgwc_event_push_to_worker(wid, e) == OGS_OK ? 1 : -1;
+    rv = sgwc_event_push_to_worker(wid, e);
+    if (rv != OGS_OK) {
+        sgwc_gtpc_rx_drop();
+        return -1;
+    }
+    return 1;
 }
 
 /*
@@ -223,13 +252,17 @@ static int sgwc_gn_recv_one(ogs_sock_t *sock)
     return sgwc_gn_queue_message(sock, pkbuf, &from);
 }
 
+/* Same budget as MME GTP-C / SGW-C PFCP: level-triggered poll re-fires. */
+#define SGWC_GTPC_RECV_BUDGET   512
+
 static void _gtpv1_c_recv_cb(short when, ogs_socket_t fd, void *data)
 {
     ogs_sock_t *sock = data;
+    int budget = SGWC_GTPC_RECV_BUDGET;
 
     ogs_assert(sock);
 
-    while (sgwc_gn_recv_one(sock) > 0)
+    while (budget-- > 0 && sgwc_gn_recv_one(sock) > 0)
         ;
 }
 
@@ -392,11 +425,12 @@ static int sgwc_gtpc_recv_one(ogs_sock_t *sock)
 static void _gtpv2_c_recv_cb(short when, ogs_socket_t fd, void *data)
 {
     ogs_sock_t *sock = data;
+    int budget = SGWC_GTPC_RECV_BUDGET;
 
     ogs_assert(fd != INVALID_SOCKET);
     ogs_assert(sock);
 
-    while (sgwc_gtpc_recv_one(sock) > 0)
+    while (budget-- > 0 && sgwc_gtpc_recv_one(sock) > 0)
         ;
 }
 
@@ -451,9 +485,11 @@ static int sgwc_roam_gtpc_open(void)
         ogs_info("roam GTP-C bind [%s]:%u (S5 local source; PGW dest port %u)",
                 OGS_ADDR(sgwc_self()->roam_gtpc_addr, buf), port,
                 ogs_gtp_self()->gtpc_port);
-        sgwc_self()->roam_gtpc_poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
-        ogs_assert(sgwc_self()->roam_gtpc_poll);
+        if (!sgwc_self()->gtpc_rx_thread) {
+            sgwc_self()->roam_gtpc_poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
+            ogs_assert(sgwc_self()->roam_gtpc_poll);
+        }
     }
 
     if (ogs_gtp_self()->gtpc_addr6) {
@@ -470,9 +506,11 @@ static int sgwc_roam_gtpc_open(void)
         ogs_info("roam GTP-C bind [%s]:%u (S5 local source; PGW dest port %u)",
                 OGS_ADDR(sgwc_self()->roam_gtpc_addr6, buf), port,
                 ogs_gtp_self()->gtpc_port);
-        sgwc_self()->roam_gtpc_poll6 = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
-        ogs_assert(sgwc_self()->roam_gtpc_poll6);
+        if (!sgwc_self()->gtpc_rx_thread) {
+            sgwc_self()->roam_gtpc_poll6 = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
+            ogs_assert(sgwc_self()->roam_gtpc_poll6);
+        }
     }
 
     if (!sgwc_self()->roam_gtpc_sock && !sgwc_self()->roam_gtpc_sock6) {
@@ -517,6 +555,26 @@ void sgwc_gtpc_f_teid_addr(
     }
 }
 
+/*
+ * Address for F-TEID IEs sent to peers (S11/S5-C). Prefer advertise so
+ * peer CDRs do not record this SGW's internal bind IP.
+ */
+int sgwc_gtpc_sockaddr_or_advertise_to_f_teid(
+        sgwc_sess_t *sess, ogs_gtp2_f_teid_t *f_teid, int *len)
+{
+    ogs_sockaddr_t *addr = NULL, *addr6 = NULL;
+
+    ogs_assert(f_teid);
+    ogs_assert(len);
+
+    if (!sgwc_gtpc_use_roam_socket(sess) &&
+            (ogs_gtp_self()->gtpc_ip.ipv4 || ogs_gtp_self()->gtpc_ip.ipv6))
+        return ogs_gtp2_ip_to_f_teid(&ogs_gtp_self()->gtpc_ip, f_teid, len);
+
+    sgwc_gtpc_f_teid_addr(sess, &addr, &addr6);
+    return ogs_gtp2_sockaddr_to_f_teid(addr, addr6, f_teid, len);
+}
+
 int sgwc_gtp_connect_peer(sgwc_sess_t *sess, ogs_gtp_node_t *gnode)
 {
     ogs_sock_t *sock = NULL;
@@ -539,22 +597,27 @@ int sgwc_gtp_open(void)
 {
     ogs_socknode_t *node = NULL;
     ogs_sock_t *sock = NULL;
+    bool rx_offload = sgwc_self()->gtpc_rx_thread != 0;
 
     ogs_list_for_each(&ogs_gtp_self()->gtpc_list, node) {
         sock = ogs_gtp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!rx_offload) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
     ogs_list_for_each(&ogs_gtp_self()->gtpc_list6, node) {
         sock = ogs_gtp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!rx_offload) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, _gtpv2_c_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
 
     OGS_SETUP_GTPC_SERVER;
@@ -571,17 +634,23 @@ int sgwc_gtp_open(void)
                 gn_sock = ogs_gtp_server(node);
                 if (!gn_sock)
                     return OGS_ERROR;
-                node->poll = ogs_pollset_add(ogs_app()->pollset,
-                        OGS_POLLIN, gn_sock->fd, _gtpv1_c_recv_cb, gn_sock);
-                ogs_assert(node->poll);
+                if (!rx_offload) {
+                    node->poll = ogs_pollset_add(ogs_app()->pollset,
+                            OGS_POLLIN, gn_sock->fd, _gtpv1_c_recv_cb,
+                            gn_sock);
+                    ogs_assert(node->poll);
+                }
             }
             ogs_list_for_each(&sgwc_self()->gn_server_list6, node) {
                 gn_sock = ogs_gtp_server(node);
                 if (!gn_sock)
                     return OGS_ERROR;
-                node->poll = ogs_pollset_add(ogs_app()->pollset,
-                        OGS_POLLIN, gn_sock->fd, _gtpv1_c_recv_cb, gn_sock);
-                ogs_assert(node->poll);
+                if (!rx_offload) {
+                    node->poll = ogs_pollset_add(ogs_app()->pollset,
+                            OGS_POLLIN, gn_sock->fd, _gtpv1_c_recv_cb,
+                            gn_sock);
+                    ogs_assert(node->poll);
+                }
             }
         }
 
@@ -596,6 +665,132 @@ int sgwc_gtp_open(void)
     }
 
     return sgwc_roam_gtpc_open();
+}
+
+static void gtpc_rx_dispatch(ogs_worker_t *worker, void *data)
+{
+    (void)worker;
+    (void)data;
+}
+
+static void gtpc_rx_thread_init(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, _gtpv2_c_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list6, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, _gtpv2_c_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+
+    if (sgwc_self()->gn_enabled) {
+        ogs_list_for_each(&sgwc_self()->gn_server_list, node) {
+            ogs_assert(node->sock);
+            node->poll = ogs_pollset_add(worker->pollset,
+                    OGS_POLLIN, node->sock->fd, _gtpv1_c_recv_cb, node->sock);
+            ogs_assert(node->poll);
+        }
+        ogs_list_for_each(&sgwc_self()->gn_server_list6, node) {
+            ogs_assert(node->sock);
+            node->poll = ogs_pollset_add(worker->pollset,
+                    OGS_POLLIN, node->sock->fd, _gtpv1_c_recv_cb, node->sock);
+            ogs_assert(node->poll);
+        }
+    }
+
+    if (sgwc_self()->roam_gtpc_sock) {
+        sgwc_self()->roam_gtpc_poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, sgwc_self()->roam_gtpc_sock->fd,
+                _gtpv2_c_recv_cb, sgwc_self()->roam_gtpc_sock);
+        ogs_assert(sgwc_self()->roam_gtpc_poll);
+    }
+    if (sgwc_self()->roam_gtpc_sock6) {
+        sgwc_self()->roam_gtpc_poll6 = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, sgwc_self()->roam_gtpc_sock6->fd,
+                _gtpv2_c_recv_cb, sgwc_self()->roam_gtpc_sock6);
+        ogs_assert(sgwc_self()->roam_gtpc_poll6);
+    }
+
+    ogs_info("SGW-C GTP-C RX thread started");
+}
+
+static void gtpc_rx_thread_fini(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    (void)worker;
+
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list6, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+    ogs_list_for_each(&sgwc_self()->gn_server_list, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+    ogs_list_for_each(&sgwc_self()->gn_server_list6, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+    if (sgwc_self()->roam_gtpc_poll) {
+        ogs_pollset_remove(sgwc_self()->roam_gtpc_poll);
+        sgwc_self()->roam_gtpc_poll = NULL;
+    }
+    if (sgwc_self()->roam_gtpc_poll6) {
+        ogs_pollset_remove(sgwc_self()->roam_gtpc_poll6);
+        sgwc_self()->roam_gtpc_poll6 = NULL;
+    }
+}
+
+int sgwc_gtpc_rx_start(void)
+{
+    if (!sgwc_self()->gtpc_rx_thread)
+        return OGS_OK;
+
+    ogs_assert(!gtpc_rx_worker);
+
+    gtpc_rx_worker = ogs_worker_create(0, 64, 8, 64,
+            gtpc_rx_dispatch, NULL);
+    ogs_assert(gtpc_rx_worker);
+    ogs_worker_hooks(gtpc_rx_worker,
+            gtpc_rx_thread_init, gtpc_rx_thread_fini);
+    ogs_worker_set_name(gtpc_rx_worker, "gtpc-rx");
+    ogs_worker_start(gtpc_rx_worker);
+
+    return OGS_OK;
+}
+
+void sgwc_gtpc_rx_stop(void)
+{
+    if (!gtpc_rx_worker)
+        return;
+
+    ogs_worker_destroy(gtpc_rx_worker);
+    gtpc_rx_worker = NULL;
+}
+
+bool sgwc_gtpc_rx_active(void)
+{
+    return gtpc_rx_worker != NULL;
 }
 
 void sgwc_gtp_send_mme_echo(ogs_gtp_node_t *gnode)
@@ -939,6 +1134,11 @@ int sgwc_gtp_send_s5c_delete_session_request(sgwc_sess_t *sess)
     }
     xact->local_teid = sess->sgw_s5c_teid;
 
+    {
+        sgwc_ue_t *_tue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+        sgwc_trace_bind_gtp(xact, _tue);
+    }
+
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -998,6 +1198,9 @@ int sgwc_gtp_send_network_delete_session(
         return OGS_ERROR;
     }
     xact->local_teid = sgwc_ue->sgw_s11_teid;
+
+    sgwc_trace_bind_gtp(xact, sgwc_ue);
+
 
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
@@ -1127,6 +1330,9 @@ int sgwc_gtp_send_delete_bearer_request_to_mme(
                      sess->session.name ? sess->session.name : "-",
              s5c_xact_id == OGS_INVALID_POOL_ID ? "yes" : "no");
 
+    sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
+
     rv = ogs_gtp_xact_commit(s11_xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1135,6 +1341,9 @@ int sgwc_gtp_send_delete_bearer_request_to_mme(
 
 void sgwc_gtp_close(void)
 {
+    /* Idempotent: terminate() may have stopped the RX helper already. */
+    sgwc_gtpc_rx_stop();
+
     if (sgwc_self()->roam_gtpc_poll) {
         ogs_pollset_remove(sgwc_self()->roam_gtpc_poll);
         sgwc_self()->roam_gtpc_poll = NULL;
@@ -1191,6 +1400,9 @@ int sgwc_gtp_send_create_pdp_context_response(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_gtp(gn_xact, sgwc_ue);
+
+
     rv = ogs_gtp_xact_commit(gn_xact);
     ogs_expect(rv == OGS_OK);
     return rv;
@@ -1225,6 +1437,9 @@ int sgwc_gtp_send_delete_pdp_context_response(
         ogs_error("ogs_gtp1_xact_update_tx() failed");
         return OGS_ERROR;
     }
+
+    sgwc_trace_bind_gtp(gn_xact, sgwc_ue);
+
 
     rv = ogs_gtp_xact_commit(gn_xact);
     ogs_expect(rv == OGS_OK);
@@ -1324,6 +1539,9 @@ int sgwc_gtp_send_create_session_response(
         return OGS_ERROR;
     }
 
+    sgwc_trace_bind_gtp(xact, sgwc_ue);
+
+
     rv = ogs_gtp_xact_commit(xact);
     ogs_expect(rv == OGS_OK);
 
@@ -1376,6 +1594,9 @@ int sgwc_gtp_send_downlink_data_notification(
         return OGS_ERROR;
     }
     gtp_xact->local_teid = sgwc_ue->sgw_s11_teid;
+
+    sgwc_trace_bind_gtp(gtp_xact, sgwc_ue);
+
 
     rv = ogs_gtp_xact_commit(gtp_xact);
     ogs_expect(rv == OGS_OK);

@@ -53,9 +53,17 @@ static void sgwc_reload_cdr_cfg_clear(sgwc_cdr_config_t *cfg)
         ogs_free((void *)cfg->node_id);
         cfg->node_id = NULL;
     }
+    if (cfg->address) {
+        ogs_free((void *)cfg->address);
+        cfg->address = NULL;
+    }
     if (cfg->local_address) {
         ogs_free((void *)cfg->local_address);
         cfg->local_address = NULL;
+    }
+    if (cfg->serving_node_address) {
+        ogs_free((void *)cfg->serving_node_address);
+        cfg->serving_node_address = NULL;
     }
 }
 
@@ -78,7 +86,10 @@ static void sgwc_reload_parse_cdr(ogs_yaml_iter_t *sgwc_iter,
     ogs_yaml_iter_recurse(sgwc_iter, &c_iter);
     while (ogs_yaml_iter_next(&c_iter)) {
         const char *ck = ogs_yaml_iter_key(&c_iter);
-        const char *cv = ogs_yaml_iter_value(&c_iter);
+        /* value may be a mapping/sequence: ogs_yaml_iter_value() would
+         * abort the daemon on non-scalar nodes (SIGHUP crash) */
+        const char *cv = ogs_yaml_iter_has_value(&c_iter) ?
+                ogs_yaml_iter_value(&c_iter) : NULL;
 
         ogs_assert(ck);
         if (!strcmp(ck, "enabled")) {
@@ -89,9 +100,15 @@ static void sgwc_reload_parse_cdr(ogs_yaml_iter_t *sgwc_iter,
         } else if (!strcmp(ck, "node_id") ||
                 !strcmp(ck, "nodeid")) {
             cfg->node_id = cv ? ogs_strdup(cv) : NULL;
-        } else if (!strcmp(ck, "local_address") ||
+        } else if (!strcmp(ck, "address") ||
                 !strcmp(ck, "sgw_address")) {
+            cfg->address = cv ? ogs_strdup(cv) : NULL;
+        } else if (!strcmp(ck, "local_address")) {
             cfg->local_address = cv ? ogs_strdup(cv) : NULL;
+        } else if (!strcmp(ck, "serving_node_address") ||
+                !strcmp(ck, "sgsn_address") ||
+                !strcmp(ck, "mme_address")) {
+            cfg->serving_node_address = cv ? ogs_strdup(cv) : NULL;
         } else if (!strcmp(ck, "interim_interval_s") ||
                 !strcmp(ck, "interim_interval")) {
             if (cv)
@@ -246,17 +263,23 @@ static void sgwc_reload_gtpu_key(
 static ogs_pfcp_node_t *sgwc_reload_pfcp_peer_find(ogs_sockaddr_t *addr)
 {
     ogs_pfcp_node_t *node = NULL;
+    ogs_pfcp_node_t *found = NULL;
 
     ogs_assert(addr);
 
+    /* Serialize vs pfcp-rx peer add/merge. */
+    ogs_pfcp_peer_lock();
     ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, node) {
         if (node->config_addr &&
                 sgwc_reload_sockaddr_lists_match(
-                    addr, node->config_addr, NULL))
-            return node;
+                    addr, node->config_addr, NULL)) {
+            found = node;
+            break;
+        }
     }
+    ogs_pfcp_peer_unlock();
 
-    return NULL;
+    return found;
 }
 
 static int sgwc_reload_sgwu_peer_add_only(
@@ -568,14 +591,60 @@ static bool sgwc_reload_sgwu_peer_wanted(
     return false;
 }
 
+static bool sgwc_reload_pfcp_peer_still_listed(ogs_pfcp_node_t *want)
+{
+    ogs_pfcp_node_t *node = NULL;
+
+    ogs_assert(want);
+
+    ogs_pfcp_peer_lock();
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, node) {
+        if (node == want) {
+            ogs_pfcp_peer_unlock();
+            return true;
+        }
+    }
+    ogs_pfcp_peer_unlock();
+    return false;
+}
+
 static void sgwc_reload_sgwu_remove_stale(ogs_yaml_iter_t *pfcp_iter)
 {
-    ogs_pfcp_node_t *node = NULL, *next = NULL;
+    ogs_pfcp_node_t *node = NULL;
+    ogs_pfcp_node_t **nodes = NULL;
+    int n = 0, cap = 0, i;
 
-    ogs_list_for_each_safe(&ogs_pfcp_self()->pfcp_peer_list, next, node) {
-        bool resolve_failed = false;
+    /*
+     * Snapshot config peers under the peer lock, then decide/remove
+     * outside (wanted-set may do DNS). Re-check list membership before
+     * remove so pfcp-rx cannot leave us with a freed pointer.
+     */
+    ogs_pfcp_peer_lock();
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, node) {
+        ogs_pfcp_node_t **grown;
 
         if (!node->config_addr)
+            continue;
+        if (n >= cap) {
+            int ncap = cap ? cap * 2 : 16;
+
+            grown = ogs_realloc(nodes, sizeof(*nodes) * (size_t)ncap);
+            if (!grown) {
+                ogs_error("sgwu remove-stale: realloc failed");
+                break;
+            }
+            nodes = grown;
+            cap = ncap;
+        }
+        nodes[n++] = node;
+    }
+    ogs_pfcp_peer_unlock();
+
+    for (i = 0; i < n; i++) {
+        bool resolve_failed = false;
+
+        node = nodes[i];
+        if (!sgwc_reload_pfcp_peer_still_listed(node))
             continue;
         if (sgwc_reload_sgwu_peer_wanted(pfcp_iter, node, &resolve_failed))
             continue;
@@ -601,6 +670,9 @@ static void sgwc_reload_sgwu_remove_stale(ogs_yaml_iter_t *pfcp_iter)
                 ogs_sockaddr_to_string_static(node->config_addr),
                 OGS_PORT(node->config_addr));
     }
+
+    if (nodes)
+        ogs_free(nodes);
 }
 
 static int sgwc_reload_pfcp_sgwu_sync(ogs_yaml_iter_t *pfcp_iter)
@@ -669,7 +741,8 @@ static void sgwc_reload_inbound_roam(ogs_yaml_iter_t *sgwc_iter)
             ogs_yaml_iter_recurse(&roam_iter, &gtpc_iter);
             while (ogs_yaml_iter_next(&gtpc_iter)) {
                 const char *gk = ogs_yaml_iter_key(&gtpc_iter);
-                const char *gv = ogs_yaml_iter_value(&gtpc_iter);
+                const char *gv = ogs_yaml_iter_has_value(&gtpc_iter) ?
+                        ogs_yaml_iter_value(&gtpc_iter) : NULL;
                 ogs_assert(gk);
 
                 if (!strcmp(gk, "source_port") ||
@@ -840,7 +913,14 @@ void sgwc_context_reload_runtime(void)
                 ogs_yaml_iter_recurse(&sgwc_iter, &gtpc_iter);
                 while (ogs_yaml_iter_next(&gtpc_iter)) {
                     const char *gk = ogs_yaml_iter_key(&gtpc_iter);
-                    const char *gv = ogs_yaml_iter_value(&gtpc_iter);
+                    /*
+                     * gtpc: contains non-scalar children (server: is a
+                     * sequence). Calling ogs_yaml_iter_value() on those
+                     * aborts the daemon (YAML_SCALAR_NODE assert) —
+                     * this crashed SGWC on SIGHUP. Guard every value.
+                     */
+                    const char *gv = ogs_yaml_iter_has_value(&gtpc_iter) ?
+                            ogs_yaml_iter_value(&gtpc_iter) : NULL;
 
                     if (gk && !strcmp(gk, "echo_interval") && gv) {
                         self->gtpc_echo_interval = (uint32_t)atoi(gv);
@@ -884,6 +964,34 @@ void sgwc_context_reload_runtime(void)
                 found = true;
             } else if (!strcmp(sgwc_key, "gn")) {
                 sgwc_reload_gn(&sgwc_iter);
+                found = true;
+            } else if (!strcmp(sgwc_key, "admission")) {
+                ogs_yaml_iter_t adm_iter;
+
+                ogs_yaml_iter_recurse(&sgwc_iter, &adm_iter);
+                while (ogs_yaml_iter_next(&adm_iter)) {
+                    const char *ak = ogs_yaml_iter_key(&adm_iter);
+                    const char *av = ogs_yaml_iter_has_value(&adm_iter) ?
+                            ogs_yaml_iter_value(&adm_iter) : NULL;
+
+                    if (!ak || !av)
+                        continue;
+                    if (!strcmp(ak, "max_outstanding")) {
+                        __atomic_store_n(&self->admission_max_outstanding,
+                                atoi(av), __ATOMIC_RELAXED);
+                        sgwc_reload_lists_changed++;
+                        ogs_reload_audit_note(
+                                "sgwc.admission.max_outstanding=%d",
+                                self->admission_max_outstanding);
+                    } else if (!strcmp(ak, "rate_per_sec")) {
+                        __atomic_store_n(&self->admission_rate_per_sec,
+                                atoi(av), __ATOMIC_RELAXED);
+                        sgwc_reload_lists_changed++;
+                        ogs_reload_audit_note(
+                                "sgwc.admission.rate_per_sec=%d",
+                                self->admission_rate_per_sec);
+                    }
+                }
                 found = true;
             } else if (!strcmp(sgwc_key, "cdr")) {
                 sgwc_reload_cdr_replace(&sgwc_iter);

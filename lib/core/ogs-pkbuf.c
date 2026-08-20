@@ -19,6 +19,8 @@
 
 #include "ogs-core.h"
 
+#include <stdlib.h>
+
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __ogs_mem_domain
 
@@ -255,9 +257,21 @@ ogs_pkbuf_t *ogs_pkbuf_alloc_debug(
 #if OGS_USE_TALLOC == 1
     ogs_pkbuf_t *pkbuf = NULL;
 
-    pkbuf = ogs_talloc_zero_size(pool, sizeof(*pkbuf) + size, file_line);
+    /*
+     * Plain calloc — not ogs_talloc_*.
+     *
+     * With OGS_USE_TALLOC=1 every historical pkbuf alloc/free took the
+     * process-global allocator mutex in ogs-memory.c. On an MME with
+     * ~70 threads that lock became the main-thread ceiling (~70% of
+     * mme-main cycles in futex under ogs_talloc_*). Pkbufs are opaque
+     * byte buffers with no talloc children; glibc per-thread tcache
+     * keeps alloc/free off that convoy. ASN.1 still uses talloc.
+     */
+    (void)pool;
+    pkbuf = calloc(1, sizeof(*pkbuf) + size);
     if (!pkbuf) {
-        ogs_error("ogs_pkbuf_alloc() failed [size=%d]", size);
+        ogs_error("ogs_pkbuf_alloc() failed [size=%d] in (%s)",
+                size, file_line);
         return NULL;
     }
 
@@ -347,7 +361,7 @@ static ogs_pkbuf_t *pkbuf_alloc_from(ogs_pkbuf_pool_t *pool,
 void ogs_pkbuf_free(ogs_pkbuf_t *pkbuf)
 {
 #if OGS_USE_TALLOC == 1
-    ogs_talloc_free(pkbuf, OGS_FILE_LINE);
+    free(pkbuf);
 #else
     ogs_pkbuf_pool_t *pool = NULL;
     ogs_cluster_t *cluster = NULL;

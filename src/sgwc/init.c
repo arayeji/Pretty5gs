@@ -88,6 +88,16 @@ int sgwc_initialize(void)
     rv = ogs_pfcp_xact_init();
     if (rv != OGS_OK) return rv;
 
+    /*
+     * Same lesson as the MME: when the event queue lags, replies that
+     * arrived in time are still waiting to be dispatched. Without this,
+     * a signaling storm turns S5 Create Session (PGW) and Sxa Session
+     * Establishment (SGW-U) into false "peer no response" give-ups, and
+     * the retransmissions amplify the very backlog that caused them.
+     */
+    ogs_gtp_xact_set_lag_cb(sgwc_event_lag);
+    ogs_pfcp_xact_set_lag_cb(sgwc_event_lag);
+
     rv = ogs_log_config_domain(
             ogs_app()->logger.domain, ogs_app()->logger.level);
     if (rv != OGS_OK) return rv;
@@ -136,7 +146,17 @@ int sgwc_initialize(void)
         if (rv != OGS_OK) return rv;
     }
 
-    thread = ogs_thread_create(sgwc_main, NULL);
+    /*
+     * RX helpers after shards_enable (workers_start): they are not
+     * protocol shards. Sockets already exist; datagrams wait in the
+     * kernel buffer until the helper registers its polls.
+     */
+    rv = sgwc_gtpc_rx_start();
+    if (rv != OGS_OK) return rv;
+    rv = sgwc_pfcp_rx_start();
+    if (rv != OGS_OK) return rv;
+
+    thread = ogs_thread_create_named(sgwc_main, NULL, "sgwc-main");
     if (!thread) return OGS_ERROR;
 
     initialized = 1;
@@ -154,6 +174,14 @@ void sgwc_terminate(void)
     sgwc_event_term();
     ogs_thread_destroy(thread);
     thread = NULL;
+
+    /*
+     * Stop RX helpers before shard/context teardown (MME order). While
+     * alive they still recv/classify and can post into dying worker
+     * queues or create PFCP peers under context_final.
+     */
+    sgwc_gtpc_rx_stop();
+    sgwc_pfcp_rx_stop();
 
     sgwc_workers_stop();
 
@@ -228,6 +256,7 @@ static void sgwc_main(void *data)
                 break;
 
             ogs_assert(e);
+            sgwc_event_lag_observe(e);
             ogs_fsm_dispatch(&sgwc_sm, e);
             sgwc_event_free(e);
         }

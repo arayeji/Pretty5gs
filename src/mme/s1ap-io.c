@@ -32,8 +32,26 @@
 #ifndef ECONNABORTED
 #define ECONNABORTED 103
 #endif
+#ifndef ETIMEDOUT
+#define ETIMEDOUT 110
+#endif
 
-static ogs_worker_t *io_worker = NULL;
+/*
+ * mme.s1ap_io_thread: N (1..MME_S1AP_IO_MAX) IO threads. Each socket is
+ * sticky to one IO worker (pointer hash), so per-association order is
+ * preserved and each worker's io_sock_hash stays thread-local. SEND and
+ * DRAIN for one sock always land on the same worker's FIFO.
+ */
+#define MME_S1AP_IO_MAX 4
+
+static ogs_worker_t *io_workers[MME_S1AP_IO_MAX];
+static int io_worker_count = 0;
+
+static ogs_worker_t *io_pick(ogs_sock_t *sock)
+{
+    /* >>6: strip allocator alignment so socks spread across workers */
+    return io_workers[((uintptr_t)sock >> 6) % (unsigned)io_worker_count];
+}
 
 typedef struct io_job_s {
 #define IO_CMD_SEND     1
@@ -56,21 +74,25 @@ typedef struct io_sock_s {
     int             wq_count;       /* O(1) depth of write_queue */
     uint32_t        wq_dropped;     /* drops in current log window */
     ogs_time_t      wq_drop_window; /* start of current log window */
+    ogs_time_t      wq_full_since;  /* when depth first hit max (0=ok) */
+    ogs_time_t      congest_report; /* last congestion heartbeat to main */
     ogs_poll_t      *poll_write;    /* POLLOUT on io_worker->pollset */
     bool            send_addr;      /* pass addr to sendmsg (SEQPACKET) */
     bool            has_peer;
     ogs_sockaddr_t  addr;
     bool            dead;           /* hard send error; drop further SEND */
-    bool            dead_reported;  /* CONNREFUSED posted once */
+    bool            teardown_posted; /* CONNREFUSED already queued */
 } io_sock_t;
 
 /*
- * Soft per-assoc backlog. When exceeded we DROP the new PDU only —
- * never tear the eNB down. (Earlier code raised CONNREFUSED here and
- * that alone could cascade-kill hundreds of cells under attach load.)
+ * Soft per-assoc backlog. When exceeded we DROP the new PDU only at
+ * first — a brief spike must not kill the cell. If the queue stays
+ * full for s1ap_io_stall_teardown_sec, we tear that assoc down so a
+ * single stuck eNB cannot retry-flood the shared MME.
  * Overridable via mme.s1ap_io_write_queue_max.
  */
-#define IO_WRITE_QUEUE_MAX_DEFAULT  10240
+#define IO_WRITE_QUEUE_MAX_DEFAULT          10240
+#define IO_STALL_TEARDOWN_SEC_DEFAULT       10
 
 static int io_write_queue_max(void)
 {
@@ -79,16 +101,51 @@ static int io_write_queue_max(void)
     return v > 0 ? v : IO_WRITE_QUEUE_MAX_DEFAULT;
 }
 
+/*
+ * Depth at which an association counts as TX-congested for overload
+ * control. A quarter of the cap by default: far enough below full that
+ * an OVERLOAD START still gets out, far enough above idle that normal
+ * attach bursts do not trip it.
+ */
+int s1ap_io_congest_depth(void)
+{
+    int v = mme_self()->s1ap_io_congest_depth;
+
+    if (v > 0)
+        return v;
+    v = io_write_queue_max() / 4;
+    return v > 0 ? v : 1;
+}
+
+/* 0/unset → default; negative → disabled */
+static int io_stall_teardown_sec(void)
+{
+    int v = mme_self()->s1ap_io_stall_teardown_sec;
+
+    if (v < 0)
+        return 0;
+    if (v == 0)
+        return IO_STALL_TEARDOWN_SEC_DEFAULT;
+    return v;
+}
+
 static OGS_THREAD_LOCAL ogs_hash_t *io_sock_hash = NULL;
+
+static bool io_sockaddr_usable(const ogs_sockaddr_t *a)
+{
+    return a && (a->ogs_sa_family == AF_INET || a->ogs_sa_family == AF_INET6);
+}
 
 /* eNB peer address for diagnostics (both send paths pass enb->sctp.addr) */
 static const char *io_sock_peer_str(io_sock_t *ctx, char *buf)
 {
     ogs_sockaddr_t *a = NULL;
 
-    if (ctx->has_peer)
+    /* has_peer alone is not enough: enb->sctp.addr can be non-NULL with
+     * AF_UNSPEC/zeroed during teardown; OGS_ADDR used to abort MME. */
+    if (ctx->has_peer && io_sockaddr_usable(&ctx->addr))
         a = &ctx->addr;
-    else if (ctx->sock && ctx->sock->remote_addr.ogs_sa_family)
+    else if (ctx->sock && io_sockaddr_usable(&ctx->sock->remote_addr))
         a = &ctx->sock->remote_addr;
 
     if (!a)
@@ -164,25 +221,30 @@ static void io_sock_free(io_sock_t *ctx)
 
 static void io_write_cb(short when, ogs_socket_t fd, void *data);
 
+/*
+ * Timeout on send: the peer is not taking data even though RX may stay
+ * quiet, so the IO thread has to drive teardown itself. OGS_ETIMEDOUT
+ * is the portable spelling (WSAETIMEDOUT on Windows, ETIMEDOUT here);
+ * listing both is a duplicated test on POSIX.
+ */
+static bool io_errno_needs_teardown(ogs_err_t err)
+{
+    return err == OGS_ETIMEDOUT;
+}
+
 static bool io_errno_assoc_dead(ogs_err_t err)
 {
     return err == EPIPE ||
            err == OGS_ECONNRESET ||
            err == ENOTCONN ||
            err == ECONNABORTED ||
-           err == OGS_EBADF;
+           err == OGS_EBADF ||
+           io_errno_needs_teardown(err);
 }
 
 /*
- * Stop sending on this sock. Do NOT raise CONNREFUSED from the IO
- * thread.
- *
- * Why: with s1ap_io_thread off, ogs_sctp_senddata() on EPIPE only
- * drops the PDU — RX (COMM_LOST / SHUTDOWN / recv0) owns teardown.
- * Raising CONNREFUSED from IO on every EPIPE / write-queue-full caused
- * mass mme_enb_remove + UE release storms and wedged the MME even
- * after the CONNREFUSED side-queue fix. Marking dead locally stops the
- * Broken-pipe send spam; lifecycle stays on the RX path (same as IO off).
+ * Clear the per-eNB write queue and stop further SEND. Does not by
+ * itself raise CONNREFUSED — see io_request_teardown().
  */
 static void io_mark_assoc_dead(io_sock_t *ctx, const char *why)
 {
@@ -195,7 +257,7 @@ static void io_mark_assoc_dead(io_sock_t *ctx, const char *why)
     if (ctx->dead)
         return;
     ctx->dead = true;
-    ctx->dead_reported = true;
+    ctx->wq_full_since = 0;
 
     ogs_list_for_each_safe(&ctx->write_queue, next, pkbuf) {
         ogs_list_remove(&ctx->write_queue, pkbuf);
@@ -218,8 +280,7 @@ static void io_mark_assoc_dead(io_sock_t *ctx, const char *why)
                         log_count, why ? why : "?",
                         io_sock_peer_str(ctx, peer), (void *)ctx->sock);
             else
-                ogs_warn("s1ap-io: eNB[%s] sock:%p send-dead (%s) — "
-                        "waiting for RX teardown",
+                ogs_warn("s1ap-io: eNB[%s] sock:%p send-dead (%s)",
                         io_sock_peer_str(ctx, peer), (void *)ctx->sock,
                         why ? why : "?");
             log_window = now;
@@ -227,6 +288,67 @@ static void io_mark_assoc_dead(io_sock_t *ctx, const char *why)
         }
         log_count++;
     }
+}
+
+/*
+ * Clear TX queue for this eNB and ask main to drop S1 (CONNREFUSED
+ * side-queue coalesces duplicates). Used for ETIMEDOUT and for a
+ * write-queue that has stayed full too long — not for a one-shot
+ * queue spike under attach load.
+ */
+static void io_request_teardown(io_sock_t *ctx, const char *why)
+{
+    ogs_sockaddr_t *addr = NULL;
+    char peer[OGS_ADDRSTRLEN];
+
+    ogs_assert(ctx);
+
+    if (ctx->teardown_posted) {
+        if (!ctx->dead)
+            io_mark_assoc_dead(ctx, why);
+        return;
+    }
+    ctx->teardown_posted = true;
+
+    io_mark_assoc_dead(ctx, why);
+
+    ogs_warn("s1ap-io: tearing down eNB[%s] sock:%p (%s) — "
+            "clear TX queue + S1 CONNREFUSED",
+            io_sock_peer_str(ctx, peer), (void *)ctx->sock,
+            why ? why : "?");
+
+    if (ctx->has_peer && io_sockaddr_usable(&ctx->addr)) {
+        addr = ogs_calloc(1, sizeof(*addr));
+        if (addr)
+            memcpy(addr, &ctx->addr, sizeof(*addr));
+    } else if (ctx->sock &&
+            io_sockaddr_usable(&ctx->sock->remote_addr)) {
+        addr = ogs_calloc(1, sizeof(*addr));
+        if (addr)
+            memcpy(addr, &ctx->sock->remote_addr, sizeof(*addr));
+    }
+
+    /* addr may be NULL — handler falls back to sock lookup */
+    mme_sctp_event_push(MME_EVENT_S1AP_LO_CONNREFUSED,
+            ctx->sock, addr, NULL, 0, 0);
+}
+
+/*
+ * Tell main this association's downlink is backing up, at most once a
+ * second. Deliberately a repeated heartbeat rather than an edge event:
+ * main holds it as a short lease (mme.overload.congest_lease_sec), so a
+ * heartbeat lost to a full event queue can only clear the state early
+ * — it can never leave an eNB throttled forever. Also why this is not
+ * a "congestion cleared" event: there is nothing to lose.
+ */
+static void io_report_congestion(io_sock_t *ctx, ogs_time_t now)
+{
+    if (ctx->congest_report &&
+        (now - ctx->congest_report) < ogs_time_from_sec(1))
+        return;
+    ctx->congest_report = now;
+
+    s1ap_io_congestion_event_push(ctx->sock, ctx->wq_count);
 }
 
 /*
@@ -263,6 +385,8 @@ static void io_sock_flush(io_sock_t *ctx)
             ogs_list_remove(&ctx->write_queue, pkbuf);
             ctx->wq_count--;
             ogs_pkbuf_free(pkbuf);
+            if (ctx->wq_count < io_write_queue_max())
+                ctx->wq_full_since = 0;
             continue;
         }
 
@@ -298,8 +422,18 @@ static void io_sock_flush(io_sock_t *ctx)
                 continue;
             }
 
+            if (io_errno_needs_teardown(err)) {
+                /*
+                 * ETIMEDOUT: peer not accepting data but SCTP may still
+                 * look "up" on RX. Clear this eNB's TX queue and drop S1
+                 * so UEs stop retry-flooding the shared MME.
+                 */
+                io_request_teardown(ctx, "send-ETIMEDOUT");
+                return;
+            }
+
             if (io_errno_assoc_dead(err)) {
-                /* Match IO-off: drop + stop spam; RX raises CONNREFUSED. */
+                /* EPIPE/RESET: stop spam; RX COMM_LOST usually finishes. */
                 io_mark_assoc_dead(ctx, "hard-send-error");
                 return;
             }
@@ -308,6 +442,9 @@ static void io_sock_flush(io_sock_t *ctx)
                     "s1ap-io: sendmsg failed (non-fatal)");
         }
     }
+
+    /* Queue drained — clear stall clock */
+    ctx->wq_full_since = 0;
 
     if (ctx->poll_write) {
         ogs_pollset_remove(ctx->poll_write);
@@ -335,7 +472,7 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
     case IO_CMD_SEND:
         ogs_assert(job->pkbuf);
         ctx = io_sock_get(job->sock);
-        if (job->has_peer) {
+        if (job->has_peer && io_sockaddr_usable(&job->addr)) {
             ctx->has_peer = true;
             memcpy(&ctx->addr, &job->addr, sizeof(ctx->addr));
         }
@@ -346,15 +483,28 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
             break;
         }
 
+        if (ctx->wq_count >= s1ap_io_congest_depth())
+            io_report_congestion(ctx, ogs_time_now());
+
         if (ctx->wq_count >= io_write_queue_max()) {
             /*
-             * Soft backpressure only. Never CONNREFUSED / mark-dead here:
-             * a slow eNB under attach load easily exceeds a few hundred
-             * queued PDUs; killing the cell made IO-on unusable.
-             * Log once per second per sock — the drop log itself must
-             * not become the flood.
+             * Soft backpressure first: drop this PDU only. If the queue
+             * has stayed full for too long, tear THIS eNB down (clear
+             * TX + CONNREFUSED) so one stuck cell cannot wedge the
+             * shared IO thread / worker pool via endless UE retries.
              */
             ogs_time_t now = ogs_time_now();
+            int stall_sec = io_stall_teardown_sec();
+
+            if (!ctx->wq_full_since)
+                ctx->wq_full_since = now;
+
+            if (stall_sec > 0 &&
+                (now - ctx->wq_full_since) >= ogs_time_from_sec(stall_sec)) {
+                ogs_pkbuf_free(job->pkbuf);
+                io_request_teardown(ctx, "write-queue-stall");
+                break;
+            }
 
             ctx->wq_dropped++;
             if (now - ctx->wq_drop_window > ogs_time_from_sec(1)) {
@@ -362,10 +512,13 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
 
                 ogs_error("s1ap-io: write queue full for eNB[%s] "
                         "(sock:%p depth:%d max:%d); dropped %u PDU(s) "
-                        "in last window",
+                        "in last window (stall %ld/%d s)",
                         io_sock_peer_str(ctx, peer),
                         (void *)job->sock, ctx->wq_count,
-                        io_write_queue_max(), ctx->wq_dropped);
+                        io_write_queue_max(), ctx->wq_dropped,
+                        (long)((now - ctx->wq_full_since) /
+                            ogs_time_from_sec(1)),
+                        stall_sec);
                 ctx->wq_drop_window = now;
                 ctx->wq_dropped = 0;
             }
@@ -395,40 +548,65 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
     ogs_free(job);
 }
 
-int s1ap_io_start(void)
+int s1ap_io_start(int count)
 {
-    ogs_assert(io_worker == NULL);
+    int i;
 
-    /*
-     * poll capacity: every connected eNB could in theory be waiting on
-     * POLLOUT at once, plus the queue-notify eventfd.
-     * Command queue capped: SEND jobs are drained continuously and
-     * per-sock backlog is bounded by io_write_queue_max() anyway.
-     */
-    io_worker = ogs_worker_create(0,
-            ogs_min(ogs_app()->pool.event, 262144), 64,
-            ogs_global_conf()->max.peer * 2 + 64,
-            io_dispatch, NULL);
-    ogs_assert(io_worker);
-    ogs_worker_hooks(io_worker, io_thread_init, io_thread_fini);
-    ogs_worker_start(io_worker);
+    ogs_assert(io_worker_count == 0);
+    ogs_assert(count > 0 && count <= MME_S1AP_IO_MAX);
 
-    ogs_info("S1AP TX IO thread: on");
+    for (i = 0; i < count; i++) {
+        char tname[16];
+
+        /*
+         * poll capacity: every connected eNB could in theory be waiting
+         * on POLLOUT at once, plus the queue-notify eventfd.
+         * Command queue capped: SEND jobs are drained continuously and
+         * per-sock backlog is bounded by io_write_queue_max() anyway.
+         */
+        io_workers[i] = ogs_worker_create(i,
+                ogs_min(ogs_app()->pool.event, 262144), 64,
+                ogs_global_conf()->max.peer * 2 + 64,
+                io_dispatch, NULL);
+        ogs_assert(io_workers[i]);
+        ogs_worker_hooks(io_workers[i], io_thread_init, io_thread_fini);
+        ogs_snprintf(tname, sizeof(tname), "s1ap-io%d", i);
+        ogs_worker_set_name(io_workers[i], tname);
+        ogs_worker_start(io_workers[i]);
+    }
+    io_worker_count = count;
+
+    ogs_info("S1AP TX IO thread(s): %d", count);
     return OGS_OK;
 }
 
 void s1ap_io_stop(void)
 {
-    if (!io_worker)
-        return;
+    int i;
 
-    ogs_worker_destroy(io_worker);   /* joins; thread_fini frees queues */
-    io_worker = NULL;
+    for (i = 0; i < io_worker_count; i++) {
+        /* joins; thread_fini frees queues */
+        ogs_worker_destroy(io_workers[i]);
+        io_workers[i] = NULL;
+    }
+    io_worker_count = 0;
 }
 
 bool s1ap_io_active(void)
 {
-    return io_worker != NULL;
+    return io_worker_count > 0;
+}
+
+/* diagnostic (torn read acceptable): total depth across IO command queues */
+unsigned int s1ap_io_queue_depth(void)
+{
+    unsigned int depth = 0;
+    int i;
+
+    for (i = 0; i < io_worker_count; i++)
+        if (io_workers[i])
+            depth += ogs_queue_size(io_workers[i]->queue);
+    return depth;
 }
 
 int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
@@ -440,7 +618,7 @@ int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
     ogs_assert(sock);
     ogs_assert(pkbuf);
 
-    if (!io_worker) {
+    if (!io_worker_count) {
         ogs_error("s1ap-io: IO worker not running; drop PDU (len:%d)",
                 pkbuf->len);
         ogs_pkbuf_free(pkbuf);
@@ -458,12 +636,16 @@ int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
     job->sock = sock;
     job->pkbuf = pkbuf;
     job->send_addr = send_with_addr;
-    if (peer_addr) {
+    if (io_sockaddr_usable(peer_addr)) {
         job->has_peer = true;
         memcpy(&job->addr, peer_addr, sizeof(job->addr));
+    } else if (peer_addr) {
+        /* Non-NULL but unusable (AF_UNSPEC): keep send_addr false so we
+         * do not pass a zeroed sockaddr into sendmsg. */
+        job->send_addr = false;
     }
 
-    rv = ogs_worker_post(io_worker, job);
+    rv = ogs_worker_post(io_pick(sock), job);
     if (rv != OGS_OK) {
         /*
          * IO queue full — meltdown-level backlog. Dropping keeps order
@@ -482,19 +664,24 @@ int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
 bool s1ap_io_drain_sock(ogs_sock_t *sock)
 {
     io_job_t *job = NULL;
+    ogs_worker_t *worker = NULL;
     int rv;
 
     ogs_assert(sock);
 
-    if (!io_worker)
+    if (!io_worker_count)
         return false;
+
+    /* same worker as every SEND for this sock — FIFO makes the drain
+     * observe all prior sends */
+    worker = io_pick(sock);
 
     job = ogs_calloc(1, sizeof(*job));
     ogs_assert(job);
     job->op = IO_CMD_DRAIN;
     job->sock = sock;
 
-    rv = ogs_worker_post(io_worker, job);
+    rv = ogs_worker_post(worker, job);
     if (rv != OGS_OK) {
         /*
          * DRAIN must not be lost: without it the close registry never
@@ -505,7 +692,7 @@ bool s1ap_io_drain_sock(ogs_sock_t *sock)
         int tries = 0;
         while (rv != OGS_OK && tries++ < 1000) {
             ogs_usleep(1000);
-            rv = ogs_worker_post(io_worker, job);
+            rv = ogs_worker_post(worker, job);
         }
         if (rv != OGS_OK) {
             ogs_error("s1ap-io: DRAIN post failed; leaking sock ref");

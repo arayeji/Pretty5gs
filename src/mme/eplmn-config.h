@@ -34,6 +34,17 @@ void mme_eplmn_log_config(int num_of_eplmn, ogs_plmn_id_t *eplmn);
 void mme_eplmn_log_serving_only(bool serving_only);
 int mme_eplmn_build_nas_list(ogs_nas_plmn_list_t *nas_list,
         int num_of_eplmn, ogs_plmn_id_t *eplmn);
+/*
+ * equivalent_plmn_serving_only: match the UE IMSI home PLMN against the
+ * configured list (not the visited/serving TAI PLMN). On hit, only that
+ * PLMN is sent; otherwise the full list is sent.
+ */
+int mme_eplmn_build_nas_list_for_imsi(ogs_nas_plmn_list_t *nas_list,
+        const char *imsi_bcd, bool imsi_plmn_only,
+        int num_of_eplmn, ogs_plmn_id_t *eplmn);
+int mme_eplmn_count_for_imsi(const char *imsi_bcd, bool imsi_plmn_only,
+        int num_of_eplmn, ogs_plmn_id_t *eplmn);
+/* Test helper: PLMN-id memcmp filter (legacy name). */
 int mme_eplmn_build_nas_list_for_serving(ogs_nas_plmn_list_t *nas_list,
         const ogs_plmn_id_t *serving_plmn, bool serving_only,
         int num_of_eplmn, ogs_plmn_id_t *eplmn);

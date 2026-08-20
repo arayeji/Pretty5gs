@@ -27,25 +27,29 @@ extern "C" {
 #endif
 
 /*
- * Dedicated S1AP SCTP send (IO) thread — knob `mme.s1ap_io_thread`.
+ * Dedicated S1AP SCTP send (IO) thread(s) — knob `mme.s1ap_io_thread`.
  *
- * A single thread owns every eNB socket's WRITE side: per-socket FIFO,
- * non-blocking sendmsg, POLLOUT on the IO thread's own pollset when the
- * kernel buffer is full. One thread means all sends stay serialized
- * (per-association order is trivially preserved) while `mme_main` no
+ * N threads (1..4) own the eNB sockets' WRITE side: per-socket FIFO,
+ * non-blocking sendmsg, POLLOUT on the owning IO thread's pollset when
+ * the kernel buffer is full. Sockets are sticky per IO worker (pointer
+ * hash), so per-association order is preserved and `mme_main` no
  * longer spends cycles in sendmsg / sctp_write_callback.
  *
  * Ownership rules (mirrors s1ap-rx.c):
- *  - main posts SEND/DRAIN jobs; it never touches the IO-side queues
- *  - the IO thread never touches mme context (jobs carry the sock
+ *  - main (or, with s1ap_tx_direct, a TX worker under mme_ctx_lock)
+ *    posts SEND/DRAIN jobs; nothing else touches the IO-side queues
+ *  - IO threads never touch mme context (jobs carry the sock
  *    pointer and, for SEQPACKET, a copied destination address)
  *  - socket destroy is deferred until every worker that references the
  *    sock confirms (see the close registry below)
  */
 
-int s1ap_io_start(void);
+int s1ap_io_start(int count);
 void s1ap_io_stop(void);
 bool s1ap_io_active(void);
+
+/* diagnostic for /admin/queues */
+unsigned int s1ap_io_queue_depth(void);
 
 /*
  * Queue one encoded S1AP PDU for transmission. ppid/stream_no must
@@ -56,12 +60,23 @@ bool s1ap_io_active(void);
  * Takes ownership of pkbuf (freed on any failure). Returns OGS_OK
  * or OGS_ERROR (job alloc/queue-full drop).
  *
- * Hard send errors (EPIPE, etc.) only mark the sock send-dead on the
- * IO thread — they do NOT raise CONNREFUSED. Teardown stays on the RX
- * path (same behaviour as s1ap_io_thread: 0).
+ * Hard send errors:
+ *  - EPIPE / ECONNRESET: mark send-dead locally; RX (COMM_LOST) usually
+ *    finishes teardown (avoids double-remove storms).
+ *  - ETIMEDOUT, or write-queue full for s1ap_io_stall_teardown_sec:
+ *    clear that eNB's TX queue and raise CONNREFUSED so S1 is dropped.
+ *    A stuck cell must not keep retry-flooding shared MME workers.
+ *
+ * Well before "full", a queue deeper than s1ap_io_congest_depth() is
+ * reported to main once a second as MME_EVENT_S1AP_IO_CONGESTED so
+ * overload control can stop admitting work from that eNB and ask it to
+ * throttle (see s1ap-overload.c).
  */
 int s1ap_io_post_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf,
         const ogs_sockaddr_t *peer_addr, bool send_with_addr);
+
+/* Effective TX-congestion watermark (mme.s1ap_io_congest_depth) */
+int s1ap_io_congest_depth(void);
 
 /*
  * Socket close registry (mutex-protected; main registers, workers may

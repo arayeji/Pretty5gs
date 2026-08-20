@@ -21,6 +21,7 @@
 
 #include "hss-context.h"
 #include "hss-fd-path.h"
+#include "hss-trace.h"
 
 /* handler for fallback cb */
 static struct disp_hdl *hdl_cx_fb = NULL;
@@ -61,6 +62,7 @@ static bool hss_cx_user_name_to_bcd(
 static int hss_ogs_diam_cx_fb_cb(struct msg **msg, struct avp *avp,
         struct session *session, void *opaque, enum disp_action *act)
 {
+    HSS_TRACE_SCOPE();
     /* This CB should never be called */
     ogs_warn("Unexpected message received!");
     OGS_DIAM_STATS_MTX(
@@ -74,6 +76,7 @@ static int hss_ogs_diam_cx_fb_cb(struct msg **msg, struct avp *avp,
 static int hss_ogs_diam_cx_uar_cb(struct msg **msg, struct avp *avp,
         struct session *session, void *opaque, enum disp_action *act)
 {
+    HSS_TRACE_SCOPE();
     int rv, ret;
     uint32_t result_code = 0;
     struct msg *ans = NULL, *qry = NULL;
@@ -227,6 +230,9 @@ static int hss_ogs_diam_cx_uar_cb(struct msg **msg, struct avp *avp,
         goto out;
     }
 
+    hss_trace_event(msisdn_data.imsi.bcd, "Cx-UAR",
+            "Rx User-Authorization-Request");
+
     if (!error_occurred) {
         /* Set Vendor-Specific-Application-Id AVP */
         ret = ogs_diam_message_vendor_specific_appid_set(
@@ -313,6 +319,8 @@ static int hss_ogs_diam_cx_uar_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx User-Authorization-Answer");
+        hss_trace_event(msisdn_data.imsi.bcd, "Cx-UAR",
+                "Tx User-Authorization-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -375,6 +383,7 @@ out:
 static int hss_ogs_diam_cx_mar_cb(struct msg **msg, struct avp *avp,
         struct session *session, void *opaque, enum disp_action *act)
 {
+    HSS_TRACE_SCOPE();
     int rv, ret;
     uint32_t result_code = 0;
     struct msg *ans = NULL, *qry = NULL;
@@ -553,6 +562,8 @@ static int hss_ogs_diam_cx_mar_cb(struct msg **msg, struct avp *avp,
         error_occurred = 1;
         goto out;
     }
+
+    hss_trace_event(imsi_bcd, "Cx-MAR", "Rx Multimedia-Auth-Request");
 
     /* Get the SIP-Auth-Data-Item AVP (Mandatory) */
     ret = fd_msg_search_avp(
@@ -970,6 +981,7 @@ static int hss_ogs_diam_cx_mar_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Multimedia-Auth-Answer");
+        hss_trace_event(imsi_bcd, "Cx-MAR", "Tx Multimedia-Auth-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -1034,6 +1046,7 @@ out:
 static int hss_ogs_diam_cx_sar_cb(struct msg **msg, struct avp *avp,
         struct session *session, void *opaque, enum disp_action *act)
 {
+    HSS_TRACE_SCOPE();
     int rv, ret;
     uint32_t result_code = 0;
     struct msg *ans = NULL, *qry = NULL;
@@ -1204,6 +1217,8 @@ static int hss_ogs_diam_cx_sar_cb(struct msg **msg, struct avp *avp,
         error_occurred = 1;
         goto out;
     }
+
+    hss_trace_event(imsi_bcd, "Cx-SAR", "Rx Server-Assignment-Request");
 
     /* Check if Visited-Network-Identifier */
     visited_network_identifier =
@@ -1436,6 +1451,7 @@ static int hss_ogs_diam_cx_sar_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Server-Assignment-Answer");
+        hss_trace_event(imsi_bcd, "Cx-SAR", "Tx Server-Assignment-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(
@@ -1500,6 +1516,7 @@ out:
 static int hss_ogs_diam_cx_lir_cb(struct msg **msg, struct avp *avp,
         struct session *session, void *opaque, enum disp_action *act)
 {
+    HSS_TRACE_SCOPE();
     int ret;
     uint32_t result_code = 0;
     struct msg *ans = NULL, *qry = NULL;
@@ -1568,6 +1585,11 @@ static int hss_ogs_diam_cx_lir_cb(struct msg **msg, struct avp *avp,
         result_code = OGS_DIAM_CX_SERVER_NAME_NOT_STORED;
         error_occurred = 1;
         goto out;
+    }
+
+    {
+        char *lir_imsi = hss_cx_get_imsi_bcd(public_identity);
+        hss_trace_event(lir_imsi, "Cx-LIR", "Rx Location-Info-Request");
     }
 
     if (!error_occurred) {
@@ -1640,6 +1662,8 @@ static int hss_ogs_diam_cx_lir_cb(struct msg **msg, struct avp *avp,
         }
 
         ogs_debug("Tx Location-Info-Answer");
+        hss_trace_event(hss_cx_get_imsi_bcd(public_identity), "Cx-LIR",
+                "Tx Location-Info-Answer");
 
         /* Add to stats */
         OGS_DIAM_STATS_MTX(

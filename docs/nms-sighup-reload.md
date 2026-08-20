@@ -1,10 +1,12 @@
 # NMS reference: SIGHUP runtime config reload
 
-This document lists every YAML key that **open5gs-mmed**, **open5gs-smfd**, and **open5gs-sgwcd** apply on **SIGHUP** without restarting the daemon (attached UEs / sessions stay up).
+This document lists every YAML key that **open5gs-mmed**, **open5gs-smfd**, **open5gs-sgwcd**, and **open5gs-hssd** apply on **SIGHUP** without restarting the daemon (attached UEs / sessions stay up).
 
 Branch: `feature/sighup-list-replace` (Pretty5gs fork).
 
-**Other NFs** (AMF, UPF, HSS, PCRF, NRF, …) have **no SIGHUP handler** — any config change requires a daemon restart.
+**Other NFs** (AMF, UPF, PCRF, NRF, …) have **no SIGHUP handler** — any config change requires a daemon restart.
+
+HSS SIGHUP is minimal: **logger** (via `ogs_app_config_reload`) and **`hss.trace_imsi`** full-replace. Diameter / metrics / `sms_over_ims` / change-stream still need restart. Runtime trace also works via `GET /admin/trace/imsi` on the metrics port.
 
 ---
 
@@ -15,6 +17,7 @@ Branch: `feature/sighup-list-replace` (Pretty5gs fork).
 | MME | `sudo systemctl reload open5gs-mmed` | `sudo kill -HUP "$(pidof open5gs-mmed)"` |
 | SMF | `sudo systemctl reload open5gs-smfd` | `sudo kill -HUP "$(pidof open5gs-smfd)"` |
 | SGWC | `sudo systemctl reload open5gs-sgwcd` | `sudo kill -HUP "$(pidof open5gs-sgwcd)"` |
+| HSS | `sudo systemctl reload open5gs-hssd` | `sudo kill -HUP "$(pidof open5gs-hssd)"` |
 
 ### Log signals
 
@@ -51,6 +54,23 @@ Top-level section in each NF YAML (`mme.yaml`, `smf.yaml`, `sgwc.yaml`).
 | `logger.file.path` | yes |
 | `logger.default.timestamp` | yes |
 | `logger.file.timestamp` | yes |
+
+---
+
+## Global parameters (`global.parameter` in MME YAML)
+
+Applied by the MME SIGHUP handler. Keys absent from the new document keep
+their previous value.
+
+| YAML path | SIGHUP | Notes |
+|-----------|--------|-------|
+| `global.parameter.fake_csfb` | yes | SMS-only Combined Accept when UE asked Combined+SMS only |
+| `global.parameter.fake_csfb_lai` | yes | with fake_csfb: synthesize LAI+P-TMSI (default true; alias `fake_csfb_ptmsi`) |
+| `global.parameter.ignore_sgs` | yes | skip SGsAP Location Update (e.g. roamers); no VLR |
+| `global.parameter.use_openair` | yes | umbrella: short ENFS + omit HashMME (all UEs) |
+| `global.parameter.openair_short_enfs` | yes | 1-byte ENFS on Attach/TAU Accept |
+| `global.parameter.openair_omit_hashmme` | yes | omit HashMME on SMC (security tradeoff) |
+| other `global.parameter.*` | **no** | restart required |
 
 ---
 
@@ -93,6 +113,28 @@ Top-level section in each NF YAML (`mme.yaml`, `smf.yaml`, `sgwc.yaml`).
 
 Peer entry fields on add/sync: `address`, `port`, `family`, `tac`, `e_cell_id`, `apn`, `serving_plmn_id`, `plmn_id` (IMSI-PLMN rules).
 
+### SGs / VLR — `mme.sgsap.*`
+
+| YAML path | SIGHUP | Notes |
+|-----------|--------|-------|
+| `mme.sgsap.client[].map[]` | yes | TAI-LAI table: entries added, updated in place, or retired. A map entry is keyed by `tai.plmn_id` + `tac`/`tac_end` + `imsi_prefix`, so editing only `lai` updates the existing entry |
+| `mme.sgsap.client[]` (new address) | yes | new VLR is added and its SCTP association started |
+| `mme.sgsap.client[].address` (changed) | **no** | reads as "new VLR added, old one missing": the new one connects, the old association is kept — restart to drop it |
+| `mme.sgsap.client[]` (removed) | **no** | association kept, warned in the audit — restart required |
+| `mme.sgsap.client[].local_address` / `port` / `option` | **no** | bind/transport — restart required, change is ignored with an audit warning |
+| `mme.sgsap.max_csmap` | yes | parse-time cap only |
+
+Reload is add/update-only by design: rebinding a VLR would drop SGs for every
+CSFB subscriber on it and force them all to re-run Location Update.
+
+Map entries dropped from the file are unlinked from the lookup path
+immediately, but the objects are freed only once no attached UE still points
+at one (a UE holds its `csmap` until it detaches or runs another TAU). The
+audit line reports both counts, e.g.
+`sgsap vlr+0 map+3 map~11 map-2 (freed 1, 1 pinned by attached UEs)`.
+
+A malformed `mme.sgsap` block leaves the previous table in place.
+
 ### Lists — full replace when key present
 
 | YAML path | SIGHUP | Notes |
@@ -110,9 +152,12 @@ Peer entry fields on add/sync: `address`, `port`, `family`, `tac`, `e_cell_id`, 
 | YAML path | SIGHUP |
 |-----------|--------|
 | `mme.attach_accept.tai_list` (`serving_only` / `all`) | yes |
+| `mme.attach_accept.equivalent_plmn` (boolean IE switch) | yes |
 | `mme.attach_accept.equivalent_plmn_serving_only` | yes |
+| `mme.attach_accept.equivalent_plmn_access_control_tac` | yes |
 | `mme.attach_accept.ims_voice_over_ps` | yes |
 | `mme.equivalent_plmn_serving_only` | yes |
+| `mme.equivalent_plmn_access_control_tac` | yes |
 | `mme.ims_voice_over_ps_in_s1_mode` | yes |
 | `mme.tai_list_in_accept` | yes |
 | `mme.require_hss_map` | yes |
@@ -167,7 +212,8 @@ UPF entry fields: `address`, `port`, `family`, `apn`/`dnn`, `tac`, `order`.
 | `smf.cdr.enabled` | yes | writer close/reopen |
 | `smf.cdr.spool_dir` / `directory` | yes | |
 | `smf.cdr.node_id` / `nodeid` | yes | |
-| `smf.cdr.local_address` / `pgw_address` | yes | |
+| `smf.cdr.address` / `pgw_address` | yes | manual CDR [4] (after gtpc advertise) |
+| `smf.cdr.local_address` | yes | last-resort CDR [4] fallback |
 | `smf.cdr.max_records` | yes | |
 | `smf.cdr.max_bytes` | yes | |
 | `smf.cdr.max_seconds` | yes | |
@@ -241,7 +287,8 @@ Removal: only when **no PFCP sessions** on that SGW-U.
 | `sgwc.cdr.enabled` | yes | writer close/reopen |
 | `sgwc.cdr.spool_dir` / `directory` | yes | |
 | `sgwc.cdr.node_id` / `nodeid` | yes | |
-| `sgwc.cdr.local_address` / `sgw_address` | yes | |
+| `sgwc.cdr.address` / `sgw_address` | yes | manual CDR [4] (after gtpc advertise) |
+| `sgwc.cdr.local_address` | yes | last-resort CDR [4] fallback |
 | `sgwc.cdr.interim_interval_s` / `interim_interval` | yes | |
 | `sgwc.cdr.max_records` / `max_bytes` / `max_seconds` | yes | |
 | `sgwc.cdr.triggers` | yes | |
@@ -252,32 +299,47 @@ Removal: only when **no PFCP sessions** on that SGW-U.
 
 ---
 
+## HSS (`hss:`)
+
+| Key | Reloadable | Notes |
+|-----|------------|-------|
+| `hss.trace_imsi[]` | yes | full replace; empty sequence clears |
+| `logger.*` | yes | via `ogs_app_config_reload` on every SIGHUP |
+
+### HSS — restart required
+
+`hss.freeDiameter`, `hss.metrics`, `hss.sms_over_ims`, `hss.use_mongodb_change_stream`, `hss.diameter_stats_interval`.
+
+Runtime alternative for trace filters: `GET /admin/trace/imsi` on the HSS metrics port.
+
+---
+
 ## Quick lookup by category
 
-| Category | MME | SMF | SGWC |
-|----------|-----|-----|------|
-| Timers | `mme.time.*` (wide set) | — | — |
-| GTP echo interval | yes | — | yes |
-| GTP-U / TEID scalars | — | — | yes (+ `inbound_roam`) |
-| Session / IP pools | — | yes | — |
-| PFCP peer lists | — | UPF sync | SGW-U sync |
-| GTP-C peer lists | SGWC + SMF sync | — | — |
-| ACL / policy lists | tai, access_control, hss_map, imsi_acl, emergency, … | — | gn.pgw |
-| Trace IMSI | yes | yes | yes |
-| CDR | — | yes | yes |
-| RADIUS | — | yes (+ per-APN from session) | — |
-| DNS | — | yes | — |
-| MTU | — | yes | — |
-| NWI rewrite | — | — | yes |
-| Logger | yes | yes | yes |
-| Bind / listen addresses | restart | restart | restart |
+| Category | MME | SMF | SGWC | HSS |
+|----------|-----|-----|------|-----|
+| Timers | `mme.time.*` (wide set) | — | — | — |
+| GTP echo interval | yes | — | yes | — |
+| GTP-U / TEID scalars | — | — | yes (+ `inbound_roam`) | — |
+| Session / IP pools | — | yes | — | — |
+| PFCP peer lists | — | UPF sync | SGW-U sync | — |
+| GTP-C peer lists | SGWC + SMF sync | — | — | — |
+| ACL / policy lists | tai, access_control, hss_map, imsi_acl, emergency, … | — | gn.pgw | — |
+| Trace IMSI | yes | yes | yes | yes |
+| CDR | — | yes | yes | — |
+| RADIUS | — | yes (+ per-APN from session) | — | — |
+| DNS | — | yes | — | — |
+| MTU | — | yes | — | — |
+| NWI rewrite | — | — | yes | — |
+| Logger | yes | yes | yes | yes |
+| Bind / listen addresses | restart | restart | restart | restart |
 
 ---
 
 ## NMS reload workflow (recommended)
 
 1. Validate YAML syntax before push.
-2. Write config to the live path (`/etc/open5gs/{mme,smf,sgwc}.yaml`).
+2. Write config to the live path (`/etc/open5gs/{mme,smf,sgwc,hss}.yaml`).
 3. Trigger reload (systemctl reload or `kill -HUP`).
 4. Parse daemon log for `Configuration reloaded` and audit lines.
 5. If any `… ignored (bind address)` or `Configuration reload failed` appears, mark the change as **needs restart**.

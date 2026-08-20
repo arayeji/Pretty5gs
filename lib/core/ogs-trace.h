@@ -90,6 +90,46 @@ size_t ogs_trace_format_prefix(char *buf, size_t buflen);
  */
 bool ogs_trace_should_emit(int domain);
 
+/*
+ * PACKET dumps for NMS PCAP rebuild. Zero cost when the IMSI filter is
+ * empty; when active, emits one INFO line:
+ *   PACKET: proto=<name> dir=<rx|tx> len=<n> b64=<base64>
+ * Payload is capped (OGS_TRACE_PACKET_MAX) so a traced flood cannot
+ * balloon journald. Never called for untraced subscribers.
+ */
+#define OGS_TRACE_PACKET_MAX        2048
+#define OGS_TRACE_ALIAS_KEY_LEN     20
+#define OGS_MAX_TRACE_ALIASES       16
+
+typedef enum {
+    OGS_TRACE_ALIAS_MSISDN = 1,
+    OGS_TRACE_ALIAS_IMEI = 2,
+} ogs_trace_alias_type_e;
+
+void ogs_trace_packet(const char *imsi, const char *proto, const char *dir,
+        const void *data, size_t len);
+/* Uses thread-local ogs_trace_get()->imsi; no-op if unset/unmatched. */
+void ogs_trace_packet_ctx(const char *proto, const char *dir,
+        const void *data, size_t len);
+/*
+ * Bind an RX buffer for the current worker; the next
+ * ogs_trace_packet_on_imsi() dumps it once (then clears). Safe if the
+ * filter is empty (no-op). Call before handlers that may set IMSI.
+ */
+void ogs_trace_packet_bind_rx(const char *proto, const void *data, size_t len);
+void ogs_trace_packet_on_imsi(const char *imsi);
+
+/*
+ * Trace was requested by MSISDN/IMEI: keep the alias and the resolved
+ * IMSI filter entry. On each attach, refresh so SIM/device swaps still
+ * hit IMSI-keyed NF logs.
+ */
+int ogs_trace_alias_set(ogs_trace_alias_type_e type, const char *key,
+        const char *imsi_bcd);
+void ogs_trace_alias_refresh_imsi(const char *msisdn_bcd,
+        const char *imeisv_bcd, const char *imsi_bcd);
+void ogs_trace_alias_clear(void);
+
 #define OGS_TLOG(level, fmt, ...) \
     do { \
         char _ogs_tlog_prefix[OGS_TRACE_PREFIX_BUFSIZE]; \

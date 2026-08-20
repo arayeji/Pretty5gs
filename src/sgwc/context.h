@@ -73,6 +73,8 @@ typedef struct sgwc_pgw_peer_s {
     bool peer_recovery_valid;
     ogs_timer_t *t_echo;
     bool echo_pending;
+    /* Cached OGS_ADDR(gnode) for metrics/logs; filled at peer attach. */
+    char addr_str[OGS_ADDRSTRLEN];
 } sgwc_pgw_peer_t;
 
 /*
@@ -84,7 +86,20 @@ typedef struct sgwc_cdr_config_s {
 
     const char *spool_dir;
     const char *node_id;
-    const char *local_address;  /* SGW S5/S11 address for CDR [4] s-GWAddress */
+    /*
+     * CDR [4] s-GWAddress selection (IPv4):
+     *   1) gtpc.server.advertise (ogs_gtp_self()->gtpc_ip)
+     *   2) address / sgw_address (manual override below)
+     *   3) local_address (last-resort fallback)
+     *
+     * CDR [6] servingNodeAddress (MME S11 / SGSN Gn peer):
+     *   1) peer signalling IP stored from CSR / Create PDP
+     *   2) serving_node_address / sgsn_address / mme_address
+     *   3) peer gnode remote address
+     */
+    const char *address;        /* manual CDR [4] override (alias: sgw_address) */
+    const char *local_address;  /* last-resort CDR [4] fallback */
+    const char *serving_node_address; /* manual CDR [6] fallback */
 
     uint32_t interim_interval_s;   /* URR time_threshold, default 300 */
     uint32_t rotate_max_records;
@@ -115,6 +130,32 @@ typedef struct sgwc_orphan_config_s {
     ogs_timer_t *t_sweep;  /* main-thread periodic timer                     */
 } sgwc_orphan_config_t;
 
+/*
+ * DL FAR BUFFER idle policy (TS 29.244 apply-action DROP after page fail /
+ * long idle). Stops UPF buffering forever when the UE never returns.
+ */
+typedef struct sgwc_buffer_idle_config_s {
+    bool enabled;          /* default true */
+    /*
+     * Blanket idle BUFF→DROP conversion (default false). Idle BUFF|NOCP
+     * sessions consume no UPF buffer until DL traffic actually arrives,
+     * but DROP kills DDN/paging (MT reachability) until the UE itself
+     * wakes up. Unable-to-page still DROPs regardless of this flag.
+     */
+    bool idle_drop;
+    uint32_t duration_s;   /* seconds in BUFF before DROP (default 180) */
+    uint32_t interval_s;   /* sweep period (default 30) */
+    /*
+     * DROP→BUFF|NOCP re-arm: after rearm_s seconds in DROP, restore
+     * buffering so DDN/paging works again (default 600, 0 = never).
+     * Paced at rearm_batch sessions per sweep per shard to avoid a
+     * PFCP modification storm (default 1000).
+     */
+    uint32_t rearm_s;
+    uint32_t rearm_batch;
+    ogs_timer_t *t_sweep;
+} sgwc_buffer_idle_config_t;
+
 typedef struct sgwc_context_s {
     ogs_list_t mme_s11_list;    /* MME GTPC Node List */
     ogs_list_t pgw_s5c_list;    /* PGW GTPC Node List */
@@ -124,6 +165,17 @@ typedef struct sgwc_context_s {
     uint32_t cdr_local_seq;
 
     sgwc_orphan_config_t orphan;
+    sgwc_buffer_idle_config_t buffer_idle;
+
+    /* Create BAR Suggested Buffering Packets Count (0 = omit IE). Default 8. */
+    uint8_t bar_suggested_buffering_packets_count;
+
+    /*
+     * Seconds to suppress further DDNs toward the MME after a DDN Ack
+     * with Unable-to-page (cause 90/102). 0 disables the holddown
+     * (every buffered-packet report immediately re-pages). Default 60.
+     */
+    uint32_t ddn_holddown_s;
 
     ogs_hash_t *imsi_ue_hash;   /* hash table (IMSI : SGW_UE) */
     ogs_hash_t *sgw_s11_teid_hash;  /* hash table (SGW-S11-TEID : SGW_UE) */
@@ -188,6 +240,21 @@ typedef struct sgwc_context_s {
     bool maintenance_mode;
 
     /*
+     * Attach-storm admission control (sgwc.admission in yaml).
+     * max_outstanding caps in-flight Create Session -> PFCP Session
+     * Establishment (0 = unlimited); rate_per_sec is an optional token
+     * bucket on accepted Create Sessions (0 = disabled). Over-cap or
+     * PFCP-all-down requests are rejected immediately with GTP-C entity
+     * congestion so the MME can back UEs off (EMM #22 + T3346) instead
+     * of piling contexts onto a dead SGW-U.
+     */
+    int         admission_max_outstanding;
+    int         admission_rate_per_sec;
+    int         admission_outstanding;      /* current in-flight count */
+    int         admission_rate_tokens;
+    ogs_time_t  admission_rate_window;      /* 1s token refill window */
+
+    /*
      * Batched /admin/maintenance/drain bookkeeping (see sgwc-sm.c).
      * Sessions are drained in fixed-size UE batches paced by a timer so
      * a large drain cannot monopolise the main thread or burst-flood
@@ -211,6 +278,13 @@ typedef struct sgwc_context_s {
     ogs_sockaddr_t *gn_addr6;
     ogs_list_t gn_pgw_list;
     uint8_t gn_gtpc_recovery;
+
+    /*
+     * Dedicated RX helper threads (default 0 = sockets on sgwc-main).
+     * Not protocol shards — they never call ogs_worker_shards_enable().
+     */
+    int gtpc_rx_thread;
+    int pfcp_rx_thread;
 } sgwc_context_t;
 
 typedef struct sgwc_ue_s {
@@ -301,6 +375,13 @@ typedef struct sgwc_sess_s {
 
     struct {
         ogs_time_t start_time;
+        /*
+         * recordOpeningTime of the *next* CDR (TS 32.251: each partial
+         * record opens when the previous one closes). start_time stays
+         * fixed at session establishment for [38] startTime; this one
+         * advances on every emitted partial record.
+         */
+        ogs_time_t opening_time;
         uint32_t record_seq;
         uint64_t last_ul_octets;
         uint64_t last_dl_octets;
@@ -321,12 +402,27 @@ typedef struct sgwc_sess_s {
     /* Monotonic start time for create-session latency logging */
     ogs_time_t      create_session_t0;
 
+    /* Counted in sgwc_context_t.admission_outstanding (exactly-once) */
+    unsigned        admission_counted : 1;
+
+    /*
+     * Set when the MME proves it owns this session (bearer-resolved
+     * Modify Bearer Request). Every legitimate attach sends one within
+     * seconds of Create Session. A counted session that never sees it
+     * belongs to an MME context that died mid-attach (e.g. accepted
+     * Create Session Response hit an early return); the orphan sweep may
+     * reclaim it after a long grace.
+     */
+    unsigned        s11_owned : 1;
+
     unsigned        metrics_session_counted : 1;
     unsigned        metrics_rat_labeled : 1;
     unsigned        metrics_apn_labeled : 1;
     char            metrics_rat[16];
     char            metrics_gtp_if[8];
     char            metrics_apn[OGS_MAX_APN_LEN+1];
+    /* PGW label used at session_active_inc; reused on dec (no re-format). */
+    char            metrics_pgw_addr[OGS_ADDRSTRLEN];
     unsigned        gn : 1;         /* Session from GTPv1 Gn */
     uint8_t         gtp_rat_type;
     unsigned        gtp_selection_mode_set : 1;
@@ -335,6 +431,33 @@ typedef struct sgwc_sess_s {
     uint8_t         apn_fqdn[OGS_MAX_APN_LEN + 2];
     uint8_t         apn_fqdn_len;
     ogs_gtp1_qos_profile_decoded_t gn_qos_pdec;
+
+    /*
+     * When DL FAR last entered BUFF|NOCP (RAB / Error-Ind deactivate).
+     * 0 = not buffering (FORW or DROP). Used by buffer_idle sweep.
+     */
+    ogs_time_t      dl_buff_since;
+
+    /*
+     * DDN holddown (TS 23.401 5.3.4.3 NOTE on repeated paging): after an
+     * Unable-to-page DDN Ack, suppress further Downlink Data
+     * Notifications until this time so the MME is not re-paged every
+     * few seconds by a chatty DL stream toward an unreachable UE. The
+     * FAR stays BUFF|NOCP the whole time (no DROP). ddn_suppressed
+     * records that a Downlink Data Report arrived during the holddown;
+     * the buffer_idle sweep then sends a DROBU once the holddown ends
+     * so the (report-suppressing) non-empty UP buffer is cleared and
+     * the next DL packet can raise a fresh report -> DDN -> paging.
+     */
+    ogs_time_t      ddn_holddown_until;
+    bool            ddn_suppressed;
+
+    /*
+     * When DL FAR entered DROP (Unable-to-page / idle sweep / restore).
+     * 0 = not dropped. Used by buffer_idle sweep to re-arm BUFF|NOCP
+     * after buffer_idle.rearm seconds so paging reachability recovers.
+     */
+    ogs_time_t      dl_drop_since;
 } sgwc_sess_t;
 
 static inline void sgwc_create_session_phase(
@@ -343,6 +466,9 @@ static inline void sgwc_create_session_phase(
     ogs_time_t elapsed;
 
     if (!sess || !ue || !phase || !phase[0] || !sess->create_session_t0)
+        return;
+
+    if (!ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_INFO))
         return;
 
     elapsed = ogs_time_now() - sess->create_session_t0;
@@ -496,6 +622,17 @@ void sgwc_sess_sync_pfcp_pdr_nwi(sgwc_sess_t *sess);
 
 void sgwc_sess_select_sgwu(sgwc_sess_t *sess);
 
+/*
+ * Attach-storm admission control. sgwc_admission_check() returns 0 to
+ * accept or a GTP2 cause to reject (GTP-C entity congestion when all
+ * PFCP peers are down, over the in-flight cap, or over the rate limit).
+ * started/done bracket one in-flight PFCP Session Establishment;
+ * done is idempotent (sess->admission_counted).
+ */
+uint8_t sgwc_admission_check(void);
+void sgwc_admission_establish_started(sgwc_sess_t *sess);
+void sgwc_admission_establish_done(sgwc_sess_t *sess);
+
 void sgwc_sess_abort_create(sgwc_sess_t *sess);
 int sgwc_sess_remove(sgwc_sess_t *sess);
 void sgwc_sess_purge_upf(sgwc_sess_t *sess);
@@ -510,6 +647,38 @@ void sgwc_sess_remove_all(sgwc_ue_t *sgwc_ue);
  * sum over all shards.
  */
 int sgwc_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
+
+void sgwc_sess_note_dl_buffering(sgwc_sess_t *sess);
+void sgwc_sess_clear_dl_buffering(sgwc_sess_t *sess);
+void sgwc_sess_count_dl_far(sgwc_sess_t *sess,
+        int *buff, int *forw, int *drop);
+void sgwc_sess_prepare_restoration_drop_idle(sgwc_sess_t *sess);
+int sgwc_sess_send_dl_far_drop(sgwc_sess_t *sess);
+int sgwc_sess_send_dl_far_rearm(sgwc_sess_t *sess);
+/* PFCPSMReq-Flags DROBU=1: discard UP-buffered DL packets, FAR untouched */
+int sgwc_sess_send_dl_drobu(sgwc_sess_t *sess);
+int sgwc_buffer_idle_sweep(int *out_dropped);
+
+/*
+ * Operational counters for the DL buffering / paging state machine.
+ * Incremented from shard workers as well as main, hence the atomics.
+ * Exposed via GET /admin/far-stats.
+ */
+typedef struct sgwc_dl_stats_s {
+    uint64_t ddn_sent;           /* Downlink Data Notifications sent */
+    uint64_t ddn_unable_to_page; /* DDN Acks with cause 90/102 */
+    uint64_t ddn_suppressed;     /* DDNs withheld during holddown */
+    uint64_t drobu_sent;         /* PFCP modifies with DROBU flag */
+    uint64_t far_dropped;        /* DL FARs set to DROP */
+    uint64_t far_rearmed;        /* DL FARs restored DROP->BUFF|NOCP */
+} sgwc_dl_stats_t;
+extern sgwc_dl_stats_t sgwc_dl_stats;
+#define SGWC_DL_STAT_INC(field) \
+    __atomic_fetch_add(&sgwc_dl_stats.field, 1, __ATOMIC_RELAXED)
+#define SGWC_DL_STAT_GET(field) \
+    __atomic_load_n(&sgwc_dl_stats.field, __ATOMIC_RELAXED)
+void sgwc_buffer_idle_timer_start(void);
+void sgwc_buffer_idle_timer_stop(void);
 
 /* Periodic orphan sweep timer (no-op when sgwc.orphan.enabled is false). */
 void sgwc_orphan_timer_start(void);

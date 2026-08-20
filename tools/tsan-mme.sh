@@ -60,17 +60,22 @@ do_build() {
             echo "injected mme.workers:4 -> $f"
         fi
 
-        # SGWC shard workers (rehome / TEID shard-bit routing) under `sgwc:`.
+        # SGWC shard workers (rehome / TEID shard-bit routing) plus the
+        # Stage-C RX offload helpers (gtpc_rx_thread / pfcp_rx_thread) so
+        # recv/classify/parse and the session-owner handoff run under
+        # TSAN, not just on sgwc-main.
         if grep -q '^sgwc:' "$f" && \
            ! awk '/^sgwc:/{s=1;next} /^[a-z]/{s=0} s&&/workers:/{f=1} END{exit !f}' "$f"; then
             awk '
                 { print }
                 /^sgwc:/ && !done {
                     print "  workers: 4"
+                    print "  gtpc_rx_thread: 1"
+                    print "  pfcp_rx_thread: 1"
                     done = 1
                 }
             ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-            echo "injected sgwc.workers:4 -> $f"
+            echo "injected sgwc.workers:4 + gtpc/pfcp_rx_thread:1 -> $f"
         fi
     done
 
@@ -121,15 +126,23 @@ do_test() {
     # daemons) must not turn into nonzero exits, or the test harness's
     # child_main asserts during teardown and aborts the whole suite.
     export TSAN_OPTIONS="${TSAN_OPTIONS:-halt_on_error=0 exitcode=0 history_size=7 second_deadlock_stack=1 log_path=tsan-mme}"
+    # WSL2 / modern Ubuntu: high ASLR entropy makes libtsan abort at
+    # startup with "FATAL: ThreadSanitizer: unexpected memory mapping".
+    # Disable ASLR for the test process tree when setarch is available
+    # (needs no root, unlike lowering vm.mmap_rnd_bits).
+    WRAP=""
+    if command -v setarch >/dev/null 2>&1; then
+        WRAP="setarch $(uname -m) -R"
+    fi
     if [ -n "$suite" ]; then
         cleanup_lab
-        meson test -C "$BUILDDIR" "$suite" --timeout-multiplier 4 \
+        $WRAP meson test -C "$BUILDDIR" "$suite" --timeout-multiplier 4 \
             --print-errorlogs
     else
         for s in $SUITES; do
             echo "==== TSAN suite: $s ===="
             cleanup_lab
-            meson test -C "$BUILDDIR" "$s" --timeout-multiplier 4 \
+            $WRAP meson test -C "$BUILDDIR" "$s" --timeout-multiplier 4 \
                 --print-errorlogs || true
         done
     fi

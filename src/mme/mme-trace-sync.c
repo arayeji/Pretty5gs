@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2026 by Open5GS contributors
  *
- * MME /admin/trace/imsi ?sync=sgwc,smf propagation to peer NF metrics ports.
+ * MME /admin/trace/imsi ?sync=hss,sgwc,smf propagation to peer NF metrics ports.
  */
 
 #include "mme-trace-sync.h"
@@ -10,8 +10,13 @@
 #include "ogs-app.h"
 #include "ogs-metrics.h"
 
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#include <pthread.h>
+#include <sys/socket.h>
+#include <sys/time.h>
 
 typedef struct {
     const char *name;
@@ -19,7 +24,9 @@ typedef struct {
     uint16_t port;
 } mme_trace_sync_peer_t;
 
+/* Default loopback metrics ports from configs/open5gs yaml templates */
 static const mme_trace_sync_peer_t default_peers[] = {
+    { "hss",  "127.0.0.8", 9090 },
     { "sgwc", "127.0.0.3", 9090 },
     { "smf",  "127.0.0.4", 9090 },
 };
@@ -32,6 +39,10 @@ static bool sync_token_requested(const char *sync, const char *name)
     if (!sync || !sync[0] || !name || !name[0])
         return false;
 
+    /* sync=all → every known peer */
+    if (!strcasecmp(sync, "all"))
+        return true;
+
     ogs_snprintf(pattern, sizeof(pattern), "%s", name);
     p = sync;
     while (*p) {
@@ -42,6 +53,8 @@ static bool sync_token_requested(const char *sync, const char *name)
         end = strchr(p, ',');
         if (!end)
             end = p + strlen(p);
+        if ((size_t)(end - p) == 3 && strncasecmp(p, "all", 3) == 0)
+            return true;
         if ((size_t)(end - p) == strlen(pattern) &&
                 strncasecmp(p, pattern, end - p) == 0)
             return true;
@@ -105,6 +118,17 @@ static int trace_http_get(const char *host, uint16_t port,
     if (!sock)
         return OGS_ERROR;
 
+    /* Bound sync so a hung peer cannot stall the MHD admin thread. */
+    {
+        struct timeval tv;
+        tv.tv_sec = 2;
+        tv.tv_usec = 0;
+        (void)setsockopt(sock->fd, SOL_SOCKET, SO_RCVTIMEO,
+                (const void *)&tv, sizeof(tv));
+        (void)setsockopt(sock->fd, SOL_SOCKET, SO_SNDTIMEO,
+                (const void *)&tv, sizeof(tv));
+    }
+
     req_len = ogs_snprintf(req, sizeof(req),
             "GET %s HTTP/1.1\r\n"
             "Host: %s\r\n"
@@ -166,6 +190,27 @@ static int trace_http_get(const char *host, uint16_t port,
     return OGS_OK;
 }
 
+static size_t admin_buf_append(char *body, size_t body_cap, size_t off,
+        const char *fmt, ...)
+{
+    va_list ap;
+    int n;
+
+    if (!body || body_cap == 0 || off >= body_cap)
+        return off;
+
+    va_start(ap, fmt);
+    n = vsnprintf(body + off, body_cap - off, fmt, ap);
+    va_end(ap);
+
+    if (n < 0)
+        return off;
+    /* C99: snprintf returns the length that would have been written. */
+    if ((size_t)n >= body_cap - off)
+        return body_cap - 1;
+    return off + (size_t)n;
+}
+
 size_t mme_trace_sync_append(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t body_len)
 {
@@ -175,8 +220,11 @@ size_t mme_trace_sync_append(const ogs_metrics_query_t *q,
     size_t peer_len = 0;
     unsigned int i;
 
-    if (!q || !q->sync || !q->sync[0] || !body || body_cap == 0)
+    if (!q || !q->sync || !q->sync[0] || !body || body_cap < 2)
         return body_len;
+
+    if (off >= body_cap)
+        off = body_cap - 1;
 
     if (off > 0 && body[off - 1] == '\n')
         off--;
@@ -196,22 +244,85 @@ size_t mme_trace_sync_append(const ogs_metrics_query_t *q,
         peer_body[0] = '\0';
         if (trace_http_get(peer->host, peer->port, path,
                 peer_body, sizeof(peer_body), &peer_len) != OGS_OK) {
-            off += (size_t)snprintf(body + off, body_cap - off,
+            off = admin_buf_append(body, body_cap, off,
                     ",\"%s\":{\"ok\":false,\"detail\":\"peer unreachable\"}",
                     peer->name);
             continue;
         }
 
-        off += (size_t)snprintf(body + off, body_cap - off,
-                ",\"%s\":", peer->name);
+        off = admin_buf_append(body, body_cap, off, ",\"%s\":", peer->name);
         if (peer_len > 0 && peer_body[peer_len - 1] == '\n')
             peer_body[--peer_len] = '\0';
-        off += (size_t)snprintf(body + off, body_cap - off, "%s",
+        off = admin_buf_append(body, body_cap, off, "%s",
                 peer_body[0] ? peer_body : "{\"ok\":false}");
     }
 
-    if (off < body_cap)
-        off += (size_t)snprintf(body + off, body_cap - off, "}\n");
+    off = admin_buf_append(body, body_cap, off, "}\n");
+    body[off < body_cap ? off : body_cap - 1] = '\0';
+    return off < body_cap ? off : body_cap - 1;
+}
 
-    return off;
+typedef struct {
+    char imsi[OGS_TRACE_IMSI_LEN];
+    char sync[64];
+    char match[16];
+    int force;
+    int remove;
+    int replace;
+} mme_trace_sync_job_t;
+
+static void *mme_trace_sync_pthread(void *arg)
+{
+    mme_trace_sync_job_t *job = arg;
+    ogs_metrics_query_t q;
+    char body[8192];
+    size_t len;
+
+    memset(&q, 0, sizeof(q));
+    if (job->imsi[0])
+        q.imsi = job->imsi;
+    q.sync = job->sync;
+    q.force = job->force;
+    q.remove = job->remove;
+    q.replace = job->replace;
+    if (job->match[0])
+        q.match = job->match;
+
+    len = (size_t)ogs_snprintf(body, sizeof(body),
+            "{\"ok\":true,\"detail\":\"async peer sync\"}");
+    (void)mme_trace_sync_append(&q, body, sizeof(body), len);
+    ogs_info("admin trace sync async finished");
+    ogs_free(job);
+    return NULL;
+}
+
+void mme_trace_sync_async(const ogs_metrics_query_t *q)
+{
+    mme_trace_sync_job_t *job;
+    pthread_t tid;
+    pthread_attr_t attr;
+
+    if (!q || !q->sync || !q->sync[0])
+        return;
+
+    job = ogs_calloc(1, sizeof(*job));
+    if (!job)
+        return;
+
+    if (q->imsi && q->imsi[0])
+        ogs_cpystrn(job->imsi, q->imsi, sizeof(job->imsi));
+    ogs_cpystrn(job->sync, q->sync, sizeof(job->sync));
+    if (q->match && q->match[0])
+        ogs_cpystrn(job->match, q->match, sizeof(job->match));
+    job->force = q->force;
+    job->remove = q->remove;
+    job->replace = q->replace;
+
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    if (pthread_create(&tid, &attr, mme_trace_sync_pthread, job) != 0) {
+        ogs_error("trace sync async: pthread_create failed");
+        ogs_free(job);
+    }
+    pthread_attr_destroy(&attr);
 }

@@ -51,10 +51,63 @@ typedef struct cgf_spool_file_s {
     /* Out-of-order DTRR acks buffered until the confirmed cursor catches up. */
     cgf_spool_pending_ack_t pending_acks[CGF_MAX_INFLIGHT];
     uint32_t num_pending_acks;
+
+    /*
+     * After uncertain delivery (timeout / failover / peer restart), the
+     * next DTRR(s) for this file use Packet Transfer Command = Send
+     * possibly duplicated (TS 32.295 §6.2.4.5.2). Cleared once the
+     * unacked range has been re-accepted and no batches remain in flight.
+     */
+    bool send_possibly_dup;
 } cgf_spool_file_t;
 
+/*
+ * Main-thread (workers==1) active-file set. Multiple files may be open
+ * at once so the GTP' window stays full while earlier files wait for
+ * ACKs. Drain workers do NOT use this set — they keep their own arrays.
+ */
+uint32_t cgf_spool_active_count(void);
+cgf_spool_file_t *cgf_spool_active_at(uint32_t idx);
+
+/* Compatibility: first active file, or NULL. Prefer active_at/count. */
 cgf_spool_file_t *cgf_spool_get_active(void);
+
+/*
+ * Open more ready/ files into the main-thread active set until `max`
+ * files are held or ready/ is empty. No-op when already at capacity.
+ * Used by the workers==1 drain path.
+ */
+void cgf_spool_try_open_more(uint32_t max);
+
+/* Legacy name: open one file if the active set is empty. */
 void cgf_spool_refill(void);
+
+/*
+ * Slurp + validate + return a spool file WITHOUT touching the
+ * main-thread active set. Used by drain workers, which own their own
+ * file arrays. On a bad header the file is quarantined into failed/
+ * (same as the internal open path) and NULL is returned.
+ */
+cgf_spool_file_t *cgf_spool_open_path(const char *path);
+
+/* Free an in-memory file handle WITHOUT touching the file on disk or
+ * the main-thread active set. Used by a drain worker that is shutting
+ * down while still holding files — the on-disk copy stays under
+ * processing/<id>/ and is reclaimed into ready/ on next startup. */
+void cgf_spool_release(cgf_spool_file_t *file);
+
+/* One-time init for the claim-file mutex. Call once on the main
+ * thread before any worker starts. */
+void cgf_spool_claim_init(void);
+
+/*
+ * Atomically claim one ready/ *.cdr file for `worker_id` by renaming it
+ * into processing/<worker_id>/. Serialized by an internal mutex so
+ * concurrent workers never race the same directory scan. Returns
+ * OGS_OK and fills `out_path` with the new (processing/) path, or
+ * OGS_ERROR if ready/ has nothing claimable right now.
+ */
+int cgf_spool_claim_for_worker(int worker_id, char *out_path, size_t cap);
 
 uint32_t cgf_spool_stage_batch(cgf_spool_file_t *file,
         uint8_t *out, size_t out_cap, size_t *out_used,
@@ -69,7 +122,21 @@ void cgf_spool_commit_send(cgf_spool_file_t *file,
 bool cgf_spool_ack_batch(cgf_spool_file_t *file,
         size_t batch_start, uint32_t records);
 
+/*
+ * Same as cgf_spool_ack_batch(), but also reports whether the ack
+ * caused the file to be fully delivered and freed. Callers that hold
+ * a persistent pointer to `file` beyond this call (drain workers)
+ * MUST use this variant and clear their pointer when `*out_freed`
+ * comes back true, or they will dereference freed memory on the next
+ * drain attempt. `out_freed` may be NULL.
+ */
+bool cgf_spool_ack_batch_ex(cgf_spool_file_t *file,
+        size_t batch_start, uint32_t records, bool *out_freed);
+
 void cgf_spool_nack_batch(cgf_spool_file_t *file);
+
+/* Mark subsequent sends as Possibly-Duplicated (uncertain prior delivery). */
+void cgf_spool_mark_possibly_dup(cgf_spool_file_t *file);
 
 void cgf_spool_quarantine(cgf_spool_file_t *file);
 void cgf_spool_close(void);

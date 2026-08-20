@@ -124,10 +124,22 @@ int ogs_addaddrinfo(ogs_sockaddr_t **sa_list,
 
     rc = getaddrinfo(hostname, service, &hints, &ai_list);
     if (rc != 0) {
-        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
-                        "getaddrinfo(%d:%s:%d:0x%x) failed: %s",
-                        family, hostname ? hostname : "(null)",
-                        port, flags, gai_strerror(rc));
+        /*
+         * NXDOMAIN / temporary DNS failure is routine for APN-FQDN lookup
+         * of unknown/typo APNs (e.g. green.apn...). Keep as WARN so it
+         * does not flood production ERROR logs; other failures stay ERROR.
+         */
+        ogs_log_message(
+#if defined(EAI_NONAME) && defined(EAI_AGAIN)
+                (rc == EAI_NONAME || rc == EAI_AGAIN) ?
+                    OGS_LOG_WARN : OGS_LOG_ERROR,
+#else
+                OGS_LOG_ERROR,
+#endif
+                ogs_socket_errno,
+                "getaddrinfo(%d:%s:%d:0x%x) failed: %s",
+                family, hostname ? hostname : "(null)",
+                port, flags, gai_strerror(rc));
         /* Non-fatal: log the error and return */
         return OGS_ERROR;
     }
@@ -473,9 +485,19 @@ const char *ogs_inet_ntop(void *sa, char *buf, int buflen)
         return inet_ntop(family, &sockaddr->sin6.sin6_addr, buf,
                 INET6_ADDRSTRLEN);
     default:
-        ogs_fatal("Unknown family(%d)", family);
-        ogs_abort();
-        return NULL;
+        /*
+         * Logging helper — never abort the process. Callers (S1AP IO
+         * teardown, GTP timeout, metrics) can see AF_UNSPEC / zeroed
+         * sockaddrs during assoc teardown races; killing MME for that
+         * takes every UE down.
+         */
+        ogs_error("Unknown family(%d)", family);
+        if (buflen > 0) {
+            buf[0] = '?';
+            if (buflen > 1)
+                buf[1] = '\0';
+        }
+        return buf;
     }
 }
 

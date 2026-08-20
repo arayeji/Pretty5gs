@@ -238,8 +238,15 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
         if (session->session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
             session->session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
             session->session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
-            req->pdn_type.u8 = mme_gtp2_pdn_type_for_sess(
-                    session, sess->ue_request_type.type);
+            /*
+             * policy_pdn_type is the ESM-resolved type (UE request
+             * intersected with the subscription, then corrected or
+             * clamped by mme.apn_correction). It is already a subset of
+             * the subscription, so the AND below is a no-op for it.
+             */
+            req->pdn_type.u8 = mme_gtp2_pdn_type_for_sess(session,
+                    sess->policy_pdn_type ?
+                        sess->policy_pdn_type : sess->ue_request_type.type);
         } else {
             ogs_error("Invalid PDN-TYPE[%d]", session->session_type);
             return NULL;
@@ -452,7 +459,18 @@ ogs_pkbuf_t *mme_s11_build_modify_bearer_request(
     ogs_assert(mme_ue);
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     ogs_assert(sgw_ue);
-    ogs_assert(ogs_list_count(&mme_ue->bearer_to_modify_list));
+    /*
+     * Never abort the MME on an empty list. Concurrent ICS Response and
+     * Activate-Default-Bearer-Accept both list_init() bearer_to_modify_list;
+     * one path can clear the list after the other already decided to send.
+     */
+    if (ogs_list_count(&mme_ue->bearer_to_modify_list) == 0) {
+        ogs_warn("[%s] Modify Bearer Request skipped: "
+                "bearer_to_modify_list empty "
+                "(ICS/attach-complete race or no active S1-U bearers)",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+        return NULL;
+    }
 
     /* Initialize message */
     memset(&gtp_message, 0, sizeof(ogs_gtp2_message_t));
@@ -494,7 +512,18 @@ ogs_pkbuf_t *mme_s11_build_modify_bearer_request(
     ogs_list_for_each_entry(
             &mme_ue->bearer_to_modify_list, bearer, to_modify_node) {
         mme_sess_t *sess = mme_sess_find_by_id(bearer->sess_id);
-        ogs_assert(sess);
+
+        /*
+         * Session can already be gone (PDN disconnect / race) while the
+         * bearer is still on bearer_to_modify_list. Do not abort the MME;
+         * skip HO-indication check for that bearer.
+         */
+        if (!sess) {
+            ogs_warn("[%s] Modify Bearer: session gone for EBI[%d] "
+                    "sess_id[%d]; skip handover indication check",
+                    mme_ue->imsi_bcd, bearer->ebi, bearer->sess_id);
+            continue;
+        }
 
         if (sess->ue_request_type.value == OGS_NAS_EPS_REQUEST_TYPE_HANDOVER) {
             indication.handover_indication = 1;
@@ -533,9 +562,15 @@ ogs_pkbuf_t *mme_s11_build_modify_bearer_request(
      * Data Notification for all UEs served by that MME
      * (see clause 5.3.4.2 of 3GPP TS 23.401 [3]).
      */
-    if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST) {
+    if (mme_ue->nas_eps.type == MME_EPS_TYPE_SERVICE_REQUEST ||
+        mme_ue->nas_eps.type == MME_EPS_TYPE_EXTENDED_SERVICE_REQUEST) {
+        /*
+         * TS 23.401 5.3.4.2 / TS 29.274: Delay Value is an integer multiple
+         * of 50 ms. Ask the SGW to wait ~100 ms for Modify Bearer before
+         * raising another DDN for this MME's UEs (was hard-coded 0).
+         */
         req->delay_downlink_packet_notification_request.presence = 1;
-        req->delay_downlink_packet_notification_request.u8 = 0;
+        req->delay_downlink_packet_notification_request.u8 = 2;
     }
 
     gtp_message.h.type = type;
@@ -556,14 +591,38 @@ ogs_pkbuf_t *mme_s11_build_delete_session_request(
     mme_bearer_t *bearer = NULL;
     mme_ue_t *mme_ue = NULL;
     sgw_ue_t *sgw_ue = NULL;
+    uint8_t linked_ebi = 0;
 
     ogs_assert(sess);
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
-    ogs_assert(mme_ue);
+    /*
+     * Teardown races can free UE / empty the bearer list while detach
+     * or admin delete still builds Delete Session. Hard-asserting here
+     * SIGABRTed production MME (2026-08-10 21:28).
+     */
+    if (!mme_ue) {
+        ogs_error("Delete Session Request: UE gone (sess id=%d)",
+                (int)sess->id);
+        return NULL;
+    }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        ogs_error("[%s] Delete Session Request: SGW-UE gone",
+                mme_ue->imsi_bcd);
+        return NULL;
+    }
     bearer = mme_default_bearer_in_sess(sess);
-    ogs_assert(bearer);
+    linked_ebi = bearer ? bearer->ebi : sess->linked_ebi;
+    if (!linked_ebi) {
+        ogs_error("[%s] Delete Session Request: no Linked EBI "
+                "(sess id=%d bearer_list empty, linked_ebi unset)",
+                mme_ue->imsi_bcd, (int)sess->id);
+        return NULL;
+    }
+    if (!bearer)
+        ogs_warn("[%s] Delete Session Request: bearer list empty; "
+                "using cached Linked EBI[%d]",
+                mme_ue->imsi_bcd, linked_ebi);
 
     ogs_debug("Delete Session Request");
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
@@ -572,7 +631,7 @@ ogs_pkbuf_t *mme_s11_build_delete_session_request(
     memset(&gtp_message, 0, sizeof(ogs_gtp2_message_t));
 
     req->linked_eps_bearer_id.presence = 1;
-    req->linked_eps_bearer_id.u8 = bearer->ebi;
+    req->linked_eps_bearer_id.u8 = linked_ebi;
 
     /* User Location Information(ULI) */
     memset(&uli, 0, sizeof(ogs_gtp2_uli_t));

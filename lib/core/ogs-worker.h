@@ -79,6 +79,9 @@ typedef struct ogs_worker_s {
     ogs_thread_cond_t ready_cond;
     bool ready;
 
+    /* Visible in top -H / ps -T (15-char Linux limit). Set before start. */
+    char name[16];
+
     void *data;                     /* NF-private shard state */
 } ogs_worker_t;
 
@@ -88,6 +91,8 @@ ogs_worker_t *ogs_worker_create(int id,
         ogs_worker_dispatch_f dispatch, void *data);
 void ogs_worker_hooks(ogs_worker_t *worker,
         ogs_worker_hook_f thread_init, ogs_worker_hook_f thread_fini);
+/* Optional pthread name (truncated to 15 chars). Call before start. */
+void ogs_worker_set_name(ogs_worker_t *worker, const char *name);
 void ogs_worker_start(ogs_worker_t *worker);
 /*
  * Join the worker thread but keep queue/timer_mgr/pollset alive.

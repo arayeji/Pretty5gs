@@ -22,6 +22,9 @@ global:
   parameter:
     use_upg_vpp: false
     prefer_ipv4: true
+    # ignore_sgs: true   # skip SGsAP Location-Update (e.g. roamers); no VLR (SIGHUP)
+    # fake_csfb: true       # Combined Accept if UE asked Combined (SIGHUP)
+    # fake_csfb_lai: true   # synthesize LAI+P-TMSI (default true; alias fake_csfb_ptmsi)
   time:
     message:
       duration: 15000
@@ -178,6 +181,22 @@ mme:
     number:
       - digits: "112"
         categories: [police, ambulance, fire]
+
+  # Overload control (S1AP OVERLOAD START/STOP + ingress admission).
+  # On by default; keys below are optional tuning. Emergency,
+  # high-priority and mobile-terminated access are never shed.
+  overload:
+    enabled: true
+    signal_enb: true
+    enb_initial_ue_rate: 0                  # NMS: max new UEs/s per eNB (0=off)
+    enb_initial_ue_burst: 0                 # NMS: token bucket size (0=2x rate)
+    congest_lease_sec: 3
+    lag_high_ms: 1500                       # NMS: MME overload threshold
+    lag_critical_ms: 4000
+    global_sustain_sec: 3
+    traffic_reduction: 50                   # NMS: percent, sent to eNB
+    resend_interval_sec: 10
+    recovery_sec: 5
 
   mip_home_agent_host_dns: true
   pgw_selection:

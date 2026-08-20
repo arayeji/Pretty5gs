@@ -21,13 +21,17 @@
 
 #include "ogs-app.h"
 #include <errno.h>
+#include <stdio.h>
 #include <strings.h>
 #include <sys/stat.h>
 
 #ifdef _WIN32
 #include <direct.h>
+#include <windows.h>
 #define cgf_mkdir(p) _mkdir(p)
 #else
+#include <dirent.h>
+#include <unistd.h>
 #define cgf_mkdir(p) mkdir((p), 0755)
 #endif
 
@@ -54,7 +58,10 @@ int cgf_context_init(void)
     self.max_records_per_packet = 255;
     self.max_bytes_per_packet = CGF_DEFAULT_MAX_BYTES_PER_PACKET;
     self.max_inflight = CGF_DEFAULT_MAX_INFLIGHT;
+    self.max_active_files = 0; /* resolved after parse: default = max_inflight */
     self.purge_on_success = false;
+    self.workers = 1;
+    self.send_mode = CGF_SEND_MODE_FAILOVER;
 
     /* DRP IE sub-header defaults. Matches the working peer capture:
      *   01        Data Record Format = BER
@@ -89,6 +96,7 @@ void cgf_context_final(void)
     if (self.ready_dir) ogs_free(self.ready_dir);
     if (self.done_dir) ogs_free(self.done_dir);
     if (self.failed_dir) ogs_free(self.failed_dir);
+    if (self.processing_dir) ogs_free(self.processing_dir);
 
     memset(&self, 0, sizeof(self));
     initialized = false;
@@ -120,6 +128,86 @@ static int mkdir_p(const char *path)
 
     ogs_free(copy);
     return rc;
+}
+
+/*
+ * Move any `*.cdr` files sitting directly under `dir` back into
+ * ready_dir. Used to reclaim files a drain worker had claimed
+ * (processing/<id>/) but never finished delivering before an unclean
+ * shutdown / crash — nothing may be left orphaned outside ready/.
+ */
+static void reclaim_dir_into_ready(const char *dir)
+{
+#ifdef _WIN32
+    WIN32_FIND_DATAA fd;
+    HANDLE h;
+    char pattern[600];
+
+    ogs_snprintf(pattern, sizeof(pattern), "%s\\*.cdr", dir);
+    h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        char src[700], dst[700];
+
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        ogs_snprintf(src, sizeof(src), "%s\\%s", dir, fd.cFileName);
+        ogs_snprintf(dst, sizeof(dst), "%s/%s", self.ready_dir, fd.cFileName);
+        if (rename(src, dst) != 0) {
+            ogs_warn("cgf: reclaim rename '%s' -> '%s' failed: %s",
+                    src, dst, strerror(errno));
+        } else {
+            ogs_info("cgf: reclaimed leftover spool file '%s' into ready/",
+                    fd.cFileName);
+        }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+#else
+    DIR *d;
+    struct dirent *ent;
+
+    d = opendir(dir);
+    if (!d) return;
+    while ((ent = readdir(d)) != NULL) {
+        char src[700], dst[700];
+        size_t nl = strlen(ent->d_name);
+
+        if (nl < 4 || strcmp(ent->d_name + nl - 4, ".cdr") != 0) continue;
+        ogs_snprintf(src, sizeof(src), "%s/%s", dir, ent->d_name);
+        ogs_snprintf(dst, sizeof(dst), "%s/%s", self.ready_dir, ent->d_name);
+        if (rename(src, dst) != 0) {
+            ogs_warn("cgf: reclaim rename '%s' -> '%s' failed: %s",
+                    src, dst, strerror(errno));
+        } else {
+            ogs_info("cgf: reclaimed leftover spool file '%s' into ready/",
+                    ent->d_name);
+        }
+    }
+    closedir(d);
+#endif
+}
+
+/*
+ * On every startup, sweep processing/0 .. processing/CGF_MAX_WORKERS-1
+ * (not just the currently-configured worker count — a prior run may
+ * have used more workers) for files left behind by a worker that
+ * didn't shut down cleanly, and put them back in ready/ so they get
+ * re-claimed and re-sent. Safe to call even if `workers: 1` today.
+ */
+static void reclaim_processing_leftovers(void)
+{
+    uint32_t w;
+    struct stat st;
+
+    if (!self.processing_dir) return;
+    if (stat(self.processing_dir, &st) != 0 || !S_ISDIR(st.st_mode)) return;
+
+    for (w = 0; w < CGF_MAX_WORKERS; w++) {
+        char sub[600];
+
+        ogs_snprintf(sub, sizeof(sub), "%s/%u", self.processing_dir, w);
+        if (stat(sub, &st) != 0 || !S_ISDIR(st.st_mode)) continue;
+        reclaim_dir_into_ready(sub);
+    }
 }
 
 static int parse_peer_block(yaml_document_t *document,
@@ -157,7 +245,8 @@ static int parse_peer_block(yaml_document_t *document,
     peer->port = port;
     peer->role = role;
     peer->state = CGF_PEER_STATE_DOWN;
-    peer->next_seq = (uint16_t)(ogs_random32() & 0xffff);
+    /* TS 32.295: start from 0 after CDF (re)start; increment thereafter. */
+    peer->next_seq = 0;
     return OGS_OK;
 }
 
@@ -189,6 +278,24 @@ int cgf_context_parse_config(void)
                 self.spool_dir = ogs_yaml_iter_value(&cgf_iter);
             } else if (!strcmp(k, "node_id")) {
                 self.node_id = ogs_yaml_iter_value(&cgf_iter);
+            } else if (!strcmp(k, "workers")) {
+                const char *v = ogs_yaml_iter_value(&cgf_iter);
+                self.workers = v ? (uint32_t)atoi(v) : 1;
+            } else if (!strcmp(k, "send_mode")) {
+                const char *v = ogs_yaml_iter_value(&cgf_iter);
+                if (v && (!strcasecmp(v, "round_robin") ||
+                          !strcasecmp(v, "round-robin") ||
+                          !strcasecmp(v, "rr")))
+                    self.send_mode = CGF_SEND_MODE_ROUND_ROBIN;
+                else if (v && (!strcasecmp(v, "failover") ||
+                               !strcasecmp(v, "primary_failover")))
+                    self.send_mode = CGF_SEND_MODE_FAILOVER;
+                else {
+                    ogs_warn("cgf: unknown send_mode `%s` "
+                            "(expected failover|round_robin); "
+                            "keeping failover", v ? v : "");
+                    self.send_mode = CGF_SEND_MODE_FAILOVER;
+                }
             } else if (!strcmp(k, "purge_on_success")) {
                 const char *v = ogs_yaml_iter_value(&cgf_iter);
                 /* Accept the usual YAML truthy spellings. */
@@ -238,6 +345,8 @@ int cgf_context_parse_config(void)
                         self.max_bytes_per_packet = (uint32_t)atoi(bv);
                     else if (!strcmp(bk, "max_inflight"))
                         self.max_inflight = (uint32_t)atoi(bv);
+                    else if (!strcmp(bk, "max_active_files"))
+                        self.max_active_files = (uint32_t)atoi(bv);
                     else ogs_warn("cgf: unknown batch `%s`", bk);
                 }
             } else if (!strcmp(k, "drp")) {
@@ -275,12 +384,29 @@ int cgf_context_parse_config(void)
     if (!self.max_inflight || self.max_inflight > CGF_MAX_INFLIGHT)
         self.max_inflight = CGF_MAX_INFLIGHT;
 
+    /* Default active-file cap tracks the DTRR window so one drain
+     * pipeline can keep the GTP' pipe full across many small spool
+     * files while earlier ones wait for ACKs. */
+    if (!self.max_active_files)
+        self.max_active_files = self.max_inflight;
+    if (self.max_active_files > CGF_MAX_INFLIGHT)
+        self.max_active_files = CGF_MAX_INFLIGHT;
+
+    if (self.workers == 0) self.workers = 1;
+    if (self.workers > CGF_MAX_WORKERS) {
+        ogs_warn("cgf: workers=%u exceeds max %d, clamping",
+                self.workers, CGF_MAX_WORKERS);
+        self.workers = CGF_MAX_WORKERS;
+    }
+
     ogs_snprintf(path, sizeof(path), "%s/ready", self.spool_dir);
     self.ready_dir = ogs_strdup(path);
     ogs_snprintf(path, sizeof(path), "%s/done", self.spool_dir);
     self.done_dir = ogs_strdup(path);
     ogs_snprintf(path, sizeof(path), "%s/failed", self.spool_dir);
     self.failed_dir = ogs_strdup(path);
+    ogs_snprintf(path, sizeof(path), "%s/processing", self.spool_dir);
+    self.processing_dir = ogs_strdup(path);
 
     if (mkdir_p(self.done_dir) != OGS_OK) {
         ogs_warn("cgf: cannot create '%s'", self.done_dir);
@@ -289,8 +415,28 @@ int cgf_context_parse_config(void)
         ogs_warn("cgf: cannot create '%s'", self.failed_dir);
     }
 
-    /* Primary always wins the initial active slot, regardless of order
-     * in the config file. */
+    if (self.workers > 1) {
+        uint32_t w;
+
+        if (mkdir_p(self.processing_dir) != OGS_OK)
+            ogs_warn("cgf: cannot create '%s'", self.processing_dir);
+        for (w = 0; w < self.workers; w++) {
+            char sub[600];
+
+            ogs_snprintf(sub, sizeof(sub), "%s/%u", self.processing_dir, w);
+            if (mkdir_p(sub) != OGS_OK)
+                ogs_warn("cgf: cannot create '%s'", sub);
+        }
+        ogs_info("cgf: workers=%u parallel drain threads enabled",
+                self.workers);
+    }
+
+    /* Regardless of the current worker count, sweep any leftover
+     * claimed files from a previous run back into ready/. */
+    reclaim_processing_leftovers();
+
+    /* Primary always wins the initial active / RR cursor slot,
+     * regardless of order in the config file. */
     {
         uint32_t i;
         self.active_peer_idx = 0;
@@ -301,6 +447,15 @@ int cgf_context_parse_config(void)
             }
         }
     }
+
+    if (self.send_mode == CGF_SEND_MODE_ROUND_ROBIN) {
+        ogs_info("cgf: send_mode=round_robin (%u peer(s); "
+                "pin each spool file to one peer, rotate on new files)",
+                self.num_of_peers);
+    }
+    ogs_info("cgf: batch max_inflight=%u max_active_files=%u "
+            "(multi-file drain keeps GTP' window full across ACK waits)",
+            self.max_inflight, self.max_active_files);
 
     return OGS_OK;
 }

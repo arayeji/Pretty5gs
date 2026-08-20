@@ -27,6 +27,8 @@
 #include "s1ap-path.h"
 #include "s1ap-tx.h"
 #include "s1ap-io.h"
+#include "s1ap-free.h"
+#include "s1ap-overload.h"
 #include "sgsap-path.h"
 #include "nas-security.h"
 #include "nas-path.h"
@@ -38,6 +40,7 @@
 #include "mme-fd-path.h"
 #include "mme-s6a-handler.h"
 #include "mme-path.h"
+#include "mme-pgw-select.h"
 
 #ifdef OPEN5GS_ADMIN_WATCHER
 #include "mme-admin-watcher.h"
@@ -58,6 +61,7 @@ void mme_state_initial(ogs_fsm_t *s, mme_event_t *e)
     ogs_assert(s);
 
     mme_orphan_timer_start();
+    mme_overload_timer_start();
 
     OGS_FSM_TRAN(s, &mme_state_operational);
 }
@@ -78,9 +82,9 @@ static void admin_detach_enb_finalize(void *data)
 
     ogs_assert(e);
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = mme_queue_push_main(e);
     if (rv != OGS_OK) {
-        ogs_error("admin_detach_enb_finalize: ogs_queue_push failed: %d", rv);
+        ogs_error("admin_detach_enb_finalize: event dropped: %d", rv);
         if (e->timer) ogs_timer_delete(e->timer);
         mme_event_free(e);
     }
@@ -132,6 +136,7 @@ void mme_state_final(ogs_fsm_t *s, mme_event_t *e)
     ogs_assert(s);
 
     mme_orphan_timer_stop();
+    mme_overload_timer_stop();
     mme_admin_drain_timer_stop();
     mme_gtp_pending_release_final();
 }
@@ -324,11 +329,14 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             ogs_error("S1AP MESSAGE: invalid peer address (family=%u)",
                     addr ? addr->ogs_sa_family : 0);
             if (addr) ogs_free(addr);
-            ogs_pkbuf_free(pkbuf);
             if (e->s1ap_rx_decoded) {
-                ogs_s1ap_free(e->s1ap_message);
-                ogs_free(e->s1ap_message);
+                s1ap_free_defer(e->s1ap_message, pkbuf);
+                e->s1ap_message = NULL;
+                e->s1ap_rx_decoded = false;
+            } else {
+                ogs_pkbuf_free(pkbuf);
             }
+            e->pkbuf = NULL;
             break;
         }
 
@@ -340,11 +348,14 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
              * main thread removes the eNB context; without workers this
              * cannot happen and used to be an assert. Drop it. */
             ogs_warn("S1AP MESSAGE for removed eNB - dropped");
-            ogs_pkbuf_free(pkbuf);
             if (e->s1ap_rx_decoded) {
-                ogs_s1ap_free(e->s1ap_message);
-                ogs_free(e->s1ap_message);
+                s1ap_free_defer(e->s1ap_message, pkbuf);
+                e->s1ap_message = NULL;
+                e->s1ap_rx_decoded = false;
+            } else {
+                ogs_pkbuf_free(pkbuf);
             }
+            e->pkbuf = NULL;
             break;
         }
         ogs_assert(OGS_FSM_STATE(&enb->sm));
@@ -354,9 +365,11 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             e->enb_id = enb->id;
             ogs_fsm_dispatch(&enb->sm, e);
 
-            ogs_s1ap_free(e->s1ap_message);
-            ogs_free(e->s1ap_message);
-            ogs_pkbuf_free(pkbuf);
+            /* Handlers must not retain IE pointers into the PDU. */
+            s1ap_free_defer(e->s1ap_message, pkbuf);
+            e->s1ap_message = NULL;
+            e->s1ap_rx_decoded = false;
+            e->pkbuf = NULL;
             break;
         }
 
@@ -371,7 +384,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                     enb, NULL, NULL, S1AP_Cause_PR_protocol,
                     S1AP_CauseProtocol_abstract_syntax_error_falsely_constructed_message);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
 
         ogs_s1ap_free(&s1ap_message);
@@ -391,6 +403,15 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         /* the IO thread dropped its write queue / POLLOUT for e->sock */
         ogs_assert(e->sock);
         s1ap_sock_close_confirm(e->sock, S1AP_SOCK_CONFIRM_IO);
+        break;
+
+    case MME_EVENT_S1AP_IO_CONGESTED:
+        /* TX backlog heartbeat from the IO thread; a socket that has
+         * since been torn down simply has no eNB to throttle */
+        ogs_assert(e->sock);
+        enb = mme_enb_find_by_sock(e->sock);
+        if (enb)
+            mme_overload_enb_congested(enb, e->io_wq_depth);
         break;
 
     case MME_EVENT_S1AP_RX_WATCH_FAILED:
@@ -441,7 +462,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
             r = s1ap_send_to_enb_ue(enb_ue, pkbuf);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             ogs_timer_delete(e->timer);
             break;
         case MME_TIMER_S1_HOLDING:
@@ -469,7 +489,8 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         }
 
         if (ogs_nas_emm_decode(&nas_message, pkbuf) != OGS_OK) {
-            ogs_error("ogs_nas_emm_decode() failed");
+            ogs_warn("ogs_nas_emm_decode() failed "
+                    "(malformed/truncated NAS from UE/eNB)");
             ogs_pkbuf_free(pkbuf);
             return;
         }
@@ -513,8 +534,11 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                             S1AP_Cause_PR_misc,
                             S1AP_CauseMisc_control_processing_overload,
                             S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
-                    ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
+                    if (r != OGS_OK)
+                        ogs_warn("mme_ue_add failed (pool/overload) and "
+                                "UE Context Release Command also failed "
+                                "(rv=%d) — S1/eNB already gone; drop",
+                                r);
                     ogs_pkbuf_free(pkbuf);
                     return;
                 }
@@ -641,10 +665,11 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
 #define ESM_MESSAGE_CHECK \
     do { \
-        ogs_error("emm_state_exception"); \
-        ogs_error("nas_type:%d, create_action:%d", \
-                e->nas_type, e->create_action); \
-        ogs_error("esm.message[EBI:%d,PTI:%d,TYPE:%d]", \
+        /* Detach/attach race: queued ESM after UE left attach FSM */ \
+        ogs_warn("emm_state_exception: drop queued ESM " \
+                "nas_type:%d create_action:%d " \
+                "esm.message[EBI:%d,PTI:%d,TYPE:%d]", \
+                e->nas_type, e->create_action, \
                 nas_message.esm.h.eps_bearer_identity, \
                 nas_message.esm.h.procedure_transaction_identity, \
                 nas_message.esm.h.message_type); \
@@ -764,8 +789,26 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                 "esm");
 
         ogs_fsm_dispatch(&bearer->sm, e);
+
+        /*
+         * ESM may already have freed this sess (and the bearer) — e.g.
+         * mme_gtp_send_delete_session_request() with no S11 TEID does an
+         * immediate MME_SESS_CLEAR. Re-resolve before touching anything.
+         */
+        bearer = mme_bearer_find_by_id(e->bearer_id);
+        if (!bearer) {
+            ogs_pkbuf_free(pkbuf);
+            break;
+        }
+        sess = mme_sess_find_by_id(bearer->sess_id);
+        if (!sess || sess->sess_removing) {
+            ogs_pkbuf_free(pkbuf);
+            break;
+        }
+        default_bearer = mme_default_bearer_in_sess(sess);
+
         if (OGS_FSM_CHECK(&bearer->sm, esm_state_bearer_deactivated)) {
-            if (default_bearer->ebi == bearer->ebi) {
+            if (default_bearer && default_bearer->ebi == bearer->ebi) {
                 /* if the bearer is a default bearer,
                  * remove all session context linked the default bearer */
                 MME_SESS_CLEAR(sess);
@@ -776,20 +819,31 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             }
 
         } else if (OGS_FSM_CHECK(&bearer->sm, esm_state_pdn_did_disconnect)) {
-            ogs_assert(default_bearer->ebi == bearer->ebi);
+            /*
+             * PDN disconnect completed. Clear the whole session even if
+             * bearer_list order makes mme_default_bearer_in_sess() disagree
+             * with the bearer that finished the procedure — asserting here
+             * aborted production MME (default_bearer->ebi == bearer->ebi).
+             */
+            if (default_bearer && default_bearer->ebi != bearer->ebi) {
+                ogs_error("[%s] PDN disconnect completed on EBI[%d] but "
+                        "list-default is EBI[%d]; clearing session anyway",
+                        mme_ue->imsi_bcd, bearer->ebi, default_bearer->ebi);
+            }
             MME_SESS_CLEAR(sess);
 
         } else if (OGS_FSM_CHECK(&bearer->sm, esm_state_exception)) {
-
             /*
-             * The UE requested the wrong APN.
+             * Wrong-APN / failed-ESM: keep the UE, drop the session.
              *
-             * From the Issues #568, MME need to accept further service request.
-             * To do this, we are not going to release UE context.
-             *
-             * Just we'll remove MME session context.
+             * Many exception transitions already sent Delete Session (default
+             * bearer reject, bearer-setup timeout, ...). Clearing here raced
+             * the Delete Session Response and double-removed the sess (the
+             * DOUBLE REMOVE guard caught it in production). When a Delete
+             * Session is in flight, DSR owns the remove.
              */
-            MME_SESS_CLEAR(sess);
+            if (!sess->delete_session_pending)
+                MME_SESS_CLEAR(sess);
         }
 
         ogs_pkbuf_free(pkbuf);
@@ -804,17 +858,22 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         ogs_assert(OGS_FSM_STATE(&bearer->sm));
 
         ogs_fsm_dispatch(&bearer->sm, e);
+        bearer = mme_bearer_find_by_id(e->bearer_id);
+        if (!bearer)
+            break;
         if (OGS_FSM_CHECK(&bearer->sm, esm_state_bearer_deactivated)) {
             sess = mme_sess_find_by_id(bearer->sess_id);
-            if (!sess) {
+            if (!sess || sess->sess_removing) {
                 ogs_warn("ESM timer: sess gone for bearer id=%d",
                         bearer->id);
                 break;
             }
             default_bearer = mme_default_bearer_in_sess(sess);
             if (!default_bearer) {
-                ogs_warn("ESM timer: no default bearer in sess id=%d",
-                        sess->id);
+                ogs_warn("ESM timer: no default bearer in sess id=%d — "
+                        "clear zombie session", sess->id);
+                if (!sess->delete_session_pending)
+                    MME_SESS_CLEAR(sess);
                 break;
             }
             if (default_bearer->ebi == bearer->ebi) {
@@ -822,6 +881,13 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             } else {
                 mme_bearer_remove(bearer);
             }
+        } else if (OGS_FSM_CHECK(&bearer->sm, esm_state_exception)) {
+            sess = mme_sess_find_by_id(bearer->sess_id);
+            if (!sess || sess->sess_removing)
+                break;
+            /* Same rule as ESM-message exception: DSR owns the clear. */
+            if (!sess->delete_session_pending)
+                MME_SESS_CLEAR(sess);
         }
         break;
 
@@ -915,7 +981,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                             enb_ue, mme_ue, emm_cause,
                             OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
                     /* This is usually an UE coming from 2G (Cell reselection),
                      * which we decided to re-authenticate */
@@ -924,15 +989,20 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                     r = nas_eps_send_tau_reject(
                             enb_ue, mme_ue, emm_cause);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
+                } else if (mme_ue->nas_eps.type ==
+                                MME_EPS_TYPE_DETACH_REQUEST_FROM_UE ||
+                        mme_ue->nas_eps.type ==
+                                MME_EPS_TYPE_DETACH_REQUEST_TO_UE) {
+                    ogs_warn("[%s] S6a fail during detach (type=%d) — skip",
+                            mme_ue->imsi_bcd, mme_ue->nas_eps.type);
                 } else
-                    ogs_error("Invalid Type[%d]", mme_ue->nas_eps.type);
+                    ogs_warn("[%s] S6a fail with unexpected NAS type[%d]",
+                            mme_ue->imsi_bcd, mme_ue->nas_eps.type);
 
                 r = s1ap_send_ue_context_release_command(enb_ue,
                         S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release,
                         S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 break;
             }
 
@@ -944,8 +1014,15 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
 
             /* Auth-Info accepted from HSS, now authenticate the UE: */
             r = nas_eps_send_authentication_request(mme_ue);
-            ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
+            if (r != OGS_OK)
+                /*
+                 * Do NOT assert: under overload the NAS build/send can
+                 * fail for one UE (pkbuf exhaustion, S1 race) - this
+                 * crashed the whole MME. T3460 retransmission recovers
+                 * the send-failure case; otherwise the UE re-attaches.
+                 */
+                ogs_error("[%s] Authentication request not sent (r=%d)",
+                        mme_ue->imsi_bcd, r);
 
             break;
         case OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION:
@@ -958,16 +1035,21 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                             enb_ue, mme_ue, emm_cause,
                             OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
                     ogs_info("[%s] TAU reject [OGS_NAS_EMM_CAUSE:%d]",
                             mme_ue->imsi_bcd, emm_cause);
                     r = nas_eps_send_tau_reject(
                             enb_ue, mme_ue, emm_cause);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
+                } else if (mme_ue->nas_eps.type ==
+                                MME_EPS_TYPE_DETACH_REQUEST_FROM_UE ||
+                        mme_ue->nas_eps.type ==
+                                MME_EPS_TYPE_DETACH_REQUEST_TO_UE) {
+                    ogs_warn("[%s] ULA reject during detach (type=%d) — skip",
+                            mme_ue->imsi_bcd, mme_ue->nas_eps.type);
                 } else
-                    ogs_error("Invalid Type[%d]", mme_ue->nas_eps.type);
+                    ogs_warn("[%s] ULA reject with unexpected NAS type[%d]",
+                            mme_ue->imsi_bcd, mme_ue->nas_eps.type);
 
                 /*
                  * enb_ue may be NULL: the S1 connection can be released
@@ -985,7 +1067,6 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
                                 S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE :
                                 S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 } else {
                     ogs_warn("[%s] ULA reject with no S1 context; "
                             "removing UE", mme_ue->imsi_bcd);
@@ -1006,7 +1087,8 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             mme_s6a_handle_idr(mme_ue, s6a_message);
             break;
         default:
-            ogs_error("Invalid Type[%d]", s6a_message->cmd_code);
+            ogs_error("[%s] Invalid S6a cmd_code[%d]",
+                    mme_ue->imsi_bcd, s6a_message->cmd_code);
             break;
         }
 
@@ -1019,6 +1101,8 @@ cleanup:
     case MME_EVENT_S11_MESSAGE:
         pkbuf = e->pkbuf;
         ogs_assert(pkbuf);
+
+        ogs_trace_packet_bind_rx("gtp", pkbuf->data, pkbuf->len);
 
         if (ogs_gtp2_parse_msg(&gtp_message, pkbuf) != OGS_OK) {
             ogs_error("ogs_gtp2_parse_msg() failed");
@@ -1050,6 +1134,9 @@ cleanup:
                         gtp_message.h.teid_presence ?
                             gtp_message.h.teid : 0,
                         sqn, rv);
+                if (MME_UE_HAVE_IMSI(ue_hint))
+                    ogs_trace_packet(ue_hint->imsi_bcd, "gtp", "rx",
+                            pkbuf->data, pkbuf->len);
                 if (gtp_message.h.type ==
                         OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE)
                     mme_ue_progress(ue_hint, "create_session_rsp_late");
@@ -1063,6 +1150,7 @@ cleanup:
                             gtp_message.h.teid : 0,
                         sqn, rv);
             }
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
             ogs_pkbuf_free(pkbuf);
             break;
         }
@@ -1117,6 +1205,21 @@ cleanup:
              * originated the message, so try harder by using the TEID we
              * locally stored in xact when sending the original request: */
             mme_ue = mme_ue_find_by_s11_local_teid(xact->local_teid);
+        }
+
+        /* Node Echo has no UE — never attribute via TEID / sticky on_imsi. */
+        if (gtp_message.h.type == OGS_GTP2_ECHO_REQUEST_TYPE ||
+                gtp_message.h.type == OGS_GTP2_ECHO_RESPONSE_TYPE) {
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
+        } else if (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
+            ogs_gtp_xact_set_imsi(xact, mme_ue->imsi_bcd);
+            ogs_trace_packet(mme_ue->imsi_bcd, "gtp", "rx",
+                    pkbuf->data, pkbuf->len);
+            ogs_trace_packet_bind_rx(NULL, NULL, 0); /* avoid on_imsi dup */
+        } else if (xact && xact->imsi_bcd[0]) {
+            ogs_trace_packet(xact->imsi_bcd, "gtp", "rx",
+                    pkbuf->data, pkbuf->len);
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
         }
 
         switch (gtp_message.h.type) {
@@ -1231,13 +1334,13 @@ cleanup:
                     mme_ue, GTP_COUNTER_DELETE_SESSION_BY_PATH_SWITCH);
 
                 enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-                if (enb_ue) {
-                    ogs_assert(OGS_OK ==
-                        mme_gtp_send_delete_session_request(
-                            enb_ue, sgw_ue, sess,
-                            OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST));
-                } else
+                if (!enb_ue)
                     ogs_warn("ENB-S1 Context has already been removed");
+                else if (mme_gtp_send_delete_session_request(
+                            enb_ue, sgw_ue, sess,
+                            OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST) != OGS_OK)
+                    ogs_error("[%s] Delete Session Request failed in "
+                            "Path Switch Request", mme_ue->imsi_bcd);
 
             }
             break;
@@ -1438,13 +1541,13 @@ cleanup:
                     mme_ue, GTP_COUNTER_DELETE_SESSION_BY_PATH_SWITCH);
 
                 enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-                if (enb_ue) {
-                    ogs_assert(OGS_OK ==
-                        mme_gtp_send_delete_session_request(
-                            enb_ue, sgw_ue, sess,
-                            OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST));
-                } else
+                if (!enb_ue)
                     ogs_warn("ENB-S1 Context has already been removed");
+                else if (mme_gtp_send_delete_session_request(
+                            enb_ue, sgw_ue, sess,
+                            OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST) != OGS_OK)
+                    ogs_error("[%s] Delete Session Request failed in "
+                            "Path Switch Request", mme_ue->imsi_bcd);
             }
             break;
 
@@ -1549,11 +1652,28 @@ cleanup:
         break;
     }
 
+    case MME_EVENT_ADMIN_DETACH_SESS:
+    {
+        mme_sess_t *sess = mme_sess_find_by_id(e->sess_id);
+        if (!sess) {
+            ogs_warn("admin session delete: sess pool-id %d already gone",
+                    (int)e->sess_id);
+            break;
+        }
+        mme_admin_detach_sess(sess, e->admin_force ? true : false);
+        break;
+    }
+
     case MME_EVENT_ADMIN_PURGE_UE:
     {
         mme_ue = mme_ue_find_by_id(e->mme_ue_id);
         if (!mme_ue) {
             ogs_debug("purge ue: mme_ue pool-id %d already gone",
+                    (int)e->mme_ue_id);
+            break;
+        }
+        if (mme_ue->being_removed) {
+            ogs_debug("purge ue: mme_ue pool-id %d already being removed",
                     (int)e->mme_ue_id);
             break;
         }
@@ -1602,7 +1722,100 @@ cleanup:
                     MME_PAGING_TYPE_UE_REACHABILITY, NULL);
             r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
+        }
+        break;
+    }
+
+    case MME_EVENT_PGW_DNS_DONE:
+    {
+        mme_sess_t *dns_sess = NULL;
+        int r;
+
+        mme_ue = mme_ue_find_by_id(e->mme_ue_id);
+        dns_sess = mme_sess_find_by_id(e->sess_id);
+        enb_ue = enb_ue_find_by_id(e->enb_ue_id);
+
+        if (!mme_ue || !dns_sess) {
+            ogs_warn("PGW DNS done: context gone [mme_ue:%s sess:%s]",
+                    mme_ue ? "ok" : "gone", dns_sess ? "ok" : "gone");
+            break;
+        }
+        if (dns_sess->mme_ue_id != mme_ue->id) {
+            ogs_warn("PGW DNS done: sess/ue mismatch");
+            break;
+        }
+
+        dns_sess->pgw_dns_pending = false;
+
+        if (e->pgw_dns_rv != OGS_OK) {
+            /*
+             * Neg-cache is populated; re-bind applies HSS/YAML fallbacks
+             * for standard selection. dns-only rules without fallback
+             * still fail here.
+             */
+            r = mme_pgw_bind_for_csr(mme_ue, dns_sess, enb_ue,
+                    e->create_action);
+            if (r == OGS_OK) {
+                if (!enb_ue) {
+                    ogs_error("[%s] PGW DNS fail fallback bound but "
+                            "enb_ue gone", mme_ue->imsi_bcd);
+                    break;
+                }
+                r = mme_gtp_send_create_session_request(
+                        enb_ue, dns_sess, e->create_action);
+                if (r != OGS_OK) {
+                    ogs_warn("[%s] Create Session after DNS fallback failed",
+                            mme_ue->imsi_bcd);
+                    r = nas_eps_send_pdn_connectivity_reject(
+                            dns_sess,
+                            OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
+                            e->create_action);
+                    ogs_expect(r == OGS_OK);
+                }
+                break;
+            }
+            if (r == OGS_RETRY) {
+                /* Should not re-queue after neg-cache; treat as fail */
+                ogs_error("[%s] PGW DNS fail unexpectedly re-queued",
+                        mme_ue->imsi_bcd);
+            }
+            ogs_warn("[%s] PGW APN DNS failed; rejecting PDN",
+                    mme_ue->imsi_bcd);
+            r = nas_eps_send_pdn_connectivity_reject(
+                    dns_sess, OGS_NAS_ESM_CAUSE_NETWORK_FAILURE,
+                    e->create_action);
+            ogs_expect(r == OGS_OK);
+            break;
+        }
+
+        memcpy(&dns_sess->pgw_s5c_ip, &e->pgw_dns_ip,
+                sizeof(dns_sess->pgw_s5c_ip));
+        if (dns_sess->session &&
+                !(dns_sess->session->smf_ip.ipv4 ||
+                    dns_sess->session->smf_ip.ipv6)) {
+            memcpy(&dns_sess->session->smf_ip, &e->pgw_dns_ip,
+                    sizeof(dns_sess->session->smf_ip));
+        }
+
+        if (!enb_ue) {
+            ogs_error("[%s] PGW DNS done but enb_ue gone — cannot CSR",
+                    mme_ue->imsi_bcd);
+            r = nas_eps_send_pdn_connectivity_reject(
+                    dns_sess, OGS_NAS_ESM_CAUSE_NETWORK_FAILURE,
+                    e->create_action);
+            ogs_expect(r == OGS_OK);
+            break;
+        }
+
+        r = mme_gtp_send_create_session_request(
+                enb_ue, dns_sess, e->create_action);
+        if (r != OGS_OK) {
+            ogs_warn("[%s] Create Session after PGW DNS failed",
+                    mme_ue->imsi_bcd);
+            r = nas_eps_send_pdn_connectivity_reject(
+                    dns_sess, OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
+                    e->create_action);
+            ogs_expect(r == OGS_OK);
         }
         break;
     }
@@ -1612,7 +1825,20 @@ cleanup:
         /* Deferred Path Switch / Handover Notify tail on the UE owner
          * shard (posted by the main-thread S1AP handlers). Contexts may
          * have died between post and dispatch — re-validate both. */
-        if (e->ho_kind == MME_HO_TAIL_UE_REL ||
+        if (e->ho_kind == MME_HO_TAIL_STMSI_ASSOC) {
+            /* mme_ue gone is NOT fatal here: the tail then dispatches
+             * the NAS PDU unassociated, exactly like an unknown S-TMSI
+             * (attach re-identifies, service request is rejected). */
+            enb_ue = enb_ue_find_by_id(e->enb_ue_id);
+            if (!enb_ue)
+                ogs_warn("S-TMSI assoc tail: enb_ue gone [id:%d]",
+                        e->enb_ue_id);
+            else if (e->pkbuf)
+                s1ap_initial_ue_stmsi_assoc_tail(
+                        enb_ue, e->mme_ue_id, e->pkbuf);
+            else
+                ogs_error("S-TMSI assoc tail without NAS payload");
+        } else if (e->ho_kind == MME_HO_TAIL_UE_REL ||
                 e->ho_kind == MME_HO_TAIL_REL_AB) {
             /* e->enb_ue_id may name an ALREADY-REMOVED enb_ue here:
              * only the mme_ue must still exist. */
@@ -1669,9 +1895,9 @@ cleanup:
             ue_remaining = mme_orphan_ue_sweep(true, grace, &ue_purged);
             enb_remaining = mme_orphan_enb_sweep(true, grace, &enb_purged);
             if (ue_purged || enb_purged)
-                ogs_warn("admin maintenance: orphan sweep purged %d "
-                        "stale UE(s) (%d left), %d failed-setup eNB(s) "
-                        "(%d left)",
+                ogs_warn("admin maintenance: orphan sweep queued/removed %d "
+                        "stale UE(s) (%d eligible left this tick), "
+                        "%d failed-setup eNB(s) (%d left)",
                         ue_purged, ue_remaining, enb_purged, enb_remaining);
         }
         break;
@@ -1698,18 +1924,22 @@ cleanup:
             enb_ue_remaining =
                     mme_orphan_enb_ue_sweep(true, grace, &enb_ue_purged);
 
-            /* Heartbeat for /admin/maintenance/status (visible at any log level). */
-            mme_orphan_sweep_record(ue_purged, ue_remaining);
+            /* un-wedge any eNB whose TX hold list leaked (s1ap-tx.c) */
+            s1ap_tx_hold_watchdog();
+
+            /* Heartbeat recorded inside mme_orphan_ue_sweep(). */
 
             if (ue_purged || enb_purged || enb_ue_purged)
-                ogs_warn("orphan sweep: purged %d stale UE(s) (%d left), "
+                ogs_warn("orphan sweep: queued/removed %d stale UE(s) "
+                        "(%d eligible left this tick), "
                         "%d failed-setup eNB(s) (%d left), "
                         "%d orphan S1 context(s) (%d left)",
                         ue_purged, ue_remaining, enb_purged, enb_remaining,
                         enb_ue_purged, enb_ue_remaining);
             else if (ue_remaining || enb_remaining || enb_ue_remaining)
-                ogs_debug("orphan sweep: %d stale UE(s), %d failed-setup "
-                        "eNB(s), %d orphan S1 context(s) within grace",
+                ogs_debug("orphan sweep: %d eligible UE(s) this tick, "
+                        "%d failed-setup eNB(s), %d orphan S1 context(s) "
+                        "(grace/pending)",
                         ue_remaining, enb_remaining, enb_ue_remaining);
 
             mme_orphan_timer_rearm();
@@ -1723,7 +1953,15 @@ cleanup:
         max_num_of_ostreams = e->max_num_of_ostreams;
 
         vlr = mme_vlr_find_by_sock(sock);
-        ogs_assert(vlr);
+        if (!vlr) {
+            /*
+             * Stale COMM_UP after mme_vlr_close() nulled sock, or after
+             * a fast reconnect replaced the fd. Do not abort the MME.
+             */
+            ogs_warn("SGsAP SCTP_COMM_UP: no VLR for sock:%p (stale)",
+                    sock);
+            break;
+        }
         ogs_assert(OGS_FSM_STATE(&vlr->sm));
 
         vlr->max_num_of_ostreams =
@@ -1741,8 +1979,18 @@ cleanup:
         sock = e->sock;
         ogs_assert(sock);
 
+        /*
+         * SCTP_SEND_FAILED / COMM_LOST can enqueue many CONNREFUSED
+         * events for the same association. The first close nulls
+         * vlr->sock, so later lookups return NULL — same race S1AP
+         * already tolerates. Never FATAL the MME on a lost VLR link.
+         */
         vlr = mme_vlr_find_by_sock(sock);
-        ogs_assert(vlr);
+        if (!vlr) {
+            ogs_warn("SGsAP CONNREFUSED: VLR already closed/removed "
+                    "(sock:%p)", sock);
+            break;
+        }
         ogs_assert(OGS_FSM_STATE(&vlr->sm));
 
         if (OGS_FSM_CHECK(&vlr->sm, sgsap_state_connected)) {
@@ -1777,7 +2025,13 @@ cleanup:
         ogs_assert(sock);
 
         vlr = mme_vlr_find_by_sock(sock);
-        ogs_assert(vlr);
+        if (!vlr) {
+            ogs_warn("SGsAP MESSAGE: no VLR for sock:%p "
+                    "(association already closed); dropping", sock);
+            e->pkbuf = NULL;
+            ogs_pkbuf_free(pkbuf);
+            break;
+        }
         ogs_assert(OGS_FSM_STATE(&vlr->sm));
 
         /*

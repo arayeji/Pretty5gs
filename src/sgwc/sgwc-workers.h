@@ -26,7 +26,7 @@
 extern "C" {
 #endif
 
-/* Parse sgwc.workers (0..8). Call before sgwc_context_init when >0 path. */
+/* Parse sgwc.workers (0..15 / OGS_MAX_WORKERS-1). Call before start. */
 int sgwc_workers_parse_config(void);
 
 /* Configured count from YAML (before start). Runtime count after start. */

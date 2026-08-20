@@ -869,6 +869,24 @@ ogs_gtp_node_t *ogs_gtp_node_find_by_addr(
     return node;
 }
 
+ogs_gtp_node_t *ogs_gtp_node_find_by_addr_only(
+        ogs_list_t *list, ogs_sockaddr_t *addr)
+{
+    ogs_gtp_node_t *node = NULL;
+
+    ogs_assert(list);
+    ogs_assert(addr);
+
+    ogs_gtp_node_lock();
+    ogs_list_for_each(list, node) {
+        if (ogs_sockaddr_is_equal_addr(&node->addr, addr) == true)
+            break;
+    }
+    ogs_gtp_node_unlock();
+
+    return node;
+}
+
 ogs_gtp_node_t *ogs_gtp_node_find_by_f_teid(
         ogs_list_t *list, ogs_gtp2_f_teid_t *f_teid)
 {

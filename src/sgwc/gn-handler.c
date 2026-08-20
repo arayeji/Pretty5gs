@@ -737,6 +737,14 @@ void sgwc_gn_handle_create_pdp_context_request(
         return;
     }
 
+    /* Attach-storm admission control (same policy as S11 Create Session) */
+    if (sgwc_admission_check()) {
+        ogs_gtp1_send_error_message(gn_xact, 0,
+                OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE,
+                OGS_GTP1_CAUSE_NO_RESOURCES_AVAILABLE);
+        return;
+    }
+
     if (req->imsi.presence == 0) {
         ogs_gtp1_send_error_message(gn_xact, 0,
                 OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE,
@@ -770,6 +778,18 @@ void sgwc_gn_handle_create_pdp_context_request(
 
     if (sgwc_ue->gnode == NULL && gn_xact->gnode)
         OGS_SETUP_GTP_NODE(sgwc_ue, gn_xact->gnode);
+
+    /* CDR [6] / peer identity: prefer SGSN Address for Signalling IE. */
+    if (req->sgsn_address_for_signalling.presence) {
+        ogs_ip_t sgsn_ip;
+
+        if (ogs_gtp1_gsn_addr_to_ip(req->sgsn_address_for_signalling.data,
+                req->sgsn_address_for_signalling.len, &sgsn_ip) == OGS_OK &&
+                sgsn_ip.ipv4) {
+            sgwc_ue->mme_s11_ipv4 = ntohl(sgsn_ip.addr);
+            sgwc_ue->mme_s11_ipv4_valid = 1;
+        }
+    }
 
     {
         sgwc_sess_t *sess = NULL;

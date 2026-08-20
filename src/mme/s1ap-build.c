@@ -56,14 +56,32 @@ ogs_pkbuf_t *s1ap_build_setup_rsp(mme_enb_t *enb)
     S1SetupResponse = &successfulOutcome->value.choice.S1SetupResponse;
 
     if (mme_self()->mme_name) {
-        ie = CALLOC(1, sizeof(S1AP_S1SetupResponseIEs_t));
-        ASN_SEQUENCE_ADD(&S1SetupResponse->protocolIEs, ie);
+        const char *n = mme_self()->mme_name;
+        size_t nlen = strlen(n);
+        size_t k;
+        bool printable = nlen > 0 && nlen <= 150;
 
-        ie->id = S1AP_ProtocolIE_ID_id_MMEname;
-        ie->criticality = S1AP_Criticality_ignore;
-        ie->value.present = S1AP_S1SetupResponseIEs__value_PR_MMEname;
+        /* S1AP MMEname is PrintableString; non-ASCII / control bytes make
+         * strict eNBs answer ErrorIndication(transfer-syntax-error). */
+        for (k = 0; printable && k < nlen; k++) {
+            unsigned char c = (unsigned char)n[k];
+            if (c < 0x20 || c > 0x7e)
+                printable = false;
+        }
 
-        MMEname = &ie->value.choice.MMEname;
+        if (printable) {
+            ie = CALLOC(1, sizeof(S1AP_S1SetupResponseIEs_t));
+            ASN_SEQUENCE_ADD(&S1SetupResponse->protocolIEs, ie);
+
+            ie->id = S1AP_ProtocolIE_ID_id_MMEname;
+            ie->criticality = S1AP_Criticality_ignore;
+            ie->value.present = S1AP_S1SetupResponseIEs__value_PR_MMEname;
+
+            MMEname = &ie->value.choice.MMEname;
+        } else {
+            ogs_error("mme_name is not a valid PrintableString "
+                    "(len=%zu) — omitting MMEname IE", nlen);
+        }
     }
 
     ie = CALLOC(1, sizeof(S1AP_S1SetupResponseIEs_t));
@@ -84,10 +102,9 @@ ogs_pkbuf_t *s1ap_build_setup_rsp(mme_enb_t *enb)
 
     RelativeMMECapacity = &ie->value.choice.RelativeMMECapacity;
 
-    if (MMEname) {
-        ogs_asn_buffer_to_OCTET_STRING((char*)mme_self()->mme_name,
+    if (MMEname)
+        ogs_asn_buffer_to_OCTET_STRING(mme_self()->mme_name,
                 strlen(mme_self()->mme_name), MMEname);
-    }
 
     if (enb && enb->supported_ta_plmn_present)
         preferred_plmn = &enb->supported_ta_plmn;
@@ -257,6 +274,87 @@ ogs_pkbuf_t *s1ap_build_setup_failure(
     return ogs_s1ap_encode(&pdu);
 }
 
+/*
+ * TS 36.413 8.9.1 Overload Start.
+ *
+ * The GUMMEIList IE is omitted on purpose: without it the eNB applies
+ * the overload action to every MME it serves through this association,
+ * which for a single-MME association (our case) is exactly right and
+ * avoids depending on the eNB honouring a GUMMEI filter correctly.
+ */
+ogs_pkbuf_t *s1ap_build_overload_start(long action, int traffic_reduction)
+{
+    S1AP_S1AP_PDU_t pdu;
+    S1AP_InitiatingMessage_t *initiatingMessage = NULL;
+    S1AP_OverloadStart_t *OverloadStart = NULL;
+
+    S1AP_OverloadStartIEs_t *ie = NULL;
+    S1AP_OverloadResponse_t *OverloadResponse = NULL;
+
+    ogs_debug("OverloadStart[action:%ld reduction:%d]",
+            action, traffic_reduction);
+
+    memset(&pdu, 0, sizeof (S1AP_S1AP_PDU_t));
+    pdu.present = S1AP_S1AP_PDU_PR_initiatingMessage;
+    pdu.choice.initiatingMessage = CALLOC(1, sizeof(S1AP_InitiatingMessage_t));
+
+    initiatingMessage = pdu.choice.initiatingMessage;
+    initiatingMessage->procedureCode = S1AP_ProcedureCode_id_OverloadStart;
+    initiatingMessage->criticality = S1AP_Criticality_ignore;
+    initiatingMessage->value.present =
+        S1AP_InitiatingMessage__value_PR_OverloadStart;
+
+    OverloadStart = &initiatingMessage->value.choice.OverloadStart;
+
+    ie = CALLOC(1, sizeof(S1AP_OverloadStartIEs_t));
+    ASN_SEQUENCE_ADD(&OverloadStart->protocolIEs, ie);
+
+    ie->id = S1AP_ProtocolIE_ID_id_OverloadResponse;
+    ie->criticality = S1AP_Criticality_reject;
+    ie->value.present = S1AP_OverloadStartIEs__value_PR_OverloadResponse;
+
+    OverloadResponse = &ie->value.choice.OverloadResponse;
+    OverloadResponse->present = S1AP_OverloadResponse_PR_overloadAction;
+    OverloadResponse->choice.overloadAction = action;
+
+    if (traffic_reduction > 0) {
+        if (traffic_reduction > 99)
+            traffic_reduction = 99;
+
+        ie = CALLOC(1, sizeof(S1AP_OverloadStartIEs_t));
+        ASN_SEQUENCE_ADD(&OverloadStart->protocolIEs, ie);
+
+        ie->id = S1AP_ProtocolIE_ID_id_TrafficLoadReductionIndication;
+        ie->criticality = S1AP_Criticality_ignore;
+        ie->value.present =
+            S1AP_OverloadStartIEs__value_PR_TrafficLoadReductionIndication;
+        ie->value.choice.TrafficLoadReductionIndication = traffic_reduction;
+    }
+
+    return ogs_s1ap_encode(&pdu);
+}
+
+/* TS 36.413 8.9.2 Overload Stop */
+ogs_pkbuf_t *s1ap_build_overload_stop(void)
+{
+    S1AP_S1AP_PDU_t pdu;
+    S1AP_InitiatingMessage_t *initiatingMessage = NULL;
+
+    ogs_debug("OverloadStop");
+
+    memset(&pdu, 0, sizeof (S1AP_S1AP_PDU_t));
+    pdu.present = S1AP_S1AP_PDU_PR_initiatingMessage;
+    pdu.choice.initiatingMessage = CALLOC(1, sizeof(S1AP_InitiatingMessage_t));
+
+    initiatingMessage = pdu.choice.initiatingMessage;
+    initiatingMessage->procedureCode = S1AP_ProcedureCode_id_OverloadStop;
+    initiatingMessage->criticality = S1AP_Criticality_reject;
+    initiatingMessage->value.present =
+        S1AP_InitiatingMessage__value_PR_OverloadStop;
+
+    return ogs_s1ap_encode(&pdu);
+}
+
 ogs_pkbuf_t *s1ap_build_enb_configuration_update_ack(void)
 {
     S1AP_S1AP_PDU_t pdu;
@@ -411,11 +509,17 @@ ogs_pkbuf_t *s1ap_build_downlink_nas_transport(
     return ogs_s1ap_encode(&pdu);
 }
 
+static bool mme_bearer_has_sgw_s1u(mme_bearer_t *bearer)
+{
+    return bearer &&
+        (bearer->sgw_s1u_ip.ipv4 || bearer->sgw_s1u_ip.ipv6);
+}
+
 static bool mme_bearer_sgw_s1u_ready(mme_bearer_t *bearer)
 {
     ogs_assert(bearer);
 
-    if (bearer->sgw_s1u_ip.ipv4 || bearer->sgw_s1u_ip.ipv6)
+    if (mme_bearer_has_sgw_s1u(bearer))
         return true;
 
     {
@@ -623,36 +727,74 @@ ogs_pkbuf_t *s1ap_build_initial_context_setup_request(
     S1AP_NAS_PDU_t *nasPdu = NULL;
 
     if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {
+        mme_sess_t *s = NULL;
+        mme_bearer_t *b = NULL;
+        mme_sess_t *chosen_sess = NULL;
+        mme_bearer_t *chosen_bearer = NULL;
+        mme_sess_t *fallback_sess = NULL;
+        mme_bearer_t *fallback_bearer = NULL;
+        int n_sess = 0;
+
         /*
-         * For Attach Request,
-         * Delete Session Request/Response removes ALL session/bearers.
+         * For Attach Request bearers are still INACTIVE — do not require
+         * esm_state_active. Pick the session whose default bearer has a
+         * usable SGW S1-U (Create Session Response applied).
          *
-         * Since all bearers are INACTIVE,
-         * we should not check the bearer activation.
+         * CRITICAL: do NOT use ogs_list_first() alone. Re-attach merges
+         * leave a stale/empty session at the head while CSRSP populated
+         * a later session; nas_eps_send_attach_accept() already chooses
+         * that later session for the ESM container, but ICS used to keep
+         * looking at the first → empty E-RAB list → Attach Accept never
+         * leaves the MME (Case A: CSRSP OK, no ICS on the wire) → UE
+         * storm → main-queue wedge.
          */
-        sess = ogs_list_first(&mme_ue->sess_list);
-        /*
-         * Issue #3072 : Only first Bearer should be included.
-         */
-        if (sess)
-            bearer = ogs_list_first(&sess->bearer_list);
+        ogs_list_for_each(&mme_ue->sess_list, s) {
+            n_sess++;
+            b = mme_default_bearer_in_sess(s);
+            if (!b)
+                b = ogs_list_first(&s->bearer_list);
+            if (!b)
+                continue;
+            if (!fallback_bearer) {
+                fallback_sess = s;
+                fallback_bearer = b;
+            }
+            if (mme_bearer_has_sgw_s1u(b)) {
+                chosen_sess = s;
+                chosen_bearer = b; /* last ready wins = newest CSR */
+            }
+        }
+
+        if (!chosen_bearer) {
+            chosen_sess = fallback_sess;
+            chosen_bearer = fallback_bearer;
+        }
+
+        sess = chosen_sess;
+        bearer = chosen_bearer;
 
         if (sess && bearer) {
-            if (!mme_bearer_sgw_s1u_ready(bearer)) {
+            if (!mme_bearer_has_sgw_s1u(bearer)) {
                 char pgw_peer[64];
                 sgw_ue_t *sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
 
                 mme_log_pgw_peer(pgw_peer, sizeof(pgw_peer), sess);
                 ogs_error("[%s] Cannot build ICS for attach: default bearer "
                         "EBI[%d] missing SGW S1-U APN[%s] PGW[%s] "
-                        "SGW_S11_TEID[0x%x]",
+                        "SGW_S11_TEID[0x%x] sess=%d",
                         mme_log_imsi(mme_ue), bearer->ebi,
                         sess->session ? sess->session->name : "-",
                         pgw_peer[0] ? pgw_peer : "-",
-                        sgw_ue ? sgw_ue->sgw_s11_teid : 0);
+                        sgw_ue ? sgw_ue->sgw_s11_teid : 0, n_sess);
                 ogs_s1ap_free(&pdu);
                 return NULL;
             }
+
+            if (n_sess > 1)
+                ogs_info("[%s] ICS attach: %d sessions, using APN[%s] EBI[%d]",
+                        mme_log_imsi(mme_ue), n_sess,
+                        sess->session ? sess->session->name : "-",
+                        bearer->ebi);
 
             item = CALLOC(1, sizeof(S1AP_E_RABToBeSetupItemCtxtSUReqIEs_t));
             ASN_SEQUENCE_ADD(&E_RABToBeSetupListCtxtSUReq->list, item);

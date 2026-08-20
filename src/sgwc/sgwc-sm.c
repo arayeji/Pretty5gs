@@ -269,8 +269,10 @@ void sgwc_state_initial(ogs_fsm_t *s, sgwc_event_t *e)
      * thread; when it fires, main fans the sweep event to every worker
      * and each shard (main included) sweeps only the UEs it owns.
      */
-    if (!ogs_worker_self())
+    if (!ogs_worker_self()) {
         sgwc_orphan_timer_start();
+        sgwc_buffer_idle_timer_start();
+    }
 
     OGS_FSM_TRAN(s, &sgwc_state_operational);
 }
@@ -282,6 +284,7 @@ void sgwc_state_final(ogs_fsm_t *s, sgwc_event_t *e)
     ogs_assert(s);
 
     sgwc_orphan_timer_stop();
+    sgwc_buffer_idle_timer_stop();
     sgwc_admin_drain_timer_stop();
 }
 
@@ -319,8 +322,25 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         ogs_assert(recvbuf);
         pfcp_message = e->pfcp_message;
         ogs_assert(pfcp_message);
+        if (pfcp_message->h.type == OGS_PFCP_HEARTBEAT_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_HEARTBEAT_RESPONSE_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE)
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
         pfcp_node = e->pfcp_node;
         ogs_assert(pfcp_node);
+        /*
+         * RX may have added the peer without FSM init; that deferred
+         * init is main-only. Shard workers only see session messages
+         * for already-associated peers — never call ensure_fsm here
+         * (ogs_assert(!ogs_worker_self()) would abort the process).
+         */
+        if (!ogs_worker_self())
+            sgwc_pfcp_node_ensure_fsm(pfcp_node);
         ogs_assert(OGS_FSM_STATE(&pfcp_node->sm));
 
         rv = ogs_pfcp_xact_receive(pfcp_node, &pfcp_message->h, &pfcp_xact);
@@ -347,8 +367,16 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
             ogs_error("PFCP state machine exception");
         }
 
-        if (pfcp_xact->gtpbuf)
+        /*
+         * Must NULL after free: an in-flight PFCP modify xact can be
+         * found again by a Modify Bearer retransmit (step >= 1) which
+         * frees xact->gtpbuf before replacing it. Leaving a dangling
+         * pointer here caused talloc "access after free" under load.
+         */
+        if (pfcp_xact->gtpbuf) {
             ogs_pkbuf_free(pfcp_xact->gtpbuf);
+            pfcp_xact->gtpbuf = NULL;
+        }
         ogs_pkbuf_free(recvbuf);
         ogs_pfcp_message_free(pfcp_message);
         break;
@@ -368,6 +396,7 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         ogs_assert(e);
         recvbuf = e->pkbuf;
         ogs_assert(recvbuf);
+        ogs_trace_packet_bind_rx("gtp", recvbuf->data, recvbuf->len);
 
         if (recvbuf->len >= sizeof(ogs_gtp1_header_t)) {
             uint8_t gtp_ver = ((ogs_gtp1_header_t *)recvbuf->data)->version;
@@ -423,6 +452,18 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         if (sgwc_ue)
             OGS_SETUP_GTP_NODE(sgwc_ue, gnode);
 
+        /* Node Echo has no UE — never attribute via TEID / sticky on_imsi. */
+        if (gtp_message.h.type == OGS_GTP2_ECHO_REQUEST_TYPE ||
+                gtp_message.h.type == OGS_GTP2_ECHO_RESPONSE_TYPE) {
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
+        } else if (sgwc_ue && sgwc_ue->imsi_bcd[0]) {
+            /* Prefer TEID-resolved IMSI (handlers may return before on_imsi). */
+            ogs_gtp_xact_set_imsi(gtp_xact, sgwc_ue->imsi_bcd);
+            ogs_trace_packet(sgwc_ue->imsi_bcd, "gtp", "rx",
+                    recvbuf->data, recvbuf->len);
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
+        }
+
         switch(gtp_message.h.type) {
         case OGS_GTP2_ECHO_REQUEST_TYPE:
             sgwc_handle_echo_request(gtp_xact, &gtp_message.echo_request);
@@ -445,6 +486,13 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
             }
             if (sgwc_ue)
                 OGS_SETUP_GTP_NODE(sgwc_ue, gnode);
+            /* Create Session often arrives with TEID=0; dump after UE exists. */
+            if (sgwc_ue && sgwc_ue->imsi_bcd[0]) {
+                ogs_gtp_xact_set_imsi(gtp_xact, sgwc_ue->imsi_bcd);
+                ogs_trace_packet(sgwc_ue->imsi_bcd, "gtp", "rx",
+                        recvbuf->data, recvbuf->len);
+                ogs_trace_packet_bind_rx(NULL, NULL, 0);
+            }
             sgwc_s11_handle_create_session_request(
                     sgwc_ue, gtp_xact, recvbuf, &gtp_message);
             break;
@@ -816,6 +864,28 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
                 sgwc_self()->orphan.enabled && sgwc_self()->orphan.t_sweep)
             ogs_timer_start(sgwc_self()->orphan.t_sweep,
                     ogs_time_from_sec(sgwc_self()->orphan.interval_s));
+        break;
+    }
+
+    case SGWC_EVT_BUFFER_IDLE_SWEEP: {
+        int dropped = 0, remaining;
+
+        if (!ogs_worker_self() && sgwc_workers_active())
+            sgwc_event_fanout_workers(SGWC_EVT_BUFFER_IDLE_SWEEP, 0);
+
+        remaining = sgwc_buffer_idle_sweep(&dropped);
+        if (dropped)
+            ogs_warn("buffer_idle sweep: DROPped %d session(s), "
+                    "%d still buffering on this shard",
+                    dropped, remaining);
+        else
+            ogs_debug("buffer_idle sweep: %d session(s) buffering", remaining);
+
+        if (!ogs_worker_self() &&
+                sgwc_self()->buffer_idle.enabled &&
+                sgwc_self()->buffer_idle.t_sweep)
+            ogs_timer_start(sgwc_self()->buffer_idle.t_sweep,
+                    ogs_time_from_sec(sgwc_self()->buffer_idle.interval_s));
         break;
     }
 

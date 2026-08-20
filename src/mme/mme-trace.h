@@ -83,6 +83,11 @@ void mme_sess_removed_log(mme_ue_t *mme_ue, const char *apn);
 void mme_bearer_added_log(mme_ue_t *mme_ue, mme_bearer_t *bearer);
 void mme_bearer_removed_log(mme_ue_t *mme_ue, mme_bearer_t *bearer);
 
+/* Serialize freeDiameter msg → PACKET: proto=diameter (filter-gated). */
+struct msg;
+void mme_trace_diameter(
+        const char *imsi_bcd, const char *dir, struct msg *msg);
+
 /* Context strings for ogs_error/ogs_warn (IMSI, peers, radio) */
 const char *mme_log_imsi(mme_ue_t *mme_ue);
 void mme_log_gtp_peer(char *buf, size_t buflen, ogs_gtp_node_t *gnode);

@@ -1,0 +1,348 @@
+--- a/include/freeDiameter/libfdproto.h
++++ b/include/freeDiameter/libfdproto.h
+@@ -837,6 +837,27 @@
+ /*                          THREADS                           */
+ /*============================================================*/
+ 
++
++/* pthread_setname_np: declare only when glibc headers did not (no _GNU_SOURCE).
++ * Open5GS builds define _GNU_SOURCE / __USE_GNU and already declare it. */
++#ifdef __linux__
++# ifndef __USE_GNU
++extern int pthread_setname_np(pthread_t thread, const char *name);
++# endif
++#endif
++
++/* Set pthread name (Linux: 15 chars max). No-op elsewhere / on NULL thr. */
++static __inline__ void fd_thr_setname(pthread_t th, const char *name)
++{
++#ifdef __linux__
++	if (th != (pthread_t)NULL && name != NULL)
++		(void) pthread_setname_np(th, name);
++#else
++	(void)th;
++	(void)name;
++#endif
++}
++
+ /* Terminate a thread */
+ static __inline__ int fd_thr_term(pthread_t * th)
+ {
+--- a/libfdcore/p_expiry.c
++++ b/libfdcore/p_expiry.c
+@@ -147,7 +147,9 @@
+ {
+ 	TRACE_ENTRY();
+ 	CHECK_FCT( pthread_create( &exp_thr, NULL, exp_th_fct, NULL ) );
++	fd_thr_setname(exp_thr, "fd-expiry");
+ 	CHECK_FCT( pthread_create( &gc_thr,  NULL, gc_th_fct,  NULL ) );
++	fd_thr_setname(gc_thr, "fd-gc");
+ 	return 0;
+ }
+ 
+--- a/libfdcore/core.c
++++ b/libfdcore/core.c
+@@ -304,6 +304,7 @@
+ 	
+ 	/* Start the core runner thread that handles main events (until shutdown) */
+ 	CHECK_POSIX( pthread_create(&core_runner, NULL, core_runner_thread, NULL) );
++	fd_thr_setname(core_runner, "fd-core");
+ 	
+ 	/* Unlock threads waiting into fd_core_waitstartcomplete */
+ 	core_state_set(CORE_RUNNING);
+--- a/libfdcore/p_sr.c
++++ b/libfdcore/p_sr.c
+@@ -251,6 +251,7 @@
+ 		/* if the thread does not exist yet, create it */
+ 		if (srlist->thr == (pthread_t)NULL) {
+ 			CHECK_POSIX_DO( pthread_create(&srlist->thr, NULL, sr_expiry_th, srlist), /* continue anyway */);
++	fd_thr_setname(srlist->thr, "fd-sr-exp");
+ 		} else {
+ 			/* or, if added in first position, signal the condvar to update the sleep time of the thread */
+ 			if (li == &srlist->exp) {
+--- a/libfdcore/p_psm.c
++++ b/libfdcore/p_psm.c
+@@ -920,6 +920,7 @@
+ 
+ 	/* Create the PSM controller thread */
+ 	CHECK_POSIX( pthread_create( &peer->p_psm, NULL, p_psm_th, peer ) );
++	fd_thr_setname(peer->p_psm, "fd-psm");
+ 
+ 	/* We're done */
+ 	return 0;
+--- a/libfdcore/p_out.c
++++ b/libfdcore/p_out.c
+@@ -216,6 +216,7 @@
+ 	CHECK_PARAMS( CHECK_PEER(peer) && (peer->p_outthr == (pthread_t)NULL) );
+ 	
+ 	CHECK_POSIX( pthread_create(&peer->p_outthr, NULL, out_thr, peer) );
++	fd_thr_setname(peer->p_outthr, "fd-out");
+ 	
+ 	CHECK_FCT( fd_cnx_unordered_delivery(peer->p_cnxctx, 1) );
+ 	
+--- a/libfdcore/p_cnx.c
++++ b/libfdcore/p_cnx.c
+@@ -338,6 +338,7 @@
+ 	
+ 	/* Start the connect thread */
+ 	CHECK_FCT( pthread_create(&peer->p_ini_thr, NULL, connect_thr, peer) );
++	fd_thr_setname(peer->p_ini_thr, "fd-cnx");
+ 	return 0;
+ }
+ 
+--- a/libfdcore/cnxctx.c
++++ b/libfdcore/cnxctx.c
+@@ -944,11 +944,13 @@
+ 		case IPPROTO_TCP:
+ 			/* Start the tcp_notls thread */
+ 			CHECK_POSIX( pthread_create( &conn->cc_rcvthr, NULL, rcvthr_notls_tcp, conn ) );
++	fd_thr_setname(conn->cc_rcvthr, "fd-recv");
+ 			break;
+ #ifndef DISABLE_SCTP
+ 		case IPPROTO_SCTP:
+ 			/* Start the tcp_notls thread */
+ 			CHECK_POSIX( pthread_create( &conn->cc_rcvthr, NULL, rcvthr_notls_sctp, conn ) );
++	fd_thr_setname(conn->cc_rcvthr, "fd-recv");
+ 			break;
+ #endif /* DISABLE_SCTP */
+ 		default:
+@@ -1762,6 +1764,7 @@
+ 		/* Start decrypting the data */
+ 		if (!dtls) {
+ 			CHECK_POSIX( pthread_create( &conn->cc_rcvthr, NULL, rcvthr_tls_single, conn ) );
++	fd_thr_setname(conn->cc_rcvthr, "fd-recv");
+ 		} else {
+ 			TODO("Signal the dtls_push function that multiple streams can be used from this point.");
+ 			TODO("Create DTLS rcvthr (must reassembly based on seq numbers & stream id ?)");
+--- a/libfdcore/server.c
++++ b/libfdcore/server.c
+@@ -331,6 +331,11 @@
+ 		new->workers[i].s = new;
+ 		new->workers[i].id = i;
+ 		CHECK_POSIX_DO( pthread_create( &new->workers[i].worker, NULL, client_worker, &new->workers[i]), return NULL );
++		{
++			char tname[16];
++			snprintf(tname, sizeof(tname), "fd-work%u", (unsigned)i);
++			fd_thr_setname(new->workers[i].worker, tname);
++		}
+ 	}
+ 	
+ 	return new;
+@@ -355,6 +360,11 @@
+ 			CHECK_MALLOC( s->conn = fd_cnx_serv_sctp(fd_g_config->cnf_port, empty_conf_ep ? NULL : &fd_g_config->cnf_endpoints) );
+ 			fd_list_insert_before( &FD_SERVERS, &s->chain );
+ 			CHECK_POSIX( pthread_create( &s->thr, NULL, serv_th, s ) );
++				{
++					char tname[16];
++					snprintf(tname, sizeof(tname), "fd-serv%u", (unsigned)0);
++					fd_thr_setname(s->thr, tname);
++				}
+ 		}
+ 		
+ 		/* Create the server on secure port */
+@@ -363,6 +373,11 @@
+ 			CHECK_MALLOC( s->conn = fd_cnx_serv_sctp(fd_g_config->cnf_port_tls, empty_conf_ep ? NULL : &fd_g_config->cnf_endpoints) );
+ 			fd_list_insert_before( &FD_SERVERS, &s->chain );
+ 			CHECK_POSIX( pthread_create( &s->thr, NULL, serv_th, s ) );
++				{
++					char tname[16];
++					snprintf(tname, sizeof(tname), "fd-serv%u", (unsigned)1);
++					fd_thr_setname(s->thr, tname);
++				}
+ 		}
+ 		
+ 		/* Create the other server on 3436 secure port */
+@@ -371,6 +386,11 @@
+ 			CHECK_MALLOC( s->conn = fd_cnx_serv_sctp(fd_g_config->cnf_port_3436, empty_conf_ep ? NULL : &fd_g_config->cnf_endpoints) );
+ 			fd_list_insert_before( &FD_SERVERS, &s->chain );
+ 			CHECK_POSIX( pthread_create( &s->thr, NULL, serv_th, s ) );
++				{
++					char tname[16];
++					snprintf(tname, sizeof(tname), "fd-serv%u", (unsigned)2);
++					fd_thr_setname(s->thr, tname);
++				}
+ 		}*/
+ 		
+ #endif /* DISABLE_SCTP */
+@@ -388,6 +408,11 @@
+ 					CHECK_MALLOC( s->conn = fd_cnx_serv_tcp(fd_g_config->cnf_port, AF_INET, NULL) );
+ 					fd_list_insert_before( &FD_SERVERS, &s->chain );
+ 					CHECK_POSIX( pthread_create( &s->thr, NULL, serv_th, s ) );
++				{
++					char tname[16];
++					snprintf(tname, sizeof(tname), "fd-serv%u", (unsigned)3);
++					fd_thr_setname(s->thr, tname);
++				}
+ 				}
+ 
+ 				if (fd_g_config->cnf_port_tls) {
+@@ -395,6 +420,11 @@
+ 					CHECK_MALLOC( s->conn = fd_cnx_serv_tcp(fd_g_config->cnf_port_tls, AF_INET, NULL) );
+ 					fd_list_insert_before( &FD_SERVERS, &s->chain );
+ 					CHECK_POSIX( pthread_create( &s->thr, NULL, serv_th, s ) );
++				{
++					char tname[16];
++					snprintf(tname, sizeof(tname), "fd-serv%u", (unsigned)4);
++					fd_thr_setname(s->thr, tname);
++				}
+ 				}
+ 			}
+ 			
+@@ -406,6 +436,11 @@
+ 					CHECK_MALLOC( s->conn = fd_cnx_serv_tcp(fd_g_config->cnf_port, AF_INET6, NULL) );
+ 					fd_list_insert_before( &FD_SERVERS, &s->chain );
+ 					CHECK_POSIX( pthread_create( &s->thr, NULL, serv_th, s ) );
++				{
++					char tname[16];
++					snprintf(tname, sizeof(tname), "fd-serv%u", (unsigned)5);
++					fd_thr_setname(s->thr, tname);
++				}
+ 				}
+ 
+ 				if (fd_g_config->cnf_port_tls) {
+@@ -413,6 +448,11 @@
+ 					CHECK_MALLOC( s->conn = fd_cnx_serv_tcp(fd_g_config->cnf_port_tls, AF_INET6, NULL) );
+ 					fd_list_insert_before( &FD_SERVERS, &s->chain );
+ 					CHECK_POSIX( pthread_create( &s->thr, NULL, serv_th, s ) );
++				{
++					char tname[16];
++					snprintf(tname, sizeof(tname), "fd-serv%u", (unsigned)6);
++					fd_thr_setname(s->thr, tname);
++				}
+ 				}
+ 			}
+ 		} else {
+@@ -433,6 +473,11 @@
+ 					CHECK_MALLOC( s->conn = fd_cnx_serv_tcp(fd_g_config->cnf_port, sa->sa_family, ep) );
+ 					fd_list_insert_before( &FD_SERVERS, &s->chain );
+ 					CHECK_POSIX( pthread_create( &s->thr, NULL, serv_th, s ) );
++				{
++					char tname[16];
++					snprintf(tname, sizeof(tname), "fd-serv%u", (unsigned)7);
++					fd_thr_setname(s->thr, tname);
++				}
+ 				}
+ 
+ 				if (fd_g_config->cnf_port_tls) {
+@@ -440,6 +485,11 @@
+ 					CHECK_MALLOC( s->conn = fd_cnx_serv_tcp(fd_g_config->cnf_port_tls, sa->sa_family, ep) );
+ 					fd_list_insert_before( &FD_SERVERS, &s->chain );
+ 					CHECK_POSIX( pthread_create( &s->thr, NULL, serv_th, s ) );
++				{
++					char tname[16];
++					snprintf(tname, sizeof(tname), "fd-serv%u", (unsigned)8);
++					fd_thr_setname(s->thr, tname);
++				}
+ 				}
+ 			}
+ 		}
+--- a/libfdcore/routing_dispatch.c
++++ b/libfdcore/routing_dispatch.c
+@@ -39,7 +39,6 @@
+ /* This needs -D_USE_GNU, and since I have no idea what else that does, let's simply copy the declaration. */
+ 
+ /* Set thread name visible in the kernel and its interfaces.  */
+-extern int pthread_setname_np (pthread_t __target_thread, const char *__name);
+ #endif
+ 
+ /********************************************************************************/
+@@ -504,24 +503,7 @@
+ 	}
+ 	
+ 	/* Retrieve the session of the message */
+-#if 0 /* modified by acetcom */
+ 	CHECK_FCT( fd_msg_sess_get(fd_g_config->cnf_dict, msgptr, &sess, NULL) );
+-#else
+-    /* Retrieve the session of the message */
+-	CHECK_FCT_DO( fd_msg_sess_get(fd_g_config->cnf_dict, msgptr, &sess, NULL),
+-		{
+-			/* A malformed Session-Id (e.g. one containing a NUL byte, which
+-			   fd_os_is_valid_os0() rejects) is a per-message data error from a
+-			   single peer. It must NOT propagate as a fatal error: process_thr()
+-			   treats any non-zero return as unrecoverable and calls
+-			   fd_core_shutdown(), taking down the whole Diameter listener.
+-			   Drop just this message and keep serving every other peer. */
+-			fd_hook_call(HOOK_MESSAGE_DROPPED, msgptr, NULL,
+-				"Invalid Session-Id in received message", fd_msg_pmdl_get(msgptr));
+-			fd_msg_free(msgptr);
+-			return 0;
+-		} );
+-#endif
+ 
+ 	/* Now, call any callback registered for the message */
+ 	CHECK_FCT( fd_msg_dispatch ( &msgptr, sess, &action, &ec, &em, &error) );
+@@ -1198,21 +1180,15 @@
+ 	/* Create the threads */
+ 	for (i=0; i < fd_g_config->cnf_dispthr; i++) {
+ 		CHECK_POSIX( pthread_create( &dispatch[i], NULL, dispatch_thr, &disp_state[i] ) );
+-#ifdef linux
+-		pthread_setname_np(dispatch[i], "fd-dispatch");
+-#endif
++fd_thr_setname(dispatch[i], "fd-dispatch");
+ 	}
+ 	for (i=0; i < fd_g_config->cnf_rtoutthr; i++) {
+ 		CHECK_POSIX( pthread_create( &rt_out[i], NULL, routing_out_thr, &out_state[i] ) );
+-#ifdef linux
+-		pthread_setname_np(rt_out[i], "fd-routing-out");
+-#endif
++fd_thr_setname(rt_out[i], "fd-routing-out");
+ 	}
+ 	for (i=0; i < fd_g_config->cnf_rtinthr; i++) {
+ 		CHECK_POSIX( pthread_create( &rt_in[i], NULL, routing_in_thr, &in_state[i] ) );
+-#ifdef linux
+-		pthread_setname_np(rt_in[i], "fd-routing-in");
+-#endif
++fd_thr_setname(rt_in[i], "fd-routing-in");
+ 	}
+ 	
+ 	/* Later: TODO("Set the thresholds for the queues to create more threads as needed"); */
+--- a/libfdcore/events.c
++++ b/libfdcore/events.c
+@@ -203,6 +203,7 @@
+ 		if (t->trig_value == trigger_val) {
+ 			TRACE_DEBUG(FULL, "Trigger %d: Calling %p in %s", t->trig_value, t->cb, t->trig_module);
+ 			CHECK_POSIX_DO( pthread_create( &th, &detached, call_cb_detached, t->cb ), break );
++	fd_thr_setname(th, "fd-ev-cb");
+ 		}
+ 		if (t->trig_value > trigger_val)
+ 			break;
+--- a/libfdcore/sctp3436.c
++++ b/libfdcore/sctp3436.c
+@@ -585,6 +585,7 @@
+ 
+ 	/* Start the demux thread */
+ 	CHECK_POSIX( pthread_create( &conn->cc_rcvthr, NULL, demuxer, conn ) );
++	fd_thr_setname(conn->cc_rcvthr, "fd-demux");
+ 
+ 	return 0;
+ }
+@@ -649,6 +650,7 @@
+ 
+ 		/* Start the handshake thread */
+ 		CHECK_POSIX( pthread_create( &conn->cc_sctp3436_data.array[i].thr, NULL, handshake_resume_th, &conn->cc_sctp3436_data.array[i] ) );
++		fd_thr_setname(conn->cc_sctp3436_data.array[i].thr, "fd-hs");
+ 	}
+ 
+ 	/* We can now release the memory of master session data if any */
+@@ -688,9 +690,11 @@
+ 
+ 			/* Start the decipher thread */
+ 			CHECK_POSIX( pthread_create( &conn->cc_sctp3436_data.array[i].thr, NULL, decipher, &conn->cc_sctp3436_data.array[i] ) );
++			fd_thr_setname(conn->cc_sctp3436_data.array[i].thr, "fd-deciph");
+ 		}
+ 	} else {
+ 		CHECK_POSIX( pthread_create( &conn->cc_sctp3436_data.array[0].thr, NULL, decipher, &conn->cc_sctp3436_data.array[0] ) );
++		fd_thr_setname(conn->cc_sctp3436_data.array[0].thr, "fd-deciph");
+ 	}
+ 	return 0;
+ }
+--- a/libfdproto/sessions.c
++++ b/libfdproto/sessions.c
+@@ -271,6 +271,7 @@
+ {
+ 	/* Start session garbage collector (expiry) */
+ 	CHECK_POSIX(  pthread_create(&exp_thr, NULL, exp_fct, NULL)  );
++	fd_thr_setname(exp_thr, "fd-sess-exp");
+ 
+ 	return 0;
+ }

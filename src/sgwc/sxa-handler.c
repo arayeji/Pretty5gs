@@ -24,7 +24,6 @@
 #include "sxa-handler.h"
 #include "sgwc-trace.h"
 #include "ga-writer.h"
-#include "sgwc-trace.h"
 #include "sgwc-gtp-interop.h"
 #include "gn-handler.h"
 #include "gn-build.h"
@@ -419,6 +418,10 @@ void sgwc_sxa_handle_session_establishment_response(
     ogs_assert(pfcp_rsp);
     ogs_assert(recv_message);
 
+    /* Establish answered: release the admission in-flight slot */
+    if (sess)
+        sgwc_admission_establish_done(sess);
+
     create_session_request = &recv_message->create_session_request;
     ogs_assert(create_session_request);
 
@@ -464,13 +467,13 @@ void sgwc_sxa_handle_session_establishment_response(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sess) {
-        ogs_error("No Context");
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
         /*
          * The SGWC session was removed while the establishment was in
          * flight (UE detached or re-attached meanwhile), but the SGW-U
          * accepted the request and created the user-plane session.
          * Nobody owns it now: delete it right away.
+         * (Rich error line is emitted below — do not log bare "No Context".)
          */
         if (rsp_up_seid && pfcp_node) {
             ogs_warn("Purging orphaned SGW-U session created for a removed "
@@ -590,6 +593,10 @@ void sgwc_sxa_handle_session_establishment_response(
         char pgw_peer[OGS_ADDRSTRLEN];
         char vpp_detail[512];
         uint16_t offending_ie = 0;
+        bool upf_accepted = pfcp_rsp->cause.presence &&
+                pfcp_rsp->cause.u8 == OGS_PFCP_CAUSE_REQUEST_ACCEPTED;
+        bool no_sgwc_sess = (sess == NULL);
+        const char *what;
 
         vpp_detail[0] = '\0';
         if (pfcp_pkbuf &&
@@ -604,16 +611,26 @@ void sgwc_sxa_handle_session_establishment_response(
         sgwc_log_sgwu_peer(sgwu_peer, sizeof(sgwu_peer), sess);
         sgwc_log_mme_peer(mme_peer, sizeof(mme_peer), sgwc_ue);
         sgwc_log_pgw_peer(pgw_peer, sizeof(pgw_peer), sess);
+
+        if (no_sgwc_sess && upf_accepted)
+            what = "SGW-C session gone after SGW-U accepted PFCP "
+                    "Session Establishment (race)";
+        else if (!upf_accepted)
+            what = "SGW-U rejected PFCP Session Establishment";
+        else
+            what = "PFCP Session Establishment failed after SGW-U accept "
+                    "(local/F-SEID)";
+
         /*
          * Always-on ogs_error (not sgwc_ue_error): the per-IMSI helper is
          * filter-gated for CPU, so production only ever saw the anonymous
          * "No UP F-SEID" / "PFCP Cause" lines with no subscriber identity.
          */
-        ogs_error("[%s] SGW-U rejected PFCP Session Establishment "
-                "APN[%s] SGW-U[%s] MME[%s] PGW[%s] "
+        ogs_error("[%s] %s APN[%s] SGW-U[%s] MME[%s] PGW[%s] "
                 "PFCP cause[%u:%s] -> S11 cause[%u] "
-                "sess_id[%d] offending_ie[%u] vpp[%s]",
+                "sess_id[%d] UP-SEID[0x%llx] offending_ie[%u] vpp[%s]",
                 sgwc_ue && sgwc_ue->imsi_bcd[0] ? sgwc_ue->imsi_bcd : "-",
+                what,
                 sess && sess->session.name ? sess->session.name : "-",
                 sgwu_peer[0] ? sgwu_peer : "-",
                 mme_peer[0] ? mme_peer : "-",
@@ -622,6 +639,7 @@ void sgwc_sxa_handle_session_establishment_response(
                 pfcp_rsp->cause.presence ?
                     ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8) : "-",
                 cause_value, sess ? sess->id : 0,
+                (unsigned long long)rsp_up_seid,
                 offending_ie,
                 vpp_detail[0] ? vpp_detail : "-");
         sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact, cause_value);
@@ -693,15 +711,11 @@ void sgwc_sxa_handle_session_establishment_response(
     memset(&sgw_s5c_teid, 0, sizeof(ogs_gtp2_f_teid_t));
     sgw_s5c_teid.interface_type = OGS_GTP2_F_TEID_S5_S8_SGW_GTP_C;
     sgw_s5c_teid.teid = htobe32(sess->sgw_s5c_teid);
-    {
-        ogs_sockaddr_t *gtpc_addr = NULL, *gtpc_addr6 = NULL;
-        sgwc_gtpc_f_teid_addr(sess, &gtpc_addr, &gtpc_addr6);
-        rv = ogs_gtp2_sockaddr_to_f_teid(
-                gtpc_addr, gtpc_addr6, &sgw_s5c_teid, &sgw_s5c_len);
-    }
+    rv = sgwc_gtpc_sockaddr_or_advertise_to_f_teid(
+            sess, &sgw_s5c_teid, &sgw_s5c_len);
     if (rv != OGS_OK) {
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-        ogs_error("ogs_gtp2_sockaddr_to_f_teid(S5C) failed");
+        ogs_error("sgwc_gtpc_sockaddr_or_advertise_to_f_teid(S5C) failed");
         sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
                 OGS_GTP2_CAUSE_SYSTEM_FAILURE);
         return;
@@ -908,6 +922,10 @@ void sgwc_sxa_handle_session_establishment_response(
 
     ogs_gtp_xact_associate(s11_xact, s5c_xact);
 
+    if (!sgwc_ue && sess)
+        sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+    sgwc_trace_bind_gtp(s5c_xact, sgwc_ue);
+
     rv = ogs_gtp_xact_commit(s5c_xact);
     ogs_expect(rv == OGS_OK);
 }
@@ -956,13 +974,14 @@ void sgwc_sxa_handle_session_modification_response(
         if (!sess) {
             ogs_pool_id_t sess_id = OGS_INVALID_POOL_ID;
 
-            ogs_error("No Session Context");
+            ogs_warn("No Session Context (already torn down)");
 
             sess_id = OGS_POINTER_TO_UINT(pfcp_xact->data);
             if (sess_id >= OGS_MIN_POOL_ID && sess_id <= OGS_MAX_POOL_ID) {
                 sess = sgwc_sess_find_by_id(sess_id);
                 if (!sess) {
-                    ogs_error("Session not found [%d]", sess_id);
+                    ogs_warn("Session not found [%d] "
+                            "(already torn down)", sess_id);
                     cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
                 }
             } else {
@@ -992,7 +1011,8 @@ void sgwc_sxa_handle_session_modification_response(
 
                     sess = sgwc_sess_find_by_id(bearer->sess_id);
                     if (!sess) {
-                        ogs_error("Session not found [%d]", bearer->sess_id);
+                        ogs_warn("Session not found [%d] "
+                                "(already torn down)", bearer->sess_id);
                         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
                     }
                 }
@@ -1024,14 +1044,30 @@ void sgwc_sxa_handle_session_modification_response(
                 vpp_detail[0] = '\0';
 
             /* Always-on: sgwc_ue_error is filter-gated and would hide IMSI */
-            ogs_error("[%s] SGW-U rejected PFCP Session Modification "
-                    "APN[%s] PFCP cause[%u:%s] -> S11 cause[%u] vpp[%s]",
-                    sgwc_ue && sgwc_ue->imsi_bcd[0] ? sgwc_ue->imsi_bcd : "-",
-                    sess && sess->session.name ? sess->session.name : "-",
-                    pfcp_rsp->cause.u8,
-                    ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8),
-                    gtp_cause_from_pfcp(pfcp_rsp->cause.u8),
-                    vpp_detail[0] ? vpp_detail : "-");
+            if (pfcp_rsp->cause.u8 ==
+                    OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND)
+                ogs_warn("[%s] SGW-U PFCP Session Modification: "
+                        "session already gone APN[%s] PFCP cause[%u:%s] "
+                        "-> S11 cause[%u] vpp[%s]",
+                        sgwc_ue && sgwc_ue->imsi_bcd[0] ?
+                            sgwc_ue->imsi_bcd : "-",
+                        sess && sess->session.name ?
+                            sess->session.name : "-",
+                        pfcp_rsp->cause.u8,
+                        ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8),
+                        gtp_cause_from_pfcp(pfcp_rsp->cause.u8),
+                        vpp_detail[0] ? vpp_detail : "-");
+            else
+                ogs_error("[%s] SGW-U rejected PFCP Session Modification "
+                        "APN[%s] PFCP cause[%u:%s] -> S11 cause[%u] vpp[%s]",
+                        sgwc_ue && sgwc_ue->imsi_bcd[0] ?
+                            sgwc_ue->imsi_bcd : "-",
+                        sess && sess->session.name ?
+                            sess->session.name : "-",
+                        pfcp_rsp->cause.u8,
+                        ogs_pfcp_cause_get_name(pfcp_rsp->cause.u8),
+                        gtp_cause_from_pfcp(pfcp_rsp->cause.u8),
+                        vpp_detail[0] ? vpp_detail : "-");
 
             if (ogs_pfcp_cause_no_association(pfcp_rsp->cause.u8) && sess)
                 sgwc_pfcp_request_reassociation(sess->pfcp_node);
@@ -1245,6 +1281,21 @@ void sgwc_sxa_handle_session_modification_response(
                            (long long)flags, pfcp_xact->assoc_xact_id);
                 }
             }
+        } else if (flags & OGS_PFCP_MODIFY_DROP) {
+            /* Local DROP (Unable-to-page / buffer_idle): no GTP peer wait. */
+            ogs_warn("PFCP DL FAR DROP failed cause[%d] IMSI[%s]",
+                    cause_value,
+                    sgwc_ue ? sgwc_ue->imsi_bcd : "unknown");
+        } else if (flags & OGS_PFCP_MODIFY_REARM) {
+            /* Local re-arm (DROP → BUFF|NOCP): no GTP peer wait. */
+            ogs_warn("PFCP DL FAR re-arm failed cause[%d] IMSI[%s]",
+                    cause_value,
+                    sgwc_ue ? sgwc_ue->imsi_bcd : "unknown");
+        } else if (flags & OGS_PFCP_MODIFY_DROBU) {
+            /* Local DROBU (discard buffered): no GTP peer wait. */
+            ogs_warn("PFCP DROBU failed cause[%d] IMSI[%s]",
+                    cause_value,
+                    sgwc_ue ? sgwc_ue->imsi_bcd : "unknown");
         }
 
         ogs_pfcp_xact_commit(pfcp_xact);
@@ -1256,7 +1307,12 @@ void sgwc_sxa_handle_session_modification_response(
         /* Nothing */
 
     } else {
-        ogs_assert(bearer);
+        if (!bearer) {
+            ogs_error("PFCP Session Modification Response: bearer gone "
+                    "[flags=0x%llx]", (long long)flags);
+            ogs_pfcp_xact_commit(pfcp_xact);
+            return;
+        }
 
         dl_tunnel = sgwc_dl_tunnel_in_bearer(bearer);
         ogs_assert(dl_tunnel);
@@ -1344,6 +1400,9 @@ void sgwc_sxa_handle_session_modification_response(
                     return;
                 }
 
+                sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
+
                 rv = ogs_gtp_xact_commit(s11_xact);
                 ogs_expect(rv == OGS_OK);
             }
@@ -1369,6 +1428,9 @@ void sgwc_sxa_handle_session_modification_response(
                     ogs_error("ogs_gtp_xact_update_tx() failed");
                     return;
                 }
+
+                sgwc_trace_bind_gtp(s5c_xact, sgwc_ue);
+
 
                 rv = ogs_gtp_xact_commit(s5c_xact);
                 ogs_expect(rv == OGS_OK);
@@ -1438,6 +1500,9 @@ void sgwc_sxa_handle_session_modification_response(
             s11_xact->local_teid = sgwc_ue->sgw_s11_teid;
 
             ogs_gtp_xact_associate(s5c_xact, s11_xact);
+
+            sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
 
             rv = ogs_gtp_xact_commit(s11_xact);
             ogs_expect(rv == OGS_OK);
@@ -1524,6 +1589,9 @@ void sgwc_sxa_handle_session_modification_response(
                 return;
             }
 
+            sgwc_trace_bind_gtp(s5c_xact, sgwc_ue);
+
+
             rv = ogs_gtp_xact_commit(s5c_xact);
             ogs_expect(rv == OGS_OK);
 
@@ -1574,7 +1642,20 @@ void sgwc_sxa_handle_session_modification_response(
                             bearer_contexts[i].eps_bearer_id.presence);
                     bearer = sgwc_bearer_find_by_ue_ebi(sgwc_ue,
                                 gtp_req->bearer_contexts[i].eps_bearer_id.u8);
-                    ogs_assert(bearer);
+                    /*
+                     * HO Create-Indirect can complete after the UE bearer was
+                     * released/replaced. Do not abort SGW-C; fail the GTP
+                     * response instead.
+                     */
+                    if (!bearer) {
+                        ogs_error("[%s] Create Indirect: no bearer for "
+                                "EBI[%u] after PFCP Session Modification",
+                                sgwc_ue->imsi_bcd,
+                                gtp_req->bearer_contexts[i].
+                                        eps_bearer_id.u8);
+                        cause.value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
+                        goto indirect_fail;
+                    }
 
                     ogs_list_for_each(&bearer->tunnel_list, tunnel) {
                         if (tunnel->interface_type ==
@@ -1688,6 +1769,9 @@ indirect_fail:
                     return;
                 }
 
+                sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
+
                 rv = ogs_gtp_xact_commit(s11_xact);
                 ogs_expect(rv == OGS_OK);
             }
@@ -1728,15 +1812,14 @@ indirect_fail:
             gtp_rsp = &recv_message->create_session_response;
             ogs_assert(gtp_rsp);
 
-            /* Send Control Plane(UL) : SGW-S11 */
+            /* Send Control Plane(UL) : SGW-S11 (prefer gtpc advertise) */
             memset(&sgw_s11_teid, 0, sizeof(ogs_gtp2_f_teid_t));
             sgw_s11_teid.interface_type = OGS_GTP2_F_TEID_S11_S4_SGW_GTP_C;
             sgw_s11_teid.teid = htobe32(sgwc_ue->sgw_s11_teid);
-            rv = ogs_gtp2_sockaddr_to_f_teid(
-                    ogs_gtp_self()->gtpc_addr, ogs_gtp_self()->gtpc_addr6,
-                    &sgw_s11_teid, &len);
+            rv = sgwc_gtpc_sockaddr_or_advertise_to_f_teid(
+                    sess, &sgw_s11_teid, &len);
             if (rv != OGS_OK) {
-                ogs_error("ogs_gtp2_sockaddr_to_f_teid(S11) failed");
+                ogs_error("sgwc_gtpc_sockaddr_or_advertise_to_f_teid(S11) failed");
                 sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact,
                         OGS_GTP2_CAUSE_SYSTEM_FAILURE);
                 return;
@@ -1894,6 +1977,9 @@ indirect_fail:
                 return;
             }
 
+            sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
+
             rv = ogs_gtp_xact_commit(s11_xact);
             ogs_expect(rv == OGS_OK);
 
@@ -1940,6 +2026,9 @@ indirect_fail:
                     s5c_xact->local_teid = sess->sgw_s5c_teid;
 
                     ogs_gtp_xact_associate(s11_xact, s5c_xact);
+
+                    sgwc_trace_bind_gtp(s5c_xact, sgwc_ue);
+
 
                     rv = ogs_gtp_xact_commit(s5c_xact);
                     ogs_expect(rv == OGS_OK);
@@ -2021,14 +2110,33 @@ indirect_fail:
                         return;
                     }
 
+                    sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
+
                     rv = ogs_gtp_xact_commit(s11_xact);
                     ogs_expect(rv == OGS_OK);
                 }
             }
+        } else if (flags & (OGS_PFCP_MODIFY_DROP|
+                    OGS_PFCP_MODIFY_REARM|OGS_PFCP_MODIFY_DROBU)) {
+            ogs_pfcp_xact_commit(pfcp_xact);
+            ogs_debug("PFCP DL FAR %s accepted IMSI[%s]",
+                    (flags & OGS_PFCP_MODIFY_DROP) ? "DROP" :
+                    (flags & OGS_PFCP_MODIFY_REARM) ? "re-arm" : "DROBU",
+                    sgwc_ue ? sgwc_ue->imsi_bcd : "unknown");
+            return;
         } else {
             ogs_error("Invalid modify_flags[0x%llx]", (long long)flags);
             return;
         }
+    } else if (flags & (OGS_PFCP_MODIFY_DROP|
+                OGS_PFCP_MODIFY_REARM|OGS_PFCP_MODIFY_DROBU)) {
+        ogs_pfcp_xact_commit(pfcp_xact);
+        ogs_debug("PFCP DL FAR %s accepted IMSI[%s]",
+                (flags & OGS_PFCP_MODIFY_DROP) ? "DROP" :
+                (flags & OGS_PFCP_MODIFY_REARM) ? "re-arm" : "DROBU",
+                sgwc_ue ? sgwc_ue->imsi_bcd : "unknown");
+        return;
     } else if (flags & OGS_PFCP_MODIFY_DEACTIVATE) {
         if (flags & OGS_PFCP_MODIFY_ERROR_INDICATION) {
             /* It's faked method for receiving `bearer` context */
@@ -2097,9 +2205,19 @@ indirect_fail:
 
                 rv = ogs_gtp_xact_update_tx(s11_xact, &send_message.h, pkbuf);
                 if (rv != OGS_OK) {
-                    ogs_error("ogs_gtp_xact_update_tx() failed");
+                    /*
+                     * update_tx already freed pkbuf on failure. Do NOT
+                     * free again or call ogs_gtp_send_error_message() —
+                     * that double-freed and aborted with Bad talloc magic
+                     * (crash loop: RAB PFCP rsp after xact step advanced).
+                     */
+                    ogs_error("ogs_gtp_xact_update_tx() failed "
+                            "(RAB Response; pkbuf already freed)");
                     return;
                 }
+
+                sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
+
 
                 rv = ogs_gtp_xact_commit(s11_xact);
                 ogs_expect(rv == OGS_OK);
@@ -2305,6 +2423,9 @@ void sgwc_sxa_handle_session_deletion_response(
             return;
         }
 
+        sgwc_trace_bind_gtp(gtp_xact, sgwc_ue);
+
+
         rv = ogs_gtp_xact_commit(gtp_xact);
         ogs_expect(rv == OGS_OK);
         }
@@ -2320,7 +2441,8 @@ cleanup:
         /* Release the UE context once its last PDN connection is gone. */
         sgwc_ue_remove_if_empty(owner_ue);
     } else
-        ogs_error("PFCP Session Deletion Response from SGW-U, but SGWC "
+        /* Benign: both sides were tearing the session down at once */
+        ogs_warn("PFCP Session Deletion Response from SGW-U, but SGWC "
                 "session context was already removed "
                 "(local SXA-SEID[0x%llx] PFCP-cause[%d]); nothing to clean up",
                 (unsigned long long)pfcp_xact->local_seid,
@@ -2353,7 +2475,7 @@ void sgwc_sxa_handle_session_report_request(
      * - Session could be deleted before a message is received from SMF.
      ************************/
     if (!sess) {
-        ogs_error("No Context");
+        /* Already logged with the SEID at the dispatch site */
         cause_value = OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND;
     }
 
@@ -2415,6 +2537,23 @@ void sgwc_sxa_handle_session_report_request(
 
         pdr_id = pfcp_req->downlink_data_report.pdr_id.u16;
 
+        /*
+         * DDN holddown: paging for this session just failed
+         * (Unable-to-page). Re-paging the MME for every buffered
+         * packet only feeds the paging storm, so withhold the DDN;
+         * the buffer_idle sweep sends a DROBU when the holddown ends,
+         * which re-arms the first-packet report. The FAR stays
+         * BUFF|NOCP throughout (TS 23.401 5.3.4.3 reachability).
+         */
+        if (sess->ddn_holddown_until &&
+                ogs_time_now() < sess->ddn_holddown_until) {
+            sess->ddn_suppressed = true;
+            SGWC_DL_STAT_INC(ddn_suppressed);
+            ogs_debug("[%s] DDN suppressed (holddown after paging failure)",
+                    sgwc_ue->imsi_bcd);
+            return;
+        }
+
         ogs_list_for_each(&sess->bearer_list, bearer) {
             ogs_list_for_each(&bearer->tunnel_list, tunnel) {
                 if (!tunnel || !tunnel->pdr)
@@ -2423,12 +2562,15 @@ void sgwc_sxa_handle_session_report_request(
                     if (sgwc_gtp_send_downlink_data_notification(
                             OGS_GTP2_CAUSE_UNDEFINED_VALUE, bearer) != OGS_OK)
                         ogs_error("sgwc_gtp_send_downlink_data_notification() failed");
+                    else
+                        SGWC_DL_STAT_INC(ddn_sent);
                     return;
                 }
             }
         }
 
-        ogs_error("Cannot find the PDR-ID[%d]", pdr_id);
+        ogs_warn("Cannot find the PDR-ID[%d] "
+                "(stale downlink data report after session gone)", pdr_id);
 
     } else if (report_type.error_indication_report) {
         far = ogs_pfcp_far_find_by_pfcp_session_report(

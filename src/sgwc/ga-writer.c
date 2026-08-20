@@ -34,6 +34,7 @@
 /* CHOICE alternative tag for SGWRecord (PGW uses 79). */
 #define CDR_OUTER_TAG_SGW   78
 
+#define CDR_SNT_SGSN             0
 #define CDR_SNT_MME              5
 #define CDR_CAUSE_TIME_LIMIT     17
 #define CDR_CAUSE_NORMAL_RELEASE 0
@@ -48,6 +49,10 @@ static struct {
     uint32_t cur_records;
     uint32_t cur_bytes;
     ogs_time_t cur_opened;
+    /* Monotonic per-process file id — second-resolution names collide
+     * under multi-worker CGF (same basename in processing/N/ then
+     * clobbers done/ on move). */
+    uint32_t file_seq;
 } g;
 
 /*
@@ -297,13 +302,28 @@ static uint32_t gsn_ipv4_from_gnode(const ogs_gtp_node_t *gnode)
     return 0;
 }
 
-static uint32_t mme_serving_node_ipv4(const sgwc_ue_t *sgwc_ue)
+/*
+ * CDR [6] servingNodeAddress: peer signalling IP first, then configured
+ * fallback, then gnode remote. Never use this SGW's own bind/advertise.
+ */
+static uint32_t serving_node_ipv4(
+        const sgwc_ue_t *sgwc_ue, const sgwc_cdr_config_t *cfg)
 {
-    if (!sgwc_ue)
-        return 0;
-    if (sgwc_ue->mme_s11_ipv4_valid)
+    if (sgwc_ue && sgwc_ue->mme_s11_ipv4_valid)
         return sgwc_ue->mme_s11_ipv4;
-    return gsn_ipv4_from_gnode(sgwc_ue->gnode);
+
+    if (cfg && cfg->serving_node_address) {
+        ogs_ipsubnet_t ipsub;
+
+        if (ogs_ipsubnet(&ipsub, cfg->serving_node_address, NULL) == OGS_OK &&
+                ipsub.family == AF_INET)
+            return ntohl(ipsub.sub[0]);
+    }
+
+    if (sgwc_ue)
+        return gsn_ipv4_from_gnode(sgwc_ue->gnode);
+
+    return 0;
 }
 
 static void encode_epc_qos(ber_t *b, const ogs_qos_t *qos)
@@ -358,22 +378,31 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
         if (n) ber_prim_ctx(&b, 3, tmp, n);
     }
 
-    if (cfg->local_address) {
-        ogs_ipsubnet_t ipsub;
-        if (ogs_ipsubnet(&ipsub, cfg->local_address, NULL) == OGS_OK &&
-                ipsub.family == AF_INET)
-            encode_gsn_address_v4(&b, 4, ntohl(ipsub.sub[0]));
-    } else if (ogs_gtp_self()->gtpc_addr &&
-            ogs_gtp_self()->gtpc_addr->ogs_sa_family == AF_INET) {
-        encode_gsn_address_v4(&b, 4,
-                ntohl(ogs_gtp_self()->gtpc_addr->sin.sin_addr.s_addr));
+    /* [4] s-GWAddress: gtpc advertise > cdr.address > cdr.local_address */
+    if (ogs_gtp_self()->gtpc_ip.ipv4) {
+        encode_gsn_address_v4(&b, 4, ntohl(ogs_gtp_self()->gtpc_ip.addr));
+    } else {
+        const char *candidates[2] = { cfg->address, cfg->local_address };
+        int i;
+
+        for (i = 0; i < 2; i++) {
+            ogs_ipsubnet_t ipsub;
+
+            if (!candidates[i])
+                continue;
+            if (ogs_ipsubnet(&ipsub, candidates[i], NULL) == OGS_OK &&
+                    ipsub.family == AF_INET) {
+                encode_gsn_address_v4(&b, 4, ntohl(ipsub.sub[0]));
+                break;
+            }
+        }
     }
 
     if (sess->charging_id)
         ber_uint_be_ctx(&b, 5, sess->charging_id, 4);
 
-    /* [6] servingNodeAddress — MME S11-C (not PGW). */
-    encode_gsn_address_v4(&b, 6, mme_serving_node_ipv4(sgwc_ue));
+    /* [6] servingNodeAddress — MME S11-C or SGSN Gn peer (not this SGW). */
+    encode_gsn_address_v4(&b, 6, serving_node_ipv4(sgwc_ue, cfg));
 
     if (sess->session.name)
         ber_prim_ctx(&b, 7, sess->session.name, strlen(sess->session.name));
@@ -403,9 +432,11 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
         uint8_t ts[9];
         size_t list, row;
         uint64_t dur = interval_duration_s;
+        ogs_time_t open_t = sess->cdr.opening_time ?
+                sess->cdr.opening_time : sess->cdr.start_time;
 
-        if (!dur && sess->cdr.start_time && now > sess->cdr.start_time)
-            dur = (uint64_t)((now - sess->cdr.start_time) / OGS_USEC_PER_SEC);
+        if (!dur && open_t && now > open_t)
+            dur = (uint64_t)((now - open_t) / OGS_USEC_PER_SEC);
 
         list = ber_begin_ctx(&b, 12);
         row = ber_begin_seq(&b);
@@ -420,16 +451,28 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
         ber_end(&b, list);
     }
 
+    /*
+     * [13] recordOpeningTime: TS 32.251 partial-record semantics — each
+     * partial CDR opens at the closure of the previous one, so this
+     * advances every interval (matches Huawei CGF output and keeps the
+     * downstream GA server's StartDate-based day bucketing correct).
+     * The true session start stays in [38] startTime below.
+     */
     {
         uint8_t ts[9];
-        ogs_time_t open_t = sess->cdr.start_time ? sess->cdr.start_time : now;
+        ogs_time_t open_t = sess->cdr.opening_time ? sess->cdr.opening_time :
+                (sess->cdr.start_time ? sess->cdr.start_time : now);
         timestamp_encode(open_t, ts);
         ber_prim_ctx(&b, 13, ts, 9);
     }
 
-    ber_duration_ctx(&b, 14, interval_duration_s ? interval_duration_s :
-            (sess->cdr.start_time && now > sess->cdr.start_time ?
-             (uint64_t)((now - sess->cdr.start_time) / OGS_USEC_PER_SEC) : 0));
+    {
+        ogs_time_t open_t = sess->cdr.opening_time ?
+                sess->cdr.opening_time : sess->cdr.start_time;
+        ber_duration_ctx(&b, 14, interval_duration_s ? interval_duration_s :
+                (open_t && now > open_t ?
+                 (uint64_t)((now - open_t) / OGS_USEC_PER_SEC) : 0));
+    }
 
     if (is_stop)
         tmp[0] = sess->cdr.cause_for_rec_closing ?
@@ -506,9 +549,10 @@ static size_t build_sgw_record(sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue,
 
     {
         size_t m = ber_begin_ctx(&b, 35);
+        uint8_t snt = (sgwc_ue && sgwc_ue->gn) ? CDR_SNT_SGSN : CDR_SNT_MME;
         ber_u8(&b, 0x0a);
         ber_u8(&b, 0x01);
-        ber_u8(&b, CDR_SNT_MME);
+        ber_u8(&b, snt);
         ber_end(&b, m);
     }
 
@@ -612,16 +656,23 @@ static int open_current_file(void)
 
     if (g.fp) return OGS_OK;
 
-    ogs_snprintf(name, sizeof(name), "%s/%s-%llu-%d.cdr",
-            g.current_dir, node,
-            (unsigned long long)(ogs_time_now() / OGS_USEC_PER_SEC),
-            (int)sgwc_getpid());
+    /* usec + seq + pid: unique even with many rotates in the same second. */
+    for (;;) {
+        ogs_time_t now = ogs_time_now();
+
+        g.file_seq++;
+        ogs_snprintf(name, sizeof(name), "%s/%s-%lld-%u-%d.cdr",
+                g.current_dir, node,
+                (long long)now, g.file_seq, (int)sgwc_getpid());
+        if (access(name, F_OK) != 0)
+            break;
+    }
 
     if (g.current_path) { ogs_free(g.current_path); g.current_path = NULL; }
     g.current_path = ogs_strdup(name);
     ogs_assert(g.current_path);
 
-    g.fp = fopen(g.current_path, "ab");
+    g.fp = fopen(g.current_path, "wb");
     if (!g.fp) {
         ogs_warn("sgwc_ga_writer: cannot open '%s': %s",
                 g.current_path, strerror(errno));
@@ -740,6 +791,9 @@ static void emit(sgwc_sess_t *sess, bool is_stop, uint32_t interval_duration_s)
     sess->cdr.last_dl_octets = sess->usage_dl_octets;
     sess->cdr.last_interval_duration_s = interval_duration_s;
     sess->cdr.record_seq++;
+    /* This record just closed; the next partial record opens now. */
+    if (!is_stop)
+        sess->cdr.opening_time = ogs_time_now();
 }
 
 void sgwc_sess_usage_accumulate(sgwc_sess_t *sess,
@@ -808,7 +862,9 @@ void sgwc_ga_writer_close(void)
 
 static char *g_owned_spool_dir;
 static char *g_owned_node_id;
+static char *g_owned_address;
 static char *g_owned_local_address;
+static char *g_owned_serving_node_address;
 
 static void replace_owned_string(const char **field, char **owned,
         const char *new_value)
@@ -845,8 +901,12 @@ int sgwc_ga_writer_apply_runtime(const sgwc_cdr_config_t *new_cfg)
             new_cfg->spool_dir);
     replace_owned_string(&cur->node_id, &g_owned_node_id,
             new_cfg->node_id);
+    replace_owned_string(&cur->address, &g_owned_address,
+            new_cfg->address);
     replace_owned_string(&cur->local_address, &g_owned_local_address,
             new_cfg->local_address);
+    replace_owned_string(&cur->serving_node_address,
+            &g_owned_serving_node_address, new_cfg->serving_node_address);
 
     if (new_cfg->interim_interval_s)
         cur->interim_interval_s = new_cfg->interim_interval_s;
@@ -890,6 +950,8 @@ void sgwc_ga_cdr_session_start(sgwc_sess_t *sess)
 
     if (!sess->cdr.start_time)
         sess->cdr.start_time = ogs_time_now();
+    if (!sess->cdr.opening_time)
+        sess->cdr.opening_time = sess->cdr.start_time;
 
     if (sgwc_self()->cdr.triggers & SGWC_CDR_TRIG_START)
         emit(sess, false, 0);
@@ -915,6 +977,7 @@ void sgwc_ga_sess_clear(sgwc_sess_t *sess)
 {
     ogs_assert(sess);
     sess->cdr.start_time = 0;
+    sess->cdr.opening_time = 0;
     sess->cdr.record_seq = 0;
     sess->cdr.last_ul_octets = 0;
     sess->cdr.last_dl_octets = 0;

@@ -28,6 +28,24 @@ typedef enum {
     GTP_XACT_FINAL_STAGE,
 } ogs_gtp_xact_stage_t;
 
+void ogs_gtp_xact_set_imsi(ogs_gtp_xact_t *xact, const char *imsi_bcd)
+{
+    if (!xact || !imsi_bcd || !imsi_bcd[0])
+        return;
+    ogs_cpystrn(xact->imsi_bcd, imsi_bcd, sizeof(xact->imsi_bcd));
+}
+
+/* Prefer xact-bound IMSI only — never sticky TLS (node Echo/Heartbeat). */
+static void gtp_xact_trace_tx(ogs_gtp_xact_t *xact, ogs_pkbuf_t *pkbuf)
+{
+    if (!xact || !pkbuf || !pkbuf->data || !pkbuf->len)
+        return;
+    if (!xact->imsi_bcd[0])
+        return;
+    ogs_trace_packet(xact->imsi_bcd, "gtp", "tx",
+            pkbuf->data, pkbuf->len);
+}
+
 /*
  * Transaction layer storage:
  *   - Main / IO thread (ogs_worker_self() == NULL): process-global pool.
@@ -856,6 +874,7 @@ static int ogs_gtp_xact_update_rx(ogs_gtp_xact_t *xact, uint8_t type)
                             OGS_ADDR(&xact->gnode->addr,
                                 buf),
                             OGS_PORT(&xact->gnode->addr));
+                    gtp_xact_trace_tx(xact, pkbuf);
                     ogs_expect(OGS_OK == ogs_gtp_sendto(xact->gnode, pkbuf));
                 } else {
                     ogs_warn("[%d] %s Request Duplicated. Discard!"
@@ -921,6 +940,7 @@ static int ogs_gtp_xact_update_rx(ogs_gtp_xact_t *xact, uint8_t type)
                             OGS_ADDR(&xact->gnode->addr,
                                 buf),
                             OGS_PORT(&xact->gnode->addr));
+                    gtp_xact_trace_tx(xact, pkbuf);
                     ogs_expect(OGS_OK == ogs_gtp_sendto(xact->gnode, pkbuf));
                 } else {
                     ogs_warn("[%d] %s Request Duplicated. Discard!"
@@ -994,13 +1014,30 @@ int ogs_gtp_xact_commit(ogs_gtp_xact_t *xact)
     ogs_assert(xact);
     ogs_assert(xact->gnode);
 
+    type = xact->seq[xact->step-1].type;
+
+    /*
+     * Capture IMSI from thread-local ctx if the NF set it before commit
+     * but did not call ogs_gtp_xact_set_imsi() (common for older paths).
+     * Never inherit sticky IMSI for node Echo — SMF/SGWC keep TLS IMSI
+     * from the last traced UE, which flooded IMSI PACKET with pings.
+     */
+    if (!xact->imsi_bcd[0] &&
+            type != OGS_GTP1_ECHO_REQUEST_TYPE &&
+            type != OGS_GTP1_ECHO_RESPONSE_TYPE &&
+            type != OGS_GTP2_ECHO_REQUEST_TYPE &&
+            type != OGS_GTP2_ECHO_RESPONSE_TYPE) {
+        const ogs_trace_ctx_t *ctx = ogs_trace_get();
+        if (ctx && ctx->imsi[0])
+            ogs_cpystrn(xact->imsi_bcd, ctx->imsi, sizeof(xact->imsi_bcd));
+    }
+
     ogs_debug("[%d] %s Commit  peer [%s]:%d",
             xact->xid,
             xact->org == OGS_GTP_LOCAL_ORIGINATOR ? "LOCAL " : "REMOTE",
             OGS_ADDR(&xact->gnode->addr, buf),
             OGS_PORT(&xact->gnode->addr));
 
-    type = xact->seq[xact->step-1].type;
     if (xact->gtp_version == 1)
         stage = ogs_gtp1_xact_get_stage(type, xact->xid);
     else
@@ -1095,6 +1132,7 @@ int ogs_gtp_xact_commit(ogs_gtp_xact_t *xact)
     pkbuf = xact->seq[xact->step-1].pkbuf;
     ogs_assert(pkbuf);
 
+    gtp_xact_trace_tx(xact, pkbuf);
     if (ogs_gtp_sendto(xact->gnode, pkbuf) != OGS_OK) {
         ogs_error("[%d] ogs_gtp_sendto() failed peer [%s]:%d",
                 xact->xid,
@@ -1105,6 +1143,54 @@ int ogs_gtp_xact_commit(ogs_gtp_xact_t *xact)
     }
 
     return OGS_OK;
+}
+
+/*
+ * Registered by the NF (e.g. MME: mme_event_lag). Written once at startup
+ * before workers exist, read from every thread that runs GTP timers.
+ */
+static ogs_time_t (*xact_lag_cb)(void) = NULL;
+
+void ogs_gtp_xact_set_lag_cb(ogs_time_t (*cb)(void))
+{
+    xact_lag_cb = cb;
+}
+
+static bool xact_response_lag_defer(ogs_gtp_xact_t *xact)
+{
+    ogs_time_t lag;
+
+    if (!xact_lag_cb || !xact->tm_response)
+        return false;
+
+    lag = xact_lag_cb();
+    if (lag < OGS_GTP_XACT_LAG_DEFER_THRESHOLD)
+        return false;
+    if (xact->lag_defer_count >= OGS_GTP_XACT_LAG_MAX_DEFER)
+        return false;
+
+    xact->lag_defer_count++;
+    ogs_timer_start(xact->tm_response, OGS_GTP_XACT_LAG_DEFER_INTERVAL);
+
+    {
+        /* one line per second across all transactions, not one per xact */
+        static OGS_THREAD_LOCAL ogs_time_t last_log = 0;
+        static OGS_THREAD_LOCAL unsigned long suppressed = 0;
+        ogs_time_t now = ogs_get_monotonic_time();
+
+        suppressed++;
+        if (now - last_log >= ogs_time_from_sec(1)) {
+            ogs_warn("GTP response timer deferred: event lag %dms - "
+                    "reply is likely queued locally, not lost by the peer "
+                    "(%lu deferral(s) in last window, this xact %d/%d)",
+                    (int)(lag / 1000), suppressed,
+                    xact->lag_defer_count, OGS_GTP_XACT_LAG_MAX_DEFER);
+            last_log = now;
+            suppressed = 0;
+        }
+    }
+
+    return true;
 }
 
 static void response_timeout(void *data)
@@ -1132,6 +1218,15 @@ static void response_timeout(void *data)
             OGS_ADDR(&xact->gnode->addr, buf),
             OGS_PORT(&xact->gnode->addr));
 
+    /*
+     * If OUR event queue is lagging, the reply may already be sitting in
+     * it. Retransmitting now duplicates peer work and, on the last rcount,
+     * turns our backlog into a false "peer not responding" (cause 100 ->
+     * Attach Reject #22 -> immediate UE re-attach -> more backlog).
+     */
+    if (xact_response_lag_defer(xact))
+        return;
+
     if (--xact->response_rcount > 0) {
         ogs_pkbuf_t *pkbuf = NULL;
 
@@ -1142,6 +1237,7 @@ static void response_timeout(void *data)
         pkbuf = xact->seq[xact->step-1].pkbuf;
         ogs_assert(pkbuf);
 
+        gtp_xact_trace_tx(xact, pkbuf);
         ogs_expect(OGS_OK == ogs_gtp_sendto(xact->gnode, pkbuf));
     } else {
         ogs_debug("[%d] %s No Reponse. Give up! "

@@ -490,6 +490,7 @@ static void sgwc_worker_dispatch(ogs_worker_t *worker, void *data)
     ogs_assert(worker);
     ogs_assert(e);
 
+    sgwc_event_lag_observe(e);
     ogs_fsm_dispatch(&worker_fsm, e);
     sgwc_event_free(e);
 }
@@ -521,6 +522,11 @@ int sgwc_workers_start(void)
         ogs_assert(sgwc_workers[i]);
         ogs_worker_hooks(sgwc_workers[i],
                 sgwc_worker_thread_init, sgwc_worker_thread_fini);
+        {
+            char tname[16];
+            ogs_snprintf(tname, sizeof(tname), "sgwc-w%d", i);
+            ogs_worker_set_name(sgwc_workers[i], tname);
+        }
         ogs_worker_start(sgwc_workers[i]);
     }
 

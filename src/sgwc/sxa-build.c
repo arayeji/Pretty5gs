@@ -49,7 +49,7 @@ static bool sgwc_sxa_tunnel_matches_modify(
 }
 
 ogs_pkbuf_t *sgwc_sxa_build_session_establishment_request(
-        uint8_t type, sgwc_sess_t *sess)
+        uint8_t type, sgwc_sess_t *sess, ogs_pfcp_xact_t *xact)
 {
     ogs_pfcp_message_t *pfcp_message = NULL;
     ogs_pfcp_session_establishment_request_t *req = NULL;
@@ -163,6 +163,26 @@ ogs_pkbuf_t *sgwc_sxa_build_session_establishment_request(
     /* Create BAR */
     if (sess->pfcp.bar) {
         ogs_pfcp_build_create_bar(&req->create_bar, sess->pfcp.bar);
+    }
+
+    /*
+     * Restoration Indication (TS 29.244 8.2.136, TS 23.007 16.1A.4).
+     *
+     * The restoration path already asks for this flag via
+     * OGS_PFCP_CREATE_RESTORATION_INDICATION, but it was never encoded
+     * on the wire here -- only the SMF (n4-build.c) did it. Without
+     * RESTI=1 the SGW-U cannot tell a restoration re-establishment
+     * from a brand new session, so it will not restore the F-TEIDs it
+     * had allocated and the restored sessions blackhole.
+     */
+    if (xact && (xact->create_flags &
+                OGS_PFCP_CREATE_RESTORATION_INDICATION)) {
+        ogs_pfcp_sereq_flags_t sereq_flags;
+
+        sereq_flags.value = 0;
+        sereq_flags.restoration_indication = 1;
+        req->pfcpsereq_flags.presence = 1;
+        req->pfcpsereq_flags.u8 = sereq_flags.value;
     }
 
     pfcp_message->h.type = type;
@@ -335,6 +355,40 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
                                 num_of_update_far, far);
 
                         num_of_update_far++;
+                        if (tunnel->interface_type ==
+                                OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U)
+                            sgwc_sess_note_dl_buffering(sess);
+                    } else
+                        ogs_assert_if_reached();
+
+                } else if (modify_flags & OGS_PFCP_MODIFY_DROP) {
+
+                    far = tunnel->far;
+                    if (far) {
+                        ogs_pfcp_build_update_far_drop(
+                                &req->update_far[num_of_update_far],
+                                num_of_update_far, far);
+
+                        num_of_update_far++;
+                        if (tunnel->interface_type ==
+                                OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U)
+                            sgwc_sess_clear_dl_buffering(sess);
+                    } else
+                        ogs_assert_if_reached();
+
+                } else if (modify_flags & OGS_PFCP_MODIFY_REARM) {
+
+                    /* DROP → BUFF|NOCP: restore DDN/paging reachability */
+                    far = tunnel->far;
+                    if (far) {
+                        ogs_pfcp_build_update_far_deactivate(
+                                &req->update_far[num_of_update_far],
+                                num_of_update_far, far);
+
+                        num_of_update_far++;
+                        if (tunnel->interface_type ==
+                                OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U)
+                            sgwc_sess_note_dl_buffering(sess);
                     } else
                         ogs_assert_if_reached();
 
@@ -354,6 +408,9 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
 
                         /* Clear all FAR flags */
                         tunnel->far->smreq_flags.value = 0;
+                        if (tunnel->interface_type ==
+                                OGS_GTP2_F_TEID_S5_S8_SGW_GTP_U)
+                            sgwc_sess_clear_dl_buffering(sess);
                     } else
                         ogs_assert_if_reached();
 
@@ -397,9 +454,34 @@ ogs_pkbuf_t *sgwc_sxa_build_bearer_to_modify_list(
         }
     }
 
+    if (modify_flags & OGS_PFCP_MODIFY_DROBU) {
+        /*
+         * Message-level PFCPSMReq-Flags DROBU=1: drop the packets the
+         * UP function currently buffers for this session, keep the FAR
+         * in BUFF|NOCP (TS 29.244 5.2.4.3). Deliberately builds NO
+         * Update FAR - the whole point is not to change forwarding.
+         */
+        ogs_pfcp_smreq_flags_t smreq_flags;
+
+        memset(&smreq_flags, 0, sizeof(smreq_flags));
+        smreq_flags.drop_buffered_packets = 1;
+
+        req->pfcpsmreq_flags.presence = 1;
+        req->pfcpsmreq_flags.u8 = smreq_flags.value;
+    }
+
     total = num_of_remove_pdr + num_of_remove_far + num_of_create_pdr +
             num_of_create_far + num_of_create_urr + num_of_update_pdr +
             num_of_update_far;
+
+    /* A DROBU-only modification legitimately carries no rule IEs. */
+    if (!total && (modify_flags & OGS_PFCP_MODIFY_DROBU)) {
+        pfcp_message->h.type = type;
+        pkbuf = ogs_pfcp_build_msg(pfcp_message);
+        ogs_expect(pkbuf);
+        ogs_free(pfcp_message);
+        return pkbuf;
+    }
 
     if (!total) {
         ogs_error("PFCP Session Modification build invalid state: "

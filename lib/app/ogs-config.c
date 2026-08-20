@@ -35,6 +35,10 @@ int ogs_app_config_init(void)
     memset(&global_conf, 0, sizeof(ogs_app_global_conf_t));
     memset(&local_conf, 0, sizeof(ogs_app_local_conf_t));
 
+    /* Preserve prior fake_csfb behaviour: synthesize LAI/P-TMSI unless
+     * the operator explicitly sets fake_csfb_lai: false. */
+    global_conf.parameter.fake_csfb_lai = true;
+
     ogs_pool_init(&policy_conf_pool, OGS_MAX_NUM_OF_PLMN);
     ogs_pool_init(&slice_conf_pool, OGS_MAX_NUM_OF_SLICE);
     ogs_pool_init(&session_conf_pool,
@@ -306,11 +310,25 @@ int ogs_app_parse_global_conf(ogs_yaml_iter_t *parent)
                 } else if (!strcmp(parameter_key, "use_openair")) {
                     global_conf.parameter.use_openair =
                         ogs_yaml_iter_bool(&parameter_iter);
+                } else if (!strcmp(parameter_key, "openair_short_enfs")) {
+                    global_conf.parameter.openair_short_enfs =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                } else if (!strcmp(parameter_key, "openair_omit_hashmme")) {
+                    global_conf.parameter.openair_omit_hashmme =
+                        ogs_yaml_iter_bool(&parameter_iter);
                 } else if (!strcmp(parameter_key, "use_upg_vpp")) {
                     global_conf.parameter.use_upg_vpp =
                         ogs_yaml_iter_bool(&parameter_iter);
                 } else if (!strcmp(parameter_key, "fake_csfb")) {
                     global_conf.parameter.fake_csfb =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                } else if (!strcmp(parameter_key, "fake_csfb_lai") ||
+                        !strcmp(parameter_key, "fake_csfb_ptmsi")) {
+                    /* LAI + P-TMSI pair (alias fake_csfb_ptmsi). */
+                    global_conf.parameter.fake_csfb_lai =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                } else if (!strcmp(parameter_key, "ignore_sgs")) {
+                    global_conf.parameter.ignore_sgs =
                         ogs_yaml_iter_bool(&parameter_iter);
                 } else if (!strcmp(parameter_key, "no_ims")) {
                     global_conf.parameter.no_ims =
@@ -474,6 +492,74 @@ int ogs_app_parse_global_conf(ogs_yaml_iter_t *parent)
     if (rv != OGS_OK) return rv;
 
     return OGS_OK;
+}
+
+int ogs_app_reload_parameter_scalars(void)
+{
+    yaml_document_t *document = NULL;
+    ogs_yaml_iter_t root_iter;
+    int applied = 0;
+
+    document = ogs_app()->document;
+    if (!document)
+        return 0;
+
+    ogs_yaml_iter_init(&root_iter, document);
+    while (ogs_yaml_iter_next(&root_iter)) {
+        const char *root_key = ogs_yaml_iter_key(&root_iter);
+        ogs_yaml_iter_t global_iter;
+
+        ogs_assert(root_key);
+        if (strcmp(root_key, "global") != 0)
+            continue;
+
+        ogs_yaml_iter_recurse(&root_iter, &global_iter);
+        while (ogs_yaml_iter_next(&global_iter)) {
+            const char *global_key = ogs_yaml_iter_key(&global_iter);
+            ogs_yaml_iter_t parameter_iter;
+
+            ogs_assert(global_key);
+            if (strcmp(global_key, "parameter") != 0)
+                continue;
+
+            ogs_yaml_iter_recurse(&global_iter, &parameter_iter);
+            while (ogs_yaml_iter_next(&parameter_iter)) {
+                const char *parameter_key =
+                    ogs_yaml_iter_key(&parameter_iter);
+
+                ogs_assert(parameter_key);
+                if (!strcmp(parameter_key, "fake_csfb")) {
+                    global_conf.parameter.fake_csfb =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                    applied++;
+                } else if (!strcmp(parameter_key, "fake_csfb_lai") ||
+                        !strcmp(parameter_key, "fake_csfb_ptmsi")) {
+                    global_conf.parameter.fake_csfb_lai =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                    applied++;
+                } else if (!strcmp(parameter_key, "ignore_sgs")) {
+                    global_conf.parameter.ignore_sgs =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                    applied++;
+                } else if (!strcmp(parameter_key, "use_openair")) {
+                    global_conf.parameter.use_openair =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                    applied++;
+                } else if (!strcmp(parameter_key, "openair_short_enfs")) {
+                    global_conf.parameter.openair_short_enfs =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                    applied++;
+                } else if (!strcmp(parameter_key, "openair_omit_hashmme")) {
+                    global_conf.parameter.openair_omit_hashmme =
+                        ogs_yaml_iter_bool(&parameter_iter);
+                    applied++;
+                }
+                /* Other parameter keys stay restart-only. */
+            }
+        }
+    }
+
+    return applied;
 }
 
 static void regenerate_all_timer_duration(void)

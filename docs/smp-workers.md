@@ -75,10 +75,12 @@ the single-threaded daemon.
 ## Done (SGW-C shards)
 
 1. **`src/sgwc/sgwc-workers.c` + `init.c`** — parse `sgwc.workers`
-   (0..8, default 0); `ogs_worker_shards_enable()`; per-shard pools;
-   worker FSM = `sgwc_state_operational`.
+   (0..15 / `OGS_MAX_WORKERS-1`, default 0); `ogs_worker_shards_enable()`;
+   per-shard pools; worker FSM = `sgwc_state_operational`.
 2. **GTP / PFCP RX routers** — TEID/SEID/IMSI/SQN shard steering;
-   Echo + PFCP association stay on main.
+   Echo + PFCP association stay on main. Optional
+   `sgwc.gtpc_rx_thread` / `sgwc.pfcp_rx_thread` move socket recv off
+   `sgwc-main` onto helper threads (default off).
 3. **Shared GTP peer lists** (`sgwc_mme_s11_list` etc.) + mutex;
    PFCP peer list mutex in `lib/pfcp/context.c`.
 4. **Admin / SIGHUP / drain / orphan purge** fan-out to every shard.
@@ -108,10 +110,12 @@ the single-threaded daemon.
 - **F2/F6 closed**: SGW-C workers, RX routers, shared peer lists and
   drain/admin fan-out are implemented. Keep `sgwc.workers: 0` in
   production until staging soak.
-- **F7 open**: `ogs_worker_post()` is a blocking push; switch to
-  trypush + drop metric under sustained overload.
-- **F8 open**: RX offload is wired for the lksctp `SOCK_STREAM` path
-  only; with usrsctp (`SOCK_SEQPACKET` upcalls) the knob is a no-op.
+- **F7 closed** (lib): `ogs_worker_post()` is non-blocking
+  (`ogs_queue_trypush_hint`); SGW-C RX paths count drops via
+  `/admin/queues` (`gtpc_rx_drops` / `pfcp_rx_drops`).
+- **F8 open**: MME S1AP RX offload is wired for the lksctp
+  `SOCK_STREAM` path only; with usrsctp (`SOCK_SEQPACKET` upcalls)
+  the knob is a no-op.
 
 ## Deployment
 
@@ -120,18 +124,26 @@ the single-threaded daemon.
 
   ```yaml
   mme:
-    s1ap_rx_workers: 2   # 0 = off (default); max 8
+    s1ap_rx_workers: 4   # 0 = off (default); prefer 4–6 in prod (8 adds
+                         # lock contenders with little extra throughput)
+    stage_c: 1           # needs workers > 0
+    s1ap_tx_direct: 1    # needs s1ap_tx_workers + s1ap_io_thread
   ```
 
   Watch main-thread CPU (`rate(process_cpu_seconds_total[5m])`), GTP
   xact timeout counters, and S1 setup churn during an eNB flap storm.
+  After deploy, re-profile `comm: mme-main` (see `docs/mme-smp-todo.md`
+  §7) — expect lower futex share from pkbuf `calloc` + `s1ap-free`.
 - SGW-C staging trial:
 
   ```yaml
   sgwc:
-    workers: 2   # 0 = off (default); max 8
+    workers: 15          # 0 = off (default); max 15 (4-bit shard ids)
+    gtpc_rx_thread: 1    # offload GTP-C/Gn recv from main
+    pfcp_rx_thread: 1    # offload PFCP recv/parse from main
   ```
 
-  Watch main vs worker CPU, GTP/PFCP xact timeouts, and drain/SIGHUP.
-  `inbound_roam.gtpc.teid_offset` must stay below 2^29 when workers > 0.
+  Watch main vs `gtpc-rx`/`pfcp-rx`/`sgwc-w*` CPU, GTP/PFCP xact
+  timeouts, and drain/SIGHUP. `inbound_roam.gtpc.teid_offset` must
+  stay below 2^28 when workers > 0.
 - Then production during a night window with a rollback binary staged.

@@ -27,16 +27,21 @@ testunit_unit_sources = files('''
     nrf-discovery-test.c
     crash-test.c
     eplmn-test.c
+    access-control-eplmn-test.c
+    inbound-roam-apn-yaml-test.c
     tai-list-test.c
+    pfcp-buffer-test.c
 '''.split())
 
 testunit_unit_sources += files('../../src/mme/eplmn-config.c')
+testunit_unit_sources += files('../../src/mme/mme-access-control-match.c')
 
 testunit_unit_exe = executable('unit',
     sources : testunit_unit_sources,
     include_directories : include_directories('../../src/mme'),
     c_args : [testunit_core_cc_flags, sbi_cc_flags],
     dependencies : [libs1ap_dep,
+                    libpfcp_dep,
                     libgtp_dep,
                     libngap_dep,
                     libnas_eps_dep,

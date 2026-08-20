@@ -53,6 +53,7 @@ void mme_s6a_report_urrp(mme_ue_t *mme_ue);
 
 void mme_s6a_timer_start(mme_ue_t *mme_ue, uint16_t cmd_code);
 void mme_s6a_timer_stop(mme_ue_t *mme_ue);
+void mme_s6a_answer_received(mme_ue_t *mme_ue);
 
 #ifdef __cplusplus
 }

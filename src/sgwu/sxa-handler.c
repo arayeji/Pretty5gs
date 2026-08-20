@@ -368,6 +368,27 @@ void sgwu_sxa_handle_session_modification_request(
         }
     }
 
+    /*
+     * TS 29.244 5.2.4.3 / 8.2.31: message-level PFCPSMReq-Flags DROBU
+     * instructs the UP function to discard the packets currently
+     * buffered for this session WITHOUT changing the Apply Action.
+     * Must run before the buffered-packet flush below, so a modify
+     * that both sets DROBU and activates FORW only forwards new data.
+     */
+    if (req->pfcpsmreq_flags.presence) {
+        ogs_pfcp_smreq_flags_t smreq_flags;
+
+        smreq_flags.value = req->pfcpsmreq_flags.u8;
+        if (smreq_flags.drop_buffered_packets) {
+            int dropped = ogs_pfcp_sess_drop_buffered_gtpu(&sess->pfcp);
+            if (dropped)
+                ogs_debug("DROBU: dropped %d buffered DL packet(s) "
+                        "SEID[CP:0x%lx UP:0x%lx]", dropped,
+                        (unsigned long)sess->sgwc_sxa_f_seid.seid,
+                        (unsigned long)sess->sgwu_sxa_seid);
+        }
+    }
+
     /* Send Buffered Packet to gNB */
     ogs_list_for_each(&sess->pfcp.pdr_list, pdr) {
         if (pdr->src_if == OGS_PFCP_INTERFACE_CORE) { /* Downlink */
@@ -438,7 +459,6 @@ void sgwu_sxa_handle_session_report_response(
 
     if (rsp->cause.presence) {
         if (rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
-            ogs_error("PFCP Cause[%d] : Not Accepted", rsp->cause.u8);
             cause_value = rsp->cause.u8;
         }
     } else {
@@ -447,7 +467,43 @@ void sgwu_sxa_handle_session_report_response(
     }
 
     if (cause_value != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
-        ogs_error("Cause request not accepted[%d]", cause_value);
+        if (sess && cause_value == OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND) {
+            /*
+             * The SGW-C no longer knows this session (deleted while our
+             * report was in flight, or lost across a CP restart).
+             * Without this cleanup the orphan session stays installed
+             * and re-reports on every downlink packet for its stale
+             * F-TEID - observed as a permanent "No Context" flood on
+             * the SGW-C (2,000+ lines per 30 min). Per 29.244 the UP
+             * should delete the local session on this cause.
+             */
+            ogs_warn("Session Report rejected with context-not-found; "
+                    "removing orphan session "
+                    "SEID[CP:0x%lx UP:0x%lx]",
+                    (unsigned long)sess->sgwc_sxa_f_seid.seid,
+                    (unsigned long)sess->sgwu_sxa_seid);
+            sgwu_sess_remove(sess);
+        } else
+            ogs_error("Session Report Response cause not accepted[%d]",
+                    cause_value);
         return;
+    }
+
+    /*
+     * TS 29.244 8.2.32: PFCPSRRsp-Flags DROBU (bit 1) in a Session
+     * Report Response tells the UP function to drop the packets it is
+     * currently buffering (e.g. the CP learned paging failed). The
+     * Apply Action is untouched: the next DL packet buffers again and,
+     * with the buffer now empty, generates a fresh Downlink Data Report.
+     */
+    if (rsp->pfcpsrrsp_flags.presence &&
+            (rsp->pfcpsrrsp_flags.u8 &
+             OGS_PFCP_SRRSP_FLAGS_DROP_BUFFERED_PACKETS)) {
+        int dropped = ogs_pfcp_sess_drop_buffered_gtpu(&sess->pfcp);
+        if (dropped)
+            ogs_debug("SRRsp DROBU: dropped %d buffered DL packet(s) "
+                    "SEID[CP:0x%lx UP:0x%lx]", dropped,
+                    (unsigned long)sess->sgwc_sxa_f_seid.seid,
+                    (unsigned long)sess->sgwu_sxa_seid);
     }
 }

@@ -34,10 +34,35 @@ extern "C" {
 
 #define ogs_fatal(...) ogs_log_message(OGS_LOG_FATAL, 0, __VA_ARGS__)
 #define ogs_error(...) ogs_log_message(OGS_LOG_ERROR, 0, __VA_ARGS__)
-#define ogs_warn(...) ogs_log_message(OGS_LOG_WARN, 0, __VA_ARGS__)
-#define ogs_info(...) ogs_log_message(OGS_LOG_INFO, 0, __VA_ARGS__)
-#define ogs_debug(...) ogs_log_message(OGS_LOG_DEBUG, 0, __VA_ARGS__)
-#define ogs_trace(...) ogs_log_message(OGS_LOG_TRACE, 0, __VA_ARGS__)
+/*
+ * INFO/WARN/DEBUG/TRACE are lazy: when the domain level would discard
+ * the line, hot paths must not pay for argument evaluation (OGS_ADDR
+ * sockaddr conversion, PLMN/TEID formatting helpers) plus a varargs
+ * call just to have ogs_log_vprintf discard it. ogs_log_domain_prints
+ * keeps the per-IMSI trace-filter bypass working for DEBUG.
+ * Arguments must stay free of side effects. FATAL/ERROR stay eager so
+ * always-on diagnostics keep their formatting cost.
+ */
+#define ogs_warn(...) \
+    do { \
+        if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_WARN)) \
+            ogs_log_message(OGS_LOG_WARN, 0, __VA_ARGS__); \
+    } while (0)
+#define ogs_info(...) \
+    do { \
+        if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_INFO)) \
+            ogs_log_message(OGS_LOG_INFO, 0, __VA_ARGS__); \
+    } while (0)
+#define ogs_debug(...) \
+    do { \
+        if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG)) \
+            ogs_log_message(OGS_LOG_DEBUG, 0, __VA_ARGS__); \
+    } while (0)
+#define ogs_trace(...) \
+    do { \
+        if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_TRACE)) \
+            ogs_log_message(OGS_LOG_TRACE, 0, __VA_ARGS__); \
+    } while (0)
 
 #define ogs_log_message(level, err, ...) \
     ogs_log_printf(level, OGS_LOG_DOMAIN, \
@@ -114,6 +139,15 @@ void ogs_log_vprintf(ogs_log_level_e level, int id,
  * number of suppressed lines when the next second begins.
  */
 bool ogs_log_guard(void);
+
+/*
+ * Budget for debug lines emitted only because an IMSI trace filter
+ * matched (domain level would suppress them otherwise). Process-wide,
+ * OGS_TRACE_LOG_RATE_LIMIT lines/sec (0 = unlimited, default 2000).
+ * consume=true takes a token; consume=false just peeks, for callers
+ * that want to skip expensive prefix enrichment when over budget.
+ */
+bool ogs_log_trace_budget(bool consume);
 
 void ogs_log_printf(ogs_log_level_e level, int domain_id,
     ogs_err_t err, const char *file, int line, const char *func,

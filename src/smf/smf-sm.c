@@ -165,6 +165,65 @@ static void smf_admin_detach_ue_sessions(smf_ue_t *ue, int admin_force)
             admin_force ? "removed" : "initiated for", count, ue->imsi_bcd);
 }
 
+/*
+ * Graceful: GTPv2 Delete Bearer Request for the default bearer (same as
+ * RADIUS PoD) so SGW/MME tear down the PDN; PFCP follows on DBR response.
+ * Force: PFCP best-effort + local remove.
+ */
+static void smf_admin_detach_one_session(smf_sess_t *sess, int admin_force)
+{
+    smf_ue_t *smf_ue;
+    smf_bearer_t *bearer;
+    int rv;
+
+    ogs_assert(sess);
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+
+    ogs_info("admin session delete: imsi=%s apn=%s mode=%s",
+            smf_ue && smf_ue->imsi_bcd[0] ? smf_ue->imsi_bcd : "-",
+            sess->session.name ? sess->session.name : "-",
+            admin_force ? "force" : "graceful");
+
+    if (admin_force) {
+        rv = smf_epc_pfcp_send_session_deletion_best_effort(sess);
+        ogs_expect(rv == OGS_OK);
+        smf_sess_remove(sess);
+        if (smf_ue && ogs_list_empty(&smf_ue->sess_list))
+            smf_ue_remove(smf_ue);
+        return;
+    }
+
+    if (!sess->epc) {
+        ogs_warn("admin session delete: non-EPC session id=%d — "
+                "forcing PFCP teardown", (int)sess->id);
+        rv = smf_epc_pfcp_send_session_deletion_best_effort(sess);
+        ogs_expect(rv == OGS_OK);
+        return;
+    }
+
+    bearer = smf_default_bearer_in_sess(sess);
+    if (!bearer || !sess->gnode) {
+        ogs_warn("admin session delete: half-state (bearer=%p gnode=%p) "
+                "sess_id=%d — PFCP teardown",
+                bearer, sess->gnode, (int)sess->id);
+        rv = smf_epc_pfcp_send_session_deletion_request(
+                sess, OGS_INVALID_POOL_ID);
+        ogs_expect(rv == OGS_OK);
+        return;
+    }
+
+    rv = smf_gtp2_send_delete_bearer_request(bearer,
+            OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED,
+            OGS_GTP2_CAUSE_REACTIVATION_REQUESTED);
+    if (rv != OGS_OK) {
+        ogs_error("admin session delete: Delete Bearer Request failed "
+                "(rv=%d) — PFCP teardown", rv);
+        rv = smf_epc_pfcp_send_session_deletion_request(
+                sess, OGS_INVALID_POOL_ID);
+        ogs_expect(rv == OGS_OK);
+    }
+}
+
 void smf_state_initial(ogs_fsm_t *s, smf_event_t *e)
 {
     smf_sm_debug(e);
@@ -245,9 +304,25 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         ogs_assert(e);
         recvbuf = e->pkbuf;
         ogs_assert(recvbuf);
+        ogs_trace_packet_bind_rx("gtp", recvbuf->data, recvbuf->len);
 
         smf_gnode = e->gnode;
-        ogs_assert(smf_gnode);
+        if (!smf_gnode) {
+            uint8_t msg_type = 0;
+            uint32_t teid = 0;
+
+            if (recvbuf->len >= 8) {
+                ogs_gtp2_header_t *h = (ogs_gtp2_header_t *)recvbuf->data;
+                msg_type = h->type;
+                if (h->teid_presence && recvbuf->len >= 12)
+                    teid = be32toh(h->teid);
+            }
+            ogs_error("S5C message with no GTP node — dropping "
+                    "type[%u] teid[0x%x] len[%d]",
+                    msg_type, teid, (int)recvbuf->len);
+            ogs_pkbuf_free(recvbuf);
+            break;
+        }
 
         if (ogs_gtp2_parse_msg(&gtp2_message, recvbuf) != OGS_OK) {
             ogs_error("ogs_gtp2_parse_msg() failed");
@@ -284,6 +359,21 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
              * originated the message, so try harder by using the TEID we
              * locally stored in xact when sending the original request: */
             sess = smf_sess_find_active_by_teid(gtp_xact->local_teid);
+
+        /* Node Echo has no UE — never attribute via TEID / sticky on_imsi. */
+        if (gtp2_message.h.type == OGS_GTP2_ECHO_REQUEST_TYPE ||
+                gtp2_message.h.type == OGS_GTP2_ECHO_RESPONSE_TYPE) {
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
+        } else if (sess) {
+            /* Dump GTP RX once IMSI is known (CSR TEID=0 after sess_add). */
+            smf_ue_t *trace_ue = smf_ue_find_by_id(sess->smf_ue_id);
+            if (trace_ue && trace_ue->imsi_bcd[0]) {
+                ogs_gtp_xact_set_imsi(gtp_xact, trace_ue->imsi_bcd);
+                ogs_trace_packet(trace_ue->imsi_bcd, "gtp", "rx",
+                        recvbuf->data, recvbuf->len);
+                ogs_trace_packet_bind_rx(NULL, NULL, 0);
+            }
+        }
 
         switch(gtp2_message.h.type) {
         case OGS_GTP2_ECHO_REQUEST_TYPE:
@@ -410,6 +500,17 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                         OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
                         OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND);
                 break;
+            }
+
+            /* Create Session TEID=0: dump after sess/UE exist. */
+            {
+                smf_ue_t *trace_ue = smf_ue_find_by_id(sess->smf_ue_id);
+                if (trace_ue && trace_ue->imsi_bcd[0]) {
+                    ogs_gtp_xact_set_imsi(gtp_xact, trace_ue->imsi_bcd);
+                    ogs_trace_packet(trace_ue->imsi_bcd, "gtp", "rx",
+                            recvbuf->data, recvbuf->len);
+                    ogs_trace_packet_bind_rx(NULL, NULL, 0);
+                }
             }
 
             if (gtp2_sender_f_teid.teid_presence == true)
@@ -647,7 +748,22 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         ogs_assert(recvbuf);
 
         smf_gnode = e->gnode;
-        ogs_assert(smf_gnode);
+        if (!smf_gnode) {
+            uint8_t msg_type = 0;
+            uint32_t teid = 0;
+
+            if (recvbuf->len >= 8) {
+                ogs_gtp1_header_t *h = (ogs_gtp1_header_t *)recvbuf->data;
+                msg_type = h->type;
+                /* GTPv1 always carries TEID after flags/type/length */
+                teid = be32toh(h->teid);
+            }
+            ogs_error("Gn message with no GTP node — dropping "
+                    "type[%u] teid[0x%x] len[%d]",
+                    msg_type, teid, (int)recvbuf->len);
+            ogs_pkbuf_free(recvbuf);
+            break;
+        }
 
         if (ogs_gtp1_parse_msg(&gtp1_message, recvbuf) != OGS_OK) {
             ogs_error("ogs_gtp2_parse_msg() failed");
@@ -837,6 +953,19 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         ogs_assert(recvbuf);
         pfcp_message = e->pfcp_message;
         ogs_assert(pfcp_message);
+        /* Node-level PFCP must not sit in bind_rx — sticky IMSI on_imsi
+         * would otherwise attach Heartbeats to the last traced UE.
+         * Session messages keep the full-PDU bind from pfcp-path.c
+         * (before header pull); do not re-bind the pulled IE body. */
+        if (pfcp_message->h.type == OGS_PFCP_HEARTBEAT_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_HEARTBEAT_RESPONSE_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE ||
+                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE)
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
         pfcp_node = e->pfcp_node;
         ogs_assert(pfcp_node);
         ogs_assert(OGS_FSM_STATE(&pfcp_node->sm));
@@ -1915,6 +2044,17 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             } else {
                 ogs_warn("admin session detach: UE already gone");
             }
+        }
+        break;
+
+    case SMF_EVT_ADMIN_DETACH_SESS_ONE:
+        {
+            smf_sess_t *admin_sess = smf_sess_find_by_id(e->admin_sess_id);
+            if (admin_sess)
+                smf_admin_detach_one_session(admin_sess, e->admin_force);
+            else
+                ogs_warn("admin session delete: sess id=%d already gone",
+                        (int)e->admin_sess_id);
         }
         break;
 

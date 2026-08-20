@@ -148,7 +148,11 @@ ogs_pkbuf_t *smf_n4_build_session_establishment_request(
     }
 
     /* APN/DNN */
-    len = ogs_fqdn_build(apn_dnn, sess->session.name, strlen(sess->session.name));
+    {
+        const char *nwi = smf_sess_nwi_for_pfcp(sess);
+
+        len = ogs_fqdn_build(apn_dnn, nwi, strlen(nwi));
+    }
     req->apn_dnn.presence = 1;
     req->apn_dnn.len = len;
     req->apn_dnn.data = apn_dnn;

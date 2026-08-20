@@ -155,9 +155,14 @@ production; volte/csfb/handover/transfer suites still need TSAN soak.
 
 Known remaining (accepted / TODO):
 
-- [ ] Main thread still *reads* shard-owned `mme_ue` state in S1AP
-      handlers (e.g. S-TMSI lookup + `mme_ue_is_valid_for_s1` in
-      InitialUEMessage). Read-mostly; needs Stage B/C ownership handoff.
+- [x] Main thread read/mutated shard-owned `mme_ue` state in the
+      InitialUEMessage S-TMSI path (`mme_ue_is_valid_for_s1`,
+      `HOLDING_S1_CONTEXT`, `enb_ue_associate_mme_ue`, mobile-reachable
+      timer). Fix (Stage C-full): with workers on, main only does the
+      GUTI-hash lookup and posts `MME_HO_TAIL_STMSI_ASSOC` (enb_ue id +
+      mme_ue id + raw NAS bytes) to the owner shard, which re-validates,
+      associates and dispatches the NAS PDU. Post failure falls back to
+      the legacy inline path instead of dropping the message.
 - [x] Handover paths (`path switch request`, `handover notify`):
       the tail (location write, NH chain, S11 Modify Bearer / Create
       Session) is now deferred to the UE owner shard via
@@ -176,12 +181,31 @@ Known remaining (accepted / TODO):
 ### Design checklist (remaining for Stage C-full)
 
 - [x] Process-global context; **never** TLS `mme_self()`
-- [ ] Shared: eNB table, config, served-TAI, IMSI→worker map (rwlock/RCU)
-- [ ] Sharded: `mme_ue`, `enb_ue`, sessions, bearers, timers, S11/S6a xacts
+- [x] Shared: eNB table, config, served-TAI all guarded by the recursive
+      `mme_ctx_lock` (mutex, not rwlock — upgrade only if contention
+      shows in perf); IMSI→worker via `mme_shard_from_imsi_bcd` hash
+- [~] Sharded: timers (per-worker `timer_mgr`), S11/S6a xacts
+      (per-thread `ogs_gtp_xact_init`, xid partition carries the
+      creator shard). `mme_ue`/`enb_ue`/session/bearer POOLS stay
+      process-global under the narrow ctx lock — **deferred with
+      reason**: ownership (all mutation on the owner thread) is what
+      correctness needs; splitting the pools buys allocator locality
+      only and would churn every `find_by_id` call site.
 - [x] Route after Initial UE: S1AP-id / S11 TEID bits (+ IMSI peek for TEID=0)
 - [x] Embed worker id in MME_UE_S1AP_ID, S11 TEID (Diameter session id later)
-- [ ] Stable `N` across restart or map + `% N` fallback for old GUTIs
-- [ ] eNB-scoped events (S1 Setup, Reset, Paging): main or fan-out
+- [x] Stable `N` across restart / stale shard prefixes: GUTIs do NOT
+      embed shard bits (S-TMSI resolves via the GUTI hash, then the S11
+      TEID names the owner), so `N` may change across restart freely.
+      Stale/forged TEID prefixes: `mme_event_resolve_wid` clamps
+      `wid % N` (deterministic owner, lookup fails there → legacy error
+      path); the Stage C RX classifier bounces them to main.
+- [x] eNB-scoped events — DECIDED: stay on main (eNB lifecycle owner).
+      S1 Setup / Reset / eNB teardown run on main and bounce the per-UE
+      work to owner shards (`MME_HO_TAIL_UE_REL` / `REL_AB`); the
+      partial-reset ACK is take-and-null under the ctx lock so the last
+      finisher (main or shard) sends it. Paging runs on the UE owner
+      shard and walks the eNB table under the ctx lock — no fan-out
+      event needed.
 - [x] All SCTP TX serialized on main/IO (`s1ap_io` / `s1ap_send_to_enb`)
 - [x] Stage landing: (A) bounce router only → (B) NAS crypto → (C) full UE ownership
 
@@ -212,12 +236,181 @@ takes the ONE default pkbuf-pool mutex.
 
 ---
 
+## 6. Stage C RX→shard routing + direct TX send + multi-IO — LANDED (default off)
+
+Feature branch `feature/stage-c-sharding`. Three knobs, all startup-only,
+all default 0 (bit-identical to before when off):
+
+- [x] `mme.stage_c` (needs `workers > 0`): RX workers classify decoded
+      PDUs (`s1ap-shard.c`) — UplinkNASTransport, UECapabilityInfo,
+      InitialContextSetup/UEContextModification/E-RAB-Setup responses
+      carrying a valid shard prefix in MME_UE_S1AP_ID go straight to the
+      owning UE shard worker; everything else (and any miss: unknown UE,
+      eNB not set up, queue full) bounces to main exactly as before.
+      `enb->state.s1_setup_success` reads/writes are atomic now.
+- [x] `mme.s1ap_tx_direct` (needs `s1ap_tx_workers > 0` and
+      `s1ap_io_thread >= 1`): TX workers post encoded DLNAS PDUs to the
+      IO thread themselves (`tx_complete_direct` under `mme_ctx_lock`,
+      which also flushes the per-eNB hold list) instead of round-tripping
+      through main's TX_READY.
+- [x] `mme.s1ap_io_thread: 0..4` (was 0/1): N send threads; sockets are
+      sticky per thread (pointer hash) so per-association order holds.
+- [x] Load test `tests/load` + `configs/load.yaml.in` — runs the whole
+      EPC with workers:4 stage_c:1 rx:2 tx:2 tx_direct:1 io:2
+      pkbuf_thread_pool:256. Scenarios: S1-Setup churn, 4-eNB parallel
+      mass attach/detach (24 UEs), parallel idle/service-request/TAU,
+      paging, cross-eNB idle TAU (shard rehome). eNB threads record
+      failures and main asserts after join (ABTS is not thread-safe).
+- [x] Branch merged with `main` (Aug 3 2026): multi-IO kept (per-worker
+      thread names `s1ap-io0..N`), main's TX hold watchdog / queue-depth
+      diagnostics kept, `s1ap_io_queue_depth()` now sums all IO workers.
+- [x] Stage C-full remaining design items closed (see checklist above):
+      S-TMSI association handoff (`MME_HO_TAIL_STMSI_ASSOC`), stable-N
+      / stale-prefix routing, eNB-scoped event policy decided; pool
+      sharding explicitly deferred with reason.
+- [x] `mme.sgsap_io_thread: 0/1` (default 0) — `sgsap-io.c`: dedicated
+      VLR (SGsAP) send thread. With workers on, CSFB/SMS senders run on
+      UE owner shards while main owns the VLR socket lifecycle
+      (CONNREFUSED close + reconnect); the IO thread re-resolves
+      `vlr->sock` and sends under `mme_ctx_lock`, `mme_vlr_close()` /
+      `sgsap_client()` mutate the socket under the same lock — no
+      send-vs-destroy race, no DRAIN handshake needed. Single FIFO
+      preserves per-UE SGs ordering. Auto-enabled (with warning) when
+      `mme.workers > 0` and a VLR is configured. Queue-full = drop
+      (SGs recovers via Ts6-1 etc.), never inline cross-thread send.
+      `configs/csfb.yaml.in` runs the whole CSFB suite through it.
+- [ ] Prod soak stage_c + tx_direct after test-rig green
+- [x] Load-test (`tests/load`) green on merged Stage C-full branch
+      (Aug 3 2026, WSL root + ogstun + mongod, logger.level=debug):
+      **SUCCESS / All tests passed** in ~9s with knobs
+      workers:4 stage_c:1 rx:2 tx:2 tx_direct:1 io:2 pkbuf:256.
+      Synthetic PLMN 999/70 only (IMSI 99970…). Flows: S1-Setup
+      churn (8 eNB), mass attach/detach (4×12), idle/SR/TAU (4×4),
+      paging (3 UE), cross-eNB idle TAU (2 UE / rehome). Capture under
+      `/tmp/stage-c-load-20260803/` (not in repo). Remaining: TSAN soak.
+
+---
+
+## 7. Global talloc allocator mutex — the main-thread ceiling
+
+Prod DWARF perf (`perf record -F 499 --call-graph dwarf`, 120 s,
+582k samples; knobs stage_c:1 tx_direct:1 sgsap_io:1 gtpc_rx:1
+rx:8 tx:4 io:1 workers:10, Aug 5 2026):
+
+- process = **9.73 cores on an 88-core box** (89% idle → the limit is
+  serialization, not CPU exhaustion)
+- `mme-main` = 8.61% = **0.84 of ONE core** — hottest thread and the
+  ceiling. Every other pool has ~2x headroom (rx ~0.46 c each,
+  shards ~0.36 c each, io 0.33 c)
+- of main's own cycles: `__x64_sys_futex` 53%, `__switch_to_asm` 53%,
+  `pthread_mutex_lock` 46%, `lll_lock_wait`→`futex_wait` 43%,
+  unlock→`lll_lock_wake` 31% → **~70-75% is mutex machinery**, leaving
+  only ~0.2 c of real MME work. Shard workers lose ~39% the same way;
+  ~2 of 9.7 cores burned process-wide.
+
+The contended lock is **NOT** `mme_ctx_lock`. Recovering the
+`(deleted)` libogscore from `/proc/PID/map_files` and resolving the
+addresses by hand named the callers: `ogs_talloc_free` /
+`ogs_talloc_zero_size` / `ogs_talloc_size` — i.e. the ONE global mutex
+in `lib/core/ogs-memory.c` that every ogs_malloc/calloc/free/realloc
+takes, **including every pkbuf alloc and free** (`ogs-pkbuf.c`
+allocates via `ogs_talloc_*`). Section 5's per-thread pkbuf pools
+removed the pkbuf *pool* mutex but not this one underneath it.
+
+- [x] `ogs_mem_init`: `PTHREAD_MUTEX_ADAPTIVE_NP` — spin before futex.
+      Critical section is a few hundred ns of talloc pointer work, so
+      spinning beats a syscall + 2 context switches. Non-recursive
+      semantics unchanged, no call-site changes.
+- [x] `mme_event_new/free`: plain `calloc`/`free` — flat struct with no
+      talloc children → glibc per-thread tcache, no lock at all.
+      Removes 2 acquisitions of the hottest lock per event.
+- [x] `s1ap_send_paging`: stack array for <= 64 eNBs (heap only for
+      large TAs) — was a malloc+free per paging attempt.
+- [x] `mme_orphan_ue_sweep`: allocate the 320 KB candidate array once
+      and reuse (sweep is main-only: ORPHAN_SWEEP / ADMIN_MAINTENANCE
+      are not UE-scoped, so shard workers reject them).
+- [x] WSL `tests/load` green x3 with the MME knobs + sgwc workers +
+      gtpc/pfcp_rx_thread. NOTE: the load harness proves correctness,
+      **not** speedup (non-TSAN build, not a throughput benchmark).
+- [ ] **Measure the win.** Re-run the same dwarf perf on prod after
+      deploy and compare main's futex share against the ~70% baseline
+      above. Quote no speedup number until this is done.
+
+      After deploying `s1ap-free` + pkbuf `calloc` + Stage C widen:
+
+      ```bash
+      # pgrep -n open5gs-mmed fails (comm is mme-main)
+      PID=$(pgrep -f 'open5gs-mmed -c')
+      perf record -F 499 --call-graph dwarf -p "$PID" -o mme.dwarf.post.data -- sleep 60
+      perf report -i mme.dwarf.post.data --comms mme-main --stdio | head -80
+      top -H -p "$PID" -b -n 1 | head -40
+      ```
+
+      Compare: `CHOICE_free` / `ogs_talloc_free` under `mme-main` should
+      drop (frees moved to `s1ap-free`); pkbuf path should leave the
+      global talloc mutex. Prefer `s1ap_rx_workers: 4-6` for the soak.
+- [x] Structural: pkbuf alloc/free off the global talloc mutex when
+      `OGS_USE_TALLOC=1` — `ogs_pkbuf_alloc`/`free` use `calloc`/`free`
+      (glibc tcache); ASN.1 remains on talloc. Pair with deferred
+      `s1ap-free` worker for heap PDU teardown off `mme-main`.
+- [ ] Split `mme_ctx_lock` into domain locks (eNB table → rwlock; UE
+      pools/hashes; sess/bearer). Precedents that worked:
+      `served_tai_mutex` (af445061f), `enb->s1ap_tx_hold_lock`.
+- [ ] Lock-free `*_find_by_id`: pool slots are never returned to the
+      OS, so a plain array index + `->id` / `context_created`
+      generation check can replace the locked hash lookup on the
+      per-message hot path (called several times per message x 19
+      active threads).
+- [x] Chunk the orphan-sweep classify walk (`MME_ORPHAN_UE_LOCK_CHUNK`
+      4096 + resume cursor) so `mme_ctx_lock` is not held across the
+      whole `mme_ue_list`.
+- [x] Prefer `s1ap_rx_workers: 4-6` in prod (not 8): fewer contenders
+      on remaining ASN.1 talloc traffic; config-only, see
+      `docs/smp-workers.md`.
+
+### Profiling gotchas (cost real time — remember these)
+
+- `pgrep -n open5gs-mmed` **fails**: the process renames its comm to
+  `mme-main`. Use `pgrep -f "open5gs-mmed -c"`.
+- A `(deleted)` DSO (binary reinstalled while the process ran) breaks
+  perf symbol resolution and `perf buildid-cache -a` will NOT fix it.
+  Recover the running image instead:
+  `cp /proc/PID/map_files/<range> /tmp/`, then
+  `addr2line -f -C -e <recovered.so> $((runtime_addr - map_base))`.
+- Kernel frames need `sudo` (kptr_restrict) or manual
+  `/proc/kallsyms` nearest-symbol lookup.
+- `perf lock contention` is **not** available on this box's perf.
+
+---
+
+## 8. Open audit / coverage gaps
+
+- [ ] Ownership audit for `mme_vlr_t` (SGs), `mme_sgw_t` and the
+      served-TAI/config tables. `mme_enb_t` was audited field-by-field
+      (3 bugs found from one root: designed main-owned, silently made
+      shared by UE shards); these three have NOT had the same pass.
+- [ ] sgwc RX offload (`gtpc_rx_thread` / `pfcp_rx_thread`) hangs every
+      meson EPC suite but passes `tests/load`. Strongly suspected to be
+      the fork-based test harness (5 NFs forked into children under
+      TSAN, `application.c` races already documented) rather than a
+      product bug — but it is **unproven**. Needs a TSAN race-check via
+      a harness that does not fork (build `tests/load` under TSAN, or
+      run the NFs as separate TSAN processes).
+- [ ] TSAN soak of the allocator changes in section 7 (the WSL
+      validation was a non-TSAN build).
+
+---
+
 ## Suggested order (current)
 
 1. ~~`mme_find_served_tai`~~ — done / confirmed in perf  
 2. ~~S1AP TX DLNAS wedge~~ — landed; **finish Stage 2b** (more builders + SCTP send placement)  
-3. **NAS sec snapshot** — optional; pairs with TX if already queuing NAS  
-4. **Stage C UE shards** — only after SGWC soak + test rig (attacks remaining `mme_main` FSM)
+3. **Measure section 7 on prod** (dwarf perf before/after) — everything
+   else is guesswork until the allocator win is quantified  
+4. **Split `mme_ctx_lock` + lock-free find_by_id** — the structural
+   follow-through once section 7 is measured  
+5. **NAS sec snapshot** — optional; pairs with TX if already queuing NAS  
+6. **Stage C UE shards** — only after SGWC soak + test rig (attacks remaining `mme_main` FSM)
 
 ## Deployment reminder
 

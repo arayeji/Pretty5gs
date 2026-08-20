@@ -33,9 +33,15 @@ extern int __cgf_log_domain;
 #define OGS_LOG_DOMAIN __cgf_log_domain
 
 #define CGF_MAX_PEERS            4
-#define CGF_MAX_INFLIGHT         16
+/* Parallel drain workers (cgf.workers: N). 1 = legacy single-thread
+ * behaviour (default); >1 spawns independent drain threads, each with
+ * its own peer sockets / GTP' sequence space / spool file. */
+#define CGF_MAX_WORKERS          8
+#define CGF_MAX_INFLIGHT         64
 #define CGF_DEFAULT_GTPP_PORT    3386
 #define CGF_DEFAULT_MAX_BYTES_PER_PACKET  1400
+/* Conservative default so single-worker installs see no behaviour
+ * change; operators can raise this (and cgf.workers) together. */
 #define CGF_DEFAULT_MAX_INFLIGHT            16
 
 /* One outstanding DataRecordTransferRequest slot per peer. GTP' allows
@@ -44,6 +50,8 @@ extern int __cgf_log_domain;
 typedef struct cgf_xact_s {
     bool active;
     uint16_t seq;
+    /* Packet Transfer Command used in this request (TS 32.295 §6.2.4.5.2). */
+    uint8_t ptc;
     uint32_t retries;
     ogs_time_t sent_at;
     ogs_pkbuf_t *pkbuf;
@@ -53,11 +61,25 @@ typedef struct cgf_xact_s {
 } cgf_xact_t;
 
 /* Peer role. Only the primary is used under normal conditions; failover
- * switches to a secondary when the primary stops answering echoes. */
+ * switches to a secondary when the primary stops answering echoes.
+ * In send_mode=round_robin every UP peer is an equal send target and
+ * role only picks the initial RR cursor. */
 typedef enum {
     CGF_PEER_ROLE_PRIMARY = 0,
     CGF_PEER_ROLE_SECONDARY = 1
 } cgf_peer_role_e;
+
+/* How DTRRs are distributed across configured peers. */
+typedef enum {
+    /* Legacy: only active_peer_idx receives CDRs; secondaries are
+     * used solely when the active peer is marked DOWN. */
+    CGF_SEND_MODE_FAILOVER = 0,
+    /* Active-active: each newly opened spool file is assigned to the
+     * next UP peer (round-robin). A file stays pinned to that peer
+     * for its lifetime (or until the peer dies, then it fails over).
+     * Use workers >= number of peers for parallel drain across peers. */
+    CGF_SEND_MODE_ROUND_ROBIN = 1
+} cgf_send_mode_e;
 
 typedef enum {
     CGF_PEER_STATE_DOWN = 0,   /* never alive, or gave up */
@@ -79,7 +101,9 @@ typedef struct cgf_peer_s {
     /*
      * Per-peer GTP' sequence-number space. A single 16-bit counter is
      * shared by Echo Request and DataRecordTransferRequest, as required
-     * by TS 32.295 §6.1.1. Incremented on every transmit, wraps freely.
+     * by TS 32.295 §6.1.1. Starts at 0 on CDF (re)start and after a peer
+     * Recovery change (CGF restart); increments on every transmit and
+     * wraps freely.
      */
     uint16_t next_seq;
 
@@ -99,6 +123,22 @@ typedef struct cgf_context_s {
     char *ready_dir;
     char *done_dir;
     char *failed_dir;
+    /*
+     * processing/<worker_id>/ — files claimed (atomically renamed out
+     * of ready/) by a drain worker while in flight. Only used when
+     * `workers` > 1; NULL/unused in legacy single-thread mode.
+     */
+    char *processing_dir;
+
+    /*
+     * Number of parallel drain worker threads (cgf.workers: N, 1..
+     * CGF_MAX_WORKERS). 1 (default) preserves the legacy single-thread
+     * main-FSM drain path exactly. >1 spawns that many worker threads,
+     * each opening its own UDP sockets to the configured peers (hence
+     * its own source port and GTP' sequence/xact space) and claiming
+     * disjoint spool files out of ready/.
+     */
+    uint32_t workers;
 
     /* Identity. Sent as Address-of-Recording-Entity / Node Name IE
      * where relevant; also used for logging. */
@@ -107,7 +147,8 @@ typedef struct cgf_context_s {
     /* Peers (primary first, then secondaries in declaration order). */
     cgf_peer_t peers[CGF_MAX_PEERS];
     uint32_t num_of_peers;
-    uint32_t active_peer_idx;   /* the peer being used right now */
+    uint32_t active_peer_idx;   /* failover active / RR cursor */
+    cgf_send_mode_e send_mode;  /* failover (default) or round_robin */
 
     /* Timers. */
     ogs_timer_t *t_echo;        /* fires every echo_interval_s */
@@ -125,6 +166,14 @@ typedef struct cgf_context_s {
     uint32_t max_records_per_packet;
     uint32_t max_bytes_per_packet;
     uint32_t max_inflight;      /* pipelined DTRRs per peer (1..CGF_MAX_INFLIGHT) */
+    /*
+     * How many spool files a drain pipeline (main thread or one worker)
+     * may hold open at once. Keeping more than one file open lets the
+     * GTP' window stay full while earlier files wait for ACKs — without
+     * this, send_offset==EOF stalls the whole drain until every ACK
+     * returns. Defaults to max_inflight; clamped to CGF_MAX_INFLIGHT.
+     */
+    uint32_t max_active_files;
 
     /*
      * Data Record Packet sub-header fields (TS 32.295 §6.2.4.2, wire

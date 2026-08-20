@@ -67,7 +67,9 @@
  *   GET /admin/trace/imsi?imsi=<prefix>&match=exact  exact IMSI match
  *   GET /admin/trace/imsi?imsi=list                  list active prefixes
  *   GET /admin/trace/imsi?force=1                    clear all filters
- *   GET /admin/trace/imsi?imsi=<p>&sync=sgwc,smf     MME: push to peers
+ *   GET /admin/trace/imsi?imsi=<p>&sync=hss,sgwc,smf MME: push to peers
+ *   GET /admin/trace/imsi?imsi=<p>&sync=all          MME: push to all peers
+ *   (HSS also has its own /admin/trace/imsi on metrics port; sync is optional)
  *
  *   POST /admin/pgw-host/cache?clear=1                 ; or GET
  *   POST /admin/pgw-host/cache?fqdn=<host.realm>       ; or GET
@@ -119,6 +121,11 @@ int mme_admin_trace_imsi(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len);
 
 size_t mme_dump_maintenance_status(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q);
+
+/* /admin/queues: queue depths + event lag + per-eNB TX hold state,
+ * with a one-word verdict (ok | behind | wedged). */
+size_t mme_dump_queue_status(char *buf, size_t buflen,
         size_t page, size_t page_size, const ogs_metrics_query_t *q);
 
 int mme_admin_maintenance_enable(const ogs_metrics_query_t *q,

@@ -27,8 +27,15 @@ extern "C" {
 #endif
 
 /* HSS Sends Cancel Location Request to MME */
-void hss_s6a_send_clr(char *imsi_bcd, char *mme_host, char *mme_realm, 
+void hss_s6a_send_clr(char *imsi_bcd, char *mme_host, char *mme_realm,
     uint32_t cancellation_type);
+
+/*
+ * Same as hss_s6a_send_clr, but Reattach-Required is explicit.
+ * hss_s6a_send_clr() sets reattach when type is Subscription Withdrawal.
+ */
+void hss_s6a_send_clr_ex(char *imsi_bcd, char *mme_host, char *mme_realm,
+    uint32_t cancellation_type, bool reattach_required);
 
 /* HSS Sends Insert Subscriber Data Request to MME */
 int hss_s6a_send_idr(char *imsi_bcd, uint32_t idr_flags, uint32_t subdata_mask);

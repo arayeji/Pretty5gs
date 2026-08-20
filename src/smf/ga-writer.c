@@ -66,6 +66,9 @@ static struct {
     uint32_t cur_records;
     uint32_t cur_bytes;
     ogs_time_t cur_opened;
+    /* Monotonic file id — avoid second-resolution name collisions that
+     * CGF multi-workers then clobber in done/. */
+    uint32_t file_seq;
 } g;
 
 /* ================================================================== */
@@ -211,17 +214,33 @@ static void ber_duration_ctx(ber_t *b, uint32_t tag, uint64_t secs)
 
 static void pgw_plmn_for_pgw_cdr(const smf_sess_t *sess, ogs_plmn_id_t *out)
 {
-    ogs_assert(sess && out);
+    smf_ue_t *smf_ue;
 
-    if (ogs_local_conf()->num_of_serving_plmn_id > 0) {
-        memcpy(out, &ogs_local_conf()->serving_plmn_id[0], OGS_PLMN_ID_LEN);
-        return;
-    }
-    if (sess->home_plmn_id.mcc1 || sess->home_plmn_id.mcc2) {
+    ogs_assert(sess && out);
+    memset(out, 0, sizeof(*out));
+
+    /*
+     * TS 32.298 [37] p-GWPLMNIdentifier is the PGW/home PLMN — not the
+     * visited Serving Network. EPC Create Session never filled
+     * sess->home_plmn_id, and this SMF has no global serving_plmn_id, so
+     * we used to fall through to sess->serving_plmn_id and stamp VPLMN
+     * into [37] for roamers (live: IMSI 43212* with [37]=43235/43246).
+     * Match SGWC: derive from IMSI first.
+     */
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+    if (smf_ue && smf_ue->imsi_bcd[0])
+        smf_home_plmn_from_imsi_bcd(smf_ue->imsi_bcd, out);
+    else if (sess->home_plmn_id.mcc1 || sess->home_plmn_id.mcc2 ||
+            sess->home_plmn_id.mcc3)
         memcpy(out, &sess->home_plmn_id, OGS_PLMN_ID_LEN);
-        return;
+
+    if (!out->mcc1 && !out->mcc2 && !out->mcc3) {
+        if (ogs_local_conf()->num_of_serving_plmn_id > 0)
+            memcpy(out, &ogs_local_conf()->serving_plmn_id[0],
+                    OGS_PLMN_ID_LEN);
+        else
+            memcpy(out, &sess->serving_plmn_id, OGS_PLMN_ID_LEN);
     }
-    memcpy(out, &sess->serving_plmn_id, OGS_PLMN_ID_LEN);
 }
 
 /* Reserve space for a constructed header and return a marker used by
@@ -517,12 +536,23 @@ static size_t build_pgw_record(
         if (n) ber_prim_ctx(&b, 3, tmp, n);
     }
 
-    /* [4] p-GWAddress from configured local_address (IPv4 only for v1). */
-    if (cfg->local_address) {
-        ogs_ipsubnet_t ipsub;
-        if (ogs_ipsubnet(&ipsub, cfg->local_address, NULL) == OGS_OK &&
-                ipsub.family == AF_INET) {
-            encode_gsn_address_v4(&b, 4, ntohl(ipsub.sub[0]));
+    /* [4] p-GWAddress: gtpc advertise > cdr.address > cdr.local_address */
+    if (ogs_gtp_self()->gtpc_ip.ipv4) {
+        encode_gsn_address_v4(&b, 4, ntohl(ogs_gtp_self()->gtpc_ip.addr));
+    } else {
+        const char *candidates[2] = { cfg->address, cfg->local_address };
+        int i;
+
+        for (i = 0; i < 2; i++) {
+            ogs_ipsubnet_t ipsub;
+
+            if (!candidates[i])
+                continue;
+            if (ogs_ipsubnet(&ipsub, candidates[i], NULL) == OGS_OK &&
+                    ipsub.family == AF_INET) {
+                encode_gsn_address_v4(&b, 4, ntohl(ipsub.sub[0]));
+                break;
+            }
         }
     }
 
@@ -536,10 +566,10 @@ static size_t build_pgw_record(
      * reports "BER Error: Missing field in SET class:CONTEXT(2) tag:6
      * expected" when this is absent, and real CGFs reject the record.
      *
-     * We always emit at least one address:
-     *   1. SGW S5-C IPv4 (EPC GTPv2 path), else
-     *   2. SGW S5-C IPv6, else
-     *   3. 0.0.0.0 placeholder so the mandatory slot is filled.
+     * Order:
+     *   1. Peer signalling IP (SGW S5-C from F-TEID, or SGSN Gn address)
+     *   2. cdr.serving_node_address / sgsn_address / sgw_serving_address
+     *   3. 0.0.0.0 placeholder so the mandatory slot is filled
      */
     if (sess->sgw_s5c_ip.ipv4) {
         encode_gsn_address_v4(&b, 6, ntohl(sess->sgw_s5c_ip.addr));
@@ -548,6 +578,14 @@ static size_t build_pgw_record(
         size_t m = ber_begin_ctx(&b, 6);
         ber_prim_ctx(&b, 1, sess->sgw_s5c_ip.addr6, OGS_IPV6_LEN);
         ber_end(&b, m);
+    } else if (cfg->serving_node_address) {
+        ogs_ipsubnet_t ipsub;
+
+        if (ogs_ipsubnet(&ipsub, cfg->serving_node_address, NULL) == OGS_OK &&
+                ipsub.family == AF_INET)
+            encode_gsn_address_v4(&b, 6, ntohl(ipsub.sub[0]));
+        else
+            encode_gsn_address_v4(&b, 6, 0);
     } else {
         encode_gsn_address_v4(&b, 6, 0);
     }
@@ -607,19 +645,26 @@ static size_t build_pgw_record(
         ber_end(&b, list);
     }
 
-    /* [13] recordOpeningTime */
+    /*
+     * [13] recordOpeningTime: TS 32.251 partial-record semantics — each
+     * partial CDR opens when the previous one closed (last_change_time),
+     * not at session establishment. The session start stays in [38].
+     */
     {
         uint8_t ts[9];
-        ogs_time_t open_t = sess->cdr.start_time ?
-                sess->cdr.start_time : now;
+        ogs_time_t open_t = sess->cdr.last_change_time ?
+                sess->cdr.last_change_time :
+                (sess->cdr.start_time ? sess->cdr.start_time : now);
         timestamp_encode(open_t, ts);
         ber_prim_ctx(&b, 13, ts, 9);
     }
 
-    /* [14] duration (seconds since session start) */
+    /* [14] duration (seconds covered by this record) */
     {
-        ogs_time_t start = sess->cdr.start_time ? sess->cdr.start_time : now;
-        uint64_t secs = (uint64_t)((now - start) / OGS_USEC_PER_SEC);
+        ogs_time_t open_t = sess->cdr.last_change_time ?
+                sess->cdr.last_change_time :
+                (sess->cdr.start_time ? sess->cdr.start_time : now);
+        uint64_t secs = (uint64_t)((now - open_t) / OGS_USEC_PER_SEC);
         ber_duration_ctx(&b, 14, secs);
     }
 
@@ -740,7 +785,14 @@ static size_t build_pgw_record(
     /* [35] servingNodeType SEQUENCE OF. */
     {
         size_t m = ber_begin_ctx(&b, 35);
-        uint8_t snt = sess->epc ? CDR_SNT_GTP_SGW : CDR_SNT_MME;
+        uint8_t snt;
+
+        if (sess->gtp.version == 1)
+            snt = CDR_SNT_SGSN;
+        else if (sess->epc)
+            snt = CDR_SNT_GTP_SGW;
+        else
+            snt = CDR_SNT_MME;
         /* ServingNodeType ::= ENUMERATED — encoded as a context [x] is
          * wrong; spec says it's a universal ENUMERATED inside the SEQ.
          * Use UNIVERSAL ENUMERATED primitive tag 0x0a. */
@@ -854,15 +906,21 @@ static int open_current_file(void)
 
     if (g.fp) return OGS_OK;
 
-    ogs_snprintf(name, sizeof(name), "%s/%s-%llu.cdr",
-            g.current_dir, node,
-            (unsigned long long)(ogs_time_now() / OGS_USEC_PER_SEC));
+    for (;;) {
+        ogs_time_t now = ogs_time_now();
+
+        g.file_seq++;
+        ogs_snprintf(name, sizeof(name), "%s/%s-%lld-%u.cdr",
+                g.current_dir, node, (long long)now, g.file_seq);
+        if (access(name, F_OK) != 0)
+            break;
+    }
 
     if (g.current_path) { ogs_free(g.current_path); g.current_path = NULL; }
     g.current_path = ogs_strdup(name);
     ogs_assert(g.current_path);
 
-    g.fp = fopen(g.current_path, "ab");
+    g.fp = fopen(g.current_path, "wb");
     if (!g.fp) {
         ogs_warn("smf_ga_writer: cannot open spool file '%s': %s",
                 g.current_path, strerror(errno));
@@ -1117,7 +1175,9 @@ void smf_ga_sess_clear(smf_sess_t *sess)
  */
 static char *g_owned_spool_dir;
 static char *g_owned_node_id;
+static char *g_owned_address;
 static char *g_owned_local_address;
+static char *g_owned_serving_node_address;
 
 static void replace_owned_string(const char **field, char **owned,
                                  const char *new_value)
@@ -1157,8 +1217,13 @@ int smf_ga_writer_apply_runtime(const smf_cdr_config_t *new_cfg)
                          new_cfg->spool_dir);
     replace_owned_string(&cur->node_id,       &g_owned_node_id,
                          new_cfg->node_id);
+    replace_owned_string(&cur->address,       &g_owned_address,
+                         new_cfg->address);
     replace_owned_string(&cur->local_address, &g_owned_local_address,
                          new_cfg->local_address);
+    replace_owned_string(&cur->serving_node_address,
+                         &g_owned_serving_node_address,
+                         new_cfg->serving_node_address);
 
     /* 3. Scalar fields. */
     cur->rotate_max_records = new_cfg->rotate_max_records

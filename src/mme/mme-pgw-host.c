@@ -180,7 +180,7 @@ static int pgw_host_dns_resolve(const char *fqdn, ogs_ip_t *smf_ip)
 
     rv = ogs_getaddrinfo(&sa_list, AF_UNSPEC, fqdn, 0, 0);
     if (rv != OGS_OK || !sa_list) {
-        ogs_error("DNS failed for PGW host [%s]", fqdn);
+        ogs_warn("DNS failed for PGW host [%s]", fqdn);
         return OGS_ERROR;
     }
 
@@ -375,12 +375,30 @@ void mme_pgw_host_resolve_pending_sessions(ogs_slice_data_t *slice_data)
         if (sess->smf_ip.ipv4 || sess->smf_ip.ipv6)
             continue;
 
+        /*
+         * TS 29.272 / 23.401: DYNAMIC means the MIP6 identity was selected
+         * by another node, not operator-provisioned. For initial request the
+         * MME may re-select (APN DNS / YAML); Host DNS is not required and
+         * must not block attach when the FQDN is unreachable. Selection
+         * already ignores DYNAMIC via mme_pgw_hss_static_usable().
+         */
+        if (sess->pdn_gw_allocation_type ==
+                OGS_PDN_GW_ALLOCATION_DYNAMIC) {
+            ogs_debug("Skip MIP-Home-Agent-Host DNS [%s] "
+                    "(PDN-GW-Allocation-Type=DYNAMIC)",
+                    sess->mip_home_agent_host);
+            sess->mip_home_agent_host[0] = '\0';
+            sess->mip_home_agent_realm[0] = '\0';
+            continue;
+        }
+
         if (mme_pgw_host_resolve(sess->mip_home_agent_host,
                     (int)strlen(sess->mip_home_agent_host),
                     sess->mip_home_agent_realm,
                     (int)strlen(sess->mip_home_agent_realm),
                     &sess->smf_ip) != OGS_OK) {
-            ogs_error("MIP-Home-Agent-Host resolution failed [%s]",
+            ogs_warn("MIP-Home-Agent-Host resolution failed [%s] "
+                    "(fall back to APN DNS / YAML PGW)",
                     sess->mip_home_agent_host);
         }
 

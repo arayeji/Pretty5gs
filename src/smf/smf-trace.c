@@ -65,6 +65,8 @@ void ogs_smf_trace_set_from_gtp2_create_session_request(
     }
 
     ogs_trace_set(&ctx);
+    if (ctx.imsi[0])
+        ogs_trace_packet_on_imsi(ctx.imsi);
 }
 
 void ogs_smf_trace_set(
@@ -113,6 +115,49 @@ void ogs_smf_trace_set(
     }
 
     ogs_trace_set(&ctx);
+    if (ctx.imsi[0])
+        ogs_trace_packet_on_imsi(ctx.imsi);
+}
+
+void smf_trace_bind_gtp(ogs_gtp_xact_t *xact, smf_ue_t *smf_ue)
+{
+    if (!xact || !smf_ue || !smf_ue->imsi_bcd[0])
+        return;
+    ogs_gtp_xact_set_imsi(xact, smf_ue->imsi_bcd);
+}
+
+void smf_trace_bind_pfcp(ogs_pfcp_xact_t *xact, smf_sess_t *sess)
+{
+    smf_ue_t *smf_ue;
+
+    if (!xact || !sess)
+        return;
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+    if (!smf_ue || !smf_ue->imsi_bcd[0])
+        return;
+    ogs_pfcp_xact_set_imsi(xact, smf_ue->imsi_bcd);
+}
+
+void smf_trace_pfcp_rx(ogs_pfcp_xact_t *xact, smf_sess_t *sess,
+        const void *data, size_t len)
+{
+    smf_ue_t *smf_ue;
+
+    if (!sess)
+        return;
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+    if (!smf_ue || !smf_ue->imsi_bcd[0])
+        return;
+    if (xact)
+        ogs_pfcp_xact_set_imsi(xact, smf_ue->imsi_bcd);
+    /*
+     * Emit the full PDU captured in pfcp-path before header pull.
+     * Do not dump `data` here — after parse it is IE-only and rebuilds
+     * as a malformed PFCP packet in NMS.
+     */
+    (void)data;
+    (void)len;
+    ogs_trace_packet_on_imsi(smf_ue->imsi_bcd);
 }
 
 void smf_ue_log(

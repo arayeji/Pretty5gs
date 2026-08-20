@@ -34,6 +34,35 @@
 #include "mme-workers.h"
 #include "metrics.h"
 
+/*
+ * Identity helpers for NAS drop / decode failure logs. Initial UE Message
+ * often has no IMSI yet — eNB peer IP is the only stable handle then.
+ */
+static const char *s1ap_nas_log_ids(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
+        char *enb_ip, uint32_t *enb_id)
+{
+    mme_enb_t *enb = NULL;
+
+    if (enb_id)
+        *enb_id = 0;
+    if (enb_ip)
+        enb_ip[0] = '\0';
+
+    if (enb_ue) {
+        enb = mme_enb_find_by_id(enb_ue->enb_id);
+        if (enb) {
+            if (enb_id && enb->enb_id_presence)
+                *enb_id = enb->enb_id;
+            if (enb_ip && enb->sctp.addr)
+                OGS_ADDR(enb->sctp.addr, enb_ip);
+        }
+    }
+
+    if (mme_ue && MME_UE_HAVE_IMSI(mme_ue))
+        return mme_ue->imsi_bcd;
+    return "-";
+}
+
 int s1ap_open(void)
 {
     ogs_socknode_t *node = NULL;
@@ -90,12 +119,20 @@ int s1ap_send_to_enb(mme_enb_t *enb, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
     if (s1ap_tx_active()) {
         bool parked = false;
 
-        mme_ctx_lock();
+        /* Unwedge before parking: TX_READY can sit behind a deep main
+         * queue for seconds while ICS/Attach Accept pile onto the hold
+         * list. Recover here on the shard/send path so we do not depend
+         * on the orphan-sweep timer (starved when main never re-polls). */
+        s1ap_tx_hold_recover_stalled(enb);
+
+        ogs_thread_mutex_lock(&enb->s1ap_tx_hold_lock);
         if (__atomic_load_n(&enb->s1ap_tx_pending, __ATOMIC_ACQUIRE) > 0) {
+            if (!ogs_list_first(&enb->s1ap_tx_hold))
+                enb->s1ap_tx_hold_since = ogs_time_now();
             ogs_list_add(&enb->s1ap_tx_hold, pkbuf);
             parked = true;
         }
-        mme_ctx_unlock();
+        ogs_thread_mutex_unlock(&enb->s1ap_tx_hold_lock);
 
         if (parked)
             return OGS_OK;
@@ -118,6 +155,7 @@ int s1ap_send_to_enb_ue(enb_ue_t *enb_ue, ogs_pkbuf_t *pkbuf)
 {
     int rv;
     mme_enb_t *enb = NULL;
+    mme_ue_t *mme_ue = NULL;
 
     ogs_assert(pkbuf);
 
@@ -133,6 +171,11 @@ int s1ap_send_to_enb_ue(enb_ue_t *enb_ue, ogs_pkbuf_t *pkbuf)
         ogs_pkbuf_free(pkbuf);
         return OGS_NOTFOUND;
     }
+
+    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+    if (mme_ue && MME_UE_HAVE_IMSI(mme_ue))
+        ogs_trace_packet(mme_ue->imsi_bcd, "s1ap", "tx",
+                pkbuf->data, pkbuf->len);
 
     rv = s1ap_send_to_enb(enb, pkbuf, enb_ue->enb_ostream_id);
     ogs_expect(rv == OGS_OK);
@@ -162,7 +205,11 @@ int s1ap_delayed_send_to_enb_ue(
         return OGS_OK;
     } else {
         int rv = s1ap_send_to_enb_ue(enb_ue, pkbuf);
-        ogs_expect(rv == OGS_OK);
+        if (rv != OGS_OK)
+            ogs_warn("s1ap_delayed_send: S1 send failed "
+                    "(enb_ue_s1ap_id=%u rv=%d) — eNB/S1 context already "
+                    "gone during release/teardown; ignore",
+                    enb_ue->enb_ue_s1ap_id, rv);
 
         return rv;
     }
@@ -181,6 +228,7 @@ int s1ap_send_to_esm(
     e = mme_event_new(MME_EVENT_ESM_MESSAGE);
     ogs_assert(e);
     e->mme_ue_id = mme_ue->id;
+    e->owner_wid = mme_shard_from_teid(mme_ue->mme_s11_teid);
     e->pkbuf = esmbuf;
     e->nas_type = nas_type;
     e->create_action = create_action;
@@ -197,6 +245,9 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
     int rv;
 
     mme_ue_t *mme_ue = NULL;
+    char enb_ip[OGS_ADDRSTRLEN];
+    uint32_t enb_id = 0;
+    const char *imsi;
 
     ogs_nas_eps_security_header_t *sh = NULL;
     ogs_nas_security_header_type_t security_header_type;
@@ -208,13 +259,17 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
     ogs_assert(enb_ue);
     ogs_assert(nasPdu);
 
+    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+    imsi = s1ap_nas_log_ids(enb_ue, mme_ue, enb_ip, &enb_id);
+
     if (nasPdu->size < sizeof(ogs_nas_emm_header_t)) {
-        ogs_error("NAS PDU too short [%d]", (int)nasPdu->size);
+        ogs_error("NAS PDU too short [%d] "
+                "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                (int)nasPdu->size, enb_ip[0] ? enb_ip : "-",
+                enb_id, enb_ue->enb_ue_s1ap_id, imsi);
         enb_ue_remove(enb_ue);
         return OGS_ERROR;
     }
-
-    mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
 
     /* The Packet Buffer(pkbuf_t) for NAS message MUST make a HEADROOM.
      * When calculating AES_CMAC, we need to use the headroom of the packet. */
@@ -250,8 +305,13 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
         security_header_type.new_security_context = 1;
         break;
     default:
-        ogs_error("Not implemented(security header type:0x%x)",
-                sh->security_header_type);
+        /* Spare/reserved security header (e.g. 0xf) — corrupt or
+         * non-EPS NAS from UE/eNB; drop Initial UE Message. */
+        ogs_error("Bad NAS security header type:0x%x "
+                "(spare/reserved — corrupt PDU from UE or eNB) "
+                "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                sh->security_header_type, enb_ip[0] ? enb_ip : "-",
+                enb_id, enb_ue->enb_ue_s1ap_id, imsi);
         ogs_pkbuf_free(nasbuf);
         enb_ue_remove(enb_ue);
         return OGS_ERROR;
@@ -269,8 +329,10 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
      */
     if (security_header_type.integrity_protected) {
         if (!ogs_pkbuf_pull(nasbuf, sizeof(ogs_nas_eps_security_header_t))) {
-            ogs_error("NAS PDU too short for security header [%d]",
-                    (int)nasPdu->size);
+            ogs_error("NAS PDU too short for security header [%d] "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                    (int)nasPdu->size, enb_ip[0] ? enb_ip : "-",
+                    enb_id, enb_ue->enb_ue_s1ap_id, imsi);
             ogs_pkbuf_free(nasbuf);
             enb_ue_remove(enb_ue);
             return OGS_ERROR;
@@ -283,7 +345,10 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
      * covers ciphered messages: the length is unchanged by decoding.
      */
     if (nasbuf->len < sizeof(ogs_nas_emm_header_t)) {
-        ogs_error("NAS PDU too short for EMM header [%d]", (int)nasbuf->len);
+        ogs_error("NAS PDU too short for EMM header [%d] "
+                "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                (int)nasbuf->len, enb_ip[0] ? enb_ip : "-",
+                enb_id, enb_ue->enb_ue_s1ap_id, imsi);
         ogs_pkbuf_free(nasbuf);
         enb_ue_remove(enb_ue);
         return OGS_ERROR;
@@ -292,7 +357,10 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
     if (mme_ue) {
         if (nas_eps_security_decode(mme_ue,
                 security_header_type, nasbuf) != OGS_OK) {
-            ogs_error("nas_eps_security_decode failed()");
+            ogs_error("nas_eps_security_decode failed "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                    enb_ip[0] ? enb_ip : "-",
+                    enb_id, enb_ue->enb_ue_s1ap_id, imsi);
             ogs_pkbuf_free(nasbuf);
             enb_ue_remove(enb_ue);
             return OGS_ERROR;
@@ -305,8 +373,11 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
     if (procedureCode == S1AP_ProcedureCode_id_initialUEMessage) {
         if (h->protocol_discriminator != OGS_NAS_PROTOCOL_DISCRIMINATOR_EMM) {
 
-            ogs_error("Invalid protocol_discriminator [%d]",
-                    h->protocol_discriminator);
+            ogs_warn("Invalid protocol_discriminator [%d] "
+                    "(not EMM — garbled/corrupt NAS on Initial UE Message) "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                    h->protocol_discriminator, enb_ip[0] ? enb_ip : "-",
+                    enb_id, enb_ue->enb_ue_s1ap_id, imsi);
 
             ogs_pkbuf_free(nasbuf);
             enb_ue_remove(enb_ue);
@@ -321,7 +392,27 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
             h->message_type != OGS_NAS_EPS_EXTENDED_SERVICE_REQUEST &&
             h->message_type != OGS_NAS_EPS_DETACH_REQUEST) {
 
-            ogs_error("Invalid EMM message type [%d]", h->message_type);
+            /*
+             * Initial UE Message may only carry Attach/TAU/Service/
+             * Extended Service/Detach. Type 83 = Authentication Response
+             * belongs on an existing S1 (Uplink NAS), not a new Initial UE
+             * — typical eNB race after S1 reset or context mismatch.
+             */
+            ogs_error("Invalid EMM on Initial UE Message type[%d%s] "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s] "
+                    "(only Attach/TAU/Service/Detach allowed here; "
+                    "dropping S1 — eNB/UE race or stale NAS)",
+                    h->message_type,
+                    h->message_type == OGS_NAS_EPS_AUTHENTICATION_RESPONSE
+                        ? ":AuthenticationResponse" :
+                    h->message_type == OGS_NAS_EPS_AUTHENTICATION_REQUEST
+                        ? ":AuthenticationRequest" :
+                    h->message_type == OGS_NAS_EPS_SECURITY_MODE_COMPLETE
+                        ? ":SecurityModeComplete" :
+                    h->message_type == OGS_NAS_EPS_ATTACH_COMPLETE
+                        ? ":AttachComplete" : "",
+                    enb_ip[0] ? enb_ip : "-",
+                    enb_id, enb_ue->enb_ue_s1ap_id, imsi);
 
             ogs_pkbuf_free(nasbuf);
             enb_ue_remove(enb_ue);
@@ -334,13 +425,18 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
         int rv;
         e = mme_event_new(MME_EVENT_EMM_MESSAGE);
         if (!e) {
-            ogs_error("s1ap_send_to_nas() failed");
+            ogs_error("s1ap_send_to_nas() failed (no event) "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                    enb_ip[0] ? enb_ip : "-",
+                    enb_id, enb_ue->enb_ue_s1ap_id, imsi);
             ogs_pkbuf_free(nasbuf);
             return OGS_ERROR;
         }
         e->enb_ue_id = enb_ue->id;
-        if (mme_ue)
+        if (mme_ue) {
             e->mme_ue_id = mme_ue->id;
+            e->owner_wid = mme_shard_from_teid(mme_ue->mme_s11_teid);
+        }
         e->s1ap_code = procedureCode;
         e->nas_type = security_header_type.type;
         e->pkbuf = nasbuf;
@@ -350,12 +446,18 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
         e->nas_location_present = true;
         rv = mme_event_push_to_ue_owner(e);
         if (rv != OGS_OK)
-            ogs_error("s1ap_send_to_nas() failed:%d", (int)rv);
+            ogs_error("s1ap_send_to_nas() push failed:%d "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                    (int)rv, enb_ip[0] ? enb_ip : "-",
+                    enb_id, enb_ue->enb_ue_s1ap_id, imsi);
         return rv;
     } else if (h->protocol_discriminator ==
             OGS_NAS_PROTOCOL_DISCRIMINATOR_ESM) {
         if (!mme_ue) {
-            ogs_error("No UE Context");
+            ogs_error("No UE Context for ESM "
+                    "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u]",
+                    enb_ip[0] ? enb_ip : "-",
+                    enb_id, enb_ue->enb_ue_s1ap_id);
             ogs_pkbuf_free(nasbuf);
             return OGS_ERROR;
         }
@@ -365,8 +467,10 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
         ogs_expect(rv == OGS_OK);
         return rv;
     } else {
-        ogs_error("Unknown/Unimplemented NAS Protocol discriminator 0x%02x",
-                  h->protocol_discriminator);
+        ogs_error("Unknown/Unimplemented NAS Protocol discriminator 0x%02x "
+                "eNB[%s] enb_id[%u] enb_ue_s1ap_id[%u] IMSI[%s]",
+                h->protocol_discriminator, enb_ip[0] ? enb_ip : "-",
+                enb_id, enb_ue->enb_ue_s1ap_id, imsi);
 
         ogs_pkbuf_free(nasbuf);
         enb_ue_remove(enb_ue);
@@ -409,6 +513,59 @@ int s1ap_send_s1_setup_failure(
     s1ap_buffer = s1ap_build_setup_failure(group, cause, S1AP_TimeToWait_v10s);
     if (!s1ap_buffer) {
         ogs_error("s1ap_build_setup_failure() failed");
+        return OGS_ERROR;
+    }
+
+    rv = s1ap_send_to_enb(enb, s1ap_buffer, S1AP_NON_UE_SIGNALLING);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
+int s1ap_send_overload_start(mme_enb_t *enb, int level, int traffic_reduction)
+{
+    int rv;
+    ogs_pkbuf_t *s1ap_buffer;
+    long action;
+
+    ogs_assert(enb);
+
+    if (level >= 2) {
+#define S1AP_OVERLOAD_ACTION_EMERGENCY_AND_MT_ONLY \
+    S1AP_OverloadAction_permit_emergency_sessions_and_mobile_terminated_services_only
+        action = S1AP_OVERLOAD_ACTION_EMERGENCY_AND_MT_ONLY;
+        /*
+         * The action already tells the eNB to admit nothing else, and
+         * TS 36.413 pairs the reduction percentage with the milder
+         * actions; sending both would be contradictory.
+         */
+        traffic_reduction = 0;
+    } else {
+        action = S1AP_OverloadAction_reject_non_emergency_mo_dt;
+    }
+
+    s1ap_buffer = s1ap_build_overload_start(action, traffic_reduction);
+    if (!s1ap_buffer) {
+        ogs_error("s1ap_build_overload_start() failed");
+        return OGS_ERROR;
+    }
+
+    rv = s1ap_send_to_enb(enb, s1ap_buffer, S1AP_NON_UE_SIGNALLING);
+    ogs_expect(rv == OGS_OK);
+
+    return rv;
+}
+
+int s1ap_send_overload_stop(mme_enb_t *enb)
+{
+    int rv;
+    ogs_pkbuf_t *s1ap_buffer;
+
+    ogs_assert(enb);
+
+    s1ap_buffer = s1ap_build_overload_stop();
+    if (!s1ap_buffer) {
+        ogs_error("s1ap_build_overload_stop() failed");
         return OGS_ERROR;
     }
 
@@ -572,7 +729,11 @@ int s1ap_send_ue_context_release_command(
     }
 
     rv = s1ap_delayed_send_to_enb_ue(enb_ue, s1apbuf, duration);
-    ogs_expect(rv == OGS_OK);
+    if (rv != OGS_OK)
+        ogs_warn("UE Context Release Command not sent "
+                "(enb_ue_s1ap_id=%u group=%d cause=%ld rv=%d) — "
+                "S1/eNB already gone; local cleanup continues",
+                enb_ue->enb_ue_s1ap_id, group, cause, rv);
 
     ogs_timer_start(enb_ue->t_s1_holding,
             mme_timer_cfg(MME_TIMER_S1_HOLDING)->duration);
@@ -625,6 +786,20 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
     mme_enb_t *enb = NULL;
     int rv;
     bool sent = false;
+    /*
+     * Most TAs are served by a handful of eNBs, so keep the snapshot on
+     * the stack and only fall back to the heap for unusually large TAs.
+     * ogs_malloc/ogs_free take the process-global allocator mutex (see
+     * ogs_mem_init), and paging is a per-UE hot path -- a malloc+free
+     * per page put two acquisitions of the hottest lock in the process
+     * on every paging attempt.
+     */
+#define MME_PAGING_ENB_STACK    64
+    ogs_pool_id_t enb_ids_stack[MME_PAGING_ENB_STACK];
+    ogs_pool_id_t *enb_ids = NULL;
+    bool enb_ids_heap = false;
+    int n_enb = 0, n_cap = 0, n_match = 0;
+    int i;
 
     ogs_debug("S1-Paging");
 
@@ -636,14 +811,27 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
     mme_metrics_paging_attempt(mme_ue);
 
     /*
-     * Paging runs on the UE owner shard (T3413 expiry, DDN, S1
-     * release) while main adds/removes eNBs on SCTP churn: walk
-     * enb_list / eNB hashes only under the ctx lock — enb add/remove
-     * mutate them under the same (recursive) mutex. The sends inside
-     * just queue to the S1AP IO/TX path, so holding the lock across
-     * the walk is cheap.
+     * Snapshot matching eNB pool IDs under mme_ctx_lock (enb_list /
+     * supported_ta_list mutate on main during SCTP churn), then send
+     * unlocked — same pattern as orphan-UE sweep. Holding the global
+     * lock across encode/queue fan-out serialized every UE find on
+     * s1ap-rx / mme-w for the whole paging burst.
+     *
+     * Cap follows current enb_list size so large TAs are not silently
+     * truncated at a fixed 512.
      */
     mme_ctx_lock();
+
+    n_cap = mme_self()->num_of_enbs;
+    if (n_cap < 1)
+        n_cap = 1;
+    if (n_cap <= MME_PAGING_ENB_STACK) {
+        enb_ids = enb_ids_stack;
+    } else {
+        enb_ids = ogs_malloc(sizeof(*enb_ids) * (size_t)n_cap);
+        ogs_assert(enb_ids);
+        enb_ids_heap = true;
+    }
 
     /*
      * Smart paging (mme.paging.first_wave: last_enb): first wave goes
@@ -651,6 +839,8 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
      * eCGI (cell_id >> 8 = macro eNB id; full 28 bits = home eNB id).
      * T3413 retries fan out to the whole TA, so a UE that moved cells
      * while idle is still reached.
+     *
+     * mme_enb_find_by_enb_id takes the recursive ctx lock again.
      */
     if (mme_self()->paging_first_wave_last_enb &&
             mme_ue->t3413.retry_count == 0 &&
@@ -663,31 +853,62 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
                     mme_ue->e_cgi.cell_id & 0x0fffffff);
 
         if (last_enb && enb_serves_tai(last_enb, &mme_ue->tai)) {
-            rv = paging_send_to_enb(mme_ue, last_enb, cn_domain);
-            if (rv != OGS_OK) {
-                mme_ctx_unlock();
-                return rv;
-            }
-            sent = true;
+            n_match++;
+            if (n_enb < n_cap)
+                enb_ids[n_enb++] = last_enb->id;
         }
         /* last eNB gone / TA changed: fall through to full fan-out */
     }
 
-    if (!sent) {
+    if (!n_enb) {
         /* Full fan-out: every eNB advertising the UE's TAI. */
         ogs_list_for_each(&mme_self()->enb_list, enb) {
             if (!enb_serves_tai(enb, &mme_ue->tai))
                 continue;
-
-            rv = paging_send_to_enb(mme_ue, enb, cn_domain);
-            if (rv != OGS_OK) {
-                mme_ctx_unlock();
-                return rv;
-            }
+            n_match++;
+            if (n_enb < n_cap)
+                enb_ids[n_enb++] = enb->id;
         }
     }
 
     mme_ctx_unlock();
+
+    if (n_match > n_enb) {
+        ogs_warn("[%s] S1-Paging: truncated fan-out %d→%d eNBs "
+                "(enb_list grew during snapshot) TAC[%d]",
+                mme_ue->imsi_bcd, n_match, n_enb, mme_ue->tai.tac);
+    }
+
+    for (i = 0; i < n_enb; i++) {
+        enb = mme_enb_find_by_id(enb_ids[i]);
+        if (!enb)
+            continue;
+        /* Pool-id recycle / TA list change after unlock. */
+        if (!enb_serves_tai(enb, &mme_ue->tai))
+            continue;
+
+        rv = paging_send_to_enb(mme_ue, enb, cn_domain);
+        if (rv != OGS_OK) {
+            if (enb_ids_heap)
+                ogs_free(enb_ids);
+            return rv;
+        }
+        sent = true;
+    }
+
+    if (enb_ids_heap)
+        ogs_free(enb_ids);
+
+    if (!sent) {
+        /*
+         * No eNB advertises this TAI. Do not start T3413 — there is
+         * nothing to retransmit to. Callers (e.g. Delete Bearer per
+         * TS 23.401 §5.4.4) must answer with Unable to page UE now.
+         */
+        ogs_warn("[%s] S1-Paging: no eNB serves TAI [TAC:%d]",
+                mme_ue->imsi_bcd, mme_ue->tai.tac);
+        return OGS_NOTFOUND;
+    }
 
     /* Start T3413 */
     ogs_timer_start(mme_ue->t3413.timer,
@@ -1058,12 +1279,18 @@ int s1ap_send_mme_status_transfer(
     s1apbuf = s1ap_build_mme_status_transfer(target_ue,
             enb_statustransfer_transparentContainer);
     if (!s1apbuf) {
-        ogs_error("s1ap_build_mme_status_transfer() failed");
+        ogs_error("MME Status Transfer build/ASN encode failed "
+                "(target enb_ue_s1ap_id=%u) — eNB Status Transfer "
+                "container empty/corrupt during HO; PDCP SN sync skipped",
+                target_ue->enb_ue_s1ap_id);
         return OGS_ERROR;
     }
 
     rv = s1ap_send_to_enb_ue(target_ue, s1apbuf);
-    ogs_expect(rv == OGS_OK);
+    if (rv != OGS_OK)
+        ogs_warn("MME Status Transfer not sent "
+                "(target enb_ue_s1ap_id=%u rv=%d) — target S1 gone mid-HO",
+                target_ue->enb_ue_s1ap_id, rv);
 
     return rv;
 }

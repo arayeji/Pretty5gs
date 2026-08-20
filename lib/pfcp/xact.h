@@ -65,6 +65,9 @@ typedef struct ogs_pfcp_xact_s {
 
     ogs_timer_t     *tm_response;   /**< Timer waiting for next message */
     uint8_t         response_rcount;
+    uint8_t         lag_defer_count; /**< response_timeout deferrals taken
+                                          because the OWN event queue lagged
+                                          (see ogs_pfcp_xact_set_lag_cb) */
     ogs_timer_t     *tm_holding;    /**< Timer waiting for holding message */
     uint8_t         holding_rcount;
 
@@ -72,6 +75,9 @@ typedef struct ogs_pfcp_xact_s {
 
     uint64_t        local_seid;     /**< Local SEID,
                                          expected in reply from peer */
+
+    /* Optional IMSI for PACKET dumps on TX (incl. retransmits). */
+    char            imsi_bcd[16];
 
     ogs_pool_id_t   assoc_xact_id;  /**< Associated GTP transaction ID */
     ogs_pkbuf_t     *gtpbuf;        /**< GTP packet buffer */
@@ -121,10 +127,24 @@ typedef struct ogs_pfcp_xact_s {
 #define OGS_PFCP_MODIFY_URR_TIME_QUOTA ((uint64_t)1<<32)
 #define OGS_PFCP_MODIFY_URR_VOLUME_THRESH ((uint64_t)1<<33)
 #define OGS_PFCP_MODIFY_URR_TIME_THRESH ((uint64_t)1<<34)
+/* Stop DL buffering (DROP); used after Unable-to-page / buffer-idle expiry */
+#define OGS_PFCP_MODIFY_DROP ((uint64_t)1<<35)
+/* Revert a DL FAR from DROP back to BUFF|NOCP (paging re-arm). Local-only
+ * like MODIFY_DROP: no associated GTP transaction, no peer response. */
+#define OGS_PFCP_MODIFY_REARM ((uint64_t)1<<36)
+/*
+ * TS 29.244 5.2.4.3 / 8.2.31: send message-level PFCPSMReq-Flags with
+ * DROBU=1 - the UP function discards the packets currently buffered for
+ * the session but the FAR Apply Action (BUFF|NOCP) is NOT changed, so a
+ * later DL packet still buffers and raises a new Downlink Data Report.
+ * This is the standards-compliant "paging failed: delete buffered
+ * packets" action (TS 23.401 5.3.4.3). Local-only: no GTP peer wait.
+ */
+#define OGS_PFCP_MODIFY_DROBU ((uint64_t)1<<37)
 /* Collapsed SAEGW-C (S11): DL deactivation only means "buffer in UPF"
  * (Release Access Bearers / Error Indication); it must not trigger
  * a Delete Bearer Request towards the MME. */
-#define OGS_PFCP_MODIFY_S11_BUFFER ((uint64_t)1<<35)
+#define OGS_PFCP_MODIFY_S11_BUFFER ((uint64_t)1<<38)
     uint64_t        modify_flags;
 
 #define OGS_PFCP_DELETE_TRIGGER_LOCAL_INITIATED 1
@@ -143,6 +163,19 @@ typedef struct ogs_pfcp_xact_s {
 } ogs_pfcp_xact_t;
 
 int ogs_pfcp_xact_init(void);
+
+/*
+ * Own-backlog awareness for the response timer (same contract as
+ * ogs_gtp_xact_set_lag_cb): while the registered callback reports an
+ * event-dispatch lag at/above the threshold, a firing response timer is
+ * re-armed (bounded) instead of retransmitting or giving up — the reply
+ * is typically already queued locally. Register once at startup, before
+ * any worker thread exists.
+ */
+#define OGS_PFCP_XACT_LAG_DEFER_THRESHOLD   ogs_time_from_msec(1500)
+#define OGS_PFCP_XACT_LAG_DEFER_INTERVAL    ogs_time_from_msec(1000)
+#define OGS_PFCP_XACT_LAG_MAX_DEFER         8
+void ogs_pfcp_xact_set_lag_cb(ogs_time_t (*cb)(void));
 void ogs_pfcp_xact_final(void);
 
 ogs_pfcp_xact_t *ogs_pfcp_xact_local_create(ogs_pfcp_node_t *node,
@@ -155,6 +188,9 @@ int ogs_pfcp_xact_update_tx(ogs_pfcp_xact_t *xact,
 
 int ogs_pfcp_xact_commit(ogs_pfcp_xact_t *xact);
 void ogs_pfcp_xact_delayed_commit(ogs_pfcp_xact_t *xact, ogs_time_t duration);
+
+/** Bind IMSI onto a PFCP xact so TX PACKET dumps work without thread-local ctx. */
+void ogs_pfcp_xact_set_imsi(ogs_pfcp_xact_t *xact, const char *imsi_bcd);
 
 int ogs_pfcp_xact_delete(ogs_pfcp_xact_t *xact);
 
