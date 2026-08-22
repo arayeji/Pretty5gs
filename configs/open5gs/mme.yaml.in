@@ -127,11 +127,12 @@ mme:
 #    - plmn_id: { mcc: 999, mnc: 70 }
 #      allowed_apn: [internet]
 #      denied_apn: [ims]
-#  provisioning_sms:              # Stage A: after Attach Complete, if attach
-#                                 # PDN Connectivity Request omitted APN IE
-#                                 # (and ESM Info Response did not supply one),
-#                                 # send one binary MT SMS over NAS (no SMSC).
-#                                 # Matched by IMSI home PLMN. One-shot/attach.
+#  provisioning_sms:              # After Attach Complete: if IMSI home PLMN
+#                                 # matches and IMEI is new/changed vs local
+#                                 # tracker, send one binary MT SMS over NAS
+#                                 # (no SMSC). IMEI recorded only on success.
+#    tracker_file: /var/lib/open5gs/mme-imei-tracker.txt
+#    rules:
 #    - imsi_plmn_id: { mcc: 432, mnc: 11 }
 #      userdata_hex: "0102030405" # binary SMS-DELIVER user data (max 160)
 #      oa: "1234"                 # originating address digits

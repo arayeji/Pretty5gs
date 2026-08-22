@@ -163,19 +163,6 @@ int esm_handle_pdn_connectivity_request(
                 mme_ue->imsi_bcd);
         return OGS_ERROR;
     }
-
-    /*
-     * Stage A provisioning SMS: remember that the attach-embedded PDN
-     * Connectivity Request omitted the APN IE (normal per 24.301 §6.5.1.2).
-     * Cleared later if ESM Information Response supplies an APN.
-     */
-    if (create_action == OGS_GTP_CREATE_IN_ATTACH_REQUEST) {
-        bool apn_present = (req->presencemask &
-                OGS_NAS_EPS_PDN_CONNECTIVITY_REQUEST_ACCESS_POINT_NAME_PRESENT) &&
-                req->access_point_name.length > 0 &&
-                req->access_point_name.apn[0] != '\0';
-        mme_ue->attach_pdn_apn_ie_missing = !apn_present;
-    }
     /*
      * TS 23.401 / 24.301: APN IE absent or empty → select the default APN
      * from the S6a subscription (mme_default_session). inbound_roam
@@ -413,8 +400,6 @@ int esm_handle_information_response(
             rsp->access_point_name.length > 0 &&
             rsp->access_point_name.apn[0] != '\0') {
         sess->ue_provided_apn = true;
-        /* UE supplied APN after security — not a "missing APN" case */
-        mme_ue->attach_pdn_apn_ie_missing = false;
 
         sess->session = mme_session_find_by_apn(
                             mme_ue, rsp->access_point_name.apn);
