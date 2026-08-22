@@ -1408,6 +1408,13 @@ struct mme_ue_s {
     /* Save PDN Connectivity Request */
     ogs_nas_esm_message_container_t pdn_connectivity_request;
 
+    /*
+     * Stage A provisioning SMS: set when attach-embedded PDN Connectivity
+     * Request had no APN IE; cleared if ESM Information Response supplies
+     * an APN. After Attach Complete, may trigger mme.provisioning_sms.
+     */
+    bool attach_pdn_apn_ie_missing;
+
 #define CLEAR_MME_UE_ALL_TIMERS(__mME) \
     do { \
         mme_sess_t *sess = NULL; \

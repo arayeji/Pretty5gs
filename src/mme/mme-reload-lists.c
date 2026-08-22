@@ -25,6 +25,7 @@
 #include "mme-reload-lists.h"
 #include "mme-inbound-roam-apn.h"
 #include "mme-apn-policy.h"
+#include "mme-provisioning-sms.h"
 #include "s1ap-overload.h"
 
 volatile int mme_reload_lists_changed = 0;
@@ -2086,6 +2087,13 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
 
         mme_reload_lists_changed++;
         ogs_reload_audit_note(" apn_correction rules=%d", n);
+        return 0;
+    }
+    if (!strcmp(mme_key, "provisioning_sms")) {
+        int n = mme_provisioning_sms_parse(mme_iter);
+
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" provisioning_sms rules=%d", n);
         return 0;
     }
     if (!strcmp(mme_key, "emergency"))

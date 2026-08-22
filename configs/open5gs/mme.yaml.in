@@ -127,6 +127,17 @@ mme:
 #    - plmn_id: { mcc: 999, mnc: 70 }
 #      allowed_apn: [internet]
 #      denied_apn: [ims]
+#  provisioning_sms:              # Stage A: after Attach Complete, if attach
+#                                 # PDN Connectivity Request omitted APN IE
+#                                 # (and ESM Info Response did not supply one),
+#                                 # send one binary MT SMS over NAS (no SMSC).
+#                                 # Matched by IMSI home PLMN. One-shot/attach.
+#    - imsi_plmn_id: { mcc: 432, mnc: 11 }
+#      userdata_hex: "0102030405" # binary SMS-DELIVER user data (max 160)
+#      oa: "1234"                 # originating address digits
+#      dcs: 0x04                  # TP-DCS (default 0x04 = 8-bit)
+#      dest_port: 2948            # optional UDHI 16-bit application ports
+#      orig_port: 2949
 #  ambr_limit:
 #    enabled: false
 #    force: false

@@ -28,6 +28,7 @@
 #include "emm-build.h"
 #include "esm-handler.h"
 #include "nas-path.h"
+#include "mme-provisioning-sms.h"
 #include "metrics.h"
 #include "nas-security.h"
 #include "s1ap-path.h"
@@ -2375,6 +2376,10 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
             }
 
             mme_metrics_attach_success(mme_ue);
+
+            /* Stage A: optional per-IMSI-PLMN binary MT SMS if APN IE
+             * was missing on the attach PDN and never supplied via EIT. */
+            mme_provisioning_sms_on_attach_complete(mme_ue);
 
             OGS_FSM_TRAN(s, &emm_state_registered);
             break;

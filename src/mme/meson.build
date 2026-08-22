@@ -61,6 +61,7 @@ libmme_sources = files('''
     mme-li.h
     mme-inbound-roam-apn.h
     mme-apn-policy.h
+    mme-provisioning-sms.h
     mme-roam-access.h
     mme-access-control-match.h
     metrics.h
@@ -72,6 +73,7 @@ libmme_sources = files('''
     mme-reload-lists.c
     mme-inbound-roam-apn.c
     mme-apn-policy.c
+    mme-provisioning-sms.c
     mme-roam-access.c
     mme-access-control-match.c
     eplmn-config.c
