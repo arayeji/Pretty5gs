@@ -41,6 +41,7 @@
 #include "enb-info.h"
 #include "ue-info.h"
 #include "admin-api.h"
+#include "ogs-dbi.h"
 #ifdef OPEN5GS_ADMIN_WATCHER
 #include "mme-admin-watcher.h"
 #endif
@@ -115,6 +116,20 @@ int mme_initialize(void)
 
     rv = ogs_metrics_context_parse_config(APP_NAME);
     if (rv != OGS_OK) return rv;
+
+    /*
+     * Optional MongoDB (same URI as HSS). Needed for provisioning_sms
+     * IMSI→IMEI tracker (collection imei_tracker). Init before MME YAML
+     * parse so rule load can see the collection.
+     */
+    if (ogs_app()->db_uri) {
+        rv = ogs_dbi_init(ogs_app()->db_uri);
+        if (rv != OGS_OK) {
+            ogs_error("MME MongoDB init failed (db_uri) — "
+                    "provisioning_sms IMEI tracker unavailable");
+            /* Non-fatal: MME still runs without tracker */
+        }
+    }
 
     rv = mme_context_parse_config();
     if (rv != OGS_OK) return rv;
@@ -328,6 +343,9 @@ void mme_terminate(void)
     ogs_gtp_xact_final();
 
     mme_metrics_final();
+
+    if (ogs_mongoc()->initialized)
+        ogs_dbi_final();
 
     /* Per-thread pkbuf pools are destroyed in app_terminate() AFTER
      * ogs_sctp_final(), not here: pools must outlive every pkbuf. */

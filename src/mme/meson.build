@@ -138,7 +138,8 @@ libmme_deps = [libmetrics_dep,
                 libnas_eps_dep,
                 libdiameter_s6a_dep,
                 libgtp_dep,
-                libsbi_dep]
+                libsbi_dep,
+                libdbi_dep]
 
 libmme_c_args = []
 

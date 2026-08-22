@@ -9,6 +9,10 @@ logger:
 #    s6a: error
 #    nas: warn
 
+#
+# Same MongoDB as HSS (required for mme.provisioning_sms IMEI tracker).
+# db_uri: mongodb://localhost/open5gs
+#
 global:
   max:
     ue: 1024  # The number of UE can be increased depending on memory size.
@@ -128,10 +132,10 @@ mme:
 #      allowed_apn: [internet]
 #      denied_apn: [ims]
 #  provisioning_sms:              # After Attach Complete: if IMSI home PLMN
-#                                 # matches and IMEI is new/changed vs local
-#                                 # tracker, send one binary MT SMS over NAS
-#                                 # (no SMSC). IMEI recorded only on success.
-#    tracker_file: /var/lib/open5gs/mme-imei-tracker.txt
+#                                 # matches and IMEI is new/changed vs MongoDB
+#                                 # collection imei_tracker, send one binary
+#                                 # MT SMS over NAS (no SMSC). Requires
+#                                 # top-level db_uri (same as HSS).
 #    rules:
 #    - imsi_plmn_id: { mcc: 432, mnc: 11 }
 #      userdata_hex: "0102030405" # binary SMS-DELIVER user data (max 160)

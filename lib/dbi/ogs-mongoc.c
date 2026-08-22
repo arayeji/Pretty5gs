@@ -171,6 +171,9 @@ int ogs_dbi_init(const char *db_uri)
         self.collection.subscriber = mongoc_client_get_collection(
             ogs_mongoc()->client, ogs_mongoc()->name, "subscribers");
         ogs_assert(self.collection.subscriber);
+        self.collection.imei_tracker = mongoc_client_get_collection(
+            ogs_mongoc()->client, ogs_mongoc()->name, "imei_tracker");
+        ogs_assert(self.collection.imei_tracker);
     }
 
     return OGS_OK;
@@ -180,6 +183,11 @@ void ogs_dbi_final(void)
 {
     if (self.collection.subscriber) {
         mongoc_collection_destroy(self.collection.subscriber);
+        self.collection.subscriber = NULL;
+    }
+    if (self.collection.imei_tracker) {
+        mongoc_collection_destroy(self.collection.imei_tracker);
+        self.collection.imei_tracker = NULL;
     }
 
 #if MONGOC_CHECK_VERSION(1, 9, 0)

@@ -24,6 +24,8 @@ libdbi_sources = files('''
     subscription.c
     session.c
     ims.c
+    imei-tracker.h
+    imei-tracker.c
 '''.split())
 
 libmongoc_dep = dependency('libmongoc-1.0')

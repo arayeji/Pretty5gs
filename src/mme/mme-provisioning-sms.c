@@ -4,262 +4,22 @@
 
 #include "mme-provisioning-sms.h"
 #include "nas-path.h"
+#include "ogs-dbi.h"
 
 #include <ctype.h>
-#include <errno.h>
-#include <stdio.h>
 #include <time.h>
-
-#ifndef _WIN32
-#include <sys/stat.h>
-#endif
-
-#define MME_PROV_SMS_DEFAULT_TRACKER \
-    "/var/lib/open5gs/mme-imei-tracker.txt"
-
-typedef struct mme_imei_track_entry_s {
-    char imsi[OGS_MAX_IMSI_BCD_LEN + 1];
-    char imei[MME_PROV_SMS_IMEI_LEN + 1];
-} mme_imei_track_entry_t;
 
 static ogs_list_t g_rules;
 static uint8_t g_rp_msg_ref;
-
-static ogs_hash_t *g_imei_hash = NULL;
-static ogs_thread_mutex_t g_imei_lock;
-static char g_tracker_path[512];
-static bool g_tracker_dirty;
-
-static void tracker_mkdir_p(const char *dir)
-{
-    char tmp[512];
-    char *p;
-    size_t len;
-
-    if (!dir || !dir[0])
-        return;
-
-    ogs_cpystrn(tmp, dir, sizeof(tmp));
-    len = strlen(tmp);
-    if (len && tmp[len - 1] == '/')
-        tmp[len - 1] = '\0';
-
-#ifndef _WIN32
-    for (p = tmp + 1; *p; p++) {
-        if (*p == '/') {
-            *p = '\0';
-            if (mkdir(tmp, 0755) != 0 && errno != EEXIST)
-                ogs_warn("mkdir(%s): %s", tmp, strerror(errno));
-            *p = '/';
-        }
-    }
-    if (mkdir(tmp, 0755) != 0 && errno != EEXIST)
-        ogs_warn("mkdir(%s): %s", tmp, strerror(errno));
-#else
-    (void)p;
-#endif
-}
-
-static void tracker_clear_hash(void)
-{
-    ogs_hash_index_t *hi;
-
-    if (!g_imei_hash)
-        return;
-
-    for (hi = ogs_hash_first(g_imei_hash); hi; ) {
-        mme_imei_track_entry_t *e =
-            (mme_imei_track_entry_t *)ogs_hash_this_val(hi);
-        hi = ogs_hash_next(hi);
-        if (e) {
-            ogs_hash_set(g_imei_hash, e->imsi, strlen(e->imsi) + 1, NULL);
-            ogs_free(e);
-        }
-    }
-}
-
-static void tracker_load(void)
-{
-    FILE *f;
-    char line[128];
-    int loaded = 0;
-
-    if (!g_tracker_path[0] || !g_imei_hash)
-        return;
-
-    f = fopen(g_tracker_path, "r");
-    if (!f)
-        return;
-
-    while (fgets(line, sizeof(line), f)) {
-        char imsi[OGS_MAX_IMSI_BCD_LEN + 1];
-        char imei[MME_PROV_SMS_IMEI_LEN + 1];
-        mme_imei_track_entry_t *e, *old;
-        char *comma, *nl;
-        size_t imsi_len, imei_len;
-
-        nl = strchr(line, '\n');
-        if (nl)
-            *nl = '\0';
-        if (line[0] == '#' || line[0] == '\0')
-            continue;
-
-        comma = strchr(line, ',');
-        if (!comma)
-            continue;
-        *comma = '\0';
-
-        imsi_len = strlen(line);
-        imei_len = strlen(comma + 1);
-        if (imsi_len < 6 || imsi_len > OGS_MAX_IMSI_BCD_LEN)
-            continue;
-        if (imei_len < MME_PROV_SMS_IMEI_LEN)
-            continue;
-
-        ogs_cpystrn(imsi, line, sizeof(imsi));
-        ogs_cpystrn(imei, comma + 1, sizeof(imei));
-        imei[MME_PROV_SMS_IMEI_LEN] = '\0';
-
-        e = ogs_calloc(1, sizeof(*e));
-        if (!e)
-            continue;
-        ogs_cpystrn(e->imsi, imsi, sizeof(e->imsi));
-        ogs_cpystrn(e->imei, imei, sizeof(e->imei));
-
-        old = ogs_hash_get(g_imei_hash, e->imsi, strlen(e->imsi) + 1);
-        if (old) {
-            ogs_hash_set(g_imei_hash, old->imsi, strlen(old->imsi) + 1, NULL);
-            ogs_free(old);
-        }
-        ogs_hash_set(g_imei_hash, e->imsi, strlen(e->imsi) + 1, e);
-        loaded++;
-    }
-
-    fclose(f);
-    ogs_info("provisioning_sms: loaded %d IMEI tracker entries from %s",
-            loaded, g_tracker_path);
-}
-
-static void tracker_save(void)
-{
-    FILE *f;
-    ogs_hash_index_t *hi;
-    char dir[512];
-    char *slash;
-    int n = 0;
-
-    if (!g_tracker_dirty || !g_tracker_path[0] || !g_imei_hash)
-        return;
-
-    ogs_cpystrn(dir, g_tracker_path, sizeof(dir));
-    slash = strrchr(dir, '/');
-    if (slash && slash != dir) {
-        *slash = '\0';
-        tracker_mkdir_p(dir);
-    }
-
-    f = fopen(g_tracker_path, "w");
-    if (!f) {
-        ogs_error("provisioning_sms: cannot write tracker %s: %s",
-                g_tracker_path, strerror(errno));
-        return;
-    }
-
-    fprintf(f, "# imsi,imei (15 digits) — local provisioning tracker\n");
-    for (hi = ogs_hash_first(g_imei_hash); hi; hi = ogs_hash_next(hi)) {
-        mme_imei_track_entry_t *e =
-            (mme_imei_track_entry_t *)ogs_hash_this_val(hi);
-        if (!e)
-            continue;
-        fprintf(f, "%s,%s\n", e->imsi, e->imei);
-        n++;
-    }
-    fclose(f);
-    g_tracker_dirty = false;
-    ogs_debug("provisioning_sms: saved %d IMEI tracker entries to %s",
-            n, g_tracker_path);
-}
-
-/* Returns true if IMEI is new or changed for this IMSI (needs SMS). */
-static bool tracker_imei_is_new(const char *imsi, const char *imei)
-{
-    mme_imei_track_entry_t *e;
-    bool is_new;
-
-    ogs_assert(imsi);
-    ogs_assert(imei);
-
-    ogs_thread_mutex_lock(&g_imei_lock);
-    e = g_imei_hash ?
-        ogs_hash_get(g_imei_hash, imsi, strlen(imsi) + 1) : NULL;
-    is_new = (!e || strcmp(e->imei, imei) != 0);
-    ogs_thread_mutex_unlock(&g_imei_lock);
-    return is_new;
-}
-
-static void tracker_remember(const char *imsi, const char *imei)
-{
-    mme_imei_track_entry_t *e, *old;
-
-    ogs_assert(imsi);
-    ogs_assert(imei);
-    if (!g_imei_hash)
-        return;
-
-    ogs_thread_mutex_lock(&g_imei_lock);
-
-    old = ogs_hash_get(g_imei_hash, imsi, strlen(imsi) + 1);
-    if (old && strcmp(old->imei, imei) == 0) {
-        ogs_thread_mutex_unlock(&g_imei_lock);
-        return;
-    }
-
-    if (old) {
-        ogs_hash_set(g_imei_hash, old->imsi, strlen(old->imsi) + 1, NULL);
-        ogs_free(old);
-    }
-
-    e = ogs_calloc(1, sizeof(*e));
-    ogs_assert(e);
-    ogs_cpystrn(e->imsi, imsi, sizeof(e->imsi));
-    ogs_cpystrn(e->imei, imei, sizeof(e->imei));
-    ogs_hash_set(g_imei_hash, e->imsi, strlen(e->imsi) + 1, e);
-    g_tracker_dirty = true;
-    tracker_save();
-
-    ogs_thread_mutex_unlock(&g_imei_lock);
-}
-
-static void extract_imei15(const char *imeisv_bcd, char *imei, size_t imei_sz)
-{
-    size_t n, i;
-
-    ogs_assert(imei);
-    ogs_assert(imei_sz > MME_PROV_SMS_IMEI_LEN);
-    imei[0] = '\0';
-    if (!imeisv_bcd || !imeisv_bcd[0])
-        return;
-
-    n = 0;
-    for (i = 0; imeisv_bcd[i] && n < MME_PROV_SMS_IMEI_LEN; i++) {
-        if (isdigit((unsigned char)imeisv_bcd[i]))
-            imei[n++] = imeisv_bcd[i];
-    }
-    imei[n] = '\0';
-    if (n != MME_PROV_SMS_IMEI_LEN)
-        imei[0] = '\0';
-}
+static ogs_thread_mutex_t g_db_lock;
+static bool g_db_lock_ok;
 
 void mme_provisioning_sms_init(void)
 {
     ogs_list_init(&g_rules);
     g_rp_msg_ref = 0;
-    g_imei_hash = ogs_hash_make();
-    ogs_assert(g_imei_hash);
-    ogs_thread_mutex_init(&g_imei_lock);
-    ogs_cpystrn(g_tracker_path, MME_PROV_SMS_DEFAULT_TRACKER,
-            sizeof(g_tracker_path));
-    g_tracker_dirty = false;
+    ogs_thread_mutex_init(&g_db_lock);
+    g_db_lock_ok = true;
 }
 
 void mme_provisioning_sms_remove_all(void)
@@ -275,17 +35,10 @@ void mme_provisioning_sms_remove_all(void)
 void mme_provisioning_sms_final(void)
 {
     mme_provisioning_sms_remove_all();
-
-    ogs_thread_mutex_lock(&g_imei_lock);
-    if (g_tracker_dirty)
-        tracker_save();
-    tracker_clear_hash();
-    if (g_imei_hash) {
-        ogs_hash_destroy(g_imei_hash);
-        g_imei_hash = NULL;
+    if (g_db_lock_ok) {
+        ogs_thread_mutex_destroy(&g_db_lock);
+        g_db_lock_ok = false;
     }
-    ogs_thread_mutex_unlock(&g_imei_lock);
-    ogs_thread_mutex_destroy(&g_imei_lock);
 }
 
 static int hex_nibble(char c)
@@ -359,11 +112,7 @@ static void fill_scts(uint8_t scts[7])
     struct tm tm_buf, *tm;
 
     memset(scts, 0, 7);
-#if defined(_WIN32)
-    tm = gmtime_s(&tm_buf, &now) == 0 ? &tm_buf : NULL;
-#else
     tm = gmtime_r(&now, &tm_buf);
-#endif
     if (!tm)
         return;
 
@@ -399,9 +148,9 @@ static size_t build_mt_binary_sms(const mme_provisioning_sms_rule_t *rule,
     if (!ndigits)
         ndigits = 1;
 
-    first = 0x04; /* MTI=DELIVER, MMS=1 */
+    first = 0x04;
     if (rule->dest_port || rule->orig_port)
-        first |= 0x40; /* UDHI */
+        first |= 0x40;
 
     tpdu[tpdu_len++] = first;
     tpdu[tpdu_len++] = (uint8_t)ndigits;
@@ -486,6 +235,58 @@ static mme_provisioning_sms_rule_t *find_rule_for_imsi(const char *imsi_bcd)
     return NULL;
 }
 
+static void extract_imei15(const char *imeisv_bcd, char *imei, size_t imei_sz)
+{
+    size_t n = 0, i;
+
+    ogs_assert(imei);
+    ogs_assert(imei_sz > MME_PROV_SMS_IMEI_LEN);
+    imei[0] = '\0';
+    if (!imeisv_bcd || !imeisv_bcd[0])
+        return;
+
+    for (i = 0; imeisv_bcd[i] && n < MME_PROV_SMS_IMEI_LEN; i++) {
+        if (isdigit((unsigned char)imeisv_bcd[i]))
+            imei[n++] = imeisv_bcd[i];
+    }
+    imei[n] = '\0';
+    if (n != MME_PROV_SMS_IMEI_LEN)
+        imei[0] = '\0';
+}
+
+static bool tracker_imei_is_new(const char *imsi, const char *imei)
+{
+    char stored[MME_PROV_SMS_IMEI_LEN + 1];
+    int rv;
+
+    if (!ogs_mongoc()->initialized || !ogs_mongoc()->collection.imei_tracker)
+        return false;
+
+    ogs_thread_mutex_lock(&g_db_lock);
+    rv = ogs_dbi_imei_tracker_get(imsi, stored, sizeof(stored));
+    ogs_thread_mutex_unlock(&g_db_lock);
+
+    if (rv != OGS_OK)
+        return true;
+    return strcmp(stored, imei) != 0;
+}
+
+static void tracker_remember(const char *imsi, const char *imei)
+{
+    int rv;
+
+    if (!ogs_mongoc()->initialized || !ogs_mongoc()->collection.imei_tracker)
+        return;
+
+    ogs_thread_mutex_lock(&g_db_lock);
+    rv = ogs_dbi_imei_tracker_set(imsi, imei);
+    ogs_thread_mutex_unlock(&g_db_lock);
+
+    if (rv != OGS_OK)
+        ogs_error("[%s] provisioning_sms: failed to persist IMEI %s in DB",
+                imsi, imei);
+}
+
 static int parse_one_rule(ogs_yaml_iter_t *entry)
 {
     mme_provisioning_sms_rule_t *rule;
@@ -548,6 +349,9 @@ static int parse_one_rule(ogs_yaml_iter_t *entry)
             const char *v = ogs_yaml_iter_value(entry);
             if (v)
                 rule->orig_port = (uint16_t)atoi(v);
+        } else if (!strcmp(k, "tracker_file")) {
+            ogs_warn("mme.provisioning_sms: tracker_file ignored "
+                    "(IMEI tracker is MongoDB collection imei_tracker)");
         } else {
             ogs_warn("mme.provisioning_sms: unknown key `%s'", k);
         }
@@ -616,13 +420,10 @@ int mme_provisioning_sms_parse(ogs_yaml_iter_t *parent)
 {
     ogs_yaml_iter_t root;
     int count = 0;
-    char new_path[512];
-    bool reload_tracker = false;
 
     ogs_assert(parent);
     mme_provisioning_sms_remove_all();
 
-    ogs_cpystrn(new_path, g_tracker_path, sizeof(new_path));
     ogs_yaml_iter_recurse(parent, &root);
 
     if (ogs_yaml_iter_type(&root) == YAML_SEQUENCE_NODE) {
@@ -630,36 +431,28 @@ int mme_provisioning_sms_parse(ogs_yaml_iter_t *parent)
     } else if (ogs_yaml_iter_type(&root) == YAML_MAPPING_NODE) {
         ogs_yaml_iter_t probe;
         bool has_rules_key = false;
-        bool has_tracker_key = false;
 
         ogs_yaml_iter_recurse(parent, &probe);
         while (ogs_yaml_iter_next(&probe)) {
             const char *k = ogs_yaml_iter_key(&probe);
-            if (!k)
-                continue;
-            if (!strcmp(k, "rules"))
+            if (k && !strcmp(k, "rules"))
                 has_rules_key = true;
-            else if (!strcmp(k, "tracker_file"))
-                has_tracker_key = true;
         }
 
-        if (has_rules_key || has_tracker_key) {
+        if (has_rules_key) {
             ogs_yaml_iter_t map;
             ogs_yaml_iter_recurse(parent, &map);
             while (ogs_yaml_iter_next(&map)) {
                 const char *k = ogs_yaml_iter_key(&map);
                 if (!k)
                     continue;
-                if (!strcmp(k, "tracker_file")) {
-                    const char *v = ogs_yaml_iter_value(&map);
-                    if (v && v[0]) {
-                        ogs_cpystrn(new_path, v, sizeof(new_path));
-                        reload_tracker = true;
-                    }
-                } else if (!strcmp(k, "rules")) {
+                if (!strcmp(k, "rules")) {
                     ogs_yaml_iter_t rules;
                     ogs_yaml_iter_recurse(&map, &rules);
                     count = parse_rules_sequence(&rules);
+                } else if (!strcmp(k, "tracker_file")) {
+                    ogs_warn("mme.provisioning_sms: tracker_file ignored "
+                            "(use MongoDB imei_tracker; set db_uri)");
                 } else {
                     ogs_warn("mme.provisioning_sms: unknown key `%s'", k);
                 }
@@ -671,20 +464,13 @@ int mme_provisioning_sms_parse(ogs_yaml_iter_t *parent)
         }
     }
 
-    ogs_thread_mutex_lock(&g_imei_lock);
-    if (reload_tracker && strcmp(g_tracker_path, new_path) != 0) {
-        tracker_clear_hash();
-        ogs_cpystrn(g_tracker_path, new_path, sizeof(g_tracker_path));
-        tracker_load();
-    } else if (g_imei_hash && ogs_hash_count(g_imei_hash) == 0) {
-        tracker_load();
-    } else if (reload_tracker) {
-        ogs_cpystrn(g_tracker_path, new_path, sizeof(g_tracker_path));
+    if (count > 0 &&
+            (!ogs_mongoc()->initialized ||
+             !ogs_mongoc()->collection.imei_tracker)) {
+        ogs_warn("provisioning_sms: %d rule(s) loaded but MongoDB not ready "
+                "(set top-level db_uri in mme.yaml) — SMS tracker disabled",
+                count);
     }
-    ogs_thread_mutex_unlock(&g_imei_lock);
-
-    if (count > 0)
-        ogs_info("provisioning_sms: tracker_file=%s", g_tracker_path);
 
     return count;
 }
@@ -701,6 +487,11 @@ void mme_provisioning_sms_on_attach_complete(mme_ue_t *mme_ue)
         return;
     if (ogs_list_empty(&g_rules))
         return;
+    if (!ogs_mongoc()->initialized || !ogs_mongoc()->collection.imei_tracker) {
+        ogs_debug("[%s] provisioning_sms: no MongoDB; skip",
+                mme_ue->imsi_bcd);
+        return;
+    }
 
     rule = find_rule_for_imsi(mme_ue->imsi_bcd);
     if (!rule)
