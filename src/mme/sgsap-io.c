@@ -22,10 +22,15 @@
 #include "sgsap-io.h"
 #include "sgsap-path.h"
 
+/* Brief backoff when the VLR SCTP send buffer is full (EAGAIN). */
+#define SGSAP_IO_EAGAIN_RETRIES     64
+#define SGSAP_IO_EAGAIN_SLEEP_US    1000
+
 typedef struct io_job_s {
     mme_vlr_t *vlr;
     ogs_pkbuf_t *pkbuf;
     uint16_t stream_no;
+    uint16_t retries;
 } io_job_t;
 
 static ogs_worker_t *io_worker = NULL;
@@ -35,6 +40,7 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
     io_job_t *job = data;
     mme_vlr_t *vlr = NULL;
     bool found = false;
+    int rv = OGS_ERROR;
 
     ogs_assert(job);
     ogs_assert(job->pkbuf);
@@ -55,14 +61,34 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
     }
 
     if (found) {
-        /* sgsap_send() consumes the pkbuf and handles sock == NULL */
-        sgsap_send(job->vlr->sock, job->pkbuf, job->stream_no);
+        /* OK/ERROR consume pkbuf; RETRY leaves ownership with us. */
+        rv = sgsap_send(job->vlr->sock, job->pkbuf, job->stream_no);
     } else {
         ogs_warn("sgsap-io: VLR removed; dropping PDU (len:%d stream:%d)",
                 job->pkbuf->len, job->stream_no);
         ogs_pkbuf_free(job->pkbuf);
+        job->pkbuf = NULL;
+        rv = OGS_ERROR;
     }
     mme_ctx_unlock();
+
+    if (rv == OGS_RETRY) {
+        job->retries++;
+        if (job->retries <= SGSAP_IO_EAGAIN_RETRIES && io_worker) {
+            ogs_usleep(SGSAP_IO_EAGAIN_SLEEP_US);
+            if (ogs_worker_post(io_worker, job) == OGS_OK)
+                return; /* job stays alive */
+        }
+        if (ogs_log_guard())
+            ogs_warn("sgsap-io: EAGAIN retries exhausted; drop PDU "
+                    "(len:%d stream:%d retries:%u)",
+                    job->pkbuf ? (int)job->pkbuf->len : 0,
+                    job->stream_no, job->retries);
+        if (job->pkbuf)
+            ogs_pkbuf_free(job->pkbuf);
+        ogs_free(job);
+        return;
+    }
 
     ogs_free(job);
 }
@@ -141,6 +167,7 @@ int sgsap_io_post_send(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf,
     job->vlr = vlr;
     job->pkbuf = pkbuf;
     job->stream_no = stream_no;
+    job->retries = 0;
 
     rv = ogs_worker_post(io_worker, job);
     if (rv != OGS_OK) {

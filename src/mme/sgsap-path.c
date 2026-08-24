@@ -92,9 +92,21 @@ int sgsap_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
 
     sent = ogs_sctp_sendmsg(sock, pkbuf->data, pkbuf->len,
             NULL, OGS_SCTP_SGSAP_PPID, stream_no);
+    if (sent < 0 && ogs_socket_errno_would_block()) {
+        /*
+         * Send buffer full (EAGAIN). Do not free pkbuf — caller may
+         * requeue. Rate-limit the log: under LU/SMS storms this used
+         * to flood ERROR for every dropped LU/Service-Request.
+         */
+        if (ogs_log_guard())
+            ogs_warn("SGsAP SCTP send buffer full (EAGAIN) "
+                    "len:%d ssn:%d — will retry/drop",
+                    (int)pkbuf->len, stream_no);
+        return OGS_RETRY;
+    }
     if (sent < 0 || sent != pkbuf->len) {
         ogs_error("ogs_sctp_sendmsg(len:%d,ssn:%d) error (%d:%s)",
-                pkbuf->len, stream_no, errno, strerror(errno));
+                (int)pkbuf->len, stream_no, errno, strerror(errno));
         ogs_pkbuf_free(pkbuf);
         return OGS_ERROR;
     }
@@ -135,7 +147,15 @@ int sgsap_send_to_vlr_with_sid(
         return OGS_ERROR;
     }
 
-    return sgsap_send(sock, pkbuf, stream_no);
+    {
+        int rv = sgsap_send(sock, pkbuf, stream_no);
+        if (rv == OGS_RETRY) {
+            /* Sync path has no POLLOUT waiter — drop after the warn. */
+            ogs_pkbuf_free(pkbuf);
+            return OGS_ERROR;
+        }
+        return rv;
+    }
 }
 
 int sgsap_send_to_vlr(mme_ue_t *mme_ue, ogs_pkbuf_t *pkbuf)
