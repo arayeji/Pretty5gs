@@ -239,14 +239,15 @@ uint8_t mme_s6a_handle_ula(
 
             if (sgsap_send_location_update_request(mme_ue) != OGS_OK) {
                 /*
-                 * SGs/VLR association down or send failed. Do not abort the
-                 * MME (this was ogs_assert()). Return "CS domain not
-                 * available"; the caller (OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION
-                 * in mme-sm.c) sends a TAU reject and releases the context.
+                 * SGs/VLR association down or send failed (was ogs_assert /
+                 * return #18 → TAU Reject). Continue Accept: fake_csfb →
+                 * Combined; else EPS-only + #18.
                  */
                 ogs_error("[%s] Combined TAU(ULA): SGsAP Location-Update not "
-                        "sent (VLR/SGs unavailable)", mme_ue->imsi_bcd);
-                return OGS_NAS_EMM_CAUSE_CS_DOMAIN_NOT_AVAILABLE;
+                        "sent (VLR/SGs unavailable); continue without CS",
+                        mme_ue->imsi_bcd);
+                mme_sgs_continue_without_cs(mme_ue, "sgsap_lu_send_failed");
+                return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
             }
 
         } else {

@@ -485,9 +485,10 @@ int esm_handle_information_response(
             } else {
                 mme_ue_progress(mme_ue, "attach_accept_deferred_sgs");
                 if (OGS_OK != sgsap_send_location_update_request(mme_ue)) {
-                    ogs_error("[%s] sgsap_send_location_update_request() failed",
+                    ogs_error("[%s] sgsap_send_location_update_request() failed; "
+                            "continue Attach without CS",
                             mme_ue->imsi_bcd);
-                    return OGS_ERROR;
+                    mme_sgs_continue_without_cs(mme_ue, "sgsap_lu_send_failed");
                 }
             }
         } else {

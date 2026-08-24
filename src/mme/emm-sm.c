@@ -182,9 +182,6 @@ static void emm_handle_t3450_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
 
 static void emm_handle_sgs_ts6_1_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
 {
-    int r;
-    enb_ue_t *enb_ue = NULL;
-
     ogs_assert(mme_ue);
 
     if (!mme_ue->sgs_lu_pending) {
@@ -194,52 +191,7 @@ static void emm_handle_sgs_ts6_1_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
         return;
     }
 
-    mme_ue->sgs_lu_pending = false;
-    ogs_timer_stop(mme_ue->t_sgs_ts6_1);
-    mme_ue->sgs_cs_unavailable = true;
-
-    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-    if (!enb_ue) {
-        ogs_warn("[%s] Ts6-1 expired but no S1 context",
-                mme_ue->imsi_bcd);
-        return;
-    }
-
-    ogs_warn("[%s] SGSAP: Location-Update timeout (Ts6-1); EPS-only",
-            mme_ue->imsi_bcd);
-    mme_ue_progress(mme_ue, "sgsap_lu_timeout");
-
-    if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {
-        r = nas_eps_send_attach_accept(mme_ue);
-        if (r != OGS_OK)
-            mme_send_delete_session_after_attach_accept_fail(enb_ue, mme_ue);
-        ogs_expect(r == OGS_OK);
-    } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
-        if (mme_ue->nas_eps.update.active_flag) {
-            ogs_kdf_kenb(mme_ue->kasme, mme_ue->ul_count.i32,
-                    mme_ue->kenb);
-            ogs_kdf_nh_enb(mme_ue->kasme, mme_ue->kenb, mme_ue->nh);
-            mme_ue->nhcc = 1;
-
-            ogs_info("[%s] KDF update(active_flag=1)", mme_ue->imsi_bcd);
-        }
-
-        if (mme_ue->tracking_area_update_request_presencemask &
-            OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_EPS_BEARER_CONTEXT_STATUS_PRESENT) {
-            ogs_info("[%s] Ts6-1 + TAU accept(active_flag=%d, BCS)",
-                mme_ue->imsi_bcd,
-                mme_ue->nas_eps.update.active_flag);
-            mme_send_delete_session_or_tau_accept(enb_ue, mme_ue);
-        } else {
-            ogs_info("[%s] Ts6-1 + TAU accept(active_flag=%d, No BCS)",
-                mme_ue->imsi_bcd,
-                mme_ue->nas_eps.update.active_flag);
-            mme_send_tau_accept_and_check_release(enb_ue, mme_ue);
-        }
-    } else {
-        ogs_warn("[%s] Ts6-1 expired in unexpected EPS-Type[%d]",
-                mme_ue->imsi_bcd, mme_ue->nas_eps.type);
-    }
+    mme_sgs_continue_without_cs(mme_ue, "sgsap_lu_timeout");
 }
 
 static void emm_handle_s6a_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
@@ -1254,23 +1206,14 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
 
                 if (sgsap_send_location_update_request(mme_ue) != OGS_OK) {
                     /*
-                     * SGs/VLR association is down or the send failed. This
-                     * used to be ogs_assert(), which aborted the entire MME
-                     * (FATAL) on a recoverable per-UE condition - a single
-                     * combined TA/LA update while the MSC/VLR link was
-                     * unavailable would crash the daemon.
-                     *
-                     * Instead reject the combined update with "CS domain not
-                     * available" (TS 24.301), so the UE stays EPS-attached and
-                     * stops attempting the CS leg, and release the context.
+                     * SGs/VLR association down or send failed (was
+                     * ogs_assert / TAU Reject #18). Continue Accept:
+                     * fake_csfb → Combined; else EPS-only + #18.
                      */
                     ogs_error("[%s] Combined TAU: SGsAP Location-Update not "
-                            "sent (VLR/SGs unavailable); rejecting CS domain",
+                            "sent (VLR/SGs unavailable); continue without CS",
                             mme_ue->imsi_bcd);
-                    r = nas_eps_send_tau_reject(enb_ue, mme_ue,
-                            OGS_NAS_EMM_CAUSE_CS_DOMAIN_NOT_AVAILABLE);
-                    ogs_expect(r == OGS_OK);
-                    OGS_FSM_TRAN(s, &emm_state_exception);
+                    mme_sgs_continue_without_cs(mme_ue, "sgsap_lu_send_failed");
                     break;
                 }
 

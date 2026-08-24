@@ -1370,6 +1370,66 @@ cleanup:
 }
 
 /* ----------------------------------------------------------------------
+ * Function: mme_sgs_continue_without_cs
+ * ----------------------------------------------------------------------
+ * SGs Location-Update unavailable (send fail / Ts6-1 / VLR reject).
+ * Continue Attach or Combined TAU; never Reject the UE for CS alone.
+ * emm-build: fake_csfb → Combined Accept; else EPS-only + EMM #18.
+ * ---------------------------------------------------------------------- */
+void mme_sgs_continue_without_cs(mme_ue_t *mme_ue, const char *reason)
+{
+    int r;
+    enb_ue_t *enb_ue = NULL;
+
+    ogs_assert(mme_ue);
+    if (!reason)
+        reason = "sgs_cs_unavailable";
+
+    mme_sgs_ts6_1_timer_stop(mme_ue);
+    mme_ue->sgs_cs_unavailable = true;
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (!enb_ue) {
+        ogs_warn("[%s] SGs CS unavailable (%s) but no S1 context",
+                mme_ue->imsi_bcd, reason);
+        return;
+    }
+
+    ogs_warn("[%s] SGSAP: CS unavailable (%s); continue Attach/TAU",
+            mme_ue->imsi_bcd, reason);
+    mme_ue_progress(mme_ue, reason);
+
+    if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {
+        r = nas_eps_send_attach_accept(mme_ue);
+        if (r != OGS_OK)
+            mme_send_delete_session_after_attach_accept_fail(enb_ue, mme_ue);
+        ogs_expect(r == OGS_OK);
+    } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
+        if (mme_ue->nas_eps.update.active_flag) {
+            ogs_kdf_kenb(mme_ue->kasme, mme_ue->ul_count.i32,
+                    mme_ue->kenb);
+            ogs_kdf_nh_enb(mme_ue->kasme, mme_ue->kenb, mme_ue->nh);
+            mme_ue->nhcc = 1;
+            ogs_info("[%s] KDF update(active_flag=1)", mme_ue->imsi_bcd);
+        }
+
+        if (mme_ue->tracking_area_update_request_presencemask &
+            OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_EPS_BEARER_CONTEXT_STATUS_PRESENT) {
+            ogs_info("[%s] CS unavailable + TAU accept(active_flag=%d, BCS)",
+                    mme_ue->imsi_bcd, mme_ue->nas_eps.update.active_flag);
+            mme_send_delete_session_or_tau_accept(enb_ue, mme_ue);
+        } else {
+            ogs_info("[%s] CS unavailable + TAU accept(active_flag=%d, No BCS)",
+                    mme_ue->imsi_bcd, mme_ue->nas_eps.update.active_flag);
+            mme_send_tau_accept_and_check_release(enb_ue, mme_ue);
+        }
+    } else {
+        ogs_warn("[%s] SGs CS unavailable (%s) in unexpected EPS-Type[%d]",
+                mme_ue->imsi_bcd, reason, mme_ue->nas_eps.type);
+    }
+}
+
+/*
  * Function: mme_send_delete_session_or_tau_accept
  * ----------------------------------------------------------------------
  * - Check UE's EPS Bearer Context Status (BCS) regardless of active_flag

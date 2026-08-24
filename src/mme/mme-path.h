@@ -121,6 +121,13 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed);
 void mme_send_delete_session_or_tau_accept(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 void mme_send_tau_accept_and_check_release(enb_ue_t *enb_ue, mme_ue_t *mme_ue);
 
+/*
+ * SGs Location-Update could not complete (send fail, Ts6-1, VLR reject).
+ * Continue Attach/TAU with sgs_cs_unavailable: emm-build serves Combined
+ * when fake_csfb is on, otherwise EPS-only + EMM #18. Never Reject.
+ */
+void mme_sgs_continue_without_cs(mme_ue_t *mme_ue, const char *reason);
+
 /* Tear down S11 session after CSR ok when Attach Accept cannot be delivered. */
 void mme_send_delete_session_after_attach_accept_fail(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue);
