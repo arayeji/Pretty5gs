@@ -2782,6 +2782,26 @@ int mme_context_parse_config(void)
                             &self.num_of_eplmn, self.eplmn);
                     if (rv != OGS_OK)
                         return rv;
+                } else if (!strcmp(mme_key, "home_plmn")) {
+                    /*
+                     * Same YAML shape as equivalent_plmn. Affects only
+                     * inbound-roam / GTP APN (local NI), not Attach EPLMN IE.
+                     */
+                    rv = mme_eplmn_parse_config(&mme_iter,
+                            &self.num_of_home_plmn, self.home_plmn);
+                    if (rv != OGS_OK)
+                        return rv;
+                    if (self.num_of_home_plmn > 0) {
+                        int hi;
+                        ogs_info("home_plmn: %d PLMN(s) treated as local",
+                                self.num_of_home_plmn);
+                        for (hi = 0; hi < self.num_of_home_plmn; hi++) {
+                            char plmn_str[OGS_PLMNIDSTRLEN];
+                            ogs_plmn_id_to_string(&self.home_plmn[hi],
+                                    plmn_str);
+                            ogs_info("  home_plmn[%d]=%s", hi, plmn_str);
+                        }
+                    }
                 } else if (!strcmp(mme_key, "equivalent_plmn_serving_only")) {
                     self.attach_accept.equivalent_plmn_serving_only =
                         ogs_yaml_iter_bool(&mme_iter);

@@ -142,6 +142,11 @@ mme:
     mnc: '71'
   - mcc: '999'
     mnc: '72'
+  # Extra HPLMNs treated as local (not inbound roam) even when TAI is another
+  # PLMN. GTP APN stays NI-only (hiweb), not hiweb.mnc….mcc….gprs.
+  # home_plmn:
+  # - mcc: '999'
+  #   mnc: '12'
   inbound_roam:
     gtp_apn_format: fqdn
     gtp_apn_lowercase: false

@@ -247,6 +247,16 @@ typedef struct mme_context_s {
     int             num_of_eplmn;
     ogs_plmn_id_t   eplmn[OGS_NAS_MAX_PLMN];
 
+    /*
+     * Extra home PLMNs for inbound-roam detection. IMSI matching any of
+     * these (or the serving TAI PLMN) is treated as a local subscriber:
+     * GTP APN-NI only (e.g. "hiweb"), not home-routed FQDN OI.
+     * Use when the RAN still broadcasts another PLMN (e.g. 432) but the
+     * operator also owns IMSI ranges under 999/12.
+     */
+    int             num_of_home_plmn;
+    ogs_plmn_id_t   home_plmn[OGS_NAS_MAX_PLMN];
+
     /* Access Control (HPLMN / IMSI prefix whitelist; optional TAC/eNB for inbound roam) */
     int             default_reject_cause;
     int             num_of_access_control;

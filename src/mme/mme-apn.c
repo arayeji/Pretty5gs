@@ -88,6 +88,8 @@ void mme_apn_oi_plmn_id(
 
 bool mme_ue_is_inbound_roam(mme_ue_t *mme_ue)
 {
+    int i;
+
     ogs_assert(mme_ue);
 
     if (!MME_UE_HAVE_IMSI(mme_ue))
@@ -96,8 +98,18 @@ bool mme_ue_is_inbound_roam(mme_ue_t *mme_ue)
     /* Home iff the IMSI starts with the serving TAI PLMN digits; the
      * TAI PLMN carries its true MNC length, unlike a PLMN derived from
      * the IMSI (see ogs_plmn_id_imsi_prefix_match). */
-    return !ogs_plmn_id_imsi_prefix_match(
-            mme_ue->imsi_bcd, &mme_ue->tai.plmn_id);
+    if (ogs_plmn_id_imsi_prefix_match(
+            mme_ue->imsi_bcd, &mme_ue->tai.plmn_id))
+        return false;
+
+    /* Operator-owned HPLMNs that share this RAN (mme.home_plmn). */
+    for (i = 0; i < mme_self()->num_of_home_plmn; i++) {
+        if (ogs_plmn_id_imsi_prefix_match(
+                    mme_ue->imsi_bcd, &mme_self()->home_plmn[i]))
+            return false;
+    }
+
+    return true;
 }
 
 int mme_apn_for_gtp(

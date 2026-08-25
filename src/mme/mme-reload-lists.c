@@ -1098,6 +1098,44 @@ static int reload_access_control_replace(ogs_yaml_iter_t *mme_iter)
     return added;
 }
 
+static int reload_home_plmn_replace(ogs_yaml_iter_t *mme_iter)
+{
+    mme_context_t *self = mme_self();
+    ogs_plmn_id_t new_home[OGS_NAS_MAX_PLMN];
+    int new_count = 0;
+    int rv;
+    bool changed;
+
+    rv = mme_eplmn_parse_config(mme_iter, &new_count, new_home);
+    if (rv != OGS_OK) {
+        ogs_reload_audit_warn("home_plmn YAML parse failed "
+                "(keep previous %d entries; use flat mme.home_plmn: "
+                "[{mcc, mnc}, ...] max %d)",
+                self->num_of_home_plmn, OGS_NAS_MAX_PLMN);
+        return 0;
+    }
+
+    changed = (new_count != self->num_of_home_plmn) ||
+            (new_count > 0 && memcmp(new_home, self->home_plmn,
+             new_count * sizeof(new_home[0])) != 0) ||
+            (new_count == 0 && self->num_of_home_plmn > 0);
+
+    if (changed) {
+        self->num_of_home_plmn = new_count;
+        if (new_count > 0)
+            memcpy(self->home_plmn, new_home,
+                    new_count * sizeof(self->home_plmn[0]));
+        mme_reload_lists_changed++;
+        ogs_reload_audit_note(" home_plmn replaced (%d entries)",
+                new_count);
+    } else {
+        ogs_reload_audit_note(" home_plmn unchanged (%d entries)",
+                new_count);
+    }
+
+    return new_count;
+}
+
 static int reload_equivalent_plmn_replace(ogs_yaml_iter_t *mme_iter)
 {
     mme_context_t *self = mme_self();
@@ -2099,6 +2137,8 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
         return reload_hss_map_replace(mme_iter);
     if (!strcmp(mme_key, "equivalent_plmn"))
         return reload_equivalent_plmn_replace(mme_iter);
+    if (!strcmp(mme_key, "home_plmn"))
+        return reload_home_plmn_replace(mme_iter);
     if (!strcmp(mme_key, "imsi_acl"))
         return reload_imsi_acl_replace(mme_iter);
     if (!strcmp(mme_key, "trace_imsi"))
