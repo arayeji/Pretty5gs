@@ -21,6 +21,7 @@
 
 #include "hss-context.h"
 #include "hss-fd-path.h"
+#include "hss-trace.h"
 
 static hss_diam_stats_t prev_st;
 
@@ -95,16 +96,29 @@ int hss_fd_init(void)
     rv = hss_sh_init();
     ogs_assert(rv == OGS_OK);
 
+    /* After S6a/Cx/… disp_register so routing failures are visible for
+     * hss.trace_imsi even when the app callback never runs (3002 path). */
+    rv = hss_diam_trace_hooks_init();
+    ogs_assert(rv == 0);
+
     ogs_diam_stats_update_cb_register(hsss_diam_stats_update_cb);
 
     rv = ogs_diam_start();
     ogs_assert(rv == 0);
+
+    if (fd_g_config) {
+        ogs_info("HSS Diameter Identity=%s Realm=%s "
+                "(MME hss_map Dest-Realm/Host must match for local S6a)",
+                fd_g_config->cnf_diamid ? (char *)fd_g_config->cnf_diamid : "-",
+                fd_g_config->cnf_diamrlm ? (char *)fd_g_config->cnf_diamrlm : "-");
+    }
 
     return OGS_OK;
 }
 
 void hss_fd_final(void)
 {
+    hss_diam_trace_hooks_final();
     hss_s6a_final();
     hss_cx_final();
     hss_swx_final();

@@ -83,6 +83,15 @@ static inline void hss_trace_scope_cleanup(int *unused)
 int hss_admin_trace_imsi_ep(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len);
 
+/*
+ * freeDiameter routing hooks: when AIR/ULR hits HSS FD but never reaches the
+ * S6a callback (Dest-Realm/Host mismatch → 3002), hss.trace_imsi was silent.
+ * These hooks emit WARN for matching User-Name on ROUTING_ERROR / DROPPED /
+ * FORWARD (NoRelay path).
+ */
+int hss_diam_trace_hooks_init(void);
+void hss_diam_trace_hooks_final(void);
+
 #ifdef __cplusplus
 }
 #endif

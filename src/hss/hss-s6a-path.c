@@ -467,7 +467,8 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
     /* Get authentication info from database */
     rv = hss_db_auth_info(imsi_bcd, &auth_info);
     if (rv != OGS_OK) {
-        ogs_warn("Failed to get auth info for IMSI: %s", imsi_bcd);
+        hss_imsi_warn(imsi_bcd, "S6a-AIR",
+                "Failed to get auth info (USER_UNKNOWN)");
         result_code = OGS_DIAM_S6A_ERROR_USER_UNKNOWN;
         error_occurred = 1;
         goto out;

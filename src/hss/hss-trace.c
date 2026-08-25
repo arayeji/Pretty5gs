@@ -18,11 +18,139 @@
  */
 
 #include "hss-trace.h"
+#include "ogs-diameter-common.h"
 #include "ogs-metrics.h"
 
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+
+static struct fd_hook_hdl *hss_diam_trace_hook_hdl = NULL;
+
+static void hss_diam_copy_os_avp(
+        struct msg *msg, struct dict_object *obj, char *buf, size_t buflen)
+{
+    int ret;
+    struct avp *avp = NULL;
+    struct avp_hdr *hdr = NULL;
+
+    if (!buf || buflen == 0)
+        return;
+    buf[0] = '\0';
+    if (!msg || !obj)
+        return;
+
+    ret = fd_msg_search_avp(msg, obj, &avp);
+    if (ret != 0 || !avp)
+        return;
+    ret = fd_msg_avp_hdr(avp, &hdr);
+    if (ret != 0 || !hdr || !hdr->avp_value || !hdr->avp_value->os.data ||
+            hdr->avp_value->os.len == 0)
+        return;
+
+    ogs_cpystrn(buf, (char *)hdr->avp_value->os.data,
+            ogs_min(hdr->avp_value->os.len + 1, buflen));
+}
+
+static bool hss_diam_user_name_to_imsi_bcd(
+        struct msg *msg, char *imsi_bcd, size_t imsi_bcd_len)
+{
+    char user_name[OGS_MAX_IMSI_BCD_LEN + 8];
+    size_t i, j = 0;
+
+    if (!imsi_bcd || imsi_bcd_len == 0)
+        return false;
+    imsi_bcd[0] = '\0';
+
+    hss_diam_copy_os_avp(msg, ogs_diam_user_name, user_name, sizeof(user_name));
+    if (!user_name[0])
+        return false;
+
+    for (i = 0; user_name[i]; i++) {
+        if (user_name[i] >= '0' && user_name[i] <= '9') {
+            if (j + 1 >= imsi_bcd_len)
+                return false;
+            imsi_bcd[j++] = user_name[i];
+        }
+    }
+    imsi_bcd[j] = '\0';
+    return ogs_imsi_bcd_is_valid(imsi_bcd);
+}
+
+static const char *hss_diam_hook_name(enum fd_hook_type type)
+{
+    switch (type) {
+    case HOOK_MESSAGE_ROUTING_ERROR:
+        return "ROUTING_ERROR";
+    case HOOK_MESSAGE_DROPPED:
+        return "DROPPED";
+    case HOOK_MESSAGE_ROUTING_FORWARD:
+        return "ROUTING_FORWARD";
+    default:
+        return "HOOK";
+    }
+}
+
+static void hss_diam_trace_hook_cb(
+        enum fd_hook_type type, struct msg *msg, struct peer_hdr *peer,
+        void *other, struct fd_hook_permsgdata *pmd, void *regdata)
+{
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN + 1];
+    char dest_realm[OGS_MAX_FQDN_LEN + 1];
+    char dest_host[OGS_MAX_FQDN_LEN + 1];
+    const char *err = (other && (type == HOOK_MESSAGE_ROUTING_ERROR ||
+                type == HOOK_MESSAGE_DROPPED)) ? (const char *)other : NULL;
+
+    (void)peer;
+    (void)pmd;
+    (void)regdata;
+
+    if (!msg || ogs_trace_filter_count() == 0)
+        return;
+    if (!hss_diam_user_name_to_imsi_bcd(msg, imsi_bcd, sizeof(imsi_bcd)))
+        return;
+    if (!ogs_trace_filter_match(imsi_bcd))
+        return;
+
+    hss_diam_copy_os_avp(msg, ogs_diam_destination_realm,
+            dest_realm, sizeof(dest_realm));
+    hss_diam_copy_os_avp(msg, ogs_diam_destination_host,
+            dest_host, sizeof(dest_host));
+
+    hss_imsi_warn(imsi_bcd, "diameter",
+            "%s before S6a (local Identity=%s Realm=%s) "
+            "Dest-Realm=%s Dest-Host=%s detail=%s",
+            hss_diam_hook_name(type),
+            fd_g_config && fd_g_config->cnf_diamid ?
+                (char *)fd_g_config->cnf_diamid : "-",
+            fd_g_config && fd_g_config->cnf_diamrlm ?
+                (char *)fd_g_config->cnf_diamrlm : "-",
+            dest_realm[0] ? dest_realm : "-",
+            dest_host[0] ? dest_host : "-",
+            err && err[0] ? err : "-");
+}
+
+int hss_diam_trace_hooks_init(void)
+{
+    uint32_t mask = HOOK_MASK(
+            HOOK_MESSAGE_ROUTING_ERROR,
+            HOOK_MESSAGE_DROPPED,
+            HOOK_MESSAGE_ROUTING_FORWARD);
+
+    if (hss_diam_trace_hook_hdl)
+        return 0;
+
+    return fd_hook_register(mask, hss_diam_trace_hook_cb,
+            NULL, NULL, &hss_diam_trace_hook_hdl);
+}
+
+void hss_diam_trace_hooks_final(void)
+{
+    if (hss_diam_trace_hook_hdl) {
+        (void)fd_hook_unregister(hss_diam_trace_hook_hdl);
+        hss_diam_trace_hook_hdl = NULL;
+    }
+}
 
 void hss_trace_set(const char *imsi_bcd, const char *proc)
 {
@@ -229,3 +357,4 @@ int hss_admin_trace_imsi_ep(const ogs_metrics_query_t *q,
 
     return ogs_metrics_admin_trace_imsi(use_q, body, body_cap, body_len);
 }
+
