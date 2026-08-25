@@ -26,6 +26,12 @@
 #include <string.h>
 
 static struct fd_hook_hdl *hss_diam_trace_hook_hdl = NULL;
+static struct fd_hook_hdl *hss_diam_rewrite_hook_hdl = NULL;
+
+static void hss_diam_copy_os_avp(
+        struct msg *msg, struct dict_object *obj, char *buf, size_t buflen);
+static bool hss_diam_user_name_to_imsi_bcd(
+        struct msg *msg, char *imsi_bcd, size_t imsi_bcd_len);
 
 static void hss_diam_copy_os_avp(
         struct msg *msg, struct dict_object *obj, char *buf, size_t buflen)
@@ -52,6 +58,73 @@ static void hss_diam_copy_os_avp(
             ogs_min(hdr->avp_value->os.len + 1, buflen));
 }
 
+/*
+ * Accept alias Destination-Realms (e.g. MME auto epc…mcc999…) when the
+ * message was already delivered to this HSS peer and is not addressed to a
+ * different Destination-Host. Rewrites Dest-Realm to local Realm so
+ * freeDiameter does not answer UNABLE_TO_DELIVER / "another realm/host"
+ * before S6a runs. MME/DRA unchanged.
+ */
+static void hss_diam_rewrite_dest_realm_alias(struct msg *msg)
+{
+    int ret;
+    struct msg_hdr *msg_hdr = NULL;
+    struct avp *avp = NULL;
+    union avp_value val;
+    char dest_realm[OGS_MAX_FQDN_LEN + 1];
+    char dest_host[OGS_MAX_FQDN_LEN + 1];
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN + 1];
+    const char *local_realm;
+    const char *local_host;
+
+    if (!msg || !fd_g_config || !fd_g_config->cnf_diamrlm)
+        return;
+
+    ret = fd_msg_hdr(msg, &msg_hdr);
+    if (ret != 0 || !msg_hdr)
+        return;
+    if (msg_hdr->msg_flags & CMD_ANSWER)
+        return;
+
+    local_realm = (const char *)fd_g_config->cnf_diamrlm;
+    local_host = fd_g_config->cnf_diamid ?
+        (const char *)fd_g_config->cnf_diamid : NULL;
+
+    hss_diam_copy_os_avp(msg, ogs_diam_destination_realm,
+            dest_realm, sizeof(dest_realm));
+    if (!dest_realm[0] || !strcmp(dest_realm, local_realm))
+        return;
+
+    hss_diam_copy_os_avp(msg, ogs_diam_destination_host,
+            dest_host, sizeof(dest_host));
+    if (dest_host[0] && local_host && strcmp(dest_host, local_host) != 0)
+        return;
+
+    ret = fd_msg_search_avp(msg, ogs_diam_destination_realm, &avp);
+    if (ret != 0 || !avp)
+        return;
+
+    memset(&val, 0, sizeof(val));
+    val.os.data = (uint8_t *)local_realm;
+    val.os.len = strlen(local_realm);
+    ret = fd_msg_avp_setvalue(avp, &val);
+    if (ret != 0) {
+        ogs_error("HSS Dest-Realm alias rewrite failed (%d) from=%s",
+                ret, dest_realm);
+        return;
+    }
+
+    imsi_bcd[0] = '\0';
+    (void)hss_diam_user_name_to_imsi_bcd(msg, imsi_bcd, sizeof(imsi_bcd));
+    if (imsi_bcd[0] && ogs_trace_filter_match(imsi_bcd)) {
+        hss_imsi_warn(imsi_bcd, "diameter",
+                "rewrote Dest-Realm %s -> %s (local alias accept)",
+                dest_realm, local_realm);
+    } else {
+        ogs_info("HSS Dest-Realm alias: %s -> %s", dest_realm, local_realm);
+    }
+}
+
 static bool hss_diam_user_name_to_imsi_bcd(
         struct msg *msg, char *imsi_bcd, size_t imsi_bcd_len)
 {
@@ -75,6 +148,20 @@ static bool hss_diam_user_name_to_imsi_bcd(
     }
     imsi_bcd[j] = '\0';
     return ogs_imsi_bcd_is_valid(imsi_bcd);
+}
+
+static void hss_diam_rewrite_hook_cb(
+        enum fd_hook_type type, struct msg *msg, struct peer_hdr *peer,
+        void *other, struct fd_hook_permsgdata *pmd, void *regdata)
+{
+    (void)type;
+    (void)peer;
+    (void)other;
+    (void)pmd;
+    (void)regdata;
+
+    if (msg)
+        hss_diam_rewrite_dest_realm_alias(msg);
 }
 
 static const char *hss_diam_hook_name(enum fd_hook_type type)
@@ -132,16 +219,28 @@ static void hss_diam_trace_hook_cb(
 
 int hss_diam_trace_hooks_init(void)
 {
-    uint32_t mask = HOOK_MASK(
+    uint32_t trace_mask = HOOK_MASK(
             HOOK_MESSAGE_ROUTING_ERROR,
             HOOK_MESSAGE_DROPPED,
             HOOK_MESSAGE_ROUTING_FORWARD);
+    uint32_t rewrite_mask = HOOK_MASK(HOOK_MESSAGE_RECEIVED);
+    int ret;
 
-    if (hss_diam_trace_hook_hdl)
-        return 0;
+    if (!hss_diam_rewrite_hook_hdl) {
+        ret = fd_hook_register(rewrite_mask, hss_diam_rewrite_hook_cb,
+                NULL, NULL, &hss_diam_rewrite_hook_hdl);
+        if (ret != 0)
+            return ret;
+    }
 
-    return fd_hook_register(mask, hss_diam_trace_hook_cb,
-            NULL, NULL, &hss_diam_trace_hook_hdl);
+    if (!hss_diam_trace_hook_hdl) {
+        ret = fd_hook_register(trace_mask, hss_diam_trace_hook_cb,
+                NULL, NULL, &hss_diam_trace_hook_hdl);
+        if (ret != 0)
+            return ret;
+    }
+
+    return 0;
 }
 
 void hss_diam_trace_hooks_final(void)
@@ -149,6 +248,10 @@ void hss_diam_trace_hooks_final(void)
     if (hss_diam_trace_hook_hdl) {
         (void)fd_hook_unregister(hss_diam_trace_hook_hdl);
         hss_diam_trace_hook_hdl = NULL;
+    }
+    if (hss_diam_rewrite_hook_hdl) {
+        (void)fd_hook_unregister(hss_diam_rewrite_hook_hdl);
+        hss_diam_rewrite_hook_hdl = NULL;
     }
 }
 

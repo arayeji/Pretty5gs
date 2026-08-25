@@ -84,10 +84,10 @@ int hss_admin_trace_imsi_ep(const ogs_metrics_query_t *q,
         char *body, size_t body_cap, size_t *body_len);
 
 /*
- * freeDiameter routing hooks: when AIR/ULR hits HSS FD but never reaches the
- * S6a callback (Dest-Realm/Host mismatch → 3002), hss.trace_imsi was silent.
- * These hooks emit WARN for matching User-Name on ROUTING_ERROR / DROPPED /
- * FORWARD (NoRelay path).
+ * freeDiameter hooks: (1) rewrite foreign Dest-Realm to local Realm when the
+ * request was delivered here without a foreign Dest-Host — fixes MME auto
+ * epc…mcc999… vs HSS …mcc432… without touching MME/DRA; (2) WARN traced
+ * IMSIs on ROUTING_ERROR / DROPPED / FORWARD.
  */
 int hss_diam_trace_hooks_init(void);
 void hss_diam_trace_hooks_final(void);
