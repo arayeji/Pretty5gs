@@ -2838,7 +2838,7 @@ int ogs_pfcp_ue_pool_generate(void)
             }
 
             inc = 0;
-            while(poolindex < ogs_app()->pool.sess) {
+            while(poolindex < subnet->pool.size) {
                 ogs_pfcp_ue_ip_t *ue_ip = NULL;
 
                 ue_ip = &subnet->pool.array[poolindex];
@@ -3145,7 +3145,28 @@ static ogs_pfcp_subnet_t *subnet_add_with_dnns(
         subnet->dnn = NULL;
     }
 
-    ogs_pool_init(&subnet->pool, ogs_app()->pool.sess);
+    {
+        /*
+         * Size the UE-IP pool by what the subnet can actually address
+         * instead of the global session maximum. Sizing every pool to
+         * ogs_app()->pool.sess meant that with max.ue=100000
+         * (pool.sess=300000) and hundreds of `session:` subnets the SMF
+         * preallocated ~10 GB of ue_ip entries that could never be handed
+         * out (a /24 holds at most 254 hosts), inflating RSS and startup
+         * time. IPv6 pools keep pool.sess: a /64 prefix is effectively
+         * unbounded.
+         */
+        int pool_size = ogs_app()->pool.sess;
+
+        if (subnet->family == AF_INET &&
+                subnet->prefixlen >= 2 && subnet->prefixlen <= 32) {
+            uint64_t capacity = (uint64_t)1 << (32 - subnet->prefixlen);
+            if (capacity < (uint64_t)pool_size)
+                pool_size = (int)capacity;
+        }
+
+        ogs_pool_init(&subnet->pool, pool_size);
+    }
 
     ogs_list_add(&self.subnet_list, subnet);
 
