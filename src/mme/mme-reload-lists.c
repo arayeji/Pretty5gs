@@ -835,6 +835,21 @@ static int reload_hss_map_replace(ogs_yaml_iter_t *mme_iter)
 
     mme_hssmap_resort_by_order();
 
+    /* Drop stale pointers into the old (freed) hss_map entries. */
+    {
+        mme_ue_t *mme_ue = NULL;
+
+        mme_ctx_lock();
+        ogs_list_for_each(&mme_self()->mme_ue_list, mme_ue) {
+            if (!MME_UE_HAVE_IMSI(mme_ue)) {
+                mme_ue->hssmap = NULL;
+                continue;
+            }
+            mme_ue->hssmap = mme_hssmap_find_by_imsi_bcd(mme_ue->imsi_bcd);
+        }
+        mme_ctx_unlock();
+    }
+
     if (count > 0 || ogs_list_first(&mme_self()->hssmap_list) == NULL) {
         mme_reload_lists_changed++;
         ogs_reload_audit_note(" hss_map replaced (%d entries)", count);

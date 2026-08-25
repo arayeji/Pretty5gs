@@ -282,6 +282,14 @@ static int mme_add_hss_destination(mme_ue_t *mme_ue, struct msg *req)
     ogs_assert(mme_ue);
     ogs_assert(req);
 
+    /*
+     * Always re-resolve. SIGHUP hss_map replace frees old entries; a cached
+     * mme_ue->hssmap would be stale/dangling and keep sending the old
+     * Dest-Realm (e.g. auto mcc999) after the operator fixed yaml.
+     */
+    if (MME_UE_HAVE_IMSI(mme_ue))
+        mme_ue->hssmap = mme_hssmap_find_by_imsi_bcd(mme_ue->imsi_bcd);
+
     if (mme_ue->hssmap) {
         realm = mme_ue->hssmap->realm;
         host = mme_ue->hssmap->host;
@@ -289,6 +297,14 @@ static int mme_add_hss_destination(mme_ue_t *mme_ue, struct msg *req)
 
     if (realm == NULL)
         realm = fd_g_config->cnf_diamrlm;
+
+    if (MME_UE_HAVE_IMSI(mme_ue) &&
+            ogs_trace_filter_match(mme_ue->imsi_bcd)) {
+        ogs_warn("[%s] S6a Dest-Realm=%s Dest-Host=%s",
+                mme_ue->imsi_bcd,
+                realm ? realm : "-",
+                host ? host : "(none)");
+    }
 
     ret = fd_msg_avp_new(ogs_diam_destination_realm, 0, &avp);
     if (ret != 0) {

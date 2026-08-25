@@ -6481,8 +6481,7 @@ const char *mme_imsi_hss_deny_reason(mme_ue_t *mme_ue)
         return "imsi_acl";
 
     if (self.require_hss_map && ogs_list_first(&self.hssmap_list) != NULL) {
-        if (!mme_ue->hssmap)
-            mme_ue->hssmap = mme_hssmap_find_by_imsi_bcd(imsi);
+        mme_ue->hssmap = mme_hssmap_find_by_imsi_bcd(imsi);
         if (!mme_ue->hssmap)
             return "hss_map";
     }
