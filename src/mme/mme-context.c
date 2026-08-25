@@ -3339,55 +3339,92 @@ int mme_context_parse_config(void)
                         } else
                             ogs_assert_if_reached();
 
-                        while (ogs_yaml_iter_next(&hss_map_iter)) {
-                            const char *mnc = NULL, *mcc = NULL, *realm = NULL, *host = NULL;
-                            const char *hss_map_key =
-                                ogs_yaml_iter_key(&hss_map_iter);
-                            ogs_assert(hss_map_key);
-                            if (!strcmp(hss_map_key, "order")) {
-                                order_v = ogs_yaml_iter_value(&hss_map_iter);
-                            } else if (!strcmp(hss_map_key, "plmn_id")) {
-                                ogs_yaml_iter_t plmn_id_iter;
+                        /*
+                         * Collect the whole map entry first. Documented YAML
+                         * puts realm/host as siblings of plmn_id; adding inside
+                         * the plmn_id key ignored those siblings and auto-built
+                         * epc.mncXXX.mccYYY.3gppnetwork.org from the PLMN.
+                         */
+                        {
+                            const char *mnc = NULL, *mcc = NULL;
+                            char *realm = NULL, *host = NULL;
 
-                                ogs_yaml_iter_recurse(&hss_map_iter,
-                                        &plmn_id_iter);
-                                while (ogs_yaml_iter_next(&plmn_id_iter)) {
-                                    const char *plmn_id_key =
-                                        ogs_yaml_iter_key(&plmn_id_iter);
-                                    ogs_assert(plmn_id_key);
-                                    if (!strcmp(plmn_id_key, "host")) {
-                                        const char *v = ogs_yaml_iter_value(
-                                                &plmn_id_iter);
-                                        if (v) host = ogs_strndup(v, OGS_MAX_FQDN_LEN);
-                                    } else if (!strcmp(plmn_id_key, "realm")) {
-                                        const char *v = ogs_yaml_iter_value(
-                                                &plmn_id_iter);
-                                        if (v) realm = ogs_strndup(v, OGS_MAX_FQDN_LEN);
-                                    } else if (!strcmp(plmn_id_key, "mcc")) {
-                                        mcc = ogs_yaml_iter_value(
-                                                &plmn_id_iter);
-                                    } else if (!strcmp(plmn_id_key, "mnc")) {
-                                        mnc = ogs_yaml_iter_value(
-                                                &plmn_id_iter);
+                            while (ogs_yaml_iter_next(&hss_map_iter)) {
+                                const char *hss_map_key =
+                                    ogs_yaml_iter_key(&hss_map_iter);
+                                ogs_assert(hss_map_key);
+                                if (!strcmp(hss_map_key, "order")) {
+                                    order_v = ogs_yaml_iter_value(&hss_map_iter);
+                                } else if (!strcmp(hss_map_key, "realm")) {
+                                    const char *v =
+                                        ogs_yaml_iter_value(&hss_map_iter);
+                                    if (v) {
+                                        if (realm) ogs_free(realm);
+                                        realm = ogs_strndup(v, OGS_MAX_FQDN_LEN);
                                     }
-                                }
+                                } else if (!strcmp(hss_map_key, "host")) {
+                                    const char *v =
+                                        ogs_yaml_iter_value(&hss_map_iter);
+                                    if (v) {
+                                        if (host) ogs_free(host);
+                                        host = ogs_strndup(v, OGS_MAX_FQDN_LEN);
+                                    }
+                                } else if (!strcmp(hss_map_key, "plmn_id")) {
+                                    ogs_yaml_iter_t plmn_id_iter;
 
-                                if (mcc && mnc) {
-                                    ogs_plmn_id_t plmn_id;
-                                    mme_hssmap_t *hssmap = NULL;
+                                    ogs_yaml_iter_recurse(&hss_map_iter,
+                                            &plmn_id_iter);
+                                    while (ogs_yaml_iter_next(&plmn_id_iter)) {
+                                        const char *plmn_id_key =
+                                            ogs_yaml_iter_key(&plmn_id_iter);
+                                        ogs_assert(plmn_id_key);
+                                        if (!strcmp(plmn_id_key, "host")) {
+                                            const char *v = ogs_yaml_iter_value(
+                                                    &plmn_id_iter);
+                                            if (v) {
+                                                if (host) ogs_free(host);
+                                                host = ogs_strndup(v,
+                                                        OGS_MAX_FQDN_LEN);
+                                            }
+                                        } else if (!strcmp(plmn_id_key,
+                                                    "realm")) {
+                                            const char *v = ogs_yaml_iter_value(
+                                                    &plmn_id_iter);
+                                            if (v) {
+                                                if (realm) ogs_free(realm);
+                                                realm = ogs_strndup(v,
+                                                        OGS_MAX_FQDN_LEN);
+                                            }
+                                        } else if (!strcmp(plmn_id_key,
+                                                    "mcc")) {
+                                            mcc = ogs_yaml_iter_value(
+                                                    &plmn_id_iter);
+                                        } else if (!strcmp(plmn_id_key,
+                                                    "mnc")) {
+                                            mnc = ogs_yaml_iter_value(
+                                                    &plmn_id_iter);
+                                        }
+                                    }
+                                } else
+                                    ogs_warn("unknown key `%s`",
+                                            hss_map_key);
+                            }
 
-                                    ogs_plmn_id_build(&plmn_id,
-                                        atoi(mcc), atoi(mnc), strlen(mnc));
+                            if (mcc && mnc) {
+                                ogs_plmn_id_t plmn_id;
+                                mme_hssmap_t *hssmap = NULL;
 
-                                    hssmap = mme_hssmap_add(&plmn_id, realm, host,
-                                            mme_gtpc_entry_selection_order(
-                                                    hss_map_entry_idx, order_v));
-                                    ogs_assert(hssmap);
-                                    hss_map_entry_idx++;
-                                }
-                            } else
-                                ogs_warn("unknown key `%s`",
-                                        hss_map_key);
+                                ogs_plmn_id_build(&plmn_id,
+                                    atoi(mcc), atoi(mnc), strlen(mnc));
+
+                                hssmap = mme_hssmap_add(&plmn_id, realm, host,
+                                        mme_gtpc_entry_selection_order(
+                                                hss_map_entry_idx, order_v));
+                                ogs_assert(hssmap);
+                                hss_map_entry_idx++;
+                            }
+                            if (host) ogs_free(host);
+                            if (realm) ogs_free(realm);
                         }
                     } while (ogs_yaml_iter_type(&hss_map_array) ==
                             YAML_SEQUENCE_NODE);
