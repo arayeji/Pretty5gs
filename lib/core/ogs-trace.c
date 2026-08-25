@@ -359,11 +359,23 @@ size_t ogs_trace_format_prefix(char *buf, size_t buflen)
 static const char trace_b64_table[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+/* Owned copy — bind stores a heap buffer so handlers may free the
+ * source pkbuf, and steal can move the buffer to another thread. */
 static OGS_THREAD_LOCAL struct {
-    const uint8_t *data;
+    uint8_t *data;
     size_t len;
     char proto[16];
 } packet_rx;
+
+static void packet_rx_clear(void)
+{
+    if (packet_rx.data) {
+        ogs_free(packet_rx.data);
+        packet_rx.data = NULL;
+    }
+    packet_rx.len = 0;
+    packet_rx.proto[0] = '\0';
+}
 
 static struct {
     ogs_thread_mutex_t mutex;
@@ -495,17 +507,25 @@ void ogs_trace_packet_ctx(const char *proto, const char *dir,
 
 void ogs_trace_packet_bind_rx(const char *proto, const void *data, size_t len)
 {
-    packet_rx.data = NULL;
-    packet_rx.len = 0;
-    packet_rx.proto[0] = '\0';
+    size_t copy_len;
+
+    packet_rx_clear();
 
     if (trace_filter.count == 0)
         return;
     if (!data || !len)
         return;
 
-    packet_rx.data = (const uint8_t *)data;
-    packet_rx.len = len;
+    /* Cap copy to dump max — enough for NMS PCAP rebuild. */
+    copy_len = len;
+    if (copy_len > OGS_TRACE_PACKET_MAX)
+        copy_len = OGS_TRACE_PACKET_MAX;
+
+    packet_rx.data = ogs_malloc(copy_len);
+    if (!packet_rx.data)
+        return;
+    memcpy(packet_rx.data, data, copy_len);
+    packet_rx.len = copy_len;
     if (proto && proto[0])
         ogs_cpystrn(packet_rx.proto, proto, sizeof(packet_rx.proto));
     else
@@ -521,9 +541,43 @@ void ogs_trace_packet_on_imsi(const char *imsi)
 
     ogs_trace_packet(imsi, packet_rx.proto, "rx",
             packet_rx.data, packet_rx.len);
+    packet_rx_clear();
+}
+
+bool ogs_trace_filter_active(void)
+{
+    return trace_filter.count > 0;
+}
+
+bool ogs_trace_packet_steal_rx(uint8_t **data, size_t *len,
+        char *proto, size_t proto_size)
+{
+    ogs_assert(data);
+    ogs_assert(len);
+
+    *data = NULL;
+    *len = 0;
+    if (proto && proto_size)
+        proto[0] = '\0';
+
+    if (!packet_rx.data || !packet_rx.len)
+        return false;
+
+    *data = packet_rx.data;
+    *len = packet_rx.len;
+    if (proto && proto_size)
+        ogs_cpystrn(proto, packet_rx.proto, proto_size);
+
     packet_rx.data = NULL;
     packet_rx.len = 0;
     packet_rx.proto[0] = '\0';
+    return true;
+}
+
+void ogs_trace_packet_free_buf(uint8_t *data)
+{
+    if (data)
+        ogs_free(data);
 }
 
 static bool trace_alias_imei_match(const char *key, const char *imeisv)

@@ -1138,9 +1138,16 @@ void s1ap_handle_initial_ue_message(
     if (pkbuf) {
         mme_ue_t *trace_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
 
-        if (trace_ue && MME_UE_HAVE_IMSI(trace_ue))
+        if (trace_ue && MME_UE_HAVE_IMSI(trace_ue)) {
             ogs_trace_packet(trace_ue->imsi_bcd, "s1ap", "rx",
                     pkbuf->data, pkbuf->len);
+            /* Drop TLS bind — already dumped from the live buffer. */
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
+        } else if (ogs_trace_filter_active()) {
+            /* IMSI not known yet (first Attach): park copy on enb_ue for
+             * the UE-owner shard to dump after identity / set_imsi. */
+            mme_enb_ue_s1ap_trace_take_bound(enb_ue);
+        }
     }
 
     /*
@@ -1233,9 +1240,13 @@ void s1ap_handle_uplink_nas_transport(
     }
 
     /* Dump on this thread (main/shard) before NAS is handed to UE worker. */
-    if (pkbuf && mme_ue && MME_UE_HAVE_IMSI(mme_ue))
+    if (pkbuf && mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
         ogs_trace_packet(mme_ue->imsi_bcd, "s1ap", "rx",
                 pkbuf->data, pkbuf->len);
+        ogs_trace_packet_bind_rx(NULL, NULL, 0);
+    } else if (pkbuf && ogs_trace_filter_active()) {
+        mme_enb_ue_s1ap_trace_take_bound(enb_ue);
+    }
 
     ogs_debug("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
             enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);

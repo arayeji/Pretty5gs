@@ -878,6 +878,15 @@ struct enb_ue_s {
     bool            metrics_sgw_counted;
     char            metrics_sgw_addr[OGS_ADDRSTRLEN];
     ogs_plmn_id_t   metrics_plmn_id;
+
+    /*
+     * Pending S1AP RX PACKET dump for trace_imsi. Bound on the S1AP
+     * RX/main thread (copy), dumped on the UE-owner shard once IMSI is
+     * known — TLS bind alone never crosses mme.workers.
+     */
+    uint8_t         *s1ap_trace_rx;
+    size_t          s1ap_trace_rx_len;
+    char            s1ap_trace_rx_proto[16];
 };
 
 struct sgw_ue_s {
@@ -1997,6 +2006,8 @@ mme_hssmap_t *mme_hssmap_find_by_imsi_bcd(const char *imsi_bcd);
 void mme_home_plmn_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id);
 
 bool mme_imsi_hss_allowed(mme_ue_t *mme_ue);
+/* NULL if allowed; else static reason: imsi_acl | hss_map | access_control */
+const char *mme_imsi_hss_deny_reason(mme_ue_t *mme_ue);
 
 uint8_t mme_emm_cause_from_access_control_imsi_bcd(const char *imsi_bcd);
 

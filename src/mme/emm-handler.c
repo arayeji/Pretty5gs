@@ -20,6 +20,7 @@
 #include "mme-event.h"
 #include "mme-sm.h"
 #include "mme-workers.h"
+#include "mme-trace.h"
 
 #include "nas-security.h"
 
@@ -46,9 +47,14 @@ static uint8_t emm_inbound_roam_access_reject(
     if (emm_cause == OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED)
         return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
 
-    /* ACL deny is expected/configured behavior, not an error - log at debug. */
-    ogs_debug("[%s] Rejected by inbound roam access policy [emm_cause:%d]",
-            imsi_bcd, emm_cause);
+    mme_enb_ue_s1ap_trace_dump(enb_ue, imsi_bcd);
+    /* Always visible when traced; otherwise debug (configured allow-list). */
+    if (ogs_trace_filter_match(imsi_bcd))
+        ogs_warn("[%s] Rejected by inbound roam access policy [emm_cause:%d]",
+                imsi_bcd, emm_cause);
+    else
+        ogs_debug("[%s] Rejected by inbound roam access policy [emm_cause:%d]",
+                imsi_bcd, emm_cause);
     if (tau)
         r = nas_eps_send_tau_reject(enb_ue, mme_ue, emm_cause);
     else
@@ -293,6 +299,7 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
 
             mme_home_plmn_from_imsi_bcd(imsi_bcd, &home_plmn_id);
             ogs_plmn_id_to_string(&home_plmn_id, home_plmn);
+            mme_enb_ue_s1ap_trace_dump(enb_ue, imsi_bcd);
             ogs_warn("[%s] Rejected by PLMN-ID access control "
                     "[home_plmn:%s emm_cause:%d]",
                     imsi_bcd, home_plmn, emm_cause);
@@ -586,6 +593,7 @@ int emm_handle_identity_response(
 
             mme_home_plmn_from_imsi_bcd(imsi_bcd, &home_plmn_id);
             ogs_plmn_id_to_string(&home_plmn_id, home_plmn);
+            mme_enb_ue_s1ap_trace_dump(enb_ue, imsi_bcd);
             ogs_warn("[%s] Rejected by PLMN-ID access control "
                     "[home_plmn:%s emm_cause:%d]",
                     imsi_bcd, home_plmn, emm_cause);

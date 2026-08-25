@@ -33,6 +33,11 @@ void ogs_mme_trace_from_ids(
         ogs_pool_id_t enb_ue_id, ogs_pool_id_t mme_ue_id,
         const char *apn, const char *proc);
 
+/* Move TLS-bound S1AP RX copy onto enb_ue for dump after IMSI is known. */
+void mme_enb_ue_s1ap_trace_take_bound(enb_ue_t *enb_ue);
+void mme_enb_ue_s1ap_trace_dump(enb_ue_t *enb_ue, const char *imsi_bcd);
+void mme_enb_ue_s1ap_trace_clear(enb_ue_t *enb_ue);
+
 /* Attach/SGW pipeline breadcrumbs (INFO; ERROR for *_fail / attach_reject /
  * attach_accept_no_s1 / attach_accept_fail / sgsap_lu_reject) */
 void mme_ue_progress(mme_ue_t *mme_ue, const char *step);

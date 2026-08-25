@@ -237,10 +237,21 @@ static void mme_s6a_send_abort(
 static int mme_s6a_imsi_acl_check(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         uint16_t cmd_code, ogs_pool_id_t gtp_xact_id)
 {
-    if (mme_imsi_hss_allowed(mme_ue))
+    const char *reason;
+
+    reason = mme_imsi_hss_deny_reason(mme_ue);
+    if (!reason)
         return OGS_OK;
 
-    {
+    /*
+     * Always WARN when this IMSI is in mme.trace_imsi — operators enable
+     * trace specifically to see ACL rejects. Otherwise keep 1/s rate limit
+     * so attach storms cannot flood the journal.
+     */
+    if (ogs_trace_filter_match(mme_ue->imsi_bcd)) {
+        ogs_warn("[%s] IMSI ACL/HSS deny before S6a (reason=%s cmd=%u)",
+                mme_ue->imsi_bcd, reason, cmd_code);
+    } else {
         static ogs_time_t last_acl_warn = 0;
         static uint64_t acl_reject_count = 0;
         ogs_time_t now = ogs_time_now();
@@ -249,9 +260,9 @@ static int mme_s6a_imsi_acl_check(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         if (last_acl_warn == 0 ||
                 now - last_acl_warn > ogs_time_from_sec(1)) {
             last_acl_warn = now;
-            ogs_warn("[%s] IMSI not in ACL, reject before HSS (S6a cmd %u) "
+            ogs_warn("[%s] IMSI ACL/HSS deny before S6a (reason=%s cmd=%u) "
                     "(%llu/s suppressed detail)",
-                    mme_ue->imsi_bcd, cmd_code,
+                    mme_ue->imsi_bcd, reason, cmd_code,
                     (unsigned long long)acl_reject_count);
             acl_reject_count = 0;
         }
@@ -2284,7 +2295,12 @@ void mme_s6a_send_pur(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     ogs_debug("[MME] Purge-UE-Request");
 
     if (!mme_imsi_hss_allowed(mme_ue)) {
-        ogs_debug("[%s] skip PUR for ACL-blocked IMSI", mme_ue->imsi_bcd);
+        const char *reason = mme_imsi_hss_deny_reason(mme_ue);
+        if (ogs_trace_filter_match(mme_ue->imsi_bcd))
+            ogs_warn("[%s] skip PUR for ACL-blocked IMSI (reason=%s)",
+                    mme_ue->imsi_bcd, reason ? reason : "?");
+        else
+            ogs_debug("[%s] skip PUR for ACL-blocked IMSI", mme_ue->imsi_bcd);
         return;
     }
 

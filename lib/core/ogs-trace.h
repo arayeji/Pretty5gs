@@ -118,6 +118,16 @@ void ogs_trace_packet_ctx(const char *proto, const char *dir,
  */
 void ogs_trace_packet_bind_rx(const char *proto, const void *data, size_t len);
 void ogs_trace_packet_on_imsi(const char *imsi);
+/*
+ * Cross-thread RX PACKET handoff (MME workers): bind copies into TLS
+ * owned memory; steal moves that buffer to the caller (e.g. enb_ue) so
+ * the UE-owner shard can dump after IMSI is known. No-op / false when
+ * the filter is empty or nothing is bound.
+ */
+bool ogs_trace_filter_active(void);
+bool ogs_trace_packet_steal_rx(uint8_t **data, size_t *len,
+        char *proto, size_t proto_size);
+void ogs_trace_packet_free_buf(uint8_t *data);
 
 /*
  * Trace was requested by MSISDN/IMEI: keep the alias and the resolved

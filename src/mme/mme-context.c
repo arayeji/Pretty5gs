@@ -6422,33 +6422,42 @@ uint8_t mme_emm_cause_from_access_control_imsi_bcd(const char *imsi_bcd)
 
 bool mme_imsi_hss_allowed(mme_ue_t *mme_ue)
 {
+    return mme_imsi_hss_deny_reason(mme_ue) == NULL;
+}
+
+/*
+ * NULL = allowed. Otherwise a short static reason for ACL/HSS-map deny
+ * (safe for logs; not heap-allocated).
+ */
+const char *mme_imsi_hss_deny_reason(mme_ue_t *mme_ue)
+{
     const char *imsi;
 
     ogs_assert(mme_ue);
 
     if (!MME_UE_HAVE_IMSI(mme_ue))
-        return true;
+        return NULL;
 
     imsi = mme_ue->imsi_bcd;
 
     if (self.num_of_imsi_acl > 0 && !mme_imsi_acl_match(imsi))
-        return false;
+        return "imsi_acl";
 
     if (self.require_hss_map && ogs_list_first(&self.hssmap_list) != NULL) {
         if (!mme_ue->hssmap)
             mme_ue->hssmap = mme_hssmap_find_by_imsi_bcd(imsi);
         if (!mme_ue->hssmap)
-            return false;
+            return "hss_map";
     }
 
     if (self.num_of_access_control > 0) {
         uint8_t emm_cause =
             mme_emm_cause_from_access_control_imsi_bcd(imsi);
         if (emm_cause != OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED)
-            return false;
+            return "access_control";
     }
 
-    return true;
+    return NULL;
 }
 
 mme_enb_t *mme_enb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
@@ -6877,6 +6886,8 @@ void enb_ue_remove(enb_ue_t *enb_ue)
     }
     enb_ue->being_removed = true;
     mme_ctx_unlock();
+
+    mme_enb_ue_s1ap_trace_clear(enb_ue);
 
     /*
      * Mark the owning mme_ue as IDLE for the LRU eviction path. If the
@@ -8572,6 +8583,13 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
 
     ogs_cpystrn(mme_ue->imsi_bcd, imsi_bcd, OGS_MAX_IMSI_BCD_LEN+1);
     ogs_bcd_to_buffer(mme_ue->imsi_bcd, mme_ue->imsi, &mme_ue->imsi_len);
+
+    /* Cross-thread S1AP PACKET: dump parked InitialUE/UplinkNAS copy. */
+    {
+        enb_ue_t *enb_ue_trace = enb_ue_find_by_id(mme_ue->enb_ue_id);
+        if (enb_ue_trace)
+            mme_enb_ue_s1ap_trace_dump(enb_ue_trace, mme_ue->imsi_bcd);
+    }
 
     /*
      * Check if an OLD mme_ue exists for this IMSI (duplicate re-attach).

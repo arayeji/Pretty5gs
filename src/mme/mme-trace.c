@@ -21,6 +21,50 @@
 
 #include <stdarg.h>
 
+void mme_enb_ue_s1ap_trace_clear(enb_ue_t *enb_ue)
+{
+    if (!enb_ue)
+        return;
+    if (enb_ue->s1ap_trace_rx) {
+        ogs_trace_packet_free_buf(enb_ue->s1ap_trace_rx);
+        enb_ue->s1ap_trace_rx = NULL;
+    }
+    enb_ue->s1ap_trace_rx_len = 0;
+    enb_ue->s1ap_trace_rx_proto[0] = '\0';
+}
+
+void mme_enb_ue_s1ap_trace_take_bound(enb_ue_t *enb_ue)
+{
+    uint8_t *data = NULL;
+    size_t len = 0;
+    char proto[16];
+
+    ogs_assert(enb_ue);
+
+    mme_enb_ue_s1ap_trace_clear(enb_ue);
+    if (!ogs_trace_packet_steal_rx(&data, &len, proto, sizeof(proto)))
+        return;
+
+    enb_ue->s1ap_trace_rx = data;
+    enb_ue->s1ap_trace_rx_len = len;
+    ogs_cpystrn(enb_ue->s1ap_trace_rx_proto, proto,
+            sizeof(enb_ue->s1ap_trace_rx_proto));
+}
+
+void mme_enb_ue_s1ap_trace_dump(enb_ue_t *enb_ue, const char *imsi_bcd)
+{
+    if (!enb_ue || !enb_ue->s1ap_trace_rx || !enb_ue->s1ap_trace_rx_len)
+        return;
+    if (!imsi_bcd || !imsi_bcd[0])
+        return;
+
+    ogs_trace_packet(imsi_bcd,
+            enb_ue->s1ap_trace_rx_proto[0] ?
+                enb_ue->s1ap_trace_rx_proto : "s1ap",
+            "rx", enb_ue->s1ap_trace_rx, enb_ue->s1ap_trace_rx_len);
+    mme_enb_ue_s1ap_trace_clear(enb_ue);
+}
+
 void ogs_mme_trace_set(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         const char *apn, const char *proc)
@@ -84,8 +128,11 @@ void ogs_mme_trace_set(
 
     /* Full snapshot: unset fields show "-" instead of previous UE/session data. */
     ogs_trace_set(&ctx);
-    if (ctx.imsi[0])
+    if (ctx.imsi[0]) {
         ogs_trace_packet_on_imsi(ctx.imsi);
+        if (enb_ue)
+            mme_enb_ue_s1ap_trace_dump(enb_ue, ctx.imsi);
+    }
 }
 
 void ogs_mme_trace_from_ids(
@@ -132,12 +179,15 @@ void mme_ue_progress(mme_ue_t *mme_ue, const char *step)
 {
     ogs_assert(step);
 
-    if (mme_ue_progress_is_failure(step))
-        /* Reject/fail is an expected per-subscriber outcome (roaming reject,
-         * ACL, S6a deny), not an MME error - log at debug so it stays
-         * filterable per-IMSI via mme.trace_imsi instead of flooding error. */
-        mme_ue_debug(mme_ue, NULL, "attach", NULL, "ATTACH step: %s", step);
-    else
+    if (mme_ue_progress_is_failure(step)) {
+        /* Reject/fail is expected for most UEs (ACL/roaming) — debug by
+         * default. Traced IMSIs always get WARN so operators see the step. */
+        if (mme_ue && MME_UE_HAVE_IMSI(mme_ue) &&
+                ogs_trace_filter_match(mme_ue->imsi_bcd))
+            mme_ue_warn(mme_ue, NULL, "attach", NULL, "ATTACH step: %s", step);
+        else
+            mme_ue_debug(mme_ue, NULL, "attach", NULL, "ATTACH step: %s", step);
+    } else
         mme_ue_info(mme_ue, NULL, "attach", NULL, "ATTACH step: %s", step);
 }
 

@@ -175,6 +175,11 @@ uint8_t mme_inbound_roam_access_emm_cause_at(
             ogs_debug("[%s] inbound roam IMSI not in access_control allow-list "
                     "[serving_plmn:%s tac:%u eNB:0x%x emm_cause:%d]",
                     mme_ue->imsi_bcd, serving_plmn, tac, enb_id, emm_cause);
+            if (ogs_trace_filter_match(mme_ue->imsi_bcd))
+                ogs_warn("[%s] inbound roam IMSI not in access_control "
+                        "allow-list [serving_plmn:%s tac:%u eNB:0x%x "
+                        "emm_cause:%d]",
+                        mme_ue->imsi_bcd, serving_plmn, tac, enb_id, emm_cause);
             return emm_cause;
         }
         return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
@@ -196,6 +201,13 @@ uint8_t mme_inbound_roam_access_emm_cause_at(
                 mme_ue->imsi_bcd, tac,
                 ac->imsi_prefix[0] ? ac->imsi_prefix : "-",
                 serving_plmn, enb_id, emm_cause);
+        if (ogs_trace_filter_match(mme_ue->imsi_bcd))
+            ogs_warn("[%s] inbound roam TAC[%u] not in access_control "
+                    "allow-list [prefix:%s serving_plmn:%s eNB:0x%x "
+                    "emm_cause:%d]",
+                    mme_ue->imsi_bcd, tac,
+                    ac->imsi_prefix[0] ? ac->imsi_prefix : "-",
+                    serving_plmn, enb_id, emm_cause);
         return emm_cause;
     }
 
@@ -209,6 +221,12 @@ uint8_t mme_inbound_roam_access_emm_cause_at(
                     mme_ue->imsi_bcd,
                     ac->imsi_prefix[0] ? ac->imsi_prefix : "-",
                     serving_plmn, tac, emm_cause);
+            if (ogs_trace_filter_match(mme_ue->imsi_bcd))
+                ogs_warn("[%s] inbound roam eNB-ID unknown for access_control "
+                        "[prefix:%s serving_plmn:%s tac:%u emm_cause:%d]",
+                        mme_ue->imsi_bcd,
+                        ac->imsi_prefix[0] ? ac->imsi_prefix : "-",
+                        serving_plmn, tac, emm_cause);
             return emm_cause;
         }
         if (!ogs_hash_get(ac->enb_id_hash, &enb_id, sizeof(enb_id))) {
@@ -220,6 +238,13 @@ uint8_t mme_inbound_roam_access_emm_cause_at(
                     mme_ue->imsi_bcd, enb_id,
                     ac->imsi_prefix[0] ? ac->imsi_prefix : "-",
                     serving_plmn, tac, emm_cause);
+            if (ogs_trace_filter_match(mme_ue->imsi_bcd))
+                ogs_warn("[%s] inbound roam eNB-ID[0x%x] not in access_control "
+                        "allow-list [prefix:%s serving_plmn:%s tac:%u "
+                        "emm_cause:%d]",
+                        mme_ue->imsi_bcd, enb_id,
+                        ac->imsi_prefix[0] ? ac->imsi_prefix : "-",
+                        serving_plmn, tac, emm_cause);
             return emm_cause;
         }
     }
