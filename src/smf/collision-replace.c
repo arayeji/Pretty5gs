@@ -196,7 +196,24 @@ static bool smf_sess_collision_replace_begin(
                 OGS_INET_NTOP(&old_sess->ipv4->addr, buf4) : "-",
             (unsigned long long)old_sess->upf_n4_seid);
 
-    {
+    if (OGS_FSM_CHECK(&old_sess->sm, smf_gsm_state_wait_pfcp_deletion)) {
+        /*
+         * The old session is ALREADY in wait_pfcp_deletion (an earlier
+         * teardown never got a PFCP answer, e.g. dead/restarted UPF).
+         * ogs_fsm_tran() to the current state is a no-op - no ENTRY
+         * handler runs, so no new PFCP deletion would be sent and the
+         * replace would hang forever, rejecting every re-attach with
+         * "collision replace already pending". Send a fresh deletion;
+         * its response or timeout now always completes the replace.
+         */
+        if (smf_epc_pfcp_send_session_deletion_request(
+                    old_sess, OGS_INVALID_POOL_ID) != OGS_OK) {
+            ogs_error("[%s] collision replace: PFCP deletion re-send "
+                    "failed; completing replace immediately",
+                    smf_ue->imsi_bcd);
+            smf_sess_collision_replace_complete(old_sess);
+        }
+    } else {
         smf_event_t ev;
 
         memset(&ev, 0, sizeof(ev));

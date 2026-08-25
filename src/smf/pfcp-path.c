@@ -23,6 +23,7 @@
 #include "collision-replace.h"
 #include "smf-trace.h"
 #include "event.h"
+#include "smf-sm.h"
 
 /* Converts PFCP "Usage Report" "Report Trigger" bitmask to Gy "Reporting-Reason" AVP enum value.
  * PFCP: 3GPP TS 29.244 sec 8.2.41
@@ -531,8 +532,48 @@ static void sess_epc_timeout(ogs_pfcp_xact_t *xact, void *data)
                     sess,
                     gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID, 0);
             ogs_expect(rv == OGS_OK);
-        } else
-            ogs_error("No PFCP session deletion response");
+        } else {
+            /*
+             * The UPF never answered the PFCP Session Deletion Request
+             * (dead/restarted UPF). Previously this only logged an error
+             * and left the session parked in wait_pfcp_deletion forever:
+             * that state ignores S5C messages, so later admin deletes,
+             * Delete Bearer Responses and re-attach collision replaces
+             * all dead-ended against the wedged session. The UPF side is
+             * unreachable either way, so answer any pending GTP peer and
+             * release the session locally.
+             */
+            ogs_gtp_xact_t *gtp_xact =
+                ogs_gtp_xact_find_by_id(xact->assoc_xact_id);
+
+            ogs_error("[%s] No PFCP session deletion response; "
+                    "releasing session locally",
+                    smf_log_id(smf_ue_find_by_id(sess->smf_ue_id)));
+
+            if (gtp_xact) {
+                if (gtp_xact->gtp_version == 1)
+                    ogs_gtp1_send_error_message(gtp_xact,
+                            sess->sgw_s5c_teid,
+                            OGS_GTP1_DELETE_PDP_CONTEXT_RESPONSE_TYPE,
+                            OGS_GTP1_CAUSE_REQUEST_ACCEPTED);
+                else
+                    ogs_gtp2_send_error_message(gtp_xact,
+                            sess->sgw_s5c_teid,
+                            OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE,
+                            OGS_GTP2_CAUSE_REQUEST_ACCEPTED);
+            }
+
+            if (OGS_FSM_CHECK(&sess->sm, smf_gsm_state_wait_pfcp_deletion)) {
+                smf_event_t ev;
+
+                memset(&ev, 0, sizeof(ev));
+                ev.sess_id = sess->id;
+                ogs_fsm_tran(&sess->sm,
+                        smf_gsm_state_session_will_release, &ev);
+            } else {
+                smf_sess_remove(sess);
+            }
+        }
         break;
     default:
         ogs_error("Not implemented [type:%d]", type);

@@ -193,6 +193,26 @@ static void smf_admin_detach_one_session(smf_sess_t *sess, int admin_force)
         return;
     }
 
+    if (OGS_FSM_CHECK(&sess->sm, smf_gsm_state_wait_pfcp_deletion)) {
+        /*
+         * A teardown is already in flight (or wedged against a dead UPF).
+         * That state ignores S5C messages, so a graceful Delete Bearer
+         * Request would be sent and its response silently dropped -
+         * every admin retry would report success and change nothing.
+         * Escalate: answer any parked collision-replace CSR, best-effort
+         * PFCP deletion, and remove the session locally.
+         */
+        ogs_warn("admin session delete: teardown already in progress "
+                "(sess_id=%d) - forcing local removal", (int)sess->id);
+        smf_ue_collision_abort(smf_ue);
+        rv = smf_epc_pfcp_send_session_deletion_best_effort(sess);
+        ogs_expect(rv == OGS_OK);
+        smf_sess_remove(sess);
+        if (smf_ue && ogs_list_empty(&smf_ue->sess_list))
+            smf_ue_remove(smf_ue);
+        return;
+    }
+
     if (!sess->epc) {
         ogs_warn("admin session delete: non-EPC session id=%d — "
                 "forcing PFCP teardown", (int)sess->id);

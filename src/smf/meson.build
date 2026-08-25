@@ -17,8 +17,6 @@
 
 smf_conf = configuration_data()
 
-libcrypto_dep = dependency('libcrypto', required : true)
-
 smf_headers = ('''
     net/if.h
     netinet/ip.h
@@ -151,8 +149,7 @@ libsmf_deps = [libmetrics_dep,
                 libdiameter_gx_dep,
                 libdiameter_gy_dep,
                 libdiameter_s6b_dep,
-                libpfcp_dep,
-                libcrypto_dep]
+                libpfcp_dep]
 
 libsmf_c_args = []
 

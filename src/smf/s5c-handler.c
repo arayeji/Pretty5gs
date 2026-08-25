@@ -1428,6 +1428,26 @@ bool smf_s5c_handle_delete_bearer_response(
     }
 
     /*
+     * Error responses (e.g. "Context Not Found (64)") carry only a Cause
+     * IE - no Linked EPS Bearer ID. If the Delete Bearer Request was for
+     * the DEFAULT bearer (PDN teardown: admin delete, RADIUS PoD, ...),
+     * the session must still be released; otherwise a peer that already
+     * lost its context leaves the smf_sess allocated forever and every
+     * follow-up graceful delete dead-ends the same way. Seen in collapsed
+     * SAEGW mode where the MME answered a stale S11 TEID with cause 64.
+     */
+    if (bearer == smf_default_bearer_in_sess(sess)) {
+        cause_value = OGS_GTP2_CAUSE_UNDEFINED_VALUE;
+        if (rsp->cause.presence && rsp->cause.data)
+            cause_value = ((ogs_gtp2_cause_t *)rsp->cause.data)->value;
+        ogs_warn("Delete Bearer Response for DEFAULT bearer without "
+                "Linked EBI (GTP Cause [Value:%d]); releasing session",
+                cause_value);
+        /* Release entire session: */
+        return true;
+    }
+
+    /*
      * 1. MME sends Bearer Resource Command to SGW/SMF.
      * 2. SMF sends Delete Bearer Request(DEDICATED BEARER) to SGW/MME
      * 3. MME sends Delete Bearer Response(DEDICATED BEARER) to SGW/SMF
