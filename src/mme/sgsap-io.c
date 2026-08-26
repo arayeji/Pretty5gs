@@ -26,6 +26,15 @@
 #define SGSAP_IO_EAGAIN_RETRIES     64
 #define SGSAP_IO_EAGAIN_SLEEP_US    1000
 
+/*
+ * TX stall watchdog: if every send has EAGAINed for this long (peer
+ * stopped ACKing - zero receive window / half-dead association - while
+ * SCTP heartbeats keep it nominally up), ask main to reset the
+ * association. Seen live: VLR wedged for 90+ minutes, 347k PDUs
+ * dropped, only an MME restart recovered.
+ */
+#define SGSAP_IO_TX_STALL_RESET     ogs_time_from_sec(15)
+
 typedef struct io_job_s {
     mme_vlr_t *vlr;
     ogs_pkbuf_t *pkbuf;
@@ -41,6 +50,8 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
     mme_vlr_t *vlr = NULL;
     bool found = false;
     int rv = OGS_ERROR;
+    ogs_sock_t *stall_sock = NULL;
+    ogs_time_t stalled_for = 0;
 
     ogs_assert(job);
     ogs_assert(job->pkbuf);
@@ -63,6 +74,23 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
     if (found) {
         /* OK/ERROR consume pkbuf; RETRY leaves ownership with us. */
         rv = sgsap_send(job->vlr->sock, job->pkbuf, job->stream_no);
+
+        /* TX stall watchdog (fields guarded by the ctx lock held here) */
+        if (rv == OGS_OK) {
+            vlr->tx_stall_since = 0;
+            vlr->tx_stall_posted = false;
+        } else if (rv == OGS_RETRY && vlr->sock) {
+            ogs_time_t now = ogs_time_now();
+
+            if (!vlr->tx_stall_since) {
+                vlr->tx_stall_since = now;
+            } else if (!vlr->tx_stall_posted &&
+                    (now - vlr->tx_stall_since) >= SGSAP_IO_TX_STALL_RESET) {
+                vlr->tx_stall_posted = true;
+                stall_sock = vlr->sock;
+                stalled_for = now - vlr->tx_stall_since;
+            }
+        }
     } else {
         ogs_warn("sgsap-io: VLR removed; dropping PDU (len:%d stream:%d)",
                 job->pkbuf->len, job->stream_no);
@@ -71,6 +99,14 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
         rv = OGS_ERROR;
     }
     mme_ctx_unlock();
+
+    if (stall_sock) {
+        ogs_error("sgsap-io: VLR TX stalled for %d s (SCTP send buffer "
+                "full, zero progress); requesting association reset",
+                (int)ogs_time_sec(stalled_for));
+        sgsap_event_push(MME_EVENT_SGSAP_TX_STALL,
+                stall_sock, NULL, NULL, 0, 0);
+    }
 
     if (rv == OGS_RETRY) {
         job->retries++;

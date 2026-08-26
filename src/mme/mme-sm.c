@@ -2006,6 +2006,32 @@ cleanup:
         }
 
         break;
+    case MME_EVENT_SGSAP_TX_STALL:
+        sock = e->sock;
+        ogs_assert(sock);
+
+        /*
+         * sgsap-io watchdog: the SCTP send path made zero progress for
+         * the whole stall window (peer stopped ACKing / zero receive
+         * window) while heartbeats kept the association nominally up.
+         * Reset it like a CONNREFUSED: close + reconnect.
+         */
+        vlr = mme_vlr_find_by_sock(sock);
+        if (!vlr) {
+            ogs_warn("SGsAP TX_STALL: VLR already closed/removed "
+                    "(sock:%p)", sock);
+            break;
+        }
+        ogs_assert(OGS_FSM_STATE(&vlr->sm));
+
+        if (OGS_FSM_CHECK(&vlr->sm, sgsap_state_connected)) {
+            e->vlr = vlr;
+            ogs_fsm_dispatch(&vlr->sm, e);
+        } else {
+            ogs_warn("VLR-SGs %s TX stalled, but not in connected state",
+                    ogs_sockaddr_to_string_static(vlr->sa_list));
+        }
+        break;
     case MME_EVENT_SGSAP_MESSAGE:
         pkbuf = e->pkbuf;
         ogs_assert(pkbuf);

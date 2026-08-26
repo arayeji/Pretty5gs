@@ -329,6 +329,8 @@ const char *mme_event_get_name(mme_event_t *e)
         return "MME_EVENT_SGSAP_LO_SCTP_COMM_UP";
     case MME_EVENT_SGSAP_LO_CONNREFUSED:
         return "MME_EVENT_SGSAP_LO_CONNREFUSED";
+    case MME_EVENT_SGSAP_TX_STALL:
+        return "MME_EVENT_SGSAP_TX_STALL";
 
     case MME_EVENT_GN_MESSAGE:
         return "MME_EVENT_GN_MESSAGE";
@@ -672,7 +674,10 @@ void mme_sctp_event_push(mme_event_e id,
     if (ogs_worker_self()) {
         must_deliver = (id == MME_EVENT_S1AP_IO_DRAINED ||
                 id == MME_EVENT_S1AP_RX_SOCK_CLOSED ||
-                id == MME_EVENT_S1AP_RX_WATCH_FAILED);
+                id == MME_EVENT_S1AP_RX_WATCH_FAILED ||
+                /* one-shot per stall episode; losing it would leave the
+                 * dead VLR association up forever */
+                id == MME_EVENT_SGSAP_TX_STALL);
 
         if (must_deliver) {
             int tries = 0;

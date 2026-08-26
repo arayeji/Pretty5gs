@@ -613,6 +613,14 @@ typedef struct mme_vlr_s {
     ogs_poll_t      *poll;      /* VLR SGsAP Poll */
 
     bool            seen;       /* still present in the reloaded config */
+
+    /*
+     * SGsAP TX stall watchdog (owned by the sgsap-io thread, guarded by
+     * mme_ctx_lock): first EAGAIN timestamp since the last successful
+     * send, and whether the association-reset event was already pushed.
+     */
+    ogs_time_t      tx_stall_since;
+    bool            tx_stall_posted;
 } mme_vlr_t;
 
 typedef struct mme_csmap_s {

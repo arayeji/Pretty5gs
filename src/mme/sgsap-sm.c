@@ -192,6 +192,13 @@ void sgsap_state_connected(ogs_fsm_t *s, mme_event_t *e)
         mme_vlr_close(vlr);
         OGS_FSM_TRAN(s, sgsap_state_will_connect);
         break;
+    case MME_EVENT_SGSAP_TX_STALL:
+        ogs_error("[SGsAP] VLR %s TX stalled (send buffer full, no "
+                "progress); resetting SCTP association",
+                ogs_sockaddr_to_string_static(vlr->sa_list));
+        mme_vlr_close(vlr);
+        OGS_FSM_TRAN(s, sgsap_state_will_connect);
+        break;
     case MME_EVENT_SGSAP_MESSAGE:
         pkbuf = e->pkbuf;
         ogs_assert(pkbuf);

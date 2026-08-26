@@ -5222,6 +5222,9 @@ void mme_vlr_close(mme_vlr_t *vlr)
         ogs_sctp_destroy(vlr->sock);
         vlr->sock = NULL;
     }
+    /* Fresh association starts with a clean TX stall watchdog. */
+    vlr->tx_stall_since = 0;
+    vlr->tx_stall_posted = false;
     mme_ctx_unlock();
 }
 
