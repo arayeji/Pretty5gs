@@ -218,7 +218,19 @@ static int epoll_remove(ogs_poll_t *poll)
     }
 
     map = ogs_hash_get(context->map_hash, &poll->fd, sizeof(poll->fd));
-    ogs_assert(map);
+    if (!map) {
+        /*
+         * Already detached: teardown paths can remove the same fd twice
+         * (e.g. MME exit: the S1AP close registry reaps an eNB socket,
+         * then mme_enb_remove() removes its still-set poll.write).
+         * Was ogs_assert(map) - aborting at exit turned this stale no-op
+         * into SIGABRT + a multi-GB core dump, so the daemon sat until
+         * systemd's TimeoutStopSec SIGKILL (90 s "hung" restarts).
+         */
+        ogs_error("epoll_remove: no map for fd=%d (already removed)",
+                (int)poll->fd);
+        return OGS_ERROR;
+    }
 
     if (poll->when & OGS_POLLIN)
         map->read = NULL;
