@@ -338,6 +338,23 @@ ogs_pkbuf_t *smf_n4_build_pdr_to_modify_list(
             num_of_update_urr++;
         }
     }
+    if (modify_flags & OGS_PFCP_MODIFY_DROBU) {
+        /*
+         * Message-level PFCPSMReq-Flags DROBU=1 (TS 29.244 5.2.4.3):
+         * drop the DL packets the UP function currently buffers for
+         * this session. Sent together with the Update FAR (BUFF|NOCP)
+         * so the buffering episode restarts and the next DL packet
+         * raises a fresh Downlink Data Report.
+         */
+        ogs_pfcp_smreq_flags_t smreq_flags;
+
+        memset(&smreq_flags, 0, sizeof(smreq_flags));
+        smreq_flags.drop_buffered_packets = 1;
+
+        req->pfcpsmreq_flags.presence = 1;
+        req->pfcpsmreq_flags.u8 = smreq_flags.value;
+    }
+
     ogs_assert(num_of_remove_pdr + num_of_remove_far + num_of_create_pdr +
             num_of_create_far + num_of_update_pdr + num_of_update_far +
             num_of_update_qer + num_of_update_urr);

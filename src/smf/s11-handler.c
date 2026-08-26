@@ -390,6 +390,44 @@ void smf_s11_handle_release_access_bearers_request(
     }
 }
 
+/*
+ * The UPF raises a single Downlink Data Report per buffering episode.
+ * If the DDN it triggered dies - the MME never answers (e.g. paging
+ * outlived its GTP NOTIFY transaction) or answers Unable-to-page -
+ * nothing ever resets the buffering state: the UPF stays silent, no
+ * further DDN/paging can happen, and the UE is unreachable for MT
+ * traffic until it contacts the network by itself.
+ *
+ * Recover the way SGW-C does (TS 23.401 5.3.4.3): drop the stale
+ * buffered packets (PFCPSMReq-Flags DROBU) while rewriting the DL FAR
+ * as BUFF|NOCP, so the next DL packet starts a fresh
+ * report -> DDN -> paging cycle.
+ */
+static void s11_ddn_rearm(smf_sess_t *sess)
+{
+    smf_bearer_t *default_bearer = NULL;
+
+    if (!sess || !sess->pfcp_node)
+        return;
+
+    default_bearer = smf_default_bearer_in_sess(sess);
+    if (!default_bearer || !default_bearer->dl_far)
+        return;
+
+    /* UE went active in the meantime: DL is forwarding again,
+     * do not flip it back to buffering. */
+    if (default_bearer->dl_far->apply_action & OGS_PFCP_APPLY_ACTION_FORW)
+        return;
+
+    if (smf_epc_pfcp_send_all_pdr_modification_request(
+            sess, OGS_INVALID_POOL_ID, NULL,
+            OGS_PFCP_MODIFY_DL_ONLY|OGS_PFCP_MODIFY_DEACTIVATE|
+            OGS_PFCP_MODIFY_S11_BUFFER|OGS_PFCP_MODIFY_DROBU,
+            OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED,
+            OGS_GTP2_CAUSE_UNDEFINED_VALUE) != OGS_OK)
+        ogs_error("DDN re-arm: PFCP modification failed");
+}
+
 void smf_s11_handle_downlink_data_notification_ack(
         smf_sess_t *sess, ogs_gtp_xact_t *xact,
         ogs_gtp2_downlink_data_notification_acknowledge_t *ack)
@@ -413,6 +451,13 @@ void smf_s11_handle_downlink_data_notification_ack(
             cause_value != OGS_GTP2_CAUSE_UE_ALREADY_RE_ATTACHED)
             ogs_warn("Downlink Data Notification Ack: GTP Cause [%d]",
                     cause_value);
+
+        if (cause_value == OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE ||
+            cause_value ==
+                OGS_GTP2_CAUSE_UNABLE_TO_PAGE_UE_DUE_TO_SUSPENSION) {
+            ogs_info("DDN Ack Unable-to-page: DROBU + re-arm DL buffering");
+            s11_ddn_rearm(sess);
+        }
     } else {
         ogs_error("Downlink Data Notification Ack: no Cause");
     }
@@ -434,7 +479,9 @@ static void ddn_timeout(ogs_gtp_xact_t *xact, void *data)
     }
 
     ogs_error("Downlink Data Notification: no response from MME "
-            "(bearer EBI[%d])", bearer->ebi);
+            "(bearer EBI[%d]); DROBU + re-arm DL buffering", bearer->ebi);
+
+    s11_ddn_rearm(smf_sess_find_by_id(bearer->sess_id));
 }
 
 static ogs_pkbuf_t *s11_build_downlink_data_notification(
