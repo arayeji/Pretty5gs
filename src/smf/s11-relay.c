@@ -197,6 +197,11 @@ void smf_s11_relay_handle_create_session_request(
         sess->session.session_type = req->pdn_type.u8;
     }
 
+    /* Serving Network: relay CSRs bypass the S5C handler, so take the
+     * per-PLMN gauge label here (otherwise it stays 000000). */
+    if (req->serving_network.presence && req->serving_network.data)
+        ogs_nas_to_plmn_id(&sess->serving_plmn_id, req->serving_network.data);
+
     /* UPF */
     if (!sess->pfcp_node)
         smf_sess_select_upf(sess);
@@ -672,6 +677,16 @@ void smf_s11_relay_forward_create_session_response(
     }
     rv = ogs_gtp_xact_commit(s11_xact);
     ogs_expect(rv == OGS_OK);
+
+    /*
+     * The relay session is now fully established. Mark it counted so the
+     * per-PLMN session gauge includes S8-relay PDNs and — critically — the
+     * orphan sweep does not mistake it for a never-established session:
+     * relay CSRs bypass the S5C/Gn handlers that normally set
+     * metrics_session_counted, so every relay session used to be purged
+     * after the grace period (attach/purge loop every sweep interval).
+     */
+    smf_metrics_session_active_inc(sess);
 
     smf_ue_info(smf_ue, sess, "s8-relay",
             "session established via home PGW "
