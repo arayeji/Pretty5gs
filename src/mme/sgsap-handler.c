@@ -646,6 +646,19 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         bool s1_live = false;
         bool page_as_idle;
 
+        /*
+         * SGs paging is IMSI-addressed, so do NOT require a *confirmed*
+         * (current) P-TMSI here: the MSC typically pages for a pending MT
+         * SMS right after LU-Accept, before the UE has sent Attach/TAU
+         * Complete — at that point the reallocated P-TMSI is still in
+         * 'next'. Gating on MME_CURRENT_P_TMSI_IS_AVAILABLE (via the
+         * CS_CALL/SMS_SERVICE_INDICATOR macros) bounced every such page
+         * with the bogus cause 13 "MT CSFB call rejected by user".
+         * Accept the association with either a current or a next P-TMSI.
+         */
+        bool sgs_assoc = MME_SGSAP_IS_CONNECTED(mme_ue) &&
+            (mme_ue->current.p_tmsi || mme_ue->next.p_tmsi);
+
         if (enb_ue)
             enb = mme_enb_find_by_id(enb_ue->enb_id);
         s1_live = enb_ue && enb && enb->sctp.sock &&
@@ -654,6 +667,20 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         page_as_idle = ECM_IDLE(mme_ue) || !enb_ue || release_pending ||
             !s1_live;
 
+        if (!sgs_assoc) {
+            ogs_warn("[%s] SGsAP Paging-Request (%s): no SGs association "
+                    "(SGs %sconnected, P-TMSI cur=0x%x next=0x%x) — "
+                    "Paging-Reject",
+                    mme_ue->imsi_bcd,
+                    mme_ue->service_indicator ==
+                        SGSAP_SMS_SERVICE_INDICATOR ?  "SMS" : "CS",
+                    MME_SGSAP_IS_CONNECTED(mme_ue) ? "" : "not ",
+                    (unsigned)mme_ue->current.p_tmsi,
+                    (unsigned)mme_ue->next.p_tmsi);
+            sgs_cause = SGSAP_SGS_CAUSE_IMSI_DETACHED_NON_EPS;
+            goto paging_reject;
+        }
+
         if (page_as_idle) {
             /*
              * New SGs-triggered page: drop any stale T3413 state so
@@ -661,23 +688,20 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
              */
             CLEAR_MME_UE_TIMER(mme_ue->t3413);
 
-            if (CS_CALL_SERVICE_INDICATOR(mme_ue)) {
+            if (mme_ue->service_indicator == SGSAP_CS_CALL_SERVICE_INDICATOR) {
                 /* UE will respond Extended Service Request in CS CNDomain*/
                 MME_STORE_PAGING_INFO(mme_ue,
                     MME_PAGING_TYPE_CS_CALL_SERVICE, NULL);
                 ogs_info("[%s] SGsAP Paging-Request (CS): S1AP paging",
                         mme_ue->imsi_bcd);
                 r = s1ap_send_paging(mme_ue, S1AP_CNDomain_cs);
-            } else if (SMS_SERVICE_INDICATOR(mme_ue)) {
-                /* UE will respond Service Request in PS CNDomain*/
+            } else {
+                /* SMS: UE will respond Service Request in PS CNDomain */
                 MME_STORE_PAGING_INFO(mme_ue,
                     MME_PAGING_TYPE_SMS_SERVICE, NULL);
                 ogs_info("[%s] SGsAP Paging-Request (SMS): S1AP paging",
                         mme_ue->imsi_bcd);
                 r = s1ap_send_paging(mme_ue, S1AP_CNDomain_ps);
-            } else {
-                sgs_cause = SGSAP_SGS_CAUSE_MT_CS_FALLBACK_REJECT_BY_USER;
-                goto paging_reject;
             }
 
             if (r != OGS_OK) {
@@ -690,12 +714,12 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
             }
         } else {
             MME_CLEAR_PAGING_INFO(mme_ue);
-            if (CS_CALL_SERVICE_INDICATOR(mme_ue)) {
+            if (mme_ue->service_indicator == SGSAP_CS_CALL_SERVICE_INDICATOR) {
                 ogs_info("[%s] SGsAP Paging-Request (CS): UE connected, "
                         "CS Service Notification", mme_ue->imsi_bcd);
                 r = nas_eps_send_cs_service_notification(mme_ue);
                 ogs_expect(r == OGS_OK);
-            } else if (SMS_SERVICE_INDICATOR(mme_ue)) {
+            } else {
                 ogs_info("[%s] SGsAP Paging-Request (SMS): UE connected, "
                         "SGsAP Service-Request", mme_ue->imsi_bcd);
                 if (sgsap_send_service_request(
@@ -719,9 +743,6 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
                         goto paging_reject;
                     }
                 }
-            } else {
-                sgs_cause = SGSAP_SGS_CAUSE_MT_CS_FALLBACK_REJECT_BY_USER;
-                goto paging_reject;
             }
         }
     }
