@@ -59,6 +59,7 @@ typedef struct mme_hssmap_s mme_hssmap_t;
 typedef struct enb_ue_s enb_ue_t;
 typedef struct sgw_ue_s sgw_ue_t;
 typedef struct mme_ue_s mme_ue_t;
+struct mme_s1ap_trace_rx_s;
 
 typedef struct mme_sess_s mme_sess_t;
 typedef struct mme_bearer_s mme_bearer_t;
@@ -893,10 +894,13 @@ struct enb_ue_s {
      * Pending S1AP RX PACKET dump for trace_imsi. Bound on the S1AP
      * RX/main thread (copy), dumped on the UE-owner shard once IMSI is
      * known — TLS bind alone never crosses mme.workers.
+     *
+     * Atomic: dump / take_bound / enb_ue_remove steal via
+     * __atomic_exchange_n. A plain check-then-free double-frees the
+     * parked buffer (glibc "double free or corruption") when attach
+     * set_imsi races S1AP take_bound or enb_ue_remove.
      */
-    uint8_t         *s1ap_trace_rx;
-    size_t          s1ap_trace_rx_len;
-    char            s1ap_trace_rx_proto[16];
+    struct mme_s1ap_trace_rx_s *s1ap_trace_rx;
 };
 
 struct sgw_ue_s {

@@ -21,16 +21,30 @@
 
 #include <stdarg.h>
 
+struct mme_s1ap_trace_rx_s {
+    uint8_t *data;
+    size_t len;
+    char proto[16];
+};
+
+static void s1ap_trace_rx_free(struct mme_s1ap_trace_rx_s *blob)
+{
+    if (!blob)
+        return;
+    ogs_trace_packet_free_buf(blob->data);
+    ogs_free(blob);
+}
+
+static struct mme_s1ap_trace_rx_s *s1ap_trace_rx_steal(enb_ue_t *enb_ue)
+{
+    return __atomic_exchange_n(&enb_ue->s1ap_trace_rx, NULL, __ATOMIC_ACQ_REL);
+}
+
 void mme_enb_ue_s1ap_trace_clear(enb_ue_t *enb_ue)
 {
     if (!enb_ue)
         return;
-    if (enb_ue->s1ap_trace_rx) {
-        ogs_trace_packet_free_buf(enb_ue->s1ap_trace_rx);
-        enb_ue->s1ap_trace_rx = NULL;
-    }
-    enb_ue->s1ap_trace_rx_len = 0;
-    enb_ue->s1ap_trace_rx_proto[0] = '\0';
+    s1ap_trace_rx_free(s1ap_trace_rx_steal(enb_ue));
 }
 
 void mme_enb_ue_s1ap_trace_take_bound(enb_ue_t *enb_ue)
@@ -38,6 +52,7 @@ void mme_enb_ue_s1ap_trace_take_bound(enb_ue_t *enb_ue)
     uint8_t *data = NULL;
     size_t len = 0;
     char proto[16];
+    struct mme_s1ap_trace_rx_s *blob, *old;
 
     ogs_assert(enb_ue);
 
@@ -45,24 +60,38 @@ void mme_enb_ue_s1ap_trace_take_bound(enb_ue_t *enb_ue)
     if (!ogs_trace_packet_steal_rx(&data, &len, proto, sizeof(proto)))
         return;
 
-    enb_ue->s1ap_trace_rx = data;
-    enb_ue->s1ap_trace_rx_len = len;
-    ogs_cpystrn(enb_ue->s1ap_trace_rx_proto, proto,
-            sizeof(enb_ue->s1ap_trace_rx_proto));
+    blob = ogs_calloc(1, sizeof(*blob));
+    if (!blob) {
+        ogs_trace_packet_free_buf(data);
+        return;
+    }
+    blob->data = data;
+    blob->len = len;
+    ogs_cpystrn(blob->proto, proto, sizeof(blob->proto));
+
+    old = __atomic_exchange_n(&enb_ue->s1ap_trace_rx, blob, __ATOMIC_ACQ_REL);
+    if (old)
+        s1ap_trace_rx_free(old);
 }
 
 void mme_enb_ue_s1ap_trace_dump(enb_ue_t *enb_ue, const char *imsi_bcd)
 {
-    if (!enb_ue || !enb_ue->s1ap_trace_rx || !enb_ue->s1ap_trace_rx_len)
+    struct mme_s1ap_trace_rx_s *blob;
+
+    if (!enb_ue)
         return;
     if (!imsi_bcd || !imsi_bcd[0])
         return;
 
-    ogs_trace_packet(imsi_bcd,
-            enb_ue->s1ap_trace_rx_proto[0] ?
-                enb_ue->s1ap_trace_rx_proto : "s1ap",
-            "rx", enb_ue->s1ap_trace_rx, enb_ue->s1ap_trace_rx_len);
-    mme_enb_ue_s1ap_trace_clear(enb_ue);
+    blob = s1ap_trace_rx_steal(enb_ue);
+    if (!blob)
+        return;
+
+    if (blob->data && blob->len)
+        ogs_trace_packet(imsi_bcd,
+                blob->proto[0] ? blob->proto : "s1ap",
+                "rx", blob->data, blob->len);
+    s1ap_trace_rx_free(blob);
 }
 
 void ogs_mme_trace_set(
