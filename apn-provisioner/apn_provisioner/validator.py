@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 # Reverse token tables (mirror cp_builder). value is None => generic, value
 # supplied by the following inline string / value token.
 _ATTR_START = {
-    (0, 0x46): ("version", "1.0"),
+    (0, 0x46): ("version", None),   # generic "version="; inline value follows
     (0, 0x06): ("value", None),
     (0, 0x07): ("name", "NAME"),
     (0, 0x08): ("name", "NAP-ADDRESS"),
@@ -103,6 +103,10 @@ def _read_element(r: _Reader, page: list) -> Element:
             if b == 0x01:  # END of content
                 r.i += 1
                 break
+            if b == 0x00:  # SWITCH_PAGE on the tag code page (all tags are p0)
+                r.i += 1
+                r.u8()  # consume target page
+                continue
             el.children.append(_read_element(r, page))
     return el
 
@@ -131,6 +135,11 @@ def _read_attrs(r: _Reader, el: Element, page: list) -> None:
                 raise MalformedError(f"unknown value token 0x{b:02X}")
             el.attrs[pending] = _VALUE_TOKEN[b]
             pending = None
+            continue
+        if b == 0x06:  # "value=" marker, valid on the current code page
+            if pending is not None:
+                el.attrs[pending] = ""
+            pending = "value"
             continue
         # attribute-start token
         key = (page[0], b)
