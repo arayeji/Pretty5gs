@@ -202,6 +202,27 @@ void smf_s11_relay_handle_create_session_request(
     if (req->serving_network.presence && req->serving_network.data)
         ogs_nas_to_plmn_id(&sess->serving_plmn_id, req->serving_network.data);
 
+    /* ULI: relay sessions emit Ga CDRs too, and userLocationInformation
+     * [32] is read from sess->gtp.user_location_information (the S5C
+     * handler normally stores it; relay CSRs bypass that path). */
+    if (req->user_location_information.presence) {
+        ogs_gtp2_uli_t uli;
+        int decoded = ogs_gtp2_parse_uli(
+                &uli, &req->user_location_information);
+        if (decoded == req->user_location_information.len) {
+            if (uli.flags.tai)
+                memcpy(&sess->e_tai, &uli.tai, sizeof(sess->e_tai));
+            if (uli.flags.e_cgi)
+                memcpy(&sess->e_cgi, &uli.e_cgi, sizeof(sess->e_cgi));
+            OGS_TLV_STORE_DATA(&sess->gtp.user_location_information,
+                    &req->user_location_information);
+        } else {
+            ogs_warn("[%s:%s] S8 relay: invalid ULI in CSR (len=%d "
+                    "decoded=%d)", smf_ue->imsi_bcd, sess->session.name,
+                    req->user_location_information.len, decoded);
+        }
+    }
+
     /* UPF */
     if (!sess->pfcp_node)
         smf_sess_select_upf(sess);

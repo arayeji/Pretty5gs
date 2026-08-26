@@ -158,6 +158,10 @@ typedef struct ue_pdn_snap_s {
     uint32_t    pgw_s5c_teid;
     bool        has_pgw_cfg;
     char        pgw_cfg[OGS_ADDRSTRLEN];
+    bool        has_ue_ip4;
+    char        ue_ip4[OGS_ADDRSTRLEN];
+    bool        has_ue_ip6;
+    char        ue_ip6[OGS_ADDRSTRLEN];
 } ue_pdn_snap_t;
 
 typedef struct ue_snap_s {
@@ -255,6 +259,27 @@ static void ue_snapshot_fill(ue_snap_t *s, const mme_ue_t *ue)
 
             if (sess->session && sess->session->qos.index > 0)
                 p->qci = sess->session->qos.index;
+
+            /* UE address from the CSR-response PAA (also present for
+             * home-routed roamers, where the home PGW assigned it). */
+            switch (sess->paa.session_type) {
+            case OGS_PDU_SESSION_TYPE_IPV4:
+                OGS_INET_NTOP(&sess->paa.addr, p->ue_ip4);
+                p->has_ue_ip4 = true;
+                break;
+            case OGS_PDU_SESSION_TYPE_IPV6:
+                OGS_INET6_NTOP(sess->paa.addr6, p->ue_ip6);
+                p->has_ue_ip6 = true;
+                break;
+            case OGS_PDU_SESSION_TYPE_IPV4V6:
+                OGS_INET_NTOP(&sess->paa.both.addr, p->ue_ip4);
+                p->has_ue_ip4 = true;
+                OGS_INET6_NTOP(sess->paa.both.addr6, p->ue_ip6);
+                p->has_ue_ip6 = true;
+                break;
+            default:
+                break;
+            }
 
             /* PGW: runtime + configured address */
             {
@@ -442,6 +467,15 @@ static cJSON *ue_snap_to_json(const ue_snap_t *s)
             }
             if (!cJSON_AddStringToObject(it, "pdu_state",
                         p->bearer_count ? "active" : "unknown")) {
+                cJSON_Delete(it); cJSON_Delete(arr); goto end;
+            }
+
+            if (p->has_ue_ip4 &&
+                !cJSON_AddStringToObject(it, "ipv4", p->ue_ip4)) {
+                cJSON_Delete(it); cJSON_Delete(arr); goto end;
+            }
+            if (p->has_ue_ip6 &&
+                !cJSON_AddStringToObject(it, "ipv6", p->ue_ip6)) {
                 cJSON_Delete(it); cJSON_Delete(arr); goto end;
             }
 
