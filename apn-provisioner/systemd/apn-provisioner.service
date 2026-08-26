@@ -3,6 +3,8 @@ Description=APN Provisioner (MME attach-event datagrams -> OMA CP OTA APN SMS)
 Documentation=file:/opt/apn-provisioner/README.md
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -18,8 +20,6 @@ RuntimeDirectoryMode=0755
 ExecStart=/opt/apn-provisioner/.venv/bin/python -m apn_provisioner --config /etc/apn-provisioner/config.yaml
 Restart=on-failure
 RestartSec=5
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 # Hardening: this service must never inject S1 traffic, write the HSS, or touch
 # other production services (spec 5.6). It needs no elevated capabilities.
