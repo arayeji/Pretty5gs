@@ -1,0 +1,21 @@
+# Dev/throwaway scripts (never commit scripts to the repo)
+tools/
+*.sh
+*.ps1
+
+# Local venvs / caches
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Runtime state and real config (contains endpoints/credentials)
+config.yaml
+*.db
+*.sqlite
+
+# Real captures MUST NOT be committed (may contain subscriber data)
+tests/fixtures/pcaps/real/*.pcap
+tests/fixtures/pcaps/real/*.pcapng

@@ -1,0 +1,38 @@
+[Unit]
+Description=APN Provisioner (MME attach-event datagrams -> OMA CP OTA APN SMS)
+Documentation=file:/opt/apn-provisioner/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runs as an unprivileged service account. It is PASSIVE on the network side:
+# it receives MME attach-event datagrams on a UNIX/UDP socket, reads the HSS
+# read-only, and only ever submits SMS.
+User=apnprov
+Group=apnprov
+WorkingDirectory=/opt/apn-provisioner
+# Creates /run/apn-provisioner for the event_socket the MME sends to.
+RuntimeDirectory=apn-provisioner
+RuntimeDirectoryMode=0755
+ExecStart=/opt/apn-provisioner/.venv/bin/python -m apn_provisioner --config /etc/apn-provisioner/config.yaml
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Hardening: this service must never inject S1 traffic, write the HSS, or touch
+# other production services (spec 5.6). It needs no elevated capabilities.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/apn-provisioner
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

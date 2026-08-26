@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "apn-provisioner"
+version = "0.1.0"
+description = "Passive S1 watcher that OTA-provisions the default APN via OMA CP SMS"
+requires-python = ">=3.10"
+dependencies = [
+    "pycrate>=0.7",
+    "scapy>=2.5",
+    "pymongo>=4.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[project.scripts]
+apn-provisioner = "apn_provisioner.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["apn_provisioner*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

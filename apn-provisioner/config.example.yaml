@@ -1,0 +1,69 @@
+# apn-provisioner example config. Copy to config.yaml and fill in real values.
+# Real endpoints/credentials must NEVER be committed (config.yaml is gitignored).
+
+# ---------------------------------------------------------------------------
+# Event source. The MME sends ONE small datagram per eligible attach (NOT a log
+# line):
+#     event=attach imsi=.. msisdn=.. imei=.. imeisv=.. mcc=.. mnc=.. apn_absent=1
+# It fires ONLY for UEs that sent no APN IE and match a per-PLMN
+# `mme.provisioning_sms` rule with `delivery: event` (see README "MME side").
+# This service binds the socket, receives datagrams, and sends via SMPP -- no
+# logs, and the MME send is non-blocking so it never loads MME call processing.
+#
+#   mode: mme_event_unix | mme_event_udp | pcap_replay | pcap_tail
+# ---------------------------------------------------------------------------
+s1_source:
+  mode: mme_event_unix
+
+  # mme_event_unix (same host as the MME): UNIX-domain datagram socket this
+  # service binds. Must equal the rule's `event_socket` in mme.yaml.
+  event_socket: /run/apn-provisioner/events.sock
+
+  # mme_event_udp (remote host): host:port this service binds to receive UDP.
+  # Must match the rule's `event_addr` in mme.yaml.
+  event_bind_addr: "0.0.0.0:5005"
+
+  # pcap_replay / pcap_tail: offline S1AP decoding (bring-up / tests only)
+  pcap_path: /var/lib/apn-provisioner/s1.pcap
+  pcap_dir: /var/spool/apn-provisioner/s1
+  pcap_pattern: "*.pcap"
+
+# ---------------------------------------------------------------------------
+# SMPP submission to osmo-msc (the proven-working sender, spec 2.1)
+# ---------------------------------------------------------------------------
+smpp:
+  host: MSC_SMPP_HOST_CHANGE_ME     # osmo-msc SMPP, do not commit the real IP
+  port: 2776
+  system_id: jasmin
+  password: SMPP_PASSWORD_CHANGE_ME
+  source_addr: "1234"
+  segment_gap_sec: 1.0
+
+# ---------------------------------------------------------------------------
+# HSS (MongoDB) -- READ ONLY user. This service must never write to the HSS.
+# ---------------------------------------------------------------------------
+mongo:
+  uri: "mongodb://READONLY_USER:PASSWORD@MONGO_HOST_CHANGE_ME:27017/open5gs?authSource=open5gs"
+  db: open5gs
+  collection: subscribers
+
+# ---------------------------------------------------------------------------
+# State + behaviour
+# ---------------------------------------------------------------------------
+state_db_path: /var/lib/apn-provisioner/state.db
+
+resend_interval_hours: 24
+send_on_imei_change: true
+ignore_sv_change: true
+correlation_timeout_sec: 60
+
+# Rate limiting / circuit breaker (spec 5.1, 5.2)
+dedup_window_sec: 60
+max_sends_per_sub_per_day: 5
+global_max_per_sec: 1
+breaker_per_min: 30
+breaker_resume_per_min: 5
+
+# Start in dry-run: build + validate + log the hex, send NOTHING.
+dry_run: true
+log_level: INFO
