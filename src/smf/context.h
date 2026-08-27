@@ -1195,6 +1195,8 @@ smf_ue_t *smf_ue_find_by_imsi(uint8_t *imsi, int imsi_len);
 smf_ue_t *smf_ue_find_by_imsi_bcd(const char *imsi_bcd);
 void smf_home_plmn_from_imsi_bcd(const char *imsi_bcd, ogs_plmn_id_t *plmn_id);
 
+void smf_sess_apply_gtp2_uli(smf_sess_t *sess, const ogs_gtp2_uli_t *uli);
+
 smf_sess_t *smf_sess_add_by_gtp1_message(ogs_gtp1_message_t *message);
 smf_sess_t *smf_sess_add_by_gtp2_message(ogs_gtp2_message_t *message);
 smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type);

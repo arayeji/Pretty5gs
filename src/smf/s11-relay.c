@@ -210,10 +210,7 @@ void smf_s11_relay_handle_create_session_request(
         int decoded = ogs_gtp2_parse_uli(
                 &uli, &req->user_location_information);
         if (decoded == req->user_location_information.len) {
-            if (uli.flags.tai)
-                memcpy(&sess->e_tai, &uli.tai, sizeof(sess->e_tai));
-            if (uli.flags.e_cgi)
-                memcpy(&sess->e_cgi, &uli.e_cgi, sizeof(sess->e_cgi));
+            smf_sess_apply_gtp2_uli(sess, &uli);
             OGS_TLV_STORE_DATA(&sess->gtp.user_location_information,
                     &req->user_location_information);
         } else {

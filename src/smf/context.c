@@ -2430,6 +2430,38 @@ static void smf_gtp_apn_apply_to_sess(smf_sess_t *sess, char *full_apn)
     sess->full_dnn = full_apn;
 }
 
+void smf_sess_apply_gtp2_uli(smf_sess_t *sess, const ogs_gtp2_uli_t *uli)
+{
+    ogs_assert(sess);
+    ogs_assert(uli);
+
+    if (uli->flags.tai)
+        memcpy(&sess->e_tai, &uli->tai, sizeof(sess->e_tai));
+    if (uli->flags.e_cgi)
+        memcpy(&sess->e_cgi, &uli->e_cgi, sizeof(sess->e_cgi));
+
+    if (uli->flags.tai)
+        return;
+
+    if (uli->flags.cgi) {
+        ogs_nas_to_plmn_id(&sess->e_tai.plmn_id, &uli->cgi.nas_plmn_id);
+        sess->e_tai.tac = uli->cgi.lac;
+        if (!uli->flags.e_cgi) {
+            ogs_nas_to_plmn_id(&sess->e_cgi.plmn_id, &uli->cgi.nas_plmn_id);
+            sess->e_cgi.cell_id = uli->cgi.ci;
+        }
+    } else if (uli->flags.sai) {
+        ogs_nas_to_plmn_id(&sess->e_tai.plmn_id, &uli->sai.nas_plmn_id);
+        sess->e_tai.tac = uli->sai.lac;
+    } else if (uli->flags.rai) {
+        ogs_nas_to_plmn_id(&sess->e_tai.plmn_id, &uli->rai.nas_plmn_id);
+        sess->e_tai.tac = uli->rai.lac;
+    } else if (uli->flags.lai) {
+        ogs_nas_to_plmn_id(&sess->e_tai.plmn_id, &uli->lai.nas_plmn_id);
+        sess->e_tai.tac = uli->lai.lac;
+    }
+}
+
 smf_sess_t *smf_sess_add_by_gtp1_message(ogs_gtp1_message_t *message)
 {
     smf_ue_t *smf_ue = NULL;

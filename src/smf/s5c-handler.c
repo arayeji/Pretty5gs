@@ -374,8 +374,7 @@ uint8_t smf_s5c_handle_create_session_request(
                     "Invalid User Location Information(ULI)");
             return OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
         }
-        memcpy(&sess->e_tai, &uli.tai, sizeof(sess->e_tai));
-        memcpy(&sess->e_cgi, &uli.e_cgi, sizeof(sess->e_cgi));
+        smf_sess_apply_gtp2_uli(sess, &uli);
 
     } else if (smf_gtp2_rat_is_legacy_ps(sess->gtp_rat_type)) {
         if (req->user_location_information.presence) {
@@ -385,10 +384,7 @@ uint8_t smf_s5c_handle_create_session_request(
                     "Invalid User Location Information(ULI)");
                 return OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
             }
-            if (uli.flags.tai)
-                memcpy(&sess->e_tai, &uli.tai, sizeof(sess->e_tai));
-            if (uli.flags.e_cgi)
-                memcpy(&sess->e_cgi, &uli.e_cgi, sizeof(sess->e_cgi));
+            smf_sess_apply_gtp2_uli(sess, &uli);
         }
 
     } else if (sess->gtp_rat_type == OGS_GTP2_RAT_TYPE_WLAN) {
@@ -910,6 +906,17 @@ void smf_s5c_handle_modify_bearer_request(
 
         ogs_debug("    SGW_S5C_TEID[0x%x] SMF_N4_TEID[0x%x]",
                 sess->sgw_s5c_teid, sess->smf_n4_teid);
+    }
+
+    if (req->user_location_information.presence) {
+        ogs_gtp2_uli_t uli;
+        int decoded = ogs_gtp2_parse_uli(
+                &uli, &req->user_location_information);
+        if (decoded == req->user_location_information.len) {
+            smf_sess_apply_gtp2_uli(sess, &uli);
+            OGS_TLV_STORE_DATA(&sess->gtp.user_location_information,
+                    &req->user_location_information);
+        }
     }
 
     /* Check Modify Bearer */

@@ -279,6 +279,26 @@ static uint16_t smf_sess_lac_for_filter(const smf_sess_t *sess)
             sess->gtp.user_location_information.presence)
         return sess->uli_lac;
 
+    if (sess->gtp.user_location_information.presence &&
+            sess->gtp.user_location_information.data &&
+            sess->gtp.user_location_information.len) {
+        ogs_gtp2_uli_t uli;
+        ogs_tlv_octet_t octet = sess->gtp.user_location_information;
+
+        if (ogs_gtp2_parse_uli(&uli, &octet) == octet.len) {
+            if (uli.flags.tai)
+                return uli.tai.tac;
+            if (uli.flags.cgi)
+                return uli.cgi.lac;
+            if (uli.flags.sai)
+                return uli.sai.lac;
+            if (uli.flags.rai)
+                return uli.rai.lac;
+            if (uli.flags.lai)
+                return uli.lai.lac;
+        }
+    }
+
     return sess->e_tai.tac;
 }
 
@@ -336,6 +356,32 @@ static bool smf_ue_has_matching_pdu(const smf_ue_t *ue,
     }
 
     return false;
+}
+
+static bool smf_json_add_plmn_from_nas(
+        cJSON *o, const ogs_nas_plmn_id_t *nas)
+{
+    ogs_plmn_id_t plmn;
+    char buf[OGS_PLMNIDSTRLEN];
+
+    if (!o || !nas)
+        return false;
+
+    ogs_nas_to_plmn_id(&plmn, nas);
+    if (!smf_plmn_id_is_set(&plmn))
+        return false;
+    ogs_plmn_id_to_string(&plmn, buf);
+    return cJSON_AddStringToObject(o, "plmn", buf) != NULL;
+}
+
+static bool smf_json_add_hex16(cJSON *o, const char *key, unsigned value)
+{
+    char buf[8];
+
+    if (!o || !key)
+        return false;
+    snprintf(buf, sizeof(buf), "%04x", value & 0xffffu);
+    return cJSON_AddStringToObject(o, key, buf) != NULL;
 }
 
 static cJSON *build_location_object(const smf_sess_t *sess)
@@ -454,6 +500,95 @@ static cJSON *build_location_object(const smf_sess_t *sess)
         }
 
         return loc;
+    }
+
+    if (sess->gtp.user_location_information.presence &&
+            sess->gtp.user_location_information.data &&
+            sess->gtp.user_location_information.len) {
+        ogs_gtp2_uli_t uli;
+        ogs_tlv_octet_t octet = sess->gtp.user_location_information;
+        bool added = false;
+
+        if (ogs_gtp2_parse_uli(&uli, &octet) == octet.len) {
+            loc = cJSON_CreateObject();
+            if (!loc)
+                return NULL;
+
+            if (smf_plmn_id_is_set(&sess->serving_plmn_id)) {
+                ogs_plmn_id_to_string(&sess->serving_plmn_id, plmn);
+                if (cJSON_AddStringToObject(loc, "plmn", plmn))
+                    added = true;
+            }
+
+            if (uli.flags.tai) {
+                cJSON *tai = cJSON_CreateObject();
+                if (tai) {
+                    smf_json_add_plmn_from_nas(tai, &uli.tai.nas_plmn_id);
+                    smf_json_add_hex16(tai, "tac", uli.tai.tac);
+                    cJSON_AddItemToObjectCS(loc, "tai", tai);
+                    added = true;
+                }
+            }
+            if (uli.flags.e_cgi) {
+                cJSON *ecgi = cJSON_CreateObject();
+                if (ecgi) {
+                    char cell[9];
+                    smf_json_add_plmn_from_nas(ecgi, &uli.e_cgi.nas_plmn_id);
+                    snprintf(cell, sizeof(cell), "%07x",
+                            (unsigned)(uli.e_cgi.cell_id & 0x0fffffffu));
+                    cJSON_AddStringToObject(ecgi, "cell_id", cell);
+                    cJSON_AddItemToObjectCS(ecgi, "enb_id",
+                            cJSON_CreateNumber(
+                                    (double)(uli.e_cgi.cell_id >> 8)));
+                    cJSON_AddItemToObjectCS(loc, "ecgi", ecgi);
+                    added = true;
+                }
+            }
+            if (uli.flags.rai) {
+                cJSON *rai = cJSON_CreateObject();
+                if (rai) {
+                    smf_json_add_plmn_from_nas(rai, &uli.rai.nas_plmn_id);
+                    smf_json_add_hex16(rai, "lac", uli.rai.lac);
+                    smf_json_add_hex16(rai, "rac", uli.rai.rac);
+                    cJSON_AddItemToObjectCS(loc, "rai", rai);
+                    added = true;
+                }
+            }
+            if (uli.flags.sai) {
+                cJSON *sai = cJSON_CreateObject();
+                if (sai) {
+                    smf_json_add_plmn_from_nas(sai, &uli.sai.nas_plmn_id);
+                    smf_json_add_hex16(sai, "lac", uli.sai.lac);
+                    smf_json_add_hex16(sai, "sac", uli.sai.sac);
+                    cJSON_AddItemToObjectCS(loc, "sai", sai);
+                    added = true;
+                }
+            }
+            if (uli.flags.cgi) {
+                cJSON *cgi = cJSON_CreateObject();
+                if (cgi) {
+                    smf_json_add_plmn_from_nas(cgi, &uli.cgi.nas_plmn_id);
+                    smf_json_add_hex16(cgi, "lac", uli.cgi.lac);
+                    smf_json_add_hex16(cgi, "ci", uli.cgi.ci);
+                    cJSON_AddItemToObjectCS(loc, "cgi", cgi);
+                    added = true;
+                }
+            }
+            if (uli.flags.lai) {
+                cJSON *lai = cJSON_CreateObject();
+                if (lai) {
+                    smf_json_add_plmn_from_nas(lai, &uli.lai.nas_plmn_id);
+                    smf_json_add_hex16(lai, "lac", uli.lai.lac);
+                    cJSON_AddItemToObjectCS(loc, "lai", lai);
+                    added = true;
+                }
+            }
+
+            if (added)
+                return loc;
+            cJSON_Delete(loc);
+            loc = NULL;
+        }
     }
 
     if (smf_plmn_id_is_set(&sess->e_tai.plmn_id)) {
