@@ -495,6 +495,18 @@ static cJSON *build_location_object(const smf_sess_t *sess)
         return loc;
     }
 
+    if (smf_plmn_id_is_set(&sess->serving_plmn_id)) {
+        loc = cJSON_CreateObject();
+        if (!loc)
+            return NULL;
+        ogs_plmn_id_to_string(&sess->serving_plmn_id, plmn);
+        if (!cJSON_AddStringToObject(loc, "plmn", plmn)) {
+            cJSON_Delete(loc);
+            return NULL;
+        }
+        return loc;
+    }
+
     return NULL;
 }
 

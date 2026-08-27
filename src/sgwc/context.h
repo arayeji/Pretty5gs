@@ -731,6 +731,9 @@ sgwc_tunnel_t *sgwc_tunnel_find_by_id(ogs_pool_id_t id);
 
 void sgwc_bearer_urr_setup(sgwc_bearer_t *bearer);
 void sgwc_ue_store_uli_raw(sgwc_ue_t *sgwc_ue, void *data, uint16_t len);
+/* Parse GTPv2 ULI, keep the raw IE, and fill e_tai/e_cgi from TAI/ECGI
+ * or, for UTRAN/GERAN, from CGI/SAI/RAI/LAI so PLMN is not left zero. */
+bool sgwc_ue_apply_gtp2_uli(sgwc_ue_t *sgwc_ue, ogs_tlv_octet_t *octet);
 
 #ifdef __cplusplus
 }

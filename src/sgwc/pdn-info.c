@@ -35,6 +35,8 @@
 
 #include "sbi/openapi/external/cJSON.h"
 
+#include <stdio.h>
+#include <string.h>
 #include <strings.h>
 
 static const char *sgwc_gtp_rat_type_name(uint8_t rat)
@@ -317,42 +319,214 @@ static cJSON *build_qos_flows_array(const sgwc_sess_t *sess)
     return arr;
 }
 
-static cJSON *build_location_object(const sgwc_ue_t *ue)
+static bool sgwc_plmn_is_set(const ogs_plmn_id_t *plmn)
+{
+    static const uint8_t zero[OGS_PLMN_ID_LEN];
+
+    return plmn && memcmp(plmn, zero, OGS_PLMN_ID_LEN) != 0;
+}
+
+static bool sgwc_json_add_plmn_from_nas(
+        cJSON *o, const ogs_nas_plmn_id_t *nas)
+{
+    ogs_plmn_id_t plmn;
+    char buf[OGS_PLMNIDSTRLEN];
+
+    if (!o || !nas)
+        return false;
+
+    ogs_nas_to_plmn_id(&plmn, nas);
+    if (!sgwc_plmn_is_set(&plmn))
+        return false;
+    ogs_plmn_id_to_string(&plmn, buf);
+    return cJSON_AddStringToObject(o, "plmn", buf) != NULL;
+}
+
+static bool sgwc_json_add_hex16(cJSON *o, const char *key, unsigned value)
+{
+    char buf[8];
+
+    if (!o || !key)
+        return false;
+    snprintf(buf, sizeof(buf), "%04x", value & 0xffffu);
+    return cJSON_AddStringToObject(o, key, buf) != NULL;
+}
+
+static cJSON *build_location_object(
+        const sgwc_ue_t *ue, const sgwc_sess_t *sess)
 {
     cJSON *loc = NULL;
-    cJSON *tai = NULL;
-    cJSON *ecgi = NULL;
-    char plmn[OGS_PLMNIDSTRLEN] = "";
-    char ecgi_plmn[OGS_PLMNIDSTRLEN] = "";
-    char tac[7] = "";
-    char cell[9] = "";
+    bool added = false;
+    ogs_gtp2_uli_t uli2;
+    ogs_gtp1_uli_t uli1;
+    ogs_tlv_octet_t octet;
 
     ogs_assert(ue);
 
-    if (!ue->uli_presence)
+    loc = cJSON_CreateObject();
+    if (!loc)
         return NULL;
 
-    loc = cJSON_CreateObject();
-    tai = cJSON_CreateObject();
-    ecgi = cJSON_CreateObject();
-    if (!loc || !tai || !ecgi) {
-        cJSON_Delete(loc);
-        cJSON_Delete(tai);
-        cJSON_Delete(ecgi);
-        return NULL;
+    if (sess && sgwc_plmn_is_set(&sess->serving_plmn_id)) {
+        char buf[OGS_PLMNIDSTRLEN];
+        ogs_plmn_id_to_string(&sess->serving_plmn_id, buf);
+        if (cJSON_AddStringToObject(loc, "plmn", buf))
+            added = true;
     }
 
-    ogs_plmn_id_to_string(&ue->e_tai.plmn_id, plmn);
-    snprintf(tac, sizeof(tac), "%04x", (unsigned)ue->e_tai.tac);
-    cJSON_AddItemToObjectCS(tai, "plmn", cJSON_CreateString(plmn));
-    cJSON_AddItemToObjectCS(tai, "tac", cJSON_CreateString(tac));
-    cJSON_AddItemToObjectCS(loc, "tai", tai);
+    memset(&octet, 0, sizeof(octet));
+    if (ue->uli_pkbuf && ue->uli_pkbuf->data && ue->uli_pkbuf->len) {
+        octet.presence = 1;
+        octet.data = ue->uli_pkbuf->data;
+        octet.len = ue->uli_pkbuf->len;
+    }
 
-    ogs_plmn_id_to_string(&ue->e_cgi.plmn_id, ecgi_plmn);
-    snprintf(cell, sizeof(cell), "%07x", (unsigned)ue->e_cgi.cell_id);
-    cJSON_AddItemToObjectCS(ecgi, "plmn", cJSON_CreateString(ecgi_plmn));
-    cJSON_AddItemToObjectCS(ecgi, "cell_id", cJSON_CreateString(cell));
-    cJSON_AddItemToObjectCS(loc, "ecgi", ecgi);
+    if (octet.presence &&
+            ogs_gtp2_parse_uli(&uli2, &octet) == octet.len) {
+        if (uli2.flags.tai) {
+            cJSON *tai = cJSON_CreateObject();
+            if (tai) {
+                sgwc_json_add_plmn_from_nas(tai, &uli2.tai.nas_plmn_id);
+                sgwc_json_add_hex16(tai, "tac", uli2.tai.tac);
+                cJSON_AddItemToObjectCS(loc, "tai", tai);
+                added = true;
+            }
+        }
+        if (uli2.flags.e_cgi) {
+            cJSON *ecgi = cJSON_CreateObject();
+            if (ecgi) {
+                char cell[9];
+                sgwc_json_add_plmn_from_nas(ecgi, &uli2.e_cgi.nas_plmn_id);
+                snprintf(cell, sizeof(cell), "%07x",
+                        (unsigned)(uli2.e_cgi.cell_id & 0x0fffffffu));
+                cJSON_AddStringToObject(ecgi, "cell_id", cell);
+                cJSON_AddItemToObjectCS(loc, "ecgi", ecgi);
+                added = true;
+            }
+        }
+        if (uli2.flags.rai) {
+            cJSON *rai = cJSON_CreateObject();
+            if (rai) {
+                sgwc_json_add_plmn_from_nas(rai, &uli2.rai.nas_plmn_id);
+                sgwc_json_add_hex16(rai, "lac", uli2.rai.lac);
+                sgwc_json_add_hex16(rai, "rac", uli2.rai.rac);
+                cJSON_AddItemToObjectCS(loc, "rai", rai);
+                added = true;
+            }
+        }
+        if (uli2.flags.sai) {
+            cJSON *sai = cJSON_CreateObject();
+            if (sai) {
+                sgwc_json_add_plmn_from_nas(sai, &uli2.sai.nas_plmn_id);
+                sgwc_json_add_hex16(sai, "lac", uli2.sai.lac);
+                sgwc_json_add_hex16(sai, "sac", uli2.sai.sac);
+                cJSON_AddItemToObjectCS(loc, "sai", sai);
+                added = true;
+            }
+        }
+        if (uli2.flags.cgi) {
+            cJSON *cgi = cJSON_CreateObject();
+            if (cgi) {
+                sgwc_json_add_plmn_from_nas(cgi, &uli2.cgi.nas_plmn_id);
+                sgwc_json_add_hex16(cgi, "lac", uli2.cgi.lac);
+                sgwc_json_add_hex16(cgi, "ci", uli2.cgi.ci);
+                cJSON_AddItemToObjectCS(loc, "cgi", cgi);
+                added = true;
+            }
+        }
+        if (uli2.flags.lai) {
+            cJSON *lai = cJSON_CreateObject();
+            if (lai) {
+                sgwc_json_add_plmn_from_nas(lai, &uli2.lai.nas_plmn_id);
+                sgwc_json_add_hex16(lai, "lac", uli2.lai.lac);
+                cJSON_AddItemToObjectCS(loc, "lai", lai);
+                added = true;
+            }
+        }
+    } else if (octet.presence &&
+            ogs_gtp1_parse_uli(&uli1, &octet) > 0) {
+        ogs_plmn_id_t plmn_id;
+        char buf[OGS_PLMNIDSTRLEN];
+
+        switch (uli1.geo_loc_type) {
+        case OGS_GTP1_GEO_LOC_TYPE_CGI:
+            ogs_nas_to_plmn_id(&plmn_id, &uli1.cgi.nas_plmn_id);
+            if (sgwc_plmn_is_set(&plmn_id)) {
+                cJSON *cgi = cJSON_CreateObject();
+                if (cgi) {
+                    ogs_plmn_id_to_string(&plmn_id, buf);
+                    cJSON_AddStringToObject(cgi, "plmn", buf);
+                    sgwc_json_add_hex16(cgi, "lac", uli1.cgi.lac);
+                    sgwc_json_add_hex16(cgi, "ci", uli1.cgi.ci);
+                    cJSON_AddItemToObjectCS(loc, "cgi", cgi);
+                    added = true;
+                }
+            }
+            break;
+        case OGS_GTP1_GEO_LOC_TYPE_SAI:
+            ogs_nas_to_plmn_id(&plmn_id, &uli1.sai.nas_plmn_id);
+            if (sgwc_plmn_is_set(&plmn_id)) {
+                cJSON *sai = cJSON_CreateObject();
+                if (sai) {
+                    ogs_plmn_id_to_string(&plmn_id, buf);
+                    cJSON_AddStringToObject(sai, "plmn", buf);
+                    sgwc_json_add_hex16(sai, "lac", uli1.sai.lac);
+                    sgwc_json_add_hex16(sai, "sac", uli1.sai.sac);
+                    cJSON_AddItemToObjectCS(loc, "sai", sai);
+                    added = true;
+                }
+            }
+            break;
+        case OGS_GTP1_GEO_LOC_TYPE_RAI:
+            ogs_nas_to_plmn_id(&plmn_id, &uli1.rai.nas_plmn_id);
+            if (sgwc_plmn_is_set(&plmn_id)) {
+                cJSON *rai = cJSON_CreateObject();
+                if (rai) {
+                    ogs_plmn_id_to_string(&plmn_id, buf);
+                    cJSON_AddStringToObject(rai, "plmn", buf);
+                    sgwc_json_add_hex16(rai, "lac", uli1.rai.lac);
+                    sgwc_json_add_hex16(rai, "rac", uli1.rai.rac);
+                    cJSON_AddItemToObjectCS(loc, "rai", rai);
+                    added = true;
+                }
+            }
+            break;
+        default:
+            break;
+        }
+    } else if (ue->uli_presence && sgwc_plmn_is_set(&ue->e_tai.plmn_id)) {
+        /* Fallback if raw ULI cannot be parsed. */
+        cJSON *tai = cJSON_CreateObject();
+        if (tai) {
+            char buf[OGS_PLMNIDSTRLEN];
+            char tac[8];
+            ogs_plmn_id_to_string(&ue->e_tai.plmn_id, buf);
+            snprintf(tac, sizeof(tac), "%04x", (unsigned)ue->e_tai.tac);
+            cJSON_AddStringToObject(tai, "plmn", buf);
+            cJSON_AddStringToObject(tai, "tac", tac);
+            cJSON_AddItemToObjectCS(loc, "tai", tai);
+            added = true;
+        }
+        if (sgwc_plmn_is_set(&ue->e_cgi.plmn_id)) {
+            cJSON *ecgi = cJSON_CreateObject();
+            if (ecgi) {
+                char buf[OGS_PLMNIDSTRLEN];
+                char cell[9];
+                ogs_plmn_id_to_string(&ue->e_cgi.plmn_id, buf);
+                snprintf(cell, sizeof(cell), "%07x",
+                        (unsigned)ue->e_cgi.cell_id);
+                cJSON_AddStringToObject(ecgi, "plmn", buf);
+                cJSON_AddStringToObject(ecgi, "cell_id", cell);
+                cJSON_AddItemToObjectCS(loc, "ecgi", ecgi);
+                added = true;
+            }
+        }
+    }
+
+    if (!added) {
+        cJSON_Delete(loc);
+        return NULL;
+    }
 
     return loc;
 }
@@ -506,7 +680,7 @@ static cJSON *build_single_pdn_object(const sgwc_sess_t *sess,
             cJSON_CreateNumber((double)sess->usage_dl_octets));
 
     {
-        cJSON *loc = build_location_object(ue);
+        cJSON *loc = build_location_object(ue, sess);
         if (loc)
             cJSON_AddItemToObjectCS(pdn, "location", loc);
     }

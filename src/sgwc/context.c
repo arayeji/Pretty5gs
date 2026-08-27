@@ -3733,6 +3733,64 @@ void sgwc_ue_store_uli_raw(sgwc_ue_t *sgwc_ue, void *data, uint16_t len)
         ogs_pkbuf_put_data(sgwc_ue->uli_pkbuf, data, len);
 }
 
+bool sgwc_ue_apply_gtp2_uli(sgwc_ue_t *sgwc_ue, ogs_tlv_octet_t *octet)
+{
+    ogs_gtp2_uli_t uli;
+    int16_t decoded;
+
+    ogs_assert(sgwc_ue);
+    if (!octet || !octet->data || !octet->len)
+        return false;
+
+    decoded = ogs_gtp2_parse_uli(&uli, octet);
+    if (decoded != octet->len)
+        return false;
+
+    sgwc_ue->uli_presence = true;
+    sgwc_ue_store_uli_raw(sgwc_ue, octet->data, octet->len);
+
+    if (uli.flags.tai) {
+        ogs_nas_to_plmn_id(&sgwc_ue->e_tai.plmn_id, &uli.tai.nas_plmn_id);
+        sgwc_ue->e_tai.tac = uli.tai.tac;
+    }
+    if (uli.flags.e_cgi) {
+        ogs_nas_to_plmn_id(&sgwc_ue->e_cgi.plmn_id, &uli.e_cgi.nas_plmn_id);
+        sgwc_ue->e_cgi.cell_id = uli.e_cgi.cell_id;
+    }
+
+    /* UTRAN/GERAN ULI has CGI/SAI/RAI/LAI, not TAI. Keep a PLMN (and LAC
+     * in tac) so metrics and /pdn-info are not all-zero. */
+    if (!uli.flags.tai) {
+        if (uli.flags.cgi) {
+            ogs_nas_to_plmn_id(&sgwc_ue->e_tai.plmn_id, &uli.cgi.nas_plmn_id);
+            sgwc_ue->e_tai.tac = uli.cgi.lac;
+            if (!uli.flags.e_cgi) {
+                ogs_nas_to_plmn_id(&sgwc_ue->e_cgi.plmn_id,
+                        &uli.cgi.nas_plmn_id);
+                sgwc_ue->e_cgi.cell_id = uli.cgi.ci;
+            }
+        } else if (uli.flags.sai) {
+            ogs_nas_to_plmn_id(&sgwc_ue->e_tai.plmn_id, &uli.sai.nas_plmn_id);
+            sgwc_ue->e_tai.tac = uli.sai.lac;
+        } else if (uli.flags.rai) {
+            ogs_nas_to_plmn_id(&sgwc_ue->e_tai.plmn_id, &uli.rai.nas_plmn_id);
+            sgwc_ue->e_tai.tac = uli.rai.lac;
+        } else if (uli.flags.lai) {
+            ogs_nas_to_plmn_id(&sgwc_ue->e_tai.plmn_id, &uli.lai.nas_plmn_id);
+            sgwc_ue->e_tai.tac = uli.lai.lac;
+        }
+    }
+
+    ogs_debug("    TAI[PLMN_ID:%06x,TAC:%d]",
+            ogs_plmn_id_hexdump(&sgwc_ue->e_tai.plmn_id),
+            sgwc_ue->e_tai.tac);
+    ogs_debug("    E_CGI[PLMN_ID:%06x,CELL_ID:0x%x]",
+            ogs_plmn_id_hexdump(&sgwc_ue->e_cgi.plmn_id),
+            sgwc_ue->e_cgi.cell_id);
+
+    return true;
+}
+
 void sgwc_bearer_urr_setup(sgwc_bearer_t *bearer)
 {
     sgwc_sess_t *sess = NULL;
