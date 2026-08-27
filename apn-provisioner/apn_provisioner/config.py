@@ -61,6 +61,11 @@ class Config:
     breaker_per_min: int = 30
     breaker_resume_per_min: int = 5
 
+    # HSS session names that are never the default internet APN (IMS is often
+    # first in the slice; S6a default is "first session" and that is wrong here).
+    non_data_apns: list[str] = field(
+        default_factory=lambda: ["ims", "sos", "emergency", "xcap", "ims2"])
+
     dry_run: bool = True
     log_level: str = "INFO"
 

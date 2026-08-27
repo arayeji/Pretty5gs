@@ -57,6 +57,10 @@ send_on_imei_change: true
 ignore_sv_change: true
 correlation_timeout_sec: 60
 
+# HSS slice session names that are never the default internet APN.
+# Open5GS S6a default is "first session in the slice"; IMS is often first.
+non_data_apns: [ims, sos, emergency, xcap, ims2]
+
 # Rate limiting / circuit breaker (spec 5.1, 5.2)
 dedup_window_sec: 60
 max_sends_per_sub_per_day: 5

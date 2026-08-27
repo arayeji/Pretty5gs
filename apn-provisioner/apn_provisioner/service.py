@@ -239,7 +239,8 @@ def build_and_run(cfg: Config) -> None:
     if not cfg.dry_run or cfg.mongo.uri:
         from .subscriber import SubscriberLookup
         subscriber_lookup = SubscriberLookup(
-            cfg.mongo.uri, cfg.mongo.db, cfg.mongo.collection)
+            cfg.mongo.uri, cfg.mongo.db, cfg.mongo.collection,
+            skip_names={n.lower() for n in cfg.non_data_apns})
     if not cfg.dry_run:
         from .smpp_client import SmppSender
         sender = SmppSender(

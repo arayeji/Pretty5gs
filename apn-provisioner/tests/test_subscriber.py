@@ -12,8 +12,38 @@ def test_default_indicator_slice_and_first_session():
         ],
     }
     sub = select_subscriber(doc)
-    assert sub.apn == "hiweb"          # default slice, first session
+    assert sub.apn == "hiweb"          # default slice, first data session
     assert sub.msisdn == "989951079038"
+
+
+def test_skips_ims_when_it_is_first_in_slice():
+    doc = {
+        "imsi": "1", "msisdn": ["9"],
+        "slice": [{"default_indicator": True, "session": [
+            {"name": "ims", "qos": {"index": 5}},
+            {"name": "hiweb", "qos": {"index": 9}},
+        ]}],
+    }
+    assert select_subscriber(doc).apn == "hiweb"
+
+
+def test_skips_qci5_even_if_named_oddly():
+    doc = {
+        "imsi": "1", "msisdn": ["9"],
+        "slice": [{"session": [
+            {"name": "voice", "qos": {"index": 5}},
+            {"name": "hiweb", "qos": {"index": 9}},
+        ]}],
+    }
+    assert select_subscriber(doc).apn == "hiweb"
+
+
+def test_ims_only_slice_is_skipped():
+    doc = {
+        "imsi": "1", "msisdn": ["9"],
+        "slice": [{"session": [{"name": "ims", "qos": {"index": 5}}]}],
+    }
+    assert select_subscriber(doc) is None
 
 
 def test_falls_back_to_first_slice():
