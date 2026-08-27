@@ -21,6 +21,9 @@ SUBMIT_SM_RESP = 0x80000004
 UNBIND = 0x00000006
 ENQUIRE_LINK = 0x00000015
 ENQUIRE_LINK_RESP = 0x80000015
+# osmo-msc pushes these on a transmitter bind whenever a subscriber's
+# availability changes. Not a submit_sm reply; discard quietly.
+ALERT_NOTIFICATION = 0x00000102
 
 
 def _cstr(s: str) -> bytes:
@@ -98,6 +101,8 @@ class SmppSender:
 
             if cid == ENQUIRE_LINK:
                 self._sock.sendall(_pdu(ENQUIRE_LINK_RESP, rseq, b""))
+                continue
+            if cid == ALERT_NOTIFICATION:
                 continue
 
             if (cid & 0x7FFFFFFF) == want:
