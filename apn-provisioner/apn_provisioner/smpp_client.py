@@ -19,6 +19,8 @@ BIND_TRANSMITTER_RESP = 0x80000002
 SUBMIT_SM = 0x00000004
 SUBMIT_SM_RESP = 0x80000004
 UNBIND = 0x00000006
+ENQUIRE_LINK = 0x00000015
+ENQUIRE_LINK_RESP = 0x80000015
 
 
 def _cstr(s: str) -> bytes:
@@ -63,6 +65,8 @@ class SmppSender:
     def _recv_pdu(self) -> tuple[int, int, int, bytes]:
         hdr = self._recv_exact(16)
         length, cid, status, seq = struct.unpack(">IIII", hdr)
+        if length < 16 or length > 65535:
+            raise SmppError(f"invalid PDU length {length}")
         body = self._recv_exact(length - 16) if length > 16 else b""
         return cid, status, seq, body
 
@@ -74,6 +78,40 @@ class SmppSender:
                 raise SmppError("connection closed by peer")
             buf += chunk
         return buf
+
+    def _wait_resp(self, expected_cid: int, seq: int) -> bytes:
+        """Read until the matching response. Reply to enquire_link so a long-lived
+        bind does not consume the next submit_sm_resp as a failure (status=0)."""
+        deadline = time.time() + self.connect_timeout
+        want = expected_cid & 0x7FFFFFFF
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                raise SmppError(
+                    f"timeout waiting for cid=0x{expected_cid:08X} seq={seq}")
+            self._sock.settimeout(max(remaining, 0.1))
+            try:
+                cid, status, rseq, body = self._recv_pdu()
+            except socket.timeout as e:
+                raise SmppError(
+                    f"timeout waiting for cid=0x{expected_cid:08X} seq={seq}") from e
+
+            if cid == ENQUIRE_LINK:
+                self._sock.sendall(_pdu(ENQUIRE_LINK_RESP, rseq, b""))
+                continue
+
+            if (cid & 0x7FFFFFFF) == want:
+                if status != 0:
+                    raise SmppError(
+                        f"rejected cid=0x{cid:08X} status=0x{status:08X} seq={rseq}")
+                if rseq != seq:
+                    log.warning("SMPP seq mismatch want=%d got=%d cid=0x%08X (accepting)",
+                                seq, rseq, cid)
+                return body
+
+            log.warning("SMPP ignore unexpected pdu cid=0x%08X status=0x%08X seq=%d "
+                        "(want cid=0x%08X seq=%d)",
+                        cid, status, rseq, expected_cid, seq)
 
     def connect(self) -> None:
         """Connect + bind_transmitter, with exponential backoff on failure."""
@@ -101,9 +139,7 @@ class SmppSender:
         )
         seq = self._next_seq()
         self._sock.sendall(_pdu(BIND_TRANSMITTER, seq, body))
-        cid, status, _, _ = self._recv_pdu()
-        if cid != BIND_TRANSMITTER_RESP or status != 0:
-            raise SmppError(f"bind rejected: cid=0x{cid:08X} status=0x{status:08X}")
+        self._wait_resp(BIND_TRANSMITTER_RESP, seq)
 
     def _submit(self, destination_addr: str, short_message: bytes) -> None:
         body = (
@@ -122,9 +158,7 @@ class SmppSender:
         )
         seq = self._next_seq()
         self._sock.sendall(_pdu(SUBMIT_SM, seq, body))
-        cid, status, _, _ = self._recv_pdu()
-        if cid != SUBMIT_SM_RESP or status != 0:
-            raise SmppError(f"submit_sm failed: status=0x{status:08X}")
+        self._wait_resp(SUBMIT_SM_RESP, seq)
 
     def send_segments(self, destination_addr: str, segments: list[bytes]) -> None:
         """Send all segments in order, ~1s apart. Raises SmppError on failure.
@@ -133,12 +167,16 @@ class SmppSender:
         (spec 5.5). If a segment fails we stop and raise so the caller does not
         record a partial success.
         """
-        if self._sock is None:
-            self.connect()
-        for i, seg in enumerate(segments):
-            self._submit(destination_addr, seg)
-            if i + 1 < len(segments):
-                time.sleep(self.segment_gap)
+        try:
+            if self._sock is None:
+                self.connect()
+            for i, seg in enumerate(segments):
+                self._submit(destination_addr, seg)
+                if i + 1 < len(segments):
+                    time.sleep(self.segment_gap)
+        except (OSError, SmppError):
+            self._close_socket()
+            raise
 
     def _close_socket(self) -> None:
         if self._sock is not None:
