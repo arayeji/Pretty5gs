@@ -96,6 +96,68 @@ ogs_pkbuf_t *ogs_gtp1_handle_echo_req(ogs_pkbuf_t *pkb)
     return pkb_resp;
 }
 
+/*
+ * Callers (SGW-C PFCP/S5 fail paths) often pass a GTPv2 response type, or
+ * the original request type, on a Gn (GTPv1) xact. Aborting the process
+ * here took down SGW-C in a restart loop. Map those to a PDP-context
+ * response; unknown types are logged and dropped.
+ */
+static uint8_t gtp1_error_response_type(uint8_t type)
+{
+    switch (type) {
+    case OGS_GTP1_CREATE_PDP_CONTEXT_REQUEST_TYPE:
+    case OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE:
+    case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
+    case OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE:
+        return OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE;
+    case OGS_GTP1_UPDATE_PDP_CONTEXT_REQUEST_TYPE:
+    case OGS_GTP1_UPDATE_PDP_CONTEXT_RESPONSE_TYPE:
+    case OGS_GTP2_MODIFY_BEARER_REQUEST_TYPE:
+    case OGS_GTP2_MODIFY_BEARER_RESPONSE_TYPE:
+        return OGS_GTP1_UPDATE_PDP_CONTEXT_RESPONSE_TYPE;
+    case OGS_GTP1_DELETE_PDP_CONTEXT_REQUEST_TYPE:
+    case OGS_GTP1_DELETE_PDP_CONTEXT_RESPONSE_TYPE:
+    case OGS_GTP2_DELETE_SESSION_REQUEST_TYPE:
+    case OGS_GTP2_DELETE_SESSION_RESPONSE_TYPE:
+        return OGS_GTP1_DELETE_PDP_CONTEXT_RESPONSE_TYPE;
+    default:
+        return 0;
+    }
+}
+
+static uint8_t gtp1_error_cause(uint8_t cause_value)
+{
+    /* GTP2 causes are 16..127; GTP1 reject causes are 192+. */
+    if (cause_value >= OGS_GTP1_CAUSE_REJECT)
+        return cause_value;
+
+    switch (cause_value) {
+    case OGS_GTP2_CAUSE_REQUEST_ACCEPTED:
+    case OGS_GTP2_CAUSE_REQUEST_ACCEPTED_PARTIALLY:
+        return OGS_GTP1_CAUSE_REQUEST_ACCEPTED;
+    case OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND:
+        return OGS_GTP1_CAUSE_NON_EXISTENT;
+    case OGS_GTP2_CAUSE_MANDATORY_IE_MISSING:
+        return OGS_GTP1_CAUSE_MANDATORY_IE_MISSING;
+    case OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT:
+        return OGS_GTP1_CAUSE_MANDATORY_IE_INCORRECT;
+    case OGS_GTP2_CAUSE_INVALID_MESSAGE_FORMAT:
+        return OGS_GTP1_CAUSE_INVALID_MESSAGE_FORMAT;
+    case OGS_GTP2_CAUSE_NO_RESOURCES_AVAILABLE:
+        return OGS_GTP1_CAUSE_NO_RESOURCES_AVAILABLE;
+    case OGS_GTP2_CAUSE_SERVICE_NOT_SUPPORTED:
+        return OGS_GTP1_CAUSE_SERVICE_NOT_SUPPORTED;
+    case OGS_GTP2_CAUSE_SYSTEM_FAILURE:
+        return OGS_GTP1_CAUSE_SYSTEM_FAILURE;
+    case OGS_GTP2_CAUSE_REMOTE_PEER_NOT_RESPONDING:
+        return OGS_GTP1_CAUSE_NO_RESOURCES_AVAILABLE;
+    default:
+        if (cause_value < OGS_GTP1_CAUSE_ACCEPT)
+            return OGS_GTP1_CAUSE_SYSTEM_FAILURE;
+        return cause_value;
+    }
+}
+
 void ogs_gtp1_send_error_message(
         ogs_gtp_xact_t *xact, uint32_t teid, uint8_t type, uint8_t cause_value)
 {
@@ -103,12 +165,24 @@ void ogs_gtp1_send_error_message(
     ogs_gtp1_message_t errmsg;
     ogs_gtp1_tlv_cause_t *tlv = NULL;
     ogs_pkbuf_t *pkbuf = NULL;
+    uint8_t rsp_type;
+
+    rsp_type = gtp1_error_response_type(type);
+    if (!rsp_type) {
+        ogs_error("ogs_gtp1_send_error_message: unsupported type %u "
+                "(teid=0x%x cause=%u) - drop, do not abort",
+                type, teid, cause_value);
+        return;
+    }
+    if (rsp_type != type)
+        ogs_warn("ogs_gtp1_send_error_message: mapped type %u -> %u",
+                type, rsp_type);
 
     memset(&errmsg, 0, sizeof(ogs_gtp1_message_t));
-    errmsg.h.type = type;
+    errmsg.h.type = rsp_type;
     errmsg.h.teid = teid;
 
-    switch (type) {
+    switch (rsp_type) {
     case OGS_GTP1_CREATE_PDP_CONTEXT_RESPONSE_TYPE:
         tlv = &errmsg.create_pdp_context_response.cause;
         break;
@@ -119,14 +193,15 @@ void ogs_gtp1_send_error_message(
         tlv = &errmsg.delete_pdp_context_response.cause;
         break;
     default:
-        ogs_assert_if_reached();
+        ogs_error("ogs_gtp1_send_error_message: unhandled mapped type %u",
+                rsp_type);
         return;
     }
 
     ogs_assert(tlv);
 
     tlv->presence = 1;
-    tlv->u8 = cause_value;
+    tlv->u8 = gtp1_error_cause(cause_value);
 
     pkbuf = ogs_gtp1_build_msg(&errmsg);
     if (!pkbuf) {

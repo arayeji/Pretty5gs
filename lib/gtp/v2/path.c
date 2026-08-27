@@ -148,8 +148,9 @@ void ogs_gtp2_send_error_message(
         tlv = &errmsg.bearer_resource_failure_indication.cause;
         break;
     default:
-        ogs_fatal("Invalid message[%d]", type);
-        ogs_assert_if_reached();
+        ogs_error("ogs_gtp2_send_error_message: unsupported type %u "
+                "(teid=0x%x cause=%u) - drop, do not abort",
+                type, teid, cause_value);
         return;
     }
 
