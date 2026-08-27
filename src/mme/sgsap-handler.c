@@ -82,8 +82,8 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         ogs_error("!nas_mobile_identity_imsi || !lai");
         goto error;
     }
-    if (nas_mobile_identity_imsi_len != SGSAP_IE_IMSI_LEN) {
-        ogs_error("nas_mobile_identity_imsi_len != SGSAP_IE_IMSI_LEN");
+    if (!SGSAP_IMSI_LEN_OK(nas_mobile_identity_imsi_len)) {
+        ogs_error("Invalid IMSI len [%d]", nas_mobile_identity_imsi_len);
         goto error;
     }
 
@@ -270,8 +270,8 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         ogs_error("!nas_mobile_identity_imsi || !emm_cause");
         goto error;
     }
-    if (nas_mobile_identity_imsi_len != SGSAP_IE_IMSI_LEN) {
-        ogs_error("nas_mobile_identity_imsi_len != SGSAP_IE_IMSI_LEN");
+    if (!SGSAP_IMSI_LEN_OK(nas_mobile_identity_imsi_len)) {
+        ogs_error("Invalid IMSI len [%d]", nas_mobile_identity_imsi_len);
         goto error;
     }
 
@@ -361,7 +361,7 @@ void sgsap_handle_alert_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         sgs_cause = SGSAP_SGS_CAUSE_MISSING_MANDATORY_IE;
         goto alert_reject;
     }
-    if (nas_mobile_identity_imsi_len != SGSAP_IE_IMSI_LEN) {
+    if (!SGSAP_IMSI_LEN_OK(nas_mobile_identity_imsi_len)) {
         ogs_error("Invalid IMSI len [%d]", nas_mobile_identity_imsi_len);
         sgs_cause = SGSAP_SGS_CAUSE_INVALID_MANDATORY_IE;
         goto alert_reject;
@@ -461,7 +461,7 @@ void sgsap_handle_detach_ack(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         ogs_error("No IMSI");
         return;
     }
-    if (nas_mobile_identity_imsi_len != SGSAP_IE_IMSI_LEN) {
+    if (!SGSAP_IMSI_LEN_OK(nas_mobile_identity_imsi_len)) {
         ogs_error("Invalid IMSI len [%d]", nas_mobile_identity_imsi_len);
         return;
     }
@@ -581,7 +581,7 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         sgs_cause = SGSAP_SGS_CAUSE_MISSING_MANDATORY_IE;
         goto paging_reject;
     }
-    if (nas_mobile_identity_imsi_len != SGSAP_IE_IMSI_LEN) {
+    if (!SGSAP_IMSI_LEN_OK(nas_mobile_identity_imsi_len)) {
         ogs_error("Invalid IMSI len [%d]", nas_mobile_identity_imsi_len);
         sgs_cause = SGSAP_SGS_CAUSE_INVALID_MANDATORY_IE;
         goto paging_reject;
@@ -807,10 +807,15 @@ void sgsap_handle_downlink_unitdata(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
 
     ogs_tlv_free_all(root);
 
-    ogs_assert(nas_mobile_identity_imsi);
-    ogs_assert(nas_mobile_identity_imsi_len == SGSAP_IE_IMSI_LEN);
-    ogs_assert(nas_message_container_buffer);
-    ogs_assert(nas_message_container_length);
+    if (!nas_mobile_identity_imsi ||
+            !SGSAP_IMSI_LEN_OK(nas_mobile_identity_imsi_len)) {
+        ogs_error("Invalid IMSI (len=%d)", nas_mobile_identity_imsi_len);
+        return;
+    }
+    if (!nas_message_container_buffer || !nas_message_container_length) {
+        ogs_error("No NAS message container");
+        return;
+    }
 
     if (nas_mobile_identity_imsi->type == OGS_NAS_MOBILE_IDENTITY_IMSI) {
 
@@ -894,7 +899,7 @@ void sgsap_handle_release_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         ogs_error("No IMSI");
         return;
     }
-    if (nas_mobile_identity_imsi_len != SGSAP_IE_IMSI_LEN) {
+    if (!SGSAP_IMSI_LEN_OK(nas_mobile_identity_imsi_len)) {
         ogs_error("Invalid IMSI len [%d]", nas_mobile_identity_imsi_len);
         return;
     }
@@ -962,7 +967,7 @@ void sgsap_handle_mm_information_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         ogs_error("No IMSI");
         return;
     }
-    if (nas_mobile_identity_imsi_len != SGSAP_IE_IMSI_LEN) {
+    if (!SGSAP_IMSI_LEN_OK(nas_mobile_identity_imsi_len)) {
         ogs_error("Invalid IMSI len [%d]", nas_mobile_identity_imsi_len);
         return;
     }

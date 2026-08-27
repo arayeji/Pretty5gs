@@ -49,7 +49,11 @@ extern "C" {
 #define SGSAP_UE_UNREACHABLE                    31
 
 #define SGSAP_IE_IMSI_TYPE                      1
+/* TS 24.008 / 29.118: NAS Mobile Identity IMSI is 4..8 octets, not only 8. */
+#define SGSAP_IE_IMSI_MIN_LEN                   4
 #define SGSAP_IE_IMSI_LEN                       OGS_MAX_IMSI_LEN
+#define SGSAP_IMSI_LEN_OK(len) \
+    ((len) >= SGSAP_IE_IMSI_MIN_LEN && (len) <= SGSAP_IE_IMSI_LEN)
 #define SGSAP_IE_VLR_NAME_TYPE                  2
 #define SGSAP_IE_VLR_NAME_LEN                   OGS_MAX_FQDN_LEN
 #define SGSAP_IE_LAI_TYPE                       4

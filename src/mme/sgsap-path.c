@@ -121,7 +121,10 @@ int sgsap_send_to_vlr_with_sid(
     ogs_sock_t *sock = NULL;
 
     ogs_assert(vlr);
-    ogs_assert(pkbuf);
+    if (!pkbuf) {
+        ogs_error("sgsap_send_to_vlr_with_sid: no PDU");
+        return OGS_ERROR;
+    }
 
     ogs_debug("    StreamNO[%d] VLR-IP[%s]",
             stream_no, ogs_sockaddr_to_string_static(vlr->sa_list));

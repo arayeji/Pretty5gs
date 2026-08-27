@@ -188,11 +188,17 @@ ogs_pkbuf_t *sgsap_build_alert_reject(
     ogs_tlv_t *root = NULL;
     ogs_pkbuf_t *pkbuf = NULL;
 
-    ogs_assert(nas_mobile_identity_imsi);
-    ogs_assert(nas_mobile_identity_imsi_len == SGSAP_IE_IMSI_LEN);
+    int imsi_len = nas_mobile_identity_imsi_len;
+
+    if (!nas_mobile_identity_imsi || imsi_len <= 0) {
+        ogs_error("sgsap_build_alert_reject: no IMSI");
+        return NULL;
+    }
+    if (imsi_len > SGSAP_IE_IMSI_LEN)
+        imsi_len = SGSAP_IE_IMSI_LEN;
 
     root = ogs_tlv_add(NULL, OGS_TLV_MODE_T1_L1,
-            SGSAP_IE_IMSI_TYPE, SGSAP_IE_IMSI_LEN, 0, nas_mobile_identity_imsi);
+            SGSAP_IE_IMSI_TYPE, imsi_len, 0, nas_mobile_identity_imsi);
     ogs_tlv_add(root, OGS_TLV_MODE_T1_L1,
             SGSAP_IE_SGS_CAUSE_TYPE, SGSAP_IE_SGS_CAUSE_LEN, 0, &sgs_cause);
 
@@ -356,11 +362,17 @@ ogs_pkbuf_t *sgsap_build_paging_reject(
     ogs_tlv_t *root = NULL;
     ogs_pkbuf_t *pkbuf = NULL;
 
-    ogs_assert(nas_mobile_identity_imsi);
-    ogs_assert(nas_mobile_identity_imsi_len == SGSAP_IE_IMSI_LEN);
+    int imsi_len = nas_mobile_identity_imsi_len;
+
+    if (!nas_mobile_identity_imsi || imsi_len <= 0) {
+        ogs_error("sgsap_build_paging_reject: no IMSI");
+        return NULL;
+    }
+    if (imsi_len > SGSAP_IE_IMSI_LEN)
+        imsi_len = SGSAP_IE_IMSI_LEN;
 
     root = ogs_tlv_add(NULL, OGS_TLV_MODE_T1_L1,
-            SGSAP_IE_IMSI_TYPE, SGSAP_IE_IMSI_LEN, 0, nas_mobile_identity_imsi);
+            SGSAP_IE_IMSI_TYPE, imsi_len, 0, nas_mobile_identity_imsi);
     ogs_tlv_add(root, OGS_TLV_MODE_T1_L1,
             SGSAP_IE_SGS_CAUSE_TYPE, SGSAP_IE_SGS_CAUSE_LEN, 0, &sgs_cause);
 
