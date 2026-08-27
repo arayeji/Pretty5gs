@@ -605,9 +605,18 @@ static uint8_t mme_ue_session_from_slice_data(mme_ue_t *mme_ue,
         dst++;
     }
 
-    if (dst > 0 && !default_present)
-        slice_data->context_identifier =
-                mme_ue->session[0].context_identifier;
+    if (dst > 0 && !default_present) {
+        int k;
+
+        slice_data->context_identifier = 0;
+        for (k = 0; k < dst; k++) {
+            if (ogs_session_is_ims_apn(&mme_ue->session[k]))
+                continue;
+            slice_data->context_identifier =
+                    mme_ue->session[k].context_identifier;
+            break;
+        }
+    }
 
     return dst;
 }

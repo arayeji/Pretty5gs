@@ -37,6 +37,7 @@ const Subscriber = new Schema({
     default_indicator: Boolean,
     session: [{
       name: { $type: String, required: true }, // DNN or APN
+      default_dnn_indicator: Boolean,
       type: Number,
       qos: {
         index: Number, // 5QI or QCI

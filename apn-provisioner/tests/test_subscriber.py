@@ -38,6 +38,18 @@ def test_skips_qci5_even_if_named_oddly():
     assert select_subscriber(doc).apn == "hiweb"
 
 
+def test_honours_default_dnn_indicator_among_data_apns():
+    doc = {
+        "imsi": "1", "msisdn": ["9"],
+        "slice": [{"session": [
+            {"name": "ims", "qos": {"index": 5}},
+            {"name": "register", "qos": {"index": 9}},
+            {"name": "hiweb", "qos": {"index": 9}, "default_dnn_indicator": True},
+        ]}],
+    }
+    assert select_subscriber(doc).apn == "hiweb"
+
+
 def test_ims_only_slice_is_skipped():
     doc = {
         "imsi": "1", "msisdn": ["9"],

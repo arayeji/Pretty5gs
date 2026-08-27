@@ -1178,6 +1178,64 @@ ogs_slice_data_t *ogs_slice_find_by_s_nssai(
     return NULL;
 }
 
+bool ogs_session_is_ims_apn(const ogs_session_t *session)
+{
+    if (!session)
+        return false;
+    if (session->qos.index == OGS_QOS_INDEX_5)
+        return true;
+    if (!session->name)
+        return false;
+    if (!ogs_strcasecmp(session->name, "ims") ||
+            !ogs_strcasecmp(session->name, "ims2") ||
+            !ogs_strcasecmp(session->name, "sos") ||
+            !ogs_strcasecmp(session->name, "emergency") ||
+            !ogs_strcasecmp(session->name, "xcap"))
+        return true;
+    return false;
+}
+
+ogs_slice_data_t *ogs_subscription_epc_slice(ogs_subscription_data_t *data)
+{
+    int i;
+
+    if (!data || !data->num_of_slice)
+        return NULL;
+    for (i = 0; i < data->num_of_slice; i++) {
+        if (data->slice[i].default_indicator)
+            return &data->slice[i];
+    }
+    return &data->slice[0];
+}
+
+/*
+ * Assign 1-based context identifiers and pick the EPS default APN.
+ * IMS is never the default. Prefer a session marked default_dnn_indicator.
+ */
+uint32_t ogs_slice_assign_default_apn(ogs_slice_data_t *slice)
+{
+    int i;
+    uint32_t marked = 0, first_data = 0;
+
+    ogs_assert(slice);
+    slice->context_identifier = 0;
+
+    for (i = 0; i < slice->num_of_session; i++) {
+        ogs_session_t *s = &slice->session[i];
+
+        s->context_identifier = (uint32_t)(i + 1);
+        if (ogs_session_is_ims_apn(s))
+            continue;
+        if (!first_data)
+            first_data = s->context_identifier;
+        if (s->default_dnn_indicator && !marked)
+            marked = s->context_identifier;
+    }
+
+    slice->context_identifier = marked ? marked : first_data;
+    return slice->context_identifier;
+}
+
 void ogs_subscription_data_free(ogs_subscription_data_t *subscription_data)
 {
     int i, j;

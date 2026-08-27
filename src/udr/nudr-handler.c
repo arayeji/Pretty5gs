@@ -774,6 +774,8 @@ bool udr_nudr_dr_handle_subscription_provisioned(
             DnnInfoList = OpenAPI_list_create();
             ogs_assert(DnnInfoList);
 
+            ogs_slice_assign_default_apn(slice_data);
+
             for (j = 0; j < slice_data->num_of_session; j++) {
                 ogs_session_t *session = NULL;
 
@@ -792,8 +794,9 @@ bool udr_nudr_dr_handle_subscription_provisioned(
 
                 DnnInfo->dnn = session->name;
 
-                /* 0-index DNN becomes the default DNN */
-                if (j == 0) {
+                if (slice_data->context_identifier &&
+                        session->context_identifier ==
+                        slice_data->context_identifier) {
                     DnnInfo->is_default_dnn_indicator = true;
                     DnnInfo->default_dnn_indicator = true;
                 }

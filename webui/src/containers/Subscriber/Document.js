@@ -35,6 +35,7 @@ const formData = {
     "default_indicator": true,
     "session": [{
         "name": "internet",
+        "default_dnn_indicator": true,
         "type": 3,
         "ambr": {
           "downlink": {

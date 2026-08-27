@@ -877,9 +877,8 @@ static int hss_s6a_avp_add_subscription_data(
     }
 
     if (subdatamask & OGS_DIAM_S6A_SUBDATA_APN_CONFIG) {
-        /* For EPC, we'll use first Slice in Subscription */
-        if (subscription_data->num_of_slice)
-            slice_data = &subscription_data->slice[0];
+        /* Default S-NSSAI slice if marked; else first slice. */
+        slice_data = ogs_subscription_epc_slice(subscription_data);
 
         if (!slice_data) {
             ogs_error("[%s] Cannot find S-NSSAI", subscription_data->imsi);
@@ -898,7 +897,12 @@ static int hss_s6a_avp_add_subscription_data(
         ret = fd_msg_avp_new(ogs_diam_s6a_context_identifier, 0,
                 &context_identifier);
         ogs_assert(ret == 0);
-        val.i32 = 1; /* Context Identifier : 1 */
+        /* Real default APN (never IMS). Context-Id 1 used to mean "first
+         * session", which is often IMS in this network. */
+        val.i32 = (int32_t)ogs_slice_assign_default_apn(slice_data);
+        if (!val.i32)
+            ogs_warn("[%s] no data APN in slice; IMS will not be default",
+                    subscription_data->imsi);
         ret = fd_msg_avp_setvalue(context_identifier, &val);
         ogs_assert(ret == 0);
         ret = fd_msg_avp_add(apn_configuration_profile,
@@ -938,7 +942,7 @@ static int hss_s6a_avp_add_subscription_data(
 
             session = &slice_data->session[i];
             ogs_assert(session);
-            session->context_identifier = i+1;
+            /* context_identifier already set by ogs_slice_assign_default_apn */
 
             ret = fd_msg_avp_new(ogs_diam_s6a_apn_configuration, 0,
                 &apn_configuration);

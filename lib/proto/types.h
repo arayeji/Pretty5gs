@@ -237,6 +237,7 @@ bool ogs_pdu_session_id_is_valid(int psi);
 #define OGS_SST_STRING "sst"
 #define OGS_SD_STRING "sd"
 #define OGS_DEFAULT_INDICATOR_STRING "default_indicator"
+#define OGS_DEFAULT_DNN_INDICATOR_STRING "default_dnn_indicator"
 #define OGS_SESSION_STRING "session"
 #define OGS_NAME_STRING "name"
 #define OGS_TYPE_STRING "type"
@@ -986,6 +987,11 @@ typedef struct ogs_subscription_data_s {
 } ogs_subscription_data_t;
 
 void ogs_subscription_data_free(ogs_subscription_data_t *subscription_data);
+
+/* EPS default APN: never IMS (name or QCI 5). Honours session.default_dnn_indicator. */
+bool ogs_session_is_ims_apn(const ogs_session_t *session);
+ogs_slice_data_t *ogs_subscription_epc_slice(ogs_subscription_data_t *data);
+uint32_t ogs_slice_assign_default_apn(ogs_slice_data_t *slice);
 
 typedef struct ogs_session_data_s {
     ogs_session_t session;

@@ -187,6 +187,10 @@ const schema = {
                   "title": "DNN/APN*",
                   "required": true
                 },
+                "default_dnn_indicator": {
+                  "type": "boolean",
+                  "title": "Default APN (internet; never IMS)",
+                },
                 "type": {
                   "type": "number",
                   "title": "Type*",
@@ -206,7 +210,7 @@ const schema = {
                       "type": "number",
                       "title": "5QI/QCI*",
                       "enum": [ 1, 2, 3, 4, 65, 66, 67, 75, 71, 72, 73, 74, 76, 5, 6, 7, 8, 9, 69, 70, 79, 80, 82, 83, 84, 85, 86 ],
-                      "default": 5,
+                      "default": 9,
                     },
                     "arp" : {
                       "type": "object",

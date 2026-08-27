@@ -49,7 +49,10 @@ def select_subscriber(doc: dict,
     sessions = chosen.get("session") or []
     skip = {s.lower() for s in (skip_names if skip_names is not None
                                 else DEFAULT_NON_DATA_APNS)}
-    sess = next((s for s in sessions if _is_data_session(s, skip)), None)
+    data = [s for s in sessions if _is_data_session(s, skip)]
+    sess = next((s for s in data if s.get("default_dnn_indicator")), None)
+    if sess is None and data:
+        sess = data[0]
     if sess is None:
         return None
     apn = sess.get("name")

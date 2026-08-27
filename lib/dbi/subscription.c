@@ -599,6 +599,11 @@ int ogs_dbi_subscription_data(char *supi,
                                     session->lbo_roaming_allowed =
                                         bson_iter_bool(&child4_iter);
                                 } else if (!strcmp(child4_key,
+                                            OGS_DEFAULT_DNN_INDICATOR_STRING) &&
+                                    BSON_ITER_HOLDS_BOOL(&child4_iter)) {
+                                    session->default_dnn_indicator =
+                                        bson_iter_bool(&child4_iter);
+                                } else if (!strcmp(child4_key,
                                             OGS_QOS_STRING) &&
                                     BSON_ITER_HOLDS_DOCUMENT(&child4_iter)) {
                                     bson_iter_recurse(

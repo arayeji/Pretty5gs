@@ -977,9 +977,7 @@ static int hss_ogs_diam_swx_sar_cb(struct msg **msg, struct avp *avp,
             goto out;
         }
 
-        /* For EPC, we'll use first Slice in Subscription */
-        if (subscription_data.num_of_slice)
-            slice_data = &subscription_data.slice[0];
+        slice_data = ogs_subscription_epc_slice(&subscription_data);
 
         if (!slice_data) {
             ogs_error("[%s] Cannot find S-NSSAI", imsi_bcd);
@@ -1004,7 +1002,10 @@ static int hss_ogs_diam_swx_sar_cb(struct msg **msg, struct avp *avp,
             goto out;
         }
 
-        val.i32 = 1; /* Context Identifier : 1 */
+        val.i32 = (int32_t)ogs_slice_assign_default_apn(slice_data);
+        if (!val.i32)
+            ogs_warn("[%s] no data APN in slice; IMS will not be default",
+                    imsi_bcd);
         ret = fd_msg_avp_setvalue(context_identifier, &val);
         if (ret != 0) {
             ogs_error("Failed to set Context-Identifier value");
@@ -1052,7 +1053,7 @@ static int hss_ogs_diam_swx_sar_cb(struct msg **msg, struct avp *avp,
                 ogs_error("Invalid session at index %d", i);
                 continue;
             }
-            session->context_identifier = i+1;
+            /* context_identifier already set by ogs_slice_assign_default_apn */
 
             ret = fd_msg_avp_new(ogs_diam_s6a_apn_configuration, 0,
                 &apn_configuration);
