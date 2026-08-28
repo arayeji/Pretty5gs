@@ -274,6 +274,21 @@ static int hss_s6a_air_handle_resync(struct avp *req_auth_info,
     return OGS_OK;
 }
 
+/*
+ * TS 33.102 6.3.2 / TS 33.401: AMF bit 0 (MSB of the first octet) is the
+ * separation bit. 0 = UMTS (UTRAN/GERAN SAI), 1 = EPS (E-UTRAN).
+ * Subscriber AMF in the DB is typically 0x80xx; using that unchanged on a
+ * UTRAN vector puts 8xxx in AUTN and USIMs reject the SAI.
+ */
+static void hss_s6a_amf_for_rat(uint8_t amf[OGS_AMF_LEN], bool eps)
+{
+    ogs_assert(amf);
+    if (eps)
+        amf[0] |= 0x80;
+    else
+        amf[0] &= 0x7f;
+}
+
 static int hss_s6a_air_build_e_utran_vector(struct avp *auth_info_avp,
         uint8_t *rand, uint8_t *xres, size_t xres_len,
         uint8_t *autn, uint8_t *kasme)
@@ -582,11 +597,6 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
             req_eutran ? 1 : 0, req_utran ? 1 : 0, resync ? 1 : 0,
             origin_host[0] ? origin_host : "-");
 
-    /* Generate authentication vectors (Milenage) */
-    milenage_generate(opc, auth_info.amf, auth_info.k,
-        ogs_uint64_to_buffer(auth_info.sqn, OGS_SQN_LEN, sqn), auth_info.rand,
-        autn, ik, ck, ak, xres, &xres_len);
-
     /* Set the Authentication-Info */
     ret = fd_msg_avp_new(ogs_diam_s6a_authentication_info, 0, &avp);
     if (ret != 0) {
@@ -596,6 +606,13 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
     }
 
     if (req_utran) {
+        uint8_t utran_amf[OGS_AMF_LEN];
+
+        memcpy(utran_amf, auth_info.amf, OGS_AMF_LEN);
+        hss_s6a_amf_for_rat(utran_amf, false);
+        milenage_generate(opc, utran_amf, auth_info.k,
+            ogs_uint64_to_buffer(auth_info.sqn, OGS_SQN_LEN, sqn),
+            auth_info.rand, autn, ik, ck, ak, xres, &xres_len);
         ret = hss_s6a_air_build_utran_vector(avp, auth_info.rand,
                 xres, xres_len, autn, ck, ik);
         if (ret != 0) {
@@ -603,10 +620,19 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
             error_occurred = 1;
             goto out;
         }
-        ogs_debug("AIA UTRAN-Vector for IMSI:%s", imsi_bcd);
+        hss_trace_event(imsi_bcd, "S6a-AIR",
+                "UTRAN-Vector amf=%02x%02x (sep=0)",
+                utran_amf[0], utran_amf[1]);
     }
 
     if (req_eutran) {
+        uint8_t eutran_amf[OGS_AMF_LEN];
+
+        memcpy(eutran_amf, auth_info.amf, OGS_AMF_LEN);
+        hss_s6a_amf_for_rat(eutran_amf, true);
+        milenage_generate(opc, eutran_amf, auth_info.k,
+            ogs_uint64_to_buffer(auth_info.sqn, OGS_SQN_LEN, sqn),
+            auth_info.rand, autn, ik, ck, ak, xres, &xres_len);
         ogs_auc_kasme(ck, ik, visited_plmn_bytes, sqn, ak, kasme);
         ret = hss_s6a_air_build_e_utran_vector(avp, auth_info.rand,
                 xres, xres_len, autn, kasme);
@@ -615,7 +641,9 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
             error_occurred = 1;
             goto out;
         }
-        ogs_debug("AIA E-UTRAN-Vector for IMSI:%s", imsi_bcd);
+        hss_trace_event(imsi_bcd, "S6a-AIR",
+                "E-UTRAN-Vector amf=%02x%02x (sep=1)",
+                eutran_amf[0], eutran_amf[1]);
     }
 
     /* Add Authentication-Info to answer */
