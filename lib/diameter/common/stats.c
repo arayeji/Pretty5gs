@@ -134,6 +134,7 @@ static void diam_stats_timer_cb(void *data)
 
     /* Now, display everything */
     ogs_diam_stats_log(&copy, since_start);
+    ogs_diam_log_peer_states();
 
     /* Trigger user callback: */
     if (self.update_cb)

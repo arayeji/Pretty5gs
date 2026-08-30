@@ -19,6 +19,8 @@
 
 #include "ogs-diameter-common.h"
 
+#include <unistd.h>
+
 int __ogs_diam_domain;
 
 static void diam_gnutls_log_func(int level, const char *str);
@@ -61,6 +63,26 @@ int ogs_diam_init(int mode, const char *conffile, ogs_diam_config_t *fd_config)
 
     /* Initialize FD stats */
     CHECK_FCT_DO( ogs_diam_stats_init(mode, &fd_config->stats), goto error );
+
+    /*
+     * New Origin-State-Id on every process start so a DRA that still holds
+     * the pre-crash association treats this as a restarted peer (RFC 6733)
+     * instead of RSTing CER until Tw expires.
+     */
+    fd_g_config->cnf_orstateid =
+            ((uint32_t)(ogs_time_now() / 1000000)) ^
+            ((uint32_t)getpid() << 8);
+    if (!fd_g_config->cnf_orstateid)
+        fd_g_config->cnf_orstateid = 1;
+    ogs_info("Diameter Origin-State-Id %u (restart identity)",
+            fd_g_config->cnf_orstateid);
+
+    /* Faster ConnectPeer retry after DRA RST of a stale session. */
+    if (!fd_g_config->cnf_timer_tc || fd_g_config->cnf_timer_tc > 15) {
+        ogs_info("Diameter TcTimer %u -> 10s",
+                fd_g_config->cnf_timer_tc);
+        fd_g_config->cnf_timer_tc = 10;
+    }
 
     return 0;
 error:

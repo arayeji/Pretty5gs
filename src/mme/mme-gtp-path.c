@@ -891,11 +891,30 @@ int mme_gtp_send_delete_session_request(
     ogs_gtp_xact_t *xact = NULL;
     mme_ue_t *mme_ue = NULL;
 
-    ogs_assert(action);
-    ogs_assert(sess);
+    if (!action || !sess) {
+        ogs_error("delete_session_request: missing action/sess");
+        return OGS_ERROR;
+    }
+
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
-    ogs_assert(mme_ue);
-    ogs_assert(sgw_ue);
+    /*
+     * Detach / multi-PDN teardown can free mme_ue (or the SGW UE) while a
+     * session is still queued for S11 Delete. Do not abort the MME — that
+     * also drops every DRA/S6a association and they often stay down until
+     * the peer resets the stale Origin-Host.
+     */
+    if (!mme_ue) {
+        ogs_error("delete_session_request: MME-UE already gone "
+                "(sess id=%d) — clear local", (int)sess->id);
+        MME_SESS_CLEAR(sess);
+        return OGS_ERROR;
+    }
+    if (!sgw_ue) {
+        ogs_error("[%s] delete_session_request: no SGW UE — clear local",
+                mme_ue->imsi_bcd);
+        MME_SESS_CLEAR(sess);
+        return OGS_ERROR;
+    }
 
     if (!sgw_ue->sgw_s11_teid) {
         ogs_info("[%s] Delete Session skipped: no SGW S11 TEID - clear local",

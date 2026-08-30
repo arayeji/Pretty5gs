@@ -30,7 +30,8 @@ static void ogs_diam_logger_cb(enum fd_hook_type type, struct msg * msg,
 
 int ogs_diam_logger_init()
 {
-    uint32_t mask_peers = HOOK_MASK( HOOK_PEER_CONNECT_SUCCESS );
+    uint32_t mask_peers = HOOK_MASK(
+            HOOK_PEER_CONNECT_SUCCESS, HOOK_PEER_CONNECT_FAILED);
 
     CHECK_FCT( fd_hook_register(
             mask_peers, ogs_diam_logger_cb, NULL, NULL, &logger_hdl) );
@@ -79,6 +80,15 @@ static void ogs_diam_logger_cb(enum fd_hook_type type, struct msg * msg,
                 protobuf[1] = '\0';
             }
             ogs_info("CONNECTED TO '%s' (%s):", peer_name, protobuf);
+        }
+        break;
+    case HOOK_PEER_CONNECT_FAILED:
+        {
+            const char *why = other ? (const char *)other : "unknown";
+            int st = peer ? fd_peer_get_state(peer) : -1;
+
+            ogs_error("PEER CONNECT FAILED '%s' state=%s: %s",
+                    peer_name, STATE_STR(st), why);
         }
         break;
     default:

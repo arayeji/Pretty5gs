@@ -1147,7 +1147,7 @@ static void _mme_s6a_send_air(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
     MME_S6A_CHK(fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp));
 
     /* Set Origin-Host & Origin-Realm */
-    MME_S6A_CHK(fd_msg_add_origin(req, 0));
+    MME_S6A_CHK(fd_msg_add_origin(req, 1));
 
     /* Set the Destination-Realm & Destination-Host */
     MME_S6A_CHK(mme_add_hss_destination(mme_ue, req));
@@ -1794,7 +1794,7 @@ void mme_s6a_send_ulr(enb_ue_t *enb_ue, mme_ue_t *mme_ue, uint32_t extra_ulr_fla
     MME_S6A_CHK(fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp));
 
     /* Set Origin-Host & Origin-Realm */
-    MME_S6A_CHK(fd_msg_add_origin(req, 0));
+    MME_S6A_CHK(fd_msg_add_origin(req, 1));
 
     /* Set the Destination-Realm & Destination-Host */
     MME_S6A_CHK(mme_add_hss_destination(mme_ue, req));
@@ -2348,7 +2348,7 @@ void mme_s6a_send_pur(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     MME_S6A_CHK(fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp));
 
     /* Set Origin-Host & Origin-Realm */
-    MME_S6A_CHK(fd_msg_add_origin(req, 0));
+    MME_S6A_CHK(fd_msg_add_origin(req, 1));
 
     /* Set the Destination-Realm & Destination-Host */
     MME_S6A_CHK(mme_add_hss_destination(mme_ue, req));
@@ -2453,7 +2453,7 @@ void mme_s6a_send_nor(mme_ue_t *mme_ue, uint32_t nor_flags)
     MME_S6A_CHK(fd_msg_avp_add(req, MSG_BRW_LAST_CHILD, avp));
 
     /* Set Origin-Host & Origin-Realm */
-    MME_S6A_CHK(fd_msg_add_origin(req, 0));
+    MME_S6A_CHK(fd_msg_add_origin(req, 1));
 
     /* Set the Destination-Realm & Destination-Host (HSS) */
     MME_S6A_CHK(mme_add_hss_destination(mme_ue, req));
@@ -3604,8 +3604,8 @@ int mme_fd_init(void)
     ret = ogs_diam_init(FD_MODE_CLIENT,
                 mme_self()->diam_conf_path, mme_self()->diam_config);
     if (ret != 0) {
-        ogs_error("Diameter operation failed (ret=%d)", ret);
-        return 0;
+        ogs_error("Diameter init failed (ret=%d)", ret);
+        return OGS_ERROR;
     }
 
     /* Install objects definitions for this application */
@@ -3615,8 +3615,8 @@ int mme_fd_init(void)
     /* Create handler for sessions */
     ret = fd_sess_handler_create(&mme_s6a_reg, &state_cleanup, NULL, NULL);
     if (ret != 0) {
-        ogs_error("Diameter operation failed (ret=%d)", ret);
-        return 0;
+        ogs_error("Diameter session handler failed (ret=%d)", ret);
+        return OGS_ERROR;
     }
 
     /* Specific handler for Cancel-Location-Request */
@@ -3625,8 +3625,8 @@ int mme_fd_init(void)
     ret = fd_disp_register(mme_s6a_clr_cb, DISP_HOW_CC, &data, NULL,
                 &hdl_s6a_clr);
     if (ret != 0) {
-        ogs_error("Diameter operation failed (ret=%d)", ret);
-        return 0;
+        ogs_error("Diameter CLR handler failed (ret=%d)", ret);
+        return OGS_ERROR;
     }
 
     /* Specific handler for Insert-Subscriber-Data-Request */
@@ -3634,24 +3634,24 @@ int mme_fd_init(void)
     ret = fd_disp_register(mme_s6a_idr_cb, DISP_HOW_CC, &data, NULL,
                 &hdl_s6a_idr);
     if (ret != 0) {
-        ogs_error("Diameter operation failed (ret=%d)", ret);
-        return 0;
+        ogs_error("Diameter IDR handler failed (ret=%d)", ret);
+        return OGS_ERROR;
     }
 
     /* Advertise the support for the application in the peer */
     ret = fd_disp_app_support(ogs_diam_s6a_application, ogs_diam_vendor, 1, 0);
     if (ret != 0) {
-        ogs_error("Diameter operation failed (ret=%d)", ret);
-        return 0;
+        ogs_error("Diameter S6a advertise failed (ret=%d)", ret);
+        return OGS_ERROR;
     }
 
     ret = ogs_diam_start();
     if (ret != 0) {
-        ogs_error("Diameter operation failed (ret=%d)", ret);
-        return 0;
+        ogs_error("Diameter start failed (ret=%d)", ret);
+        return OGS_ERROR;
     }
 
-    return 0;
+    return OGS_OK;
 }
 
 void mme_fd_final(void)

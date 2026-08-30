@@ -56,3 +56,34 @@ bool ogs_diam_is_relay_or_app_advertised(uint32_t app_id)
 
     return false;
 }
+
+void ogs_diam_log_peer_states(void)
+{
+    struct fd_list *li = NULL;
+    int down = 0;
+
+    if (pthread_rwlock_rdlock(&fd_g_peers_rw) != 0)
+        return;
+    for (li = fd_g_peers.next; li != &fd_g_peers; li = li->next) {
+        struct peer_hdr *p = (struct peer_hdr *)li->o;
+        int state;
+
+        if (!p || !p->info.pi_diamid)
+            continue;
+
+        state = fd_peer_get_state(p);
+        if (state == STATE_OPEN || state == STATE_OPEN_NEW ||
+                state == STATE_REOPEN)
+            ogs_debug("Diameter peer '%s' %s",
+                    p->info.pi_diamid, STATE_STR(state));
+        else {
+            ogs_error("Diameter peer '%s' %s (not OPEN — ConnectPeer retry)",
+                    p->info.pi_diamid, STATE_STR(state));
+            down++;
+        }
+    }
+    (void)pthread_rwlock_unlock(&fd_g_peers_rw);
+
+    if (!down)
+        ogs_debug("Diameter peers: all OPEN");
+}

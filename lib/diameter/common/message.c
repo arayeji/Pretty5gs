@@ -146,7 +146,7 @@ int ogs_diam_message_experimental_rescode_set(
 
     CHECK_FCT( fd_msg_avp_add(msg, MSG_BRW_LAST_CHILD, avp) );
 
-    CHECK_FCT( fd_msg_add_origin(msg, 0) );
+    CHECK_FCT( fd_msg_add_origin(msg, 1) );
 
     return 0;
 }
