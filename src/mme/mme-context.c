@@ -5206,26 +5206,30 @@ void mme_vlr_remove_all(void)
 
 void mme_vlr_close(mme_vlr_t *vlr)
 {
+    ogs_poll_t *poll = NULL;
+    ogs_sock_t *sock = NULL;
+
     ogs_assert(vlr);
 
-    if (vlr->poll) {
-        ogs_pollset_remove(vlr->poll);
-        vlr->poll = NULL;
-    }
     /*
-     * Destroy + NULL under the ctx lock: the sgsap-io thread holds the
-     * same lock from vlr->sock read through ogs_sctp_sendmsg(), so a
-     * queued send either completes before the destroy or sees NULL.
+     * Steal poll/sock under the ctx lock so a second close (SIGHUP
+     * retire + will_connect retry, or two TIMER events) cannot
+     * ogs_sctp_destroy the same object — that was SIGABRT
+     * "double free or corruption" / closesocket EBADF.
      */
     mme_ctx_lock();
-    if (vlr->sock) {
-        ogs_sctp_destroy(vlr->sock);
-        vlr->sock = NULL;
-    }
-    /* Fresh association starts with a clean TX stall watchdog. */
+    poll = vlr->poll;
+    vlr->poll = NULL;
+    sock = vlr->sock;
+    vlr->sock = NULL;
     vlr->tx_stall_since = 0;
     vlr->tx_stall_posted = false;
     mme_ctx_unlock();
+
+    if (poll)
+        ogs_pollset_remove(poll);
+    if (sock)
+        ogs_sctp_destroy(sock);
 }
 
 mme_vlr_t *mme_vlr_find_by_addr(const ogs_sockaddr_t *sa_list)
@@ -5430,6 +5434,9 @@ static void mme_vlr_restart_client(mme_vlr_t *vlr)
 
     memset(&e, 0, sizeof(e));
     e.vlr = vlr;
+
+    /* Drop the live fd before re-init; fsm_fini does not close SCTP. */
+    mme_vlr_close(vlr);
 
     if (OGS_FSM_STATE(&vlr->sm)) {
         ogs_fsm_fini(&vlr->sm, &e);

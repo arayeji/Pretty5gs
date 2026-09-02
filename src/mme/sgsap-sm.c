@@ -75,8 +75,12 @@ void sgsap_state_will_connect(ogs_fsm_t *s, mme_event_t *e)
 
     vlr = e->vlr;
     ogs_assert(vlr);
-
-    ogs_assert(vlr->t_conn);
+    if (vlr->retired)
+        return;
+    if (!vlr->t_conn) {
+        ogs_error("SGsAP will_connect: no reconnect timer");
+        return;
+    }
 
     switch (e->id) {
     case OGS_FSM_ENTRY_SIG:
@@ -191,10 +195,14 @@ void sgsap_state_connected(ogs_fsm_t *s, mme_event_t *e)
     case OGS_FSM_EXIT_SIG:
         break;
     case MME_EVENT_SGSAP_LO_CONNREFUSED:
+        if (vlr->retired)
+            break;
         mme_vlr_close(vlr);
         OGS_FSM_TRAN(s, sgsap_state_will_connect);
         break;
     case MME_EVENT_SGSAP_TX_STALL:
+        if (vlr->retired)
+            break;
         ogs_error("[SGsAP] VLR %s TX stalled (send buffer full, no "
                 "progress); resetting SCTP association",
                 ogs_sockaddr_to_string_static(vlr->sa_list));

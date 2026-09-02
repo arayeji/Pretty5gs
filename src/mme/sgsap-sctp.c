@@ -38,6 +38,10 @@ ogs_sock_t *sgsap_client(mme_vlr_t *vlr)
 
     ogs_assert(vlr);
 
+    /* Tear down a leftover poll/fd before replacing vlr->sock. */
+    if (vlr->sock || vlr->poll)
+        mme_vlr_close(vlr);
+
     sock = ogs_sctp_client(SOCK_STREAM,
             vlr->sa_list, vlr->local_sa_list, vlr->option);
     if (sock) {
