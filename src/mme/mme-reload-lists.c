@@ -2151,9 +2151,9 @@ int mme_reload_lists_key_add_only(const char *mme_key, ogs_yaml_iter_t *mme_iter
     }
     if (!strcmp(mme_key, "sgsap")) {
         /*
-         * Add/update only: VLRs keep their SCTP association, TAI-LAI maps
-         * are edited in place, and entries dropped from the file are
-         * retired rather than freed (attached UEs still point at them).
+         * VLRs matched by dest address. Same address keeps SCTP unless
+         * local_address changed; a new address connects; a removed
+         * address closes SCTP and rematches attached UEs onto live maps.
          * A failed parse leaves the previous table alone.
          */
         if (mme_sgsap_config_parse(mme_iter, true) != OGS_OK)

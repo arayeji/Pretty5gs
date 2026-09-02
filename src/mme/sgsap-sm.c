@@ -92,6 +92,8 @@ void sgsap_state_will_connect(ogs_fsm_t *s, mme_event_t *e)
         case MME_TIMER_SGS_CLI_CONN_TO_SRV:
             vlr = e->vlr;
             ogs_assert(vlr);
+            if (vlr->retired)
+                break;
             addr = vlr->sa_list;
             ogs_assert(addr);
 

@@ -5368,11 +5368,9 @@ void mme_csmap_remove_all(void)
 
 /*
  * Unlink every map the reload did not match from the lookup path. The
- * object stays allocated: UEs attached before the reload still point at
- * it and dereference it without a null check (sgsap-build.c, and the
- * ogs_assert(mme_ue->csmap) in emm-build.c / s1ap-build.c). They keep
- * using the old LAI/VLR until they detach or run another TAU, which is
- * the intended behaviour - only new lookups see the new table.
+ * object stays allocated until mme_sgsap_remap_ues() (or detach/TAU)
+ * drops the last mme_ue->csmap pointer; builders still dereference
+ * that pointer without a null check.
  */
 static int mme_csmap_retire_unseen(void)
 {
@@ -5422,6 +5420,67 @@ int mme_csmap_reclaim_retired(void)
     }
 
     return freed;
+}
+
+static void mme_vlr_restart_client(mme_vlr_t *vlr)
+{
+    mme_event_t e;
+
+    ogs_assert(vlr);
+
+    memset(&e, 0, sizeof(e));
+    e.vlr = vlr;
+
+    if (OGS_FSM_STATE(&vlr->sm)) {
+        ogs_fsm_fini(&vlr->sm, &e);
+        vlr->t_conn = NULL;
+    }
+
+    vlr->retired = false;
+    ogs_fsm_init(&vlr->sm, sgsap_state_initial, sgsap_state_final, &e);
+}
+
+static void mme_vlr_retire(mme_vlr_t *vlr)
+{
+    ogs_assert(vlr);
+
+    if (vlr->retired)
+        return;
+
+    /*
+     * Close SCTP and stop reconnect. Leave the object (and FSM) so a
+     * queued SGsAP TIMER / IO job cannot UAF; sgsap_close() finis later.
+     */
+    mme_vlr_close(vlr);
+    if (vlr->t_conn)
+        ogs_timer_stop(vlr->t_conn);
+    vlr->retired = true;
+}
+
+static int mme_sgsap_remap_ues(void)
+{
+    mme_ue_t *mme_ue = NULL;
+    int remapped = 0;
+
+    mme_ctx_lock();
+    ogs_list_for_each(&self.mme_ue_list, mme_ue) {
+        mme_csmap_t *next;
+
+        if (!mme_ue->csmap)
+            continue;
+        if (!mme_ue->csmap->retired &&
+                !(mme_ue->csmap->vlr && mme_ue->csmap->vlr->retired))
+            continue;
+
+        next = mme_csmap_find_for_ue(mme_ue);
+        if (next && next != mme_ue->csmap) {
+            mme_ue->csmap = next;
+            remapped++;
+        }
+    }
+    mme_ctx_unlock();
+
+    return remapped;
 }
 
 static bool mme_csmap_tai_match(
@@ -6049,23 +6108,26 @@ static int sgsap_config_parse_body(ogs_yaml_iter_t *mme_iter, bool reload,
                             ogs_global_conf()->parameter.prefer_ipv4);
 
                     if (existing) {
-                        /*
-                         * Keep the live SCTP association. Rebinding it would
-                         * drop SGs for every CSFB subscriber on this VLR and
-                         * force them all to re-run Location Update, so the
-                         * transport-level keys are reload-exempt and only the
-                         * maps below are refreshed.
-                         */
-                        if (!sgsap_local_addr_equal(
-                                    existing->local_sa_list, local_addr))
-                            ogs_reload_audit_warn(
-                                    " sgsap.client[%s] local_address change "
-                                    "ignored (daemon restart required)",
-                                    ogs_sockaddr_to_string_static(
-                                        existing->sa_list));
+                        bool local_changed = !sgsap_local_addr_equal(
+                                existing->local_sa_list, local_addr);
 
                         ogs_freeaddrinfo(addr);
-                        ogs_freeaddrinfo(local_addr);
+
+                        if (existing->retired || local_changed) {
+                            ogs_freeaddrinfo(existing->local_sa_list);
+                            existing->local_sa_list = local_addr;
+                            local_addr = NULL;
+                            ogs_reload_audit_note(
+                                    " sgsap.client[%s] %s — reconnecting",
+                                    ogs_sockaddr_to_string_static(
+                                        existing->sa_list),
+                                    existing->retired ?
+                                        "address back in config" :
+                                        "local_address changed");
+                            mme_vlr_restart_client(existing);
+                        } else {
+                            ogs_freeaddrinfo(local_addr);
+                        }
                         vlr = existing;
                     } else {
                         vlr = mme_vlr_add(addr, local_addr,
@@ -6182,27 +6244,45 @@ int mme_sgsap_config_parse(ogs_yaml_iter_t *mme_iter, bool reload)
 
     if (reload) {
         int retired = mme_csmap_retire_unseen();
-        int freed = mme_csmap_reclaim_retired();
+        int dropped_vlr = 0, remapped = 0, freed = 0, live_vlr = 0;
 
         ogs_list_for_each(&self.vlr_list, vlr_node) {
             if (vlr_node->seen)
                 continue;
-            ogs_reload_audit_warn(
-                    " sgsap.client[%s] no longer in config, association kept "
-                    "(daemon restart required to drop it)",
+            if (vlr_node->retired)
+                continue;
+            ogs_reload_audit_note(
+                    " sgsap.client[%s] no longer in config — SCTP closed",
                     ogs_sockaddr_to_string_static(vlr_node->sa_list));
+            mme_vlr_retire(vlr_node);
+            dropped_vlr++;
         }
 
+        remapped = mme_sgsap_remap_ues();
+        freed = mme_csmap_reclaim_retired();
+
+        ogs_list_for_each(&self.vlr_list, vlr_node)
+            if (!vlr_node->retired)
+                live_vlr++;
+
         ogs_reload_audit_note(
-                " sgsap vlr+%d map+%d map~%d map-%d (freed %d, %d pinned "
-                "by attached UEs)",
-                added_vlr, added_map, updated_map, retired, freed,
-                ogs_list_count(&self.csmap_retired_list));
+                " sgsap vlr+%d vlr-%d ue~%d map+%d map~%d map-%d "
+                "(freed %d, %d pinned by attached UEs, %d live VLR)",
+                added_vlr, dropped_vlr, remapped,
+                added_map, updated_map, retired, freed,
+                ogs_list_count(&self.csmap_retired_list), live_vlr);
     }
 
-    ogs_info("sgsap: %d TAI-LAI map(s) across %d VLR(s)",
-            ogs_list_count(&self.csmap_list),
-            ogs_list_count(&self.vlr_list));
+    {
+        int live_vlr = 0;
+        mme_vlr_t *vlr_it = NULL;
+
+        ogs_list_for_each(&self.vlr_list, vlr_it)
+            if (!vlr_it->retired)
+                live_vlr++;
+        ogs_info("sgsap: %d TAI-LAI map(s) across %d VLR(s)",
+                ogs_list_count(&self.csmap_list), live_vlr);
+    }
 
     return OGS_OK;
 }

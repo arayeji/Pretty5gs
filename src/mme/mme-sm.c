@@ -2085,8 +2085,10 @@ cleanup:
 
     case MME_EVENT_SGSAP_TIMER:
         vlr = e->vlr;
-        ogs_assert(vlr);
-        ogs_assert(OGS_FSM_STATE(&vlr->sm));
+        if (!vlr || vlr->retired || !OGS_FSM_STATE(&vlr->sm)) {
+            ogs_warn("SGsAP TIMER: VLR gone/retired; ignore");
+            break;
+        }
 
         ogs_fsm_dispatch(&vlr->sm, e);
         break;

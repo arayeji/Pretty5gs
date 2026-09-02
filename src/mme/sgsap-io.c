@@ -65,7 +65,7 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
      */
     mme_ctx_lock();
     ogs_list_for_each(&mme_self()->vlr_list, vlr) {
-        if (vlr == job->vlr) {
+        if (vlr == job->vlr && !vlr->retired) {
             found = true;
             break;
         }

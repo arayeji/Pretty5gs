@@ -593,6 +593,7 @@ typedef struct mme_pgw_sel_rule_s {
 
 #define MME_SGSAP_IS_CONNECTED(__mME) \
     ((__mME) && ((__mME)->csmap) && ((__mME)->csmap->vlr) && \
+     !(__mME)->csmap->vlr->retired && \
      (OGS_FSM_CHECK(&(__mME)->csmap->vlr->sm, sgsap_state_connected)))
 
 typedef struct mme_vlr_s {
@@ -613,6 +614,7 @@ typedef struct mme_vlr_s {
     ogs_poll_t      *poll;      /* VLR SGsAP Poll */
 
     bool            seen;       /* still present in the reloaded config */
+    bool            retired;    /* address gone on SIGHUP; SCTP closed */
 
     /*
      * SGsAP TX stall watchdog (owned by the sgsap-io thread, guarded by
@@ -1998,11 +2000,11 @@ int mme_csmap_reclaim_retired(void);
  * Parse 'mme.sgsap'. 'mme_iter' must sit on the sgsap key.
  *
  * At startup this builds the VLR and TAI-LAI map lists from scratch. On a
- * SIGHUP reload it is add/update-only: VLRs are matched by address and
- * their SCTP association is left untouched, map entries are updated in
- * place, brand-new VLRs are connected, and entries no longer in the file
- * are retired rather than freed. Changing or deleting an existing VLR
- * address still needs a restart and is reported as such.
+ * SIGHUP reload VLRs are matched by address: live associations are kept
+ * when the dest IP is unchanged, a new address gets a new SCTP client,
+ * an address (or local_address) change closes the old association and
+ * reconnects, and attached UEs are rematched from retired maps onto the
+ * live table so they send to the new destination without a restart.
  */
 int mme_sgsap_config_parse(ogs_yaml_iter_t *mme_iter, bool reload);
 

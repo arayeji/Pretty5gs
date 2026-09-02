@@ -121,6 +121,14 @@ int sgsap_send_to_vlr_with_sid(
     ogs_sock_t *sock = NULL;
 
     ogs_assert(vlr);
+    if (vlr->retired) {
+        ogs_error("SGsAP not sent: VLR [%s] retired after SIGHUP",
+                ogs_sockaddr_to_string_static(vlr->sa_list) ?
+                    ogs_sockaddr_to_string_static(vlr->sa_list) : "-");
+        if (pkbuf)
+            ogs_pkbuf_free(pkbuf);
+        return OGS_ERROR;
+    }
     if (!pkbuf) {
         ogs_error("sgsap_send_to_vlr_with_sid: no PDU");
         return OGS_ERROR;
