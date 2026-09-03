@@ -32,9 +32,11 @@
 #ifdef _WIN32
 #include <io.h>
 #include <windows.h>
+#define spool_mkdir(p) _mkdir(p)
 #else
 #include <unistd.h>
 #include <dirent.h>
+#define spool_mkdir(p) mkdir((p), 0755)
 #endif
 
 /* On-disk framing — must match lib/cdr/framing.h and ga-writer modules. */
@@ -398,10 +400,22 @@ void cgf_spool_release(cgf_spool_file_t *file)
 /* Exclusive claim for the workers==1 path: rename ready/X into
  * processing/0/X so a later ready/ rescan cannot open (and GTP'-send)
  * the same file again while it is still waiting for DTRR ACKs. */
+static void ensure_processing0(void)
+{
+    char sub[600];
+    const char *pdir = cgf_self()->processing_dir;
+
+    if (!pdir) return;
+    (void)spool_mkdir(pdir);
+    ogs_snprintf(sub, sizeof(sub), "%s/0", pdir);
+    (void)spool_mkdir(sub);
+}
+
 static int claim_main_thread(char *path, size_t cap)
 {
     const char *base;
     char dst[512];
+    int err;
 
     if (!path || !path[0] || !cgf_self()->processing_dir)
         return OGS_ERROR;
@@ -410,17 +424,27 @@ static int claim_main_thread(char *path, size_t cap)
     if (active_has_basename(base))
         return OGS_ERROR;
 
+    ensure_processing0();
     ogs_snprintf(dst, sizeof(dst), "%s/0/%s",
             cgf_self()->processing_dir, base);
-    if (rename(path, dst) != 0) {
-        if (spool_path_ready(path))
-            ogs_warn("cgf: claim '%s' -> '%s' failed: %s",
-                    path, dst, strerror(errno));
-        return OGS_ERROR;
+    if (rename(path, dst) == 0) {
+        ogs_snprintf(path, cap, "%s", dst);
+        return OGS_OK;
     }
 
-    ogs_snprintf(path, cap, "%s", dst);
-    return OGS_OK;
+    err = errno;
+#ifdef EXDEV
+    /* Cross-device spool (ready/ on another mount): keep in-place.
+     * active_has_basename() still stops a second open in this process. */
+    if (err == EXDEV && spool_path_ready(path)) {
+        ogs_info("cgf: claim rename EXDEV — draining '%s' in place", path);
+        return OGS_OK;
+    }
+#endif
+    if (spool_path_ready(path) && err != ENOENT)
+        ogs_warn("cgf: claim '%s' -> '%s' failed: %s",
+                path, dst, strerror(err));
+    return OGS_ERROR;
 }
 
 static bool open_spool_file(const char *path)
@@ -465,9 +489,12 @@ void cgf_spool_try_open_more(uint32_t max)
             spool_mark_empty();
             return;
         }
-        attempts++;
-        if (claim_main_thread(path, sizeof(path)) != OGS_OK)
+        if (claim_main_thread(path, sizeof(path)) != OGS_OK) {
+            /* Do not retry the same cached ready/ path 16 times. */
+            spool_clear_cached_next();
             continue;
+        }
+        attempts++;
         if (open_spool_file(path))
             continue;
     }
