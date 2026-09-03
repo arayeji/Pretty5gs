@@ -475,33 +475,36 @@ static bool open_spool_file(const char *path)
 void cgf_spool_try_open_more(uint32_t max)
 {
     char path[512];
-    int attempts = 0;
+    int failed_open = 0;
     uint32_t cap = max;
 
     if (!cap || cap > CGF_MAX_INFLIGHT) cap = CGF_MAX_INFLIGHT;
     if (g_active_count >= cap) return;
     if (g_empty_until && ogs_time_now() < g_empty_until) return;
 
-    /* Try several candidates per call when early files are unreadable
-     * or corrupt — avoids a full readdir every spool_poll. */
-    while (g_active_count < cap && attempts < 16) {
+    /* Keep claiming until the active set is full. Stop after a streak
+     * of real open/header failures so one poll tick cannot spin on a
+     * ready/ full of junk. Successful opens must not count as
+     * "corrupt" — max_active_files defaults to 64, so 16 good opens
+     * used to log a false warning. */
+    while (g_active_count < cap && failed_open < 16) {
         if (pick_next_path(path, sizeof(path)) != OGS_OK) {
             spool_mark_empty();
             return;
         }
         if (claim_main_thread(path, sizeof(path)) != OGS_OK) {
-            /* Do not retry the same cached ready/ path 16 times. */
+            /* Do not retry the same cached ready/ path. */
             spool_clear_cached_next();
             continue;
         }
-        attempts++;
         if (open_spool_file(path))
             continue;
+        failed_open++;
     }
 
-    if (attempts >= 16 && g_active_count < cap) {
+    if (failed_open >= 16 && g_active_count < cap) {
         ogs_warn("cgf: spool open skipped %d unreadable/corrupt files in "
-                "ready/", attempts);
+                "ready/", failed_open);
     }
 }
 
