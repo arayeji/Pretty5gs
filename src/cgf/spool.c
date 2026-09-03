@@ -112,6 +112,20 @@ static const char *path_basename(const char *path)
     return base ? base + 1 : path;
 }
 
+static bool active_has_basename(const char *base)
+{
+    uint32_t i;
+
+    if (!base || !base[0]) return false;
+    for (i = 0; i < g_active_count; i++) {
+        if (!g_active_files[i] || !g_active_files[i]->path)
+            continue;
+        if (!strcmp(path_basename(g_active_files[i]->path), base))
+            return true;
+    }
+    return false;
+}
+
 static void spool_clear_cached_next(void)
 {
     g_cached_next_path[0] = '\0';
@@ -285,7 +299,8 @@ static int slurp(const char *path, uint8_t **out, size_t *out_len)
 
 static int pick_next_path(char *out_path, size_t out_cap)
 {
-    if (g_cached_next_path[0] && spool_path_ready(g_cached_next_path)) {
+    if (g_cached_next_path[0] && spool_path_ready(g_cached_next_path) &&
+            !active_has_basename(path_basename(g_cached_next_path))) {
         ogs_snprintf(out_path, out_cap, "%s", g_cached_next_path);
         return OGS_OK;
     }
@@ -296,7 +311,8 @@ static int pick_next_path(char *out_path, size_t out_cap)
         const char *candidate = g_pending_queue[g_pending_idx];
 
         g_pending_idx++;
-        if (spool_path_ready(candidate)) {
+        if (spool_path_ready(candidate) &&
+                !active_has_basename(path_basename(candidate))) {
             ogs_snprintf(out_path, out_cap, "%s", candidate);
             ogs_snprintf(g_cached_next_path, sizeof(g_cached_next_path),
                     "%s", candidate);
@@ -311,7 +327,8 @@ static int pick_next_path(char *out_path, size_t out_cap)
         const char *candidate = g_pending_queue[g_pending_idx];
 
         g_pending_idx++;
-        if (spool_path_ready(candidate)) {
+        if (spool_path_ready(candidate) &&
+                !active_has_basename(path_basename(candidate))) {
             ogs_snprintf(out_path, out_cap, "%s", candidate);
             ogs_snprintf(g_cached_next_path, sizeof(g_cached_next_path),
                     "%s", candidate);
@@ -378,9 +395,44 @@ void cgf_spool_release(cgf_spool_file_t *file)
     free_file(file);
 }
 
+/* Exclusive claim for the workers==1 path: rename ready/X into
+ * processing/0/X so a later ready/ rescan cannot open (and GTP'-send)
+ * the same file again while it is still waiting for DTRR ACKs. */
+static int claim_main_thread(char *path, size_t cap)
+{
+    const char *base;
+    char dst[512];
+
+    if (!path || !path[0] || !cgf_self()->processing_dir)
+        return OGS_ERROR;
+
+    base = path_basename(path);
+    if (active_has_basename(base))
+        return OGS_ERROR;
+
+    ogs_snprintf(dst, sizeof(dst), "%s/0/%s",
+            cgf_self()->processing_dir, base);
+    if (rename(path, dst) != 0) {
+        if (spool_path_ready(path))
+            ogs_warn("cgf: claim '%s' -> '%s' failed: %s",
+                    path, dst, strerror(errno));
+        return OGS_ERROR;
+    }
+
+    ogs_snprintf(path, cap, "%s", dst);
+    return OGS_OK;
+}
+
 static bool open_spool_file(const char *path)
 {
-    cgf_spool_file_t *f = cgf_spool_open_path(path);
+    cgf_spool_file_t *f;
+
+    if (active_has_basename(path_basename(path))) {
+        ogs_debug("cgf: skip already-open '%s'", path);
+        return false;
+    }
+
+    f = cgf_spool_open_path(path);
 
     if (!f) {
         spool_clear_cached_next();
@@ -414,6 +466,8 @@ void cgf_spool_try_open_more(uint32_t max)
             return;
         }
         attempts++;
+        if (claim_main_thread(path, sizeof(path)) != OGS_OK)
+            continue;
         if (open_spool_file(path))
             continue;
     }
@@ -613,10 +667,12 @@ static bool maybe_finish_file(cgf_spool_file_t *file)
      */
     if (cgf_self()->purge_on_success) {
             if (unlink(file->path) != 0) {
-                ogs_warn("cgf: fully delivered '%s' but unlink failed: %s "
-                        "(file kept in ready/; will be re-sent on next "
-                        "sweep if still present)",
-                        file->path, strerror(errno));
+                if (errno == ENOENT)
+                    ogs_debug("cgf: fully delivered '%s' (already gone)",
+                            file->path);
+                else
+                    ogs_warn("cgf: fully delivered '%s' but unlink failed: %s",
+                            file->path, strerror(errno));
             } else {
                 ogs_info("cgf: fully delivered '%s' (purged)", file->path);
             }

@@ -415,21 +415,26 @@ int cgf_context_parse_config(void)
         ogs_warn("cgf: cannot create '%s'", self.failed_dir);
     }
 
-    if (self.workers > 1) {
-        uint32_t w;
+    /* processing/0 is also used by the single-thread drain path so
+     * an in-flight file is claimed out of ready/ and cannot be
+     * opened (and GTP'-sent) a second time on the next directory
+     * rescan. */
+    if (mkdir_p(self.processing_dir) != OGS_OK)
+        ogs_warn("cgf: cannot create '%s'", self.processing_dir);
+    {
+        uint32_t w, n = self.workers > 1 ? self.workers : 1;
 
-        if (mkdir_p(self.processing_dir) != OGS_OK)
-            ogs_warn("cgf: cannot create '%s'", self.processing_dir);
-        for (w = 0; w < self.workers; w++) {
+        for (w = 0; w < n; w++) {
             char sub[600];
 
             ogs_snprintf(sub, sizeof(sub), "%s/%u", self.processing_dir, w);
             if (mkdir_p(sub) != OGS_OK)
                 ogs_warn("cgf: cannot create '%s'", sub);
         }
+    }
+    if (self.workers > 1)
         ogs_info("cgf: workers=%u parallel drain threads enabled",
                 self.workers);
-    }
 
     /* Regardless of the current worker count, sweep any leftover
      * claimed files from a previous run back into ready/. */
