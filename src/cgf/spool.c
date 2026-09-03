@@ -252,9 +252,11 @@ static void spool_mark_empty(void)
 {
     uint32_t poll_ms = cgf_self()->spool_poll_ms;
 
-    /* Back off only one poll tick. Exponential backoff up to 30 s delayed
-     * pickup of newly rotated files while cgfd was idle. */
+    /* Idle ready/: do not readdir on every echo/DTRR/drain. At least
+     * 1s so an empty spool cannot pin a core; new files are picked
+     * up on the next tick. */
     if (!poll_ms) poll_ms = 250;
+    if (poll_ms < 1000) poll_ms = 1000;
     g_empty_until = ogs_time_now() + ogs_time_from_msec(poll_ms);
     spool_clear_cached_next();
     pending_queue_free();
@@ -476,31 +478,34 @@ void cgf_spool_try_open_more(uint32_t max)
 {
     char path[512];
     int failed_open = 0;
+    int failed_claim = 0;
     uint32_t cap = max;
 
     if (!cap || cap > CGF_MAX_INFLIGHT) cap = CGF_MAX_INFLIGHT;
     if (g_active_count >= cap) return;
     if (g_empty_until && ogs_time_now() < g_empty_until) return;
 
-    /* Keep claiming until the active set is full. Stop after a streak
-     * of real open/header failures so one poll tick cannot spin on a
-     * ready/ full of junk. Successful opens must not count as
-     * "corrupt" — max_active_files defaults to 64, so 16 good opens
-     * used to log a false warning. */
-    while (g_active_count < cap && failed_open < 16) {
+    /* Keep claiming until the active set is full. Cap both claim and
+     * open failures — a claim-fail `continue` with no counter used to
+     * spin the thread at 100% CPU when ready/ was empty or a file
+     * could not be renamed. */
+    while (g_active_count < cap && failed_open < 16 && failed_claim < 16) {
         if (pick_next_path(path, sizeof(path)) != OGS_OK) {
             spool_mark_empty();
             return;
         }
         if (claim_main_thread(path, sizeof(path)) != OGS_OK) {
-            /* Do not retry the same cached ready/ path. */
             spool_clear_cached_next();
+            failed_claim++;
             continue;
         }
         if (open_spool_file(path))
             continue;
         failed_open++;
     }
+
+    if (failed_claim >= 16 && g_active_count < cap)
+        spool_mark_empty();
 
     if (failed_open >= 16 && g_active_count < cap) {
         ogs_warn("cgf: spool open skipped %d unreadable/corrupt files in "
@@ -863,6 +868,8 @@ int cgf_spool_claim_for_worker(int worker_id, char *out_path, size_t cap)
     ogs_assert(out_path);
     if (!self->processing_dir || !self->ready_dir) return OGS_ERROR;
     if (!g_claim_mutex_ready) return OGS_ERROR;
+    if (g_empty_until && ogs_time_now() < g_empty_until)
+        return OGS_ERROR;
 
     ogs_thread_mutex_lock(&g_claim_mutex);
 
@@ -924,5 +931,9 @@ int cgf_spool_claim_for_worker(int worker_id, char *out_path, size_t cap)
 #endif
 
     ogs_thread_mutex_unlock(&g_claim_mutex);
+    if (rv == OGS_OK)
+        spool_clear_empty_backoff();
+    else
+        spool_mark_empty();
     return rv;
 }
