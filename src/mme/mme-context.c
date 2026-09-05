@@ -5872,10 +5872,14 @@ static int sgsap_config_parse_body(ogs_yaml_iter_t *mme_iter, bool reload,
                                 YAML_SEQUENCE_NODE);
                     } else if (!strcmp(client_key, "port")) {
                         const char *v = ogs_yaml_iter_value(&client_iter);
-                        if (v) {
+                        if (v)
                             port = mme_yaml_parse_port(v, port);
-                            self.sgsap_port = port;
-                        }
+                        /*
+                         * Per-client only. Do not write self.sgsap_port:
+                         * a later client that omits port: would inherit
+                         * the previous VLR's port, and SIGHUP would then
+                         * retire [ip]:29118 as "no longer in config".
+                         */
                     } else if (!strcmp(client_key, "option")) {
                         rv = ogs_app_parse_sockopt_config(&client_iter,
                                 &option);
@@ -6160,6 +6164,12 @@ static int sgsap_config_parse_body(ogs_yaml_iter_t *mme_iter, bool reload,
                 }
 
                 vlr->seen = true;
+                {
+                    const char *dest =
+                        ogs_sockaddr_to_string_static(vlr->sa_list);
+                    ogs_info("sgsap.client[%s] maps=%d",
+                            dest ? dest : "-", map_num);
+                }
 
                 for (i = 0; i < map_num; i++) {
                     mme_csmap_t *csmap = NULL;

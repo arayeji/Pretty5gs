@@ -377,6 +377,8 @@ mme:
 #  sgsap:
 #    client:
 #      - address: msc.open5gs.org # SCTP server address configured on the MSC/VLR
+#        port: 29118              # per-client (default 29118). Always set this
+#                                 # if another VLR uses a non-default port.
 #        local_address: 127.0.0.2 # SCTP local IP addresses to be bound in the MME
 #        map:
 #          imsi_prefix: 99970   # optional; longest prefix wins (full IMSI OK)
