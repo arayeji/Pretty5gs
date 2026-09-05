@@ -632,7 +632,7 @@ typedef struct mme_csmap_s {
     ogs_nas_eps_tai_t tai;
     uint16_t        tac_end;    /* inclusive; 0 = only tai.tac */
     ogs_nas_lai_t   lai;
-    char            imsi_prefix[6];   /* optional; empty = any IMSI on this TAI */
+    char            imsi_prefix[OGS_MAX_IMSI_BCD_LEN + 1]; /* empty = any IMSI */
 
     bool            seen;       /* matched by the reload in progress */
     bool            retired;    /* dropped from config, awaiting reclaim */

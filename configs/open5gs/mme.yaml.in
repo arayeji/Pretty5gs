@@ -379,7 +379,7 @@ mme:
 #      - address: msc.open5gs.org # SCTP server address configured on the MSC/VLR
 #        local_address: 127.0.0.2 # SCTP local IP addresses to be bound in the MME
 #        map:
-#          imsi_prefix: 99970   # optional; match IMSI (multi-operator map)
+#          imsi_prefix: 99970   # optional; longest prefix wins (full IMSI OK)
 #          tai:
 #            plmn_id:
 #              mcc: 001

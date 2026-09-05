@@ -5473,14 +5473,8 @@ static int mme_sgsap_remap_ues(void)
     ogs_list_for_each(&self.mme_ue_list, mme_ue) {
         mme_csmap_t *next;
 
-        if (!mme_ue->csmap)
-            continue;
-        if (!mme_ue->csmap->retired &&
-                !(mme_ue->csmap->vlr && mme_ue->csmap->vlr->retired))
-            continue;
-
         next = mme_csmap_find_for_ue(mme_ue);
-        if (next && next != mme_ue->csmap) {
+        if (next != mme_ue->csmap) {
             mme_ue->csmap = next;
             remapped++;
         }
@@ -5520,6 +5514,8 @@ mme_csmap_t *mme_csmap_find_by_tai_and_imsi(
 {
     mme_csmap_t *csmap = NULL;
     mme_csmap_t *fallback = NULL;
+    mme_csmap_t *best = NULL;
+    size_t best_len = 0;
     ogs_list_t *bucket = NULL;
     ogs_lnode_t *node = NULL;
 
@@ -5544,10 +5540,13 @@ mme_csmap_t *mme_csmap_find_by_tai_and_imsi(
                 continue;
 
             len = strlen(csmap->imsi_prefix);
-            if (len > 0 && strncmp(imsi_bcd, csmap->imsi_prefix, len) == 0)
-                return csmap;
+            if (len > 0 && strncmp(imsi_bcd, csmap->imsi_prefix, len) == 0 &&
+                    len > best_len) {
+                best = csmap;
+                best_len = len;
+            }
         }
-        return fallback;
+        return best ? best : fallback;
     }
 
     ogs_list_for_each(&self.csmap_list, csmap) {
@@ -5566,11 +5565,14 @@ mme_csmap_t *mme_csmap_find_by_tai_and_imsi(
             continue;
 
         len = strlen(csmap->imsi_prefix);
-        if (len > 0 && strncmp(imsi_bcd, csmap->imsi_prefix, len) == 0)
-            return csmap;
+        if (len > 0 && strncmp(imsi_bcd, csmap->imsi_prefix, len) == 0 &&
+                len > best_len) {
+            best = csmap;
+            best_len = len;
+        }
     }
 
-    return fallback;
+    return best ? best : fallback;
 }
 
 mme_csmap_t *mme_csmap_find_by_nas_lai(const ogs_nas_lai_t *lai)
@@ -5603,7 +5605,7 @@ typedef struct csmap_key_s {
     ogs_nas_plmn_id_t   nas_plmn_id;
     uint16_t            tac;
     uint16_t            tac_end;
-    char                imsi_prefix[6];
+    char                imsi_prefix[OGS_MAX_IMSI_BCD_LEN + 1];
 } csmap_key_t;
 
 static void csmap_key_set(csmap_key_t *key, const mme_vlr_t *vlr,
