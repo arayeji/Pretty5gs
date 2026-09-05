@@ -37,3 +37,20 @@ int mme_name_build(char *buf,
 
     return ogs_fqdn_build(buf, temp, len);
 }
+
+int mme_name_build_from_fqdn(char *buf, const char *fqdn)
+{
+    int len;
+
+    ogs_assert(buf);
+    ogs_assert(fqdn);
+
+    len = strlen(fqdn);
+    if (len <= 0 || len >= SGSAP_IE_MME_NAME_LEN) {
+        ogs_error("SGsAP mme_name FQDN length %d invalid (1..%d)",
+                len, SGSAP_IE_MME_NAME_LEN - 1);
+        return 0;
+    }
+
+    return ogs_fqdn_build(buf, fqdn, len);
+}

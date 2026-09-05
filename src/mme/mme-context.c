@@ -5167,6 +5167,18 @@ mme_vlr_t *mme_vlr_add(
     return vlr;
 }
 
+static void mme_vlr_apply_mme_name(mme_vlr_t *vlr, const char *name)
+{
+    ogs_assert(vlr);
+
+    if (vlr->mme_name) {
+        ogs_free(vlr->mme_name);
+        vlr->mme_name = NULL;
+    }
+    if (name && name[0])
+        vlr->mme_name = ogs_strdup(name);
+}
+
 void mme_vlr_remove(mme_vlr_t *vlr)
 {
     ogs_assert(vlr);
@@ -5190,6 +5202,8 @@ void mme_vlr_remove(mme_vlr_t *vlr)
     ogs_freeaddrinfo(vlr->local_sa_list);
     if (vlr->option)
         ogs_free(vlr->option);
+    if (vlr->mme_name)
+        ogs_free(vlr->mme_name);
 
     ogs_pool_free(&mme_vlr_pool, vlr);
 
@@ -5799,6 +5813,7 @@ static int sgsap_config_parse_body(ogs_yaml_iter_t *mme_iter, bool reload,
 
                 ogs_sockopt_t option;
                 bool is_option = false;
+                const char *mme_name_cfg = NULL;
 
                 if (ogs_yaml_iter_type(&client_array) == YAML_MAPPING_NODE) {
                     memcpy(&client_iter, &client_array,
@@ -5880,6 +5895,8 @@ static int sgsap_config_parse_body(ogs_yaml_iter_t *mme_iter, bool reload,
                          * the previous VLR's port, and SIGHUP would then
                          * retire [ip]:29118 as "no longer in config".
                          */
+                    } else if (!strcmp(client_key, "mme_name")) {
+                        mme_name_cfg = ogs_yaml_iter_value(&client_iter);
                     } else if (!strcmp(client_key, "option")) {
                         rv = ogs_app_parse_sockopt_config(&client_iter,
                                 &option);
@@ -6161,14 +6178,16 @@ static int sgsap_config_parse_body(ogs_yaml_iter_t *mme_iter, bool reload,
                         }
                     }
                     prev_vlr = vlr;
+                    mme_vlr_apply_mme_name(vlr, mme_name_cfg);
                 }
 
                 vlr->seen = true;
                 {
                     const char *dest =
                         ogs_sockaddr_to_string_static(vlr->sa_list);
-                    ogs_info("sgsap.client[%s] maps=%d",
-                            dest ? dest : "-", map_num);
+                    ogs_info("sgsap.client[%s] maps=%d mme_name=%s",
+                            dest ? dest : "-", map_num,
+                            vlr->mme_name ? vlr->mme_name : "visited-plmn");
                 }
 
                 for (i = 0; i < map_num; i++) {

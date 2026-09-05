@@ -379,6 +379,10 @@ mme:
 #      - address: msc.open5gs.org # SCTP server address configured on the MSC/VLR
 #        port: 29118              # per-client (default 29118). Always set this
 #                                 # if another VLR uses a non-default port.
+#        # mme_name: mmec01.mmegi0002.mme.epc.mnc001.mcc001.3gppnetwork.org
+#        # Optional SGsAP MME Name IE for this VLR. Omit to build the name
+#        # from the UE visited/serving TAI PLMN (TS 23.003) and the matching
+#        # served GUMMEI MMEC/MMEGI. Does not use mme.mme_name (S1AP only).
 #        local_address: 127.0.0.2 # SCTP local IP addresses to be bound in the MME
 #        map:
 #          imsi_prefix: 99970   # optional; longest prefix wins (full IMSI OK)

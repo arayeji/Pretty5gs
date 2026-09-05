@@ -28,6 +28,7 @@ extern "C" {
 
 int mme_name_build(char *buf, 
         uint32_t mme_code, uint16_t mme_gid, ogs_plmn_id_t *plmn_id);
+int mme_name_build_from_fqdn(char *buf, const char *fqdn);
 
 #ifdef __cplusplus
 }

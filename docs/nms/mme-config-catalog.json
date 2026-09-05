@@ -2855,6 +2855,16 @@
     "sample_only": true
   },
   {
+    "path": "mme.sgsap.client[].mme_name",
+    "type": "string",
+    "default": null,
+    "group": "sgsap",
+    "reload": "sighup",
+    "description": "Optional SGsAP MME Name FQDN for this VLR. If omitted, the IE is built from the UE visited/serving TAI PLMN and the matching GUMMEI.",
+    "notes": "Not mme.mme_name (S1AP). SIGHUP updates the string without reconnect.",
+    "example": "mmec01.mmegi0002.mme.epc.mnc001.mcc001.3gppnetwork.org"
+  },
+  {
     "path": "mme.sgsap.client[].local_address",
     "type": "string",
     "default": null,

@@ -617,6 +617,12 @@ typedef struct mme_vlr_s {
     bool            retired;    /* address gone on SIGHUP; SCTP closed */
 
     /*
+     * Optional SGsAP MME Name IE override for this VLR (ASCII FQDN).
+     * NULL = build from the UE visited/serving PLMN (TS 23.003).
+     */
+    char            *mme_name;
+
+    /*
      * SGsAP TX stall watchdog (owned by the sgsap-io thread, guarded by
      * mme_ctx_lock): first EAGAIN timestamp since the last successful
      * send, and whether the association-reset event was already pushed.

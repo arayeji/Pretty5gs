@@ -22,6 +22,68 @@
 #include "sgsap-build.h"
 #include "sgsap-conv.h"
 
+/*
+ * SGsAP MME Name (TS 23.003 / 29.118):
+ *   - optional sgsap.client.mme_name on this VLR overrides the IE
+ *   - otherwise MCC/MNC come from the UE visited/serving TAI PLMN;
+ *     MMEC/MMEGI from the served GUMMEI that contains that PLMN
+ *     (same pick as GUTI), falling back to gummei[0] codes
+ * Reset Ack has no UE: override or gummei[0].
+ */
+static int sgsap_fill_mme_name(char *buf, const mme_vlr_t *vlr,
+        const mme_ue_t *mme_ue)
+{
+    served_gummei_t *sg = &mme_self()->served_gummei[0];
+    ogs_plmn_id_t plmn_id;
+    uint32_t mme_code;
+    uint16_t mme_gid;
+    int i = 0, j;
+
+    ogs_assert(buf);
+    ogs_assert(sg->num_of_mme_code > 0);
+    ogs_assert(sg->num_of_mme_gid > 0);
+    ogs_assert(sg->num_of_plmn_id > 0);
+
+    if (vlr && vlr->mme_name && vlr->mme_name[0]) {
+        int len = mme_name_build_from_fqdn(buf, vlr->mme_name);
+        if (len > 0)
+            return len;
+        ogs_warn("sgsap.client mme_name override rejected; generating");
+    }
+
+    mme_code = sg->mme_code[0];
+    mme_gid = sg->mme_gid[0];
+    plmn_id = sg->plmn_id[0];
+
+    if (mme_ue) {
+        const ogs_plmn_id_t *visited = &mme_ue->tai.plmn_id;
+
+        plmn_id = *visited;
+        for (i = 0; i < mme_self()->num_of_served_gummei; i++) {
+            served_gummei_t *cand = &mme_self()->served_gummei[i];
+
+            for (j = 0; j < cand->num_of_plmn_id; j++) {
+                if (memcmp(&cand->plmn_id[j], visited,
+                            sizeof(ogs_plmn_id_t)) != 0)
+                    continue;
+                if (cand->num_of_mme_code > 0)
+                    mme_code = cand->mme_code[0];
+                if (cand->num_of_mme_gid > 0)
+                    mme_gid = cand->mme_gid[0];
+                goto found;
+            }
+        }
+found:
+        ogs_debug("[%s] SGsAP MME name from visited PLMN[%06x] "
+                "mmec%u mmegi%u%s",
+                mme_ue->imsi_bcd, ogs_plmn_id_hexdump(&plmn_id),
+                mme_code, mme_gid,
+                (i < mme_self()->num_of_served_gummei) ? "" : " (gid/code fallback)");
+    }
+
+    return mme_name_build(buf, mme_code, mme_gid, &plmn_id);
+}
+
 ogs_pkbuf_t *sgsap_build_location_update_request(mme_ue_t *mme_ue)
 {
     mme_csmap_t *csmap = NULL;
@@ -31,7 +93,6 @@ ogs_pkbuf_t *sgsap_build_location_update_request(mme_ue_t *mme_ue)
 
     char mme_name[SGSAP_IE_MME_NAME_LEN+1];
     int mme_name_len = 0;
-    served_gummei_t *served_gummei = &mme_self()->served_gummei[0];
     char eps_update_type;
     ogs_nas_lai_t lai;
     ogs_eps_tai_t tai;
@@ -47,10 +108,7 @@ ogs_pkbuf_t *sgsap_build_location_update_request(mme_ue_t *mme_ue)
             SGSAP_IE_IMSI_TYPE, SGSAP_IE_IMSI_LEN, 0,
             &mme_ue->nas_mobile_identity_imsi);
 
-    mme_name_len = mme_name_build(mme_name,
-            served_gummei->mme_code[0],
-            served_gummei->mme_gid[0],
-            &served_gummei->plmn_id[0]);
+    mme_name_len = sgsap_fill_mme_name(mme_name, vlr, mme_ue);
     ogs_tlv_add(root, OGS_TLV_MODE_T1_L1, SGSAP_IE_MME_NAME_TYPE,
             mme_name_len, 0, mme_name);
     eps_update_type = SGSAP_EPS_UPDATE_IMSI_ATTACH;
@@ -230,7 +288,6 @@ ogs_pkbuf_t *sgsap_build_detach_indication(mme_ue_t *mme_ue)
 
     char mme_name[SGSAP_IE_MME_NAME_LEN+1];
     int mme_name_len = 0;
-    served_gummei_t *served_gummei = &mme_self()->served_gummei[0];
     uint8_t type = SGSAP_EPS_DETACH_INDICATION;
     uint8_t indication = SGSAP_EPS_DETACH_UE_INITIATED;
 
@@ -266,10 +323,7 @@ ogs_pkbuf_t *sgsap_build_detach_indication(mme_ue_t *mme_ue)
     root = ogs_tlv_add(NULL, OGS_TLV_MODE_T1_L1, SGSAP_IE_IMSI_TYPE,
             SGSAP_IE_IMSI_LEN, 0, &mme_ue->nas_mobile_identity_imsi);
 
-    mme_name_len = mme_name_build(mme_name,
-            served_gummei->mme_code[0],
-            served_gummei->mme_gid[0],
-            &served_gummei->plmn_id[0]);
+    mme_name_len = sgsap_fill_mme_name(mme_name, vlr, mme_ue);
     ogs_tlv_add(root, OGS_TLV_MODE_T1_L1, SGSAP_IE_MME_NAME_TYPE,
             mme_name_len, 0, mme_name);
     if (type == SGSAP_EPS_DETACH_INDICATION) {
@@ -445,14 +499,10 @@ ogs_pkbuf_t *sgsap_build_reset_ack(mme_vlr_t *vlr)
 
     char mme_name[SGSAP_IE_MME_NAME_LEN+1];
     int mme_name_len = 0;
-    served_gummei_t *served_gummei = &mme_self()->served_gummei[0];
 
     ogs_assert(vlr);
 
-    mme_name_len = mme_name_build(mme_name,
-            served_gummei->mme_code[0],
-            served_gummei->mme_gid[0],
-            &served_gummei->plmn_id[0]);
+    mme_name_len = sgsap_fill_mme_name(mme_name, vlr, NULL);
     root = ogs_tlv_add(NULL, OGS_TLV_MODE_T1_L1, SGSAP_IE_MME_NAME_TYPE,
             mme_name_len, 0, mme_name);
 
