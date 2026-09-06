@@ -7583,7 +7583,11 @@ void mme_ue_new_guti(mme_ue_t *mme_ue)
     mme_ue->next.guti.mme_code = served_gummei->mme_code[0];
 
     mme_ue->next.m_tmsi = mme_m_tmsi_alloc();
-    ogs_assert(mme_ue->next.m_tmsi);
+    if (!mme_ue->next.m_tmsi) {
+        ogs_error("[%s] M-TMSI pool exhausted; no next GUTI",
+                mme_ue->imsi_bcd);
+        return;
+    }
     mme_ue->next.guti.m_tmsi = *(mme_ue->next.m_tmsi);
 }
 

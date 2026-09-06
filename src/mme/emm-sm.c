@@ -1257,8 +1257,9 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             }
 
             if (MME_NEXT_GUTI_IS_AVAILABLE(mme_ue)) {
-                ogs_fatal("MME does not create new GUTI");
-                ogs_assert_if_reached();
+                ogs_error("[%s] TAU accept still has next GUTI; "
+                        "wait for TAU Complete",
+                        mme_ue->imsi_bcd);
                 OGS_FSM_TRAN(s, &emm_state_initial_context_setup);
             } else if (mme_ue->tracking_area_update_accept_proc ==
                         S1AP_ProcedureCode_id_InitialContextSetup &&
@@ -1986,6 +1987,28 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
 
             /* Create New GUTI */
             mme_ue_new_guti(mme_ue);
+            if (!MME_NEXT_GUTI_IS_AVAILABLE(mme_ue)) {
+                ogs_error("[%s] SMC: failed to allocate next GUTI; "
+                        "reject UE, keep MME up",
+                        mme_ue->imsi_bcd);
+                if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
+                    r = nas_eps_send_tau_reject(enb_ue, mme_ue,
+                            OGS_NAS_EMM_CAUSE_CONGESTION);
+                    ogs_expect(r == OGS_OK);
+                } else {
+                    r = nas_eps_send_attach_reject(enb_ue, mme_ue,
+                            OGS_NAS_EMM_CAUSE_CONGESTION,
+                            OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES);
+                    ogs_expect(r == OGS_OK);
+                }
+                r = s1ap_send_ue_context_release_command(enb_ue,
+                        S1AP_Cause_PR_misc,
+                        S1AP_CauseMisc_om_intervention,
+                        S1AP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
+                ogs_expect(r == OGS_OK);
+                OGS_FSM_TRAN(s, &emm_state_exception);
+                break;
+            }
 
              /* Special path when SGSN (Gn interface) is involved: */
             if (mme_ue->gn.gtp_xact_id != OGS_INVALID_POOL_ID) {
@@ -2040,13 +2063,7 @@ void emm_state_security_mode(ogs_fsm_t *s, mme_event_t *e)
 
             mme_s6a_send_ulr(enb_ue, mme_ue, 0);
 
-            if (MME_NEXT_GUTI_IS_AVAILABLE(mme_ue)) {
-                OGS_FSM_TRAN(s, &emm_state_initial_context_setup);
-            } else {
-                ogs_fatal("MME always creates new GUTI");
-                ogs_assert_if_reached();
-                OGS_FSM_TRAN(s, &emm_state_registered);
-            }
+            OGS_FSM_TRAN(s, &emm_state_initial_context_setup);
             break;
         case OGS_NAS_EPS_SECURITY_MODE_REJECT:
             ogs_warn("Security mode reject : IMSI[%s] Cause[%d]",
