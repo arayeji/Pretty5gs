@@ -1224,12 +1224,12 @@ static int hss_s6a_avp_add_subscription_data(
                         char ipstr[OGS_ADDRSTRLEN];
 
                         OGS_INET_NTOP(&session->smf_ip.addr, ipstr);
-                        ogs_error("[%s] S6a-ULA APN[%s] static PGW/SMF %s "
+                        ogs_info("[%s] S6a-ULA APN[%s] static PGW/SMF %s "
                                 "(MIP6 + Allocation-Type=STATIC)",
                                 subscription_data->imsi,
                                 session->name ? session->name : "-", ipstr);
                     } else {
-                        ogs_error("[%s] S6a-ULA APN[%s] static PGW/SMF IPv6 "
+                        ogs_info("[%s] S6a-ULA APN[%s] static PGW/SMF IPv6 "
                                 "(MIP6 + Allocation-Type=STATIC)",
                                 subscription_data->imsi,
                                 session->name ? session->name : "-");
@@ -1237,7 +1237,7 @@ static int hss_s6a_avp_add_subscription_data(
                 }
             } else if (subscription_data->imsi &&
                     ogs_trace_filter_match(subscription_data->imsi)) {
-                ogs_error("[%s] S6a-ULA APN[%s] no static SMF/PGW in DB "
+                ogs_info("[%s] S6a-ULA APN[%s] no static SMF/PGW in DB "
                         "(set slice[].session[].smf.ipv4)",
                         subscription_data->imsi,
                         session->name ? session->name : "-");
