@@ -27,6 +27,50 @@
 #include "sgsap-path.h"
 #include "sgsap-handler.h"
 
+/*
+ * Periodic check while SGs is "connected": if the IO thread has been
+ * EAGAIN-only for MME_SGSAP_TX_STALL_RESET, post TX_STALL so main
+ * ABORTs SCTP and reconnects. Needed because fail-fast can drain the
+ * IO queue before the in-band 15 s EAGAIN watchdog gets another send.
+ */
+static void sgsap_tx_stall_timer(void *data)
+{
+    mme_vlr_t *vlr = data;
+    mme_event_t *e = NULL;
+    bool stalled = false;
+    int rv;
+
+    ogs_assert(vlr);
+    if (vlr->retired || !vlr->t_tx_stall)
+        return;
+
+    mme_ctx_lock();
+    stalled = vlr->tx_stall_since &&
+        (ogs_time_now() - vlr->tx_stall_since) >= MME_SGSAP_TX_STALL_RESET;
+    mme_ctx_unlock();
+
+    if (!stalled) {
+        ogs_timer_start(vlr->t_tx_stall, MME_SGSAP_TX_STALL_RESET);
+        return;
+    }
+
+    e = mme_event_new(MME_EVENT_SGSAP_TX_STALL);
+    if (!e) {
+        ogs_error("SGsAP TX-stall timer: event alloc failed");
+        ogs_timer_start(vlr->t_tx_stall, MME_SGSAP_TX_STALL_RESET);
+        return;
+    }
+    e->vlr = vlr;
+    e->sock = vlr->sock;
+
+    rv = mme_queue_push_main(e);
+    if (rv != OGS_OK) {
+        ogs_error("SGsAP TX-stall timer event dropped:%d", rv);
+        mme_event_free(e);
+        ogs_timer_start(vlr->t_tx_stall, MME_SGSAP_TX_STALL_RESET);
+    }
+}
+
 void sgsap_state_initial(ogs_fsm_t *s, mme_event_t *e)
 {
     mme_vlr_t *vlr = NULL;
@@ -44,6 +88,12 @@ void sgsap_state_initial(ogs_fsm_t *s, mme_event_t *e)
         ogs_error("ogs_timer_add() failed");
         return;
     }
+    vlr->t_tx_stall = ogs_timer_add(ogs_app()->timer_mgr,
+            sgsap_tx_stall_timer, vlr);
+    if (!vlr->t_tx_stall) {
+        ogs_error("ogs_timer_add(t_tx_stall) failed");
+        return;
+    }
 
     OGS_FSM_TRAN(s, &sgsap_state_will_connect);
 }
@@ -59,7 +109,14 @@ void sgsap_state_final(ogs_fsm_t *s, mme_event_t *e)
     vlr = e->vlr;
     ogs_assert(vlr);
 
-    ogs_timer_delete(vlr->t_conn);
+    if (vlr->t_conn) {
+        ogs_timer_delete(vlr->t_conn);
+        vlr->t_conn = NULL;
+    }
+    if (vlr->t_tx_stall) {
+        ogs_timer_delete(vlr->t_tx_stall);
+        vlr->t_tx_stall = NULL;
+    }
 }
 
 void sgsap_state_will_connect(ogs_fsm_t *s, mme_event_t *e)
@@ -191,8 +248,12 @@ void sgsap_state_connected(ogs_fsm_t *s, mme_event_t *e)
 
     switch (e->id) {
     case OGS_FSM_ENTRY_SIG:
+        if (vlr->t_tx_stall)
+            ogs_timer_start(vlr->t_tx_stall, MME_SGSAP_TX_STALL_RESET);
         break;
     case OGS_FSM_EXIT_SIG:
+        if (vlr->t_tx_stall)
+            ogs_timer_stop(vlr->t_tx_stall);
         break;
     case MME_EVENT_SGSAP_LO_CONNREFUSED:
         if (vlr->retired)
@@ -203,10 +264,11 @@ void sgsap_state_connected(ogs_fsm_t *s, mme_event_t *e)
     case MME_EVENT_SGSAP_TX_STALL:
         if (vlr->retired)
             break;
-        ogs_error("[SGsAP] VLR %s TX stalled (send buffer full, no "
-                "progress); resetting SCTP association",
+        ogs_error("[SGsAP] VLR %s TX stalled (SCTP send buffer full, "
+                "zero progress); ABORT association and reconnect "
+                "(MSC restart not required)",
                 ogs_sockaddr_to_string_static(vlr->sa_list));
-        mme_vlr_close(vlr);
+        mme_vlr_close(vlr); /* linger 0 → SCTP ABORT */
         OGS_FSM_TRAN(s, sgsap_state_will_connect);
         break;
     case MME_EVENT_SGSAP_MESSAGE:

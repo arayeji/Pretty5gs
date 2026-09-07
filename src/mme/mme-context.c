@@ -5197,6 +5197,8 @@ void mme_vlr_remove(mme_vlr_t *vlr)
 
     if (vlr->t_conn)
         ogs_timer_delete(vlr->t_conn);
+    if (vlr->t_tx_stall)
+        ogs_timer_delete(vlr->t_tx_stall);
 
     ogs_freeaddrinfo(vlr->sa_list);
     ogs_freeaddrinfo(vlr->local_sa_list);
@@ -5242,8 +5244,19 @@ void mme_vlr_close(mme_vlr_t *vlr)
 
     if (poll)
         ogs_pollset_remove(poll);
-    if (sock)
+    if (sock) {
+        /*
+         * Linger 0 + close = SCTP ABORT. A graceful SHUTDOWN waits
+         * for the peer to drain; a wedged MSC (zero rwnd, app not
+         * reading) never finishes that handshake, so the old
+         * association stays ESTABLISHED and the MSC ignores the
+         * MME's new INIT. ABORT is what an MSC restart does from
+         * the far end — do it here so the MSC need not restart.
+         */
+        if (sock->fd != INVALID_SOCKET)
+            ogs_sctp_so_linger(sock, 0);
         ogs_sctp_destroy(sock);
+    }
 }
 
 mme_vlr_t *mme_vlr_find_by_addr(const ogs_sockaddr_t *sa_list)
@@ -5455,6 +5468,7 @@ static void mme_vlr_restart_client(mme_vlr_t *vlr)
     if (OGS_FSM_STATE(&vlr->sm)) {
         ogs_fsm_fini(&vlr->sm, &e);
         vlr->t_conn = NULL;
+        vlr->t_tx_stall = NULL;
     }
 
     vlr->retired = false;
@@ -5475,6 +5489,8 @@ static void mme_vlr_retire(mme_vlr_t *vlr)
     mme_vlr_close(vlr);
     if (vlr->t_conn)
         ogs_timer_stop(vlr->t_conn);
+    if (vlr->t_tx_stall)
+        ogs_timer_stop(vlr->t_tx_stall);
     vlr->retired = true;
 }
 

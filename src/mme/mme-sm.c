@@ -1967,7 +1967,7 @@ cleanup:
         vlr->max_num_of_ostreams =
                 ogs_min(max_num_of_ostreams, vlr->max_num_of_ostreams);
 
-        ogs_debug("VLR-SGs SCTP_COMM_UP %s Max Num of Outbound Streams[%d]",
+        ogs_info("VLR-SGs SCTP_COMM_UP %s Max Num of Outbound Streams[%d]",
                 ogs_sockaddr_to_string_static(vlr->sa_list),
                 vlr->max_num_of_ostreams);
 
@@ -2007,19 +2007,18 @@ cleanup:
 
         break;
     case MME_EVENT_SGSAP_TX_STALL:
-        sock = e->sock;
-        ogs_assert(sock);
-
         /*
-         * sgsap-io watchdog: the SCTP send path made zero progress for
-         * the whole stall window (peer stopped ACKing / zero receive
-         * window) while heartbeats kept the association nominally up.
-         * Reset it like a CONNREFUSED: close + reconnect.
+         * sgsap-io watchdog or the connected-state 15 s timer: SCTP
+         * TX made zero progress (peer stopped ACKing / zero rwnd)
+         * while heartbeats kept the association nominally up.
+         * ABORT + reconnect — same effect as an MSC restart.
          */
-        vlr = mme_vlr_find_by_sock(sock);
+        vlr = e->vlr;
+        if (!vlr && e->sock)
+            vlr = mme_vlr_find_by_sock(e->sock);
         if (!vlr) {
             ogs_warn("SGsAP TX_STALL: VLR already closed/removed "
-                    "(sock:%p)", sock);
+                    "(sock:%p)", e->sock);
             break;
         }
         ogs_assert(OGS_FSM_STATE(&vlr->sm));

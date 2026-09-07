@@ -602,6 +602,7 @@ typedef struct mme_vlr_s {
     ogs_fsm_t       sm;          /* A state machine */
 
     ogs_timer_t     *t_conn;     /* client timer to connect to server */
+    ogs_timer_t     *t_tx_stall; /* abort+reconnect if SCTP TX is wedged */
 
     int             max_num_of_ostreams;/* SCTP Max num of outbound streams */
     uint16_t        ostream_id;     /* vlr_ostream_id generator */
@@ -626,10 +627,15 @@ typedef struct mme_vlr_s {
      * SGsAP TX stall watchdog (owned by the sgsap-io thread, guarded by
      * mme_ctx_lock): first EAGAIN timestamp since the last successful
      * send, and whether the association-reset event was already pushed.
+     * After this long with no TX progress the MME ABORTs SCTP and
+     * reconnects — same recovery as an MSC restart, without touching
+     * the MSC process.
      */
     ogs_time_t      tx_stall_since;
     bool            tx_stall_posted;
 } mme_vlr_t;
+
+#define MME_SGSAP_TX_STALL_RESET        ogs_time_from_sec(15)
 
 typedef struct mme_csmap_s {
     ogs_lnode_t     lnode;

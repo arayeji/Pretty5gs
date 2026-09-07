@@ -37,7 +37,7 @@
  * association. Seen live: VLR wedged for 90+ minutes, 347k PDUs
  * dropped, only an MME restart recovered.
  */
-#define SGSAP_IO_TX_STALL_RESET     ogs_time_from_sec(15)
+#define SGSAP_IO_TX_STALL_RESET     MME_SGSAP_TX_STALL_RESET
 
 typedef struct io_job_s {
     mme_vlr_t *vlr;
@@ -205,7 +205,7 @@ int sgsap_io_post_send(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf,
         ogs_pkbuf_free(pkbuf);
         return OGS_ERROR;
     }
-    if (vlr->tx_stall_since || vlr->tx_stall_posted) {
+    if (vlr->tx_stall_posted) {
         if (ogs_log_guard())
             ogs_warn("sgsap-io: VLR TX stalled; drop PDU (len:%d depth:%u)",
                     pkbuf->len, sgsap_io_queue_depth());
