@@ -83,9 +83,10 @@ int sgsap_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
     ogs_assert(pkbuf);
 
     if (!sock || sock->fd == INVALID_SOCKET) {
-        ogs_error("SGsAP send failed: VLR SCTP socket not connected "
-                "(stream[%d] len[%d])",
-                stream_no, pkbuf ? (int)pkbuf->len : 0);
+        if (ogs_log_guard())
+            ogs_warn("SGsAP send failed: VLR SCTP socket not connected "
+                    "(stream[%d] len[%d])",
+                    stream_no, pkbuf ? (int)pkbuf->len : 0);
         ogs_pkbuf_free(pkbuf);
         return OGS_ERROR;
     }
@@ -214,7 +215,9 @@ int sgsap_send_location_update_request(mme_ue_t *mme_ue)
         return OGS_ERROR;
     }
     rv = sgsap_send_to_vlr(mme_ue, pkbuf);
-    ogs_expect(rv == OGS_OK);
+    /* VLR down / TX stall / queue high-water is expected; callers continue
+     * without CS. Do not ogs_expect — that floods ERROR on every Combined
+     * attach/TAU. */
 
     if (rv == OGS_OK)
         mme_sgs_ts6_1_timer_start(mme_ue);
@@ -237,7 +240,6 @@ int sgsap_send_tmsi_reallocation_complete(mme_ue_t *mme_ue)
         return OGS_ERROR;
     }
     rv = sgsap_send_to_vlr(mme_ue, pkbuf);
-    ogs_expect(rv == OGS_OK);
 
     return rv;
 }
@@ -257,7 +259,6 @@ int sgsap_send_ue_activity_indication(mme_ue_t *mme_ue)
         return OGS_ERROR;
     }
     rv = sgsap_send_to_vlr(mme_ue, pkbuf);
-    ogs_expect(rv == OGS_OK);
 
     return rv;
 }
@@ -274,7 +275,6 @@ int sgsap_send_detach_indication(mme_ue_t *mme_ue)
         return OGS_ERROR;
     }
     rv = sgsap_send_to_vlr(mme_ue, pkbuf);
-    ogs_expect(rv == OGS_OK);
 
     return rv;
 }
@@ -294,7 +294,6 @@ int sgsap_send_mo_csfb_indication(mme_ue_t *mme_ue)
         return OGS_ERROR;
     }
     rv = sgsap_send_to_vlr(mme_ue, pkbuf);
-    ogs_expect(rv == OGS_OK);
 
     return rv;
 }
@@ -316,7 +315,6 @@ int sgsap_send_paging_reject(mme_ue_t *mme_ue, uint8_t sgs_cause)
         return OGS_ERROR;
     }
     rv = sgsap_send_to_vlr(mme_ue, pkbuf);
-    ogs_expect(rv == OGS_OK);
 
     return rv;
 }
@@ -338,7 +336,6 @@ int sgsap_send_service_request(mme_ue_t *mme_ue, uint8_t emm_mode)
         return OGS_ERROR;
     }
     rv = sgsap_send_to_vlr(mme_ue, pkbuf);
-    ogs_expect(rv == OGS_OK);
 
     return rv;
 }
@@ -357,7 +354,6 @@ int sgsap_send_reset_ack(mme_vlr_t *vlr)
         return OGS_ERROR;
     }
     rv =  sgsap_send_to_vlr_with_sid(vlr, pkbuf, 0);
-    ogs_expect(rv == OGS_OK);
 
     return rv;
 }
@@ -381,7 +377,6 @@ int sgsap_send_uplink_unitdata(mme_ue_t *mme_ue,
         return OGS_ERROR;
     }
     rv = sgsap_send_to_vlr(mme_ue, pkbuf);
-    ogs_expect(rv == OGS_OK);
 
     return rv;
 }
@@ -402,7 +397,6 @@ int sgsap_send_ue_unreachable(mme_ue_t *mme_ue, uint8_t sgs_cause)
         return OGS_ERROR;
     }
     rv = sgsap_send_to_vlr(mme_ue, pkbuf);
-    ogs_expect(rv == OGS_OK);
 
     return rv;
 }

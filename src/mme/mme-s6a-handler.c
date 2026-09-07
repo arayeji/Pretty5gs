@@ -243,9 +243,11 @@ uint8_t mme_s6a_handle_ula(
                  * return #18 → TAU Reject). Continue Accept: fake_csfb →
                  * Combined; else EPS-only + #18.
                  */
-                ogs_error("[%s] Combined TAU(ULA): SGsAP Location-Update not "
-                        "sent (VLR/SGs unavailable); continue without CS",
-                        mme_ue->imsi_bcd);
+                if (ogs_log_guard())
+                    ogs_warn("[%s] Combined TAU(ULA): SGsAP Location-Update "
+                            "not sent (VLR/SGs unavailable); "
+                            "continue without CS",
+                            mme_ue->imsi_bcd);
                 mme_sgs_continue_without_cs(mme_ue, "sgsap_lu_send_failed");
                 return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
             }

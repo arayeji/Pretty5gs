@@ -818,9 +818,10 @@ void mme_s11_handle_create_session_response(
         } else {
             mme_ue_progress(mme_ue, "attach_accept_deferred_sgs");
             if (OGS_OK != sgsap_send_location_update_request(mme_ue)) {
-                ogs_error("[%s] sgsap_send_location_update_request() failed; "
-                        "continue Attach without CS",
-                        mme_ue->imsi_bcd);
+                if (ogs_log_guard())
+                    ogs_warn("[%s] sgsap_send_location_update_request() "
+                            "failed; continue Attach without CS",
+                            mme_ue->imsi_bcd);
                 mme_sgs_continue_without_cs(mme_ue, "sgsap_lu_send_failed");
             }
         }

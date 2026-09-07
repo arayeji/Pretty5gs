@@ -25,6 +25,10 @@
 /* Brief backoff when the VLR SCTP send buffer is full (EAGAIN). */
 #define SGSAP_IO_EAGAIN_RETRIES     64
 #define SGSAP_IO_EAGAIN_SLEEP_US    1000
+/* Stop enqueueing once this many PDUs are already waiting; Combined
+ * attach/TAU would otherwise pack the 8192-slot queue and then ERROR
+ * on every UE. */
+#define SGSAP_IO_QUEUE_HIGHWATER    1024
 
 /*
  * TX stall watchdog: if every send has EAGAINed for this long (peer
@@ -110,7 +114,8 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
 
     if (rv == OGS_RETRY) {
         job->retries++;
-        if (job->retries <= SGSAP_IO_EAGAIN_RETRIES && io_worker) {
+        if (job->retries <= SGSAP_IO_EAGAIN_RETRIES && io_worker &&
+                sgsap_io_queue_depth() < SGSAP_IO_QUEUE_HIGHWATER) {
             ogs_usleep(SGSAP_IO_EAGAIN_SLEEP_US);
             if (ogs_worker_post(io_worker, job) == OGS_OK)
                 return; /* job stays alive */
@@ -192,6 +197,29 @@ int sgsap_io_post_send(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf,
         return OGS_ERROR;
     }
 
+    /* Fail fast: do not park thousands of LUs behind a dead/stuck VLR. */
+    if (!vlr->sock || vlr->sock->fd == INVALID_SOCKET) {
+        if (ogs_log_guard())
+            ogs_warn("sgsap-io: VLR SCTP not connected; drop PDU (len:%d)",
+                    pkbuf->len);
+        ogs_pkbuf_free(pkbuf);
+        return OGS_ERROR;
+    }
+    if (vlr->tx_stall_since || vlr->tx_stall_posted) {
+        if (ogs_log_guard())
+            ogs_warn("sgsap-io: VLR TX stalled; drop PDU (len:%d depth:%u)",
+                    pkbuf->len, sgsap_io_queue_depth());
+        ogs_pkbuf_free(pkbuf);
+        return OGS_ERROR;
+    }
+    if (sgsap_io_queue_depth() >= SGSAP_IO_QUEUE_HIGHWATER) {
+        if (ogs_log_guard())
+            ogs_warn("sgsap-io: queue high-water (%u); drop PDU (len:%d)",
+                    sgsap_io_queue_depth(), pkbuf->len);
+        ogs_pkbuf_free(pkbuf);
+        return OGS_ERROR;
+    }
+
     job = ogs_calloc(1, sizeof(*job));
     if (!job) {
         ogs_error("sgsap-io: job alloc failed; drop PDU (len:%d)",
@@ -209,8 +237,10 @@ int sgsap_io_post_send(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf,
     if (rv != OGS_OK) {
         /* Queue full: DROP, never inline-send from this (shard) thread -
          * SGs recovers via its own timers (Ts6-1 etc.) */
-        ogs_error("sgsap-io: queue full; drop PDU (len:%d stream:%d)",
-                pkbuf->len, stream_no);
+        if (ogs_log_guard())
+            ogs_warn("sgsap-io: queue full; drop PDU (len:%d stream:%d "
+                    "depth:%u)",
+                    pkbuf->len, stream_no, sgsap_io_queue_depth());
         ogs_pkbuf_free(pkbuf);
         ogs_free(job);
         return OGS_ERROR;

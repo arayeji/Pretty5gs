@@ -1210,9 +1210,11 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                      * ogs_assert / TAU Reject #18). Continue Accept:
                      * fake_csfb → Combined; else EPS-only + #18.
                      */
-                    ogs_error("[%s] Combined TAU: SGsAP Location-Update not "
-                            "sent (VLR/SGs unavailable); continue without CS",
-                            mme_ue->imsi_bcd);
+                    if (ogs_log_guard())
+                        ogs_warn("[%s] Combined TAU: SGsAP Location-Update "
+                                "not sent (VLR/SGs unavailable); "
+                                "continue without CS",
+                                mme_ue->imsi_bcd);
                     mme_sgs_continue_without_cs(mme_ue, "sgsap_lu_send_failed");
                     break;
                 }
@@ -1611,8 +1613,10 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                 mme_ue_confirm_p_tmsi(mme_ue);
 
                 if (sgsap_send_tmsi_reallocation_complete(mme_ue) != OGS_OK)
-                    ogs_error("[%s] SGsAP TMSI-Reallocation-Complete not sent "
-                            "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
+                    if (ogs_log_guard())
+                        ogs_warn("[%s] SGsAP TMSI-Reallocation-Complete "
+                                "not sent (VLR/SGs unavailable)",
+                                mme_ue->imsi_bcd);
 
                 if (!mme_ue->nas_eps.update.active_flag) {
                     enb_ue->relcause.group = S1AP_Cause_PR_nas;
@@ -2331,8 +2335,10 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
             if (MME_NEXT_P_TMSI_IS_AVAILABLE(mme_ue)) {
                 mme_ue_confirm_p_tmsi(mme_ue);
                 if (sgsap_send_tmsi_reallocation_complete(mme_ue) != OGS_OK)
-                    ogs_error("[%s] SGsAP TMSI-Reallocation-Complete not sent "
-                            "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
+                    if (ogs_log_guard())
+                        ogs_warn("[%s] SGsAP TMSI-Reallocation-Complete "
+                                "not sent (VLR/SGs unavailable)",
+                                mme_ue->imsi_bcd);
             }
 
             mme_metrics_attach_success(mme_ue);
@@ -2393,8 +2399,10 @@ void emm_state_initial_context_setup(ogs_fsm_t *s, mme_event_t *e)
                 mme_ue_confirm_p_tmsi(mme_ue);
 
                 if (sgsap_send_tmsi_reallocation_complete(mme_ue) != OGS_OK)
-                    ogs_error("[%s] SGsAP TMSI-Reallocation-Complete not sent "
-                            "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
+                    if (ogs_log_guard())
+                        ogs_warn("[%s] SGsAP TMSI-Reallocation-Complete "
+                                "not sent (VLR/SGs unavailable)",
+                                mme_ue->imsi_bcd);
 
                 if (!mme_ue->nas_eps.update.active_flag) {
                     enb_ue->relcause.group = S1AP_Cause_PR_nas;
