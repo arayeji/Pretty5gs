@@ -116,7 +116,18 @@ int nas_eps_send_to_downlink_nas_transport(
     }
 
     rv = s1ap_send_to_enb_ue(enb_ue, s1apbuf);
-    ogs_expect(rv == OGS_OK);
+    if (rv != OGS_OK && ogs_log_guard()) {
+        mme_ue_t *mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+        mme_enb_t *enb = mme_enb_find_by_id(enb_ue->enb_id);
+
+        ogs_warn("[%s] Downlink NAS not sent on S1 "
+                "(eNB-ID:%u enb_ue_s1ap_id:%u rv=%d) — "
+                "eNB/S1 gone or S1AP send failed",
+                (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) ?
+                    mme_ue->imsi_bcd : "-",
+                enb ? enb->enb_id : 0,
+                enb_ue->enb_ue_s1ap_id, rv);
+    }
 
     return rv;
 }
