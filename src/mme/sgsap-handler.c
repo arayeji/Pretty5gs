@@ -29,6 +29,39 @@
 #include "nas-path.h"
 #include "s1ap-path.h"
 
+/*
+ * TS 29.118 codes VLR name as an RFC 1035 FQDN. Some MSCs send a raw
+ * ASCII hostname instead (e.g. "ecmnet": first byte 0x65='e' is then
+ * read as label length 101 and ogs_fqdn_parse ERROR-floods). Accept
+ * both; the name is only used for logs and must not reject paging.
+ */
+static void sgsap_copy_name(char *dst, size_t dst_size,
+        const void *src, int src_len)
+{
+    const uint8_t *p = src;
+    uint8_t lab;
+    int n;
+
+    if (!dst || dst_size == 0)
+        return;
+    dst[0] = '\0';
+    if (!p || src_len <= 0)
+        return;
+
+    lab = p[0];
+    if (lab >= 1 && lab <= 63 && (int)lab + 1 <= src_len) {
+        n = ogs_fqdn_parse(dst, (const char *)p,
+                ogs_min(src_len, (int)dst_size));
+        if (n > 0)
+            return;
+        dst[0] = '\0';
+    }
+
+    n = ogs_min(src_len, (int)dst_size - 1);
+    memcpy(dst, p, n);
+    dst[n] = '\0';
+}
+
 void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
 {
     int r;
@@ -554,12 +587,8 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
             nas_mobile_identity_imsi_len = iter->length;
             break;
         case SGSAP_IE_VLR_NAME_TYPE:
-            if (ogs_fqdn_parse(vlr_name, iter->value,
-                ogs_min(iter->length, SGSAP_IE_VLR_NAME_LEN)) <= 0) {
-                ogs_error("Invalid VLR-Name");
-                sgs_cause = SGSAP_SGS_CAUSE_INVALID_MANDATORY_IE;
-                goto paging_reject;
-            }
+            sgsap_copy_name(vlr_name, sizeof(vlr_name),
+                    iter->value, iter->length);
             break;
         case SGSAP_IE_LAI_TYPE:
             lai = iter->value;
@@ -575,6 +604,7 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     ogs_tlv_free_all(root);
+    root = NULL;
 
     if (!nas_mobile_identity_imsi) {
         ogs_error("No IMSI");
@@ -750,6 +780,8 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     return;
 
 paging_reject:
+    if (root)
+        ogs_tlv_free_all(root);
     ogs_info("[SGSAP] PAGING-REJECT IMSI[%s] cause[%d]",
             imsi_bcd[0] ? imsi_bcd : "-", sgs_cause);
 
@@ -842,7 +874,12 @@ void sgsap_handle_downlink_unitdata(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
 
     r = nas_eps_send_downlink_nas_transport(mme_ue,
             nas_message_container_buffer, nas_message_container_length);
-    ogs_expect(r == OGS_OK);
+    if (r != OGS_OK) {
+        if (ogs_log_guard())
+            ogs_warn("[%s] SGsAP DOWNLINK-UNITDATA not delivered "
+                    "(no S1 or NAS send failed rv=%d)",
+                    mme_ue->imsi_bcd, r);
+    }
 }
 
 void sgsap_handle_reset_indication(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
