@@ -39,6 +39,18 @@
 extern "C" {
 #endif
 
+/*
+ * After an S1/NAS send: OGS_NOTFOUND means the UE, S1, or eNB is
+ * already gone (release race, idle, reject after detach). That is
+ * not an ERROR — ogs_expect() would flood the NMS.
+ */
+#define mme_expect_sent(rv) do { \
+    if ((rv) == OGS_OK || (rv) == OGS_NOTFOUND) \
+        ; \
+    else \
+        ogs_error("%s: send failed rv=%d", OGS_FUNC, (int)(rv)); \
+} while (0)
+
 #define GRP_PER_MME                 256    /* According to spec it is 65535 */
 #define CODE_PER_MME                256    /* According to spec it is 256 */
 
@@ -1350,7 +1362,7 @@ struct mme_ue_s {
                     enb_ue_holding, \
                     S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release, \
                     S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0); \
-            ogs_expect(r == OGS_OK); \
+            mme_expect_sent(r); \
         } else if ((__mME)->enb_ue_holding_id != OGS_INVALID_POOL_ID) { \
             ogs_warn("[%s] Holding S1 context has already been removed", \
                     (__mME)->imsi_bcd); \
@@ -1395,7 +1407,7 @@ struct mme_ue_s {
                     enb_ue_holding, \
                     S1AP_Cause_PR_nas, S1AP_CauseNas_normal_release, \
                     S1AP_UE_CTX_REL_S1_CONTEXT_REMOVE, 0); \
-            ogs_expect(r == OGS_OK); \
+            mme_expect_sent(r); \
             ogs_assert(r != OGS_ERROR); \
         } \
         (__mME)->enb_ue_holding_id = OGS_INVALID_POOL_ID; \

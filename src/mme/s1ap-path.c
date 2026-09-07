@@ -160,14 +160,14 @@ int s1ap_send_to_enb_ue(enb_ue_t *enb_ue, ogs_pkbuf_t *pkbuf)
     ogs_assert(pkbuf);
 
     if (!enb_ue) {
-        ogs_warn("S1 context has already been removed");
+        ogs_debug("S1 context has already been removed");
         ogs_pkbuf_free(pkbuf);
         return OGS_NOTFOUND;
     }
 
     enb = mme_enb_find_by_id(enb_ue->enb_id);
     if (!enb) {
-        ogs_warn("[%d] eNB has already been removed", enb_ue->enb_id);
+        ogs_debug("[%d] eNB has already been removed", enb_ue->enb_id);
         ogs_pkbuf_free(pkbuf);
         return OGS_NOTFOUND;
     }
@@ -178,7 +178,7 @@ int s1ap_send_to_enb_ue(enb_ue_t *enb_ue, ogs_pkbuf_t *pkbuf)
                 pkbuf->data, pkbuf->len);
 
     rv = s1ap_send_to_enb(enb, pkbuf, enb_ue->enb_ostream_id);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -464,7 +464,7 @@ int s1ap_send_to_nas(enb_ue_t *enb_ue,
         rv = s1ap_send_to_esm(
                 mme_ue, nasbuf, security_header_type.type,
                 OGS_GTP_CREATE_IN_UPLINK_NAS_TRANSPORT);
-        ogs_expect(rv == OGS_OK);
+        mme_expect_sent(rv);
         return rv;
     } else {
         ogs_error("Unknown/Unimplemented NAS Protocol discriminator 0x%02x "
@@ -495,7 +495,7 @@ int s1ap_send_s1_setup_response(mme_enb_t *enb)
     }
 
     rv = s1ap_send_to_enb(enb, s1ap_buffer, S1AP_NON_UE_SIGNALLING);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -517,7 +517,7 @@ int s1ap_send_s1_setup_failure(
     }
 
     rv = s1ap_send_to_enb(enb, s1ap_buffer, S1AP_NON_UE_SIGNALLING);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -551,7 +551,7 @@ int s1ap_send_overload_start(mme_enb_t *enb, int level, int traffic_reduction)
     }
 
     rv = s1ap_send_to_enb(enb, s1ap_buffer, S1AP_NON_UE_SIGNALLING);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -570,7 +570,7 @@ int s1ap_send_overload_stop(mme_enb_t *enb)
     }
 
     rv = s1ap_send_to_enb(enb, s1ap_buffer, S1AP_NON_UE_SIGNALLING);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -591,7 +591,7 @@ int s1ap_send_enb_configuration_update_ack(mme_enb_t *enb)
     }
 
     rv = s1ap_send_to_enb(enb, s1ap_buffer, S1AP_NON_UE_SIGNALLING);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -614,7 +614,7 @@ int s1ap_send_enb_configuration_update_failure(
     }
 
     rv = s1ap_send_to_enb(enb, s1ap_buffer, S1AP_NON_UE_SIGNALLING);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -654,7 +654,7 @@ int s1ap_send_initial_context_setup_request(mme_ue_t *mme_ue)
     }
 
     rv = nas_eps_send_to_enb(mme_ue, s1apbuf);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -694,7 +694,7 @@ int s1ap_send_ue_context_modification_request(mme_ue_t *mme_ue)
     }
 
     rv = nas_eps_send_to_enb(mme_ue, s1apbuf);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -936,7 +936,7 @@ int s1ap_send_mme_configuration_transfer(
     }
 
     rv = s1ap_send_to_enb(target_enb, s1apbuf, S1AP_NON_UE_SIGNALLING);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -958,7 +958,7 @@ int s1ap_send_mme_direct_information_transfer(
     }
 
     rv = s1ap_send_to_enb(target_enb, s1apbuf, S1AP_NON_UE_SIGNALLING);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -998,7 +998,7 @@ int s1ap_send_e_rab_modification_confirm(mme_ue_t *mme_ue)
     }
 
     rv = nas_eps_send_to_enb(mme_ue, s1apbuf);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -1042,7 +1042,7 @@ int s1ap_send_path_switch_ack(
     }
 
     rv = nas_eps_send_to_enb(mme_ue, s1apbuf);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -1071,7 +1071,7 @@ int s1ap_send_handover_command(enb_ue_t *source_ue)
     }
 
     rv = s1ap_send_to_enb_ue(source_ue, s1apbuf);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -1105,7 +1105,7 @@ int s1ap_send_handover_preparation_failure(
     }
 
     rv = s1ap_send_to_enb_ue(source_ue, s1apbuf);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -1161,7 +1161,7 @@ int s1ap_send_handover_cancel_ack(enb_ue_t *source_ue)
     }
 
     rv = s1ap_send_to_enb_ue(source_ue, s1apbuf);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -1235,7 +1235,7 @@ int s1ap_send_handover_request(
         rv = s1ap_send_error_indication(target_enb, NULL, NULL,
                 S1AP_Cause_PR_misc,
                 S1AP_CauseMisc_control_processing_overload);
-        ogs_expect(rv == OGS_OK);
+        mme_expect_sent(rv);
 
         return rv;
     }
@@ -1256,7 +1256,7 @@ int s1ap_send_handover_request(
     }
 
     rv = s1ap_send_to_enb_ue(target_ue, s1apbuf);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -1331,7 +1331,7 @@ int s1ap_send_error_indication(
     }
 
     rv = s1ap_send_to_enb(enb, s1apbuf, S1AP_NON_UE_SIGNALLING);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -1357,7 +1357,7 @@ int s1ap_send_error_indication1(
 
     rv = s1ap_send_error_indication(
         enb, &mme_ue_s1ap_id, &enb_ue_s1ap_id, group, cause);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -1398,7 +1398,7 @@ int s1ap_send_s1_reset_ack(
     }
 
     rv = s1ap_send_to_enb(enb, s1apbuf, S1AP_NON_UE_SIGNALLING);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }
@@ -1425,7 +1425,7 @@ int s1ap_send_s1_reset(mme_enb_t *enb, S1AP_Cause_PR group, long cause)
     }
 
     rv = s1ap_send_to_enb(enb, s1apbuf, S1AP_NON_UE_SIGNALLING);
-    ogs_expect(rv == OGS_OK);
+    mme_expect_sent(rv);
 
     return rv;
 }

@@ -60,10 +60,7 @@ static uint8_t emm_inbound_roam_access_reject(
     else
         r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                 emm_cause, OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
-    if (r != OGS_OK && ogs_log_guard())
-        ogs_warn("[%s] inbound roam policy reject (%s EMM cause %d) "
-                "not sent to UE (no S1 or NAS send failed rv=%d)",
-                imsi_bcd, tau ? "TAU" : "Attach", emm_cause, r);
+    mme_expect_sent(r);
     return emm_cause;
 }
 
@@ -94,7 +91,7 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_CONGESTION,
                 OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
         return OGS_ERROR;
     }
 
@@ -104,7 +101,7 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE,
                 OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
         return OGS_ERROR;
     }
 
@@ -220,7 +217,7 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_TRACKING_AREA_NOT_ALLOWED,
                 OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
         return OGS_ERROR;
     }
     ogs_debug("    SERVED_TAI_INDEX[%d]", served_tai_index);
@@ -263,7 +260,7 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_UE_SECURITY_CAPABILITIES_MISMATCH,
                 OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
         return OGS_ERROR;
     }
 
@@ -308,7 +305,7 @@ int emm_handle_attach_request(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
                     imsi_bcd, home_plmn, emm_cause);
             r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                     emm_cause, OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
-            ogs_expect(r == OGS_OK);
+            mme_expect_sent(r);
             return OGS_ERROR;
         }
 
@@ -458,7 +455,7 @@ int emm_handle_attach_complete(
     }
 
     r = nas_eps_send_to_downlink_nas_transport(enb_ue, emmbuf);
-    ogs_expect(r == OGS_OK);
+    mme_expect_sent(r);
 
     ogs_debug("EMM information");
     ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
@@ -536,7 +533,7 @@ int emm_handle_authentication_response(
                 r = nas_eps_send_authentication_reject(mme_ue);
                 break;
             }
-            ogs_expect(r == OGS_OK);
+            mme_expect_sent(r);
             return OGS_DONE;
         }
     }
@@ -576,7 +573,7 @@ int emm_handle_identity_response(
                 r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                         OGS_NAS_EMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE,
                         OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
-            ogs_expect(r == OGS_OK);
+            mme_expect_sent(r);
             return OGS_ERROR;
         }
         /* Pad with 0xFF so fixed-length consumers (SGsAP IMSI IE)
@@ -605,7 +602,7 @@ int emm_handle_identity_response(
             else
                 r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                         emm_cause, OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
-            ogs_expect(r == OGS_OK);
+            mme_expect_sent(r);
             return OGS_ERROR;
         }
 
@@ -627,7 +624,7 @@ int emm_handle_identity_response(
                 r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                         OGS_NAS_EMM_CAUSE_SEMANTICALLY_INCORRECT_MESSAGE,
                         OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
-            ogs_expect(r == OGS_OK);
+            mme_expect_sent(r);
             return OGS_ERROR;
         }
 
@@ -752,7 +749,7 @@ int emm_handle_service_request(
                 mme_ue->imsi_bcd);
         r = nas_eps_send_service_reject(enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_CONGESTION);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
         return OGS_ERROR;
     }
 
@@ -854,7 +851,7 @@ int emm_handle_tau_request(
                 mme_ue->imsi_bcd);
         r = nas_eps_send_tau_reject(enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_CONGESTION);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
         return OGS_ERROR;
     }
 
@@ -940,7 +937,7 @@ int emm_handle_tau_request(
             ogs_plmn_id_hexdump(&mme_ue->tai.plmn_id), mme_ue->tai.tac);
         r = nas_eps_send_tau_reject(enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_TRACKING_AREA_NOT_ALLOWED);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
         return OGS_ERROR;
     }
     ogs_debug("    SERVED_TAI_INDEX[%d]", served_tai_index);
@@ -992,7 +989,7 @@ int emm_handle_tau_request(
                 mme_ue->ue_network_capability.eea);
         r = nas_eps_send_tau_reject(enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_UE_SECURITY_CAPABILITIES_MISMATCH);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
         return OGS_ERROR;
     }
 
@@ -1070,7 +1067,7 @@ int emm_handle_extended_service_request(
                 mme_ue->imsi_bcd);
         r = nas_eps_send_service_reject(enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_CONGESTION);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
         return OGS_ERROR;
     }
 
@@ -1135,7 +1132,7 @@ int emm_handle_extended_service_request(
             ogs_plmn_id_hexdump(&mme_ue->tai.plmn_id), mme_ue->tai.tac);
         r = nas_eps_send_tau_reject(enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_TRACKING_AREA_NOT_ALLOWED);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
         return OGS_ERROR;
     }
     ogs_debug("    SERVED_TAI_INDEX[%d]", served_tai_index);

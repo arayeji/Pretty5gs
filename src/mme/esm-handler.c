@@ -109,7 +109,7 @@ int esm_handle_pdn_connectivity_request(
         r = nas_eps_send_pdn_connectivity_reject(
                 sess, OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
                 create_action);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
         return OGS_ERROR;
     }
 
@@ -134,7 +134,7 @@ int esm_handle_pdn_connectivity_request(
         r = nas_eps_send_pdn_connectivity_reject(
                 sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE,
                 create_action);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
         return OGS_ERROR;
     }
 
@@ -158,7 +158,7 @@ int esm_handle_pdn_connectivity_request(
         /* Emergency call, but no emergency APN defined */
         r = nas_eps_send_pdn_connectivity_reject(
                 sess, OGS_NAS_ESM_CAUSE_REQUEST_REJECTED_UNSPECIFIED, create_action);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
         ogs_warn("[%s] Emergency call, but no emergency APN defined",
                 mme_ue->imsi_bcd);
         return OGS_ERROR;
@@ -182,7 +182,7 @@ int esm_handle_pdn_connectivity_request(
             r = nas_eps_send_pdn_connectivity_reject(
                     sess, OGS_NAS_ESM_CAUSE_MISSING_OR_UNKNOWN_APN,
                     create_action);
-            ogs_expect(r == OGS_OK);
+            mme_expect_sent(r);
             mme_ue_warn(mme_ue, NULL, "esm",
                     apn, "Invalid emergency APN[%s]", apn);
             return OGS_ERROR;
@@ -247,7 +247,7 @@ int esm_handle_pdn_connectivity_request(
     if (security_protected_required) {
         CLEAR_BEARER_TIMER(bearer->t3489);
         r = nas_eps_send_esm_information_request(bearer);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
 
         return OGS_OK;
     }
@@ -355,7 +355,7 @@ int esm_handle_pdn_connectivity_request(
             r = nas_eps_send_pdn_connectivity_reject(
                     sess, OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
                     create_action);
-            ogs_expect(r == OGS_OK);
+            mme_expect_sent(r);
             return OGS_ERROR;
         }
     } else {
@@ -363,7 +363,7 @@ int esm_handle_pdn_connectivity_request(
                 "default Context-Identifier", mme_ue->imsi_bcd);
         r = nas_eps_send_pdn_connectivity_reject(
                 sess, no_apn_cause, create_action);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
         return OGS_ERROR;
     }
 
@@ -454,7 +454,7 @@ int esm_handle_information_response(
                         roam_cause);
                 r = nas_eps_send_pdn_connectivity_reject(
                         sess, roam_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
-                ogs_expect(r == OGS_OK);
+                mme_expect_sent(r);
                 return OGS_ERROR;
             }
         }
@@ -463,7 +463,7 @@ int esm_handle_information_response(
             r = nas_eps_send_pdn_connectivity_reject(
                     sess, OGS_NAS_ESM_CAUSE_UNKNOWN_PDN_TYPE,
                     OGS_GTP_CREATE_IN_ATTACH_REQUEST);
-            ogs_expect(r == OGS_OK);
+            mme_expect_sent(r);
             return OGS_ERROR;
         }
 
@@ -481,7 +481,7 @@ int esm_handle_information_response(
                 if (r != OGS_OK)
                     mme_send_delete_session_after_attach_accept_fail(
                             enb_ue, mme_ue);
-                ogs_expect(r == OGS_OK);
+                mme_expect_sent(r);
             } else {
                 mme_ue_progress(mme_ue, "attach_accept_deferred_sgs");
                 if (OGS_OK != sgsap_send_location_update_request(mme_ue)) {
@@ -499,7 +499,7 @@ int esm_handle_information_response(
                 r = nas_eps_send_pdn_connectivity_reject(
                         sess, OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
                         OGS_GTP_CREATE_IN_ATTACH_REQUEST);
-                ogs_expect(r == OGS_OK);
+                mme_expect_sent(r);
                 return OGS_ERROR;
             }
 
@@ -511,7 +511,7 @@ int esm_handle_information_response(
                 r = nas_eps_send_pdn_connectivity_reject(
                         sess, OGS_NAS_ESM_CAUSE_INSUFFICIENT_RESOURCES,
                         OGS_GTP_CREATE_IN_ATTACH_REQUEST);
-                ogs_expect(r == OGS_OK);
+                mme_expect_sent(r);
                 return OGS_ERROR;
             }
         }
@@ -525,7 +525,7 @@ int esm_handle_information_response(
 
         r = nas_eps_send_pdn_connectivity_reject(
                 sess, no_apn_cause, OGS_GTP_CREATE_IN_ATTACH_REQUEST);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
         return OGS_ERROR;
     }
 
@@ -556,7 +556,7 @@ int esm_handle_bearer_resource_allocation_request(
 
     r = nas_eps_send_bearer_resource_allocation_reject(
             mme_ue, sess->pti, OGS_NAS_ESM_CAUSE_NETWORK_FAILURE);
-    ogs_expect(r == OGS_OK);
+    mme_expect_sent(r);
 
     return OGS_OK;
 }

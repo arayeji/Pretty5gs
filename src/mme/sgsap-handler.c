@@ -178,7 +178,7 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         r = nas_eps_send_attach_accept(mme_ue);
         if (r != OGS_OK)
             mme_send_delete_session_after_attach_accept_fail(enb_ue, mme_ue);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
     } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
         if (mme_ue->nas_eps.update.active_flag) {
 
@@ -239,12 +239,12 @@ error:
                 enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED,
                 OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
     } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST) {
         r = nas_eps_send_tau_reject(
                 enb_ue, mme_ue,
                 OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK);
-        ogs_expect(r == OGS_OK);
+        mme_expect_sent(r);
     } else {
         ogs_error("[%s] Invalid EPS-Type[%d]",
                 mme_ue->imsi_bcd, mme_ue->nas_eps.type);
@@ -748,7 +748,7 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
                 ogs_info("[%s] SGsAP Paging-Request (CS): UE connected, "
                         "CS Service Notification", mme_ue->imsi_bcd);
                 r = nas_eps_send_cs_service_notification(mme_ue);
-                ogs_expect(r == OGS_OK);
+                mme_expect_sent(r);
             } else {
                 ogs_info("[%s] SGsAP Paging-Request (SMS): UE connected, "
                         "SGsAP Service-Request", mme_ue->imsi_bcd);
@@ -874,12 +874,7 @@ void sgsap_handle_downlink_unitdata(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
 
     r = nas_eps_send_downlink_nas_transport(mme_ue,
             nas_message_container_buffer, nas_message_container_length);
-    if (r != OGS_OK) {
-        if (ogs_log_guard())
-            ogs_warn("[%s] SGsAP DOWNLINK-UNITDATA not delivered "
-                    "(no S1 or NAS send failed rv=%d)",
-                    mme_ue->imsi_bcd, r);
-    }
+    mme_expect_sent(r);
 }
 
 void sgsap_handle_reset_indication(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
