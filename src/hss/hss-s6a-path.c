@@ -220,6 +220,52 @@ static bool hss_s6a_air_resync_present(struct avp *req_auth_info)
     return avpch != NULL;
 }
 
+/*
+ * TS 33.102 Annex C: SQN = SEQ || IND, where IND is the low 5 bits and
+ * indexes a 32-entry array in the USIM.  Each entry holds the highest SEQ
+ * accepted for that index, so vectors carrying different IND values do not
+ * invalidate one another.  That is what lets several users of authentication
+ * vectors -- the EPS domain and the UTRAN/GERAN (CS/PS) domain in particular
+ * -- authenticate the same USIM concurrently and out of order.
+ *
+ * Incrementing the stored SQN by exactly 32 leaves IND unchanged, which
+ * collapses every serving node onto a single array slot: whichever node
+ * presents a vector generated before another node's increment is rejected,
+ * and the UE resynchronises.  We therefore assign IND at vector-generation
+ * time rather than carrying it in the stored counter.
+ *
+ * Allocating IND is a home-network-local decision -- it is neither signalled
+ * nor negotiated, and the USIM simply indexes its array with whatever value
+ * arrives -- so this needs no coordination with roaming partners or the SIM
+ * vendor.  The array is split in half by domain so E-UTRAN and UTRAN/GERAN
+ * can never share a slot, and serving nodes are spread within each half so
+ * that an MME still holding vectors after a move does not collide with the
+ * one that took over.
+ */
+#define HSS_IND_MASK            0x1fULL
+#define HSS_IND_EUTRAN_BASE     0
+#define HSS_IND_UTRAN_BASE      16
+#define HSS_IND_PER_DOMAIN      16
+
+static uint8_t hss_s6a_ind_for(const char *origin_host, bool eps)
+{
+    uint32_t h = 2166136261u; /* FNV-1a over the serving node's Origin-Host */
+    const char *p;
+
+    for (p = origin_host; p && *p; p++) {
+        h ^= (uint8_t)*p;
+        h *= 16777619u;
+    }
+
+    return (eps ? HSS_IND_EUTRAN_BASE : HSS_IND_UTRAN_BASE) +
+            (h % HSS_IND_PER_DOMAIN);
+}
+
+static uint64_t hss_s6a_sqn_for_ind(uint64_t sqn, uint8_t ind)
+{
+    return (sqn & ~HSS_IND_MASK) | (uint64_t)ind;
+}
+
 static int hss_s6a_air_handle_resync(struct avp *req_auth_info,
         const char *imsi_bcd, const uint8_t *opc, const uint8_t *k,
         uint8_t *rand, uint64_t *sqn, uint32_t *result_code)
@@ -268,8 +314,15 @@ static int hss_s6a_air_handle_resync(struct avp *req_auth_info,
 
     ogs_random(rand, OGS_RAND_LEN);
     *sqn = ogs_buffer_to_uint64(sqn_buf, OGS_SQN_LEN);
-    /* 33.102 C.3.4 Guide : IND + 1 */
-    *sqn = (*sqn + 32 + 1) & OGS_MAX_SQN;
+    /*
+     * Advance SEQ past the SQN_MS the USIM reported and normalise IND to
+     * zero: IND is applied per domain and per serving node when the vector
+     * is generated (see hss_s6a_ind_for), so it must not be carried in the
+     * stored counter.  The upstream "IND + 1" step assumed a per-node IND
+     * was already in use; with a single shared IND it only walked every
+     * subscriber's slot forward one place per resynchronisation.
+     */
+    *sqn = ((*sqn + 32) & OGS_MAX_SQN) & ~HSS_IND_MASK;
 
     return OGS_OK;
 }
@@ -607,11 +660,14 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
 
     if (req_utran) {
         uint8_t utran_amf[OGS_AMF_LEN];
+        uint8_t utran_ind = hss_s6a_ind_for(origin_host, false);
 
         memcpy(utran_amf, auth_info.amf, OGS_AMF_LEN);
         hss_s6a_amf_for_rat(utran_amf, false);
         milenage_generate(opc, utran_amf, auth_info.k,
-            ogs_uint64_to_buffer(auth_info.sqn, OGS_SQN_LEN, sqn),
+            ogs_uint64_to_buffer(
+                hss_s6a_sqn_for_ind(auth_info.sqn, utran_ind),
+                OGS_SQN_LEN, sqn),
             auth_info.rand, autn, ik, ck, ak, xres, &xres_len);
         ret = hss_s6a_air_build_utran_vector(avp, auth_info.rand,
                 xres, xres_len, autn, ck, ik);
@@ -621,17 +677,20 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
             goto out;
         }
         hss_trace_event(imsi_bcd, "S6a-AIR",
-                "UTRAN-Vector amf=%02x%02x (sep=0)",
-                utran_amf[0], utran_amf[1]);
+                "UTRAN-Vector amf=%02x%02x (sep=0) ind=%u",
+                utran_amf[0], utran_amf[1], utran_ind);
     }
 
     if (req_eutran) {
         uint8_t eutran_amf[OGS_AMF_LEN];
+        uint8_t eutran_ind = hss_s6a_ind_for(origin_host, true);
 
         memcpy(eutran_amf, auth_info.amf, OGS_AMF_LEN);
         hss_s6a_amf_for_rat(eutran_amf, true);
         milenage_generate(opc, eutran_amf, auth_info.k,
-            ogs_uint64_to_buffer(auth_info.sqn, OGS_SQN_LEN, sqn),
+            ogs_uint64_to_buffer(
+                hss_s6a_sqn_for_ind(auth_info.sqn, eutran_ind),
+                OGS_SQN_LEN, sqn),
             auth_info.rand, autn, ik, ck, ak, xres, &xres_len);
         ogs_auc_kasme(ck, ik, visited_plmn_bytes, sqn, ak, kasme);
         ret = hss_s6a_air_build_e_utran_vector(avp, auth_info.rand,
@@ -642,8 +701,8 @@ static int hss_ogs_diam_s6a_air_cb(struct msg **msg, struct avp *avp,
             goto out;
         }
         hss_trace_event(imsi_bcd, "S6a-AIR",
-                "E-UTRAN-Vector amf=%02x%02x (sep=1)",
-                eutran_amf[0], eutran_amf[1]);
+                "E-UTRAN-Vector amf=%02x%02x (sep=1) ind=%u",
+                eutran_amf[0], eutran_amf[1], eutran_ind);
     }
 
     /* Add Authentication-Info to answer */
