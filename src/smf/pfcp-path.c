@@ -20,6 +20,23 @@
 #include "sbi-path.h"
 #include "context.h"
 #include "pfcp-path.h"
+
+bool smf_pfcp_type_is_node_level(uint8_t type)
+{
+    switch (type) {
+    case OGS_PFCP_HEARTBEAT_REQUEST_TYPE:
+    case OGS_PFCP_HEARTBEAT_RESPONSE_TYPE:
+    case OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE:
+    case OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE:
+    case OGS_PFCP_ASSOCIATION_UPDATE_REQUEST_TYPE:
+    case OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE:
+    case OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE:
+    case OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE:
+        return true;
+    default:
+        return false;
+    }
+}
 #include "collision-replace.h"
 #include "smf-trace.h"
 #include "event.h"
@@ -140,17 +157,13 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
         ogs_event_free(e);
         return;
     }
-    /* Drop node-level bind before queueing — other events can call
-     * on_imsi and would attribute Heartbeats to the sticky IMSI. */
-    if (message->h.type == OGS_PFCP_HEARTBEAT_REQUEST_TYPE ||
-            message->h.type == OGS_PFCP_HEARTBEAT_RESPONSE_TYPE ||
-            message->h.type == OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE ||
-            message->h.type == OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE ||
-            message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_REQUEST_TYPE ||
-            message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE ||
-            message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE ||
-            message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE)
+    /* Drop node-level bind and sticky IMSI before any DEBUG. Otherwise
+     * ogs_log elevates DEBUG for the last traced UE on this thread and
+     * Heartbeat / association looks like SMF is at DEBUG. */
+    if (smf_pfcp_type_is_node_level(message->h.type)) {
         ogs_trace_packet_bind_rx(NULL, NULL, 0);
+        ogs_trace_clear();
+    }
 
     pfcp_status = ogs_pfcp_extract_node_id(message, &node_id);
     switch (pfcp_status) {

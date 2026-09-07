@@ -103,6 +103,10 @@ bool smf_pfcp_remove_upf_peer(ogs_pfcp_node_t *node);
 
 void smf_pfcp_request_reassociation(ogs_pfcp_node_t *node);
 
+/* Heartbeat / association: not UE-addressed. Sticky trace IMSI must
+ * not elevate DEBUG for these. */
+bool smf_pfcp_type_is_node_level(uint8_t type);
+
 #ifdef __cplusplus
 }
 #endif

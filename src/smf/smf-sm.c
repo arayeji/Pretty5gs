@@ -309,6 +309,12 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
     ogs_nas_5gs_message_t nas_message;
     ogs_pkbuf_t *pkbuf = NULL;
 
+    /* Heartbeat / association are not a UE. Clear leftover IMSI so
+     * ERROR-level SMF does not print PFCP DEBUG for that xact. */
+    if (e->h.id == SMF_EVT_N4_MESSAGE && e->pfcp_message &&
+            smf_pfcp_type_is_node_level(e->pfcp_message->h.type))
+        ogs_trace_clear();
+
     smf_sm_debug(e);
 
     ogs_assert(s);
@@ -973,19 +979,11 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         ogs_assert(recvbuf);
         pfcp_message = e->pfcp_message;
         ogs_assert(pfcp_message);
-        /* Node-level PFCP must not sit in bind_rx — sticky IMSI on_imsi
-         * would otherwise attach Heartbeats to the last traced UE.
-         * Session messages keep the full-PDU bind from pfcp-path.c
-         * (before header pull); do not re-bind the pulled IE body. */
-        if (pfcp_message->h.type == OGS_PFCP_HEARTBEAT_REQUEST_TYPE ||
-                pfcp_message->h.type == OGS_PFCP_HEARTBEAT_RESPONSE_TYPE ||
-                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE ||
-                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_SETUP_RESPONSE_TYPE ||
-                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_REQUEST_TYPE ||
-                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_UPDATE_RESPONSE_TYPE ||
-                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_REQUEST_TYPE ||
-                pfcp_message->h.type == OGS_PFCP_ASSOCIATION_RELEASE_RESPONSE_TYPE)
+        /* Node-level PFCP: no PACKET bind, no sticky IMSI. */
+        if (smf_pfcp_type_is_node_level(pfcp_message->h.type)) {
             ogs_trace_packet_bind_rx(NULL, NULL, 0);
+            ogs_trace_clear();
+        }
         pfcp_node = e->pfcp_node;
         ogs_assert(pfcp_node);
         ogs_assert(OGS_FSM_STATE(&pfcp_node->sm));
