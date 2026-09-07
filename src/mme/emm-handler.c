@@ -60,7 +60,10 @@ static uint8_t emm_inbound_roam_access_reject(
     else
         r = nas_eps_send_attach_reject(enb_ue, mme_ue,
                 emm_cause, OGS_NAS_ESM_CAUSE_PROTOCOL_ERROR_UNSPECIFIED);
-    ogs_expect(r == OGS_OK);
+    if (r != OGS_OK && ogs_log_guard())
+        ogs_warn("[%s] inbound roam policy reject (%s EMM cause %d) "
+                "not sent to UE (no S1 or NAS send failed rv=%d)",
+                imsi_bcd, tau ? "TAU" : "Attach", emm_cause, r);
     return emm_cause;
 }
 
