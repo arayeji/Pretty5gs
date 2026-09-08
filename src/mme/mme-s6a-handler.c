@@ -44,6 +44,9 @@ static uint8_t mme_ue_session_from_slice_data(mme_ue_t *mme_ue,
     ogs_slice_data_t *slice_data);
 static uint8_t mme_ue_session_merge_from_slice_data(mme_ue_t *mme_ue,
     ogs_slice_data_t *slice_data);
+static void mme_s6a_idr_pin_live_apn(mme_ue_t *mme_ue);
+static void mme_s6a_idr_rebind_live_sessions(mme_ue_t *mme_ue);
+static void mme_s6a_idr_disconnect_unsubscribed_pdn(mme_ue_t *mme_ue);
 
 uint8_t mme_s6a_handle_aia(
         mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
@@ -294,6 +297,139 @@ uint8_t mme_s6a_handle_pua(
     return OGS_OK;
 }
 
+static bool mme_s6a_idr_is_emergency_apn(const char *apn)
+{
+    if (!apn || !apn[0])
+        return false;
+    return !ogs_strcasecmp(apn, "sos") ||
+           !ogs_strcasecmp(apn, "emergency");
+}
+
+static bool mme_s6a_idr_sub_has_wildcard(const mme_ue_t *mme_ue)
+{
+    int i;
+
+    for (i = 0; i < mme_ue->num_of_session && i < OGS_MAX_NUM_OF_SESS; i++) {
+        if (mme_ue->session[i].name &&
+                !strcmp(mme_ue->session[i].name, "*"))
+            return true;
+    }
+    return false;
+}
+
+static ogs_session_t *mme_s6a_idr_find_sub_apn(
+        mme_ue_t *mme_ue, const char *apn)
+{
+    int i;
+
+    if (!apn || !apn[0])
+        return NULL;
+
+    for (i = 0; i < mme_ue->num_of_session && i < OGS_MAX_NUM_OF_SESS; i++) {
+        if (!mme_ue->session[i].name)
+            continue;
+        if (!ogs_strcasecmp(mme_ue->session[i].name, apn))
+            return &mme_ue->session[i];
+    }
+    return NULL;
+}
+
+static void mme_s6a_idr_pin_live_apn(mme_ue_t *mme_ue)
+{
+    mme_sess_t *sess;
+
+    ogs_assert(mme_ue);
+    ogs_list_for_each(&mme_ue->sess_list, sess) {
+        if (sess->session && sess->session->name)
+            ogs_cpystrn(sess->metrics_apn, sess->session->name,
+                    sizeof(sess->metrics_apn));
+    }
+}
+
+static void mme_s6a_idr_rebind_live_sessions(mme_ue_t *mme_ue)
+{
+    mme_sess_t *sess;
+
+    ogs_assert(mme_ue);
+    ogs_list_for_each(&mme_ue->sess_list, sess) {
+        if (sess->metrics_apn[0])
+            sess->session = mme_s6a_idr_find_sub_apn(
+                    mme_ue, sess->metrics_apn);
+        else
+            sess->session = NULL;
+    }
+}
+
+/*
+ * 23.401 5.3.9.2: if the new profile no longer allows a PDN, use
+ * MME-initiated PDN disconnection (5.10.3). Last PDN would become a
+ * detach — skip that. Attach/TAU/handover/teardown: skip.
+ */
+static void mme_s6a_idr_disconnect_unsubscribed_pdn(mme_ue_t *mme_ue)
+{
+    mme_sess_t *sess;
+    enb_ue_t *enb_ue;
+    ogs_pool_id_t drop_id[OGS_MAX_NUM_OF_SESS];
+    int n_drop = 0, i;
+    unsigned live;
+
+    ogs_assert(mme_ue);
+
+    if (mme_ue->being_removed)
+        return;
+    if (!OGS_FSM_CHECK(&mme_ue->sm, emm_state_registered))
+        return;
+    if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST ||
+        mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST ||
+        mme_ue->nas_eps.type == MME_EPS_TYPE_DETACH_REQUEST_FROM_UE ||
+        mme_ue->nas_eps.type == MME_EPS_TYPE_DETACH_REQUEST_TO_UE)
+        return;
+    if (MME_SESSION_RELEASE_PENDING(mme_ue))
+        return;
+    if (mme_s6a_idr_sub_has_wildcard(mme_ue))
+        return;
+
+    enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (enb_ue && (enb_ue->source_ue_id || enb_ue->target_ue_id))
+        return;
+
+    ogs_list_for_each(&mme_ue->sess_list, sess) {
+        if (n_drop >= OGS_MAX_NUM_OF_SESS)
+            break;
+        if (sess->sess_removing || sess->delete_session_pending)
+            continue;
+        if (!sess->metrics_apn[0])
+            continue;
+        if (mme_s6a_idr_is_emergency_apn(sess->metrics_apn))
+            continue;
+        if (mme_s6a_idr_find_sub_apn(mme_ue, sess->metrics_apn))
+            continue;
+        drop_id[n_drop++] = sess->id;
+    }
+
+    live = mme_sess_count(mme_ue);
+    for (i = 0; i < n_drop; i++) {
+        sess = mme_sess_find_by_id(drop_id[i]);
+        if (!sess || sess->sess_removing || sess->delete_session_pending)
+            continue;
+        if (live <= 1) {
+            if (ogs_log_guard())
+                ogs_warn("[%s] IDR: APN %s no longer subscribed but is "
+                        "last PDN; skip disconnect (no detach)",
+                        mme_ue->imsi_bcd,
+                        sess->metrics_apn[0] ? sess->metrics_apn : "-");
+            continue;
+        }
+        if (ogs_log_guard())
+            ogs_info("[%s] IDR: PDN disconnect APN %s "
+                    "(no longer subscribed)",
+                    mme_ue->imsi_bcd, sess->metrics_apn);
+        mme_admin_detach_sess(sess, false);
+        if (live > 0)
+            live--;
+    }
+}
+
 uint8_t mme_s6a_handle_idr(
         mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
 {
@@ -320,17 +456,30 @@ uint8_t mme_s6a_handle_idr(
 
         mme_pgw_host_resolve_pending_sessions(slice_data);
 
+        /*
+         * Live mme_sess_t->session points into mme_ue->session[].
+         * Pin the APN name before any replace so rebind cannot use a
+         * freed name.
+         */
+        mme_s6a_idr_pin_live_apn(mme_ue);
+
         if (slice_data->all_apn_config_inc ==
                 OGS_ALL_APN_CONFIGURATIONS_INCLUDED) {
             mme_session_remove_all(mme_ue);
             num_of_session = mme_ue_session_from_slice_data(mme_ue, slice_data);
             if (num_of_session == 0) {
+                mme_s6a_idr_rebind_live_sessions(mme_ue);
                 ogs_warn("[%s] IDR: no usable session from HSS "
                         "subscription (APN configs:%d)",
                         mme_ue->imsi_bcd, slice_data->num_of_session);
                 return OGS_ERROR;
             }
             mme_ue->num_of_session = num_of_session;
+            mme_s6a_idr_rebind_live_sessions(mme_ue);
+            /* 23.401 5.3.9.2 / 5.10.3: drop PDNs the new profile
+             * no longer allows. Indicator 0 is the only case that
+             * deletes stored APNs (29.272). Never last-PDN detach. */
+            mme_s6a_idr_disconnect_unsubscribed_pdn(mme_ue);
         } else if (slice_data->all_apn_config_inc ==
                 OGS_MODIFIED_ADDED_APN_CONFIGURATIONS_INCLUDED) {
             /*
@@ -339,6 +488,7 @@ uint8_t mme_s6a_handle_idr(
              */
             num_of_session = mme_ue_session_merge_from_slice_data(
                     mme_ue, slice_data);
+            mme_s6a_idr_rebind_live_sessions(mme_ue);
             if (ogs_log_guard())
                 ogs_info("[%s] IDR: merged %d modified/added APN-Configuration"
                         "(s) (subscription APNs:%d)",
