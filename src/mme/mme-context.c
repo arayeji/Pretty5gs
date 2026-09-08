@@ -6138,8 +6138,11 @@ static int sgsap_config_parse_body(ogs_yaml_iter_t *mme_iter, bool reload,
                             "-");
                     vlr = prev_vlr;
                 } else {
-                    mme_vlr_t *existing =
-                        reload ? mme_vlr_find_by_addr(addr) : NULL;
+                    /* One SCTP client per MSC address. OsmoMSC keeps a
+                     * single SGs link per MME IP; extra clients flap
+                     * ("Closing SGs link replaced by a new connection").
+                     * Dedup on first load too, not only SIGHUP. */
+                    mme_vlr_t *existing = mme_vlr_find_by_addr(addr);
 
                     local_addr = NULL;
                     for (i = 0; i < local_hostname_num; i++) {
@@ -6159,7 +6162,7 @@ static int sgsap_config_parse_body(ogs_yaml_iter_t *mme_iter, bool reload,
 
                         ogs_freeaddrinfo(addr);
 
-                        if (existing->retired || local_changed) {
+                        if (reload && (existing->retired || local_changed)) {
                             ogs_freeaddrinfo(existing->local_sa_list);
                             existing->local_sa_list = local_addr;
                             local_addr = NULL;

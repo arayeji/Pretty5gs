@@ -158,6 +158,19 @@ void sgsap_state_will_connect(ogs_fsm_t *s, mme_event_t *e)
             addr = vlr->sa_list;
             ogs_assert(addr);
 
+            /*
+             * sctp_connectx already succeeded: tearing down here ABORTs
+             * a live assoc and OsmoMSC logs "replaced by a new
+             * connection". If the socket is up, COMM_UP was late/missed.
+             */
+            if (vlr->sock && vlr->sock->fd != INVALID_SOCKET) {
+                ogs_info("[SGsAP] Connect timer while SCTP is up [%s]:%d "
+                        "— treating as connected",
+                        OGS_ADDR(addr, buf), OGS_PORT(addr));
+                OGS_FSM_TRAN(s, sgsap_state_connected);
+                break;
+            }
+
             ogs_warn("[SGsAP] Connect to VLR [%s]:%d failed",
                         OGS_ADDR(addr, buf), OGS_PORT(addr));
 
@@ -165,7 +178,6 @@ void sgsap_state_will_connect(ogs_fsm_t *s, mme_event_t *e)
             ogs_timer_start(vlr->t_conn,
                 mme_timer_cfg(MME_TIMER_SGS_CLI_CONN_TO_SRV)->duration);
 
-            mme_vlr_close(vlr);
             sgsap_client(vlr);
             break;
         default:

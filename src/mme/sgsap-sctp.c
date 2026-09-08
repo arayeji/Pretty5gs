@@ -38,6 +38,11 @@ ogs_sock_t *sgsap_client(mme_vlr_t *vlr)
 
     ogs_assert(vlr);
 
+    /* Already associating: a second connect() is a new 4-way INIT.
+     * OsmoMSC then closes the previous link as "replaced". */
+    if (vlr->sock && vlr->sock->fd != INVALID_SOCKET)
+        return vlr->sock;
+
     /* Tear down a leftover poll/fd before replacing vlr->sock. */
     if (vlr->sock || vlr->poll)
         mme_vlr_close(vlr);
@@ -139,12 +144,16 @@ static void recv_handler(ogs_sock_t *sock)
             if (not->sn_assoc_change.sac_state == SCTP_COMM_UP) {
                 ogs_debug("SCTP_COMM_UP");
 
-                if ((not->sn_assoc_change.sac_outbound_streams-1) >= 1) {
-                    /* NEXT_ID(MAX >= MIN) */
+                /* SGs uses stream 0. Require at least one outbound
+                 * stream (S1AP's "streams-1 >= 1" hid Osmo 1-stream
+                 * COMM_UP and the 3 s reconnect timer then ABORTed). */
+                if (not->sn_assoc_change.sac_outbound_streams >= 1) {
                     sgsap_event_push(MME_EVENT_SGSAP_LO_SCTP_COMM_UP,
                             sock, NULL, NULL,
                             not->sn_assoc_change.sac_inbound_streams,
                             not->sn_assoc_change.sac_outbound_streams);
+                } else {
+                    ogs_warn("SGsAP COMM_UP with 0 outbound streams");
                 }
             } else if (not->sn_assoc_change.sac_state == SCTP_SHUTDOWN_COMP ||
                     not->sn_assoc_change.sac_state == SCTP_COMM_LOST) {
