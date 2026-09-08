@@ -891,11 +891,20 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             }
 
             if (!ACTIVE_EPS_BEARERS_IS_AVAIABLE(mme_ue)) {
-                ogs_error("No active EPS bearers : IMSI[%s]", mme_ue->imsi_bcd);
+                /*
+                 * 24.301 #40: UE must attach. Restoring REGISTERED
+                 * left a session with no active bearer, so the UE
+                 * retried Service Request every few seconds.
+                 */
+                if (ogs_log_guard())
+                    ogs_warn("[%s] Service Request: no active EPS bearers "
+                            "(#40); implicit detach",
+                            mme_ue->imsi_bcd);
                 r = nas_eps_send_service_reject(enb_ue, mme_ue,
                         OGS_NAS_EMM_CAUSE_NO_EPS_BEARER_CONTEXT_ACTIVATED);
                 mme_expect_sent(r);
-                MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
+                mme_ue->can_restore_context = false;
+                OGS_FSM_TRAN(s, &emm_state_exception);
                 break;
             }
 
@@ -1092,11 +1101,15 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
             }
 
             if (!ACTIVE_EPS_BEARERS_IS_AVAIABLE(mme_ue)) {
-                ogs_warn("No active EPS bearers : IMSI[%s]", mme_ue->imsi_bcd);
+                if (ogs_log_guard())
+                    ogs_warn("[%s] TAU: no active EPS bearers "
+                            "(#40); implicit detach",
+                            mme_ue->imsi_bcd);
                 r = nas_eps_send_tau_reject(enb_ue, mme_ue,
                         OGS_NAS_EMM_CAUSE_NO_EPS_BEARER_CONTEXT_ACTIVATED);
                 mme_expect_sent(r);
-                MME_RESTORE_CONTEXT_ON_FAILURE(mme_ue, s);
+                mme_ue->can_restore_context = false;
+                OGS_FSM_TRAN(s, &emm_state_exception);
                 break;
             }
 
