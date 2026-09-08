@@ -215,6 +215,7 @@ void sgsap_dispatch_message(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     ogs_assert(pkbuf);
 
     type = *(unsigned char *)(pkbuf->data);
+    sgsap_trace_packet(NULL, "rx", pkbuf);
     switch (type) {
     case SGSAP_LOCATION_UPDATE_ACCEPT:
         sgsap_handle_location_update_accept(vlr, pkbuf);

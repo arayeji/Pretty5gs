@@ -185,6 +185,54 @@ int sgsap_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
     return OGS_OK;
 }
 
+static bool sgsap_pkbuf_imsi_bcd(const ogs_pkbuf_t *pkbuf,
+        char *imsi_bcd, size_t buflen)
+{
+    uint8_t *p, *end;
+
+    if (!pkbuf || pkbuf->len < 1 || !imsi_bcd || buflen < 2)
+        return false;
+
+    imsi_bcd[0] = '\0';
+    p = (uint8_t *)pkbuf->data + 1;
+    end = (uint8_t *)pkbuf->data + pkbuf->len;
+    while (p + 2 <= end) {
+        uint8_t tag = p[0];
+        uint8_t len = p[1];
+        uint8_t *val = p + 2;
+
+        if (val + len > end)
+            break;
+        if (tag == SGSAP_IE_IMSI_TYPE) {
+            if (!SGSAP_IMSI_LEN_OK(len))
+                return false;
+            ogs_nas_eps_imsi_to_bcd(
+                    (ogs_nas_mobile_identity_imsi_t *)val, len, imsi_bcd);
+            return imsi_bcd[0] != '\0';
+        }
+        p = val + len;
+    }
+    return false;
+}
+
+void sgsap_trace_packet(const char *imsi, const char *dir,
+        const ogs_pkbuf_t *pkbuf)
+{
+    char peeked[OGS_MAX_IMSI_BCD_LEN + 1];
+    const char *use = imsi;
+
+    if (!pkbuf || !pkbuf->data || !pkbuf->len)
+        return;
+    if (!ogs_trace_filter_active())
+        return;
+    if (!use || !use[0]) {
+        if (!sgsap_pkbuf_imsi_bcd(pkbuf, peeked, sizeof(peeked)))
+            return;
+        use = peeked;
+    }
+    ogs_trace_packet(use, "sgsap", dir, pkbuf->data, pkbuf->len);
+}
+
 int sgsap_send_to_vlr_with_sid(
         mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
 {
@@ -203,6 +251,8 @@ int sgsap_send_to_vlr_with_sid(
         ogs_error("sgsap_send_to_vlr_with_sid: no PDU");
         return OGS_ERROR;
     }
+
+    sgsap_trace_packet(NULL, "tx", pkbuf);
 
     ogs_debug("    StreamNO[%d] VLR-IP[%s]",
             stream_no, ogs_sockaddr_to_string_static(vlr->sa_list));
