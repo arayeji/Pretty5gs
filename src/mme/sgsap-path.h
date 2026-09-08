@@ -43,6 +43,9 @@ int sgsap_send_to_vlr_with_sid(
 int sgsap_send_to_vlr(mme_ue_t *mme_ue, ogs_pkbuf_t *pkbuf);
 
 int sgsap_send_location_update_request(mme_ue_t *mme_ue);
+bool mme_sgs_need_location_update(const mme_ue_t *mme_ue);
+void mme_sgs_mark_vlr_unreliable(mme_vlr_t *vlr);
+void mme_sgs_mark_ue_vlr_reliable(mme_ue_t *mme_ue, const mme_vlr_t *vlr);
 void mme_sgs_ts6_1_timer_start(mme_ue_t *mme_ue);
 void mme_sgs_ts6_1_timer_stop(mme_ue_t *mme_ue);
 int sgsap_send_tmsi_reallocation_complete(mme_ue_t *mme_ue);

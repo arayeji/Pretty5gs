@@ -228,14 +228,7 @@ uint8_t mme_s6a_handle_ula(
 
         /* Update CSMAP from Tracking area update request */
         mme_ue->csmap = mme_csmap_find_for_ue(mme_ue);
-        if (mme_ue->csmap &&
-            ogs_global_conf()->parameter.ignore_sgs == false &&
-            mme_ue->network_access_mode ==
-                OGS_NETWORK_ACCESS_MODE_PACKET_AND_CIRCUIT &&
-            (mme_ue->nas_eps.update.value ==
-             OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING ||
-             mme_ue->nas_eps.update.value ==
-             OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING_WITH_IMSI_ATTACH)) {
+        if (mme_sgs_need_location_update(mme_ue)) {
 
             if (sgsap_send_location_update_request(mme_ue) != OGS_OK) {
                 /*
@@ -244,7 +237,7 @@ uint8_t mme_s6a_handle_ula(
                  * Combined; else EPS-only + #18.
                  */
                 if (ogs_log_guard())
-                    ogs_warn("[%s] Combined TAU(ULA): SGsAP Location-Update "
+                    ogs_warn("[%s] TAU(ULA): SGsAP Location-Update "
                             "not sent (VLR/SGs unavailable); "
                             "continue without CS",
                             mme_ue->imsi_bcd);

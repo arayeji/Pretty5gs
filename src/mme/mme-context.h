@@ -608,6 +608,11 @@ typedef struct mme_pgw_sel_rule_s {
      !(__mME)->csmap->vlr->retired && \
      (OGS_FSM_CHECK(&(__mME)->csmap->vlr->sm, sgsap_state_connected)))
 
+/* TS 29.118 4.2.2 / 5.7.3.1: VLR-Reliable MM context variable */
+#define MME_VLR_RELIABLE(__mME) \
+    ((__mME) && (__mME)->csmap && (__mME)->csmap->vlr && \
+     (__mME)->vlr_reliable_gen == (__mME)->csmap->vlr->sgs_reset_gen)
+
 typedef struct mme_vlr_s {
     ogs_lnode_t     lnode;
 
@@ -645,6 +650,14 @@ typedef struct mme_vlr_s {
      */
     ogs_time_t      tx_stall_since;
     bool            tx_stall_posted;
+
+    /*
+     * TS 29.118 5.7.3.1 VLR-Reliable: incremented on SGsAP-RESET-
+     * INDICATION. A UE is unreliable until its vlr_reliable_gen
+     * matches this (set on Location-Update Accept). Avoids walking
+     * every MM context on RESET.
+     */
+    uint32_t        sgs_reset_gen;
 } mme_vlr_t;
 
 #define MME_SGSAP_TX_STALL_RESET        ogs_time_from_sec(15)
@@ -1606,6 +1619,8 @@ struct mme_ue_s {
     bool            sgs_lu_pending;
     /* Set when SGs LU reject/timeout; Attach/TAU Accept forces EPS-only + #18 */
     bool            sgs_cs_unavailable;
+    /* Matches csmap->vlr->sgs_reset_gen when VLR-Reliable is true */
+    uint32_t        vlr_reliable_gen;
 
     ogs_timer_t     *t_s6a;
     /*

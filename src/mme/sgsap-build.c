@@ -111,7 +111,17 @@ ogs_pkbuf_t *sgsap_build_location_update_request(mme_ue_t *mme_ue)
     mme_name_len = sgsap_fill_mme_name(mme_name, vlr, mme_ue);
     ogs_tlv_add(root, OGS_TLV_MODE_T1_L1, SGSAP_IE_MME_NAME_TYPE,
             mme_name_len, 0, mme_name);
-    eps_update_type = SGSAP_EPS_UPDATE_IMSI_ATTACH;
+    /*
+     * TS 29.118 5.2.2.2.1: IMSI attach only for Combined Attach or
+     * Combined TAU with IMSI attach; periodic / normal TAU use Normal LU.
+     */
+    if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST ||
+        (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST &&
+         mme_ue->nas_eps.update.value ==
+            OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING_WITH_IMSI_ATTACH))
+        eps_update_type = SGSAP_EPS_UPDATE_IMSI_ATTACH;
+    else
+        eps_update_type = SGSAP_EPS_UPDATE_NORMAL;
     ogs_tlv_add(root, OGS_TLV_MODE_T1_L1, SGSAP_IE_EPS_UPDATE_TYPE,
             SGSAP_IE_EPS_UPDATE_LEN, 0, &eps_update_type);
     memcpy(&lai, &csmap->lai, sizeof(ogs_nas_lai_t));

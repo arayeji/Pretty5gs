@@ -148,6 +148,7 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
 
     mme_sgs_ts6_1_timer_stop(mme_ue);
     mme_ue->sgs_cs_unavailable = false;
+    mme_sgs_mark_ue_vlr_reliable(mme_ue, vlr);
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
@@ -879,10 +880,15 @@ void sgsap_handle_downlink_unitdata(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
 
 void sgsap_handle_reset_indication(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
 {
-    ogs_debug("[SGSAP] RESET-INDICATION");
-
     ogs_assert(vlr);
     ogs_assert(pkbuf);
+
+    /*
+     * TS 29.118 5.7.3.1: mark VLR-Reliable false, then RESET-ACK.
+     * Do not send Location-Update for all UEs (signalling storm).
+     * Restore on the next Combined or periodic TAU (5.2.2.2.1).
+     */
+    mme_sgs_mark_vlr_unreliable(vlr);
 
     if (sgsap_send_reset_ack(vlr) != OGS_OK)
         ogs_error("sgsap_send_reset_ack() failed");

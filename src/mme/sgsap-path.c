@@ -48,6 +48,55 @@ void mme_sgs_ts6_1_timer_stop(mme_ue_t *mme_ue)
         ogs_timer_stop(mme_ue->t_sgs_ts6_1);
 }
 
+void mme_sgs_mark_vlr_unreliable(mme_vlr_t *vlr)
+{
+    ogs_assert(vlr);
+
+    /* TS 29.118 5.7.3.1: VLR-Reliable = false for all UEs of this VLR */
+    vlr->sgs_reset_gen++;
+    if (!vlr->sgs_reset_gen)
+        vlr->sgs_reset_gen = 1;
+
+    ogs_info("[SGsAP] RESET-INDICATION: VLR-Reliable=false gen=%u",
+            vlr->sgs_reset_gen);
+}
+
+void mme_sgs_mark_ue_vlr_reliable(mme_ue_t *mme_ue, const mme_vlr_t *vlr)
+{
+    ogs_assert(mme_ue);
+    if (!vlr)
+        return;
+    mme_ue->vlr_reliable_gen = vlr->sgs_reset_gen;
+}
+
+bool mme_sgs_need_location_update(const mme_ue_t *mme_ue)
+{
+    if (!mme_ue || !mme_ue->csmap ||
+        ogs_global_conf()->parameter.ignore_sgs == true ||
+        mme_ue->network_access_mode !=
+            OGS_NETWORK_ACCESS_MODE_PACKET_AND_CIRCUIT)
+        return false;
+
+    if (mme_ue->nas_eps.update.value ==
+            OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING ||
+        mme_ue->nas_eps.update.value ==
+            OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING_WITH_IMSI_ATTACH)
+        return true;
+
+    /*
+     * TS 29.118 5.7.3.1 / 5.2.2.2.1: if VLR-Reliable is false, the MME
+     * may start Location-Update on periodic TAU for a UE still attached
+     * for non-EPS services. Combined TAU already always sends LU above.
+     */
+    if (mme_ue->nas_eps.update.value ==
+            OGS_NAS_EPS_UPDATE_TYPE_PERIODIC_UPDATING &&
+        MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue) &&
+        !MME_VLR_RELIABLE(mme_ue))
+        return true;
+
+    return false;
+}
+
 int sgsap_open(void)
 {
     mme_vlr_t *vlr = NULL;
