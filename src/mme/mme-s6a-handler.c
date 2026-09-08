@@ -38,7 +38,11 @@
 static uint8_t emm_cause_from_diameter(
                 const uint32_t *dia_err, const uint32_t *dia_exp_err);
 
+static bool mme_ue_session_apply_hss(
+        ogs_session_t *dst, const ogs_session_t *src);
 static uint8_t mme_ue_session_from_slice_data(mme_ue_t *mme_ue,
+    ogs_slice_data_t *slice_data);
+static uint8_t mme_ue_session_merge_from_slice_data(mme_ue_t *mme_ue,
     ogs_slice_data_t *slice_data);
 
 uint8_t mme_s6a_handle_aia(
@@ -327,10 +331,24 @@ uint8_t mme_s6a_handle_idr(
                 return OGS_ERROR;
             }
             mme_ue->num_of_session = num_of_session;
+        } else if (slice_data->all_apn_config_inc ==
+                OGS_MODIFIED_ADDED_APN_CONFIGURATIONS_INCLUDED) {
+            /*
+             * TS 29.272: add or replace the listed APNs; keep the rest.
+             * Returning ERROR used to skip T-ADS URRP in the same IDR.
+             */
+            num_of_session = mme_ue_session_merge_from_slice_data(
+                    mme_ue, slice_data);
+            if (ogs_log_guard())
+                ogs_info("[%s] IDR: merged %d modified/added APN-Configuration"
+                        "(s) (subscription APNs:%d)",
+                        mme_ue->imsi_bcd, num_of_session,
+                        mme_ue->num_of_session);
         } else {
-            ogs_error ("[%d] Partial APN-Configuration Not Supported in IDR.",
-                        slice_data->all_apn_config_inc);
-            return OGS_ERROR;
+            if (ogs_log_guard())
+                ogs_warn("[%s] IDR: unknown All-APN-Configurations-"
+                        "Included-Indicator %u; ignoring APN update",
+                        mme_ue->imsi_bcd, slice_data->all_apn_config_inc);
         }
 
         mme_ue->context_identifier = slice_data->context_identifier;
@@ -536,6 +554,67 @@ void mme_s6a_handle_clr(mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
     }
 }
 
+static bool mme_ue_session_apply_hss(
+        ogs_session_t *dst, const ogs_session_t *src)
+{
+    ogs_assert(dst);
+    ogs_assert(src);
+
+    if (src->session_type != OGS_PDU_SESSION_TYPE_IPV4 &&
+        src->session_type != OGS_PDU_SESSION_TYPE_IPV6 &&
+        src->session_type != OGS_PDU_SESSION_TYPE_IPV4V6) {
+        ogs_error("Invalid PDN_TYPE[%d]", src->session_type);
+        return false;
+    }
+
+    if (dst->name) {
+        ogs_free(dst->name);
+        dst->name = NULL;
+    }
+    if (src->name) {
+        dst->name = ogs_strdup(src->name);
+        ogs_assert(dst->name);
+    }
+
+    dst->context_identifier = src->context_identifier;
+    dst->session_type = src->session_type;
+    memcpy(&dst->ue_ip, &src->ue_ip, sizeof(dst->ue_ip));
+    memcpy(&dst->qos, &src->qos, sizeof(dst->qos));
+    memcpy(&dst->ambr, &src->ambr, sizeof(dst->ambr));
+    memcpy(&dst->smf_ip, &src->smf_ip, sizeof(dst->smf_ip));
+    memcpy(&dst->charging_characteristics, &src->charging_characteristics,
+            sizeof(dst->charging_characteristics));
+    dst->charging_characteristics_presence =
+            src->charging_characteristics_presence;
+    dst->vplmn_dynamic_address_allowed = src->vplmn_dynamic_address_allowed;
+    dst->pdn_gw_allocation_type = src->pdn_gw_allocation_type;
+
+    return true;
+}
+
+static int mme_ue_session_index(mme_ue_t *mme_ue, const ogs_session_t *src)
+{
+    int i;
+
+    ogs_assert(mme_ue);
+    ogs_assert(src);
+
+    for (i = 0; i < mme_ue->num_of_session; i++) {
+        if (mme_ue->session[i].context_identifier == src->context_identifier)
+            return i;
+    }
+
+    if (src->name) {
+        for (i = 0; i < mme_ue->num_of_session; i++) {
+            if (mme_ue->session[i].name &&
+                    ogs_strcasecmp(mme_ue->session[i].name, src->name) == 0)
+                return i;
+        }
+    }
+
+    return -1;
+}
+
 static uint8_t mme_ue_session_from_slice_data(mme_ue_t *mme_ue,
     ogs_slice_data_t *slice_data)
 {
@@ -557,47 +636,11 @@ static uint8_t mme_ue_session_from_slice_data(mme_ue_t *mme_ue,
          * (PDN Connectivity / ESM Information). Absent/empty APN uses the
          * S6a default and must not have that default stripped here.
          */
+        if (!mme_ue_session_apply_hss(&mme_ue->session[dst], src))
+            break;
 
-        if (src->name) {
-            mme_ue->session[dst].name = ogs_strdup(src->name);
-            ogs_assert(mme_ue->session[dst].name);
-        }
-
-        mme_ue->session[dst].context_identifier = src->context_identifier;
         if (src->context_identifier == slice_data->context_identifier)
             default_present = true;
-
-        if (src->session_type == OGS_PDU_SESSION_TYPE_IPV4 ||
-            src->session_type == OGS_PDU_SESSION_TYPE_IPV6 ||
-            src->session_type == OGS_PDU_SESSION_TYPE_IPV4V6) {
-            mme_ue->session[dst].session_type = src->session_type;
-        } else {
-            ogs_error("Invalid PDN_TYPE[%d]", src->session_type);
-            if (mme_ue->session[dst].name)
-                ogs_free(mme_ue->session[dst].name);
-            break;
-        }
-        memcpy(&mme_ue->session[dst].ue_ip, &src->ue_ip,
-                sizeof(mme_ue->session[dst].ue_ip));
-
-        memcpy(&mme_ue->session[dst].qos, &src->qos,
-                sizeof(mme_ue->session[dst].qos));
-        memcpy(&mme_ue->session[dst].ambr, &src->ambr,
-                sizeof(mme_ue->session[dst].ambr));
-
-        memcpy(&mme_ue->session[dst].smf_ip, &src->smf_ip,
-                sizeof(mme_ue->session[dst].smf_ip));
-
-        memcpy(&mme_ue->session[dst].charging_characteristics,
-                &src->charging_characteristics,
-                sizeof(mme_ue->session[dst].charging_characteristics));
-        mme_ue->session[dst].charging_characteristics_presence =
-            src->charging_characteristics_presence;
-
-        mme_ue->session[dst].vplmn_dynamic_address_allowed =
-            src->vplmn_dynamic_address_allowed;
-        mme_ue->session[dst].pdn_gw_allocation_type =
-            src->pdn_gw_allocation_type;
 
         dst++;
     }
@@ -616,6 +659,42 @@ static uint8_t mme_ue_session_from_slice_data(mme_ue_t *mme_ue,
     }
 
     return dst;
+}
+
+static uint8_t mme_ue_session_merge_from_slice_data(mme_ue_t *mme_ue,
+    ogs_slice_data_t *slice_data)
+{
+    int i, applied = 0;
+
+    ogs_assert(mme_ue);
+    ogs_assert(slice_data);
+
+    for (i = 0; i < slice_data->num_of_session; i++) {
+        ogs_session_t *src = &slice_data->session[i];
+        int idx = mme_ue_session_index(mme_ue, src);
+        ogs_session_t *dst;
+
+        if (idx < 0) {
+            if (mme_ue->num_of_session >= OGS_MAX_NUM_OF_SESS) {
+                ogs_warn("[%s] IDR merge: ignore APN overflow [%d>=%d]",
+                        mme_ue->imsi_bcd, mme_ue->num_of_session,
+                        OGS_MAX_NUM_OF_SESS);
+                continue;
+            }
+            idx = mme_ue->num_of_session;
+            memset(&mme_ue->session[idx], 0, sizeof(mme_ue->session[idx]));
+        }
+
+        dst = &mme_ue->session[idx];
+        if (!mme_ue_session_apply_hss(dst, src))
+            continue;
+
+        if (idx == mme_ue->num_of_session)
+            mme_ue->num_of_session++;
+        applied++;
+    }
+
+    return applied;
 }
 
 /* 3GPP TS 29.272 Annex A; Table A.1:
