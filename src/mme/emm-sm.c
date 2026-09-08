@@ -1360,9 +1360,10 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                             mme_ue->nas_eps.service.value);
                     if (sgsap_send_mo_csfb_indication(mme_ue) != OGS_OK) {
                         /* Was ogs_assert() - SGs/VLR down must not abort MME */
-                        ogs_error("[%s] MO-CSFB-Indication not sent "
-                                "(VLR/SGs unavailable); rejecting CSFB",
-                                mme_ue->imsi_bcd);
+                        if (ogs_log_guard())
+                            ogs_warn("[%s] MO-CSFB-Indication not sent "
+                                    "(VLR/SGs unavailable); rejecting CSFB",
+                                    mme_ue->imsi_bcd);
                         r = nas_eps_send_service_reject(enb_ue, mme_ue,
                             OGS_NAS_EMM_CAUSE_CS_DOMAIN_NOT_AVAILABLE);
                         mme_expect_sent(r);
@@ -1376,9 +1377,10 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                     if (sgsap_send_service_request(
                             mme_ue, SGSAP_EMM_IDLE_MODE) != OGS_OK) {
                         /* Was ogs_assert() - SGs/VLR down must not abort MME */
-                        ogs_error("[%s] SGsAP Service-Request not sent "
-                                "(VLR/SGs unavailable); rejecting CSFB",
-                                mme_ue->imsi_bcd);
+                        if (ogs_log_guard())
+                            ogs_warn("[%s] SGsAP Service-Request not sent "
+                                    "(VLR/SGs unavailable); rejecting CSFB",
+                                    mme_ue->imsi_bcd);
                         r = nas_eps_send_service_reject(enb_ue, mme_ue,
                             OGS_NAS_EMM_CAUSE_CS_DOMAIN_NOT_AVAILABLE);
                         mme_expect_sent(r);
@@ -1421,9 +1423,10 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                             mme_ue->nas_eps.service.value);
                     if (sgsap_send_mo_csfb_indication(mme_ue) != OGS_OK) {
                         /* Was ogs_assert() - SGs/VLR down must not abort MME */
-                        ogs_error("[%s] MO-CSFB-Indication not sent "
-                                "(VLR/SGs unavailable); rejecting CSFB",
-                                mme_ue->imsi_bcd);
+                        if (ogs_log_guard())
+                            ogs_warn("[%s] MO-CSFB-Indication not sent "
+                                    "(VLR/SGs unavailable); rejecting CSFB",
+                                    mme_ue->imsi_bcd);
                         r = nas_eps_send_service_reject(enb_ue, mme_ue,
                             OGS_NAS_EMM_CAUSE_CS_DOMAIN_NOT_AVAILABLE);
                         mme_expect_sent(r);
@@ -1437,9 +1440,10 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                     if (sgsap_send_service_request(
                             mme_ue, SGSAP_EMM_CONNECTED_MODE) != OGS_OK) {
                         /* Was ogs_assert() - SGs/VLR down must not abort MME */
-                        ogs_error("[%s] SGsAP Service-Request not sent "
-                                "(VLR/SGs unavailable); rejecting CSFB",
-                                mme_ue->imsi_bcd);
+                        if (ogs_log_guard())
+                            ogs_warn("[%s] SGsAP Service-Request not sent "
+                                    "(VLR/SGs unavailable); rejecting CSFB",
+                                    mme_ue->imsi_bcd);
                         r = nas_eps_send_service_reject(enb_ue, mme_ue,
                             OGS_NAS_EMM_CAUSE_CS_DOMAIN_NOT_AVAILABLE);
                         mme_expect_sent(r);
@@ -1535,8 +1539,9 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                 /* Was ogs_assert() - SGs/VLR down must not abort MME */
                 if (sgsap_send_uplink_unitdata(mme_ue, &message->emm.
                         uplink_nas_transport.nas_message_container) != OGS_OK)
-                    ogs_error("[%s] SGsAP Uplink-Unitdata (SMS) not sent "
-                            "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
+                    if (ogs_log_guard())
+                        ogs_warn("[%s] SGsAP Uplink-Unitdata (SMS) not sent "
+                                "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
             } else {
                 S1AP_MME_UE_S1AP_ID_t MME_UE_S1AP_ID;
                 S1AP_ENB_UE_S1AP_ID_t ENB_UE_S1AP_ID;

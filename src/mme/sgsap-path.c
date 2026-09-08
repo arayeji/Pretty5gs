@@ -18,6 +18,7 @@
  */
 
 #include "ogs-sctp.h"
+#include <errno.h>
 
 #include "mme-event.h"
 #include "mme-sm.h"
@@ -88,7 +89,7 @@ int sgsap_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
                     "(stream[%d] len[%d])",
                     stream_no, pkbuf ? (int)pkbuf->len : 0);
         ogs_pkbuf_free(pkbuf);
-        return OGS_ERROR;
+        return OGS_NOTFOUND;
     }
 
     sent = ogs_sctp_sendmsg(sock, pkbuf->data, pkbuf->len,
@@ -106,8 +107,27 @@ int sgsap_send(ogs_sock_t *sock, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
         return OGS_RETRY;
     }
     if (sent < 0 || sent != pkbuf->len) {
-        ogs_error("ogs_sctp_sendmsg(len:%d,ssn:%d) error (%d:%s)",
-                (int)pkbuf->len, stream_no, errno, strerror(errno));
+        int err = ogs_socket_errno;
+        bool assoc_lost = (err == EPIPE || err == ECONNRESET ||
+                err == ENOTCONN || err == ECONNABORTED
+#ifdef ESHUTDOWN
+                || err == ESHUTDOWN
+#endif
+                );
+
+        /* Peer reset / we already ABORTed: every Combined LU/SMS would
+         * otherwise ERROR until COMM_LOST is processed. */
+        if (assoc_lost) {
+            if (ogs_log_guard())
+                ogs_warn("SGsAP SCTP association down (%d:%s) "
+                        "len:%d — drop, reconnect",
+                        err, strerror(err), (int)pkbuf->len);
+            ogs_pkbuf_free(pkbuf);
+            return OGS_NOTFOUND;
+        }
+        if (ogs_log_guard())
+            ogs_warn("ogs_sctp_sendmsg(len:%d,ssn:%d) error (%d:%s)",
+                    (int)pkbuf->len, stream_no, err, strerror(err));
         ogs_pkbuf_free(pkbuf);
         return OGS_ERROR;
     }
@@ -150,13 +170,14 @@ int sgsap_send_to_vlr_with_sid(
 
     sock = vlr->sock;
     if (!sock || sock->fd == INVALID_SOCKET) {
-        ogs_error("SGsAP not sent: VLR SCTP down VLR[%s] stream[%d] "
-                "(VLR association lost or not established)",
+        if (ogs_log_guard())
+            ogs_warn("SGsAP not sent: VLR SCTP down VLR[%s] stream[%d] "
+                    "(VLR association lost or not established)",
                 ogs_sockaddr_to_string_static(vlr->sa_list) ?
                     ogs_sockaddr_to_string_static(vlr->sa_list) : "-",
                 stream_no);
         ogs_pkbuf_free(pkbuf);
-        return OGS_ERROR;
+        return OGS_NOTFOUND;
     }
 
     {
@@ -166,6 +187,9 @@ int sgsap_send_to_vlr_with_sid(
             ogs_pkbuf_free(pkbuf);
             return OGS_ERROR;
         }
+        if (rv == OGS_NOTFOUND && vlr->sock)
+            sgsap_event_push(MME_EVENT_SGSAP_LO_CONNREFUSED,
+                    vlr->sock, NULL, NULL, 0, 0);
         return rv;
     }
 }

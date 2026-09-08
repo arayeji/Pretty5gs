@@ -480,8 +480,9 @@ void mme_s6a_handle_clr(mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
                     enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
                     /* VLR/SGs down: continue the EPS-side detach so
                      * the context is not parked forever. */
-                    ogs_error("sgsap_send_detach_indication() failed - "
-                            "proceeding with EPS detach");
+                    if (ogs_log_guard())
+                        ogs_warn("sgsap_send_detach_indication() failed - "
+                                "proceeding with EPS detach");
                     if (enb_ue)
                         mme_send_delete_session_or_detach(enb_ue, mme_ue);
                     else
@@ -519,8 +520,9 @@ void mme_s6a_handle_clr(mme_ue_t *mme_ue, ogs_diam_s6a_message_t *s6a_message)
                 enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
                 /* VLR/SGs down: continue the EPS-side detach so the
                  * context is not parked forever. */
-                ogs_error("sgsap_send_detach_indication() failed - "
-                        "proceeding with EPS detach");
+                if (ogs_log_guard())
+                    ogs_warn("sgsap_send_detach_indication() failed - "
+                            "proceeding with EPS detach");
                 if (enb_ue)
                     mme_send_delete_session_or_detach(enb_ue, mme_ue);
                 else

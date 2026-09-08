@@ -55,6 +55,7 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
     bool found = false;
     int rv = OGS_ERROR;
     ogs_sock_t *stall_sock = NULL;
+    ogs_sock_t *dead_sock = NULL;
     ogs_time_t stalled_for = 0;
 
     ogs_assert(job);
@@ -76,23 +77,37 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
     }
 
     if (found) {
-        /* OK/ERROR consume pkbuf; RETRY leaves ownership with us. */
-        rv = sgsap_send(job->vlr->sock, job->pkbuf, job->stream_no);
+        if (vlr->tx_stall_posted ||
+                !vlr->sock || vlr->sock->fd == INVALID_SOCKET) {
+            ogs_pkbuf_free(job->pkbuf);
+            job->pkbuf = NULL;
+            rv = OGS_NOTFOUND;
+        } else {
+            /* OK/ERROR/NOTFOUND consume pkbuf; RETRY leaves ownership with us. */
+            rv = sgsap_send(job->vlr->sock, job->pkbuf, job->stream_no);
 
-        /* TX stall watchdog (fields guarded by the ctx lock held here) */
-        if (rv == OGS_OK) {
-            vlr->tx_stall_since = 0;
-            vlr->tx_stall_posted = false;
-        } else if (rv == OGS_RETRY && vlr->sock) {
-            ogs_time_t now = ogs_time_now();
-
-            if (!vlr->tx_stall_since) {
-                vlr->tx_stall_since = now;
-            } else if (!vlr->tx_stall_posted &&
-                    (now - vlr->tx_stall_since) >= SGSAP_IO_TX_STALL_RESET) {
+            /* TX stall watchdog (fields guarded by the ctx lock held here) */
+            if (rv == OGS_OK) {
+                vlr->tx_stall_since = 0;
+                vlr->tx_stall_posted = false;
+            } else if (rv == OGS_NOTFOUND && vlr->sock &&
+                    !vlr->tx_stall_posted) {
+                /* EPIPE / ESHUTDOWN / ECONNRESET: one reconnect, drop the
+                 * rest of the queue without another sendmsg. */
                 vlr->tx_stall_posted = true;
-                stall_sock = vlr->sock;
-                stalled_for = now - vlr->tx_stall_since;
+                dead_sock = vlr->sock;
+            } else if (rv == OGS_RETRY && vlr->sock) {
+                ogs_time_t now = ogs_time_now();
+
+                if (!vlr->tx_stall_since) {
+                    vlr->tx_stall_since = now;
+                } else if (!vlr->tx_stall_posted &&
+                        (now - vlr->tx_stall_since) >=
+                                SGSAP_IO_TX_STALL_RESET) {
+                    vlr->tx_stall_posted = true;
+                    stall_sock = vlr->sock;
+                    stalled_for = now - vlr->tx_stall_since;
+                }
             }
         }
     } else {
@@ -103,6 +118,10 @@ static void io_dispatch(ogs_worker_t *worker, void *data)
         rv = OGS_ERROR;
     }
     mme_ctx_unlock();
+
+    if (dead_sock)
+        sgsap_event_push(MME_EVENT_SGSAP_LO_CONNREFUSED,
+                dead_sock, NULL, NULL, 0, 0);
 
     if (stall_sock) {
         ogs_error("sgsap-io: VLR TX stalled for %d s (SCTP send buffer "
@@ -203,14 +222,14 @@ int sgsap_io_post_send(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf,
             ogs_warn("sgsap-io: VLR SCTP not connected; drop PDU (len:%d)",
                     pkbuf->len);
         ogs_pkbuf_free(pkbuf);
-        return OGS_ERROR;
+        return OGS_NOTFOUND;
     }
     if (vlr->tx_stall_posted) {
         if (ogs_log_guard())
             ogs_warn("sgsap-io: VLR TX stalled; drop PDU (len:%d depth:%u)",
                     pkbuf->len, sgsap_io_queue_depth());
         ogs_pkbuf_free(pkbuf);
-        return OGS_ERROR;
+        return OGS_NOTFOUND;
     }
     if (sgsap_io_queue_depth() >= SGSAP_IO_QUEUE_HIGHWATER) {
         if (ogs_log_guard())

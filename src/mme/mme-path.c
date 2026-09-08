@@ -683,7 +683,8 @@ void mme_admin_detach_ue(mme_ue_t *mme_ue, bool force)
 
         if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
             if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
-                ogs_error("sgsap_send_detach_indication() failed");
+                if (ogs_log_guard())
+                    ogs_warn("sgsap_send_detach_indication() failed");
             /*
              * CS/PS combined UEs still in registered state use the
              * normal async implicit-detach timer path.
@@ -854,9 +855,10 @@ void mme_send_eps_detach_with_session_delete(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
 
     if (MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue)) {
         if (sgsap_send_detach_indication(mme_ue) != OGS_OK)
-            ogs_error("[%s] sgsap_send_detach_indication() failed - "
-                    "continuing with EPS Delete Session",
-                    MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
+            if (ogs_log_guard())
+                ogs_warn("[%s] sgsap_send_detach_indication() failed - "
+                        "continuing with EPS Delete Session",
+                        MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-");
     }
 
     mme_send_delete_session_or_detach(enb_ue, mme_ue);
@@ -1305,8 +1307,9 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
                     enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
                     /* VLR/SGs down: continue the EPS-side detach so
                      * the context is not parked forever. */
-                    ogs_error("sgsap_send_detach_indication() failed - "
-                            "proceeding with EPS detach");
+                    if (ogs_log_guard())
+                        ogs_warn("sgsap_send_detach_indication() failed - "
+                                "proceeding with EPS detach");
                     if (enb_ue)
                         mme_send_delete_session_or_detach(enb_ue, mme_ue);
                     else
