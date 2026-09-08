@@ -639,9 +639,17 @@ int ogs_nas_eps_decode_eps_mobile_identity(ogs_nas_eps_mobile_identity_t *eps_mo
     eps_mobile_identity->length = source->length;
     size = eps_mobile_identity->length + sizeof(eps_mobile_identity->length);
 
-    if (ogs_pkbuf_pull(pkbuf, size) == NULL) {
-       ogs_error("ogs_pkbuf_pull() failed [size:%d]", (int)size);
-       return -1;
+    /*
+     * 24.301 9.9.3.12: LV 5-12 (IMSI / IMEI / GUTI). A claimed
+     * length of 52 (size 53) is UE or NAS-decrypt garbage, not an
+     * MME fault. Drop the message; mme-sm already WARNs on decode fail.
+     */
+    if (size < 5 || size > 12 || ogs_pkbuf_pull(pkbuf, size) == NULL) {
+        if (ogs_log_guard())
+            ogs_warn("EPS mobile identity: invalid length %d "
+                    "(remain %d, spec LV 5-12)",
+                    (int)size, pkbuf->len);
+        return -1;
     }
 
     if (sizeof(*eps_mobile_identity) < size) return -1;
