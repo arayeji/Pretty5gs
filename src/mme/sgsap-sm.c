@@ -177,8 +177,24 @@ void sgsap_state_will_connect(ogs_fsm_t *s, mme_event_t *e)
     case MME_EVENT_SGSAP_LO_SCTP_COMM_UP:
         OGS_FSM_TRAN(s, sgsap_state_connected);
         break;
+    case MME_EVENT_SGSAP_MESSAGE:
+        /*
+         * DATA can be queued before COMM_UP (MSC RESET-INDICATION
+         * right after reconnect). Dispatch so restore is not dropped,
+         * then move to connected if the socket is already up.
+         */
+        if (e->pkbuf)
+            sgsap_dispatch_message(vlr, e->pkbuf);
+        if (vlr->sock && vlr->sock->fd != INVALID_SOCKET)
+            OGS_FSM_TRAN(s, sgsap_state_connected);
+        break;
+    case MME_EVENT_SGSAP_LO_CONNREFUSED:
+    case MME_EVENT_SGSAP_TX_STALL:
+        break;
     default:
-        ogs_error("Unknown event %s", mme_event_get_name(e));
+        if (ogs_log_guard())
+            ogs_warn("SGsAP will_connect: ignore event %s",
+                    mme_event_get_name(e));
         break;
     }
 }

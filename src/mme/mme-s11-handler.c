@@ -1777,8 +1777,9 @@ void mme_s11_handle_delete_bearer_request(
             bearer = mme_bearer_find_by_ue_ebi(
                         mme_ue, req->linked_eps_bearer_id.u8);
             if (!bearer) {
-                ogs_error("Cannot find Bearer [%d]",
-                        req->linked_eps_bearer_id.u8);
+                ogs_warn("[%s] Delete Bearer: no Bearer [%d] "
+                        "(already released); CONTEXT_NOT_FOUND",
+                        mme_ue->imsi_bcd, req->linked_eps_bearer_id.u8);
                 cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
             }
         } else if (req->eps_bearer_ids.presence == 1) {
@@ -1796,7 +1797,9 @@ void mme_s11_handle_delete_bearer_request(
             */
             bearer = mme_bearer_find_by_ue_ebi(mme_ue, req->eps_bearer_ids.u8);
             if (!bearer) {
-                ogs_error("Cannot find Bearer [%d]", req->eps_bearer_ids.u8);
+                ogs_warn("[%s] Delete Bearer: no Bearer [%d] "
+                        "(already released); CONTEXT_NOT_FOUND",
+                        mme_ue->imsi_bcd, req->eps_bearer_ids.u8);
                 cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
             }
         } else {

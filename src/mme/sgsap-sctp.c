@@ -105,9 +105,19 @@ static void recv_handler(ogs_sock_t *sock)
     ogs_pkbuf_put(pkbuf, OGS_MAX_SDU_LEN);
     size = ogs_sctp_recvmsg(
             sock, pkbuf->data, pkbuf->len, NULL, &sinfo, &flags);
-    if (size < 0 || size >= OGS_MAX_SDU_LEN) {
-        ogs_error("ogs_sctp_recvmsg(%d) failed(%d:%s)",
-                size, errno, strerror(errno));
+    if (size < 0) {
+        ogs_pkbuf_free(pkbuf);
+        if (ogs_sctp_recv_would_block(size))
+            return;
+        if (ogs_log_guard())
+            ogs_warn("SGsAP recvmsg(%d) failed(%d:%s)",
+                    size, errno, strerror(errno));
+        sgsap_event_push(MME_EVENT_SGSAP_LO_CONNREFUSED,
+                sock, NULL, NULL, 0, 0);
+        return;
+    }
+    if (size >= OGS_MAX_SDU_LEN) {
+        ogs_error("ogs_sctp_recvmsg(%d) too large", size);
         ogs_pkbuf_free(pkbuf);
         return;
     }
@@ -188,14 +198,25 @@ static void recv_handler(ogs_sock_t *sock)
                     flags, not->sn_header.sn_type);
             break;
         }
+        ogs_pkbuf_free(pkbuf);
     } else if (flags & MSG_EOR) {
         ogs_pkbuf_trim(pkbuf, size);
 
         sgsap_event_push(MME_EVENT_SGSAP_MESSAGE, sock, NULL, pkbuf, 0, 0);
         return;
+    } else if (size == 0) {
+        /*
+         * Non-blocking one-to-one SCTP: POLLIN can deliver a 0-byte
+         * read with a stale EAGAIN. Do not ERROR. Real teardown still
+         * arrives as SCTP_SHUTDOWN / COMM_LOST or recv < 0.
+         */
+        ogs_pkbuf_free(pkbuf);
+        return;
     } else {
-        ogs_error("ogs_sctp_recvmsg(%d) failed(%d:%s-0x%x)",
-                size, errno, strerror(errno), flags);
+        if (ogs_log_guard())
+            ogs_warn("SGsAP recvmsg(%d) incomplete flags=0x%x",
+                    size, flags);
+        ogs_pkbuf_free(pkbuf);
+        return;
     }
-    ogs_pkbuf_free(pkbuf);
 }
