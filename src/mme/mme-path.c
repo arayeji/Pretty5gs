@@ -1273,8 +1273,9 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         if (failed == true) {
             if (sgsap_send_paging_reject(
                     mme_ue, SGSAP_SGS_CAUSE_UE_UNREACHABLE) != OGS_OK)
-                ogs_error("[%s] SGsAP Paging-Reject not sent "
-                        "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
+                if (ogs_log_guard())
+                    ogs_warn("[%s] SGsAP Paging-Reject not sent "
+                            "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
         } else {
             /* Nothing */
         }
@@ -1283,13 +1284,15 @@ void mme_send_after_paging(mme_ue_t *mme_ue, bool failed)
         if (failed == true) {
             if (sgsap_send_paging_reject(
                     mme_ue, SGSAP_SGS_CAUSE_UE_UNREACHABLE) != OGS_OK)
-                ogs_error("[%s] SGsAP Paging-Reject not sent "
-                        "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
+                if (ogs_log_guard())
+                    ogs_warn("[%s] SGsAP Paging-Reject not sent "
+                            "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
         } else {
             if (sgsap_send_service_request(
                     mme_ue, SGSAP_EMM_CONNECTED_MODE) != OGS_OK)
-                ogs_error("[%s] SGsAP Service-Request not sent "
-                        "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
+                if (ogs_log_guard())
+                    ogs_warn("[%s] SGsAP Service-Request not sent "
+                            "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
         }
         break;
     case MME_PAGING_TYPE_DETACH_TO_UE:

@@ -760,10 +760,11 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
                      * the UE is CONNECTED — fall back to S1 paging so
                      * the MSC is not left without any response path.
                      */
-                    ogs_error("[%s] SGsAP Service-Request not sent "
-                            "(VLR/SGs/CSMAP unavailable) — "
-                            "falling back to S1AP paging",
-                            mme_ue->imsi_bcd);
+                    if (ogs_log_guard())
+                        ogs_warn("[%s] SGsAP Service-Request not sent "
+                                "(VLR/SGs/CSMAP unavailable) — "
+                                "falling back to S1AP paging",
+                                mme_ue->imsi_bcd);
                     CLEAR_MME_UE_TIMER(mme_ue->t3413);
                     MME_STORE_PAGING_INFO(mme_ue,
                             MME_PAGING_TYPE_SMS_SERVICE, NULL);
