@@ -321,10 +321,12 @@ static void ogs_gtp_xact_log_state(
         return;
     }
 
-    if (why && (strstr(why, "invalid step") || strstr(why, "orphan"))) {
-        ogs_warn("%s: gtpv=%u xid=%u step=%d org=%u type=%u peer=[%s]:%d "
-                "local_teid=0x%x enb_ue_id=%d",
+    if (why && (strstr(why, "invalid step") || strstr(why, "orphan") ||
+                strstr(why, "mismatch"))) {
+        ogs_warn("%s: gtpv=%u xid=%u step=%d org=%u type=%u seq0=%u "
+                "peer=[%s]:%d local_teid=0x%x enb_ue_id=%d",
                 why, xact->gtp_version, xact->xid, xact->step, xact->org, type,
+                xact->seq[0].type,
                 xact->gnode ? OGS_ADDR(&xact->gnode->addr, buf) : "?",
                 xact->gnode ? OGS_PORT(&xact->gnode->addr) : 0,
                 xact->local_teid, xact->enb_ue_id);
@@ -332,15 +334,17 @@ static void ogs_gtp_xact_log_state(
     }
 
     if (xact->gnode) {
-        ogs_error("%s: gtpv=%u xid=%u step=%d org=%u type=%u peer=[%s]:%d "
-                "local_teid=0x%x enb_ue_id=%d",
+        ogs_error("%s: gtpv=%u xid=%u step=%d org=%u type=%u seq0=%u "
+                "peer=[%s]:%d local_teid=0x%x enb_ue_id=%d",
                 why, xact->gtp_version, xact->xid, xact->step, xact->org, type,
+                xact->seq[0].type,
                 OGS_ADDR(&xact->gnode->addr, buf), OGS_PORT(&xact->gnode->addr),
                 xact->local_teid, xact->enb_ue_id);
     } else {
-        ogs_error("%s: gtpv=%u xid=%u step=%d org=%u type=%u local_teid=0x%x "
-                "enb_ue_id=%d",
+        ogs_error("%s: gtpv=%u xid=%u step=%d org=%u type=%u seq0=%u "
+                "local_teid=0x%x enb_ue_id=%d",
                 why, xact->gtp_version, xact->xid, xact->step, xact->org, type,
+                xact->seq[0].type,
                 xact->local_teid, xact->enb_ue_id);
     }
 }
@@ -1336,6 +1340,7 @@ int ogs_gtp1_xact_receive(
     ogs_gtp_xact_stage_t stage;
     ogs_list_t *list = NULL;
     ogs_gtp_xact_t *new = NULL;
+    bool created = false;
 
     ogs_assert(gnode);
     ogs_assert(h);
@@ -1414,6 +1419,7 @@ int ogs_gtp1_xact_receive(
         ogs_debug("[%d] Cannot find xact type %u from GTPv1 peer [%s]:%d",
                   xid, type, OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
         new = ogs_gtp_xact_remote_create(gnode, 1, sqn);
+        created = true;
     }
     ogs_assert(new);
 
@@ -1425,8 +1431,16 @@ int ogs_gtp1_xact_receive(
 
     rv = ogs_gtp_xact_update_rx(new, type);
     if (rv == OGS_ERROR) {
-        ogs_gtp_xact_log_state(new, type, "ogs_gtp_xact_update_rx() failed");
-        ogs_gtp_xact_delete(new);
+        /*
+         * A newly created remotes xact failing first RX is unexpected.
+         * A found xact failing RX is late/dup/xid reuse: drop the
+         * packet, keep the in-flight transaction.
+         */
+        ogs_gtp_xact_log_state(new, type, created ?
+                "ogs_gtp_xact_update_rx() failed" :
+                "ogs_gtp_xact_update_rx() mismatch");
+        if (created)
+            ogs_gtp_xact_delete(new);
         return rv;
     } else if (rv == OGS_RETRY) {
         return rv;
@@ -1447,6 +1461,7 @@ int ogs_gtp_xact_receive(
     ogs_gtp_xact_stage_t stage;
     ogs_list_t *list = NULL;
     ogs_gtp_xact_t *new = NULL;
+    bool created = false;
 
     ogs_assert(gnode);
     ogs_assert(h);
@@ -1534,6 +1549,7 @@ int ogs_gtp_xact_receive(
                     xid, type, OGS_ADDR(&gnode->addr, buf),
                     OGS_PORT(&gnode->addr));
             new = ogs_gtp_xact_remote_create(gnode, 2, sqn);
+            created = true;
         }
         ogs_assert(new);
     }
@@ -1546,8 +1562,18 @@ int ogs_gtp_xact_receive(
 
     rv = ogs_gtp_xact_update_rx(new, type);
     if (rv == OGS_ERROR) {
-        ogs_gtp_xact_log_state(new, type, "ogs_gtp_xact_update_rx() failed");
-        ogs_gtp_xact_delete(new);
+        /*
+         * A newly created remotes xact failing first RX is unexpected.
+         * A found xact failing RX is late/dup/xid reuse (e.g. DDN type
+         * 176 on a remotes xact already at step 1): drop the packet,
+         * keep the in-flight transaction. Deleting it aborted paging
+         * Ack / Create Bearer that still owned that xid.
+         */
+        ogs_gtp_xact_log_state(new, type, created ?
+                "ogs_gtp_xact_update_rx() failed" :
+                "ogs_gtp_xact_update_rx() mismatch");
+        if (created)
+            ogs_gtp_xact_delete(new);
         return rv;
     } else if (rv == OGS_RETRY) {
         return rv;
