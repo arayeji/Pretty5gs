@@ -544,13 +544,24 @@ bool ogs_bcd_string_is_valid(const char *bcd, int max_len)
 
     len = strlen(bcd);
     if (len == 0 || len > max_len) {
-        ogs_error("Invalid BCD length [%d:%s]", len, bcd);
+        ogs_error("Invalid BCD length [%d] max[%d] value[%s] — "
+                "empty or longer than IMSI(15)/IMEISV(16)",
+                len, max_len, bcd);
         return false;
     }
 
     for (i = 0; i < len; i++) {
         if (bcd[i] < '0' || bcd[i] > '9') {
-            ogs_error("Invalid BCD digit [%d:%c:%s]", i, bcd[i], bcd);
+            /*
+             * ogs_buffer_to_bcd() maps nibble 0xA-0xF to ':'-'?'.
+             * '?' is 0xF filler in the middle of a packed IMSI/IMEISV.
+             */
+            ogs_error("Invalid BCD digit index[%d] ascii[0x%02x '%c'] "
+                    "len[%d] max[%d] value[%s] — "
+                    "non-decimal (0xF filler becomes '?')",
+                    i, (unsigned char)bcd[i],
+                    (bcd[i] >= 0x20 && bcd[i] < 0x7f) ? bcd[i] : '?',
+                    len, max_len, bcd);
             return false;
         }
     }
