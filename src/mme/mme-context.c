@@ -8611,13 +8611,27 @@ static mme_ue_t *mme_ue_lookup_by_eps_mobile_identity(
 
     switch (type) {
     case OGS_NAS_EPS_MOBILE_IDENTITY_IMSI:
+        /*
+         * TAU old GUTI is 11 octets. Some UEs (or a bad type nibble)
+         * mark it as IMSI (1). Do not treat that as a 11-digit IMSI.
+         */
+        if (eps_mobile_identity->length ==
+                sizeof(ogs_nas_eps_mobile_identity_guti_t)) {
+            ogs_warn("EPS mobile identity typed IMSI but length %d [%s]; "
+                    "treating as GUTI",
+                    eps_mobile_identity->length, proc);
+            return mme_ue_lookup_by_eps_guti(&eps_mobile_identity->guti);
+        }
         /* TS 24.008 10.5.1.4: variable length, do not require 8 octets */
         if (eps_mobile_identity->length <
                     OGS_NAS_MOBILE_IDENTITY_IMSI_MIN_LEN ||
             eps_mobile_identity->length >
                     sizeof(ogs_nas_mobile_identity_imsi_t)) {
-            ogs_error("Invalid IMSI mobile_identity length (%d) [%s]",
-                    eps_mobile_identity->length, proc);
+            ogs_warn("Invalid IMSI mobile_identity length (%d) type=%u [%s] "
+                    "(IMSI 4-%d, GUTI %d)",
+                    eps_mobile_identity->length, type, proc,
+                    (int)sizeof(ogs_nas_mobile_identity_imsi_t),
+                    (int)sizeof(ogs_nas_eps_mobile_identity_guti_t));
             return NULL;
         }
         ogs_nas_eps_imsi_to_bcd(
@@ -8628,7 +8642,7 @@ static mme_ue_t *mme_ue_lookup_by_eps_mobile_identity(
     case OGS_NAS_EPS_MOBILE_IDENTITY_GUTI:
         if (eps_mobile_identity->length <
                 sizeof(ogs_nas_eps_mobile_identity_guti_t)) {
-            ogs_error("GUTI mobile_identity length too short (%d) [%s]",
+            ogs_warn("GUTI mobile_identity length too short (%d) [%s]",
                     eps_mobile_identity->length, proc);
             return NULL;
         }
@@ -8645,11 +8659,8 @@ static mme_ue_t *mme_ue_lookup_by_eps_mobile_identity(
         return NULL;
 
     default:
-        ogs_error("Invalid EPS mobile identity type [%u] [%s]", type, proc);
-        ogs_log_hexdump(OGS_LOG_ERROR,
-                (unsigned char *)eps_mobile_identity,
-                ogs_min(eps_mobile_identity->length + 1,
-                    sizeof(ogs_nas_eps_mobile_identity_t)));
+        ogs_warn("Invalid EPS mobile identity type [%u] length [%d] [%s]",
+                type, eps_mobile_identity->length, proc);
         return NULL;
     }
 }

@@ -1017,30 +1017,54 @@ int emm_handle_tau_request(
      *   1) Consider if MME is changed or not.
      *   2) Consider if SGW is changed or not.
      */
-    switch (eps_mobile_identity->imsi.type) {
-    case OGS_NAS_EPS_MOBILE_IDENTITY_GUTI:
-        eps_mobile_identity_guti = &eps_mobile_identity->guti;
+    {
+        uint8_t id_type = eps_mobile_identity->imsi.type;
 
-        nas_guti.nas_plmn_id = eps_mobile_identity_guti->nas_plmn_id;
-        nas_guti.mme_gid = eps_mobile_identity_guti->mme_gid;
-        nas_guti.mme_code = eps_mobile_identity_guti->mme_code;
-        nas_guti.m_tmsi = eps_mobile_identity_guti->m_tmsi;
+        if (id_type == OGS_NAS_EPS_MOBILE_IDENTITY_IMSI &&
+                eps_mobile_identity->length ==
+                    sizeof(ogs_nas_eps_mobile_identity_guti_t)) {
+            ogs_warn("[%s] TAU old GUTI typed as IMSI but length %d; "
+                    "treating as GUTI",
+                    MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
+                    eps_mobile_identity->length);
+            id_type = OGS_NAS_EPS_MOBILE_IDENTITY_GUTI;
+        }
 
-        ogs_debug("    GUTI[G:%d,C:%d,M_TMSI:0x%x] IMSI:[%s]",
-                nas_guti.mme_gid,
-                nas_guti.mme_code,
-                nas_guti.m_tmsi,
-                MME_UE_HAVE_IMSI(mme_ue)
-                    ? mme_ue->imsi_bcd : "Unknown");
+        switch (id_type) {
+        case OGS_NAS_EPS_MOBILE_IDENTITY_GUTI:
+            eps_mobile_identity_guti = &eps_mobile_identity->guti;
 
-        memcpy(&mme_ue->next.guti,
-           &nas_guti, sizeof(ogs_nas_eps_guti_t));
+            nas_guti.nas_plmn_id = eps_mobile_identity_guti->nas_plmn_id;
+            nas_guti.mme_gid = eps_mobile_identity_guti->mme_gid;
+            nas_guti.mme_code = eps_mobile_identity_guti->mme_code;
+            nas_guti.m_tmsi = eps_mobile_identity_guti->m_tmsi;
 
-        break;
-    default:
-        ogs_error("Not implemented[%d]", eps_mobile_identity->imsi.type);
+            ogs_debug("    GUTI[G:%d,C:%d,M_TMSI:0x%x] IMSI:[%s]",
+                    nas_guti.mme_gid,
+                    nas_guti.mme_code,
+                    nas_guti.m_tmsi,
+                    MME_UE_HAVE_IMSI(mme_ue)
+                        ? mme_ue->imsi_bcd : "Unknown");
 
-        return OGS_OK;
+            memcpy(&mme_ue->next.guti,
+               &nas_guti, sizeof(ogs_nas_eps_guti_t));
+
+            break;
+        case OGS_NAS_EPS_MOBILE_IDENTITY_IMSI:
+            ogs_warn("[%s] TAU old identity is IMSI (len %d); "
+                    "continuing without GUTI from this IE",
+                    MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
+                    eps_mobile_identity->length);
+            break;
+        default:
+            ogs_warn("[%s] TAU old identity type[%u] length[%d] unsupported",
+                    MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
+                    id_type, eps_mobile_identity->length);
+            r = nas_eps_send_tau_reject(enb_ue, mme_ue,
+                    OGS_NAS_EMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK);
+            mme_expect_sent(r);
+            return OGS_ERROR;
+        }
     }
 
     return OGS_OK;
