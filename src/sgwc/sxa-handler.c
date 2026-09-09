@@ -607,10 +607,54 @@ void sgwc_sxa_handle_session_establishment_response(
         if (pfcp_rsp->offending_ie.presence)
             offending_ie = pfcp_rsp->offending_ie.u16;
 
+        char imsi_bcd[OGS_MAX_IMSI_BCD_LEN + 1];
+        char apn[OGS_MAX_APN_LEN + 1];
+        const char *imsi = "-";
+        const char *apn_s = "-";
+
+        imsi_bcd[0] = '\0';
+        apn[0] = '\0';
+
         if (sess) sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
         sgwc_log_sgwu_peer(sgwu_peer, sizeof(sgwu_peer), sess);
         sgwc_log_mme_peer(mme_peer, sizeof(mme_peer), sgwc_ue);
         sgwc_log_pgw_peer(pgw_peer, sizeof(pgw_peer), sess);
+
+        if (sgwc_ue && sgwc_ue->imsi_bcd[0])
+            imsi = sgwc_ue->imsi_bcd;
+        else if (s11_xact && s11_xact->imsi_bcd[0])
+            imsi = s11_xact->imsi_bcd;
+        else if (create_session_request->imsi.presence &&
+                create_session_request->imsi.data &&
+                create_session_request->imsi.len) {
+            ogs_buffer_to_bcd(create_session_request->imsi.data,
+                    create_session_request->imsi.len, imsi_bcd);
+            imsi = imsi_bcd;
+        }
+
+        if (sess && sess->session.name)
+            apn_s = sess->session.name;
+        else if (create_session_request->access_point_name.presence &&
+                create_session_request->access_point_name.data &&
+                create_session_request->access_point_name.len) {
+            if (ogs_fqdn_parse(apn,
+                    create_session_request->access_point_name.data,
+                    ogs_min(create_session_request->access_point_name.len,
+                            OGS_MAX_APN_LEN)) > 0)
+                apn_s = apn;
+        }
+
+        if (!sgwu_peer[0] && pfcp_node && pfcp_node->addr_list) {
+            char *peer = ogs_sockaddr_to_string_static(pfcp_node->addr_list);
+            if (peer)
+                ogs_cpystrn(sgwu_peer, peer, sizeof(sgwu_peer));
+        }
+        if (!mme_peer[0] && s11_xact && s11_xact->gnode) {
+            char ipbuf[OGS_ADDRSTRLEN];
+            ogs_snprintf(mme_peer, sizeof(mme_peer), "[%s]:%d",
+                    OGS_ADDR(&s11_xact->gnode->addr, ipbuf),
+                    OGS_PORT(&s11_xact->gnode->addr));
+        }
 
         if (no_sgwc_sess && upf_accepted)
             what = "SGW-C session gone after SGW-U accepted PFCP "
@@ -622,16 +666,17 @@ void sgwc_sxa_handle_session_establishment_response(
                     "(local/F-SEID)";
 
         /*
-         * Always-on ogs_error (not sgwc_ue_error): the per-IMSI helper is
-         * filter-gated for CPU, so production only ever saw the anonymous
-         * "No UP F-SEID" / "PFCP Cause" lines with no subscriber identity.
+         * Always-on log (not sgwc_ue_error): the per-IMSI helper is
+         * filter-gated for CPU. Race after Delete Session / abort is WARN;
+         * UPF reject or local F-SEID failure stays ERROR.
          */
-        ogs_error("[%s] %s APN[%s] SGW-U[%s] MME[%s] PGW[%s] "
+        ogs_log_message(
+                (no_sgwc_sess && upf_accepted) ? OGS_LOG_WARN : OGS_LOG_ERROR,
+                0,
+                "[%s] %s APN[%s] SGW-U[%s] MME[%s] PGW[%s] "
                 "PFCP cause[%u:%s] -> S11 cause[%u] "
-                "sess_id[%d] UP-SEID[0x%llx] offending_ie[%u] vpp[%s]",
-                sgwc_ue && sgwc_ue->imsi_bcd[0] ? sgwc_ue->imsi_bcd : "-",
-                what,
-                sess && sess->session.name ? sess->session.name : "-",
+                "sess_id[%d] UP-SEID[0x%llx] offending_ie[%u] vpp[%s]%s",
+                imsi, what, apn_s,
                 sgwu_peer[0] ? sgwu_peer : "-",
                 mme_peer[0] ? mme_peer : "-",
                 pgw_peer[0] ? pgw_peer : "-",
@@ -641,7 +686,10 @@ void sgwc_sxa_handle_session_establishment_response(
                 cause_value, sess ? sess->id : 0,
                 (unsigned long long)rsp_up_seid,
                 offending_ie,
-                vpp_detail[0] ? vpp_detail : "-");
+                vpp_detail[0] ? vpp_detail : "-",
+                (no_sgwc_sess && upf_accepted) ?
+                    " — orphan UP session purged; Create Session already gone"
+                    : "");
         sgwc_create_session_reject_and_cleanup(sess, sgwc_ue, s11_xact, cause_value);
         return;
     }

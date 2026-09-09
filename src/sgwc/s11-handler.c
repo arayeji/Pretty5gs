@@ -1416,8 +1416,17 @@ void sgwc_s11_handle_delete_session_request(
      * context and acknowledge so the MME can release its bearer.
      */
     if (!sess->gnode) {
-        ogs_error("[%s] Delete Session Request for session with no S5C peer; "
-                "removing locally", sgwc_ue->imsi_bcd);
+        ogs_warn("[%s] Delete Session Request for session with no S5C peer "
+                "APN[%s] EBI[%u] MME_S11_TEID[0x%x] SGW_S11_TEID[0x%x] "
+                "SGW_S5C_TEID[0x%x] PFCP-node[%s] UP-SEID[0x%llx] — "
+                "PDN never reached PGW; local remove + S11 accepted",
+                sgwc_ue->imsi_bcd,
+                sess->session.name ? sess->session.name : "-",
+                req->linked_eps_bearer_id.u8,
+                sgwc_ue->mme_s11_teid, sgwc_ue->sgw_s11_teid,
+                sess->sgw_s5c_teid,
+                sess->pfcp_node ? "yes" : "no",
+                (unsigned long long)sess->sgwu_sxa_seid);
         sgwc_sess_remove(sess);
         ogs_gtp_send_error_message(
                 s11_xact, sgwc_ue->mme_s11_teid,
