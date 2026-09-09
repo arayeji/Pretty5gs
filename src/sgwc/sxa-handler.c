@@ -626,7 +626,8 @@ void sgwc_sxa_handle_session_establishment_response(
             imsi = s11_xact->imsi_bcd;
         else if (create_session_request->imsi.presence &&
                 create_session_request->imsi.data &&
-                create_session_request->imsi.len) {
+                create_session_request->imsi.len &&
+                create_session_request->imsi.len <= OGS_MAX_IMSI_LEN) {
             ogs_buffer_to_bcd(create_session_request->imsi.data,
                     create_session_request->imsi.len, imsi_bcd);
             imsi = imsi_bcd;

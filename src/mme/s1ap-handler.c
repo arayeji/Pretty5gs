@@ -3004,18 +3004,23 @@ void s1ap_ue_context_release_tail(mme_ue_t *mme_ue, int rel_action,
             ogs_warn("HO peer S1 context already released "
                     "during failure cleanup");
         if (mme_ue_have_indirect_tunnel(mme_ue) == true) {
+            /*
+             * COMPLETE, not CANCEL: CANCEL's S11 response sends
+             * HandoverCancelAck. HO Failure already sent
+             * HandoverPreparationFailure; a cancel-ack would confuse
+             * the source eNB. COMPLETE only clears SGW forwarding.
+             */
             target_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
             ogs_warn("[%s] HandoverFailure: leftover indirect tunnel; "
                     "deleting SGW forwarding tunnels",
                     mme_ue->imsi_bcd);
-            if (target_ue) {
-                if (mme_gtp_send_delete_indirect_data_forwarding_tunnel_request(
-                            target_ue, mme_ue,
-                            OGS_GTP_DELETE_INDIRECT_HANDOVER_CANCEL) != OGS_OK)
-                    ogs_error("[%s] Delete Indirect Data Forwarding Tunnel "
-                            "Request failed", mme_ue->imsi_bcd);
+            if (target_ue &&
+                    mme_gtp_send_delete_indirect_data_forwarding_tunnel_request(
+                        target_ue, mme_ue,
+                        OGS_GTP_DELETE_INDIRECT_HANDOVER_COMPLETE) == OGS_OK) {
+                /* SGW delete in flight; S11 response clears local flags */
             } else {
-                ogs_warn("[%s] HandoverFailure: no S1 context for "
+                ogs_warn("[%s] HandoverFailure: no S1/SGW context for "
                         "indirect-tunnel delete; clearing local only",
                         mme_ue->imsi_bcd);
                 mme_ue_clear_indirect_tunnel(mme_ue);

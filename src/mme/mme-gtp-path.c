@@ -1665,7 +1665,11 @@ int mme_gtp_send_delete_indirect_data_forwarding_tunnel_request(
     ogs_assert(action);
     ogs_assert(mme_ue);
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    if (!sgw_ue) {
+        ogs_error("[%s] Delete Indirect Data Forwarding Tunnel: no SGW-UE",
+                mme_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
     h.type = OGS_GTP2_DELETE_INDIRECT_DATA_FORWARDING_TUNNEL_REQUEST_TYPE;
