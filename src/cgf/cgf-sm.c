@@ -435,7 +435,9 @@ void cgf_sm_on_echo_tick(void)
             if (p->consecutive_missed_echoes >=
                     self->failover_after_missed_echoes &&
                     p->state != CGF_PEER_STATE_DOWN) {
-                ogs_warn("cgf: peer '%s' marked DOWN", p->address_str);
+                ogs_error("cgf: peer '%s' marked DOWN "
+                        "(%u consecutive missed echoes)",
+                        p->address_str, p->consecutive_missed_echoes);
                 p->state = CGF_PEER_STATE_DOWN;
                 /*
                  * Failover mode: only abandon the active peer's pipeline

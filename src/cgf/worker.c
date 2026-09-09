@@ -423,8 +423,9 @@ static void worker_on_echo_tick(cgf_worker_t *w)
             if (p->consecutive_missed_echoes >=
                     self->failover_after_missed_echoes &&
                     p->state != CGF_PEER_STATE_DOWN) {
-                ogs_warn("cgf: worker %d peer '%s' marked DOWN",
-                        w->id, p->address_str);
+                ogs_error("cgf: worker %d peer '%s' marked DOWN "
+                        "(%u consecutive missed echoes)",
+                        w->id, p->address_str, p->consecutive_missed_echoes);
                 p->state = CGF_PEER_STATE_DOWN;
                 if (self->send_mode == CGF_SEND_MODE_ROUND_ROBIN ||
                         i == w->active_peer_idx) {
