@@ -84,6 +84,27 @@ found:
     return mme_name_build(buf, mme_code, mme_gid, &plmn_id);
 }
 
+/* Missing CSMAP is a live condition (SIGHUP remap, TAI not in sgsap.map,
+ * fake_csfb attach). Do not abort the MME — callers already treat NULL. */
+static bool sgsap_ue_has_vlr(const mme_ue_t *mme_ue, const char *fn)
+{
+    if (!mme_ue) {
+        ogs_error("%s: no UE", fn);
+        return false;
+    }
+    if (!mme_ue->csmap) {
+        ogs_error("[%s] %s: no CSMAP (no VLR mapping for TAI)",
+                mme_ue->imsi_bcd[0] ? mme_ue->imsi_bcd : "-", fn);
+        return false;
+    }
+    if (!mme_ue->csmap->vlr) {
+        ogs_error("[%s] %s: CSMAP has no VLR",
+                mme_ue->imsi_bcd[0] ? mme_ue->imsi_bcd : "-", fn);
+        return false;
+    }
+    return true;
+}
+
 ogs_pkbuf_t *sgsap_build_location_update_request(mme_ue_t *mme_ue)
 {
     mme_csmap_t *csmap = NULL;
@@ -98,11 +119,10 @@ ogs_pkbuf_t *sgsap_build_location_update_request(mme_ue_t *mme_ue)
     ogs_eps_tai_t tai;
     ogs_e_cgi_t e_cgi;
 
-    ogs_assert(mme_ue);
+    if (!sgsap_ue_has_vlr(mme_ue, "sgsap_build_location_update_request"))
+        return NULL;
     csmap = mme_ue->csmap;
-    ogs_assert(csmap);
     vlr = csmap->vlr;
-    ogs_assert(vlr);
 
     root = ogs_tlv_add(NULL, OGS_TLV_MODE_T1_L1,
             SGSAP_IE_IMSI_TYPE, SGSAP_IE_IMSI_LEN, 0,
@@ -162,16 +182,11 @@ ogs_pkbuf_t *sgsap_build_location_update_request(mme_ue_t *mme_ue)
 
 ogs_pkbuf_t *sgsap_build_tmsi_reallocation_complete(mme_ue_t *mme_ue)
 {
-    mme_csmap_t *csmap = NULL;
-    mme_vlr_t *vlr = NULL;
     ogs_tlv_t *root = NULL;
     ogs_pkbuf_t *pkbuf = NULL;
 
-    ogs_assert(mme_ue);
-    csmap = mme_ue->csmap;
-    ogs_assert(csmap);
-    vlr = csmap->vlr;
-    ogs_assert(vlr);
+    if (!sgsap_ue_has_vlr(mme_ue, "sgsap_build_tmsi_reallocation_complete"))
+        return NULL;
 
     root = ogs_tlv_add(NULL, OGS_TLV_MODE_T1_L1, SGSAP_IE_IMSI_TYPE,
             SGSAP_IE_IMSI_LEN, 0, &mme_ue->nas_mobile_identity_imsi);
@@ -291,7 +306,6 @@ ogs_pkbuf_t *sgsap_build_alert_reject(
 
 ogs_pkbuf_t *sgsap_build_detach_indication(mme_ue_t *mme_ue)
 {
-    mme_csmap_t *csmap = NULL;
     mme_vlr_t *vlr = NULL;
     ogs_tlv_t *root = NULL;
     ogs_pkbuf_t *pkbuf = NULL;
@@ -301,11 +315,9 @@ ogs_pkbuf_t *sgsap_build_detach_indication(mme_ue_t *mme_ue)
     uint8_t type = SGSAP_EPS_DETACH_INDICATION;
     uint8_t indication = SGSAP_EPS_DETACH_UE_INITIATED;
 
-    ogs_assert(mme_ue);
-    csmap = mme_ue->csmap;
-    ogs_assert(csmap);
-    vlr = csmap->vlr;
-    ogs_assert(vlr);
+    if (!sgsap_ue_has_vlr(mme_ue, "sgsap_build_detach_indication"))
+        return NULL;
+    vlr = mme_ue->csmap->vlr;
 
     switch (mme_ue->nas_eps.detach.value) {
     /* 0 0 1 : EPS detach */
@@ -371,19 +383,14 @@ ogs_pkbuf_t *sgsap_build_detach_indication(mme_ue_t *mme_ue)
 
 ogs_pkbuf_t *sgsap_build_mo_csfb_indication(mme_ue_t *mme_ue)
 {
-    mme_csmap_t *csmap = NULL;
-    mme_vlr_t *vlr = NULL;
     ogs_tlv_t *root = NULL;
     ogs_pkbuf_t *pkbuf = NULL;
 
     ogs_gtp2_uli_tai_t tai;
     ogs_gtp2_uli_e_cgi_t e_cgi;
 
-    ogs_assert(mme_ue);
-    csmap = mme_ue->csmap;
-    ogs_assert(csmap);
-    vlr = csmap->vlr;
-    ogs_assert(vlr);
+    if (!sgsap_ue_has_vlr(mme_ue, "sgsap_build_mo_csfb_indication"))
+        return NULL;
 
     root = ogs_tlv_add(NULL, OGS_TLV_MODE_T1_L1, SGSAP_IE_IMSI_TYPE,
             SGSAP_IE_IMSI_LEN, 0, &mme_ue->nas_mobile_identity_imsi);
@@ -461,16 +468,11 @@ ogs_pkbuf_t *sgsap_build_paging_reject(
 
 ogs_pkbuf_t *sgsap_build_service_request(mme_ue_t *mme_ue, uint8_t emm_mode)
 {
-    mme_csmap_t *csmap = NULL;
-    mme_vlr_t *vlr = NULL;
     ogs_tlv_t *root = NULL;
     ogs_pkbuf_t *pkbuf = NULL;
 
-    ogs_assert(mme_ue);
-    csmap = mme_ue->csmap;
-    ogs_assert(csmap);
-    vlr = csmap->vlr;
-    ogs_assert(vlr);
+    if (!sgsap_ue_has_vlr(mme_ue, "sgsap_build_service_request"))
+        return NULL;
 
     root = ogs_tlv_add(NULL, OGS_TLV_MODE_T1_L1,
             SGSAP_IE_IMSI_TYPE, SGSAP_IE_IMSI_LEN, 0,
@@ -536,18 +538,13 @@ ogs_pkbuf_t *sgsap_build_reset_ack(mme_vlr_t *vlr)
 ogs_pkbuf_t *sgsap_build_uplink_unidata(mme_ue_t *mme_ue,
         ogs_nas_eps_message_container_t *nas_message_container)
 {
-    mme_csmap_t *csmap = NULL;
-    mme_vlr_t *vlr = NULL;
     ogs_tlv_t *root = NULL;
     ogs_pkbuf_t *pkbuf = NULL;
 
     ogs_assert(nas_message_container);
 
-    ogs_assert(mme_ue);
-    csmap = mme_ue->csmap;
-    ogs_assert(csmap);
-    vlr = csmap->vlr;
-    ogs_assert(vlr);
+    if (!sgsap_ue_has_vlr(mme_ue, "sgsap_build_uplink_unidata"))
+        return NULL;
 
     root = ogs_tlv_add(NULL, OGS_TLV_MODE_T1_L1, SGSAP_IE_IMSI_TYPE,
             SGSAP_IE_IMSI_LEN, 0,
@@ -575,16 +572,11 @@ ogs_pkbuf_t *sgsap_build_uplink_unidata(mme_ue_t *mme_ue,
 
 ogs_pkbuf_t *sgsap_build_ue_unreachable(mme_ue_t *mme_ue, uint8_t sgs_cause)
 {
-    mme_csmap_t *csmap = NULL;
-    mme_vlr_t *vlr = NULL;
     ogs_tlv_t *root = NULL;
     ogs_pkbuf_t *pkbuf = NULL;
 
-    ogs_assert(mme_ue);
-    csmap = mme_ue->csmap;
-    ogs_assert(csmap);
-    vlr = csmap->vlr;
-    ogs_assert(vlr);
+    if (!sgsap_ue_has_vlr(mme_ue, "sgsap_build_ue_unreachable"))
+        return NULL;
 
     root = ogs_tlv_add(NULL, OGS_TLV_MODE_T1_L1, SGSAP_IE_IMSI_TYPE,
             SGSAP_IE_IMSI_LEN, 0,
