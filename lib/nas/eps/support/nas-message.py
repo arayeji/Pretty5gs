@@ -795,7 +795,14 @@ for (k, v) in sorted_msg_list:
         if len(msg_list[k]["ies"]) != 0:
             f.write("        size = ogs_nas_eps_decode_%s(message, pkbuf);\n" % v_lower(k))
             f.write("        if (size < 0) {\n")
-            f.write("           ogs_error(\"ogs_nas_5gs_decode_%s() failed\");\n" % v_lower(k))
+            f.write("           ogs_error(\"[NAS] EPS EMM decode %s failed "
+                    "msg_type=0x%%x remain=%%u — "
+                    "UE/eNB malformed or truncated\");\n" % v_lower(k))
+            f.write("                    message->emm.h.message_type,\n")
+            f.write("                    pkbuf->len);\n")
+            f.write("           if (pkbuf->data && pkbuf->len)\n")
+            f.write("               ogs_log_hexdump(OGS_LOG_ERROR, pkbuf->data,\n")
+            f.write("                       ogs_min(pkbuf->len, (unsigned int)256));\n")
             f.write("           return size;\n")
             f.write("        }\n\n")
             f.write("        decoded += size;\n")
@@ -842,7 +849,14 @@ for (k, v) in sorted_msg_list:
         if len(msg_list[k]["ies"]) != 0:
             f.write("        size = ogs_nas_eps_decode_%s(message, pkbuf);\n" % v_lower(k))
             f.write("        if (size < 0) {\n")
-            f.write("           ogs_error(\"ogs_nas_5gs_decode_%s() failed\");\n" % v_lower(k))
+            f.write("           ogs_error(\"[NAS] EPS ESM decode %s failed "
+                    "msg_type=0x%%x remain=%%u — "
+                    "UE/eNB malformed or truncated\");\n" % v_lower(k))
+            f.write("                    message->esm.h.message_type,\n")
+            f.write("                    pkbuf->len);\n")
+            f.write("           if (pkbuf->data && pkbuf->len)\n")
+            f.write("               ogs_log_hexdump(OGS_LOG_ERROR, pkbuf->data,\n")
+            f.write("                       ogs_min(pkbuf->len, (unsigned int)256));\n")
             f.write("           return size;\n")
             f.write("        }\n\n")
             f.write("        decoded += size;\n")
