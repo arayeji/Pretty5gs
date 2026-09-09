@@ -79,6 +79,28 @@ static uint8_t gtp_cause_from_esm(uint8_t esm_cause)
     return OGS_GTP2_CAUSE_SYSTEM_FAILURE;
 }
 
+/* TS 24.301 6.7: ESM STATUS reports an error. Log and continue. */
+static void esm_handle_status(mme_ue_t *mme_ue, mme_sess_t *sess,
+        mme_bearer_t *bearer, ogs_nas_eps_message_t *message,
+        const char *state)
+{
+    uint8_t cause;
+
+    ogs_assert(mme_ue);
+    ogs_assert(sess);
+    ogs_assert(bearer);
+    ogs_assert(message);
+    ogs_assert(state);
+
+    cause = message->esm.esm_status.esm_cause;
+    ogs_warn("[%s] ESM STATUS state=%s PTI[%d] EBI[%d] APN[%s] "
+            "cause[%d] — UE reported ESM error; no state change",
+            mme_ue->imsi_bcd, state, sess->pti, bearer->ebi,
+            (sess->session && sess->session->name) ?
+                sess->session->name : "-",
+            cause);
+}
+
 static void esm_handle_bearer_setup_timer(ogs_fsm_t *s,
         mme_ue_t *mme_ue, mme_sess_t *sess, mme_bearer_t *bearer)
 {
@@ -362,12 +384,18 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
             }
             OGS_FSM_TRAN(s, esm_state_exception);
             break;
+        case OGS_NAS_EPS_ESM_STATUS:
+            esm_handle_status(mme_ue, sess, bearer, message, "inactive");
+            break;
         default:
-            ogs_error("[%s] Unknown/unsupported ESM type[%d] in inactive "
-                    "state PTI[%d] EBI[%d] — ignoring "
+            ogs_warn("[%s] Unknown/unsupported ESM type[%d/0x%x] in inactive "
+                    "state PTI[%d] EBI[%d] APN[%s] — ignoring "
                     "(garbled NAS or unexpected procedure; no action)",
                     mme_ue->imsi_bcd, message->esm.h.message_type,
-                    sess->pti, bearer->ebi);
+                    message->esm.h.message_type,
+                    sess->pti, bearer->ebi,
+                    (sess->session && sess->session->name) ?
+                        sess->session->name : "-");
             break;
         }
         break;
@@ -556,12 +584,18 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
                     mme_ue->imsi_bcd, sess->pti, bearer->ebi);
             CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
             break;
+        case OGS_NAS_EPS_ESM_STATUS:
+            esm_handle_status(mme_ue, sess, bearer, message, "active");
+            break;
         default:
-            ogs_error("[%s] Unknown/unsupported ESM type[%d] in active "
-                    "state PTI[%d] EBI[%d] — ignoring "
+            ogs_warn("[%s] Unknown/unsupported ESM type[%d/0x%x] in active "
+                    "state PTI[%d] EBI[%d] APN[%s] — ignoring "
                     "(garbled NAS or unexpected procedure; no action)",
                     mme_ue->imsi_bcd, message->esm.h.message_type,
-                    sess->pti, bearer->ebi);
+                    message->esm.h.message_type,
+                    sess->pti, bearer->ebi,
+                    (sess->session && sess->session->name) ?
+                        sess->session->name : "-");
             break;
         }
         break;
@@ -697,12 +731,19 @@ void esm_state_pdn_will_disconnect(ogs_fsm_t *s, mme_event_t *e)
                     "IMSI[%s] PTI[%d] EBI[%d]",
                     mme_ue->imsi_bcd, sess->pti, bearer->ebi);
             break;
+        case OGS_NAS_EPS_ESM_STATUS:
+            esm_handle_status(mme_ue, sess, bearer, message,
+                    "pdn-will-disconnect");
+            break;
         default:
-            ogs_error("[%s] Unknown/unsupported ESM type[%d] "
-                    "PTI[%d] EBI[%d] — ignoring "
+            ogs_warn("[%s] Unknown/unsupported ESM type[%d/0x%x] "
+                    "in pdn-will-disconnect PTI[%d] EBI[%d] APN[%s] — ignoring "
                     "(garbled NAS or unexpected procedure; no action)",
                     mme_ue->imsi_bcd, message->esm.h.message_type,
-                    sess->pti, bearer->ebi);
+                    message->esm.h.message_type,
+                    sess->pti, bearer->ebi,
+                    (sess->session && sess->session->name) ?
+                        sess->session->name : "-");
             break;
         }
         break;
