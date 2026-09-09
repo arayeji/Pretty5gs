@@ -130,7 +130,7 @@ static void s1ap_warn_missing_ie(mme_enb_t *enb, enb_ue_t *enb_ue,
             (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) ? mme_ue->imsi_bcd : "-");
 }
 
-static void s1ap_warn_unknown_tai(mme_enb_t *enb, enb_ue_t *enb_ue,
+static void s1ap_error_unknown_tai(mme_enb_t *enb, enb_ue_t *enb_ue,
         const ogs_eps_tai_t *tai, const char *proc)
 {
     char buf[OGS_ADDRSTRLEN];
@@ -142,7 +142,7 @@ static void s1ap_warn_unknown_tai(mme_enb_t *enb, enb_ue_t *enb_ue,
     if (enb_ue)
         mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
 
-    ogs_warn("[S1AP] %s: TAI not served PLMN[%06x] MCC[%u] MNC[%u] "
+    ogs_error("[S1AP] %s: TAI not served PLMN[%06x] MCC[%u] MNC[%u] "
             "TAC[%u] eNB[id:%u %s] enb_ue_s1ap_id[%u] IMSI[%s] — "
             "not in mme.tai; Error Indication to eNB",
             proc,
@@ -154,6 +154,64 @@ static void s1ap_warn_unknown_tai(mme_enb_t *enb, enb_ue_t *enb_ue,
             (enb && enb->sctp.addr) ? OGS_ADDR(enb->sctp.addr, buf) : "-",
             enb_ue ? enb_ue->enb_ue_s1ap_id : 0,
             (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) ? mme_ue->imsi_bcd : "-");
+}
+
+/*
+ * TS 36.413: Initial Context Setup Failure (and other unsuccessful
+ * outcomes) must include Cause. Decoder ran but id-Cause (2) was not
+ * among protocolIEs — truncated PDU, eNB encoder skip, or unexpected IE.
+ * ERROR + IE inventory + raw PDU so the eNB packet can be dissected.
+ */
+static void s1ap_error_missing_cause(mme_enb_t *enb, enb_ue_t *enb_ue,
+        const S1AP_ENB_UE_S1AP_ID_t *enb_ue_s1ap_id,
+        const S1AP_MME_UE_S1AP_ID_t *mme_ue_s1ap_id,
+        const char *proc, int ie_count, const char *ie_ids,
+        ogs_pkbuf_t *pkbuf)
+{
+    char buf[OGS_ADDRSTRLEN];
+    mme_ue_t *mme_ue = NULL;
+    unsigned long e_id = 0, m_id = 0;
+
+    ogs_assert(proc);
+
+    if (enb_ue)
+        mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+
+    if (enb_ue_s1ap_id)
+        e_id = (unsigned long)*enb_ue_s1ap_id;
+    else if (enb_ue)
+        e_id = enb_ue->enb_ue_s1ap_id;
+
+    if (mme_ue_s1ap_id)
+        m_id = (unsigned long)*mme_ue_s1ap_id;
+    else if (enb_ue)
+        m_id = enb_ue->mme_ue_s1ap_id;
+
+    ogs_error("[S1AP] %s: mandatory Cause IE missing "
+            "(TS 36.413 unsuccessful outcome; Cause is why ICS failed: "
+            "radio/transport/nas/protocol/misc) "
+            "eNB[id:%u %s] enb_ue_s1ap_id[%lu] mme_ue_s1ap_id[%lu] "
+            "IMSI[%s] decoded_ies=%d ie_ids[%s] "
+            "have_mme_id[%d] have_enb_id[%d] pkbuf_len=%u — "
+            "MME cannot classify the failure; Error Indication to eNB",
+            proc,
+            enb ? enb->enb_id : 0,
+            (enb && enb->sctp.addr) ? OGS_ADDR(enb->sctp.addr, buf) : "-",
+            e_id, m_id,
+            (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) ? mme_ue->imsi_bcd : "-",
+            ie_count,
+            (ie_ids && ie_ids[0]) ? ie_ids : "-",
+            mme_ue_s1ap_id ? 1 : 0,
+            enb_ue_s1ap_id ? 1 : 0,
+            (pkbuf && pkbuf->data) ? pkbuf->len : 0);
+
+    if (pkbuf && pkbuf->data && pkbuf->len > 0) {
+        ogs_error("[S1AP] %s: raw PDU hex (len=%u) "
+                "expected IEs 0=MME-UE-S1AP-ID,2=Cause,8=eNB-UE-S1AP-ID:",
+                proc, pkbuf->len);
+        ogs_log_hexdump(OGS_LOG_ERROR, pkbuf->data,
+                ogs_min(pkbuf->len, (unsigned int)512));
+    }
 }
 
 static bool maximum_number_of_enbs_is_reached(void)
@@ -1400,7 +1458,7 @@ void s1ap_handle_uplink_nas_transport(
     /* Check TAI */
     served_tai_index = mme_find_served_tai(&tai);
     if (served_tai_index < 0) {
-        s1ap_warn_unknown_tai(enb, enb_ue, &tai, "UplinkNASTransport");
+        s1ap_error_unknown_tai(enb, enb_ue, &tai, "UplinkNASTransport");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol,
                 S1AP_CauseProtocol_message_not_compatible_with_receiver_state);
@@ -1869,6 +1927,8 @@ void s1ap_handle_initial_context_setup_failure(
     S1AP_MME_UE_S1AP_ID_t *MME_UE_S1AP_ID = NULL;
     S1AP_ENB_UE_S1AP_ID_t *ENB_UE_S1AP_ID = NULL;
     S1AP_Cause_t *Cause = NULL;
+    char ie_ids[128];
+    int ie_off = 0;
 
     mme_ue_t *mme_ue = NULL;
     enb_ue_t *enb_ue = NULL;
@@ -1885,20 +1945,40 @@ void s1ap_handle_initial_context_setup_failure(
 
     ogs_debug("InitialContextSetupFailure");
 
+    ie_ids[0] = '\0';
     for (i = 0; i < InitialContextSetupFailure->protocolIEs.list.count; i++) {
+        const char *ie_name = NULL;
+
         ie = InitialContextSetupFailure->protocolIEs.list.array[i];
         switch (ie->id) {
         case S1AP_ProtocolIE_ID_id_MME_UE_S1AP_ID:
+            ie_name = "MME-UE-S1AP-ID";
             MME_UE_S1AP_ID = &ie->value.choice.MME_UE_S1AP_ID;
             break;
         case S1AP_ProtocolIE_ID_id_eNB_UE_S1AP_ID:
+            ie_name = "eNB-UE-S1AP-ID";
             ENB_UE_S1AP_ID = &ie->value.choice.ENB_UE_S1AP_ID;
             break;
         case S1AP_ProtocolIE_ID_id_Cause:
+            ie_name = "Cause";
             Cause = &ie->value.choice.Cause;
+            break;
+        case S1AP_ProtocolIE_ID_id_CriticalityDiagnostics:
+            ie_name = "CritDiag";
             break;
         default:
             break;
+        }
+
+        if (ie_off < (int)sizeof(ie_ids) - 32) {
+            int n = ogs_snprintf(ie_ids + ie_off, sizeof(ie_ids) - ie_off,
+                    "%s%ld%s%s",
+                    ie_off ? "," : "",
+                    (long)ie->id,
+                    ie_name ? "=" : "",
+                    ie_name ? ie_name : "");
+            if (n > 0)
+                ie_off += n;
         }
     }
 
@@ -1907,6 +1987,18 @@ void s1ap_handle_initial_context_setup_failure(
 
     enb_ue = s1ap_find_enb_ue_by_message_ue_ids(
             enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID);
+
+    if (!Cause) {
+        s1ap_error_missing_cause(enb, enb_ue, ENB_UE_S1AP_ID, MME_UE_S1AP_ID,
+                "InitialContextSetupFailure",
+                InitialContextSetupFailure->protocolIEs.list.count, ie_ids,
+                pkbuf);
+        r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
+                S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
+        ogs_expect(r == OGS_OK);
+        return;
+    }
+
     if (!enb_ue) {
         ogs_warn("%s: Failed to find eNB UE by S1AP UE IDs", __func__);
         return;
@@ -1914,15 +2006,6 @@ void s1ap_handle_initial_context_setup_failure(
 
     ogs_debug("    ENB_UE_S1AP_ID[%d] MME_UE_S1AP_ID[%d]",
             enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
-
-    if (!Cause) {
-        s1ap_warn_missing_ie(enb, enb_ue, ENB_UE_S1AP_ID, MME_UE_S1AP_ID,
-                "InitialContextSetupFailure", "Cause");
-        r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
-                S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
-        ogs_expect(r == OGS_OK);
-        return;
-    }
 
     mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
     if (pkbuf && mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
@@ -3584,7 +3667,7 @@ void s1ap_handle_path_switch_request(
     /* Check TAI */
     served_tai_index = mme_find_served_tai(&tai);
     if (served_tai_index < 0) {
-        s1ap_warn_unknown_tai(enb, enb_ue, &tai, "PathSwitchRequest");
+        s1ap_error_unknown_tai(enb, enb_ue, &tai, "PathSwitchRequest");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol,
                 S1AP_CauseProtocol_message_not_compatible_with_receiver_state);
