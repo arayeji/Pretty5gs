@@ -228,7 +228,7 @@ static void emm_handle_s6a_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
          * in the FSM dispatch loop that invoked this handler, avoiding a
          * use-after-free of the EMM FSM.
          */
-        ogs_error("[%s] S6a timeout but no S1 context "
+        ogs_warn("[%s] S6a timeout but no S1 context "
                 "(cmd=%u%s); HSS/Diameter slow and eNB S1 already gone "
                 "(reset/HO/release) so NAS reject cannot be delivered — "
                 "dropping half-built UE context",
