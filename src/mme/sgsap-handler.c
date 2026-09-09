@@ -62,6 +62,27 @@ static void sgsap_copy_name(char *dst, size_t dst_size,
     dst[n] = '\0';
 }
 
+static const char *sgsap_vlr_str(const mme_vlr_t *vlr)
+{
+    const char *s;
+
+    if (!vlr || !vlr->sa_list)
+        return "-";
+    s = ogs_sockaddr_to_string_static(vlr->sa_list);
+    return s ? s : "-";
+}
+
+static void sgsap_warn_no_ue(const mme_vlr_t *vlr, const char *msg,
+        const char *imsi, const char *why)
+{
+    ogs_warn("[SGSAP] %s: no UE context IMSI[%s] VLR[%s]%s%s",
+            msg,
+            (imsi && imsi[0]) ? imsi : "-",
+            sgsap_vlr_str(vlr),
+            (why && why[0]) ? " — " : "",
+            (why && why[0]) ? why : "");
+}
+
 void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
 {
     int r;
@@ -69,7 +90,7 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     mme_ue_t *mme_ue = NULL;
     enb_ue_t *enb_ue = NULL;
 
-    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1] = {0, };
 
     ogs_nas_mobile_identity_imsi_t *nas_mobile_identity_imsi = NULL;
     int nas_mobile_identity_imsi_len = 0;
@@ -131,8 +152,15 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (!mme_ue) {
-        ogs_error("!mme_ue");
-        goto error;
+        ogs_warn("[SGSAP] LOCATION-UPDATE-ACCEPT: no UE context IMSI[%s] "
+                "VLR[%s] LAI[PLMN:%06x LAC:%u]%s — late VLR reply "
+                "after detach or MME restart",
+                imsi_bcd[0] ? imsi_bcd : "-",
+                sgsap_vlr_str(vlr),
+                lai ? (unsigned)ogs_plmn_id_hexdump(&lai->nas_plmn_id) : 0,
+                lai ? (unsigned)lai->lac : 0,
+                nas_mobile_identity_tmsi ? " P-TMSI in PDU" : "");
+        return;
     }
 
     /*
@@ -223,10 +251,10 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     return;
 
 error:
-    /* Clang scan-build SA:
-     * NULL pointer dereference: mme_ue=NULL if root=NULL. */
     if (!mme_ue) {
-        ogs_error("!mme_ue");
+        ogs_warn("[SGSAP] LOCATION-UPDATE-ACCEPT: drop (no UE) IMSI[%s] "
+                "VLR[%s]",
+                imsi_bcd[0] ? imsi_bcd : "-", sgsap_vlr_str(vlr));
         return;
     }
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
@@ -320,9 +348,8 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (!mme_ue) {
-        /* VLR LU-Reject after MME already dropped the UE — expected. */
-        ogs_warn("[SGSAP] LOCATION-UPDATE-REJECT: no UE context IMSI[%s]",
-                imsi_bcd);
+        sgsap_warn_no_ue(vlr, "LOCATION-UPDATE-REJECT", imsi_bcd,
+                "late VLR reject after detach or MME restart");
         return;
     }
 
@@ -413,8 +440,8 @@ void sgsap_handle_alert_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     mme_ue = mme_ue_find_by_imsi_bcd(imsi_bcd);
 
     if (!mme_ue) {
-       /* ALERT for an IMSI we no longer hold — reply IMSI unknown. */
-       ogs_warn("[SGSAP] ALERT-REQUEST: no UE context IMSI[%s]", imsi_bcd);
+       sgsap_warn_no_ue(vlr, "ALERT-REQUEST", imsi_bcd,
+               "IMSI unknown; Alert-Reject to VLR");
        sgs_cause = SGSAP_SGS_CAUSE_IMSI_UNKNOWN;
        goto alert_reject;
     }
@@ -510,15 +537,11 @@ void sgsap_handle_detach_ack(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (!mme_ue) {
-        /*
-         * DETACH-ACK after MME already removed the UE (local detach
-         * finished first). Harmless — nothing left to clear.
-         */
-        ogs_warn("[SGSAP] %s: no UE context IMSI[%s] "
-                "(late ACK after local detach)",
+        sgsap_warn_no_ue(vlr,
                 type == SGSAP_EPS_DETACH_ACK ? "EPS-DETACH-ACK" :
-                type == SGSAP_IMSI_DETACH_ACK ? "IMSI-DETACH-ACK" : "DETACH-ACK",
-                imsi_bcd);
+                type == SGSAP_IMSI_DETACH_ACK ? "IMSI-DETACH-ACK" :
+                "DETACH-ACK",
+                imsi_bcd, "late ACK after local detach");
         return;
     }
 
@@ -636,6 +659,8 @@ void sgsap_handle_paging_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (!mme_ue) {
+        sgsap_warn_no_ue(vlr, "PAGING-REQUEST", imsi_bcd,
+                "IMSI unknown; Paging-Reject to VLR");
         sgs_cause = SGSAP_SGS_CAUSE_IMSI_UNKNOWN;
         goto paging_reject;
     }
@@ -863,9 +888,8 @@ void sgsap_handle_downlink_unitdata(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (!mme_ue) {
-        /* DOWNLINK-UNITDATA for an IMSI already gone — drop. */
-        ogs_warn("[SGSAP] DOWNLINK-UNITDATA: no UE context IMSI[%s]",
-                imsi_bcd);
+        sgsap_warn_no_ue(vlr, "DOWNLINK-UNITDATA", imsi_bcd,
+                "UE gone; drop MT SMS/NAS");
         return;
     }
 
@@ -956,7 +980,8 @@ void sgsap_handle_release_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     if (mme_ue)
         ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
     else
-        ogs_warn("Unknown IMSI[%s]", imsi_bcd);
+        sgsap_warn_no_ue(vlr, "RELEASE-REQUEST", imsi_bcd,
+                "UE already gone");
 
 }
 
@@ -1024,5 +1049,6 @@ void sgsap_handle_mm_information_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     if (mme_ue)
         ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
     else
-        ogs_warn("Unknown IMSI[%s]", imsi_bcd);
+        sgsap_warn_no_ue(vlr, "MM-INFORMATION-REQUEST", imsi_bcd,
+                "UE already gone");
 }
