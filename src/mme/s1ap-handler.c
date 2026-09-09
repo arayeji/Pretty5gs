@@ -130,6 +130,32 @@ static void s1ap_warn_missing_ie(mme_enb_t *enb, enb_ue_t *enb_ue,
             (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) ? mme_ue->imsi_bcd : "-");
 }
 
+static void s1ap_warn_unknown_tai(mme_enb_t *enb, enb_ue_t *enb_ue,
+        const ogs_eps_tai_t *tai, const char *proc)
+{
+    char buf[OGS_ADDRSTRLEN];
+    mme_ue_t *mme_ue = NULL;
+
+    ogs_assert(tai);
+    ogs_assert(proc);
+
+    if (enb_ue)
+        mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+
+    ogs_warn("[S1AP] %s: TAI not served PLMN[%06x] MCC[%u] MNC[%u] "
+            "TAC[%u] eNB[id:%u %s] enb_ue_s1ap_id[%u] IMSI[%s] — "
+            "not in mme.tai; Error Indication to eNB",
+            proc,
+            ogs_plmn_id_hexdump(&tai->plmn_id),
+            ogs_plmn_id_mcc(&tai->plmn_id),
+            ogs_plmn_id_mnc(&tai->plmn_id),
+            tai->tac,
+            enb ? enb->enb_id : 0,
+            (enb && enb->sctp.addr) ? OGS_ADDR(enb->sctp.addr, buf) : "-",
+            enb_ue ? enb_ue->enb_ue_s1ap_id : 0,
+            (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) ? mme_ue->imsi_bcd : "-");
+}
+
 static bool maximum_number_of_enbs_is_reached(void)
 {
     /*
@@ -1374,8 +1400,7 @@ void s1ap_handle_uplink_nas_transport(
     /* Check TAI */
     served_tai_index = mme_find_served_tai(&tai);
     if (served_tai_index < 0) {
-        ogs_error("Cannot find Served TAI[PLMN_ID:%06x,TAC:%d]",
-            ogs_plmn_id_hexdump(&tai.plmn_id), tai.tac);
+        s1ap_warn_unknown_tai(enb, enb_ue, &tai, "UplinkNASTransport");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol,
                 S1AP_CauseProtocol_message_not_compatible_with_receiver_state);
@@ -1891,7 +1916,8 @@ void s1ap_handle_initial_context_setup_failure(
             enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
 
     if (!Cause) {
-        ogs_error("No Cause");
+        s1ap_warn_missing_ie(enb, enb_ue, ENB_UE_S1AP_ID, MME_UE_S1AP_ID,
+                "InitialContextSetupFailure", "Cause");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -2097,7 +2123,8 @@ void s1ap_handle_ue_context_modification_failure(
             enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
 
     if (!Cause) {
-        ogs_error("No Cause");
+        s1ap_warn_missing_ie(enb, enb_ue, ENB_UE_S1AP_ID, MME_UE_S1AP_ID,
+                "UEContextModificationFailure", "Cause");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -2516,7 +2543,8 @@ void s1ap_handle_ue_context_release_request(
             enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
 
     if (!Cause) {
-        ogs_error("No Cause");
+        s1ap_warn_missing_ie(enb, enb_ue, ENB_UE_S1AP_ID, MME_UE_S1AP_ID,
+                "UEContextReleaseRequest", "Cause");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -2893,9 +2921,22 @@ void s1ap_ue_context_release_tail(mme_ue_t *mme_ue, int rel_action,
             ogs_warn("HO peer S1 context already released "
                     "during failure cleanup");
         if (mme_ue_have_indirect_tunnel(mme_ue) == true) {
-            ogs_error("Check your eNodeB");
-            ogs_error("  We found INDIRECT TUNNEL in HandoverFailure");
-            mme_ue_clear_indirect_tunnel(mme_ue);
+            target_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+            ogs_warn("[%s] HandoverFailure: leftover indirect tunnel; "
+                    "deleting SGW forwarding tunnels",
+                    mme_ue->imsi_bcd);
+            if (target_ue) {
+                if (mme_gtp_send_delete_indirect_data_forwarding_tunnel_request(
+                            target_ue, mme_ue,
+                            OGS_GTP_DELETE_INDIRECT_HANDOVER_CANCEL) != OGS_OK)
+                    ogs_error("[%s] Delete Indirect Data Forwarding Tunnel "
+                            "Request failed", mme_ue->imsi_bcd);
+            } else {
+                ogs_warn("[%s] HandoverFailure: no S1 context for "
+                        "indirect-tunnel delete; clearing local only",
+                        mme_ue->imsi_bcd);
+                mme_ue_clear_indirect_tunnel(mme_ue);
+            }
         }
         break;
     case S1AP_UE_CTX_REL_S1_PAGING:
@@ -3543,8 +3584,7 @@ void s1ap_handle_path_switch_request(
     /* Check TAI */
     served_tai_index = mme_find_served_tai(&tai);
     if (served_tai_index < 0) {
-        ogs_error("Cannot find Served TAI[PLMN_ID:%06x,TAC:%d]",
-            ogs_plmn_id_hexdump(&tai.plmn_id), tai.tac);
+        s1ap_warn_unknown_tai(enb, enb_ue, &tai, "PathSwitchRequest");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol,
                 S1AP_CauseProtocol_message_not_compatible_with_receiver_state);
@@ -4358,7 +4398,8 @@ void s1ap_handle_handover_required(mme_enb_t *enb, ogs_s1ap_message_t *message)
     }
 
     if (!Cause) {
-        ogs_error("No Cause");
+        s1ap_warn_missing_ie(enb, source_ue, ENB_UE_S1AP_ID, MME_UE_S1AP_ID,
+                "HandoverRequired", "Cause");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -4775,7 +4816,8 @@ void s1ap_handle_handover_failure(mme_enb_t *enb, ogs_s1ap_message_t *message)
     }
 
     if (!Cause) {
-        ogs_error("No Cause");
+        s1ap_warn_missing_ie(enb, target_ue, NULL, MME_UE_S1AP_ID,
+                "HandoverFailure", "Cause");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, NULL,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -4891,7 +4933,8 @@ void s1ap_handle_handover_cancel(mme_enb_t *enb, ogs_s1ap_message_t *message)
     }
 
     if (!Cause) {
-        ogs_error("No Cause");
+        s1ap_warn_missing_ie(enb, source_ue, ENB_UE_S1AP_ID, MME_UE_S1AP_ID,
+                "HandoverCancel", "Cause");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -5400,7 +5443,7 @@ void s1ap_handle_s1_reset(
             OGS_ADDR(enb->sctp.addr, buf), enb->enb_id);
 
     if (!Cause) {
-        ogs_error("No Cause");
+        s1ap_warn_missing_ie(enb, NULL, NULL, NULL, "Reset", "Cause");
         r = s1ap_send_error_indication(enb, NULL, NULL,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
