@@ -1779,8 +1779,10 @@ cleanup:
                 ogs_error("[%s] PGW DNS fail unexpectedly re-queued",
                         mme_ue->imsi_bcd);
             }
-            ogs_warn("[%s] PGW APN DNS failed; rejecting PDN",
-                    mme_ue->imsi_bcd);
+            ogs_error("[%s] PGW APN DNS failed; rejecting PDN APN[%s]",
+                    mme_ue->imsi_bcd,
+                    (dns_sess->session && dns_sess->session->name) ?
+                        dns_sess->session->name : "-");
             r = nas_eps_send_pdn_connectivity_reject(
                     dns_sess, OGS_NAS_ESM_CAUSE_NETWORK_FAILURE,
                     e->create_action);

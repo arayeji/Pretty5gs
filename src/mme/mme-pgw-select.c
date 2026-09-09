@@ -241,7 +241,7 @@ int mme_pgw_select_for_sess(
                             session->name ? session->name : "-");
                     goto done;
                 }
-                ogs_warn("[%s] APN DNS failed for APN[%s]; "
+                ogs_error("[%s] APN DNS failed for APN[%s]; "
                         "rule fallback=hss but no HSS PGW address",
                         mme_ue->imsi_bcd,
                         session->name ? session->name : "-");
@@ -258,7 +258,7 @@ int mme_pgw_select_for_sess(
                 goto done;
             case MME_PGW_SEL_RULE_FALLBACK_NONE:
             default:
-                ogs_warn("[%s] APN DNS failed for APN[%s]; "
+                ogs_error("[%s] APN DNS failed for APN[%s]; "
                         "dns-only rule, no fallback — rejecting session",
                         mme_ue->imsi_bcd,
                         session->name ? session->name : "-");
@@ -413,7 +413,7 @@ int mme_pgw_bind_for_csr(mme_ue_t *mme_ue, mme_sess_t *sess,
                             MME_PGW_SOURCE_HSS_STATIC, &session->smf_ip);
                     return OGS_OK;
                 }
-                ogs_warn("[%s] APN DNS failed for APN[%s]; "
+                ogs_error("[%s] APN DNS failed for APN[%s]; "
                         "rule fallback=hss but no HSS PGW address",
                         mme_ue->imsi_bcd,
                         session->name ? session->name : "-");
@@ -432,7 +432,7 @@ int mme_pgw_bind_for_csr(mme_ue_t *mme_ue, mme_sess_t *sess,
                 return OGS_OK;
             case MME_PGW_SEL_RULE_FALLBACK_NONE:
             default:
-                ogs_warn("[%s] APN DNS failed for APN[%s]; "
+                ogs_error("[%s] APN DNS failed for APN[%s]; "
                         "dns-only rule, no fallback — rejecting session",
                         mme_ue->imsi_bcd,
                         session->name ? session->name : "-");

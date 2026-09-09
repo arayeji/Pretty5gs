@@ -1152,7 +1152,9 @@ static int pgw_dns_resolve_apn_uncached(
         }
     }
 
-    ogs_warn("PGW APN DNS failed: fqdn=%s", apn_fqdn);
+    ogs_error("PGW APN DNS failed: fqdn=%s — "
+            "NAPTR, A/AAAA and .gprs fallback found no PGW",
+            apn_fqdn);
     pgw_dns_cache_store_cands(cache_key, NULL, 0, false);
     return OGS_ERROR;
 }
