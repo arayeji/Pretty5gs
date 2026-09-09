@@ -1093,6 +1093,25 @@ int s1ap_send_handover_preparation_failure(
     ogs_assert(group);
 
     mme_ue = mme_ue_find_by_id(source_ue->mme_ue_id);
+
+    /*
+     * eNB HO-Required retry storm: one Failure is enough for the
+     * source to see the cause. Further replies only fill IMSI trace.
+     */
+#define HO_PREP_FAIL_SUPPRESS_SEC 3
+    if (source_ue->t_ho_prep_fail &&
+        (ogs_time_now() - source_ue->t_ho_prep_fail) <
+                ogs_time_from_sec(HO_PREP_FAIL_SUPPRESS_SEC)) {
+        if (ogs_log_guard())
+            ogs_info("[%s] HO Preparation Failure suppressed "
+                    "(eNB retry within %ds)",
+                    (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) ?
+                        mme_ue->imsi_bcd : "-",
+                    HO_PREP_FAIL_SUPPRESS_SEC);
+        return OGS_OK;
+    }
+    source_ue->t_ho_prep_fail = ogs_time_now();
+
     if (mme_ue) {
         mme_metrics_ho_fail(mme_ue, "intralte",
                 s1ap_cause_group_name(group), cause);
@@ -1246,6 +1265,7 @@ int s1ap_send_handover_request(
             target_ue->mme_ue_s1ap_id);
 
     enb_ue_source_associate_target(source_ue, target_ue);
+    source_ue->t_ho_prep_fail = 0;
 
     s1apbuf = s1ap_build_handover_request(
             target_ue, handovertype, cause,

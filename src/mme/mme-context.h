@@ -886,6 +886,12 @@ struct enb_ue_s {
     S1AP_HandoverType_t handover_type;
     ogs_pool_id_t source_ue_id;
     ogs_pool_id_t target_ue_id;
+    /*
+     * Last Handover Preparation Failure. Some eNBs retry Handover
+     * Required every ~200ms after a reject; each reply was traced
+     * and flooded IMSI PACKET. Suppress repeats for a few seconds.
+     */
+    ogs_time_t      t_ho_prep_fail;
 
     /* Use mme_ue->tai, mme_ue->e_cgi.
      * Do not access enb_ue->saved.tai enb_ue->saved.e_cgi.
