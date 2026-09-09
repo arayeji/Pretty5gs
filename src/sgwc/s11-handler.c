@@ -64,6 +64,63 @@ static void sgwc_warn_no_s11_ue(ogs_gtp_xact_t *xact,
             proc ? proc : "S11", teid, sqn, peer ? peer : "-");
 }
 
+/* Late Create/Update/Delete Bearer Response: xact still holds a bearer
+ * pool id after PFCP/detach already freed the bearer. One WARN, not a
+ * cascade of Bearer/Session/UE ERRORs. */
+static void sgwc_warn_stale_bearer_rsp(
+        ogs_gtp_xact_t *xact, ogs_gtp2_message_t *message,
+        sgwc_ue_t *ue_hint, ogs_pool_id_t bearer_id,
+        sgwc_bearer_t *bearer, sgwc_sess_t *sess, sgwc_ue_t *sgwc_ue)
+{
+    char buf[OGS_ADDRSTRLEN];
+    uint32_t teid = 0, sqn = 0;
+    const char *peer = "-";
+    const char *imsi = "-";
+    const char *proc = "S11";
+    const char *missing;
+
+    if (message) {
+        teid = message->h.teid;
+        sqn = OGS_GTP2_SQN_TO_XID(message->h.sqn);
+        switch (message->h.type) {
+        case OGS_GTP2_CREATE_BEARER_RESPONSE_TYPE:
+            proc = "Create Bearer Response";
+            break;
+        case OGS_GTP2_UPDATE_BEARER_RESPONSE_TYPE:
+            proc = "Update Bearer Response";
+            break;
+        case OGS_GTP2_DELETE_BEARER_RESPONSE_TYPE:
+            proc = "Delete Bearer Response";
+            break;
+        default:
+            break;
+        }
+    }
+    if (xact) {
+        if (!teid)
+            teid = xact->local_teid;
+        if (xact->gnode)
+            peer = OGS_ADDR(&xact->gnode->addr, buf);
+    }
+    if (ue_hint && ue_hint->imsi_bcd[0])
+        imsi = ue_hint->imsi_bcd;
+    else if (sgwc_ue && sgwc_ue->imsi_bcd[0])
+        imsi = sgwc_ue->imsi_bcd;
+
+    if (!bearer)
+        missing = "bearer";
+    else if (!sess)
+        missing = "session";
+    else
+        missing = "ue";
+
+    ogs_warn("[S11] %s: no %s context IMSI[%s] bearer_pool[%d] "
+            "TEID[0x%x] seq[%u] peer[%s] — already released; "
+            "reply CONTEXT_NOT_FOUND",
+            proc, missing, imsi, (int)bearer_id, teid, sqn,
+            peer ? peer : "-");
+}
+
 static bool sgwc_s11_message_recovery(
         ogs_gtp2_message_t *message, uint8_t *recovery)
 {
@@ -1406,6 +1463,7 @@ void sgwc_s11_handle_create_bearer_response(
     int rv;
     ogs_gtp2_cause_t *cause = NULL;
     uint8_t cause_value;
+    sgwc_ue_t *ue_hint = sgwc_ue;
 
     sgwc_sess_t *sess = NULL;
     sgwc_bearer_t *bearer = NULL;
@@ -1452,8 +1510,6 @@ void sgwc_s11_handle_create_bearer_response(
                 bearer_id <= OGS_MAX_POOL_ID);
 
         bearer = sgwc_bearer_find_by_id(bearer_id);
-        if (!bearer)
-            ogs_error("No Bearer ID [%d]", bearer_id);
     } else {
         ogs_assert(s11_xact->data);
         bearer_id = OGS_POINTER_TO_UINT(s11_xact->data);
@@ -1461,21 +1517,12 @@ void sgwc_s11_handle_create_bearer_response(
                 bearer_id <= OGS_MAX_POOL_ID);
 
         bearer = sgwc_bearer_find_by_id(bearer_id);
-        if (!bearer)
-            ogs_error("No Bearer ID [%d]", bearer_id);
     }
 
-    if (bearer) {
+    if (bearer)
         sess = sgwc_sess_find_by_id(bearer->sess_id);
-        if (!sess)
-            ogs_error("No Session ID [%d]", bearer->sess_id);
-    }
-
-    if (sess) {
+    if (sess)
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-        if (!sgwc_ue)
-            ogs_error("No SGWC-UE ID [%d]", sess->sgwc_ue_id);
-    }
 
     sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
 
@@ -1488,16 +1535,9 @@ void sgwc_s11_handle_create_bearer_response(
      *****************************************/
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
-    if (!bearer) {
-        ogs_error("No Bearer Context");
-        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
-    }
-    if (!sess) {
-        ogs_error("No Session Context");
-        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
-    }
-    if (!sgwc_ue) {
-        ogs_error("No SGWC-UE Context");
+    if (!bearer || !sess || !sgwc_ue) {
+        sgwc_warn_stale_bearer_rsp(s11_xact, message, ue_hint, bearer_id,
+                bearer, sess, sgwc_ue);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     }
 
@@ -1673,6 +1713,7 @@ void sgwc_s11_handle_update_bearer_response(
     int rv;
     ogs_gtp2_cause_t *cause = NULL;
     uint8_t cause_value;
+    sgwc_ue_t *ue_hint = sgwc_ue;
     ogs_pkbuf_t *pkbuf = NULL;
     ogs_gtp_xact_t *s5c_xact = NULL;
     sgwc_sess_t *sess = NULL;
@@ -1714,8 +1755,6 @@ void sgwc_s11_handle_update_bearer_response(
                 bearer_id <= OGS_MAX_POOL_ID);
 
         bearer = sgwc_bearer_find_by_id(bearer_id);
-        if (!bearer)
-            ogs_error("No Bearer ID [%d]", bearer_id);
     } else {
         ogs_assert(s11_xact->data);
         bearer_id = OGS_POINTER_TO_UINT(s11_xact->data);
@@ -1723,21 +1762,12 @@ void sgwc_s11_handle_update_bearer_response(
                 bearer_id <= OGS_MAX_POOL_ID);
 
         bearer = sgwc_bearer_find_by_id(bearer_id);
-        if (!bearer)
-            ogs_error("No Bearer ID [%d]", bearer_id);
     }
 
-    if (bearer) {
+    if (bearer)
         sess = sgwc_sess_find_by_id(bearer->sess_id);
-        if (!sess)
-            ogs_error("No Session ID [%d]", bearer->sess_id);
-    }
-
-    if (sess) {
+    if (sess)
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-        if (!sgwc_ue)
-            ogs_error("No SGWC-UE ID [%d]", sess->sgwc_ue_id);
-    }
 
     sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
 
@@ -1768,16 +1798,9 @@ void sgwc_s11_handle_update_bearer_response(
         cause_value = OGS_GTP2_CAUSE_MANDATORY_IE_MISSING;
     }
 
-    if (!bearer) {
-        ogs_error("No Bearer Context");
-        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
-    }
-    if (!sess) {
-        ogs_error("No Session Context");
-        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
-    }
-    if (!sgwc_ue) {
-        ogs_error("No SGWC-UE Context");
+    if (!bearer || !sess || !sgwc_ue) {
+        sgwc_warn_stale_bearer_rsp(s11_xact, message, ue_hint, bearer_id,
+                bearer, sess, sgwc_ue);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     }
 
@@ -1850,6 +1873,7 @@ void sgwc_s11_handle_delete_bearer_response(
 {
     int rv;
     uint8_t cause_value;
+    sgwc_ue_t *ue_hint = sgwc_ue;
     ogs_gtp_xact_t *s5c_xact = NULL;
 
     sgwc_sess_t *sess = NULL;
@@ -1896,8 +1920,6 @@ void sgwc_s11_handle_delete_bearer_response(
                 bearer_id <= OGS_MAX_POOL_ID);
 
         bearer = sgwc_bearer_find_by_id(bearer_id);
-        if (!bearer)
-            ogs_error("No Bearer ID [%d]", bearer_id);
     } else {
         ogs_assert(s11_xact->data);
         bearer_id = OGS_POINTER_TO_UINT(s11_xact->data);
@@ -1905,21 +1927,12 @@ void sgwc_s11_handle_delete_bearer_response(
                 bearer_id <= OGS_MAX_POOL_ID);
 
         bearer = sgwc_bearer_find_by_id(bearer_id);
-        if (!bearer)
-            ogs_error("No Bearer ID [%d]", bearer_id);
     }
 
-    if (bearer) {
+    if (bearer)
         sess = sgwc_sess_find_by_id(bearer->sess_id);
-        if (!sess)
-            ogs_error("No Session ID [%d]", bearer->sess_id);
-    }
-
-    if (sess) {
+    if (sess)
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
-        if (!sgwc_ue)
-            ogs_error("No SGWC-UE ID [%d]", sess->sgwc_ue_id);
-    }
 
     sgwc_trace_bind_gtp(s11_xact, sgwc_ue);
 
@@ -1932,16 +1945,9 @@ void sgwc_s11_handle_delete_bearer_response(
      ************************/
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
-    if (!bearer) {
-        ogs_error("No Bearer Context");
-        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
-    }
-    if (!sess) {
-        ogs_error("No Session Context");
-        cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
-    }
-    if (!sgwc_ue) {
-        ogs_error("No SGWC-UE Context");
+    if (!bearer || !sess || !sgwc_ue) {
+        sgwc_warn_stale_bearer_rsp(s11_xact, message, ue_hint, bearer_id,
+                bearer, sess, sgwc_ue);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     }
 
