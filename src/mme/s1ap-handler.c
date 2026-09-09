@@ -93,6 +93,43 @@ static bool s1ap_resolve_ue_pair(
     return mme_resolve_enb_ue_mme_ue(enb, pm, pe, out_enb_ue, out_mme_ue);
 }
 
+/* Mandatory S1AP IE missing: eNB already gets Error Indication. WARN +
+ * identity so NMS can see which peer/UE, not a bare ERROR: No TAI. */
+static void s1ap_warn_missing_ie(mme_enb_t *enb, enb_ue_t *enb_ue,
+        const S1AP_ENB_UE_S1AP_ID_t *enb_ue_s1ap_id,
+        const S1AP_MME_UE_S1AP_ID_t *mme_ue_s1ap_id,
+        const char *proc, const char *ie)
+{
+    char buf[OGS_ADDRSTRLEN];
+    mme_ue_t *mme_ue = NULL;
+    unsigned long e_id = 0, m_id = 0;
+
+    ogs_assert(proc);
+    ogs_assert(ie);
+
+    if (enb_ue)
+        mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+
+    if (enb_ue_s1ap_id)
+        e_id = (unsigned long)*enb_ue_s1ap_id;
+    else if (enb_ue)
+        e_id = enb_ue->enb_ue_s1ap_id;
+
+    if (mme_ue_s1ap_id)
+        m_id = (unsigned long)*mme_ue_s1ap_id;
+    else if (enb_ue)
+        m_id = enb_ue->mme_ue_s1ap_id;
+
+    ogs_warn("[S1AP] %s: no %s eNB[id:%u %s] "
+            "enb_ue_s1ap_id[%lu] mme_ue_s1ap_id[%lu] IMSI[%s] — "
+            "mandatory IE missing; Error Indication to eNB",
+            proc, ie,
+            enb ? enb->enb_id : 0,
+            (enb && enb->sctp.addr) ? OGS_ADDR(enb->sctp.addr, buf) : "-",
+            e_id, m_id,
+            (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) ? mme_ue->imsi_bcd : "-");
+}
+
 static bool maximum_number_of_enbs_is_reached(void)
 {
     /*
@@ -1004,7 +1041,8 @@ void s1ap_handle_initial_ue_message(
     }
 
     if (!NAS_PDU) {
-        ogs_error("No NAS_PDU");
+        s1ap_warn_missing_ie(enb, enb_ue, ENB_UE_S1AP_ID, NULL,
+                "InitialUEMessage", "NAS_PDU");
         r = s1ap_send_error_indication(enb, NULL, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -1013,7 +1051,8 @@ void s1ap_handle_initial_ue_message(
     }
 
     if (!TAI) {
-        ogs_error("No TAI");
+        s1ap_warn_missing_ie(enb, enb_ue, ENB_UE_S1AP_ID, NULL,
+                "InitialUEMessage", "TAI");
         r = s1ap_send_error_indication(enb, NULL, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -1022,7 +1061,8 @@ void s1ap_handle_initial_ue_message(
     }
 
     if (!EUTRAN_CGI) {
-        ogs_error("No EUTRAN_CGI");
+        s1ap_warn_missing_ie(enb, enb_ue, ENB_UE_S1AP_ID, NULL,
+                "InitialUEMessage", "EUTRAN_CGI");
         r = s1ap_send_error_indication(enb, NULL, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -1282,7 +1322,8 @@ void s1ap_handle_uplink_nas_transport(
     }
 
     if (!NAS_PDU) {
-        ogs_error("No NAS_PDU");
+        s1ap_warn_missing_ie(enb, enb_ue, ENB_UE_S1AP_ID, MME_UE_S1AP_ID,
+                "UplinkNASTransport", "NAS_PDU");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -1290,7 +1331,8 @@ void s1ap_handle_uplink_nas_transport(
     }
 
     if (!EUTRAN_CGI) {
-        ogs_error("No EUTRAN_CGI");
+        s1ap_warn_missing_ie(enb, enb_ue, ENB_UE_S1AP_ID, MME_UE_S1AP_ID,
+                "UplinkNASTransport", "EUTRAN_CGI");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -1298,7 +1340,8 @@ void s1ap_handle_uplink_nas_transport(
     }
 
     if (!TAI) {
-        ogs_error("No TAI");
+        s1ap_warn_missing_ie(enb, enb_ue, ENB_UE_S1AP_ID, MME_UE_S1AP_ID,
+                "UplinkNASTransport", "TAI");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -3457,7 +3500,8 @@ void s1ap_handle_path_switch_request(
             enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id);
 
     if (!EUTRAN_CGI) {
-        ogs_error("No EUTRAN_CGI");
+        s1ap_warn_missing_ie(enb, enb_ue, ENB_UE_S1AP_ID, MME_UE_S1AP_ID,
+                "PathSwitchRequest", "EUTRAN_CGI");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -3465,7 +3509,8 @@ void s1ap_handle_path_switch_request(
     }
 
     if (!TAI) {
-        ogs_error("No TAI");
+        s1ap_warn_missing_ie(enb, enb_ue, ENB_UE_S1AP_ID, MME_UE_S1AP_ID,
+                "PathSwitchRequest", "TAI");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -5100,7 +5145,8 @@ void s1ap_handle_handover_notification(
     }
 
     if (!EUTRAN_CGI) {
-        ogs_error("No EUTRAN_CGI");
+        s1ap_warn_missing_ie(enb, target_ue, ENB_UE_S1AP_ID, MME_UE_S1AP_ID,
+                "HandoverNotify", "EUTRAN_CGI");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
@@ -5108,7 +5154,8 @@ void s1ap_handle_handover_notification(
     }
 
     if (!TAI) {
-        ogs_error("No TAI");
+        s1ap_warn_missing_ie(enb, target_ue, ENB_UE_S1AP_ID, MME_UE_S1AP_ID,
+                "HandoverNotify", "TAI");
         r = s1ap_send_error_indication(enb, MME_UE_S1AP_ID, ENB_UE_S1AP_ID,
                 S1AP_Cause_PR_protocol, S1AP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
