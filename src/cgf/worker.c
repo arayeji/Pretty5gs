@@ -457,8 +457,10 @@ static bool worker_peer_rto_tick(cgf_worker_t *w, cgf_peer_t *p,
         if (now - x->sent_at < rto) continue;
 
         if (x->retries >= self->request_retries) {
-            ogs_warn("cgf: worker %d DTRR seq=%u ptc=%u gave up after "
-                    "%u retries", w->id, x->seq, x->ptc, x->retries);
+            ogs_error("cgf: worker %d DTRR seq=%u ptc=%u to '%s' timed out "
+                    "after %u/%u retries — giving up",
+                    w->id, x->seq, x->ptc, p->address_str,
+                    x->retries, self->request_retries);
             if (x->file)
                 worker_abort_file_pipeline(p, x->file, true);
             else
@@ -471,6 +473,10 @@ static bool worker_peer_rto_tick(cgf_worker_t *w, cgf_peer_t *p,
     }
 
     if (gave_up) {
+        if (p->state != CGF_PEER_STATE_DOWN)
+            ogs_error("cgf: worker %d peer '%s' marked DOWN "
+                    "(DTRR retries exhausted)",
+                    w->id, p->address_str);
         p->state = CGF_PEER_STATE_DOWN;
         if (self->send_mode != CGF_SEND_MODE_ROUND_ROBIN)
             worker_switch_to_next_peer(w);

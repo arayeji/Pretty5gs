@@ -480,8 +480,10 @@ static bool peer_rto_tick(cgf_peer_t *p, ogs_time_t now, ogs_time_t rto)
         if (now - x->sent_at < rto) continue;
 
         if (x->retries >= self->request_retries) {
-            ogs_warn("cgf: DTRR seq=%u ptc=%u gave up after %u retries",
-                    x->seq, x->ptc, x->retries);
+            ogs_error("cgf: DTRR seq=%u ptc=%u to '%s' timed out "
+                    "after %u/%u retries — giving up",
+                    x->seq, x->ptc, p->address_str,
+                    x->retries, self->request_retries);
             if (x->file)
                 abort_file_pipeline(p, x->file, true);
             else
@@ -495,7 +497,7 @@ static bool peer_rto_tick(cgf_peer_t *p, ogs_time_t now, ogs_time_t rto)
 
     if (gave_up) {
         if (p->state != CGF_PEER_STATE_DOWN)
-            ogs_warn("cgf: peer '%s' marked DOWN (DTRR retries exhausted)",
+            ogs_error("cgf: peer '%s' marked DOWN (DTRR retries exhausted)",
                     p->address_str);
         p->state = CGF_PEER_STATE_DOWN;
         /*
