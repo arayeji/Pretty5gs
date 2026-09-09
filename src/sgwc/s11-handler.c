@@ -37,6 +37,33 @@ static void sgwc_log_gtp_cause(uint8_t cause_value)
         ogs_error("GTP Cause [Value:%d]", cause_value);
 }
 
+/* Stale S11 TEID after MME restart, implicit detach, or HO. Reply
+ * CONTEXT_NOT_FOUND; this is not an SGW-C defect. */
+static void sgwc_warn_no_s11_ue(ogs_gtp_xact_t *xact,
+        ogs_gtp2_message_t *message, const char *proc)
+{
+    char buf[OGS_ADDRSTRLEN];
+    uint32_t teid = 0;
+    uint32_t sqn = 0;
+    const char *peer = "-";
+
+    if (message) {
+        teid = message->h.teid;
+        sqn = OGS_GTP2_SQN_TO_XID(message->h.sqn);
+    }
+    if (xact) {
+        if (!teid)
+            teid = xact->local_teid;
+        if (xact->gnode)
+            peer = OGS_ADDR(&xact->gnode->addr, buf);
+    }
+
+    ogs_warn("[S11] %s: no UE context TEID[0x%x] seq[%u] peer[%s] — "
+            "stale SGW TEID (MME restart/detach/HO); "
+            "reply CONTEXT_NOT_FOUND",
+            proc ? proc : "S11", teid, sqn, peer ? peer : "-");
+}
+
 static bool sgwc_s11_message_recovery(
         ogs_gtp2_message_t *message, uint8_t *recovery)
 {
@@ -783,7 +810,7 @@ void sgwc_s11_handle_create_session_request(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sgwc_ue) {
-        ogs_error("No Context");
+        sgwc_warn_no_s11_ue(s11_xact, message, "Create Session Request");
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     }
 
@@ -934,7 +961,7 @@ void sgwc_s11_handle_modify_bearer_request(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sgwc_ue) {
-        ogs_error("No Context");
+        sgwc_warn_no_s11_ue(s11_xact, message, "Modify Bearer Request");
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     }
 
@@ -2313,7 +2340,8 @@ void sgwc_s11_handle_create_indirect_data_forwarding_tunnel_request(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sgwc_ue) {
-        ogs_error("No Context");
+        sgwc_warn_no_s11_ue(s11_xact, message,
+                "Create Indirect Data Forwarding Tunnel Request");
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     }
 
@@ -2567,7 +2595,8 @@ void sgwc_s11_handle_delete_indirect_data_forwarding_tunnel_request(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sgwc_ue) {
-        ogs_error("No Context");
+        sgwc_warn_no_s11_ue(s11_xact, recv_message,
+                "Delete Indirect Data Forwarding Tunnel Request");
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     }
 
@@ -2652,7 +2681,7 @@ void sgwc_s11_handle_bearer_resource_command(
     cause_value = OGS_GTP2_CAUSE_REQUEST_ACCEPTED;
 
     if (!sgwc_ue) {
-        ogs_error("No Context");
+        sgwc_warn_no_s11_ue(s11_xact, message, "Bearer Resource Command");
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         if (cmd->linked_eps_bearer_id.presence == 0) {
