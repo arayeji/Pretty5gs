@@ -125,22 +125,33 @@ int ogs_addaddrinfo(ogs_sockaddr_t **sa_list,
     rc = getaddrinfo(hostname, service, &hints, &ai_list);
     if (rc != 0) {
         /*
-         * NXDOMAIN / temporary DNS failure is routine for APN-FQDN lookup
-         * of unknown/typo APNs (e.g. green.apn...). Keep as WARN so it
-         * does not flood production ERROR logs; other failures stay ERROR.
+         * A/AAAA miss is routine for 3GPP APN-FQDNs (NAPTR/SRV point at
+         * the PGW; the APN name itself often has no A/AAAA). Also
+         * EAI_AGAIN when the stub resolver is busy. Do not attach
+         * errno — getaddrinfo uses gai rc; leftover EAGAIN (11) was
+         * printed as "Resource temporarily unavailable" and hid NODATA.
          */
-        ogs_log_message(
-#if defined(EAI_NONAME) && defined(EAI_AGAIN)
-                (rc == EAI_NONAME || rc == EAI_AGAIN) ?
-                    OGS_LOG_WARN : OGS_LOG_ERROR,
-#else
-                OGS_LOG_ERROR,
+        bool soft = false;
+
+#ifdef EAI_NONAME
+        if (rc == EAI_NONAME) soft = true;
 #endif
-                ogs_socket_errno,
-                "getaddrinfo(%d:%s:%d:0x%x) failed: %s",
+#ifdef EAI_AGAIN
+        if (rc == EAI_AGAIN) soft = true;
+#endif
+#ifdef EAI_NODATA
+        if (rc == EAI_NODATA) soft = true;
+#endif
+#ifdef EAI_ADDRFAMILY
+        if (rc == EAI_ADDRFAMILY) soft = true;
+#endif
+        ogs_log_message(soft ? OGS_LOG_WARN : OGS_LOG_ERROR, 0,
+                "getaddrinfo A/AAAA family=%d host=%s port=%u flags=0x%x "
+                "failed: %s (gai=%d)%s",
                 family, hostname ? hostname : "(null)",
-                port, flags, gai_strerror(rc));
-        /* Non-fatal: log the error and return */
+                port, flags, gai_strerror(rc), rc,
+                soft ? " — no A/AAAA (NAPTR/SRV may still exist, "
+                       "or resolver busy)" : "");
         return OGS_ERROR;
     }
 
