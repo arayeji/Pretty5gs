@@ -88,6 +88,15 @@ void cgf_gtpp_close(void);
 int cgf_gtpp_open_peer(cgf_peer_t *peer, ogs_pollset_t *pollset,
         ogs_poll_handler_f recv_cb, void *data);
 
+/*
+ * Close and re-open one peer's endpoint so it gets a fresh UDP source
+ * port, and reset its GTP' sequence space. Used when a peer is marked
+ * DOWN: the recovery echo would otherwise be sent from the same flow
+ * that stopped being answered. Main-thread (workers <= 1) only; the
+ * caller must abort in-flight xacts first.
+ */
+int cgf_gtpp_reopen_peer(cgf_peer_t *peer);
+
 /* Build and transmit an Echo Request to the given peer. Updates
  * peer->last_echo_sent and peer->next_seq; on socket error returns
  * OGS_ERROR and the caller should mark the peer down. */

@@ -80,6 +80,23 @@ static cgf_peer_t *peer_holding_file(cgf_spool_file_t *file)
  * new file lands on the next peer. Returns NULL when every peer is
  * DOWN or full.
  */
+/*
+ * Until an Echo Response has confirmed a peer, keep only a token number
+ * of DTRRs in flight against it. A full window handed to a peer that is
+ * not in fact answering expires all at once and marks it DOWN before it
+ * ever had the chance to reply -- which is how a healthy but slow peer
+ * gets dropped from the pool within seconds of start-up.
+ */
+#define CGF_PROBING_WINDOW 2
+
+static uint32_t peer_effective_window(const cgf_peer_t *p, uint32_t window)
+{
+    if (p && p->state == CGF_PEER_STATE_PROBING &&
+            window > CGF_PROBING_WINDOW)
+        return CGF_PROBING_WINDOW;
+    return window;
+}
+
 static cgf_peer_t *rr_pick_peer(uint32_t window)
 {
     cgf_context_t *self = cgf_self();
@@ -93,7 +110,8 @@ static cgf_peer_t *rr_pick_peer(uint32_t window)
         cgf_peer_t *p = &self->peers[idx];
 
         if (!p->sock || !peer_may_send(p)) continue;
-        if (cgf_gtpp_inflight_count(p) >= window) continue;
+        if (cgf_gtpp_inflight_count(p) >= peer_effective_window(p, window))
+            continue;
 
         /* Next new assignment starts after this peer. */
         self->active_peer_idx = (idx + 1) % self->num_of_peers;
@@ -111,7 +129,9 @@ static cgf_peer_t *select_peer_for_file(cgf_spool_file_t *file, uint32_t window)
     if (self->send_mode == CGF_SEND_MODE_ROUND_ROBIN) {
         p = peer_holding_file(file);
         if (p) {
-            if (!peer_may_send(p) || cgf_gtpp_inflight_count(p) >= window)
+            if (!peer_may_send(p) ||
+                    cgf_gtpp_inflight_count(p) >=
+                            peer_effective_window(p, window))
                 return NULL;
             return p;
         }
@@ -119,7 +139,8 @@ static cgf_peer_t *select_peer_for_file(cgf_spool_file_t *file, uint32_t window)
     }
 
     p = active_peer();
-    if (!p || !peer_may_send(p) || cgf_gtpp_inflight_count(p) >= window)
+    if (!p || !peer_may_send(p) ||
+            cgf_gtpp_inflight_count(p) >= peer_effective_window(p, window))
         return NULL;
     return p;
 }
@@ -398,7 +419,13 @@ void cgf_sm_on_echo_tick(void)
 
     for (i = 0; i < self->num_of_peers; i++) {
         cgf_peer_t *p = &self->peers[i];
-        if (!p->sock) continue;
+
+        /*
+         * A re-dial can fail on a transient resolver or socket error,
+         * which would otherwise strand the peer with no endpoint and so
+         * no way back. Retry it here before anything else.
+         */
+        if (!p->sock && cgf_gtpp_reopen_peer(p) != OGS_OK) continue;
 
         if (p->last_echo_sent > p->last_echo_received) {
             p->consecutive_missed_echoes++;
@@ -423,9 +450,17 @@ void cgf_sm_on_echo_tick(void)
                     if (self->send_mode != CGF_SEND_MODE_ROUND_ROBIN)
                         switch_to_next_peer();
                 }
+                /*
+                 * Fresh source port, so the echo below has a path back
+                 * even when it is this flow that stopped being answered
+                 * rather than the CGF itself.
+                 */
+                abort_in_flight(p, "peer socket re-dialled");
+                cgf_gtpp_reopen_peer(p);
             }
         }
 
+        if (!p->sock) continue;
         cgf_gtpp_send_echo_request(p);
     }
 }
@@ -459,7 +494,18 @@ static bool peer_rto_tick(cgf_peer_t *p, ogs_time_t now, ogs_time_t rto)
     }
 
     if (gave_up) {
+        if (p->state != CGF_PEER_STATE_DOWN)
+            ogs_warn("cgf: peer '%s' marked DOWN (DTRR retries exhausted)",
+                    p->address_str);
         p->state = CGF_PEER_STATE_DOWN;
+        /*
+         * Re-dial before the next echo tick. Only an Echo Response brings
+         * a peer back, and that echo would otherwise leave from the very
+         * endpoint whose replies just stopped arriving, so the peer would
+         * stay DOWN until the process was restarted.
+         */
+        abort_in_flight(p, "peer socket re-dialled");
+        cgf_gtpp_reopen_peer(p);
         if (self->send_mode != CGF_SEND_MODE_ROUND_ROBIN)
             switch_to_next_peer();
     }

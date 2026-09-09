@@ -185,6 +185,45 @@ int cgf_gtpp_open(void)
     return rv_any;
 }
 
+/*
+ * Re-dial one peer: drop the existing endpoint and open a fresh one.
+ *
+ * A peer is only ever brought back to UP by an Echo Response, and that
+ * recovery echo leaves from the same UDP endpoint that stopped being
+ * answered. When it is the flow that is broken rather than the CGF
+ * itself, the reply can never arrive and the peer stays DOWN until the
+ * process is restarted. Re-dialling takes a fresh source port so the
+ * next echo has a path back.
+ *
+ * The new endpoint is a new GTP' sequence space (TS 32.295 6.1.1), so
+ * the caller aborts whatever is still in flight first; next_seq is reset
+ * here. Main-thread only: it re-registers against ogs_app()->pollset
+ * with this file's recv callback, while drain workers own their own
+ * pollsets and callbacks. Never call it from inside that recv callback.
+ */
+int cgf_gtpp_reopen_peer(cgf_peer_t *peer)
+{
+    int rv;
+
+    ogs_assert(peer);
+    if (cgf_workers_enabled()) return OGS_ERROR;
+
+    if (peer->poll) { ogs_pollset_remove(peer->poll); peer->poll = NULL; }
+    if (peer->sock) { ogs_sock_destroy(peer->sock); peer->sock = NULL; }
+
+    rv = cgf_gtpp_open_peer(peer, ogs_app()->pollset, recv_cb, peer);
+    if (rv != OGS_OK) {
+        ogs_error("cgf: re-dial of peer '%s' failed, retrying on the "
+                "next echo tick", peer->address_str);
+        return rv;
+    }
+
+    cgf_gtpp_reset_seq(peer);
+    ogs_warn("cgf: peer '%s' re-dialled on a fresh local port",
+            peer->address_str);
+    return OGS_OK;
+}
+
 void cgf_gtpp_close(void)
 {
     uint32_t i;
