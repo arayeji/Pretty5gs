@@ -435,7 +435,9 @@ static void worker_on_echo_tick(cgf_worker_t *w)
             }
         }
 
-        cgf_gtpp_send_echo_request(p);
+        if (cgf_gtpp_send_echo_request(p) != OGS_OK)
+            ogs_warn("cgf: worker %d echo send to '%s' failed",
+                    w->id, p->address_str);
     }
 }
 
@@ -492,6 +494,40 @@ static void worker_on_rto_tick(cgf_worker_t *w)
     } else {
         any_gave_up = worker_peer_rto_tick(w, worker_active_peer(w),
                 now, rto);
+    }
+
+    /*
+     * Recovery probe.
+     *
+     * A peer in CGF_PEER_STATE_DOWN is rejected by worker_peer_may_send(),
+     * so it is never chosen to carry a DTRR.  The only thing that can put
+     * it back to UP is cgf_sm_on_echo_response(), which needs an echo
+     * request to have gone out.  If the echo timer is not running -- or
+     * the very first echo at thread-init failed, leaving the peer at the
+     * zero-valued DOWN state -- the peer is stranded permanently and the
+     * pool silently degrades to the survivors.
+     *
+     * Drive a probe from this tick as well (the RTO timer), rate-limited
+     * to the configured echo cadence, so a DOWN peer always has a path
+     * back regardless of the echo timer.
+     */
+    {
+        ogs_time_t probe_interval =
+                ogs_time_from_sec(self->echo_interval_s);
+        uint32_t i;
+
+        for (i = 0; i < w->num_of_peers; i++) {
+            cgf_peer_t *p = &w->peers[i];
+
+            if (!p->sock) continue;
+            if (p->state != CGF_PEER_STATE_DOWN) continue;
+            if (p->last_echo_sent &&
+                    now - p->last_echo_sent < probe_interval) continue;
+
+            if (cgf_gtpp_send_echo_request(p) != OGS_OK)
+                ogs_warn("cgf: worker %d recovery probe to '%s' failed",
+                        w->id, p->address_str);
+        }
     }
 
     if (any_gave_up)
