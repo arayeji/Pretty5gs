@@ -1255,9 +1255,34 @@ next_bearer:
     }
 
     if (num_of_modified == 0) {
-        ogs_error("[%s] Modify Bearer Request: none of the %d bearer "
-                "context(s) is known to the SGW",
-                sgwc_ue->imsi_bcd, num_of_unknown);
+        char buf[OGS_ADDRSTRLEN];
+        char ebi_buf[64];
+        int e, off = 0;
+        uint32_t teid = message->h.teid ? message->h.teid :
+            s11_xact->local_teid;
+        uint32_t sqn = OGS_GTP2_SQN_TO_XID(message->h.sqn);
+        const char *peer = s11_xact->gnode ?
+            OGS_ADDR(&s11_xact->gnode->addr, buf) : "-";
+
+        ebi_buf[0] = '\0';
+        for (e = 0; e < OGS_BEARER_PER_UE; e++) {
+            if (!req->bearer_contexts_to_be_modified[e].presence ||
+                    !req->bearer_contexts_to_be_modified[e].
+                        eps_bearer_id.presence)
+                break;
+            off += ogs_snprintf(ebi_buf + off, sizeof(ebi_buf) - off, "%s%u",
+                    off ? "," : "",
+                    req->bearer_contexts_to_be_modified[e].eps_bearer_id.u8);
+            if (off < 0 || off >= (int)sizeof(ebi_buf))
+                break;
+        }
+
+        ogs_warn("[S11] Modify Bearer Request: none of %d bearer "
+                "context(s) known IMSI[%s] EBI[%s] TEID[0x%x] seq[%u] "
+                "peer[%s] — already released; reply CONTEXT_NOT_FOUND",
+                num_of_unknown, sgwc_ue->imsi_bcd,
+                ebi_buf[0] ? ebi_buf : "-",
+                teid, sqn, peer);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
         goto cleanup;
     }
