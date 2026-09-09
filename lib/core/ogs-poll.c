@@ -86,9 +86,17 @@ ogs_poll_t *ogs_pollset_add(ogs_pollset_t *pollset, short when,
     memset(poll, 0, sizeof(*poll));
 
     rc = ogs_nonblocking(fd);
-    ogs_assert(rc == OGS_OK);
+    if (rc != OGS_OK) {
+        ogs_error("ogs_pollset_add: fd not usable");
+        ogs_pool_free(&pollset->pool, poll);
+        return NULL;
+    }
     rc = ogs_closeonexec(fd);
-    ogs_assert(rc == OGS_OK);
+    if (rc != OGS_OK) {
+        ogs_error("ogs_pollset_add: close-on-exec failed");
+        ogs_pool_free(&pollset->pool, poll);
+        return NULL;
+    }
 
     poll->when = when;
     poll->fd = fd;

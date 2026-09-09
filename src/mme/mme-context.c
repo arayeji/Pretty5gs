@@ -5240,6 +5240,7 @@ void mme_vlr_close(mme_vlr_t *vlr)
     vlr->sock = NULL;
     vlr->tx_stall_since = 0;
     vlr->tx_stall_posted = false;
+    vlr->connect_wait_ticks = 0;
     mme_ctx_unlock();
 
     if (poll)

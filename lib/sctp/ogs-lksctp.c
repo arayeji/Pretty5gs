@@ -18,6 +18,9 @@
  */
 
 #include "ogs-sctp.h"
+#ifndef _WIN32
+#include <errno.h>
+#endif
 
 #undef OGS_LOG_DOMAIN
 #define OGS_LOG_DOMAIN __ogs_sock_domain
@@ -359,7 +362,8 @@ ogs_sock_t *ogs_sctp_client(
             /* Error already logged. */
             goto err;
         }
-        /* We can bind them using sctp_bindx() if desired. */
+        /* Restart after ABORT leaves the local port in TIME-WAIT. */
+        (void)ogs_listen_reusable(new_sock->fd, 1);
         rv = sctp_bindx(new_sock->fd,
                         (struct sockaddr *)local_buf,
                         local_count,
@@ -376,14 +380,29 @@ ogs_sock_t *ogs_sctp_client(
      * Connect to the REMOTE addresses using sctp_connectx().
      * (struct sockaddr *)remote_buf is the contiguous buffer.
      */
+    /* Non-blocking INIT: a blocking connectx freezes the MME for the
+     * full SCTP timeout when the VLR is down, and the 3 s reconnect
+     * timer then races the leftover fd. COMM_UP / CANT_STR_ASSOC
+     * complete the handshake on the poll loop. */
+    if (ogs_nonblocking(new_sock->fd) != OGS_OK)
+        goto err;
+
     rv = sctp_connectx(new_sock->fd,
                        (struct sockaddr *)remote_buf,
                        remote_count,
                        NULL /* assoc_id */);
     if (rv < 0) {
-        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
-                        "sctp_connectx() failed to connect");
-        goto err;
+        int err = ogs_socket_errno;
+        if (!ogs_socket_errno_would_block() &&
+                err != EINPROGRESS
+#ifdef EALREADY
+                && err != EALREADY
+#endif
+                ) {
+            ogs_log_message(OGS_LOG_ERROR, err,
+                            "sctp_connectx() failed to connect");
+            goto err;
+        }
     }
 
     /* Debug log for the first remote address. */

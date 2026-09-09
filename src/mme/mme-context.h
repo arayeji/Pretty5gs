@@ -634,6 +634,10 @@ typedef struct mme_vlr_s {
     bool            seen;       /* still present in the reloaded config */
     bool            retired;    /* address gone on SIGHUP; SCTP closed */
 
+    /* 3 s connect-timer ticks spent waiting for COMM_UP. After a few
+     * with no association, close the leftover and try again. */
+    int             connect_wait_ticks;
+
     /*
      * Optional SGsAP MME Name IE override for this VLR (ASCII FQDN).
      * NULL = build from the UE visited/serving PLMN (TS 23.003).

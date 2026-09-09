@@ -18,6 +18,9 @@
  */
 
 #include "ogs-sctp.h"
+#ifndef _WIN32
+#include <fcntl.h>
+#endif
 #include "sgsap-path.h"
 
 #include "mme-context.h"
@@ -32,6 +35,17 @@ static void lksctp_recv_handler(short when, ogs_socket_t fd, void *data);
 
 static void recv_handler(ogs_sock_t *sock);
 
+bool sgsap_sock_usable(const ogs_sock_t *sock)
+{
+    if (!sock || sock->fd == INVALID_SOCKET)
+        return false;
+#ifndef _WIN32
+    if (fcntl(sock->fd, F_GETFL, NULL) < 0)
+        return false;
+#endif
+    return true;
+}
+
 ogs_sock_t *sgsap_client(mme_vlr_t *vlr)
 {
     ogs_sock_t *sock = NULL;
@@ -39,8 +53,10 @@ ogs_sock_t *sgsap_client(mme_vlr_t *vlr)
     ogs_assert(vlr);
 
     /* Already associating: a second connect() is a new 4-way INIT.
-     * OsmoMSC then closes the previous link as "replaced". */
-    if (vlr->sock && vlr->sock->fd != INVALID_SOCKET)
+     * OsmoMSC then closes the previous link as "replaced". A dead
+     * leftover fd must not be reused — F_GETFL EBADF then aborted
+     * pollset_add. */
+    if (sgsap_sock_usable(vlr->sock) && vlr->poll)
         return vlr->sock;
 
     /* Tear down a leftover poll/fd before replacing vlr->sock. */
@@ -49,26 +65,45 @@ ogs_sock_t *sgsap_client(mme_vlr_t *vlr)
 
     sock = ogs_sctp_client(SOCK_STREAM,
             vlr->sa_list, vlr->local_sa_list, vlr->option);
-    if (sock) {
-        /* Non-blocking: sgsap-io holds mme_ctx_lock across sendmsg so a
-         * blocking send would stall every ctx-lock user (shards / main). */
-#if HAVE_USRSCTP
-        usrsctp_set_non_blocking((struct socket *)sock, 1);
-        usrsctp_set_upcall((struct socket *)sock, usrsctp_recv_handler, NULL);
-#else
-        ogs_nonblocking(sock->fd);
-        vlr->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, lksctp_recv_handler, sock);
-        ogs_assert(vlr->poll);
-#endif
-        /* paired with the sgsap-io thread reading vlr->sock under the
-         * same lock (see mme_vlr_close / sgsap-io.c) */
-        mme_ctx_lock();
-        vlr->sock = sock;
-        mme_ctx_unlock();
-        ogs_info("sgsap client() %s",
+    if (!sock)
+        return NULL;
+
+    if (!sgsap_sock_usable(sock)) {
+        ogs_error("SGsAP: socket unusable after connect to %s",
                 ogs_sockaddr_to_string_static(vlr->sa_list));
+        ogs_sctp_destroy(sock);
+        return NULL;
     }
+
+    /* Non-blocking: sgsap-io holds mme_ctx_lock across sendmsg so a
+     * blocking send would stall every ctx-lock user (shards / main). */
+#if HAVE_USRSCTP
+    usrsctp_set_non_blocking((struct socket *)sock, 1);
+    usrsctp_set_upcall((struct socket *)sock, usrsctp_recv_handler, NULL);
+#else
+    if (ogs_nonblocking(sock->fd) != OGS_OK) {
+        ogs_error("SGsAP: nonblocking failed for %s",
+                ogs_sockaddr_to_string_static(vlr->sa_list));
+        ogs_sctp_destroy(sock);
+        return NULL;
+    }
+    vlr->poll = ogs_pollset_add(ogs_app()->pollset,
+            OGS_POLLIN, sock->fd, lksctp_recv_handler, sock);
+    if (!vlr->poll) {
+        ogs_error("SGsAP: pollset_add failed for %s",
+                ogs_sockaddr_to_string_static(vlr->sa_list));
+        ogs_sctp_destroy(sock);
+        return NULL;
+    }
+#endif
+    /* paired with the sgsap-io thread reading vlr->sock under the
+     * same lock (see mme_vlr_close / sgsap-io.c) */
+    mme_ctx_lock();
+    vlr->sock = sock;
+    vlr->connect_wait_ticks = 0;
+    mme_ctx_unlock();
+    ogs_info("sgsap client() %s",
+            ogs_sockaddr_to_string_static(vlr->sa_list));
 
     return sock;
 }
@@ -156,12 +191,20 @@ static void recv_handler(ogs_sock_t *sock)
                     ogs_warn("SGsAP COMM_UP with 0 outbound streams");
                 }
             } else if (not->sn_assoc_change.sac_state == SCTP_SHUTDOWN_COMP ||
-                    not->sn_assoc_change.sac_state == SCTP_COMM_LOST) {
+                    not->sn_assoc_change.sac_state == SCTP_COMM_LOST
+#ifdef SCTP_CANT_STR_ASSOC
+                    || not->sn_assoc_change.sac_state == SCTP_CANT_STR_ASSOC
+#endif
+                    ) {
 
                 if (not->sn_assoc_change.sac_state == SCTP_SHUTDOWN_COMP)
                     ogs_debug("SCTP_SHUTDOWN_COMP");
                 if (not->sn_assoc_change.sac_state == SCTP_COMM_LOST)
                     ogs_debug("SCTP_COMM_LOST");
+#ifdef SCTP_CANT_STR_ASSOC
+                if (not->sn_assoc_change.sac_state == SCTP_CANT_STR_ASSOC)
+                    ogs_warn("SGsAP SCTP_CANT_STR_ASSOC");
+#endif
 
                 sgsap_event_push(MME_EVENT_SGSAP_LO_CONNREFUSED,
                         sock, NULL, NULL, 0, 0);

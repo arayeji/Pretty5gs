@@ -1993,17 +1993,10 @@ cleanup:
         }
         ogs_assert(OGS_FSM_STATE(&vlr->sm));
 
-        if (OGS_FSM_CHECK(&vlr->sm, sgsap_state_connected)) {
-            e->vlr = vlr;
-            ogs_fsm_dispatch(&vlr->sm, e);
-
-            ogs_info("VLR-SGs %s connection refused!!!",
-                    ogs_sockaddr_to_string_static(vlr->sa_list));
-
-        } else {
-            ogs_warn("VLR-SGs %s connection refused, Already Removed!",
-                    ogs_sockaddr_to_string_static(vlr->sa_list));
-        }
+        e->vlr = vlr;
+        ogs_fsm_dispatch(&vlr->sm, e);
+        ogs_info("VLR-SGs %s connection refused",
+                ogs_sockaddr_to_string_static(vlr->sa_list));
 
         break;
     case MME_EVENT_SGSAP_TX_STALL:
@@ -2023,13 +2016,8 @@ cleanup:
         }
         ogs_assert(OGS_FSM_STATE(&vlr->sm));
 
-        if (OGS_FSM_CHECK(&vlr->sm, sgsap_state_connected)) {
-            e->vlr = vlr;
-            ogs_fsm_dispatch(&vlr->sm, e);
-        } else {
-            ogs_warn("VLR-SGs %s TX stalled, but not in connected state",
-                    ogs_sockaddr_to_string_static(vlr->sa_list));
-        }
+        e->vlr = vlr;
+        ogs_fsm_dispatch(&vlr->sm, e);
         break;
     case MME_EVENT_SGSAP_MESSAGE:
         pkbuf = e->pkbuf;

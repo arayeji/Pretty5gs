@@ -159,20 +159,32 @@ void sgsap_state_will_connect(ogs_fsm_t *s, mme_event_t *e)
             ogs_assert(addr);
 
             /*
-             * sctp_connectx already succeeded: tearing down here ABORTs
-             * a live assoc and OsmoMSC logs "replaced by a new
-             * connection". If the socket is up, COMM_UP was late/missed.
+             * Socket present does not mean the association is up.
+             * Treating it as connected left a dead fd in place, then
+             * pollset_add / double-free on the next retry. Wait a few
+             * ticks for COMM_UP; then ABORT the leftover and reconnect.
              */
-            if (vlr->sock && vlr->sock->fd != INVALID_SOCKET) {
-                ogs_info("[SGsAP] Connect timer while SCTP is up [%s]:%d "
-                        "— treating as connected",
+            if (sgsap_sock_usable(vlr->sock)) {
+                vlr->connect_wait_ticks++;
+                if (vlr->connect_wait_ticks < 3) {
+                    ogs_info("[SGsAP] Waiting for COMM_UP [%s]:%d "
+                            "(tick %d)",
+                            OGS_ADDR(addr, buf), OGS_PORT(addr),
+                            vlr->connect_wait_ticks);
+                    ogs_timer_start(vlr->t_conn,
+                            mme_timer_cfg(MME_TIMER_SGS_CLI_CONN_TO_SRV)->
+                                    duration);
+                    break;
+                }
+                ogs_warn("[SGsAP] No COMM_UP [%s]:%d — close and retry",
                         OGS_ADDR(addr, buf), OGS_PORT(addr));
-                OGS_FSM_TRAN(s, sgsap_state_connected);
-                break;
+                mme_vlr_close(vlr);
+            } else {
+                ogs_warn("[SGsAP] Connect to VLR [%s]:%d failed",
+                        OGS_ADDR(addr, buf), OGS_PORT(addr));
+                if (vlr->sock || vlr->poll)
+                    mme_vlr_close(vlr);
             }
-
-            ogs_warn("[SGsAP] Connect to VLR [%s]:%d failed",
-                        OGS_ADDR(addr, buf), OGS_PORT(addr));
 
             ogs_assert(vlr->t_conn);
             ogs_timer_start(vlr->t_conn,
@@ -202,6 +214,12 @@ void sgsap_state_will_connect(ogs_fsm_t *s, mme_event_t *e)
         break;
     case MME_EVENT_SGSAP_LO_CONNREFUSED:
     case MME_EVENT_SGSAP_TX_STALL:
+        /* Handshake failed while still connecting. Drop the leftover
+         * so the 3 s timer opens a new socket instead of reuse. */
+        mme_vlr_close(vlr);
+        if (vlr->t_conn)
+            ogs_timer_start(vlr->t_conn,
+                    mme_timer_cfg(MME_TIMER_SGS_CLI_CONN_TO_SRV)->duration);
         break;
     default:
         if (ogs_log_guard())
