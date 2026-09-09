@@ -701,7 +701,10 @@ for (k, v) in sorted_msg_list:
     for ie in [ies for ies in msg_list[k]["ies"] if ies["presence"] == "M"]:
         f.write("    size = ogs_nas_eps_decode_%s(&%s->%s, pkbuf);\n" % (v_lower(ie["type"]), v_lower(k), v_lower(ie["value"])))
         f.write("    if (size < 0) {\n")
-        f.write("        ogs_error(\"ogs_nas_eps_decode_%s() failed\");\n" % v_lower(ie["type"]))
+        if v_lower(ie["type"]) == "eps_mobile_identity":
+            f.write("        ogs_warn(\"[NAS] %s: decode EPS mobile identity IE[%s] failed\");\n" % (v_lower(k), v_lower(ie["value"])))
+        else:
+            f.write("        ogs_error(\"ogs_nas_eps_decode_%s() failed\");\n" % v_lower(ie["type"]))
         f.write("        return size;\n")
         f.write("    }\n\n")
         f.write("    decoded += size;\n\n")
@@ -730,7 +733,10 @@ for (k, v) in sorted_msg_list:
             f.write("            ogs_assert(ogs_pkbuf_push(pkbuf, 1));\n")
         f.write("            size = ogs_nas_eps_decode_%s(&%s->%s, pkbuf);\n" % (v_lower(ie["type"]), v_lower(k), v_lower(ie["value"])))
         f.write("            if (size < 0) {\n")
-        f.write("               ogs_error(\"ogs_nas_eps_decode_%s() failed\");\n" % v_lower(ie["type"]))
+        if v_lower(ie["type"]) == "eps_mobile_identity":
+            f.write("               ogs_warn(\"[NAS] %s: decode EPS mobile identity IE[%s] failed\");\n" % (v_lower(k), v_lower(ie["value"])))
+        else:
+            f.write("               ogs_error(\"ogs_nas_eps_decode_%s() failed\");\n" % v_lower(ie["type"]))
         f.write("               return size;\n")
         f.write("            }\n\n")
         f.write("            %s->presencemask |= OGS_NAS_EPS_%s_%s_PRESENT;\n" % (v_lower(k), v_upper(k), v_upper(ie["value"])))

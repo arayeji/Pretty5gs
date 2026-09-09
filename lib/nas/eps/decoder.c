@@ -101,7 +101,7 @@ int ogs_nas_eps_decode_attach_request(ogs_nas_eps_message_t *message, ogs_pkbuf_
 
     size = ogs_nas_eps_decode_eps_mobile_identity(&attach_request->eps_mobile_identity, pkbuf);
     if (size < 0) {
-        ogs_error("ogs_nas_eps_decode_eps_mobile_identity() failed");
+        ogs_warn("[NAS] attach_request: decode EPS mobile identity IE[eps_mobile_identity] failed");
         return size;
     }
 
@@ -148,7 +148,7 @@ int ogs_nas_eps_decode_attach_request(ogs_nas_eps_message_t *message, ogs_pkbuf_
         case OGS_NAS_EPS_ATTACH_REQUEST_ADDITIONAL_GUTI_TYPE:
             size = ogs_nas_eps_decode_eps_mobile_identity(&attach_request->additional_guti, pkbuf);
             if (size < 0) {
-               ogs_error("ogs_nas_eps_decode_eps_mobile_identity() failed");
+               ogs_warn("[NAS] attach_request: decode EPS mobile identity IE[additional_guti] failed");
                return size;
             }
 
@@ -479,7 +479,7 @@ int ogs_nas_eps_decode_attach_accept(ogs_nas_eps_message_t *message, ogs_pkbuf_t
         case OGS_NAS_EPS_ATTACH_ACCEPT_GUTI_TYPE:
             size = ogs_nas_eps_decode_eps_mobile_identity(&attach_accept->guti, pkbuf);
             if (size < 0) {
-               ogs_error("ogs_nas_eps_decode_eps_mobile_identity() failed");
+               ogs_warn("[NAS] attach_accept: decode EPS mobile identity IE[guti] failed");
                return size;
             }
 
@@ -921,7 +921,7 @@ int ogs_nas_eps_decode_detach_request_from_ue(ogs_nas_eps_message_t *message, og
 
     size = ogs_nas_eps_decode_eps_mobile_identity(&detach_request_from_ue->eps_mobile_identity, pkbuf);
     if (size < 0) {
-        ogs_error("ogs_nas_eps_decode_eps_mobile_identity() failed");
+        ogs_warn("[NAS] detach_request_from_ue: decode EPS mobile identity IE[eps_mobile_identity] failed");
         return size;
     }
 
@@ -1025,7 +1025,7 @@ int ogs_nas_eps_decode_tracking_area_update_request(ogs_nas_eps_message_t *messa
 
     size = ogs_nas_eps_decode_eps_mobile_identity(&tracking_area_update_request->old_guti, pkbuf);
     if (size < 0) {
-        ogs_error("ogs_nas_eps_decode_eps_mobile_identity() failed");
+        ogs_warn("[NAS] tracking_area_update_request: decode EPS mobile identity IE[old_guti] failed");
         return size;
     }
 
@@ -1080,7 +1080,7 @@ int ogs_nas_eps_decode_tracking_area_update_request(ogs_nas_eps_message_t *messa
         case OGS_NAS_EPS_TRACKING_AREA_UPDATE_REQUEST_ADDITIONAL_GUTI_TYPE:
             size = ogs_nas_eps_decode_eps_mobile_identity(&tracking_area_update_request->additional_guti, pkbuf);
             if (size < 0) {
-               ogs_error("ogs_nas_eps_decode_eps_mobile_identity() failed");
+               ogs_warn("[NAS] tracking_area_update_request: decode EPS mobile identity IE[additional_guti] failed");
                return size;
             }
 
@@ -1460,7 +1460,7 @@ int ogs_nas_eps_decode_tracking_area_update_accept(ogs_nas_eps_message_t *messag
         case OGS_NAS_EPS_TRACKING_AREA_UPDATE_ACCEPT_GUTI_TYPE:
             size = ogs_nas_eps_decode_eps_mobile_identity(&tracking_area_update_accept->guti, pkbuf);
             if (size < 0) {
-               ogs_error("ogs_nas_eps_decode_eps_mobile_identity() failed");
+               ogs_warn("[NAS] tracking_area_update_accept: decode EPS mobile identity IE[guti] failed");
                return size;
             }
 
@@ -2118,7 +2118,7 @@ int ogs_nas_eps_decode_guti_reallocation_command(ogs_nas_eps_message_t *message,
 
     size = ogs_nas_eps_decode_eps_mobile_identity(&guti_reallocation_command->guti, pkbuf);
     if (size < 0) {
-        ogs_error("ogs_nas_eps_decode_eps_mobile_identity() failed");
+        ogs_warn("[NAS] guti_reallocation_command: decode EPS mobile identity IE[guti] failed");
         return size;
     }
 

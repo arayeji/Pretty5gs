@@ -488,11 +488,29 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             break;
         }
 
-        if (ogs_nas_emm_decode(&nas_message, pkbuf) != OGS_OK) {
-            ogs_warn("ogs_nas_emm_decode() failed "
-                    "(malformed/truncated NAS from UE/eNB)");
-            ogs_pkbuf_free(pkbuf);
-            return;
+        {
+            char buf[OGS_ADDRSTRLEN];
+            mme_enb_t *enb = mme_enb_find_by_id(enb_ue->enb_id);
+            mme_ue_t *ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
+            uint8_t emm_type = 0;
+
+            if (pkbuf->len >= 2)
+                emm_type = ((uint8_t *)pkbuf->data)[1];
+
+            if (ogs_nas_emm_decode(&nas_message, pkbuf) != OGS_OK) {
+                ogs_warn("ogs_nas_emm_decode() failed "
+                        "emm_type=0x%x eNB[id:%u %s] "
+                        "enb_ue_s1ap_id[%u] mme_ue_s1ap_id[%u] IMSI[%s] — "
+                        "malformed/truncated NAS from UE/eNB",
+                        emm_type,
+                        enb ? enb->enb_id : 0,
+                        (enb && enb->sctp.addr) ?
+                            OGS_ADDR(enb->sctp.addr, buf) : "-",
+                        enb_ue->enb_ue_s1ap_id, enb_ue->mme_ue_s1ap_id,
+                        (ue && MME_UE_HAVE_IMSI(ue)) ? ue->imsi_bcd : "-");
+                ogs_pkbuf_free(pkbuf);
+                return;
+            }
         }
 
         mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);

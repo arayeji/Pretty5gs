@@ -622,22 +622,41 @@ int ogs_nas_eps_encode_eps_attach_type(ogs_pkbuf_t *pkbuf, ogs_nas_eps_attach_ty
     return size;
 }
 
+static const char *eps_mobile_identity_type_str(uint8_t type)
+{
+    switch (type) {
+    case OGS_NAS_EPS_MOBILE_IDENTITY_IMSI:
+        return "imsi";
+    case OGS_NAS_EPS_MOBILE_IDENTITY_GUTI:
+        return "guti";
+    case OGS_NAS_EPS_MOBILE_IDENTITY_IMEI:
+        return "imei";
+    default:
+        return "unknown";
+    }
+}
+
 /* 9.9.3.12 EPS mobile identity
  * M LV 5-12 */
 int ogs_nas_eps_decode_eps_mobile_identity(ogs_nas_eps_mobile_identity_t *eps_mobile_identity, ogs_pkbuf_t *pkbuf)
 {
     int size = 0;
+    uint8_t claimed = 0, id_type = 0xff;
     ogs_nas_eps_mobile_identity_t *source = NULL;
 
     if (pkbuf->len < 1) {
-       ogs_error("Not enough pkbuf [len:%d]", pkbuf->len);
+       ogs_warn("EPS mobile identity: empty (remain 0)");
        return -1;
     }
 
     source = (ogs_nas_eps_mobile_identity_t *)pkbuf->data;
 
-    eps_mobile_identity->length = source->length;
-    size = eps_mobile_identity->length + sizeof(eps_mobile_identity->length);
+    claimed = source->length;
+    if (pkbuf->len >= 2)
+        id_type = ((uint8_t *)pkbuf->data)[1] & 0x07;
+
+    eps_mobile_identity->length = claimed;
+    size = claimed + sizeof(eps_mobile_identity->length);
 
     /*
      * 24.301 9.9.3.12: LV 5-12 (IMSI / IMEI / GUTI). A claimed
@@ -645,14 +664,20 @@ int ogs_nas_eps_decode_eps_mobile_identity(ogs_nas_eps_mobile_identity_t *eps_mo
      * MME fault. Drop the message; mme-sm already WARNs on decode fail.
      */
     if (size < 5 || size > 12 || ogs_pkbuf_pull(pkbuf, size) == NULL) {
-        if (ogs_log_guard())
-            ogs_warn("EPS mobile identity: invalid length %d "
-                    "(remain %d, spec LV 5-12)",
-                    (int)size, pkbuf->len);
+        ogs_warn("EPS mobile identity: invalid LV length=%u size=%d "
+                "remain=%d type=%u(%s) spec=5-12",
+                claimed, size, pkbuf->len, id_type,
+                eps_mobile_identity_type_str(id_type));
         return -1;
     }
 
-    if (sizeof(*eps_mobile_identity) < size) return -1;
+    if (sizeof(*eps_mobile_identity) < size) {
+        ogs_warn("EPS mobile identity: size %d exceeds struct %d "
+                "type=%u(%s)",
+                size, (int)sizeof(*eps_mobile_identity),
+                id_type, eps_mobile_identity_type_str(id_type));
+        return -1;
+    }
     memcpy(eps_mobile_identity, pkbuf->data - size, size);
 
     if (eps_mobile_identity->guti.type == OGS_NAS_EPS_MOBILE_IDENTITY_GUTI) {
