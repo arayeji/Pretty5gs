@@ -10181,6 +10181,12 @@ void mme_session_remove_all(mme_ue_t *mme_ue)
     for (i = 0; i < mme_ue->num_of_session; i++) {
         if (mme_ue->session[i].name)
             ogs_free(mme_ue->session[i].name);
+        /*
+         * Must clear the slot. from_slice_data / apply_hss used to
+         * ogs_free(dst->name) again on the leftover pointer (ULA/IDR
+         * SIGABRT double-free in talloc).
+         */
+        memset(&mme_ue->session[i], 0, sizeof(mme_ue->session[i]));
     }
 
     mme_ue->num_of_session = 0;

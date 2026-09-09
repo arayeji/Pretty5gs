@@ -781,6 +781,13 @@ static uint8_t mme_ue_session_from_slice_data(mme_ue_t *mme_ue,
         }
 
         /*
+         * Full rebuild into a cleared slot (caller used
+         * mme_session_remove_all). Zero first so a leftover name
+         * pointer cannot be double-freed in apply_hss.
+         */
+        memset(&mme_ue->session[dst], 0, sizeof(mme_ue->session[dst]));
+
+        /*
          * Keep all HSS APNs in the subscription. inbound_roam allowed_apn
          * is enforced only when the UE supplies a non-empty APN IE
          * (PDN Connectivity / ESM Information). Absent/empty APN uses the
