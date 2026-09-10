@@ -175,6 +175,7 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
     mme_vlr_t *vlr = NULL;
 
     ogs_assert(e);
+    ogs_trace_clear();
     mme_sm_debug(e);
 
     ogs_assert(s);

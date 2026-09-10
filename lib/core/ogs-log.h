@@ -39,7 +39,7 @@ extern "C" {
  * the line, hot paths must not pay for argument evaluation (OGS_ADDR
  * sockaddr conversion, PLMN/TEID formatting helpers) plus a varargs
  * call just to have ogs_log_vprintf discard it. ogs_log_domain_prints
- * keeps the per-IMSI trace-filter bypass working for DEBUG.
+ * is domain-level only; IMSI trace uses ogs_log_force_push.
  * Arguments must stay free of side effects. FATAL/ERROR stay eager so
  * always-on diagnostics keep their formatting cost.
  */
@@ -148,6 +148,13 @@ bool ogs_log_guard(void);
  * that want to skip expensive prefix enrichment when over budget.
  */
 bool ogs_log_trace_budget(bool consume);
+
+/*
+ * Temporarily allow ogs_log_printf below the domain level.
+ * Use only for PACKET / OGS_TLOG / per-IMSI helpers. Nested-safe.
+ */
+void ogs_log_force_push(void);
+void ogs_log_force_pop(void);
 
 void ogs_log_printf(ogs_log_level_e level, int domain_id,
     ogs_err_t err, const char *file, int line, const char *func,

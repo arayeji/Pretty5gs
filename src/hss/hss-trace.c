@@ -324,8 +324,12 @@ void hss_imsi_log(
     ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
 
+    if (filter_hit)
+        ogs_log_force_push();
     ogs_log_printf(level, OGS_LOG_DOMAIN,
             0, __FILE__, __LINE__, OGS_FUNC, 0, "%s %s", prefix, msg);
+    if (filter_hit)
+        ogs_log_force_pop();
 
     /*
      * Do not leave IMSI sticky on freeDiameter workers. Sticky filter match

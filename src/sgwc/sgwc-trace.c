@@ -120,22 +120,26 @@ void sgwc_ue_log(
     va_list ap;
     char prefix[OGS_TRACE_PREFIX_BUFSIZE];
     char msg[OGS_HUGE_LEN];
-    const char *imsi = sgwc_log_imsi(sgwc_ue);
+    const char *imsi;
+    bool filter_hit;
 
     ogs_assert(fmt);
 
     if (!sgwc_ue && sess)
         sgwc_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
 
+    imsi = sgwc_log_imsi(sgwc_ue);
+
     /* Per-IMSI trace lines are opt-in (see mme-trace.c): emit only for
      * filter-matched subscribers or a debug-enabled domain. */
-    if (!ogs_trace_filter_match(imsi) &&
+    filter_hit = ogs_trace_filter_match(imsi);
+    if (!filter_hit &&
             !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
         return;
 
     /* storm guard: skip formatting entirely when over budget;
-     * filter-matched DEBUG capture is never suppressed */
-    if (level != OGS_LOG_DEBUG && !ogs_log_guard())
+     * filter-matched capture is never suppressed */
+    if (!filter_hit && level != OGS_LOG_DEBUG && !ogs_log_guard())
         return;
 
     ogs_sgwc_trace_set(sgwc_ue, sess, apn, proc);
@@ -145,8 +149,12 @@ void sgwc_ue_log(
     ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
 
+    if (filter_hit)
+        ogs_log_force_push();
     ogs_log_printf(level, OGS_LOG_DOMAIN,
             0, __FILE__, __LINE__, OGS_FUNC, 0, "%s %s", prefix, msg);
+    if (filter_hit)
+        ogs_log_force_pop();
 }
 
 void sgwc_ue_warn_no_ctx(

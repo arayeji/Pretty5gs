@@ -33,6 +33,20 @@
 
 #include "ogs-core.h"
 
+/* Nested: OGS_TLOG / PACKET / per-IMSI helpers may call each other. */
+static OGS_THREAD_LOCAL int log_force_emit;
+
+void ogs_log_force_push(void)
+{
+    log_force_emit++;
+}
+
+void ogs_log_force_pop(void)
+{
+    if (log_force_emit > 0)
+        log_force_emit--;
+}
+
 #define TA_NOR              "\033[0m"       /* all off */
 
 #define TA_FGC_BLACK        "\033[30m"      /* Black */
@@ -467,13 +481,11 @@ bool ogs_log_domain_prints(int domain_id, ogs_log_level_e level)
     if (domain->level >= level)
         return true;
 
-    if (level <= OGS_LOG_DEBUG) {
-        const ogs_trace_ctx_t *trace = ogs_trace_get();
-
-        if (trace->imsi[0] && ogs_trace_filter_match(trace->imsi))
-            return true;
-    }
-
+    /*
+     * Do not elevate generic ogs_debug() when an IMSI filter is set.
+     * That leaked FSM/GTP/S1AP breadcrumbs for every UE on the same
+     * worker. PACKET / OGS_TLOG / per-IMSI helpers use ogs_log_force_*.
+     */
     return false;
 }
 
@@ -497,19 +509,17 @@ void ogs_log_vprintf(ogs_log_level_e level, int id,
             ogs_assert_if_reached();
         }
         if (domain->level < level) {
-            if (level > OGS_LOG_DEBUG)
+            if (!log_force_emit)
                 return;
-            if (!ogs_trace_get()->imsi[0] ||
-                    !ogs_trace_filter_match(ogs_trace_get()->imsi))
-                return;
-            /* Emitting only because of the trace filter: bounded.
-             * Consume once per line, not once per sink. */
-            if (!bypass_checked) {
-                bypass_ok = ogs_log_trace_budget(true);
-                bypass_checked = 1;
+            /* Forced TLOG/PACKET/per-IMSI helper. Cap DEBUG/TRACE only. */
+            if (level <= OGS_LOG_DEBUG) {
+                if (!bypass_checked) {
+                    bypass_ok = ogs_log_trace_budget(true);
+                    bypass_checked = 1;
+                }
+                if (!bypass_ok)
+                    return;
             }
-            if (!bypass_ok)
-                return;
         }
 
         p = logstr;

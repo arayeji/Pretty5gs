@@ -490,8 +490,10 @@ static void sgwc_worker_dispatch(ogs_worker_t *worker, void *data)
     ogs_assert(worker);
     ogs_assert(e);
 
+    ogs_trace_clear();
     sgwc_event_lag_observe(e);
     ogs_fsm_dispatch(&worker_fsm, e);
+    ogs_trace_clear();
     sgwc_event_free(e);
 }
 

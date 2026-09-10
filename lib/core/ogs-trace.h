@@ -62,9 +62,10 @@ void ogs_trace_clear(void);
 void ogs_trace_set(const ogs_trace_ctx_t *ctx);
 
 /*
- * Runtime IMSI prefix filters: DEBUG/TRACE logs for matching subscribers
- * are emitted even when the log domain level is error/warn. Prefix match
- * (e.g. "99970" matches "001010000000002"). Thread-safe; no restart.
+ * Runtime IMSI prefix filters: PACKET, OGS_TLOG, and per-IMSI helpers
+ * emit for matching subscribers even when the log domain is error/warn.
+ * Generic ogs_debug() is not elevated. Prefix match (e.g. "99970"
+ * matches "001010000000002"). Thread-safe; no restart.
  */
 void ogs_trace_filter_clear(void);
 int ogs_trace_filter_add(const char *imsi_prefix);
@@ -145,8 +146,10 @@ void ogs_trace_alias_clear(void);
         char _ogs_tlog_prefix[OGS_TRACE_PREFIX_BUFSIZE]; \
         if (!ogs_trace_should_emit(OGS_LOG_DOMAIN)) break; \
         ogs_trace_format_prefix(_ogs_tlog_prefix, sizeof(_ogs_tlog_prefix)); \
+        ogs_log_force_push(); \
         ogs_log_printf(level, OGS_LOG_DOMAIN, 0, __FILE__, __LINE__, OGS_FUNC, \
                 0, "%s " fmt, _ogs_tlog_prefix, ##__VA_ARGS__); \
+        ogs_log_force_pop(); \
     } while (0)
 
 #define OGS_TLOG_FATAL(fmt, ...) OGS_TLOG(OGS_LOG_FATAL, fmt, ##__VA_ARGS__)

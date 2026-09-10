@@ -689,6 +689,8 @@ static void mme_worker_dispatch(ogs_worker_t *worker, void *data)
     ogs_assert(worker);
     ogs_assert(e);
 
+    ogs_trace_clear();
+
     /*
      * Stage C: UE-scoped S1AP PDUs arrive here straight from the RX
      * workers. They bypass the per-eNB FSM (whose state word is owned
@@ -698,6 +700,7 @@ static void mme_worker_dispatch(ogs_worker_t *worker, void *data)
         /* false = ownership moved to the main queue; never touch e */
         if (s1ap_shard_handle(e))
             mme_event_free(e);
+        ogs_trace_clear();
         return;
     }
 
@@ -711,6 +714,7 @@ static void mme_worker_dispatch(ogs_worker_t *worker, void *data)
 
     mme_event_lag_observe(e);
     ogs_fsm_dispatch(&worker_fsm, e);
+    ogs_trace_clear();
     mme_event_free(e);
 }
 

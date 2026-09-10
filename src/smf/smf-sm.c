@@ -309,12 +309,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
     ogs_nas_5gs_message_t nas_message;
     ogs_pkbuf_t *pkbuf = NULL;
 
-    /* Heartbeat / association are not a UE. Clear leftover IMSI so
-     * ERROR-level SMF does not print PFCP DEBUG for that xact. */
-    if (e->h.id == SMF_EVT_N4_MESSAGE && e->pfcp_message &&
-            smf_pfcp_type_is_node_level(e->pfcp_message->h.type))
-        ogs_trace_clear();
-
+    ogs_trace_clear();
     smf_sm_debug(e);
 
     ogs_assert(s);

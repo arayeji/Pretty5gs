@@ -305,6 +305,7 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
     ogs_pfcp_xact_t *pfcp_xact = NULL;
     ogs_pfcp_message_t *pfcp_message = NULL;
 
+    ogs_trace_clear();
     sgwc_sm_debug(e);
 
     ogs_assert(s);

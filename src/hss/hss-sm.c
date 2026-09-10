@@ -21,6 +21,7 @@
 #include "hss-context.h"
 #include "hss-event.h"
 #include "hss-timer.h"
+#include "hss-trace.h"
 
 #define DB_POLLING_TIME ogs_time_from_msec(100)
 
@@ -61,6 +62,7 @@ void hss_state_final(ogs_fsm_t *s, hss_event_t *e)
 
 void hss_state_operational(ogs_fsm_t *s, hss_event_t *e)
 {
+    ogs_trace_clear();
     hss_sm_debug(e);
 
     ogs_assert(s);

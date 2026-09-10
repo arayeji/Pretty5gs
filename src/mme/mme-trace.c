@@ -237,6 +237,7 @@ void mme_ue_log(
     char prefix[OGS_TRACE_PREFIX_BUFSIZE];
     char msg[OGS_HUGE_LEN];
     const char *imsi = mme_ue_log_id(mme_ue);
+    bool filter_hit;
 
     ogs_assert(fmt);
 
@@ -248,18 +249,16 @@ void mme_ue_log(
      * Runtime enable without restart: POST /admin/trace/imsi with a
      * prefix ("432" captures every UE).
      */
-    {
-        bool filter_hit = ogs_trace_filter_match(imsi);
+    filter_hit = ogs_trace_filter_match(imsi);
 
-        if (!filter_hit &&
-                !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
-            return;
+    if (!filter_hit &&
+            !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
+        return;
 
-        /* Filter-matched lines skip the thread-local storm guard so a
-         * busy worker cannot hide ATTACH/S6a steps for the traced IMSI. */
-        if (!filter_hit && level != OGS_LOG_DEBUG && !ogs_log_guard())
-            return;
-    }
+    /* Filter-matched lines skip the thread-local storm guard so a
+     * busy worker cannot hide ATTACH/S6a steps for the traced IMSI. */
+    if (!filter_hit && level != OGS_LOG_DEBUG && !ogs_log_guard())
+        return;
 
     /*
      * Elevating past domain level is capped by the process-wide trace
@@ -279,8 +278,12 @@ void mme_ue_log(
     ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
 
+    if (filter_hit)
+        ogs_log_force_push();
     ogs_log_printf(level, OGS_LOG_DOMAIN,
             0, __FILE__, __LINE__, OGS_FUNC, 0, "%s %s", prefix, msg);
+    if (filter_hit)
+        ogs_log_force_pop();
 }
 
 void mme_sess_removed_log(mme_ue_t *mme_ue, const char *apn)

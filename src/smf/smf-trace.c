@@ -168,6 +168,7 @@ void smf_ue_log(
     char prefix[OGS_TRACE_PREFIX_BUFSIZE];
     char msg[OGS_HUGE_LEN];
     const char *id = "-";
+    bool filter_hit;
 
     ogs_assert(fmt);
 
@@ -177,8 +178,9 @@ void smf_ue_log(
     if (smf_ue)
         id = smf_log_id(smf_ue);
 
+    filter_hit = ogs_trace_filter_match(id);
     if (level == OGS_LOG_DEBUG &&
-            !ogs_trace_filter_match(id) &&
+            !filter_hit &&
             !ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
         return;
 
@@ -189,8 +191,12 @@ void smf_ue_log(
     ogs_vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
 
+    if (filter_hit)
+        ogs_log_force_push();
     ogs_log_printf(level, OGS_LOG_DOMAIN,
             0, __FILE__, __LINE__, OGS_FUNC, 0, "%s %s", prefix, msg);
+    if (filter_hit)
+        ogs_log_force_pop();
 }
 
 const char *smf_log_id(smf_ue_t *smf_ue)
