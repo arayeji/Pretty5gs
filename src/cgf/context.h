@@ -111,6 +111,8 @@ typedef struct cgf_peer_s {
     uint32_t consecutive_missed_echoes;
     ogs_time_t last_echo_sent;
     ogs_time_t last_echo_received;
+    /* Any parsed GTP' RX (Echo or DTRR, including stale seq). */
+    ogs_time_t last_gtpp_received;
     uint8_t peer_restart_counter;   /* last Recovery IE value observed */
     bool peer_restart_counter_valid;
 

@@ -292,11 +292,7 @@ void cgf_sm_on_echo_response(cgf_peer_t *peer, uint16_t seq,
     (void)seq; (void)cause;
 
     peer->last_echo_received = ogs_time_now();
-    peer->consecutive_missed_echoes = 0;
-    if (peer->state != CGF_PEER_STATE_UP) {
-        ogs_info("cgf: peer '%s' is UP", peer->address_str);
-        peer->state = CGF_PEER_STATE_UP;
-    }
+    cgf_peer_note_rx(peer);
 
     if (recovery_present) {
         if (peer->peer_restart_counter_valid &&
@@ -324,13 +320,16 @@ void cgf_sm_on_dtrr_response(cgf_peer_t *peer, uint16_t seq, uint8_t cause)
     bool need_release = false;
 
     if (!xact) {
-        ogs_debug("cgf: stale DTRR response seq=%u from '%s'",
+        ogs_warn("cgf: stale DTRR response seq=%u from '%s' "
+                "(no matching xact; peer still alive)",
                 seq, peer->address_str);
+        cgf_peer_note_rx(peer);
         return;
     }
 
     file = xact->file;
     ptc = xact->ptc;
+    cgf_peer_note_rx(peer);
 
     if (cause < 128) {
         ogs_warn("cgf: DTRR seq=%u ptc=%u rejected by '%s' (cause=%u)",
@@ -340,12 +339,6 @@ void cgf_sm_on_dtrr_response(cgf_peer_t *peer, uint16_t seq, uint8_t cause)
         cgf_gtpp_free_xact(xact);
         cgf_sm_try_drain();
         return;
-    }
-
-    if (peer->state != CGF_PEER_STATE_UP) {
-        ogs_info("cgf: peer '%s' is UP (DTRR accepted)",
-                peer->address_str);
-        peer->state = CGF_PEER_STATE_UP;
     }
 
     if (ptc == CGF_GTPP_PTC_RELEASE_DATA_REC) {
@@ -409,13 +402,17 @@ void cgf_sm_on_dtrr_response(cgf_peer_t *peer, uint16_t seq, uint8_t cause)
 void cgf_sm_on_echo_tick(void)
 {
     cgf_context_t *self = cgf_self();
+    ogs_time_t now;
     uint32_t i;
+    bool need_drain = false;
 
     /* Drain workers own the real peer sockets and run their own echo
      * tick (see worker.c); the main thread's peers[] entries have no
      * socket in that mode, so this loop would be a no-op anyway, but
      * skip it explicitly for clarity. */
     if (cgf_workers_enabled()) return;
+
+    now = ogs_time_now();
 
     for (i = 0; i < self->num_of_peers; i++) {
         cgf_peer_t *p = &self->peers[i];
@@ -428,8 +425,14 @@ void cgf_sm_on_echo_tick(void)
         if (!p->sock && cgf_gtpp_reopen_peer(p) != OGS_OK) continue;
 
         if (p->last_echo_sent > p->last_echo_received) {
-            p->consecutive_missed_echoes++;
-            if (p->state == CGF_PEER_STATE_UP)
+            /* DTRR ACKs prove the GA is alive even when Echo is ignored. */
+            if (cgf_peer_recently_answered(p, now)) {
+                p->consecutive_missed_echoes = 0;
+            } else {
+                p->consecutive_missed_echoes++;
+            }
+            if (p->state == CGF_PEER_STATE_UP &&
+                    p->consecutive_missed_echoes)
                 ogs_warn("cgf: peer '%s' missed echo (%u consecutive)",
                         p->address_str, p->consecutive_missed_echoes);
             if (p->consecutive_missed_echoes >=
@@ -463,8 +466,16 @@ void cgf_sm_on_echo_tick(void)
         }
 
         if (!p->sock) continue;
-        cgf_gtpp_send_echo_request(p);
+        if (cgf_gtpp_send_echo_request(p) == OGS_OK &&
+                p->state == CGF_PEER_STATE_DOWN) {
+            /* Echo may be ignored by the GA; allow a small DTRR probe. */
+            p->state = CGF_PEER_STATE_PROBING;
+            need_drain = true;
+        }
     }
+
+    if (need_drain)
+        cgf_sm_try_drain();
 }
 
 static bool peer_rto_tick(cgf_peer_t *p, ogs_time_t now, ogs_time_t rto)
@@ -498,16 +509,23 @@ static bool peer_rto_tick(cgf_peer_t *p, ogs_time_t now, ogs_time_t rto)
     }
 
     if (gave_up) {
+        /*
+         * One lost DTRR is not a dead GA. If the peer is still
+         * answering (other seqs, or a stale ACK we could not match),
+         * keep the UDP flow and keep sending. Re-dialling here is what
+         * stops all CDR delivery: replies go to the old port.
+         */
+        if (cgf_peer_recently_answered(p, now)) {
+            ogs_warn("cgf: DTRR give-up to '%s' but peer still answering; "
+                    "keep sending (no re-dial)",
+                    p->address_str);
+            return gave_up;
+        }
+
         if (p->state != CGF_PEER_STATE_DOWN)
             ogs_error("cgf: peer '%s' marked DOWN (DTRR retries exhausted)",
                     p->address_str);
         p->state = CGF_PEER_STATE_DOWN;
-        /*
-         * Re-dial before the next echo tick. Only an Echo Response brings
-         * a peer back, and that echo would otherwise leave from the very
-         * endpoint whose replies just stopped arriving, so the peer would
-         * stay DOWN until the process was restarted.
-         */
         abort_in_flight(p, "peer socket re-dialled");
         cgf_gtpp_reopen_peer(p);
         if (self->send_mode != CGF_SEND_MODE_ROUND_ROBIN)
@@ -525,6 +543,29 @@ void cgf_sm_on_rto_tick(void)
 
     if (cgf_workers_enabled()) return;
 
+    /* Recovery probe: DOWN peers never get DTRR until Echo or a
+     * probing window. Drive Echo from RTO as well so a missed echo
+     * timer cannot strand both GAs. */
+    {
+        ogs_time_t probe_interval = ogs_time_from_sec(self->echo_interval_s);
+        uint32_t i;
+
+        for (i = 0; i < self->num_of_peers; i++) {
+            cgf_peer_t *p = &self->peers[i];
+
+            if (!p->sock) continue;
+            if (p->state != CGF_PEER_STATE_DOWN) continue;
+            if (p->last_echo_sent &&
+                    now - p->last_echo_sent < probe_interval)
+                continue;
+
+            if (cgf_gtpp_send_echo_request(p) == OGS_OK) {
+                p->state = CGF_PEER_STATE_PROBING;
+                any_gave_up = true; /* reuse: trigger drain below */
+            }
+        }
+    }
+
     if (self->send_mode == CGF_SEND_MODE_ROUND_ROBIN) {
         uint32_t i;
         for (i = 0; i < self->num_of_peers; i++) {
@@ -532,7 +573,8 @@ void cgf_sm_on_rto_tick(void)
                 any_gave_up = true;
         }
     } else {
-        any_gave_up = peer_rto_tick(active_peer(), now, rto);
+        if (peer_rto_tick(active_peer(), now, rto))
+            any_gave_up = true;
     }
 
     if (any_gave_up)

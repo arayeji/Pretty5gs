@@ -135,6 +135,12 @@ int cgf_gtpp_retransmit_xact_on(cgf_peer_t *peer, cgf_xact_t *xact);
 /* Reset peer->next_seq to 0 (CDF/peer restart alignment). */
 void cgf_gtpp_reset_seq(cgf_peer_t *peer);
 
+/* Parsed GTP' from this peer: clear echo-miss streak and mark UP. */
+void cgf_peer_note_rx(cgf_peer_t *peer);
+/* True if a GTP' reply arrived recently enough that one lost DTRR
+ * must not take the peer DOWN or re-dial the socket. */
+bool cgf_peer_recently_answered(const cgf_peer_t *peer, ogs_time_t now);
+
 uint32_t cgf_gtpp_inflight_count(const cgf_peer_t *peer);
 cgf_xact_t *cgf_gtpp_find_xact(cgf_peer_t *peer, uint16_t seq);
 void cgf_gtpp_free_xact(cgf_xact_t *xact);

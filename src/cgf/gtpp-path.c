@@ -652,6 +652,38 @@ void cgf_gtpp_reset_seq(cgf_peer_t *peer)
     peer->next_seq = 0;
 }
 
+void cgf_peer_note_rx(cgf_peer_t *peer)
+{
+    if (!peer) return;
+
+    peer->last_gtpp_received = ogs_time_now();
+    peer->consecutive_missed_echoes = 0;
+    if (peer->state != CGF_PEER_STATE_UP) {
+        ogs_info("cgf: peer '%s' is UP (GTP' response)",
+                peer->address_str);
+        peer->state = CGF_PEER_STATE_UP;
+    }
+}
+
+bool cgf_peer_recently_answered(const cgf_peer_t *peer, ogs_time_t now)
+{
+    ogs_time_t grace, rto_grace;
+    cgf_context_t *self = cgf_self();
+
+    if (!peer || !peer->last_gtpp_received)
+        return false;
+
+    grace = ogs_time_from_sec(self->echo_interval_s ? self->echo_interval_s : 60);
+    rto_grace = ogs_time_from_msec(
+            (self->request_rto_ms ? self->request_rto_ms : 3000) * 4);
+    if (rto_grace > grace)
+        grace = rto_grace;
+    if (grace < ogs_time_from_sec(30))
+        grace = ogs_time_from_sec(30);
+
+    return (now - peer->last_gtpp_received) < grace;
+}
+
 int cgf_gtpp_send_release(cgf_peer_t *peer, uint16_t released_seq)
 {
     ogs_pkbuf_t *pkbuf;

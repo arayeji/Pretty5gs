@@ -415,8 +415,12 @@ static void worker_on_echo_tick(cgf_worker_t *w)
         if (!p->sock) continue;
 
         if (p->last_echo_sent > p->last_echo_received) {
-            p->consecutive_missed_echoes++;
-            if (p->state == CGF_PEER_STATE_UP)
+            if (cgf_peer_recently_answered(p, ogs_time_now()))
+                p->consecutive_missed_echoes = 0;
+            else
+                p->consecutive_missed_echoes++;
+            if (p->state == CGF_PEER_STATE_UP &&
+                    p->consecutive_missed_echoes)
                 ogs_warn("cgf: worker %d peer '%s' missed echo "
                         "(%u consecutive)",
                         w->id, p->address_str, p->consecutive_missed_echoes);
@@ -439,6 +443,8 @@ static void worker_on_echo_tick(cgf_worker_t *w)
         if (cgf_gtpp_send_echo_request(p) != OGS_OK)
             ogs_warn("cgf: worker %d echo send to '%s' failed",
                     w->id, p->address_str);
+        else if (p->state == CGF_PEER_STATE_DOWN)
+            p->state = CGF_PEER_STATE_PROBING;
     }
 }
 
@@ -474,6 +480,12 @@ static bool worker_peer_rto_tick(cgf_worker_t *w, cgf_peer_t *p,
     }
 
     if (gave_up) {
+        if (cgf_peer_recently_answered(p, now)) {
+            ogs_warn("cgf: worker %d DTRR give-up to '%s' but peer "
+                    "still answering; keep sending",
+                    w->id, p->address_str);
+            return gave_up;
+        }
         if (p->state != CGF_PEER_STATE_DOWN)
             ogs_error("cgf: worker %d peer '%s' marked DOWN "
                     "(DTRR retries exhausted)",
@@ -534,6 +546,10 @@ static void worker_on_rto_tick(cgf_worker_t *w)
             if (cgf_gtpp_send_echo_request(p) != OGS_OK)
                 ogs_warn("cgf: worker %d recovery probe to '%s' failed",
                         w->id, p->address_str);
+            else {
+                p->state = CGF_PEER_STATE_PROBING;
+                any_gave_up = true;
+            }
         }
     }
 
