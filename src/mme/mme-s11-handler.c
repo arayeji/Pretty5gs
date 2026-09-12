@@ -619,12 +619,25 @@ void mme_s11_handle_create_session_response(
     }
 
     if (rsp->pdn_address_allocation.presence) {
+        const ogs_paa_t *paa;
+
         if (rsp->pdn_address_allocation.len < OGS_PAA_IPV4_LEN ||
             rsp->pdn_address_allocation.len > OGS_PAA_IPV4V6_LEN) {
             ogs_error("Invalid PAA IE [Length:%d]",
                     rsp->pdn_address_allocation.len);
             fail_cause = OGS_GTP2_CAUSE_INVALID_LENGTH;
             fail_reason = "Invalid Length";
+            goto fail;
+        }
+
+        paa = rsp->pdn_address_allocation.data;
+        if (!paa || (paa->session_type != OGS_PDU_SESSION_TYPE_IPV4 &&
+                paa->session_type != OGS_PDU_SESSION_TYPE_IPV6 &&
+                paa->session_type != OGS_PDU_SESSION_TYPE_IPV4V6)) {
+            ogs_error("[%s] Invalid PAA PDN type %u",
+                    mme_ue->imsi_bcd, paa ? paa->session_type : 0);
+            fail_cause = OGS_GTP2_CAUSE_MANDATORY_IE_INCORRECT;
+            fail_reason = "Invalid PAA PDN type";
             goto fail;
         }
     }

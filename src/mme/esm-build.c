@@ -325,8 +325,17 @@ ogs_pkbuf_t *esm_build_activate_default_bearer_context_request(
         pdn_address->length = OGS_NAS_PDU_ADDRESS_IPV4V6_LEN;
         ogs_debug("    IPv4v6");
     } else {
-        ogs_fatal("Unexpected PDN Type %u", pdn_address->pdn_type);
-        ogs_assert_if_reached();
+        /*
+         * PGW/SGW can accept Create Session with a reserved PAA PDN
+         * type (0). Encoding that into NAS used to abort the MME.
+         * Fail this bearer only; callers already handle NULL.
+         */
+        ogs_error("[%s] Activate default bearer: unexpected PDN type %u "
+                "(APN[%s] UE-req=%u PAA-type=%u create_action=%d)",
+                mme_ue->imsi_bcd, pdn_address->pdn_type,
+                session->name, sess->ue_request_type.type,
+                sess->paa.session_type, create_action);
+        return NULL;
     }
 
     {
