@@ -161,9 +161,6 @@ static void mme_s6a_post_failure(
     }
 }
 
-#define MME_S6A_DELIVER_MAX_TRIES 5
-#define MME_S6A_DELIVER_RETRY_SEC 3
-
 void mme_s6a_timer_start(mme_ue_t *mme_ue, uint16_t cmd_code)
 {
     ogs_assert(mme_ue);
@@ -172,90 +169,6 @@ void mme_s6a_timer_start(mme_ue_t *mme_ue, uint16_t cmd_code)
 
     mme_ue->s6a_pending_cmd = cmd_code;
     ogs_timer_start(mme_ue->t_s6a, mme_timer_cfg(MME_TIMER_S6A)->duration);
-}
-
-bool mme_s6a_result_is_deliver_retryable(const ogs_diam_s6a_message_t *msg)
-{
-    uint32_t rc;
-
-    if (!msg || msg->exp_err)
-        return false;
-    if (!msg->err)
-        return false;
-
-    rc = msg->result_code;
-    return rc == ER_DIAMETER_UNABLE_TO_DELIVER ||
-           rc == ER_DIAMETER_REALM_NOT_SERVED;
-}
-
-bool mme_s6a_schedule_deliver_retry(mme_ue_t *mme_ue, uint16_t cmd_code)
-{
-    ogs_assert(mme_ue);
-    ogs_assert(mme_ue->t_s6a);
-    ogs_assert(cmd_code != 0);
-
-    if (mme_ue->s6a_deliver_tries >= MME_S6A_DELIVER_MAX_TRIES)
-        return false;
-
-    mme_ue->s6a_deliver_tries++;
-    mme_ue->s6a_retry_wait = true;
-    mme_ue->s6a_pending_cmd = cmd_code;
-    ogs_timer_start(mme_ue->t_s6a, ogs_time_from_sec(MME_S6A_DELIVER_RETRY_SEC));
-    ogs_warn("[%s] S6a %s retry %u/%u in %ds (Diameter peer down or 3002)",
-            mme_ue->imsi_bcd,
-            cmd_code == OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION
-                ? "AIR" :
-            cmd_code == OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION
-                ? "ULR" : "cmd",
-            mme_ue->s6a_deliver_tries, MME_S6A_DELIVER_MAX_TRIES,
-            MME_S6A_DELIVER_RETRY_SEC);
-    return true;
-}
-
-bool mme_s6a_resend_after_timeout(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
-        uint16_t cmd_code)
-{
-    ogs_assert(mme_ue);
-
-    if (!enb_ue)
-        return false;
-
-    if (mme_ue->s6a_retry_wait)
-        mme_ue->s6a_retry_wait = false;
-    else {
-        if (mme_ue->s6a_deliver_tries >= MME_S6A_DELIVER_MAX_TRIES)
-            return false;
-        mme_ue->s6a_deliver_tries++;
-    }
-
-    if (mme_ue->s6a_deliver_tries > MME_S6A_DELIVER_MAX_TRIES)
-        return false;
-
-    ogs_warn("[%s] S6a %s timeout; resend try %u/%u",
-            mme_ue->imsi_bcd,
-            cmd_code == OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION
-                ? "AIR" :
-            cmd_code == OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION
-                ? "ULR" : "cmd",
-            mme_ue->s6a_deliver_tries, MME_S6A_DELIVER_MAX_TRIES);
-
-    if (cmd_code == OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION) {
-        if (mme_ue->gn.gtp_xact_id != OGS_INVALID_POOL_ID) {
-            ogs_gtp_xact_t *xact =
-                    ogs_gtp_xact_find_by_id(mme_ue->gn.gtp_xact_id);
-            if (xact) {
-                mme_s6a_send_air_from_gn(enb_ue, mme_ue, xact);
-                return true;
-            }
-        }
-        mme_s6a_send_air(enb_ue, mme_ue, NULL);
-        return true;
-    }
-    if (cmd_code == OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION) {
-        mme_s6a_send_ulr(enb_ue, mme_ue, mme_ue->s6a_ulr_flags);
-        return true;
-    }
-    return false;
 }
 
 /*
@@ -1201,16 +1114,6 @@ static void _mme_s6a_send_air(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
                 gtp_xact_id) != OGS_OK)
         return;
 
-    if (!ogs_diam_is_relay_or_app_advertised(OGS_DIAM_S6A_APPLICATION_ID)) {
-        if (mme_s6a_schedule_deliver_retry(mme_ue,
-                OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION))
-            return;
-        mme_s6a_post_failure(enb_ue, mme_ue,
-                OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION,
-                ER_DIAMETER_UNABLE_TO_DELIVER, gtp_xact_id);
-        return;
-    }
-
     /* Clear Security Context */
     CLEAR_SECURITY_CONTEXT(mme_ue);
 
@@ -1856,18 +1759,6 @@ void mme_s6a_send_ulr(enb_ue_t *enb_ue, mme_ue_t *mme_ue, uint32_t extra_ulr_fla
                 OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION,
                 OGS_INVALID_POOL_ID) != OGS_OK)
         return;
-
-    mme_ue->s6a_ulr_flags = extra_ulr_flags;
-
-    if (!ogs_diam_is_relay_or_app_advertised(OGS_DIAM_S6A_APPLICATION_ID)) {
-        if (mme_s6a_schedule_deliver_retry(mme_ue,
-                OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION))
-            return;
-        mme_s6a_post_failure(enb_ue, mme_ue,
-                OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION,
-                ER_DIAMETER_UNABLE_TO_DELIVER, OGS_INVALID_POOL_ID);
-        return;
-    }
 
     mme_ue_progress(mme_ue, "s6a_ulr_sent");
 

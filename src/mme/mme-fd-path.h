@@ -55,13 +55,6 @@ void mme_s6a_timer_start(mme_ue_t *mme_ue, uint16_t cmd_code);
 void mme_s6a_timer_stop(mme_ue_t *mme_ue);
 void mme_s6a_answer_received(mme_ue_t *mme_ue);
 
-/* 0 = retry armed (do not NAS-reject / do not send Auth-Request). */
-#define MME_S6A_EMM_CAUSE_RETRY 0
-bool mme_s6a_result_is_deliver_retryable(const ogs_diam_s6a_message_t *msg);
-bool mme_s6a_schedule_deliver_retry(mme_ue_t *mme_ue, uint16_t cmd_code);
-bool mme_s6a_resend_after_timeout(enb_ue_t *enb_ue, mme_ue_t *mme_ue,
-        uint16_t cmd_code);
-
 #ifdef __cplusplus
 }
 #endif

@@ -67,15 +67,9 @@ uint8_t mme_s6a_handle_aia(
         ogs_warn("[%s] S6a AIA failed result=%d",
                 mme_ue->imsi_bcd, s6a_message->result_code);
         mme_ue_progress(mme_ue, "s6a_aia_fail");
-        if (mme_s6a_result_is_deliver_retryable(s6a_message) &&
-                mme_s6a_schedule_deliver_retry(mme_ue,
-                    OGS_DIAM_S6A_CMD_CODE_AUTHENTICATION_INFORMATION))
-            return MME_S6A_EMM_CAUSE_RETRY;
         return emm_cause_from_diameter(s6a_message->err, s6a_message->exp_err);
     }
 
-    mme_ue->s6a_deliver_tries = 0;
-    mme_ue->s6a_retry_wait = false;
     mme_ue_progress(mme_ue, "s6a_aia_ok");
 
     mme_ue->xres_len = e_utran_vector->xres_len;
@@ -118,15 +112,9 @@ uint8_t mme_s6a_handle_ula(
         ogs_warn("[%s] S6a ULA failed result=%d",
                 mme_ue->imsi_bcd, s6a_message->result_code);
         mme_ue_progress(mme_ue, "s6a_ula_fail");
-        if (mme_s6a_result_is_deliver_retryable(s6a_message) &&
-                mme_s6a_schedule_deliver_retry(mme_ue,
-                    OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION))
-            return MME_S6A_EMM_CAUSE_RETRY;
         return emm_cause_from_diameter(s6a_message->err, s6a_message->exp_err);
     }
 
-    mme_ue->s6a_deliver_tries = 0;
-    mme_ue->s6a_retry_wait = false;
     mme_ue_progress(mme_ue, "s6a_ula_ok");
 
     ogs_assert(subscription_data->num_of_slice == 1);
