@@ -117,6 +117,8 @@ ogs_thread_t *ogs_thread_create(void (*func)(void *), void *data);
 ogs_thread_t *ogs_thread_create_named(
         void (*func)(void *), void *data, const char *name);
 void ogs_thread_destroy(ogs_thread_t *thread);
+/* Same as destroy, but wait at most wait_usec before cancelling. */
+void ogs_thread_destroy_timeout(ogs_thread_t *thread, ogs_time_t wait_usec);
 
 #ifdef __cplusplus
 }

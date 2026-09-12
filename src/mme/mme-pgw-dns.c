@@ -1298,8 +1298,16 @@ static void pgw_dns_worker_main(void *data)
         /*
          * Sync waiters have already consumed rv/ip via their waiter
          * pointers (filled before broadcast). They only decrement
-         * sync_waiters; the worker always frees the job.
+         * sync_waiters; the worker always frees the job — unless
+         * shutdown already joined those waiters (UE shards), in which
+         * case waiting here hangs systemctl stop until SIGKILL.
          */
+        if (pgw_dns_workers_stopping) {
+            if (job->sync_waiters == 0)
+                pgw_dns_job_free(job);
+            ogs_thread_mutex_unlock(&pgw_dns_worker_mutex);
+            break;
+        }
         while (job->sync_waiters > 0)
             ogs_thread_cond_wait(&job->done_cond, &pgw_dns_worker_mutex);
         pgw_dns_job_free(job);
@@ -1354,16 +1362,19 @@ void mme_pgw_dns_workers_stop(void)
             ogs_hash_set(pgw_dns_inflight, job->cache_key,
                     strlen(job->cache_key), NULL);
         pgw_dns_job_complete_locked(job);
-        while (job->sync_waiters > 0)
-            ogs_thread_cond_wait(&job->done_cond, &pgw_dns_worker_mutex);
-        pgw_dns_job_free(job);
+        /* Shards are already joined; do not wait for sync_waiters. */
+        if (job->sync_waiters == 0)
+            pgw_dns_job_free(job);
     }
     ogs_thread_cond_broadcast(&pgw_dns_worker_cond);
     ogs_thread_mutex_unlock(&pgw_dns_worker_mutex);
 
     for (i = 0; i < MME_PGW_DNS_NUM_WORKERS; i++) {
         if (pgw_dns_workers[i]) {
-            ogs_thread_destroy(pgw_dns_workers[i]);
+            /* getaddrinfo can block past 30s; systemd then SIGKILL
+             * before GTP/S1 sockets are released. Cancel sooner. */
+            ogs_thread_destroy_timeout(pgw_dns_workers[i],
+                    ogs_time_from_sec(3));
             pgw_dns_workers[i] = NULL;
         }
     }
