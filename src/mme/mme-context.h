@@ -1504,6 +1504,8 @@ struct mme_ue_s {
         (__mME)->sgs_cs_unavailable = false; \
         ogs_timer_stop((__mME)->t_sgs_ts6_1); \
         (__mME)->s6a_pending_cmd = 0; \
+        (__mME)->s6a_deliver_tries = 0; \
+        (__mME)->s6a_retry_wait = false; \
         ogs_timer_stop((__mME)->t_s6a); \
         \
         ogs_list_for_each(&mme_ue->sess_list, sess) { \
@@ -1638,6 +1640,10 @@ struct mme_ue_s {
      * watchdog measures HSS latency rather than event-queue latency.
      */
     volatile uint16_t s6a_pending_cmd;
+    /* AIR/ULR send attempts after Diameter 3002/timeout (DRA flap). */
+    uint8_t         s6a_deliver_tries;
+    bool            s6a_retry_wait;
+    uint32_t        s6a_ulr_flags;
 
     mme_csmap_t     *csmap;
     mme_hssmap_t    *hssmap;

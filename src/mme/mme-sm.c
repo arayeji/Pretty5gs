@@ -983,6 +983,8 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
             else
                 xact = NULL;
             emm_cause = mme_s6a_handle_aia(mme_ue, s6a_message);
+            if (emm_cause == MME_S6A_EMM_CAUSE_RETRY)
+                break;
             if (emm_cause != OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED) {
                 /* If authentication was triggered due to subscriber coming from
                  * an SGSN, report to it that something went wrong: */
@@ -1047,6 +1049,8 @@ void mme_state_operational(ogs_fsm_t *s, mme_event_t *e)
         case OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION:
             ogs_debug("OGS_DIAM_S6A_CMD_CODE_UPDATE_LOCATION");
             emm_cause = mme_s6a_handle_ula(mme_ue, s6a_message);
+            if (emm_cause == MME_S6A_EMM_CAUSE_RETRY)
+                break;
             if (emm_cause != OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED) {
                 if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {
                     OGS_TLOG_INFO("Attach reject [OGS_NAS_EMM_CAUSE:%d]", emm_cause);

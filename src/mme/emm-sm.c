@@ -215,6 +215,8 @@ static void emm_handle_s6a_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
     mme_s6a_timer_stop(mme_ue);
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
+    if (mme_s6a_resend_after_timeout(enb_ue, mme_ue, cmd))
+        return;
     if (!enb_ue) {
         /*
          * S6a (AIR/ULR) timed out for a UE that has already lost its S1
