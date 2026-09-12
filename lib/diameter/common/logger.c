@@ -79,7 +79,7 @@ static void ogs_diam_logger_cb(enum fd_hook_type type, struct msg * msg,
                 protobuf[0] = '-';
                 protobuf[1] = '\0';
             }
-            ogs_info("CONNECTED TO '%s' (%s):", peer_name, protobuf);
+            ogs_warn("CONNECTED TO '%s' (%s)", peer_name, protobuf);
         }
         break;
     case HOOK_PEER_CONNECT_FAILED:

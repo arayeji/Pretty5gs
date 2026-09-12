@@ -91,6 +91,10 @@ void ogs_diam_final(void);
 
 int ogs_diam_config_init(ogs_diam_config_t *fd_config);
 bool ogs_diam_is_relay_or_app_advertised(uint32_t app_id);
+/* True if any ConnectPeer is OPEN / OPEN_NEW / REOPEN. */
+bool ogs_diam_any_peer_open(void);
+/* Block until a peer is OPEN or timeout_usec elapses. Returns true if OPEN. */
+bool ogs_diam_wait_peer_open(ogs_time_t timeout_usec);
 void ogs_diam_log_peer_states(void);
 
 int fd_avp_search_avp ( struct avp * groupedavp,

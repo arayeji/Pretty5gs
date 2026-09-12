@@ -20,11 +20,124 @@
 #include "ogs-diameter-common.h"
 
 #include <unistd.h>
+#include <errno.h>
+#include <ctype.h>
+#include <stdio.h>
+#ifdef _WIN32
+#include <direct.h>
+#define diam_mkdir(p) _mkdir(p)
+#else
+#include <sys/stat.h>
+#include <sys/types.h>
+#define diam_mkdir(p) mkdir((p), 0755)
+#endif
 
 int __ogs_diam_domain;
 
+#define DIAM_OSI_DIR "/var/lib/open5gs"
+
 static void diam_gnutls_log_func(int level, const char *str);
 static void diam_log_func(int printlevel, const char *format, va_list ap);
+
+static void diam_mkdir_p(const char *dir)
+{
+    char tmp[512];
+    char *p;
+    size_t len;
+
+    if (!dir || !dir[0])
+        return;
+
+    ogs_cpystrn(tmp, dir, sizeof(tmp));
+    len = strlen(tmp);
+    if (len && tmp[len - 1] == '/')
+        tmp[len - 1] = '\0';
+
+    for (p = tmp + 1; *p; p++) {
+        if (*p == '/') {
+            *p = '\0';
+            if (diam_mkdir(tmp) != 0 && errno != EEXIST)
+                ogs_warn("mkdir(%s) failed: %s", tmp, strerror(errno));
+            *p = '/';
+        }
+    }
+    if (diam_mkdir(tmp) != 0 && errno != EEXIST)
+        ogs_warn("mkdir(%s) failed: %s", tmp, strerror(errno));
+}
+
+static void diam_osi_path(char *buf, size_t buflen)
+{
+    const char *id = fd_g_config && fd_g_config->cnf_diamid ?
+            (const char *)fd_g_config->cnf_diamid : "unknown";
+    char safe[128];
+    size_t i, n = 0;
+
+    for (i = 0; id[i] && n + 1 < sizeof(safe); i++) {
+        unsigned char c = (unsigned char)id[i];
+        safe[n++] = (isalnum(c) || c == '-' || c == '_') ? (char)c : '_';
+    }
+    safe[n] = '\0';
+    if (!safe[0])
+        ogs_cpystrn(safe, "unknown", sizeof(safe));
+
+    ogs_snprintf(buf, buflen, DIAM_OSI_DIR "/diam_osi_%s", safe);
+}
+
+static uint32_t diam_load_osi(const char *path)
+{
+    FILE *f;
+    unsigned long val = 0;
+
+    f = fopen(path, "r");
+    if (!f)
+        return 0;
+    if (fscanf(f, "%lu", &val) != 1)
+        val = 0;
+    fclose(f);
+    return (uint32_t)val;
+}
+
+static void diam_save_osi(const char *path, uint32_t val)
+{
+    FILE *f;
+
+    diam_mkdir_p(DIAM_OSI_DIR);
+    f = fopen(path, "w");
+    if (!f) {
+        ogs_error("failed to persist Diameter Origin-State-Id to %s: %s",
+                path, strerror(errno));
+        return;
+    }
+    fprintf(f, "%u\n", val);
+    fclose(f);
+}
+
+static void diam_set_restart_origin_state_id(void)
+{
+    char path[512];
+    uint32_t loaded, now, osi;
+
+    diam_osi_path(path, sizeof(path));
+    loaded = diam_load_osi(path);
+    now = (uint32_t)ogs_time_to_sec(ogs_time_now());
+    if (!now)
+        now = 1;
+
+    /*
+     * RFC 6733: a strictly greater Origin-State-Id means this peer
+     * restarted. time^pid can go backwards and the DRA then keeps the
+     * old association and RSTs the new CER.
+     */
+    osi = now;
+    if (loaded && osi <= loaded)
+        osi = loaded + 1;
+    if (!osi)
+        osi = 1;
+
+    fd_g_config->cnf_orstateid = osi;
+    diam_save_osi(path, osi);
+    ogs_info("Diameter Origin-State-Id %u (restart, prev %u)", osi, loaded);
+}
 
 int ogs_diam_init(int mode, const char *conffile, ogs_diam_config_t *fd_config)
 {
@@ -64,24 +177,13 @@ int ogs_diam_init(int mode, const char *conffile, ogs_diam_config_t *fd_config)
     /* Initialize FD stats */
     CHECK_FCT_DO( ogs_diam_stats_init(mode, &fd_config->stats), goto error );
 
-    /*
-     * New Origin-State-Id on every process start so a DRA that still holds
-     * the pre-crash association treats this as a restarted peer (RFC 6733)
-     * instead of RSTing CER until Tw expires.
-     */
-    fd_g_config->cnf_orstateid =
-            ((uint32_t)(ogs_time_now() / 1000000)) ^
-            ((uint32_t)getpid() << 8);
-    if (!fd_g_config->cnf_orstateid)
-        fd_g_config->cnf_orstateid = 1;
-    ogs_info("Diameter Origin-State-Id %u (restart identity)",
-            fd_g_config->cnf_orstateid);
+    diam_set_restart_origin_state_id();
 
     /* Faster ConnectPeer retry after DRA RST of a stale session. */
-    if (!fd_g_config->cnf_timer_tc || fd_g_config->cnf_timer_tc > 15) {
-        ogs_info("Diameter TcTimer %u -> 10s",
+    if (!fd_g_config->cnf_timer_tc || fd_g_config->cnf_timer_tc > 5) {
+        ogs_info("Diameter TcTimer %u -> 5s",
                 fd_g_config->cnf_timer_tc);
-        fd_g_config->cnf_timer_tc = 10;
+        fd_g_config->cnf_timer_tc = 5;
     }
 
     return 0;
@@ -98,6 +200,10 @@ int ogs_diam_start(void)
     CHECK_FCT_DO( fd_core_start(), goto error );
 
     CHECK_FCT_DO( fd_core_waitstartcomplete(), goto error );
+
+    /* S1/Gx must not accept traffic before the first DRA/peer is OPEN.
+     * After a crash the DRA may RST CER until Origin-State-Id is applied. */
+    (void)ogs_diam_wait_peer_open(ogs_time_from_sec(15));
 
     CHECK_FCT( ogs_diam_stats_start() );
 

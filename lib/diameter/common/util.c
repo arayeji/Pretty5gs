@@ -57,6 +57,74 @@ bool ogs_diam_is_relay_or_app_advertised(uint32_t app_id)
     return false;
 }
 
+static int diam_peer_counts(int *open_count)
+{
+    struct fd_list *li = NULL;
+    int total = 0, open = 0;
+
+    if (open_count)
+        *open_count = 0;
+    if (pthread_rwlock_rdlock(&fd_g_peers_rw) != 0)
+        return 0;
+    for (li = fd_g_peers.next; li != &fd_g_peers; li = li->next) {
+        struct peer_hdr *p = (struct peer_hdr *)li->o;
+        int state;
+
+        if (!p)
+            continue;
+        total++;
+        state = fd_peer_get_state(p);
+        if (state == STATE_OPEN || state == STATE_OPEN_NEW ||
+                state == STATE_REOPEN)
+            open++;
+    }
+    (void)pthread_rwlock_unlock(&fd_g_peers_rw);
+    if (open_count)
+        *open_count = open;
+    return total;
+}
+
+bool ogs_diam_any_peer_open(void)
+{
+    int open = 0;
+
+    (void)diam_peer_counts(&open);
+    return open > 0;
+}
+
+bool ogs_diam_wait_peer_open(ogs_time_t timeout_usec)
+{
+    ogs_time_t deadline, now;
+
+    if (timeout_usec < 0)
+        timeout_usec = 0;
+    deadline = ogs_get_monotonic_time() + timeout_usec;
+
+    if (!diam_peer_counts(NULL))
+        return true; /* server-only: no ConnectPeer to wait for */
+
+    if (ogs_diam_any_peer_open())
+        return true;
+
+    ogs_warn("Diameter: waiting up to %d s for a ConnectPeer to reach OPEN",
+            (int)ogs_time_to_sec(timeout_usec));
+
+    do {
+        ogs_usleep(200000);
+        if (ogs_diam_any_peer_open()) {
+            ogs_warn("Diameter: peer OPEN");
+            ogs_diam_log_peer_states();
+            return true;
+        }
+        now = ogs_get_monotonic_time();
+    } while (now < deadline);
+
+    ogs_error("Diameter: no ConnectPeer OPEN after %d s",
+            (int)ogs_time_to_sec(timeout_usec));
+    ogs_diam_log_peer_states();
+    return false;
+}
+
 void ogs_diam_log_peer_states(void)
 {
     struct fd_list *li = NULL;
