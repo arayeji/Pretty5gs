@@ -84,6 +84,20 @@ bool mme_sgs_need_location_update(const mme_ue_t *mme_ue)
         return true;
 
     /*
+     * TS 29.118 5.8 / 5.2.2.2.1: after SGsAP-RELEASE-REQUEST the local
+     * association is gone. Re-establish on the next TAU even if the UE
+     * sends TA updating or periodic (it still believes it is IMSI-
+     * attached for non-EPS). Do not use "no P-TMSI" alone — that would
+     * LU EPS-only UEs that never Combined-registered.
+     */
+    if (mme_ue->sgs_reestablish_needed &&
+        (mme_ue->nas_eps.update.value ==
+            OGS_NAS_EPS_UPDATE_TYPE_TA_UPDATING ||
+         mme_ue->nas_eps.update.value ==
+            OGS_NAS_EPS_UPDATE_TYPE_PERIODIC_UPDATING))
+        return true;
+
+    /*
      * TS 29.118 5.7.3.1 / 5.2.2.2.1: if VLR-Reliable is false, the MME
      * may start Location-Update on periodic TAU for a UE still attached
      * for non-EPS services. Combined TAU already always sends LU above.
@@ -95,6 +109,28 @@ bool mme_sgs_need_location_update(const mme_ue_t *mme_ue)
         return true;
 
     return false;
+}
+
+void mme_sgs_association_released(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    /*
+     * TS 29.118 5.8: VLR released the SGs association. Drop the local
+     * CS identity so paging/CSFB do not treat the UE as still associated.
+     *
+     * Do not stop Ts6-1 / sgs_lu_pending: an in-flight Location-Update
+     * is the re-establishment, and its Accept/Reject/timeout still
+     * completes Attach/Combined TAU. Do not set sgs_cs_unavailable —
+     * that would force EPS-only + #18 on the next Combined Accept.
+     */
+    mme_ue_clear_p_tmsi(mme_ue);
+    mme_ue->sgs_reestablish_needed = true;
+
+    ogs_info("[%s] SGsAP RELEASE-REQUEST: SGs association cleared "
+            "(re-establish on next TAU%s)",
+            mme_ue->imsi_bcd,
+            mme_ue->sgs_lu_pending ? ", LU already in flight" : "");
 }
 
 int sgsap_open(void)
@@ -330,7 +366,11 @@ int sgsap_send_location_update_request(mme_ue_t *mme_ue)
     ogs_pkbuf_t *pkbuf = NULL;
     ogs_assert(mme_ue);
 
-    ogs_info("[%s] SGSAP: Location-Update-Request", mme_ue->imsi_bcd);
+    ogs_info("[%s] SGSAP: Location-Update-Request "
+            "(EPS-Type[%d] update[%d]%s)",
+            mme_ue->imsi_bcd, mme_ue->nas_eps.type,
+            mme_ue->nas_eps.update.value,
+            mme_ue->sgs_reestablish_needed ? " reestablish" : "");
 
     pkbuf = sgsap_build_location_update_request(mme_ue);
     if (!pkbuf) {

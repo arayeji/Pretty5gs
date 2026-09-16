@@ -1629,6 +1629,13 @@ struct mme_ue_s {
     bool            sgs_lu_pending;
     /* Set when SGs LU reject/timeout; Attach/TAU Accept forces EPS-only + #18 */
     bool            sgs_cs_unavailable;
+    /*
+     * Set by SGsAP-RELEASE-REQUEST (TS 29.118 5.8). The VLR dropped the
+     * SGs association; the next TAU must send Location-Update even if
+     * the NAS update type is TA/periodic (not Combined).
+     * Cleared on Location-Update-Accept. Survives CLEAR_MME_UE_ALL_TIMERS.
+     */
+    bool            sgs_reestablish_needed;
     /* Matches csmap->vlr->sgs_reset_gen when VLR-Reliable is true */
     uint32_t        vlr_reliable_gen;
 
@@ -2142,6 +2149,7 @@ void mme_ue_set_p_tmsi(
         mme_ue_t *mme_ue,
         ogs_nas_mobile_identity_tmsi_t *nas_mobile_identity_tmsi);
 void mme_ue_confirm_p_tmsi(mme_ue_t *mme_ue);
+void mme_ue_clear_p_tmsi(mme_ue_t *mme_ue);
 
 mme_ue_t *mme_ue_add(enb_ue_t *enb_ue);
 void mme_ue_remove(mme_ue_t *mme_ue);

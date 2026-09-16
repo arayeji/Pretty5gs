@@ -7677,6 +7677,14 @@ void mme_ue_confirm_p_tmsi(mme_ue_t *mme_ue)
     mme_ue->next.p_tmsi = INVALID_P_TMSI;
 }
 
+void mme_ue_clear_p_tmsi(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    mme_ue->current.p_tmsi = INVALID_P_TMSI;
+    mme_ue->next.p_tmsi = INVALID_P_TMSI;
+}
+
 static bool mme_sgw_is_default(const mme_sgw_t *sgw)
 {
     ogs_assert(sgw);

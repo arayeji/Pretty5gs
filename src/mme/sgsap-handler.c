@@ -176,6 +176,7 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
 
     mme_sgs_ts6_1_timer_stop(mme_ue);
     mme_ue->sgs_cs_unavailable = false;
+    mme_ue->sgs_reestablish_needed = false;
     mme_sgs_mark_ue_vlr_reliable(mme_ue, vlr);
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
@@ -978,7 +979,7 @@ void sgsap_handle_release_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     }
 
     if (mme_ue)
-        ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);
+        mme_sgs_association_released(mme_ue);
     else
         sgsap_warn_no_ue(vlr, "RELEASE-REQUEST", imsi_bcd,
                 "UE already gone");
