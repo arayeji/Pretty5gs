@@ -607,7 +607,13 @@ void sgwc_sxa_handle_session_establishment_response(
         if (pfcp_rsp->offending_ie.presence)
             offending_ie = pfcp_rsp->offending_ie.u16;
 
-        char imsi_bcd[OGS_MAX_IMSI_BCD_LEN + 1];
+        /*
+         * +2, not +1: ogs_buffer_to_bcd() writes 2 digits per octet and
+         * only drops the last one when the high nibble is the 0xF filler,
+         * so a full 8-octet IMSI IE with no filler emits 16 digits plus
+         * NUL. At +1 that was a one-byte stack overflow.
+         */
+        char imsi_bcd[OGS_MAX_IMSI_BCD_LEN + 2];
         char apn[OGS_MAX_APN_LEN + 1];
         const char *imsi = "-";
         const char *apn_s = "-";

@@ -116,6 +116,14 @@ ogs_sock_t *ogs_sctp_socket(int family, int type);
 
 ogs_sock_t *ogs_sctp_server(
         int type, ogs_sockaddr_t *sa_list, ogs_sockopt_t *socket_option);
+/*
+ * The INIT itself is issued non-blocking so a peer that is down cannot
+ * freeze the caller for the whole SCTP init timeout, but the socket is
+ * returned in BLOCKING mode, which is the contract callers had before
+ * that change: sending on it may block until the association is up.
+ * A caller that drives the association from a pollset (sgsap_client)
+ * must call ogs_nonblocking() on sock->fd itself before using it.
+ */
 ogs_sock_t *ogs_sctp_client(
         int type,
         ogs_sockaddr_t *sa_list, ogs_sockaddr_t *local_sa_list,

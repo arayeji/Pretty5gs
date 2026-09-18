@@ -380,10 +380,18 @@ ogs_sock_t *ogs_sctp_client(
      * Connect to the REMOTE addresses using sctp_connectx().
      * (struct sockaddr *)remote_buf is the contiguous buffer.
      */
-    /* Non-blocking INIT: a blocking connectx freezes the MME for the
-     * full SCTP timeout when the VLR is down, and the 3 s reconnect
-     * timer then races the leftover fd. COMM_UP / CANT_STR_ASSOC
-     * complete the handshake on the poll loop. */
+    /*
+     * Non-blocking INIT: a blocking connectx freezes the caller for the
+     * full SCTP init timeout (sinit_max_attempts * sinit_max_init_timeo)
+     * when the peer is down, and the MME's 3 s reconnect timer then
+     * races the leftover fd. COMM_UP / CANT_STR_ASSOC complete the
+     * handshake on the poll loop.
+     *
+     * This is only about connectx itself. The fd is put back into
+     * blocking mode below so callers keep the socket semantics they had
+     * before; a caller that wants a non-blocking socket (sgsap_client)
+     * sets it again right after this returns.
+     */
     if (ogs_nonblocking(new_sock->fd) != OGS_OK)
         goto err;
 
@@ -404,6 +412,9 @@ ogs_sock_t *ogs_sctp_client(
             goto err;
         }
     }
+
+    if (ogs_blocking(new_sock->fd) != OGS_OK)
+        goto err;
 
     /* Debug log for the first remote address. */
     ogs_debug("sctp_client() connected to %s",

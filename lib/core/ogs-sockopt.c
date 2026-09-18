@@ -86,6 +86,42 @@ int ogs_nonblocking(ogs_socket_t fd)
     return OGS_OK;
 }
 
+int ogs_blocking(ogs_socket_t fd)
+{
+#ifdef _WIN32
+    int rc;
+    u_long io_mode = 0;
+
+    ogs_assert(fd != INVALID_SOCKET);
+
+    rc = ioctlsocket(fd, FIONBIO, &io_mode);
+    if (rc != OGS_OK) {
+        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno, "ioctlsocket failed");
+        return OGS_ERROR;
+    }
+#else
+    int rc;
+    int flags;
+
+    ogs_assert(fd != INVALID_SOCKET);
+
+    flags = fcntl(fd, F_GETFL, NULL);
+    if (flags < 0) {
+        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno, "F_GETFL failed");
+        return OGS_ERROR;
+    }
+    if (flags & O_NONBLOCK) {
+        rc = fcntl(fd, F_SETFL, (flags & ~O_NONBLOCK));
+        if (rc != OGS_OK) {
+            ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno, "F_SETFL failed");
+            return OGS_ERROR;
+        }
+    }
+#endif
+
+    return OGS_OK;
+}
+
 int ogs_closeonexec(ogs_socket_t fd)
 {
 #ifndef _WIN32

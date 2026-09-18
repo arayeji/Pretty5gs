@@ -5245,6 +5245,14 @@ void mme_vlr_close(mme_vlr_t *vlr)
 
     if (poll)
         ogs_pollset_remove(poll);
+    /*
+     * Destroying OUTSIDE the lock is safe only because sgsap-io.c
+     * io_dispatch() holds mme_ctx_lock across both the vlr->sock read
+     * and ogs_sctp_sendmsg(): once we have taken the lock no sender can
+     * be inside sendmsg, and after we release it every sender sees NULL.
+     * If that send is ever moved out of the lock, this becomes a
+     * use-after-free - move the destroy back under the lock too.
+     */
     if (sock) {
         /*
          * Linger 0 + close = SCTP ABORT. A graceful SHUTDOWN waits
@@ -6198,8 +6206,18 @@ static int sgsap_config_parse_body(ogs_yaml_iter_t *mme_iter, bool reload,
                         }
                     }
                     prev_vlr = vlr;
-                    mme_vlr_apply_mme_name(vlr, mme_name_cfg);
                 }
+
+                /*
+                 * vlr->seen is cleared before each parse, so the first
+                 * client block for an address owns mme_name (setting or
+                 * clearing it). A later block for the SAME address may
+                 * only set one - otherwise a second block that just adds
+                 * maps, with no mme_name:, silently erased the override
+                 * the first block installed.
+                 */
+                if (!vlr->seen || (mme_name_cfg && mme_name_cfg[0]))
+                    mme_vlr_apply_mme_name(vlr, mme_name_cfg);
 
                 vlr->seen = true;
                 {

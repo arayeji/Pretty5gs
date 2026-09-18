@@ -60,6 +60,8 @@ typedef struct ogs_sockopt_s {
 void ogs_sockopt_init(ogs_sockopt_t *option);
 
 int ogs_nonblocking(ogs_socket_t fd);
+/* Undo ogs_nonblocking(): restore the fd to blocking mode. */
+int ogs_blocking(ogs_socket_t fd);
 int ogs_closeonexec(ogs_socket_t fd);
 int ogs_listen_reusable(ogs_socket_t fd, int on);
 int ogs_tcp_nodelay(ogs_socket_t fd, int on);
