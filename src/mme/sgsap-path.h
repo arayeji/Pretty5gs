@@ -47,6 +47,8 @@ void sgsap_trace_packet(const char *imsi, const char *dir,
 
 int sgsap_send_location_update_request(mme_ue_t *mme_ue);
 bool mme_sgs_need_location_update(const mme_ue_t *mme_ue);
+bool mme_sgs_need_periodic_vlr_refresh(const mme_ue_t *mme_ue);
+void mme_sgs_send_periodic_vlr_refresh(mme_ue_t *mme_ue);
 void mme_sgs_association_released(mme_ue_t *mme_ue);
 void mme_sgs_mark_vlr_unreliable(mme_vlr_t *vlr);
 void mme_sgs_mark_ue_vlr_unreliable(mme_ue_t *mme_ue);

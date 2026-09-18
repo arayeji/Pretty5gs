@@ -191,6 +191,14 @@ static void emm_handle_sgs_ts6_1_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
         return;
     }
 
+    if (mme_ue->sgs_lu_refresh) {
+        mme_ue->sgs_lu_refresh = false;
+        mme_sgs_ts6_1_timer_stop(mme_ue);
+        ogs_warn("[%s] SGs VLR refresh Ts6-1 timeout; EPS/CS unchanged",
+                mme_ue->imsi_bcd);
+        return;
+    }
+
     mme_sgs_continue_without_cs(mme_ue, "sgsap_lu_timeout");
 }
 
@@ -1262,6 +1270,9 @@ static void common_register_state(ogs_fsm_t *s, mme_event_t *e,
                         mme_ue->nas_eps.update.active_flag);
                     mme_send_tau_accept_and_check_release(enb_ue, mme_ue);
                 }
+
+                if (mme_sgs_need_periodic_vlr_refresh(mme_ue))
+                    mme_sgs_send_periodic_vlr_refresh(mme_ue);
             }
 
             if (MME_NEXT_GUTI_IS_AVAILABLE(mme_ue)) {

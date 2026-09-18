@@ -179,6 +179,24 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     mme_ue->sgs_reestablish_needed = false;
     mme_sgs_mark_ue_vlr_reliable(mme_ue, vlr);
 
+    if (nas_mobile_identity_tmsi) {
+        if (nas_mobile_identity_tmsi->type == OGS_NAS_MOBILE_IDENTITY_TMSI) {
+            mme_ue_set_p_tmsi(mme_ue, nas_mobile_identity_tmsi);
+        } else {
+            ogs_error("Not supported Identity type[%d]",
+                    nas_mobile_identity_tmsi->type);
+            goto error;
+        }
+        ogs_debug("    P-TMSI[0x%08x]", mme_ue->next.p_tmsi);
+    }
+
+    if (mme_ue->sgs_lu_refresh) {
+        mme_ue->sgs_lu_refresh = false;
+        ogs_info("[%s] SGSAP: Location-Update-Accept (VLR refresh)",
+                mme_ue->imsi_bcd);
+        return;
+    }
+
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
     if (!enb_ue) {
         ogs_warn("[%s] SGsAP LU Accept: S1 context already removed",
@@ -190,17 +208,6 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     if (lai) {
         ogs_debug("    LAI[PLMN_ID:%06x,LAC:%d]",
                     ogs_plmn_id_hexdump(&lai->nas_plmn_id), lai->lac);
-    }
-
-    if (nas_mobile_identity_tmsi) {
-        if (nas_mobile_identity_tmsi->type == OGS_NAS_MOBILE_IDENTITY_TMSI) {
-            mme_ue_set_p_tmsi(mme_ue, nas_mobile_identity_tmsi);
-        } else {
-            ogs_error("Not supported Identity type[%d]",
-                    nas_mobile_identity_tmsi->type);
-            goto error;
-        }
-        ogs_debug("    P-TMSI[0x%08x]", mme_ue->next.p_tmsi);
     }
 
     if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST) {
@@ -366,6 +373,14 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     if (lai) {
         ogs_debug("    LAI[PLMN_ID:%06x,LAC:%d]",
                     ogs_plmn_id_hexdump(&lai->nas_plmn_id), lai->lac);
+    }
+
+    if (mme_ue->sgs_lu_refresh) {
+        mme_ue->sgs_lu_refresh = false;
+        mme_sgs_ts6_1_timer_stop(mme_ue);
+        ogs_warn("[%s] SGs VLR refresh rejected; EPS/CS unchanged",
+                mme_ue->imsi_bcd);
+        return;
     }
 
     /* Continue Attach/TAU: fake_csfb → Combined; else EPS-only + #18 */

@@ -131,6 +131,50 @@ bool mme_sgs_need_location_update(const mme_ue_t *mme_ue)
     return false;
 }
 
+bool mme_sgs_need_periodic_vlr_refresh(const mme_ue_t *mme_ue)
+{
+    if (!mme_ue || mme_ue->sgs_lu_pending)
+        return false;
+
+    /*
+     * Already-associated idle UE: periodic TAU must refresh the VLR
+     * implicit-detach timer (T3212). 29.118 5.2.2.2.1 does not require
+     * this while VLR-Reliable is true; without it the MSC Purge-MS
+     * while the MME still looks registered.
+     * Combined / reestablish / !VLR-Reliable already hold TAU for LU.
+     */
+    if (mme_ue->nas_eps.update.value !=
+            OGS_NAS_EPS_UPDATE_TYPE_PERIODIC_UPDATING)
+        return false;
+
+    if (!MME_CURRENT_P_TMSI_IS_AVAILABLE(mme_ue))
+        return false;
+
+    if (!MME_SGSAP_IS_CONNECTED(mme_ue))
+        return false;
+
+    if (mme_sgs_need_location_update(mme_ue))
+        return false;
+
+    return true;
+}
+
+void mme_sgs_send_periodic_vlr_refresh(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    if (mme_ue->sgs_lu_pending)
+        return;
+
+    mme_ue->sgs_lu_refresh = true;
+    if (sgsap_send_location_update_request(mme_ue) != OGS_OK) {
+        mme_ue->sgs_lu_refresh = false;
+        if (ogs_log_guard())
+            ogs_warn("[%s] SGs VLR refresh not sent (VLR/SGs unavailable)",
+                    mme_ue->imsi_bcd);
+    }
+}
+
 void mme_sgs_association_released(mme_ue_t *mme_ue)
 {
     ogs_assert(mme_ue);

@@ -257,6 +257,8 @@ uint8_t mme_s6a_handle_ula(
             r = nas_eps_send_tau_accept(mme_ue,
                     mme_ue->tracking_area_update_accept_proc);
             ogs_expect(r == OGS_OK);
+            if (mme_sgs_need_periodic_vlr_refresh(mme_ue))
+                mme_sgs_send_periodic_vlr_refresh(mme_ue);
         }
     } else if (mme_ue->nas_eps.type == MME_EPS_TYPE_DETACH_REQUEST_FROM_UE ||
             mme_ue->nas_eps.type == MME_EPS_TYPE_DETACH_REQUEST_TO_UE) {
