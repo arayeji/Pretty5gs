@@ -89,6 +89,9 @@ int ogs_diam_init(int mode, const char *conffile, ogs_diam_config_t *fd_config);
 int ogs_diam_start(void);
 void ogs_diam_final(void);
 
+/* RFC 6733 12: recommended default for Tc (ConnectPeer retry), seconds. */
+#define OGS_DIAM_TIMER_TC_DEFAULT 30
+
 int ogs_diam_config_init(ogs_diam_config_t *fd_config);
 bool ogs_diam_is_relay_or_app_advertised(uint32_t app_id);
 /* True if any ConnectPeer is OPEN / OPEN_NEW / REOPEN. */

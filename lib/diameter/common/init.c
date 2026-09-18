@@ -179,12 +179,26 @@ int ogs_diam_init(int mode, const char *conffile, ogs_diam_config_t *fd_config)
 
     diam_set_restart_origin_state_id();
 
-    /* Faster ConnectPeer retry after DRA RST of a stale session. */
-    if (!fd_g_config->cnf_timer_tc || fd_g_config->cnf_timer_tc > 5) {
-        ogs_info("Diameter TcTimer %u -> 5s",
-                fd_g_config->cnf_timer_tc);
-        fd_g_config->cnf_timer_tc = 5;
-    }
+    /*
+     * RFC 6733 12: Tc defaults to 30 s, deliberately slow so that a
+     * peer which is down does not see a reconnect storm - and a DRA
+     * that rate-limits us is exactly what a 5 s retry would trip.
+     *
+     * The fast retry this replaced was a workaround for the DRA
+     * refusing CER after an MME crash; the persistent, monotonic
+     * Origin-State-Id set above is the RFC 6733 5.1 fix for that, so
+     * the first CER is accepted and no fast retry is needed.
+     *
+     * freeDiameter already applies the 30 s default in fd_conf_init()
+     * and overrides it from "TcTimer" (or a per-peer ConnectPeer Tc) in
+     * the conf file, so the right thing here is to touch nothing. The
+     * previous code clobbered any conf value above 5 s.
+     */
+    if (!fd_g_config->cnf_timer_tc)     /* belt and braces; fd sets 30 */
+        fd_g_config->cnf_timer_tc = OGS_DIAM_TIMER_TC_DEFAULT;
+    ogs_info("Diameter TcTimer %us (RFC 6733 default %ds; set TcTimer or "
+            "a per-peer ConnectPeer Tc in the freeDiameter conf to change)",
+            fd_g_config->cnf_timer_tc, OGS_DIAM_TIMER_TC_DEFAULT);
 
     return 0;
 error:
@@ -201,9 +215,31 @@ int ogs_diam_start(void)
 
     CHECK_FCT_DO( fd_core_waitstartcomplete(), goto error );
 
-    /* S1/Gx must not accept traffic before the first DRA/peer is OPEN.
-     * After a crash the DRA may RST CER until Origin-State-Id is applied. */
-    (void)ogs_diam_wait_peer_open(ogs_time_from_sec(15));
+    /*
+     * Do NOT block startup waiting for a peer to reach OPEN. This is
+     * shared by every NF that speaks Diameter, so it must not encode
+     * one NF's policy.
+     *
+     * Failing the individual request that needs the peer is both
+     * correct and diagnosable, and it keeps the work that does not
+     * need Diameter running. (In the MME that means attaches get EMM
+     * cause #17 while TAU and Service Request for already-attached UEs
+     * still work.) A blocking wait instead added its full timeout to
+     * every restart - including restarts done while the DRA is
+     * deliberately down.
+     *
+     * An NF that really must hold off new traffic while its peer is
+     * unreachable should do that in its own access layer - for the MME
+     * that is S1AP OVERLOAD START (36.413 8.7.6, driven per 23.401
+     * 4.3.7.4.2), released with OVERLOAD STOP once a peer is OPEN -
+     * not a sleep here.
+     */
+    if (!ogs_diam_any_peer_open()) {
+        ogs_warn("Diameter: no ConnectPeer OPEN yet; continuing startup. "
+                "Requests that need a Diameter peer will fail until one "
+                "connects");
+        ogs_diam_log_peer_states();
+    }
 
     CHECK_FCT( ogs_diam_stats_start() );
 
