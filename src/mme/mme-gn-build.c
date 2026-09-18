@@ -61,14 +61,28 @@ static void build_qos_profile_from_session(ogs_gtp1_qos_profile_decoded_t *qos_p
         const mme_sess_t *sess, const mme_bearer_t *bearer)
 {
     mme_ue_t *mme_ue = NULL;
-    const ogs_session_t *session = sess->session;
+    const ogs_session_t *session = NULL;
 
     ogs_assert(sess);
+    session = sess->session;
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     ogs_assert(mme_ue);
 
     /* FIXME: Initialize with defaults: */
     memset(qos_pdec, 0, sizeof(*qos_pdec));
+
+    /*
+     * sess->session points into mme_ue->session[] and an S6a IDR can
+     * withdraw this APN while the PDN is live. Dereferencing it here
+     * SIGABRTed/crashed the MME on the Gn (3G SGSN) handover path;
+     * a zeroed QoS profile degrades that one context instead.
+     */
+    if (!session) {
+        ogs_error("[%s] Gn QoS profile: no subscription APN for this PDN "
+                "(S6a IDR withdrew it?); sending defaults",
+                mme_ue->imsi_bcd);
+        return;
+    }
 
     qos_pdec->qos_profile.arp = session->qos.arp.priority_level;
 
@@ -156,9 +170,20 @@ static int sess_fill_pdp_context_decoded(mme_sess_t *sess, ogs_gtp1_pdp_context_
     int rv;
 
     ogs_assert(sess);
-    ogs_assert(sess->session);
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     ogs_assert(mme_ue);
+
+    /*
+     * Same IDR-withdrawn-APN case as build_qos_profile_from_session():
+     * sess->session points into mme_ue->session[] and can be NULL for a
+     * live PDN. The caller turns OGS_ERROR into a NULL PDU, so the Gn
+     * context transfer fails for this UE instead of aborting the MME.
+     */
+    if (!sess->session) {
+        ogs_error("[%s] Gn PDP context: no subscription APN for this PDN "
+                "(S6a IDR withdrew it?)", mme_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
 
     *pdpctx_dec = (ogs_gtp1_pdp_context_decoded_t){
         .ea = OGS_GTP1_PDPCTX_EXT_EUA_NO,
@@ -182,7 +207,12 @@ static int sess_fill_pdp_context_decoded(mme_sess_t *sess, ogs_gtp1_pdp_context_
 
     apn_fqdn_len = mme_apn_for_gtp(
             mme_ue, sess->session, apn_fqdn, sizeof(apn_fqdn));
-    ogs_assert(apn_fqdn_len > 0);
+    if (apn_fqdn_len <= 0) {
+        ogs_error("[%s] Gn PDP context: cannot build APN FQDN from "
+                "subscription APN[%s]", mme_ue->imsi_bcd,
+                sess->session->name ? sess->session->name : "-");
+        return OGS_ERROR;
+    }
     ogs_cpystrn(pdpctx_dec->apn, apn_fqdn, sizeof(pdpctx_dec->apn));
 
     rv = ogs_paa_to_ip(&sess->paa, &pdpctx_dec->pdp_address[0]);

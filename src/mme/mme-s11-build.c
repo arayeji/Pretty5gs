@@ -60,11 +60,23 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
     int pco_len = 0;
 
     ogs_assert(sess);
-    session = sess->session;
-    ogs_assert(session);
-    ogs_assert(session->name);
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     ogs_assert(mme_ue);
+
+    session = sess->session;
+    /*
+     * sess->session points into mme_ue->session[] and an S6a IDR can
+     * rebuild that array while this PDN is live (see
+     * mme_s6a_idr_rebind_live_sessions): a withdrawn APN leaves the
+     * pointer NULL. Asserting here SIGABRTed the whole MME; the caller
+     * already handles a NULL pkbuf.
+     */
+    if (!session || !session->name) {
+        ogs_error("[%s] Create Session Request: no subscription APN for "
+                "this PDN (S6a IDR withdrew it?); cannot build",
+                mme_log_imsi(mme_ue));
+        return NULL;
+    }
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     ogs_assert(sgw_ue);
 

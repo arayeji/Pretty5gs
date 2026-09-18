@@ -9490,8 +9490,8 @@ mme_sess_t *mme_sess_find_by_apn(const mme_ue_t *mme_ue, const char *apn)
 
     sess = mme_sess_first(mme_ue);
     while (sess) {
-        if (sess->session) {
-            ogs_assert(sess->session->name);
+        /* ->name may be NULL after an S6a IDR withdrew this APN. */
+        if (sess->session && sess->session->name) {
             if (ogs_strcasecmp(sess->session->name, apn) == 0)
                 return sess;
         }

@@ -44,7 +44,13 @@ static int esm_resolve_pdn_type(mme_ue_t *mme_ue, mme_sess_t *sess)
     uint8_t derived;
 
     ogs_assert(sess);
-    ogs_assert(sess->session);
+
+    /* S6a IDR can withdraw the APN under a live PDN; reject, never abort. */
+    if (!sess->session) {
+        ogs_error("[%s] No subscription APN for this PDN "
+                "(S6a IDR withdrew it?)", mme_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
 
     if (sess->session->session_type != OGS_PDU_SESSION_TYPE_IPV4 &&
         sess->session->session_type != OGS_PDU_SESSION_TYPE_IPV6 &&
@@ -266,8 +272,13 @@ int esm_handle_pdn_connectivity_request(
                 mme_ue, NULL, &no_apn_cause);
     }
 
-    if (sess->session) {
-        ogs_assert(sess->session->name);
+    /*
+     * ->name can be NULL when the HSS APN-Configuration carried no
+     * Service-Selection, or after an S6a IDR rebuilt mme_ue->session[]
+     * and withdrew this APN. Asserting SIGABRTed the MME; fall through
+     * to the existing "no APN" reject instead.
+     */
+    if (sess->session && sess->session->name) {
         ogs_debug("    APN[%s]", sess->session->name);
 
         /* Enforce allow-list on the resolved APN (UE-provided OR the
@@ -332,7 +343,6 @@ int esm_handle_pdn_connectivity_request(
         mme_bearer_t *default_bearer = NULL;
         mme_bearer_t *dedicated_bearer = NULL, *next_dedicated_bearer = NULL;
 
-        ogs_assert(sess->session->name);
         ogs_debug("    APN[%s]", sess->session->name);
 
         default_bearer = mme_default_bearer_in_sess(sess);
@@ -436,8 +446,13 @@ int esm_handle_information_response(
         OGS_NAS_STORE_DATA(&sess->ue_pco, protocol_configuration_options);
     }
 
-    if (sess->session) {
-        ogs_assert(sess->session->name);
+    /*
+     * ->name can be NULL when the HSS APN-Configuration carried no
+     * Service-Selection, or after an S6a IDR rebuilt mme_ue->session[]
+     * and withdrew this APN. Asserting SIGABRTed the MME; fall through
+     * to the existing "no APN" reject instead.
+     */
+    if (sess->session && sess->session->name) {
         ogs_debug("    APN[%s]", sess->session->name);
 
         /* Enforce allow-list on the resolved APN (UE-provided OR the
