@@ -1136,8 +1136,18 @@ cleanup:
         if (rv != OGS_OK) {
             char peer[OGS_ADDRSTRLEN];
             mme_ue_t *ue_hint = NULL;
+            const char *why;
             uint32_t sqn = gtp_message.h.teid_presence ?
                 gtp_message.h.sqn : gtp_message.h.sqn_only;
+
+            if (rv == OGS_RETRY &&
+                    gtp_message.h.type ==
+                        OGS_GTP2_DOWNLINK_DATA_NOTIFICATION_TYPE)
+                why = "duplicate DDN, Ack still pending";
+            else if (rv == OGS_RETRY)
+                why = "duplicate GTP request";
+            else
+                why = "late response or invalid GTP transaction step";
 
             if (gtp_message.h.teid_presence && gtp_message.h.teid)
                 ue_hint = mme_ue_find_by_s11_local_teid(gtp_message.h.teid);
@@ -1145,14 +1155,13 @@ cleanup:
             if (ue_hint) {
                 mme_ue_warn(ue_hint, NULL, "s11", NULL,
                         "S11 GTP receive dropped [%s]:%d type[%u] "
-                        "teid[0x%x] sqn[0x%x] rv=%d (late response or "
-                        "invalid GTP transaction step)",
+                        "teid[0x%x] sqn[0x%x] rv=%d (%s)",
                         OGS_ADDR(&gnode->addr, peer),
                         OGS_PORT(&gnode->addr),
                         gtp_message.h.type,
                         gtp_message.h.teid_presence ?
                             gtp_message.h.teid : 0,
-                        sqn, rv);
+                        sqn, rv, why);
                 if (MME_UE_HAVE_IMSI(ue_hint))
                     ogs_trace_packet(ue_hint->imsi_bcd, "gtp", "rx",
                             pkbuf->data, pkbuf->len);
@@ -1161,13 +1170,13 @@ cleanup:
                     mme_ue_progress(ue_hint, "create_session_rsp_late");
             } else {
                 ogs_warn("S11 GTP receive dropped [%s]:%d type[%u] "
-                        "teid[0x%x] sqn[0x%x] rv=%d IMSI[-]",
+                        "teid[0x%x] sqn[0x%x] rv=%d IMSI[-] (%s)",
                         OGS_ADDR(&gnode->addr, peer),
                         OGS_PORT(&gnode->addr),
                         gtp_message.h.type,
                         gtp_message.h.teid_presence ?
                             gtp_message.h.teid : 0,
-                        sqn, rv);
+                        sqn, rv, why);
             }
             ogs_trace_packet_bind_rx(NULL, NULL, 0);
             ogs_pkbuf_free(pkbuf);
