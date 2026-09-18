@@ -237,6 +237,9 @@ uint8_t mme_s6a_handle_ula(
         mme_ue->csmap = mme_csmap_find_for_ue(mme_ue);
         if (mme_sgs_need_location_update(mme_ue)) {
 
+            if (!mme_sgs_claim_procedure_lu(mme_ue))
+                return OGS_NAS_EMM_CAUSE_REQUEST_ACCEPTED;
+
             if (sgsap_send_location_update_request(mme_ue) != OGS_OK) {
                 /*
                  * SGs/VLR association down or send failed (was ogs_assert /

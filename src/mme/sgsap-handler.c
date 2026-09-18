@@ -179,6 +179,18 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     mme_ue->sgs_reestablish_needed = false;
     mme_sgs_mark_ue_vlr_reliable(mme_ue, vlr);
 
+    /*
+     * Keep-alive: TAU Accept already went out. Do not touch next P-TMSI
+     * (that would wait for a TAU Complete the UE will never send) and
+     * do not fall through to Attach/TAU Accept or the error reject path.
+     */
+    if (mme_ue->sgs_lu_refresh) {
+        mme_ue->sgs_lu_refresh = false;
+        ogs_debug("[%s] SGSAP: Location-Update-Accept (VLR refresh)",
+                mme_ue->imsi_bcd);
+        return;
+    }
+
     if (nas_mobile_identity_tmsi) {
         if (nas_mobile_identity_tmsi->type == OGS_NAS_MOBILE_IDENTITY_TMSI) {
             mme_ue_set_p_tmsi(mme_ue, nas_mobile_identity_tmsi);
@@ -188,13 +200,6 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
             goto error;
         }
         ogs_debug("    P-TMSI[0x%08x]", mme_ue->next.p_tmsi);
-    }
-
-    if (mme_ue->sgs_lu_refresh) {
-        mme_ue->sgs_lu_refresh = false;
-        ogs_info("[%s] SGSAP: Location-Update-Accept (VLR refresh)",
-                mme_ue->imsi_bcd);
-        return;
     }
 
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);

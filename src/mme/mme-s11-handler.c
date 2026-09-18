@@ -830,7 +830,9 @@ void mme_s11_handle_create_session_response(
             ogs_expect(r == OGS_OK);
         } else {
             mme_ue_progress(mme_ue, "attach_accept_deferred_sgs");
-            if (OGS_OK != sgsap_send_location_update_request(mme_ue)) {
+            if (!mme_sgs_claim_procedure_lu(mme_ue)) {
+                /* Keep-alive LU already in flight; wait for Accept. */
+            } else if (OGS_OK != sgsap_send_location_update_request(mme_ue)) {
                 if (ogs_log_guard())
                     ogs_warn("[%s] sgsap_send_location_update_request() "
                             "failed; continue Attach without CS",

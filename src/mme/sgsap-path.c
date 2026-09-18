@@ -133,7 +133,7 @@ bool mme_sgs_need_location_update(const mme_ue_t *mme_ue)
 
 bool mme_sgs_need_periodic_vlr_refresh(const mme_ue_t *mme_ue)
 {
-    if (!mme_ue || mme_ue->sgs_lu_pending)
+    if (!mme_ue || mme_ue->sgs_lu_pending || mme_ue->sgs_cs_unavailable)
         return false;
 
     /*
@@ -153,7 +153,16 @@ bool mme_sgs_need_periodic_vlr_refresh(const mme_ue_t *mme_ue)
     if (!MME_SGSAP_IS_CONNECTED(mme_ue))
         return false;
 
+    /* Do not start a keep-alive while a P-TMSI realloc is in flight. */
+    if (MME_NEXT_P_TMSI_IS_AVAILABLE(mme_ue))
+        return false;
+
     if (mme_sgs_need_location_update(mme_ue))
+        return false;
+
+    /* SGs TX already wedged: another LU storm would make it worse. */
+    if (mme_ue->csmap && mme_ue->csmap->vlr &&
+            mme_ue->csmap->vlr->tx_stall_since)
         return false;
 
     return true;
@@ -173,6 +182,18 @@ void mme_sgs_send_periodic_vlr_refresh(mme_ue_t *mme_ue)
             ogs_warn("[%s] SGs VLR refresh not sent (VLR/SGs unavailable)",
                     mme_ue->imsi_bcd);
     }
+}
+
+bool mme_sgs_claim_procedure_lu(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    /*
+     * Combined/attach/reestablish LU must drive Attach/TAU Accept.
+     * A keep-alive already in flight is reused; do not send a second LU.
+     */
+    mme_ue->sgs_lu_refresh = false;
+    return !mme_ue->sgs_lu_pending;
 }
 
 void mme_sgs_association_released(mme_ue_t *mme_ue)
@@ -435,11 +456,15 @@ int sgsap_send_location_update_request(mme_ue_t *mme_ue)
     ogs_pkbuf_t *pkbuf = NULL;
     ogs_assert(mme_ue);
 
-    ogs_info("[%s] SGSAP: Location-Update-Request "
-            "(EPS-Type[%d] update[%d]%s)",
-            mme_ue->imsi_bcd, mme_ue->nas_eps.type,
-            mme_ue->nas_eps.update.value,
-            mme_ue->sgs_reestablish_needed ? " reestablish" : "");
+    if (mme_ue->sgs_lu_refresh)
+        ogs_debug("[%s] SGSAP: Location-Update-Request (VLR refresh)",
+                mme_ue->imsi_bcd);
+    else
+        ogs_info("[%s] SGSAP: Location-Update-Request "
+                "(EPS-Type[%d] update[%d]%s)",
+                mme_ue->imsi_bcd, mme_ue->nas_eps.type,
+                mme_ue->nas_eps.update.value,
+                mme_ue->sgs_reestablish_needed ? " reestablish" : "");
 
     pkbuf = sgsap_build_location_update_request(mme_ue);
     if (!pkbuf) {
