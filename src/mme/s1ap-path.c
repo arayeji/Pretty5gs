@@ -914,6 +914,16 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
     ogs_timer_start(mme_ue->t3413.timer,
             mme_timer_cfg(MME_TIMER_T3413)->duration);
 
+    /*
+     * S1 Paging is non-UE signalling, so s1ap_send_to_enb_ue() never
+     * traces it. Dump the PDU once per wave (not once per eNB) when
+     * this IMSI is in mme.trace_imsi. ogs_trace_packet is a no-op
+     * when the filter is empty or does not match.
+     */
+    if (MME_UE_HAVE_IMSI(mme_ue) && mme_ue->t3413.pkbuf)
+        ogs_trace_packet(mme_ue->imsi_bcd, "s1ap", "tx",
+                mme_ue->t3413.pkbuf->data, mme_ue->t3413.pkbuf->len);
+
     return OGS_OK;
 }
 
