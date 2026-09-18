@@ -194,6 +194,14 @@ static void emm_handle_sgs_ts6_1_timer(ogs_fsm_t *s, mme_ue_t *mme_ue)
     if (mme_ue->sgs_lu_refresh) {
         mme_ue->sgs_lu_refresh = false;
         mme_sgs_ts6_1_timer_stop(mme_ue);
+        if (mme_ue->sgs_lu_procedure_deferred) {
+            /* Attach/TAU parked behind the keep-alive: do not hang. */
+            mme_ue->sgs_lu_procedure_deferred = false;
+            ogs_warn("[%s] SGs keep-alive Ts6-1 timeout with Attach/TAU "
+                    "waiting; continue without CS", mme_ue->imsi_bcd);
+            mme_sgs_continue_without_cs(mme_ue, "sgsap_lu_timeout");
+            return;
+        }
         ogs_warn("[%s] SGs VLR refresh Ts6-1 timeout; EPS/CS unchanged",
                 mme_ue->imsi_bcd);
         return;

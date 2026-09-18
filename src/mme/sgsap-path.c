@@ -25,6 +25,7 @@
 #include "mme-sm.h"
 #include "mme-timer.h"
 #include "mme-trace.h"
+#include "mme-path.h"
 
 #include "sgsap-path.h"
 #include "sgsap-io.h"
@@ -184,16 +185,154 @@ void mme_sgs_send_periodic_vlr_refresh(mme_ue_t *mme_ue)
     }
 }
 
+/*
+ * TS 29.118 9.4.1 EPS location update type, selected per 5.2.2.2:
+ *   IMSI attach - combined Attach, or combined TAU with IMSI attach.
+ *   Normal      - everything else (combined TA/LA updating without
+ *                 IMSI attach, and the periodic-TAU T3212 keep-alive).
+ *
+ * Two cases take IMSI attach even though the UE did not ask for it,
+ * because the VLR has no MM context to *update*:
+ *
+ *   5.11.4 - RELEASE-REQUEST with "IMSI unknown" or "IMSI detached for
+ *     non-EPS services" put the association in SGs-NULL. The spec
+ *     recovery is a NAS IMSI-detach so the UE re-attaches for non-EPS,
+ *     which this MME cannot send without de-registering EPS as well
+ *     (see mme_sgs_association_released), so signal the attach on the
+ *     SGs leg instead.
+ *   5.7.3.1 - after RESET-INDICATION the VLR lost its MM contexts.
+ *
+ * A Normal LU in those two cases asks the VLR to refresh a record it
+ * does not have; whether it then creates one and marks the subscriber
+ * IMSI-attached - which is what gates MT CS paging and MT SMS - is
+ * MSC-dependent, so do not rely on it.
+ */
+uint8_t mme_sgs_eps_update_type(const mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    if (mme_ue->nas_eps.type == MME_EPS_TYPE_ATTACH_REQUEST)
+        return SGSAP_EPS_UPDATE_IMSI_ATTACH;
+
+    if (mme_ue->nas_eps.type == MME_EPS_TYPE_TAU_REQUEST &&
+            mme_ue->nas_eps.update.value ==
+                OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING_WITH_IMSI_ATTACH)
+        return SGSAP_EPS_UPDATE_IMSI_ATTACH;
+
+    if (mme_ue->sgs_reestablish_needed || !MME_VLR_RELIABLE(mme_ue))
+        return SGSAP_EPS_UPDATE_IMSI_ATTACH;
+
+    return SGSAP_EPS_UPDATE_NORMAL;
+}
+
 bool mme_sgs_claim_procedure_lu(mme_ue_t *mme_ue)
 {
     ogs_assert(mme_ue);
 
     /*
      * Combined/attach/reestablish LU must drive Attach/TAU Accept.
-     * A keep-alive already in flight is reused; do not send a second LU.
+     *
+     * A keep-alive (periodic-TAU T3212 refresh) already in flight can
+     * neither be reused nor raced:
+     *   - it carries EPS-Update-Type Normal and the pre-procedure LAI,
+     *     so a Combined-with-IMSI-attach would never reach the VLR as
+     *     an IMSI attach; and
+     *   - SGsAP LU Accept carries no transaction id, so if we simply
+     *     sent a second LU we could not tell the two Accepts apart:
+     *     the keep-alive's Accept would complete the procedure early
+     *     and the real one would be dropped as stale, losing any
+     *     P-TMSI it reallocated.
+     *
+     * So serialise instead: let the keep-alive finish, and send the
+     * real procedure LU from its Accept handler. One extra round-trip
+     * on a rare collision (a Combined procedure arriving inside Ts6-1
+     * of a periodic TAU), in exchange for an unambiguous exchange.
+     * Ts6-1 is restarted by that second send, so the procedure still
+     * gets a full timer. Reject / Ts6-1 timeout clear the flag and
+     * fall through to continue_without_cs so nothing hangs.
      */
-    mme_ue->sgs_lu_refresh = false;
+    if (mme_ue->sgs_lu_refresh) {
+        mme_ue->sgs_lu_procedure_deferred = true;
+        return false;
+    }
+
+    /* A procedure LU is genuinely in flight: wait for its Accept. */
     return !mme_ue->sgs_lu_pending;
+}
+
+/*
+ * Keep-alive Accept/Reject/timeout with an Attach or TAU parked behind
+ * it (see mme_sgs_claim_procedure_lu). Returns true when it has taken
+ * over the procedure, i.e. the caller must not also complete it.
+ */
+bool mme_sgs_resume_deferred_procedure_lu(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    if (!mme_ue->sgs_lu_procedure_deferred)
+        return false;
+
+    mme_ue->sgs_lu_procedure_deferred = false;
+
+    /* sgs_lu_refresh is already clear, so this Accept drives the
+     * Attach/TAU Accept. */
+    if (sgsap_send_location_update_request(mme_ue) != OGS_OK) {
+        if (ogs_log_guard())
+            ogs_warn("[%s] deferred SGs procedure LU not sent "
+                    "(VLR/SGs unavailable); continue without CS",
+                    mme_ue->imsi_bcd);
+        mme_sgs_continue_without_cs(mme_ue, "sgsap_lu_send_failed");
+        return true;
+    }
+
+    ogs_info("[%s] SGs keep-alive done; procedure Location-Update "
+            "(EPS-Type[%d] update[%d]) sent",
+            mme_ue->imsi_bcd, mme_ue->nas_eps.type,
+            mme_ue->nas_eps.update.value);
+    return true;
+}
+
+/*
+ * TS 29.118 5.7.3.1 / 5.11.4 left this UE with VLR-Reliable = false
+ * (VLR RESET-INDICATION, or RELEASE-REQUEST with IMSI unknown /
+ * detached-for-non-EPS). Recovery is otherwise only the next Combined
+ * or periodic TAU, i.e. up to a full T3412 (~54 min) with MO SMS
+ * refused for every UE on that VLR at once. Re-establish on demand
+ * instead, one UE at a time: sgs_lu_pending rate-limits per UE and
+ * only UEs that actually try to use CS pay for an LU, so this is not
+ * the all-UE signalling storm that 5.7.3.1 warns about.
+ */
+void mme_sgs_request_vlr_reestablish(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    if (MME_VLR_RELIABLE(mme_ue))
+        return;
+    if (mme_ue->sgs_lu_pending)
+        return;
+    if (!MME_SGSAP_IS_CONNECTED(mme_ue))
+        return;
+    /* SGs TX already wedged: another LU would only deepen the queue. */
+    if (mme_ue->csmap && mme_ue->csmap->vlr &&
+            mme_ue->csmap->vlr->tx_stall_since)
+        return;
+
+    /*
+     * Refresh-style: the Accept must only clear VLR-Reliable, never
+     * drive an Attach/TAU Accept or a P-TMSI realloc for a UE that is
+     * mid-SMS and will not answer a TAU Complete.
+     */
+    mme_ue->sgs_lu_refresh = true;
+    if (sgsap_send_location_update_request(mme_ue) != OGS_OK) {
+        mme_ue->sgs_lu_refresh = false;
+        if (ogs_log_guard())
+            ogs_warn("[%s] SGs re-establish LU not sent "
+                    "(VLR/SGs unavailable)", mme_ue->imsi_bcd);
+        return;
+    }
+
+    ogs_info("[%s] SGs VLR-Reliable=false; re-establish Location-Update "
+            "sent on demand", mme_ue->imsi_bcd);
 }
 
 void mme_sgs_association_released(mme_ue_t *mme_ue)
@@ -630,8 +769,14 @@ int sgsap_send_uplink_unitdata(mme_ue_t *mme_ue,
      */
     if (!MME_VLR_RELIABLE(mme_ue)) {
         ogs_info("[%s] SGsAP UPLINK-UNITDATA not sent: "
-                "VLR-Reliable=false (TS 29.118 5.11.2.1)",
+                "VLR-Reliable=false (TS 29.118 5.11.2.1); "
+                "re-establishing SGs now",
                 mme_ue->imsi_bcd);
+        /*
+         * This SM is lost (the UE retransmits at the CM/RP layer), but
+         * without this the UE would keep failing until its next TAU.
+         */
+        mme_sgs_request_vlr_reestablish(mme_ue);
         return OGS_ERROR;
     }
 

@@ -188,6 +188,40 @@ void sgsap_handle_location_update_accept(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         mme_ue->sgs_lu_refresh = false;
         ogs_debug("[%s] SGSAP: Location-Update-Accept (VLR refresh)",
                 mme_ue->imsi_bcd);
+        /*
+         * A plain keep-alive drops any reallocated P-TMSI on purpose:
+         * there is no NAS procedure in flight to carry it to the UE,
+         * and arming next.p_tmsi would wait for a TAU Complete that
+         * never comes.
+         *
+         * With an Attach/TAU parked behind it there IS one, and this
+         * is the collision that matters: an on-demand re-establish
+         * (mme_sgs_request_vlr_reestablish) goes out as IMSI attach,
+         * and MSCs commonly reallocate on that Accept. Dropping it
+         * would leave the VLR holding the new P-TMSI and the UE the
+         * old one - self-healing, but it costs an identity request and
+         * a re-LU on the next CSFB.
+         *
+         * Apply it and still return: the keep-alive Accept must not
+         * drive Attach/TAU Accept itself. If the resume below fails to
+         * send, next.p_tmsi is still the right value for
+         * continue_without_cs to carry - the VLR has already accepted
+         * it - and a later procedure Accept overwrites it if the VLR
+         * allocates another.
+         */
+        if (mme_ue->sgs_lu_procedure_deferred &&
+            nas_mobile_identity_tmsi &&
+            nas_mobile_identity_tmsi->type == OGS_NAS_MOBILE_IDENTITY_TMSI) {
+            mme_ue_set_p_tmsi(mme_ue, nas_mobile_identity_tmsi);
+            ogs_debug("    P-TMSI[0x%08x] (deferred procedure will carry it)",
+                    mme_ue->next.p_tmsi);
+        }
+
+        /*
+         * The parked Attach/TAU now gets its own LU, with the right
+         * EPS location update type and a full Ts6-1.
+         */
+        mme_sgs_resume_deferred_procedure_lu(mme_ue);
         return;
     }
 
@@ -383,6 +417,18 @@ void sgsap_handle_location_update_reject(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
     if (mme_ue->sgs_lu_refresh) {
         mme_ue->sgs_lu_refresh = false;
         mme_sgs_ts6_1_timer_stop(mme_ue);
+        if (mme_ue->sgs_lu_procedure_deferred) {
+            /*
+             * The VLR rejected the keep-alive, so the procedure LU
+             * parked behind it would be rejected too. Do not leave the
+             * Attach/TAU hanging.
+             */
+            mme_ue->sgs_lu_procedure_deferred = false;
+            ogs_warn("[%s] SGs VLR refresh rejected with Attach/TAU "
+                    "waiting; continue without CS", mme_ue->imsi_bcd);
+            mme_sgs_continue_without_cs(mme_ue, "sgsap_lu_reject");
+            return;
+        }
         ogs_warn("[%s] SGs VLR refresh rejected; EPS/CS unchanged",
                 mme_ue->imsi_bcd);
         return;

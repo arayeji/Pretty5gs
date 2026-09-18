@@ -1502,6 +1502,7 @@ struct mme_ue_s {
         CLEAR_MME_UE_TIMER((__mME)->t_implicit_detach); \
         (__mME)->sgs_lu_pending = false; \
         (__mME)->sgs_lu_refresh = false; \
+        (__mME)->sgs_lu_procedure_deferred = false; \
         (__mME)->sgs_cs_unavailable = false; \
         ogs_timer_stop((__mME)->t_sgs_ts6_1); \
         (__mME)->s6a_pending_cmd = 0; \
@@ -1633,6 +1634,12 @@ struct mme_ue_s {
      * sent; LU Accept/Reject/Ts6-1 must not drive another Accept or #18.
      */
     bool            sgs_lu_refresh;
+    /*
+     * An Attach/TAU is parked behind an in-flight keep-alive LU; its
+     * Accept must send the real procedure LU rather than complete the
+     * procedure (mme_sgs_claim_procedure_lu / _resume_deferred_*).
+     */
+    bool            sgs_lu_procedure_deferred;
     /* Set when SGs LU reject/timeout; Attach/TAU Accept forces EPS-only + #18 */
     bool            sgs_cs_unavailable;
     /*
