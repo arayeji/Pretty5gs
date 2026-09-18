@@ -19,6 +19,7 @@
 
 #include "ogs-sctp.h"
 #include <errno.h>
+#include <stdint.h>
 
 #include "mme-event.h"
 #include "mme-sm.h"
@@ -69,6 +70,20 @@ void mme_sgs_mark_ue_vlr_reliable(mme_ue_t *mme_ue, const mme_vlr_t *vlr)
     mme_ue->vlr_reliable_gen = vlr->sgs_reset_gen;
 }
 
+void mme_sgs_mark_ue_vlr_unreliable(mme_ue_t *mme_ue)
+{
+    ogs_assert(mme_ue);
+
+    /*
+     * TS 29.118 5.11.4: VLR-Reliable = false until the next successful
+     * SGs Location-Update Accept (which calls mark_ue_vlr_reliable).
+     */
+    if (mme_ue->csmap && mme_ue->csmap->vlr)
+        mme_ue->vlr_reliable_gen = mme_ue->csmap->vlr->sgs_reset_gen - 1;
+    else
+        mme_ue->vlr_reliable_gen = UINT32_MAX;
+}
+
 bool mme_sgs_need_location_update(const mme_ue_t *mme_ue)
 {
     if (!mme_ue || !mme_ue->csmap ||
@@ -77,6 +92,11 @@ bool mme_sgs_need_location_update(const mme_ue_t *mme_ue)
             OGS_NETWORK_ACCESS_MODE_PACKET_AND_CIRCUIT)
         return false;
 
+    /*
+     * TS 29.118 5.2.2.2.1: Combined attach/TAU shall start SGs LU
+     * (IMSI attach, LAI change, SGs-NULL, or MME change). Always
+     * sending LU on Combined covers those shall-cases.
+     */
     if (mme_ue->nas_eps.update.value ==
             OGS_NAS_EPS_UPDATE_TYPE_COMBINED_TA_LA_UPDATING ||
         mme_ue->nas_eps.update.value ==
@@ -84,11 +104,11 @@ bool mme_sgs_need_location_update(const mme_ue_t *mme_ue)
         return true;
 
     /*
-     * TS 29.118 5.8 / 5.2.2.2.1: after SGsAP-RELEASE-REQUEST the local
-     * association is gone. Re-establish on the next TAU even if the UE
-     * sends TA updating or periodic (it still believes it is IMSI-
-     * attached for non-EPS). Do not use "no P-TMSI" alone — that would
-     * LU EPS-only UEs that never Combined-registered.
+     * After RELEASE with cause IMSI unknown / detached-for-non-EPS
+     * (5.11.4) the MME is SGs-NULL and must request re-attach for
+     * non-EPS. Open5GS cannot send a NAS IMSI-only detach without
+     * tearing down EPS, so recover on the next TA/periodic TAU.
+     * Do not use "no P-TMSI" alone — that would LU EPS-only UEs.
      */
     if (mme_ue->sgs_reestablish_needed &&
         (mme_ue->nas_eps.update.value ==
@@ -98,9 +118,9 @@ bool mme_sgs_need_location_update(const mme_ue_t *mme_ue)
         return true;
 
     /*
-     * TS 29.118 5.7.3.1 / 5.2.2.2.1: if VLR-Reliable is false, the MME
-     * may start Location-Update on periodic TAU for a UE still attached
-     * for non-EPS services. Combined TAU already always sends LU above.
+     * TS 29.118 5.2.2.2.1: if VLR-Reliable is false, the MME may
+     * start Location-Update on periodic TAU while the UE is still
+     * attached for non-EPS. Combined already always sends LU above.
      */
     if (mme_ue->nas_eps.update.value ==
             OGS_NAS_EPS_UPDATE_TYPE_PERIODIC_UPDATING &&
@@ -116,18 +136,23 @@ void mme_sgs_association_released(mme_ue_t *mme_ue)
     ogs_assert(mme_ue);
 
     /*
-     * TS 29.118 5.8: VLR released the SGs association. Drop the local
-     * CS identity so paging/CSFB do not treat the UE as still associated.
+     * TS 29.118 5.11.4: RELEASE with "IMSI unknown" or
+     * "IMSI detached for non-EPS services" — SGs-NULL and
+     * VLR-Reliable = false. SMS/no-cause RELEASE must not call this.
      *
      * Do not stop Ts6-1 / sgs_lu_pending: an in-flight Location-Update
-     * is the re-establishment, and its Accept/Reject/timeout still
-     * completes Attach/Combined TAU. Do not set sgs_cs_unavailable —
-     * that would force EPS-only + #18 on the next Combined Accept.
+     * is the re-establishment. Do not set sgs_cs_unavailable — that
+     * would force EPS-only + #18 on the next Combined Accept.
+     *
+     * Do not send NAS Detach Request (IMSI detach): Detach Accept in
+     * this MME de-registers EPS. Combined / sgs_reestablish LU is the
+     * 24.301 re-attach path we can complete safely.
      */
     mme_ue_clear_p_tmsi(mme_ue);
     mme_ue->sgs_reestablish_needed = true;
+    mme_sgs_mark_ue_vlr_unreliable(mme_ue);
 
-    ogs_info("[%s] SGsAP RELEASE-REQUEST: SGs association cleared "
+    ogs_info("[%s] SGs association SGs-NULL, VLR-Reliable=false "
             "(re-establish on next TAU%s)",
             mme_ue->imsi_bcd,
             mme_ue->sgs_lu_pending ? ", LU already in flight" : "");
@@ -528,6 +553,18 @@ int sgsap_send_uplink_unitdata(mme_ue_t *mme_ue,
     ogs_pkbuf_t *pkbuf = NULL;
     ogs_assert(mme_ue);
     ogs_assert(nas_message_container);
+
+    /*
+     * TS 29.118 5.11.2.1: do not tunnel NAS to the VLR while
+     * VLR-Reliable is false; the MME must request re-attach for
+     * non-EPS instead.
+     */
+    if (!MME_VLR_RELIABLE(mme_ue)) {
+        ogs_info("[%s] SGsAP UPLINK-UNITDATA not sent: "
+                "VLR-Reliable=false (TS 29.118 5.11.2.1)",
+                mme_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
 
     ogs_debug("[SGSAP] UPLINK-UNITDATA");
     ogs_debug("    IMSI[%s]", mme_ue->imsi_bcd);

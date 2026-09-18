@@ -1630,9 +1630,11 @@ struct mme_ue_s {
     /* Set when SGs LU reject/timeout; Attach/TAU Accept forces EPS-only + #18 */
     bool            sgs_cs_unavailable;
     /*
-     * Set by SGsAP-RELEASE-REQUEST (TS 29.118 5.8). The VLR dropped the
-     * SGs association; the next TAU must send Location-Update even if
-     * the NAS update type is TA/periodic (not Combined).
+     * Set only when SGsAP-RELEASE-REQUEST carries SGs Cause
+     * "IMSI unknown" or "IMSI detached for non-EPS services"
+     * (TS 29.118 5.11.4). SMS/no-cause RELEASE must not set this.
+     * Next TA/periodic TAU may Location-Update even though the UE
+     * still sends type 0/3 (it believes it is IMSI-attached).
      * Cleared on Location-Update-Accept. Survives CLEAR_MME_UE_ALL_TIMERS.
      */
     bool            sgs_reestablish_needed;

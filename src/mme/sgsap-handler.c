@@ -929,6 +929,8 @@ void sgsap_handle_release_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
 
     ogs_nas_mobile_identity_imsi_t *nas_mobile_identity_imsi = NULL;
     int nas_mobile_identity_imsi_len = 0;
+    uint8_t sgs_cause = 0;
+    bool have_sgs_cause = false;
 
     ogs_assert(vlr);
     ogs_assert(pkbuf);
@@ -950,8 +952,14 @@ void sgsap_handle_release_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
             nas_mobile_identity_imsi = iter->value;
             nas_mobile_identity_imsi_len = iter->length;
             break;
+        case SGSAP_IE_SGS_CAUSE_TYPE:
+            if (iter->length >= SGSAP_IE_SGS_CAUSE_LEN && iter->value) {
+                sgs_cause = *(uint8_t *)iter->value;
+                have_sgs_cause = true;
+            }
+            break;
         default:
-            ogs_warn("Invalid Type [%d]", iter->type);
+            ogs_warn("Unknown Type [%d]", iter->type);
             break;
         }
         iter = iter->next;
@@ -978,12 +986,39 @@ void sgsap_handle_release_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
         return;
     }
 
-    if (mme_ue)
-        mme_sgs_association_released(mme_ue);
-    else
+    if (!mme_ue) {
         sgsap_warn_no_ue(vlr, "RELEASE-REQUEST", imsi_bcd,
                 "UE already gone");
+        return;
+    }
 
+    /*
+     * TS 29.118 5.11.4 / 8.23.1: SGs Cause is optional.
+     * SMS / tunnel-end RELEASE (no cause, or any cause other than
+     * IMSI unknown / detached-for-non-EPS) must leave the SGs
+     * association and P-TMSI intact.
+     *
+     * Only "IMSI unknown" (3) and "IMSI detached for non-EPS
+     * services" (4) set VLR-Reliable=false and SGs-NULL.
+     */
+    if (have_sgs_cause &&
+        (sgs_cause == SGSAP_SGS_CAUSE_IMSI_UNKNOWN ||
+         sgs_cause == SGSAP_SGS_CAUSE_IMSI_DETACHED_NON_EPS)) {
+        ogs_info("[%s] SGsAP RELEASE-REQUEST cause=%u "
+                "(IMSI unknown or detached for non-EPS)",
+                mme_ue->imsi_bcd, sgs_cause);
+        mme_sgs_association_released(mme_ue);
+        return;
+    }
+
+    if (have_sgs_cause)
+        ogs_info("[%s] SGsAP RELEASE-REQUEST cause=%u: "
+                "NAS tunnel end (SGs association unchanged)",
+                mme_ue->imsi_bcd, sgs_cause);
+    else
+        ogs_info("[%s] SGsAP RELEASE-REQUEST: "
+                "NAS tunnel end (SGs association unchanged)",
+                mme_ue->imsi_bcd);
 }
 
 void sgsap_handle_mm_information_request(mme_vlr_t *vlr, ogs_pkbuf_t *pkbuf)
