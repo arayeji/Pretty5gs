@@ -1075,6 +1075,9 @@ ED8(uint8_t     spare:1;,
     };
 } __attribute__ ((packed)) ogs_pfcp_report_type_t;
 
+/* 8.2.64 PFCPSRReq-Flags — Bit 1 PSDBU */
+#define OGS_PFCP_PFCPSRREQ_PSDBU    0x01
+
 /*
  * 8.2.27 Downlink Data Service Information
  */

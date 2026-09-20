@@ -2752,7 +2752,34 @@ void sgwc_sxa_handle_session_report_request(
                 bearer) != OGS_OK)
             ogs_error("sgwc_gtp_send_downlink_data_notification() failed");
 
+    } else if (report_type.up_initiated_session_request) {
+        uint8_t flags = 0;
+
+        /*
+         * UISR (Report Type bit 7 = 64). VPP/UPG sends this after it
+         * already dropped the PFCP session. The report is already
+         * ACKed. PSDBU means do not send another Session Deletion —
+         * that is what timed out as "Sxa timeout ... Deletion Response".
+         */
+        if (pfcp_req->pfcpsrreq_flags.presence)
+            flags = pfcp_req->pfcpsrreq_flags.u8;
+
+        if (flags & OGS_PFCP_PFCPSRREQ_PSDBU) {
+            ogs_warn("[%s] PFCP UISR PSDBU: SGW-U already deleted "
+                    "sess_id[%d] - clear local, no Sxa delete",
+                    sgwc_ue->imsi_bcd, sess->id);
+            sess->sgwu_sxa_seid = 0;
+            sgwc_sess_remove(sess);
+            sgwc_ue_remove_if_empty(sgwc_ue);
+        } else {
+            ogs_info("[%s] PFCP UISR flags=0x%x - ignored",
+                    sgwc_ue->imsi_bcd, flags);
+        }
+
+    } else if (report_type.session_report) {
+        ogs_info("[%s] PFCP SESR ignored", sgwc_ue->imsi_bcd);
+
     } else {
-        ogs_error("Not supported Report Type[%d]", report_type.value);
+        ogs_warn("Not supported Report Type[%d]", report_type.value);
     }
 }
