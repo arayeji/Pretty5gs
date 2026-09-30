@@ -193,6 +193,18 @@ typedef struct mme_context_s {
     } pgw_selection;
 
     /*
+     * mme.sgwc_selection (startup only)
+     *   per_ue (default): one SGW per UE. apn: on an sgwc entry is
+     *     ignored and the entry matches on its other keys, as before.
+     *   per_pdn: an sgwc entry carrying apn: moves the PDNs it matches
+     *     (all keys ANDed, lowest order wins) onto its SGW. A UE holds at
+     *     most two S11 contexts: its own SGW and one extra.
+     */
+#define MME_SGWC_SELECTION_PER_UE       0
+#define MME_SGWC_SELECTION_PER_PDN      1
+    int sgwc_selection;
+
+    /*
      * mme.apn_correction — per subscriber range / requested APN policy
      * for what happens when the UE-requested APN or PDN type does not
      * match the S6a subscription. Empty list = strict 3GPP behaviour.
@@ -527,6 +539,14 @@ typedef struct mme_sgw_s {
     ogs_plmn_id_t   imsi_plmn_id;
     char            imsi_prefix[OGS_MAX_IMSI_BCD_LEN + 1];
     int             selection_order;
+
+    /*
+     * With mme.sgwc_selection: per_pdn, apn: makes this entry a per-PDN
+     * rule that is never picked as a UE's SGW (mme_sgw_is_pdn_rule).
+     */
+#define MME_MAX_NUM_OF_SGW_PDN_RULE     32
+    char            *apn[OGS_MAX_NUM_OF_APN];
+    int             num_of_apn;
 
     /*
      * Cached OGS_ADDR(sa_list) for metrics labels. Formatted once at
@@ -1477,6 +1497,13 @@ struct mme_ue_s {
 
     /* SGW UE context */
     ogs_pool_id_t sgw_ue_id;
+    /* Second S11 context for PDNs placed by mme.sgwc_selection: per_pdn */
+    ogs_pool_id_t extra_sgw_ue_id;
+    /*
+     * Set by the SGW restart purge: the UE's S11 context on the SGW that
+     * did not restart, whose PDNs the owner deletes before local release.
+     */
+    ogs_pool_id_t sgw_restart_other_ue_id;
 
     /* Save PDN Connectivity Request */
     ogs_nas_esm_message_container_t pdn_connectivity_request;
@@ -1613,6 +1640,8 @@ struct mme_ue_s {
 #define GTP_COUNTER_CREATE_SESSION_BY_PATH_SWITCH               1
 #define GTP_COUNTER_DELETE_SESSION_BY_PATH_SWITCH               2
 #define GTP_COUNTER_DELETE_SESSION_BY_TAU                       3
+#define GTP_COUNTER_MODIFY_BEARER_BY_SGW                        4
+#define GTP_COUNTER_RELEASE_ACCESS_BEARERS_BY_SGW               5
     struct {
         uint8_t request;
         uint8_t response;
@@ -1687,6 +1716,8 @@ bool mme_session_context_is_available(const mme_ue_t *mme_ue);
         ogs_assert((__mME)); \
         sgw_ue = sgw_ue_find_by_id((__mME)->sgw_ue_id); \
         if (sgw_ue) sgw_ue->sgw_s11_teid = 0; \
+        sgw_ue = mme_ue_extra_sgw_ue(__mME); \
+        if (sgw_ue) sgw_ue->sgw_s11_teid = 0; \
     } while(0)
 
 #define MME_SESS_CLEAR(__sESS) \
@@ -1741,6 +1772,12 @@ typedef struct mme_sess_s {
 
     /* Related Context */
     ogs_pool_id_t   mme_ue_id;
+    /*
+     * mme_ue->extra_sgw_ue_id when this PDN lives on the extra S11
+     * context, else invalid: the PDN follows mme_ue->sgw_ue_id (also
+     * across SGW relocation). Resolve with mme_sess_sgw_ue().
+     */
+    ogs_pool_id_t   sgw_ue_id;
 
     ogs_session_t   *session;
 
@@ -2148,6 +2185,38 @@ typedef enum {
 sgw_relocation_e sgw_ue_check_if_relocated(
         mme_ue_t *mme_ue, enb_ue_t *enb_ue);
 void mme_sgw_reselect_for_ue_if_needed(mme_ue_t *mme_ue);
+
+/*
+ * mme.sgwc_selection: per_pdn. A UE has its primary S11 context
+ * (mme_ue->sgw_ue_id) and at most one extra one; every PDN sits on
+ * exactly one of them. With per_ue there is never an extra context and
+ * all of these resolve to the primary one.
+ */
+bool mme_sgw_is_pdn_rule(const mme_sgw_t *sgw);
+sgw_ue_t *mme_ue_extra_sgw_ue(const mme_ue_t *mme_ue);
+/* The S11 context carrying this PDN (primary unless placed on extra). */
+sgw_ue_t *mme_sess_sgw_ue(const mme_sess_t *sess);
+/* Same for a bearer; primary when its session is already gone. */
+sgw_ue_t *mme_bearer_sgw_ue(const mme_bearer_t *bearer);
+/* The S11 context whose SGW is gnode's peer; primary when not the extra. */
+sgw_ue_t *mme_ue_sgw_ue_by_gnode(
+        const mme_ue_t *mme_ue, const ogs_gtp_node_t *gnode);
+/* true when the two contexts talk to the same SGW peer address */
+bool mme_sgw_ue_same_peer(const sgw_ue_t *a, const sgw_ue_t *b);
+/* Place a PDN before its Create Session Request; NULL if UE has no SGW. */
+sgw_ue_t *mme_sess_select_sgw_ue(enb_ue_t *enb_ue, mme_sess_t *sess);
+/* Number of this UE's PDNs sitting on sgw_ue */
+int mme_sgw_ue_sess_count(const mme_ue_t *mme_ue, const sgw_ue_t *sgw_ue);
+/* Drop the extra context (local only, no S11 signalling). */
+void mme_ue_extra_sgw_remove(mme_ue_t *mme_ue);
+
+/*
+ * One UE-level procedure answered by one S11 response per SGW. start()
+ * arms the counter for num (> 1) responses; done() counts one response
+ * and is true on the last one, or right away when nothing was armed.
+ */
+void mme_s11_fanout_start(mme_ue_t *mme_ue, int type, int num);
+bool mme_s11_fanout_done(mme_ue_t *mme_ue, int type);
 
 void mme_ue_new_guti(mme_ue_t *mme_ue);
 void mme_ue_confirm_guti(mme_ue_t *mme_ue);

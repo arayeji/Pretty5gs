@@ -125,11 +125,27 @@ void ogs_mme_trace_set(
             ogs_cpystrn(ctx.imsi, mme_ue->imsi_bcd, sizeof(ctx.imsi));
         ctx.mme_s11_teid = mme_ue->mme_s11_teid;
 
-        sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+        sess = NULL;
+        if (apn && apn[0]) {
+            mme_sess_t *it = NULL;
+            ogs_list_for_each(&mme_ue->sess_list, it) {
+                if (it->session && it->session->name &&
+                        ogs_strcasecmp(it->session->name, apn) == 0) {
+                    sess = it;
+                    break;
+                }
+            }
+        }
+        if (!sess)
+            sess = mme_sess_first(mme_ue);
+
+        /* the PDN's own S11 context (per-PDN SGW), else the UE's */
+        sgw_ue = sess ? mme_sess_sgw_ue(sess) : NULL;
+        if (!sgw_ue)
+            sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
         if (sgw_ue)
             ctx.sgw_s11_teid = sgw_ue->sgw_s11_teid;
 
-        sess = mme_sess_first(mme_ue);
         if (sess) {
             if (!ctx.apn[0] && sess->session && sess->session->name)
                 ogs_cpystrn(ctx.apn, sess->session->name, sizeof(ctx.apn));

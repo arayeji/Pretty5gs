@@ -595,6 +595,10 @@ static void reload_sgw_clear_all_rules(void)
     mme_sgw_t *sgw = NULL;
 
     ogs_list_for_each(&mme_self()->sgw_list, sgw) {
+        /* per-PDN rules are startup-only: wiping them would widen them */
+        if (mme_sgw_is_pdn_rule(sgw))
+            continue;
+
         if (sgw->num_of_tac || sgw->num_of_e_cell_id ||
             sgw->serving_plmn_present || sgw->imsi_plmn_present ||
             sgw->imsi_prefix[0])
@@ -1868,6 +1872,16 @@ static int reload_gtpc_client_entry_add_only(
 
         if (!addr) {
             ogs_free(tac);
+            continue;
+        }
+
+        if (!pgw && num_of_apn &&
+                mme_self()->sgwc_selection == MME_SGWC_SELECTION_PER_PDN) {
+            ogs_reload_audit_note(" sgwc apn rule kept as loaded at "
+                    "startup (restart mmed to change per-PDN rules)");
+            ogs_freeaddrinfo(addr);
+            ogs_free(tac);
+            (*entry_idx)++;
             continue;
         }
 

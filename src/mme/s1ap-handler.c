@@ -2468,11 +2468,11 @@ void s1ap_handle_e_rab_setup_response(
             ogs_debug("    Linked-EBI[%d]", linked_bearer->ebi);
 
             if (bearer->ebi == linked_bearer->ebi) {
-                sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-                ogs_assert(sgw_ue);
-
                 sess = mme_sess_find_by_id(bearer->sess_id);
                 ogs_assert(sess);
+
+                sgw_ue = mme_sess_sgw_ue(sess);
+                ogs_assert(sgw_ue);
 
                 /* Radio failure cleanup:
                  * delete session without E-RAB release procedure */

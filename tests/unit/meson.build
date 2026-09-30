@@ -31,10 +31,12 @@ testunit_unit_sources = files('''
     inbound-roam-apn-yaml-test.c
     tai-list-test.c
     pfcp-buffer-test.c
+    gtpc-select-test.c
 '''.split())
 
 testunit_unit_sources += files('../../src/mme/eplmn-config.c')
 testunit_unit_sources += files('../../src/mme/mme-access-control-match.c')
+testunit_unit_sources += files('../../src/mme/mme-gtpc-select-match.c')
 
 testunit_unit_exe = executable('unit',
     sources : testunit_unit_sources,

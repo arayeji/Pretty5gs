@@ -44,6 +44,8 @@ void mme_ue_enter_ue_context_will_remove(mme_ue_t *mme_ue)
 
     mme_ue->ue_context_will_remove = true;
 
+    mme_gtp_send_sgw_restart_other_deletes(mme_ue);
+
     memset(&e, 0, sizeof(e));
     e.id = OGS_FSM_USER_SIG;
     e.mme_ue_id = mme_ue->id;
@@ -795,7 +797,7 @@ void mme_admin_detach_sess(mme_sess_t *sess, bool force)
     apn = sess->session && sess->session->name ? sess->session->name : "-";
     bearer = mme_default_bearer_in_sess(sess);
     enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    sgw_ue = mme_sess_sgw_ue(sess);
 
     ogs_info("admin session delete: imsi=%s apn=%s mode=%s ecm=%s",
             mme_ue->imsi_bcd, apn,
@@ -1476,7 +1478,7 @@ void mme_send_delete_session_or_tau_accept(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
         if (!(mask & (1 << ebi))) {
             ogs_warn("[%s] BCS mismatch: UE missing EBI=%u",
                     mme_ue->imsi_bcd, ebi);
-            sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+            sgw_ue = mme_sess_sgw_ue(sess);
             ogs_assert(sgw_ue);
 
             GTP_COUNTER_INCREMENT(

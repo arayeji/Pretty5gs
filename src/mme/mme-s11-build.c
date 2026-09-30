@@ -451,7 +451,8 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
 }
 
 ogs_pkbuf_t *mme_s11_build_modify_bearer_request(
-        uint8_t type, mme_ue_t *mme_ue, int uli_presence)
+        uint8_t type, mme_ue_t *mme_ue, const sgw_ue_t *only,
+        int uli_presence)
 {
     ogs_gtp2_message_t gtp_message;
     ogs_gtp2_modify_bearer_request_t *req = NULL;
@@ -469,7 +470,7 @@ ogs_pkbuf_t *mme_s11_build_modify_bearer_request(
     ogs_debug("Modifty Bearer Request");
 
     ogs_assert(mme_ue);
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    sgw_ue = only ? (sgw_ue_t *)only : sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     ogs_assert(sgw_ue);
     /*
      * Never abort the MME on an empty list. Concurrent ICS Response and
@@ -494,6 +495,9 @@ ogs_pkbuf_t *mme_s11_build_modify_bearer_request(
     i = 0;
     ogs_list_for_each_entry(
             &mme_ue->bearer_to_modify_list, bearer, to_modify_node) {
+        if (only && mme_bearer_sgw_ue(bearer) != only)
+            continue;
+
         ogs_assert(i < OGS_BEARER_PER_UE);
 
         ogs_debug("    ENB_S1U_TEID[%d] SGW_S1U_TEID[%d]",
@@ -519,11 +523,24 @@ ogs_pkbuf_t *mme_s11_build_modify_bearer_request(
         i++;
     }
 
+    if (i == 0) {
+        ogs_warn("[%s] Modify Bearer Request skipped: no bearer to modify "
+                "on SGW context [%d]",
+                MME_UE_HAVE_IMSI(mme_ue) ? mme_ue->imsi_bcd : "-",
+                sgw_ue->id);
+        return NULL;
+    }
+
     /* Indication */
     memset(&indication, 0, sizeof(ogs_gtp2_indication_t));
     ogs_list_for_each_entry(
             &mme_ue->bearer_to_modify_list, bearer, to_modify_node) {
-        mme_sess_t *sess = mme_sess_find_by_id(bearer->sess_id);
+        mme_sess_t *sess = NULL;
+
+        if (only && mme_bearer_sgw_ue(bearer) != only)
+            continue;
+
+        sess = mme_sess_find_by_id(bearer->sess_id);
 
         /*
          * Session can already be gone (PDN disconnect / race) while the
@@ -1060,6 +1077,11 @@ ogs_pkbuf_t *mme_s11_build_create_indirect_data_forwarding_tunnel_request(
     i = 0;
     sess = mme_sess_first(mme_ue);
     while (sess != NULL) {
+        /* sent to the primary SGW only; per-PDN SGW bearers get none */
+        if (mme_sess_sgw_ue(sess) != sgw_ue) {
+            sess = mme_sess_next(sess);
+            continue;
+        }
         bearer = mme_bearer_first(sess);
         while (bearer != NULL) {
             if (MME_HAVE_ENB_DL_INDIRECT_TUNNEL(bearer)) {

@@ -46,6 +46,7 @@
 #include "metrics.h"
 #include "mme-apn.h"
 #include "mme-li.h"
+#include "mme-gtpc-select-match.h"
 
 #include <errno.h>
 #include <string.h>
@@ -1059,6 +1060,36 @@ static int mme_context_validation(void)
         return OGS_ERROR;
     }
 
+    {
+        mme_sgw_t *sgw = NULL;
+        int ue_entries = 0, pdn_rules = 0;
+
+        ogs_list_for_each(&self.sgw_list, sgw) {
+            if (sgw->num_of_apn)
+                pdn_rules++;
+            else
+                ue_entries++;
+        }
+
+        if (self.sgwc_selection == MME_SGWC_SELECTION_PER_PDN) {
+            if (ue_entries == 0) {
+                ogs_error("sgwc_selection: per_pdn but every "
+                        "gtpc.client.sgwc entry has apn: in '%s'; at least "
+                        "one entry without apn: is needed to place UEs",
+                        ogs_app()->file);
+                return OGS_ERROR;
+            }
+            ogs_info("SGW selection: per_pdn (%d apn rule(s), "
+                    "%d UE entr%s)", pdn_rules, ue_entries,
+                    ue_entries == 1 ? "y" : "ies");
+        } else if (pdn_rules) {
+            ogs_warn("SGW selection: per_ue, apn: ignored on %d "
+                    "gtpc.client.sgwc entr%s (they match on their other "
+                    "keys; set mme.sgwc_selection: per_pdn to use apn:)",
+                    pdn_rules, pdn_rules == 1 ? "y" : "ies");
+        }
+    }
+
     if (ogs_list_first(&self.pgw_list) == NULL) {
         ogs_error("No pgw.gtpc.address in '%s'", ogs_app()->file);
         return OGS_ERROR;
@@ -1761,6 +1792,9 @@ int mme_context_parse_config(void)
                                         ogs_plmn_id_t sgw_serving_plmn;
                                         bool sgw_imsi_plmn_parsed = false;
                                         ogs_plmn_id_t sgw_imsi_plmn;
+                                        const char *sgw_apn[
+                                            OGS_MAX_NUM_OF_APN];
+                                        int sgw_num_of_apn = 0;
 
                                         ogs_assert(tac);
                                         imsi_prefix_buf[0] = '\0';
@@ -1951,6 +1985,42 @@ int mme_context_parse_config(void)
                                                                 imsi_prefix_buf));
                                                     imsi_prefix_set = true;
                                                 }
+                                            } else if (!strcmp(sgwc_key,
+                                                        "apn")) {
+                                                ogs_yaml_iter_t apn_iter;
+                                                ogs_yaml_iter_recurse(
+                                                        &sgwc_iter, &apn_iter);
+                                                ogs_assert(ogs_yaml_iter_type(
+                                                            &apn_iter) !=
+                                                        YAML_MAPPING_NODE);
+
+                                                do {
+                                                    const char *v = NULL;
+
+                                                    if (ogs_yaml_iter_type(
+                                                            &apn_iter) ==
+                                                        YAML_SEQUENCE_NODE) {
+                                                        if (!ogs_yaml_iter_next(
+                                                                    &apn_iter))
+                                                            break;
+                                                    }
+                                                    if (sgw_num_of_apn >=
+                                                            OGS_MAX_NUM_OF_APN) {
+                                                        ogs_warn("sgwc apn list "
+                                                                "exceeds %d, "
+                                                                "skipping",
+                                                                OGS_MAX_NUM_OF_APN);
+                                                        break;
+                                                    }
+                                                    v = ogs_yaml_iter_value(
+                                                            &apn_iter);
+                                                    if (v && v[0])
+                                                        sgw_apn[
+                                                            sgw_num_of_apn++] = v;
+                                                } while (
+                                                    ogs_yaml_iter_type(
+                                                        &apn_iter) ==
+                                                        YAML_SEQUENCE_NODE);
                                             } else
                                                 ogs_warn("unknown key `%s`",
                                                         sgwc_key);
@@ -2010,6 +2080,12 @@ int mme_context_parse_config(void)
                                             ogs_cpystrn(sgw->imsi_prefix,
                                                     imsi_prefix_buf,
                                                     sizeof(sgw->imsi_prefix));
+                                        for (i = 0; i < sgw_num_of_apn; i++) {
+                                            sgw->apn[i] =
+                                                ogs_strdup(sgw_apn[i]);
+                                            ogs_assert(sgw->apn[i]);
+                                        }
+                                        sgw->num_of_apn = sgw_num_of_apn;
 
                                         ogs_free(tac);
                                         sgwc_entry_idx++;
@@ -2876,6 +2952,21 @@ int mme_context_parse_config(void)
                             self.pgw_selection.force_yaml ? "force" : "standard",
                             self.pgw_selection.dns_enabled ?
                             "enabled" : "disabled");
+                } else if (!strcmp(mme_key, "sgwc_selection")) {
+                    const char *v = ogs_yaml_iter_value(&mme_iter);
+
+                    if (v && (!strcmp(v, "per_pdn") ||
+                                !strcmp(v, "per-pdn"))) {
+                        self.sgwc_selection = MME_SGWC_SELECTION_PER_PDN;
+                    } else if (v && (!strcmp(v, "per_ue") ||
+                                !strcmp(v, "per-ue"))) {
+                        self.sgwc_selection = MME_SGWC_SELECTION_PER_UE;
+                    } else {
+                        ogs_warn("Unknown sgwc_selection `%s' "
+                                "(use: per_ue|per_pdn), keeping per_ue",
+                                v ? v : "");
+                        self.sgwc_selection = MME_SGWC_SELECTION_PER_UE;
+                    }
                 } else if (!strcmp(mme_key, "omit_indication_on_gtp_csr") ||
                         !strcmp(mme_key, "omit_gtp_indication")) {
                     self.omit_indication_on_gtp_csr =
@@ -4160,6 +4251,12 @@ void mme_sgw_remove(mme_sgw_t *sgw)
     ogs_freeaddrinfo(sgw->gnode.sa_list);
 
     ogs_free(sgw->tac);
+    {
+        int i;
+        for (i = 0; i < sgw->num_of_apn; i++)
+            if (sgw->apn[i])
+                ogs_free(sgw->apn[i]);
+    }
 
     ogs_pool_free(&mme_sgw_pool, sgw);
 }
@@ -4190,14 +4287,24 @@ bool mme_sgw_in_use(const mme_sgw_t *sgw)
 
 mme_sgw_t *mme_sgw_find_by_addr(const ogs_sockaddr_t *addr)
 {
-    mme_sgw_t *sgw = NULL;
+    mme_sgw_t *sgw = NULL, *rule = NULL;
 
     ogs_assert(addr);
 
+    /*
+     * A per-PDN rule may share its address with a UE entry. S11 contexts
+     * of both kinds bind to the UE entry, so it must win the lookup.
+     */
     ogs_list_for_each(&self.sgw_list, sgw) {
-        if (ogs_sockaddr_is_equal(&sgw->gnode.addr, addr) == true)
-            return sgw;
+        if (ogs_sockaddr_is_equal(&sgw->gnode.addr, addr) == true) {
+            if (!mme_sgw_is_pdn_rule(sgw))
+                return sgw;
+            if (!rule)
+                rule = sgw;
+        }
     }
+    if (rule)
+        return rule;
 
     /*
      * SGWC inbound roam may reply from inbound_roam.gtpc.source_port (not
@@ -4206,11 +4313,15 @@ mme_sgw_t *mme_sgw_find_by_addr(const ogs_sockaddr_t *addr)
     ogs_list_for_each(&self.sgw_list, sgw) {
         if (sgw->gnode.sa_list &&
                 ogs_sockaddr_check_any_match(
-                    sgw->gnode.sa_list, NULL, addr, false) == true)
-            return sgw;
+                    sgw->gnode.sa_list, NULL, addr, false) == true) {
+            if (!mme_sgw_is_pdn_rule(sgw))
+                return sgw;
+            if (!rule)
+                rule = sgw;
+        }
     }
 
-    return NULL;
+    return rule;
 }
 
 static bool mme_sgw_recovery_is_restart(uint8_t stored, uint8_t received)
@@ -4260,8 +4371,27 @@ static void mme_sgw_purge_sessions(mme_sgw_t *sgw)
             continue;
         }
 
-        if (mme_ue->sgw_ue_id != sgw_ue->id)
+        if (mme_ue->sgw_ue_id != sgw_ue->id &&
+                mme_ue->extra_sgw_ue_id != sgw_ue->id)
             continue;
+
+        /*
+         * Per-PDN SGW: the UE's other S11 context sits on an SGW that did
+         * not restart and still holds those PDNs. The local release below
+         * would strand them there, so the owner deletes them first.
+         */
+        {
+            sgw_ue_t *other = NULL;
+
+            if (mme_ue->sgw_ue_id == sgw_ue->id)
+                other = mme_ue_extra_sgw_ue(mme_ue);
+            else
+                other = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+
+            if (other && other->sgw_s11_teid &&
+                    !mme_sgw_ue_same_peer(other, sgw_ue))
+                mme_ue->sgw_restart_other_ue_id = other->id;
+        }
 
         /*
          * Per 3GPP TS 23.007, on detecting an S-GW restart the MME deletes the
@@ -7522,9 +7652,348 @@ bool mme_session_context_is_available(const mme_ue_t *mme_ue)
     sgw_ue = ogs_pool_find_by_id(&sgw_ue_pool, mme_ue->sgw_ue_id);
     if (sgw_ue)
         teid = sgw_ue->sgw_s11_teid;
+    if (!teid && mme_ue->extra_sgw_ue_id >= OGS_MIN_POOL_ID &&
+            mme_ue->extra_sgw_ue_id <= OGS_MAX_POOL_ID) {
+        sgw_ue = ogs_pool_find_by_id(&sgw_ue_pool, mme_ue->extra_sgw_ue_id);
+        if (sgw_ue)
+            teid = sgw_ue->sgw_s11_teid;
+    }
     mme_ctx_unlock();
 
     return teid != 0;
+}
+
+static void mme_sgw_log_pick(
+        mme_ue_t *mme_ue, const mme_sgw_t *sgw, const char *when,
+        const mme_sgw_t *from_sgw);
+
+sgw_ue_t *mme_ue_extra_sgw_ue(const mme_ue_t *mme_ue)
+{
+    sgw_ue_t *sgw_ue = NULL;
+
+    if (!mme_ue)
+        return NULL;
+    if (mme_ue->extra_sgw_ue_id < OGS_MIN_POOL_ID ||
+            mme_ue->extra_sgw_ue_id > OGS_MAX_POOL_ID)
+        return NULL;
+
+    sgw_ue = sgw_ue_find_by_id(mme_ue->extra_sgw_ue_id);
+    /* pool slot reused by another UE after a missed cleanup */
+    if (sgw_ue && sgw_ue->mme_ue_id != mme_ue->id)
+        return NULL;
+
+    return sgw_ue;
+}
+
+sgw_ue_t *mme_sess_sgw_ue(const mme_sess_t *sess)
+{
+    mme_ue_t *mme_ue = NULL;
+    sgw_ue_t *extra = NULL;
+
+    if (!sess)
+        return NULL;
+    mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
+    if (!mme_ue)
+        return NULL;
+
+    if (sess->sgw_ue_id >= OGS_MIN_POOL_ID &&
+            sess->sgw_ue_id <= OGS_MAX_POOL_ID &&
+            sess->sgw_ue_id == mme_ue->extra_sgw_ue_id) {
+        extra = mme_ue_extra_sgw_ue(mme_ue);
+        if (extra)
+            return extra;
+    }
+
+    return sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+}
+
+sgw_ue_t *mme_bearer_sgw_ue(const mme_bearer_t *bearer)
+{
+    mme_sess_t *sess = NULL;
+    mme_ue_t *mme_ue = NULL;
+
+    if (!bearer)
+        return NULL;
+    sess = mme_sess_find_by_id(bearer->sess_id);
+    if (sess)
+        return mme_sess_sgw_ue(sess);
+
+    mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
+    return mme_ue ? sgw_ue_find_by_id(mme_ue->sgw_ue_id) : NULL;
+}
+
+bool mme_sgw_ue_same_peer(const sgw_ue_t *a, const sgw_ue_t *b)
+{
+    if (!a || !b || !a->sgw || !b->sgw)
+        return false;
+    if (a->sgw == b->sgw)
+        return true;
+
+    return ogs_sockaddr_is_equal(&a->sgw->gnode.addr, &b->sgw->gnode.addr);
+}
+
+sgw_ue_t *mme_ue_sgw_ue_by_gnode(
+        const mme_ue_t *mme_ue, const ogs_gtp_node_t *gnode)
+{
+    sgw_ue_t *extra = NULL;
+
+    if (!mme_ue)
+        return NULL;
+
+    extra = mme_ue_extra_sgw_ue(mme_ue);
+    if (extra && gnode && extra->gnode &&
+            (extra->gnode == gnode ||
+             ogs_sockaddr_is_equal(&extra->gnode->addr, &gnode->addr)))
+        return extra;
+
+    return sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+}
+
+int mme_sgw_ue_sess_count(const mme_ue_t *mme_ue, const sgw_ue_t *sgw_ue)
+{
+    mme_sess_t *sess = NULL;
+    int n = 0;
+
+    if (!mme_ue || !sgw_ue)
+        return 0;
+
+    ogs_list_for_each(&((mme_ue_t *)mme_ue)->sess_list, sess)
+        if (mme_sess_sgw_ue(sess) == sgw_ue)
+            n++;
+
+    return n;
+}
+
+void mme_ue_extra_sgw_remove(mme_ue_t *mme_ue)
+{
+    sgw_ue_t *extra = NULL;
+    mme_sess_t *sess = NULL;
+
+    ogs_assert(mme_ue);
+
+    extra = mme_ue_extra_sgw_ue(mme_ue);
+    mme_ue->extra_sgw_ue_id = OGS_INVALID_POOL_ID;
+    if (!extra)
+        return;
+
+    ogs_list_for_each(&mme_ue->sess_list, sess)
+        if (sess->sgw_ue_id == extra->id)
+            sess->sgw_ue_id = OGS_INVALID_POOL_ID;
+
+    ogs_info("[%s] SGW extra S11 context removed [%s] SGW_S11_TEID[0x%x]",
+            mme_log_imsi(mme_ue), extra->sgw->addr_str, extra->sgw_s11_teid);
+    sgw_ue_remove(extra);
+}
+
+/*
+ * After a PDN left the UE: drop the extra context once it carries no PDN,
+ * and forget the primary TEID once the primary carries none either (the
+ * SGW deleted that S11 context with its last PDN, so a later Create
+ * Session must open a new one). Only relevant with an extra context.
+ */
+static void mme_ue_sgw_contexts_after_sess_remove(mme_ue_t *mme_ue)
+{
+    sgw_ue_t *primary = NULL, *extra = NULL;
+
+    ogs_assert(mme_ue);
+
+    extra = mme_ue_extra_sgw_ue(mme_ue);
+    if (!extra) {
+        mme_ue->extra_sgw_ue_id = OGS_INVALID_POOL_ID;
+        return;
+    }
+
+    if (mme_sgw_ue_sess_count(mme_ue, extra) == 0) {
+        mme_ue_extra_sgw_remove(mme_ue);
+        return;
+    }
+
+    primary = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    if (primary && primary->sgw_s11_teid &&
+            mme_sgw_ue_sess_count(mme_ue, primary) == 0) {
+        ogs_info("[%s] SGW primary S11 context has no PDN left [%s] "
+                "SGW_S11_TEID[0x%x] cleared", mme_log_imsi(mme_ue),
+                primary->sgw->addr_str, primary->sgw_s11_teid);
+        primary->sgw_s11_teid = 0;
+    }
+}
+
+/* The node inbound S11 is dispatched to for this entry's address. */
+static mme_sgw_t *mme_sgw_rx_node(mme_sgw_t *sgw)
+{
+    mme_sgw_t *node = NULL;
+
+    ogs_assert(sgw);
+    node = mme_sgw_find_by_addr(&sgw->gnode.addr);
+
+    return node ? node : sgw;
+}
+
+static mme_sgw_t *mme_sgw_select_for_pdn(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue, const char *apn)
+{
+    mme_sgw_t *sgw = NULL;
+    mme_gtpc_sel_keys_t keys[MME_MAX_NUM_OF_SGW_PDN_RULE];
+    const mme_gtpc_sel_keys_t *kp[MME_MAX_NUM_OF_SGW_PDN_RULE];
+    int order[MME_MAX_NUM_OF_SGW_PDN_RULE];
+    mme_sgw_t *node[MME_MAX_NUM_OF_SGW_PDN_RULE];
+    mme_gtpc_sel_facts_t facts;
+    int n = 0, best;
+
+    ogs_assert(enb_ue);
+    ogs_assert(mme_ue);
+
+    if (!apn || !apn[0])
+        return NULL;
+
+    ogs_list_for_each(&mme_self()->sgw_list, sgw) {
+        mme_gtpc_sel_keys_t *k = NULL;
+
+        if (!mme_sgw_is_pdn_rule(sgw))
+            continue;
+        if (n >= MME_MAX_NUM_OF_SGW_PDN_RULE) {
+            ogs_warn("More than %d sgwc apn rules, rest ignored",
+                    MME_MAX_NUM_OF_SGW_PDN_RULE);
+            break;
+        }
+
+        k = &keys[n];
+        memset(k, 0, sizeof(*k));
+        k->apn = (const char **)sgw->apn;
+        k->num_of_apn = sgw->num_of_apn;
+        k->tac = sgw->tac;
+        k->num_of_tac = sgw->num_of_tac;
+        k->e_cell_id = sgw->e_cell_id;
+        k->num_of_e_cell_id = sgw->num_of_e_cell_id;
+        k->imsi_plmn_present = sgw->imsi_plmn_present;
+        k->imsi_plmn_id = sgw->imsi_plmn_id;
+        k->serving_plmn_present = sgw->serving_plmn_present;
+        k->serving_plmn_id = sgw->serving_plmn_id;
+        k->imsi_prefix = sgw->imsi_prefix;
+
+        kp[n] = k;
+        order[n] = sgw->selection_order;
+        node[n] = sgw;
+        n++;
+    }
+    if (n == 0)
+        return NULL;
+
+    memset(&facts, 0, sizeof(facts));
+    facts.apn = apn;
+    facts.tac_known = true;
+    facts.tac = enb_ue->saved.tai.tac;
+    facts.e_cell_id_known = true;
+    facts.e_cell_id = enb_ue->saved.e_cgi.cell_id;
+    facts.imsi_known = MME_UE_HAVE_IMSI(mme_ue);
+    facts.imsi_bcd = mme_ue->imsi_bcd;
+    facts.serving_plmn_known = true;
+    facts.serving_plmn_id = enb_ue->saved.tai.plmn_id;
+    facts.inbound_roam =
+        mme_ue_inbound_roam_on_tai(mme_ue, &enb_ue->saved.tai);
+
+    best = mme_gtpc_sel_pick(kp, order, n, &facts);
+
+    return best >= 0 ? node[best] : NULL;
+}
+
+sgw_ue_t *mme_sess_select_sgw_ue(enb_ue_t *enb_ue, mme_sess_t *sess)
+{
+    mme_ue_t *mme_ue = NULL;
+    sgw_ue_t *primary = NULL, *extra = NULL;
+    mme_sgw_t *rule = NULL, *wanted = NULL;
+    sgw_ue_t probe;
+    const char *apn = NULL;
+    mme_pdn_sgw_place_e place;
+
+    ogs_assert(sess);
+    mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
+    if (!mme_ue)
+        return NULL;
+    primary = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    if (!primary)
+        return NULL;
+    extra = mme_ue_extra_sgw_ue(mme_ue);
+
+    /* Already placed (Create Session re-sent after APN DNS) */
+    if (sess->sgw_ue_id >= OGS_MIN_POOL_ID &&
+            sess->sgw_ue_id <= OGS_MAX_POOL_ID) {
+        if (extra && sess->sgw_ue_id == extra->id)
+            return extra;
+        sess->sgw_ue_id = OGS_INVALID_POOL_ID;
+    }
+
+    if (self.sgwc_selection != MME_SGWC_SELECTION_PER_PDN || !enb_ue)
+        return primary;
+
+    apn = (sess->session && sess->session->name) ?
+        sess->session->name : NULL;
+    rule = mme_sgw_select_for_pdn(enb_ue, mme_ue, apn);
+    wanted = rule ? mme_sgw_rx_node(rule) : primary->sgw;
+
+    memset(&probe, 0, sizeof(probe));
+    probe.sgw = wanted;
+
+    place = mme_gtpc_pdn_sgw_place(rule != NULL,
+            mme_sgw_ue_same_peer(&probe, primary),
+            extra != NULL,
+            extra && mme_sgw_ue_same_peer(&probe, extra));
+
+    switch (place) {
+    case MME_PDN_SGW_EXTRA:
+        sess->sgw_ue_id = extra->id;
+        return extra;
+    case MME_PDN_SGW_NEW_EXTRA:
+        extra = sgw_ue_add(wanted);
+        if (!extra || !extra->gnode) {
+            if (extra)
+                sgw_ue_remove(extra);
+            ogs_error("[%s] APN[%s] extra SGW context not allocated [%s]; "
+                    "staying on the UE's SGW", mme_log_imsi(mme_ue),
+                    apn ? apn : "-", wanted->addr_str);
+            return primary;
+        }
+        extra->mme_ue_id = mme_ue->id;
+        mme_ue->extra_sgw_ue_id = extra->id;
+        sess->sgw_ue_id = extra->id;
+        mme_sgw_log_pick(mme_ue, rule, "per-pdn", primary->sgw);
+        return extra;
+    case MME_PDN_SGW_PRIMARY_LIMIT:
+        ogs_warn("[%s] APN[%s] matches SGW [%s] but the UE already uses "
+                "two SGWs; staying on [%s]", mme_log_imsi(mme_ue),
+                apn ? apn : "-", wanted->addr_str, primary->sgw->addr_str);
+        return primary;
+    case MME_PDN_SGW_PRIMARY:
+    default:
+        return primary;
+    }
+}
+
+void mme_s11_fanout_start(mme_ue_t *mme_ue, int type, int num)
+{
+    ogs_assert(mme_ue);
+    ogs_assert(type > 0 && type < MAX_NUM_OF_GTP_COUNTER);
+
+    mme_ue->gtp_counter[type].request = num > 1 ? num : 0;
+    mme_ue->gtp_counter[type].response = 0;
+}
+
+bool mme_s11_fanout_done(mme_ue_t *mme_ue, int type)
+{
+    ogs_assert(mme_ue);
+    ogs_assert(type > 0 && type < MAX_NUM_OF_GTP_COUNTER);
+
+    if (mme_ue->gtp_counter[type].request == 0)
+        return true;
+
+    mme_ue->gtp_counter[type].response++;
+    if (mme_ue->gtp_counter[type].response <
+            mme_ue->gtp_counter[type].request)
+        return false;
+
+    mme_ue->gtp_counter[type].request = 0;
+    mme_ue->gtp_counter[type].response = 0;
+    return true;
 }
 
 sgw_relocation_e sgw_ue_check_if_relocated(
@@ -7537,6 +8006,16 @@ sgw_relocation_e sgw_ue_check_if_relocated(
     ogs_assert(enb_ue);
     source_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     ogs_assert(source_ue);
+
+    /*
+     * Relocation moves the primary context only; the extra one would be
+     * left behind on the old path. Keep both SGWs for such a UE.
+     */
+    if (mme_ue_extra_sgw_ue(mme_ue)) {
+        ogs_info("[%s] SGW relocation skipped: UE holds a per-PDN SGW",
+                mme_log_imsi(mme_ue));
+        return SGW_WITHOUT_RELOCATION;
+    }
 
     current = source_ue->sgw;
     ogs_assert(current);
@@ -7703,9 +8182,20 @@ void mme_ue_clear_p_tmsi(mme_ue_t *mme_ue)
     mme_ue->next.p_tmsi = INVALID_P_TMSI;
 }
 
+bool mme_sgw_is_pdn_rule(const mme_sgw_t *sgw)
+{
+    ogs_assert(sgw);
+
+    return self.sgwc_selection == MME_SGWC_SELECTION_PER_PDN &&
+            sgw->num_of_apn > 0;
+}
+
 static bool mme_sgw_is_default(const mme_sgw_t *sgw)
 {
     ogs_assert(sgw);
+
+    if (mme_sgw_is_pdn_rule(sgw))
+        return false;
 
     return sgw->num_of_tac == 0 &&
             sgw->num_of_e_cell_id == 0 &&
@@ -7722,7 +8212,7 @@ static bool compare_sgw_info(
     ogs_assert(node);
     ogs_assert(enb_ue);
 
-    if (mme_sgw_is_default(node))
+    if (mme_sgw_is_default(node) || mme_sgw_is_pdn_rule(node))
         return false;
 
     for (i = 0; i < node->num_of_tac; i++)
@@ -7759,11 +8249,29 @@ static bool mme_sgw_list_has_filters(void)
     mme_sgw_t *sgw = NULL;
 
     ogs_list_for_each(&mme_self()->sgw_list, sgw) {
+        if (mme_sgw_is_pdn_rule(sgw))
+            continue;
         if (!mme_sgw_is_default(sgw))
             return true;
     }
 
     return false;
+}
+
+/* First entry that may carry a UE (skips per-PDN rules). */
+static mme_sgw_t *mme_sgw_first_for_ue(mme_sgw_t *from)
+{
+    mme_sgw_t *node = NULL;
+
+    for (node = from; node; node = ogs_list_next(node))
+        if (!mme_sgw_is_pdn_rule(node))
+            return node;
+    for (node = ogs_list_first(&mme_self()->sgw_list);
+            node && node != from; node = ogs_list_next(node))
+        if (!mme_sgw_is_pdn_rule(node))
+            return node;
+
+    return ogs_list_first(&mme_self()->sgw_list);
 }
 
 static mme_sgw_t *mme_sgw_select_for_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
@@ -7776,6 +8284,9 @@ static mme_sgw_t *mme_sgw_select_for_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     ogs_assert(enb_ue);
 
     ogs_list_for_each(&mme_self()->sgw_list, sgw) {
+        if (mme_sgw_is_pdn_rule(sgw))
+            continue;
+
         if (mme_sgw_is_default(sgw)) {
             if (!default_sgw)
                 default_sgw = sgw;
@@ -7797,7 +8308,7 @@ static mme_sgw_t *mme_sgw_select_for_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     if (default_sgw)
         return default_sgw;
 
-    return ogs_list_first(&mme_self()->sgw_list);
+    return mme_sgw_first_for_ue(ogs_list_first(&mme_self()->sgw_list));
 }
 
 static void mme_sgw_format_rule(
@@ -7817,9 +8328,14 @@ static void mme_sgw_format_rule(
         return;
     }
 
+    if (mme_sgw_is_pdn_rule(sgw))
+        len = ogs_snprintf(buf, buflen, "apn:%s%s", sgw->apn[0],
+                sgw->num_of_apn > 1 ? ",..." : "");
     if (sgw->imsi_plmn_present) {
         ogs_plmn_id_to_string(&sgw->imsi_plmn_id, plmn);
-        len = ogs_snprintf(buf, buflen, "imsi_plmn:%s", plmn);
+        if (len > 0)
+            len += ogs_snprintf(buf + len, buflen - len, "+");
+        len += ogs_snprintf(buf + len, buflen - len, "imsi_plmn:%s", plmn);
     }
     if (sgw->imsi_prefix[0]) {
         if (len > 0)
@@ -7924,7 +8440,8 @@ static mme_sgw_t *selected_sgw_node(
             return node;
     }
 
-    return next ? next : ogs_list_first(&mme_self()->sgw_list);
+    return mme_sgw_first_for_ue(
+            next ? next : ogs_list_first(&mme_self()->sgw_list));
 }
 
 static mme_sgw_t *changed_sgw_node(
@@ -8377,6 +8894,7 @@ void mme_ue_remove(mme_ue_t *mme_ue)
 
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     if (sgw_ue) sgw_ue_remove(sgw_ue);
+    mme_ue_extra_sgw_remove(mme_ue);
 
     if (MME_CURRENT_GUTI_IS_AVAILABLE(mme_ue)) {
         (void)mme_m_tmsi_free(mme_ue->current.m_tmsi);
@@ -9007,6 +9525,18 @@ int mme_ue_set_imsi(mme_ue_t *mme_ue, char *imsi_bcd)
                         "S11 TEID not carried over",
                         mme_ue->imsi_bcd, !sgw_ue ? "new" : "old");
 
+            /* the moved sessions still reference OLD's per-PDN SGW */
+            {
+                sgw_ue_t *old_extra = mme_ue_extra_sgw_ue(old_mme_ue);
+
+                old_mme_ue->extra_sgw_ue_id = OGS_INVALID_POOL_ID;
+                if (old_extra) {
+                    mme_ue_extra_sgw_remove(mme_ue);
+                    old_extra->mme_ue_id = mme_ue->id;
+                    mme_ue->extra_sgw_ue_id = old_extra->id;
+                }
+            }
+
             /*
              * Phase-5 : sess->session of the moved sessions points INTO
              * old_mme_ue->session[] (see esm-handler.c). mme_ue_remove()
@@ -9169,21 +9699,26 @@ bool mme_sess_have_session_release_pending(mme_sess_t *sess)
 
 int mme_ue_xact_count(mme_ue_t *mme_ue, uint8_t org)
 {
-    sgw_ue_t *sgw_ue = NULL;
+    sgw_ue_t *sgw_ue = NULL, *extra = NULL;
     ogs_gtp_node_t *gnode = NULL;
+    int n = 0;
 
     ogs_assert(org == OGS_GTP_LOCAL_ORIGINATOR ||
                 org == OGS_GTP_REMOTE_ORIGINATOR);
 
+    extra = mme_ue_extra_sgw_ue(mme_ue);
+    if (extra && extra->gnode)
+        n = ogs_gtp_xact_count(extra->gnode, org);
+
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    if (!sgw_ue) return 0;
+    if (!sgw_ue) return n;
 
     gnode = sgw_ue->gnode;
-    if (!gnode) return 0;
+    if (!gnode || (extra && gnode == extra->gnode)) return n;
 
     /* O(1) via the xact index; the linear ogs_list_count here was the
      * single largest CPU consumer in the 2026-07-17 perf profile */
-    return ogs_gtp_xact_count(gnode, org);
+    return n + ogs_gtp_xact_count(gnode, org);
 }
 
 void enb_ue_associate_mme_ue(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
@@ -9458,6 +9993,9 @@ void mme_sess_remove(mme_sess_t *sess)
 
     ogs_pool_id_free(&mme_sess_pool, sess);
     mme_ctx_unlock();
+
+    if (mme_ue && !mme_ue->being_removed)
+        mme_ue_sgw_contexts_after_sess_remove(mme_ue);
 
     stats_remove_mme_session();
 }

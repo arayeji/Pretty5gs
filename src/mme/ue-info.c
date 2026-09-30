@@ -64,6 +64,11 @@
  *             "s5c_teid": 67890,
  *             "config_selected": "10.0.0.1"
  *           },
+ *           "sgw": {                 (differs from the UE-level "sgw"
+ *             "address": "172.16.28.85",  only with sgwc_selection:
+ *             "port": 2123,               per_pdn)
+ *             "s11_teid": 12345
+ *           },
  *           "qos_flows": [
  *             {
  *               "ebi": 5
@@ -162,6 +167,10 @@ typedef struct ue_pdn_snap_s {
     char        ue_ip4[OGS_ADDRSTRLEN];
     bool        has_ue_ip6;
     char        ue_ip6[OGS_ADDRSTRLEN];
+    bool        has_sgw;        /* S11 context carrying this PDN */
+    char        sgw_addr[OGS_ADDRSTRLEN];
+    int         sgw_port;
+    uint32_t    s11_teid;
 } ue_pdn_snap_t;
 
 typedef struct ue_snap_s {
@@ -259,6 +268,17 @@ static void ue_snapshot_fill(ue_snap_t *s, const mme_ue_t *ue)
 
             if (sess->session && sess->session->qos.index > 0)
                 p->qci = sess->session->qos.index;
+
+            {
+                sgw_ue_t *sgw_ue = mme_sess_sgw_ue(sess);
+                if (sgw_ue && sgw_ue->sgw && sgw_ue->sgw->gnode.sa_list) {
+                    OGS_ADDR(sgw_ue->sgw->gnode.sa_list, p->sgw_addr);
+                    p->sgw_port =
+                        (int)OGS_PORT(sgw_ue->sgw->gnode.sa_list);
+                    p->s11_teid = sgw_ue->sgw_s11_teid;
+                    p->has_sgw = true;
+                }
+            }
 
             /* UE address from the CSR-response PAA (also present for
              * home-routed roamers, where the home PGW assigned it). */
@@ -501,6 +521,21 @@ static cJSON *ue_snap_to_json(const ue_snap_t *s)
                     cJSON_Delete(arr); goto end;
                 }
                 cJSON_AddItemToObjectCS(it, "pgw", pgw);
+            }
+
+            if (p->has_sgw) {
+                cJSON *sgw = cJSON_CreateObject();
+                if (!sgw) { cJSON_Delete(it); cJSON_Delete(arr); goto end; }
+                if (!cJSON_AddStringToObject(sgw, "address", p->sgw_addr) ||
+                    !cJSON_AddNumberToObject(sgw, "port",
+                            (double)p->sgw_port) ||
+                    (p->s11_teid &&
+                     !cJSON_AddNumberToObject(sgw, "s11_teid",
+                            (double)p->s11_teid))) {
+                    cJSON_Delete(sgw); cJSON_Delete(it);
+                    cJSON_Delete(arr); goto end;
+                }
+                cJSON_AddItemToObjectCS(it, "sgw", sgw);
             }
 
             cJSON_AddItemToArray(arr, it);

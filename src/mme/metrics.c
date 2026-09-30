@@ -1031,7 +1031,7 @@ void mme_metrics_sess_active_update(mme_sess_t *sess)
     if (!mme_ue || !mme_metrics_plmn_from_ue(mme_ue, &plmn_id))
         return;
 
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    sgw_ue = mme_sess_sgw_ue(sess);
     if (!sgw_ue || !sgw_ue->sgw || !sgw_ue->sgw->addr_str[0])
         return;
 

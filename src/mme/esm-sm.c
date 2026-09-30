@@ -125,7 +125,7 @@ static void esm_handle_bearer_setup_timer(ogs_fsm_t *s,
 
         if (bearer->ebi == linked_bearer->ebi) {
             if (enb_ue && MME_HAVE_SGW_S1U_PATH(sess)) {
-                sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+                sgw_ue = mme_sess_sgw_ue(sess);
                 if (!sgw_ue) {
                     ogs_warn("[%s] bearer setup timeout: sgw_ue gone",
                             mme_ue->imsi_bcd);
@@ -226,7 +226,7 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
             ogs_debug("    IMSI[%s] PTI[%d] EBI[%d]",
                     mme_ue->imsi_bcd, sess->pti, bearer->ebi);
             if (MME_HAVE_SGW_S1U_PATH(sess)) {
-                sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+                sgw_ue = mme_sess_sgw_ue(sess);
                 if (!sgw_ue) {
                     ogs_warn("[%s] PDN disconnect: sgw_ue gone",
                             mme_ue->imsi_bcd);
@@ -371,7 +371,7 @@ void esm_state_inactive(ogs_fsm_t *s, mme_event_t *e)
                         esm_cause);
             CLEAR_BEARER_TIMER(bearer->t_bearer_setup);
             if (MME_HAVE_SGW_S1U_PATH(sess)) {
-                sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+                sgw_ue = mme_sess_sgw_ue(sess);
                 if (!sgw_ue)
                     ogs_warn("[%s] default bearer reject: sgw_ue gone",
                             mme_ue->imsi_bcd);
@@ -504,7 +504,7 @@ void esm_state_active(ogs_fsm_t *s, mme_event_t *e)
                     mme_ue->imsi_bcd, sess->pti, bearer->ebi);
 
             if (MME_HAVE_SGW_S1U_PATH(sess)) {
-                sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+                sgw_ue = mme_sess_sgw_ue(sess);
                 if (!sgw_ue) {
                     ogs_warn("[%s] PDN disconnect: sgw_ue gone",
                             mme_ue->imsi_bcd);

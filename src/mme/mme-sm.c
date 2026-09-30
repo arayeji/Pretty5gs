@@ -1572,7 +1572,7 @@ cleanup:
                 if (!enb_ue)
                     ogs_warn("ENB-S1 Context has already been removed");
                 else if (mme_gtp_send_delete_session_request(
-                            enb_ue, sgw_ue, sess,
+                            enb_ue, mme_sess_sgw_ue(sess), sess,
                             OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST) != OGS_OK)
                     ogs_error("[%s] Delete Session Request failed in "
                             "Path Switch Request", mme_ue->imsi_bcd);

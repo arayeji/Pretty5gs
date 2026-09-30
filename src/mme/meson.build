@@ -64,6 +64,7 @@ libmme_sources = files('''
     mme-provisioning-sms.h
     mme-roam-access.h
     mme-access-control-match.h
+    mme-gtpc-select-match.h
     metrics.h
 
     mme-init.c
@@ -76,6 +77,7 @@ libmme_sources = files('''
     mme-provisioning-sms.c
     mme-roam-access.c
     mme-access-control-match.c
+    mme-gtpc-select-match.c
     eplmn-config.c
     mme-apn.c
     mme-ambr.c

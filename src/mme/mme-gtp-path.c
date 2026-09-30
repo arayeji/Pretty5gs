@@ -444,8 +444,10 @@ static void timeout(ogs_gtp_xact_t *xact, void *data)
         ogs_warn("[%s] GTP timeout: Release Access Bearers "
                 "(action=%d) - finishing S1 release locally, "
                 "PDN kept", mme_log_imsi(mme_ue), xact->release_action);
-        mme_s11_finish_release_access_bearers(
-                mme_ue, enb_ue, xact->release_action);
+        if (mme_s11_fanout_done(
+                    mme_ue, GTP_COUNTER_RELEASE_ACCESS_BEARERS_BY_SGW))
+            mme_s11_finish_release_access_bearers(
+                    mme_ue, enb_ue, xact->release_action);
         break;
     case OGS_GTP2_CREATE_SESSION_REQUEST_TYPE:
         /*
@@ -587,6 +589,11 @@ int mme_gtp_open(void)
         ogs_info("MME S11 peer configured: [%s]:%d",
                 OGS_ADDR(&sgw->gnode.addr, buf), OGS_PORT(&sgw->gnode.addr));
 
+        /* Replies for a shared address reach the first entry only. */
+        if (mme_sgw_is_pdn_rule(sgw) &&
+                mme_sgw_find_by_addr(&sgw->gnode.addr) != sgw)
+            continue;
+
         mme_gtp_send_sgw_echo(sgw);
         mme_sgw_echo_schedule(sgw);
     }
@@ -694,10 +701,12 @@ int mme_gtp_send_create_session_request(
         return OGS_ERROR;
     }
 
-    if (create_action != OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST)
+    if (create_action != OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST) {
         mme_sgw_reselect_for_ue_if_needed(mme_ue);
-
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+        sgw_ue = mme_sess_select_sgw_ue(enb_ue, sess);
+    } else {
+        sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    }
     if (!sgw_ue) {
         ogs_error("[%s] Create Session Request: SGW-UE gone "
                 "(create_action=%d)", mme_ue->imsi_bcd, create_action);
@@ -808,17 +817,17 @@ int mme_gtp_send_create_session_request(
     return OGS_OK;
 }
 
+static int mme_gtp_send_modify_bearer_to_sgw(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue, sgw_ue_t *sgw_ue,
+        const sgw_ue_t *only, int uli_presence, int modify_action);
+
 int mme_gtp_send_modify_bearer_request(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         int uli_presence, int modify_action)
 {
-    int rv;
-
-    ogs_gtp_xact_t *xact = NULL;
-    sgw_ue_t *sgw_ue = NULL;
-
-    ogs_gtp2_header_t h;
-    ogs_pkbuf_t *pkbuf = NULL;
+    int rv, sent = 0, n_primary = 0, n_extra = 0;
+    sgw_ue_t *sgw_ue = NULL, *extra = NULL;
+    mme_bearer_t *bearer = NULL;
 
     ogs_assert(mme_ue);
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
@@ -834,11 +843,59 @@ int mme_gtp_send_modify_bearer_request(
         return OGS_ERROR;
     }
 
+    extra = mme_ue_extra_sgw_ue(mme_ue);
+    if (!extra) {
+        mme_s11_fanout_start(mme_ue, GTP_COUNTER_MODIFY_BEARER_BY_SGW, 1);
+        return mme_gtp_send_modify_bearer_to_sgw(enb_ue, mme_ue, sgw_ue,
+                NULL, uli_presence, modify_action);
+    }
+
+    ogs_list_for_each_entry(
+            &mme_ue->bearer_to_modify_list, bearer, to_modify_node) {
+        if (mme_bearer_sgw_ue(bearer) == extra)
+            n_extra++;
+        else
+            n_primary++;
+    }
+
+    rv = OGS_OK;
+    if (n_primary) {
+        if (mme_gtp_send_modify_bearer_to_sgw(enb_ue, mme_ue, sgw_ue,
+                    sgw_ue, uli_presence, modify_action) == OGS_OK)
+            sent++;
+        else
+            rv = OGS_ERROR;
+    }
+    if (n_extra) {
+        if (mme_gtp_send_modify_bearer_to_sgw(enb_ue, mme_ue, extra,
+                    extra, uli_presence, modify_action) == OGS_OK)
+            sent++;
+        else
+            rv = OGS_ERROR;
+    }
+    /* responses are handled on this same thread, after we return */
+    mme_s11_fanout_start(mme_ue, GTP_COUNTER_MODIFY_BEARER_BY_SGW, sent);
+
+    return sent ? OGS_OK : rv;
+}
+
+static int mme_gtp_send_modify_bearer_to_sgw(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue, sgw_ue_t *sgw_ue,
+        const sgw_ue_t *only, int uli_presence, int modify_action)
+{
+    int rv;
+
+    ogs_gtp_xact_t *xact = NULL;
+
+    ogs_gtp2_header_t h;
+    ogs_pkbuf_t *pkbuf = NULL;
+
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
     h.type = OGS_GTP2_MODIFY_BEARER_REQUEST_TYPE;
     h.teid = sgw_ue->sgw_s11_teid;
 
-    pkbuf = mme_s11_build_modify_bearer_request(h.type, mme_ue, uli_presence);
+    pkbuf = mme_s11_build_modify_bearer_request(
+            h.type, mme_ue, only, uli_presence);
     if (!pkbuf) {
         ogs_error("mme_s11_build_modify_bearer_request() failed");
         return OGS_ERROR;
@@ -1036,6 +1093,48 @@ int mme_gtp_send_orphan_delete_session(
     return rv;
 }
 
+void mme_gtp_send_sgw_restart_other_deletes(mme_ue_t *mme_ue)
+{
+    sgw_ue_t *other = NULL;
+    mme_sess_t *sess = NULL;
+    ogs_pool_id_t id;
+    int sent = 0;
+
+    ogs_assert(mme_ue);
+
+    id = mme_ue->sgw_restart_other_ue_id;
+    mme_ue->sgw_restart_other_ue_id = OGS_INVALID_POOL_ID;
+    if (id < OGS_MIN_POOL_ID || id > OGS_MAX_POOL_ID)
+        return;
+
+    other = sgw_ue_find_by_id(id);
+    if (!other || other->mme_ue_id != mme_ue->id ||
+            !other->sgw_s11_teid || !other->gnode)
+        return;
+
+    ogs_list_for_each(&mme_ue->sess_list, sess) {
+        mme_bearer_t *bearer = NULL;
+        uint8_t ebi;
+
+        if (mme_sess_sgw_ue(sess) != other)
+            continue;
+
+        bearer = mme_default_bearer_in_sess(sess);
+        ebi = bearer ? bearer->ebi : sess->linked_ebi;
+        if (!ebi)
+            continue;
+
+        if (mme_gtp_send_orphan_delete_session(
+                    other->gnode, other->sgw_s11_teid, ebi) == OGS_OK)
+            sent++;
+    }
+
+    ogs_warn("[%s] SGW restart purge: %d PDN(s) deleted on the other "
+            "SGW [%s] SGW_S11_TEID[0x%x]", mme_log_imsi(mme_ue), sent,
+            other->sgw->addr_str, other->sgw_s11_teid);
+    other->sgw_s11_teid = 0;
+}
+
 void mme_gtp_send_delete_all_sessions(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue, int action)
 {
@@ -1043,10 +1142,9 @@ void mme_gtp_send_delete_all_sessions(
     sgw_ue_t *sgw_ue = NULL;
 
     ogs_assert(mme_ue);
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     ogs_assert(action);
 
-    if (!sgw_ue || !sgw_ue->sgw_s11_teid) {
+    if (!SESSION_CONTEXT_IS_AVAILABLE(mme_ue)) {
         ogs_list_for_each_safe(&mme_ue->sess_list, next_sess, sess)
             MME_SESS_CLEAR(sess);
         return;
@@ -1057,8 +1155,12 @@ void mme_gtp_send_delete_all_sessions(
      * MME_HAVE_SGW_S1U_PATH left SGW/PGW PDNs alive when S1-U was cleared
      * or never installed while the S11 session remained (detach / reject
      * cleanup then only freed local MME state).
+     *
+     * Each PDN goes to the SGW that holds it; one without an S11 TEID is
+     * cleared locally by mme_gtp_send_delete_session_request().
      */
     ogs_list_for_each_safe(&mme_ue->sess_list, next_sess, sess) {
+        sgw_ue = mme_sess_sgw_ue(sess);
         mme_gtp_send_delete_session_request(enb_ue, sgw_ue, sess, action);
     }
 }
@@ -1101,7 +1203,7 @@ int mme_gtp_send_create_bearer_response(
                 xact->org, xact->seq[0].type);
         return OGS_OK;
     }
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    sgw_ue = mme_ue_sgw_ue_by_gnode(mme_ue, xact->gnode);
     if (!sgw_ue) {
         ogs_error("[%s] Create Bearer Response: SGW UE context gone",
                 mme_ue->imsi_bcd);
@@ -1169,6 +1271,8 @@ int mme_gtp_send_update_bearer_response(
         ogs_warn("GTP transaction(UPDATE) has already been removed");
         return OGS_OK;
     }
+    sgw_ue = mme_ue_sgw_ue_by_gnode(mme_ue, xact->gnode);
+    ogs_assert(sgw_ue);
 
     /*
      * eNB sends Modify EPS Bearer Accept to the MME
@@ -1246,7 +1350,7 @@ int mme_gtp_send_delete_bearer_response(
                 xact->org, xact->seq[0].type);
         return OGS_OK;
     }
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    sgw_ue = mme_ue_sgw_ue_by_gnode(mme_ue, xact->gnode);
     if (!sgw_ue) {
         ogs_error("[%s] Delete Bearer Response: SGW UE context gone",
                 mme_ue->imsi_bcd);
@@ -1276,14 +1380,15 @@ int mme_gtp_send_delete_bearer_response(
     return rv;
 }
 
+static int mme_gtp_send_release_access_bearers_to_sgw(
+        ogs_pool_id_t enb_ue_id, mme_ue_t *mme_ue, sgw_ue_t *sgw_ue,
+        int action);
+
 int mme_gtp_send_release_access_bearers_request(
         ogs_pool_id_t enb_ue_id, mme_ue_t *mme_ue, int action)
 {
-    int rv;
-    ogs_gtp2_header_t h;
-    ogs_pkbuf_t *pkbuf = NULL;
-    ogs_gtp_xact_t *xact = NULL;
-    sgw_ue_t *sgw_ue = NULL;
+    sgw_ue_t *sgw_ue = NULL, *extra = NULL;
+    int rv, sent = 0;
 
     ogs_assert(action);
     ogs_assert(mme_ue);
@@ -1299,7 +1404,13 @@ int mme_gtp_send_release_access_bearers_request(
         return OGS_OK;
 
     sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    if (!sgw_ue || !sgw_ue->sgw_s11_teid) {
+    if (sgw_ue && !sgw_ue->sgw_s11_teid)
+        sgw_ue = NULL;
+    extra = mme_ue_extra_sgw_ue(mme_ue);
+    if (extra && !extra->sgw_s11_teid)
+        extra = NULL;
+
+    if (!sgw_ue && !extra) {
         /*
          * No SGW session / ghost TEID already cleared. Sending RAB would
          * only produce Context Not Found. Finish the S1 release locally.
@@ -1312,6 +1423,38 @@ int mme_gtp_send_release_access_bearers_request(
         mme_s11_finish_release_access_bearers(mme_ue, enb_ue, action);
         return OGS_OK;
     }
+
+    if (!extra) {
+        mme_s11_fanout_start(
+                mme_ue, GTP_COUNTER_RELEASE_ACCESS_BEARERS_BY_SGW, 1);
+        return mme_gtp_send_release_access_bearers_to_sgw(
+                enb_ue_id, mme_ue, sgw_ue, action);
+    }
+
+    rv = OGS_ERROR;
+    if (sgw_ue && mme_gtp_send_release_access_bearers_to_sgw(
+                enb_ue_id, mme_ue, sgw_ue, action) == OGS_OK)
+        sent++;
+    if (mme_gtp_send_release_access_bearers_to_sgw(
+                enb_ue_id, mme_ue, extra, action) == OGS_OK)
+        sent++;
+    if (sent)
+        rv = OGS_OK;
+    /* responses are handled on this same thread, after we return */
+    mme_s11_fanout_start(
+            mme_ue, GTP_COUNTER_RELEASE_ACCESS_BEARERS_BY_SGW, sent);
+
+    return rv;
+}
+
+static int mme_gtp_send_release_access_bearers_to_sgw(
+        ogs_pool_id_t enb_ue_id, mme_ue_t *mme_ue, sgw_ue_t *sgw_ue,
+        int action)
+{
+    int rv;
+    ogs_gtp2_header_t h;
+    ogs_pkbuf_t *pkbuf = NULL;
+    ogs_gtp_xact_t *xact = NULL;
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
     h.type = OGS_GTP2_RELEASE_ACCESS_BEARERS_REQUEST_TYPE;
@@ -1578,7 +1721,7 @@ int mme_gtp_send_downlink_data_notification_ack(
                 xact->org, xact->seq[0].type);
         return OGS_OK;
     }
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    sgw_ue = mme_ue_sgw_ue_by_gnode(mme_ue, xact->gnode);
     if (!sgw_ue) {
         ogs_error("[%s] DDN Ack: SGW UE context gone", mme_ue->imsi_bcd);
         return OGS_ERROR;
@@ -1715,7 +1858,7 @@ int mme_gtp_send_bearer_resource_command(
     ogs_assert(bearer);
     mme_ue = mme_ue_find_by_id(bearer->mme_ue_id);
     ogs_assert(mme_ue);
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    sgw_ue = mme_bearer_sgw_ue(bearer);
     ogs_assert(sgw_ue);
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));

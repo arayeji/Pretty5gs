@@ -43,6 +43,7 @@ abts_suite *test_access_control_eplmn(abts_suite *suite);
 abts_suite *test_inbound_roam_apn_yaml(abts_suite *suite);
 abts_suite *test_tai_list(abts_suite *suite);
 abts_suite *test_pfcp_buffer(abts_suite *suite);
+abts_suite *test_gtpc_select(abts_suite *suite);
 
 const struct testlist {
     abts_suite *(*func)(abts_suite *suite);
@@ -61,6 +62,7 @@ const struct testlist {
     {test_inbound_roam_apn_yaml},
     {test_tai_list},
     {test_pfcp_buffer},
+    {test_gtpc_select},
     {NULL},
 };
 

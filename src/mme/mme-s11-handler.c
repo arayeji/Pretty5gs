@@ -516,7 +516,10 @@ void mme_s11_handle_create_session_response(
             goto fail;
         }
     } else {
-        target_ue = source_ue;
+        /* the S11 context the request went out on (per-PDN SGW) */
+        target_ue = mme_sess_sgw_ue(sess);
+        if (!target_ue)
+            target_ue = source_ue;
     }
 
     /************************
@@ -1028,6 +1031,12 @@ void mme_s11_handle_modify_bearer_response(
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
             mme_ue->mme_s11_teid, sgw_ue->sgw_s11_teid);
 
+    if (!mme_s11_fanout_done(mme_ue, GTP_COUNTER_MODIFY_BEARER_BY_SGW)) {
+        ogs_debug("[%s] Modify Bearer Response: waiting for the other SGW",
+                mme_ue->imsi_bcd);
+        return;
+    }
+
     switch (modify_action) {
     case OGS_GTP_MODIFY_IN_PATH_SWITCH_REQUEST:
         r = s1ap_send_path_switch_ack(mme_ue, false);
@@ -1271,6 +1280,8 @@ void mme_s11_handle_delete_session_response(
 
             sgw_ue_source_deassociate_target(source_ue);
             sgw_ue_remove(source_ue);
+            /* Gn holding: the UE left E-UTRAN, per-PDN SGW goes too */
+            mme_ue_extra_sgw_remove(mme_ue);
 
         );
 
@@ -1333,7 +1344,7 @@ void mme_s11_handle_create_bearer_request(
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
         enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-        sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+        sgw_ue = mme_ue_sgw_ue_by_gnode(mme_ue, xact->gnode);
         if (!sgw_ue) {
             mme_ue_error(mme_ue, enb_ue, "s11", NULL,
                     "Create Bearer: No SGW UE Context");
@@ -1571,7 +1582,7 @@ void mme_s11_handle_update_bearer_request(
         ogs_error("No Context in TEID");
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
-        sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+        sgw_ue = mme_ue_sgw_ue_by_gnode(mme_ue, xact->gnode);
         if (!sgw_ue) {
             ogs_error("Update Bearer: No SGW UE Context");
             cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
@@ -1772,7 +1783,7 @@ void mme_s11_handle_delete_bearer_request(
                     req->eps_bearer_ids.u8 : -1);
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
-        sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+        sgw_ue = mme_ue_sgw_ue_by_gnode(mme_ue, xact->gnode);
         if (!sgw_ue) {
             ogs_error("[%s] Delete Bearer: No SGW UE Context",
                     mme_ue->imsi_bcd);
@@ -2011,6 +2022,8 @@ void mme_s11_handle_release_access_bearers_response(
 
     mme_ue = mme_ue_find_by_id(OGS_POINTER_TO_UINT(xact->data));
     enb_ue = enb_ue_find_by_id(xact->enb_ue_id);
+    if (mme_ue)
+        sgw_ue = mme_ue_sgw_ue_by_gnode(mme_ue, xact->gnode);
 
     rv = ogs_gtp_xact_commit(xact);
     if (rv != OGS_OK) {
@@ -2023,7 +2036,6 @@ void mme_s11_handle_release_access_bearers_response(
                 "MME-UE Context has already been removed");
         return;
     }
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     if (!sgw_ue) {
         mme_ue_warn(mme_ue, enb_ue, "s11", NULL,
                 "SGW-UE Context has already been removed "
@@ -2053,10 +2065,24 @@ void mme_s11_handle_release_access_bearers_response(
             ogs_info("[%s] Release Access Bearers: SGW CONTEXT_NOT_FOUND "
                     "(action=%d) - clear local sessions, finish S1 release",
                     mme_ue->imsi_bcd, action);
-            CLEAR_SESSION_CONTEXT(mme_ue);
-            ogs_list_for_each_safe(&mme_ue->sess_list, next_sess, sess)
-                MME_SESS_CLEAR(sess);
-            mme_s11_finish_release_access_bearers(mme_ue, enb_ue, action);
+            if (!mme_ue_extra_sgw_ue(mme_ue)) {
+                CLEAR_SESSION_CONTEXT(mme_ue);
+                ogs_list_for_each_safe(&mme_ue->sess_list, next_sess, sess)
+                    MME_SESS_CLEAR(sess);
+            } else {
+                /* only the PDNs of the SGW that lost the context */
+                ogs_pool_id_t lost_id = sgw_ue->id;
+
+                sgw_ue->sgw_s11_teid = 0;
+                ogs_list_for_each_safe(&mme_ue->sess_list, next_sess, sess) {
+                    sgw_ue_t *on = mme_sess_sgw_ue(sess);
+                    if (on && on->id == lost_id)
+                        MME_SESS_CLEAR(sess);
+                }
+            }
+            if (mme_s11_fanout_done(
+                        mme_ue, GTP_COUNTER_RELEASE_ACCESS_BEARERS_BY_SGW))
+                mme_s11_finish_release_access_bearers(mme_ue, enb_ue, action);
             return;
         }
         if (cause_value != OGS_GTP2_CAUSE_REQUEST_ACCEPTED) {
@@ -2079,6 +2105,13 @@ void mme_s11_handle_release_access_bearers_response(
 
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
             mme_ue->mme_s11_teid, sgw_ue->sgw_s11_teid);
+
+    if (!mme_s11_fanout_done(
+                mme_ue, GTP_COUNTER_RELEASE_ACCESS_BEARERS_BY_SGW)) {
+        ogs_debug("[%s] Release Access Bearers Response: waiting for the "
+                "other SGW", mme_ue->imsi_bcd);
+        return;
+    }
 
     mme_s11_finish_release_access_bearers(mme_ue, enb_ue, action);
 }
@@ -2265,7 +2298,7 @@ void mme_s11_handle_downlink_data_notification(
         ogs_warn("DDN: No UE Context — Ack CONTEXT_NOT_FOUND");
         cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
     } else {
-        sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+        sgw_ue = mme_ue_sgw_ue_by_gnode(mme_ue, xact->gnode);
         if (!sgw_ue) {
             ogs_error("Downlink Data Notification: No SGW UE Context");
             cause_value = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
@@ -2812,7 +2845,7 @@ void mme_s11_handle_bearer_resource_failure_indication(
                 "MME-UE Context has already been removed");
         return;
     }
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    sgw_ue = mme_sess_sgw_ue(sess);
     if (!sgw_ue) {
         mme_ue_warn(mme_ue, NULL, "s11",
                 sess->session ? sess->session->name : NULL,
