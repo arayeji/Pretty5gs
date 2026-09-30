@@ -4060,14 +4060,54 @@ void s1ap_path_switch_request_complete(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
         }
     } else if (relocation == SGW_WITH_RELOCATION) {
         mme_sess_t *sess = NULL;
+        mme_bearer_t *bearer = NULL;
+        sgw_ue_t *ctx[2];
+        int i, n;
+
+        /*
+         * One counter for the whole switch: Create Session for PDNs on a
+         * relocating S11 context, Modify Bearer for the other context.
+         * The last answer runs sgw_ue_relocation_complete() + the ack.
+         */
+        GTP_COUNTER_CLEAR(mme_ue, GTP_COUNTER_CREATE_SESSION_BY_PATH_SWITCH);
+        mme_s11_fanout_start(mme_ue, GTP_COUNTER_MODIFY_BEARER_BY_SGW, 0);
 
         ogs_list_for_each(&mme_ue->sess_list, sess) {
+            sgw_ue_t *sgw_ue = mme_sess_sgw_ue(sess);
+
+            if (!sgw_ue || !sgw_ue_find_by_id(sgw_ue->target_ue_id))
+                continue;
+
             GTP_COUNTER_INCREMENT(
                 mme_ue, GTP_COUNTER_CREATE_SESSION_BY_PATH_SWITCH);
 
             if (mme_gtp_send_create_session_request(enb_ue, sess,
                         OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST) != OGS_OK)
                 ogs_error("[%s] Create Session Request failed in "
+                        "Path Switch Request", mme_ue->imsi_bcd);
+        }
+
+        ctx[0] = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+        ctx[1] = mme_ue_extra_sgw_ue(mme_ue);
+        for (i = 0; i < 2; i++) {
+            if (!ctx[i] || sgw_ue_find_by_id(ctx[i]->target_ue_id))
+                continue;
+
+            n = 0;
+            ogs_list_for_each_entry(&mme_ue->bearer_to_modify_list,
+                    bearer, to_modify_node)
+                if (mme_bearer_sgw_ue(bearer) == ctx[i])
+                    n++;
+            if (!n)
+                continue;
+
+            GTP_COUNTER_INCREMENT(
+                mme_ue, GTP_COUNTER_CREATE_SESSION_BY_PATH_SWITCH);
+
+            if (mme_gtp_send_modify_bearer_request_to_sgw(enb_ue, mme_ue,
+                        ctx[i], 1, OGS_GTP_MODIFY_IN_PATH_SWITCH_REQUEST) !=
+                    OGS_OK)
+                ogs_error("[%s] Modify Bearer Request failed in "
                         "Path Switch Request", mme_ue->imsi_bcd);
         }
     } else if (relocation == SGW_HAS_ALREADY_BEEN_RELOCATED) {

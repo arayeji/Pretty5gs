@@ -108,25 +108,25 @@ int mme_gtpc_sel_pick(const mme_gtpc_sel_keys_t *const *keys,
 
 /*
  * mme.sgwc_selection: per_pdn places each PDN on one of at most two S11
- * contexts per UE: the UE's SGW (primary) or one extra SGW.
+ * contexts per UE (primary and extra). The wanted SGW is the PDN's apn:
+ * rule, else the UE-level SGW.
  */
 typedef enum {
     MME_PDN_SGW_PRIMARY = 0,
     MME_PDN_SGW_EXTRA,          /* reuse the existing extra context */
     MME_PDN_SGW_NEW_EXTRA,      /* create the extra context */
-    MME_PDN_SGW_PRIMARY_LIMIT,  /* wanted a third SGW: stays on primary */
+    MME_PDN_SGW_PRIMARY_LIMIT,  /* wanted a third SGW: UE-level context */
+    MME_PDN_SGW_RETARGET_PRIMARY, /* primary unused: move it there */
 } mme_pdn_sgw_place_e;
 
 /*
- * rule_hit:           an apn: entry matched this PDN
  * wanted_is_primary:  the wanted SGW has the primary context's address
+ * primary_unused:     no other PDN and no S11 TEID on the primary yet
  * have_extra:         the UE already holds the extra context
  * wanted_is_extra:    the wanted SGW has the extra context's address
- *
- * Without a rule hit the wanted SGW is the primary one.
  */
-mme_pdn_sgw_place_e mme_gtpc_pdn_sgw_place(bool rule_hit,
-        bool wanted_is_primary, bool have_extra, bool wanted_is_extra);
+mme_pdn_sgw_place_e mme_gtpc_pdn_sgw_place(bool wanted_is_primary,
+        bool primary_unused, bool have_extra, bool wanted_is_extra);
 
 #ifdef __cplusplus
 }

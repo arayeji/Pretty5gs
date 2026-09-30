@@ -143,8 +143,12 @@ void ogs_mme_trace_set(
         sgw_ue = sess ? mme_sess_sgw_ue(sess) : NULL;
         if (!sgw_ue)
             sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-        if (sgw_ue)
+        if (sgw_ue) {
             ctx.sgw_s11_teid = sgw_ue->sgw_s11_teid;
+            if (sgw_ue->sgw && sgw_ue->sgw->addr_str[0])
+                ogs_cpystrn(ctx.sgw_ip, sgw_ue->sgw->addr_str,
+                        sizeof(ctx.sgw_ip));
+        }
 
         if (sess) {
             if (!ctx.apn[0] && sess->session && sess->session->name)

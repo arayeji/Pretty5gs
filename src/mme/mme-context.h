@@ -198,7 +198,7 @@ typedef struct mme_context_s {
      *     ignored and the entry matches on its other keys, as before.
      *   per_pdn: an sgwc entry carrying apn: moves the PDNs it matches
      *     (all keys ANDed, lowest order wins) onto its SGW. A UE holds at
-     *     most two S11 contexts: its own SGW and one extra.
+     *     most two S11 contexts. The apn: rules are SIGHUP reloadable.
      */
 #define MME_SGWC_SELECTION_PER_UE       0
 #define MME_SGWC_SELECTION_PER_PDN      1
@@ -547,6 +547,12 @@ typedef struct mme_sgw_s {
 #define MME_MAX_NUM_OF_SGW_PDN_RULE     32
     char            *apn[OGS_MAX_NUM_OF_APN];
     int             num_of_apn;
+    /*
+     * SIGHUP dropped this rule while S11 contexts still use the node:
+     * kept for them, never picked again, freed by a later reload.
+     */
+    bool            rule_retired;
+    bool            rule_seen;      /* reload pass bookkeeping */
 
     /*
      * Cached OGS_ADDR(sa_list) for metrics labels. Formatted once at
@@ -958,6 +964,9 @@ struct enb_ue_s {
      */
     bool            metrics_sgw_counted;
     char            metrics_sgw_addr[OGS_ADDRSTRLEN];
+    /* second SGW of a per_pdn UE (counted under both) */
+    bool            metrics_sgw2_counted;
+    char            metrics_sgw2_addr[OGS_ADDRSTRLEN];
     ogs_plmn_id_t   metrics_plmn_id;
 
     /*
@@ -985,6 +994,14 @@ struct sgw_ue_s {
 
     /* S11 Holding timer for removing this context */
     ogs_timer_t     *t_s11_holding;
+    /* Delete Session (path switch / Gn) answers still expected */
+    int             pending_delete;
+
+    /*
+     * sgwc_selection: per_pdn — opened for PDNs placed by an apn: rule
+     * (relocation re-runs the rules), else it follows UE-level selection.
+     */
+    bool            pdn_rule;
 
     /* Related Context */
     union {
@@ -1504,6 +1521,12 @@ struct mme_ue_s {
      * did not restart, whose PDNs the owner deletes before local release.
      */
     ogs_pool_id_t sgw_restart_other_ue_id;
+    /*
+     * UE-level SGW when no S11 context follows it (every PDN placed by
+     * an apn: rule); per_pdn without selection filters only.
+     */
+    bool            ue_sgw_addr_set;
+    ogs_sockaddr_t  ue_sgw_addr;
 
     /* Save PDN Connectivity Request */
     ogs_nas_esm_message_container_t pdn_connectivity_request;
@@ -1642,6 +1665,8 @@ struct mme_ue_s {
 #define GTP_COUNTER_DELETE_SESSION_BY_TAU                       3
 #define GTP_COUNTER_MODIFY_BEARER_BY_SGW                        4
 #define GTP_COUNTER_RELEASE_ACCESS_BEARERS_BY_SGW               5
+#define GTP_COUNTER_CREATE_INDIRECT_TUNNEL_BY_SGW               6
+#define GTP_COUNTER_DELETE_INDIRECT_TUNNEL_BY_SGW               7
     struct {
         uint8_t request;
         uint8_t response;
@@ -1778,6 +1803,13 @@ typedef struct mme_sess_s {
      * across SGW relocation). Resolve with mme_sess_sgw_ue().
      */
     ogs_pool_id_t   sgw_ue_id;
+    /* placed by an sgwc apn: rule (per_pdn) */
+    bool            sgw_rule;
+    /*
+     * X2 SGW relocation: the old S11 context this PDN moved from, whose
+     * S11 holding timer sends it a Delete Session (scope indication).
+     */
+    ogs_pool_id_t   sgw_source_ue_id;
 
     ogs_session_t   *session;
 
@@ -2209,6 +2241,21 @@ sgw_ue_t *mme_sess_select_sgw_ue(enb_ue_t *enb_ue, mme_sess_t *sess);
 int mme_sgw_ue_sess_count(const mme_ue_t *mme_ue, const sgw_ue_t *sgw_ue);
 /* Drop the extra context (local only, no S11 signalling). */
 void mme_ue_extra_sgw_remove(mme_ue_t *mme_ue);
+
+/*
+ * X2 SGW relocation, evaluated per S11 context. complete() runs once
+ * every Create Session (relocating PDNs) and Modify Bearer (the other
+ * context) answered: the targets take over and each source starts its
+ * S11 holding timer.
+ */
+void sgw_ue_relocation_complete(mme_ue_t *mme_ue);
+/* The held relocation source a Delete Session went to, else NULL. */
+sgw_ue_t *mme_ue_held_sgw_source(
+        const mme_ue_t *mme_ue, const ogs_gtp_node_t *gnode);
+/* S11 holding expiry: Delete Session its moved PDNs at the old SGW. */
+void sgw_ue_holding_expire(sgw_ue_t *sgw_ue, mme_ue_t *mme_ue);
+/* One held-source Delete Session answer; frees the source on the last. */
+void sgw_ue_held_delete_answered(sgw_ue_t *source_ue);
 
 /*
  * One UE-level procedure answered by one S11 response per SGW. start()

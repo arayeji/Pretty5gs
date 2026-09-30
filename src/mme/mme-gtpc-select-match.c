@@ -158,8 +158,8 @@ int mme_gtpc_sel_pick(const mme_gtpc_sel_keys_t *const *keys,
     return best;
 }
 
-mme_pdn_sgw_place_e mme_gtpc_pdn_sgw_place(bool rule_hit,
-        bool wanted_is_primary, bool have_extra, bool wanted_is_extra)
+mme_pdn_sgw_place_e mme_gtpc_pdn_sgw_place(bool wanted_is_primary,
+        bool primary_unused, bool have_extra, bool wanted_is_extra)
 {
     /*
      * Extra first: after a primary reselect both contexts can point at
@@ -167,8 +167,10 @@ mme_pdn_sgw_place_e mme_gtpc_pdn_sgw_place(bool rule_hit,
      */
     if (have_extra && wanted_is_extra)
         return MME_PDN_SGW_EXTRA;
-    if (!rule_hit || wanted_is_primary)
+    if (wanted_is_primary)
         return MME_PDN_SGW_PRIMARY;
+    if (primary_unused)
+        return MME_PDN_SGW_RETARGET_PRIMARY;
     if (have_extra)
         return MME_PDN_SGW_PRIMARY_LIMIT;
     return MME_PDN_SGW_NEW_EXTRA;

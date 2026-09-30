@@ -77,12 +77,20 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
                 mme_log_imsi(mme_ue));
         return NULL;
     }
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
+    sgw_ue = mme_sess_sgw_ue(sess);
+    if (!sgw_ue) {
+        ogs_error("[%s] Create Session Request: no SGW-UE",
+                mme_log_imsi(mme_ue));
+        return NULL;
+    }
 
     if (create_action == OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST) {
         sgw_ue = sgw_ue_find_by_id(sgw_ue->target_ue_id);
-        ogs_assert(sgw_ue);
+        if (!sgw_ue) {
+            ogs_error("[%s] Create Session Request: no target SGW-UE",
+                    mme_log_imsi(mme_ue));
+            return NULL;
+        }
     }
 
     ogs_debug("Create Session Request");
@@ -1047,14 +1055,13 @@ ogs_pkbuf_t *mme_s11_build_downlink_data_notification_ack(
 }
 
 ogs_pkbuf_t *mme_s11_build_create_indirect_data_forwarding_tunnel_request(
-        uint8_t type, mme_ue_t *mme_ue)
+        uint8_t type, mme_ue_t *mme_ue, const sgw_ue_t *sgw_ue)
 {
     int rv;
     int i;
 
     mme_sess_t *sess = NULL;
     mme_bearer_t *bearer = NULL;
-    sgw_ue_t *sgw_ue = NULL;
 
     ogs_gtp2_message_t gtp_message;
     ogs_gtp2_create_indirect_data_forwarding_tunnel_request_t *req =
@@ -1065,7 +1072,6 @@ ogs_pkbuf_t *mme_s11_build_create_indirect_data_forwarding_tunnel_request(
     int len;
 
     ogs_assert(mme_ue);
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
     ogs_assert(sgw_ue);
 
     ogs_debug("Create Indirect Data Forwarding Tunnel Request");
@@ -1077,7 +1083,7 @@ ogs_pkbuf_t *mme_s11_build_create_indirect_data_forwarding_tunnel_request(
     i = 0;
     sess = mme_sess_first(mme_ue);
     while (sess != NULL) {
-        /* sent to the primary SGW only; per-PDN SGW bearers get none */
+        /* one request per SGW: only the PDNs on this S11 context */
         if (mme_sess_sgw_ue(sess) != sgw_ue) {
             sess = mme_sess_next(sess);
             continue;

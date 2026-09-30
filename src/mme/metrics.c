@@ -959,15 +959,39 @@ static bool mme_metrics_sgw_plmn_from_ue(
     return true;
 }
 
+/* per_pdn: the UE's second SGW (extra S11 context), "" when none */
+static void mme_metrics_sgw2_from_ue(mme_ue_t *mme_ue,
+        const char *sgw_addr, char *sgw2_addr, int sgw2_addr_len)
+{
+    sgw_ue_t *extra = mme_ue_extra_sgw_ue(mme_ue);
+
+    sgw2_addr[0] = '\0';
+    if (!extra || !extra->sgw || !extra->sgw->addr_str[0])
+        return;
+    if (strcmp(extra->sgw->addr_str, sgw_addr) == 0)
+        return;
+
+    ogs_cpystrn(sgw2_addr, extra->sgw->addr_str, sgw2_addr_len);
+}
+
+static bool mme_metrics_addr_in(const char *addr,
+        bool c1, const char *a1, bool c2, const char *a2)
+{
+    return (c1 && strcmp(addr, a1) == 0) || (c2 && strcmp(addr, a2) == 0);
+}
+
 /*
  * Count one enb_ue S1 context (same population as global enb_ue) under
- * the owning UE's selected SGW and IMSI home PLMN.
+ * each SGW the owning UE uses (two with a per_pdn extra S11 context) and
+ * its IMSI home PLMN.
  */
 void mme_metrics_enb_ue_connected_update(enb_ue_t *enb_ue)
 {
     mme_ue_t *mme_ue = NULL;
     char sgw_addr[OGS_ADDRSTRLEN] = "";
+    char sgw2_addr[OGS_ADDRSTRLEN] = "";
     ogs_plmn_id_t plmn_id;
+    bool same_plmn, want2;
 
     if (!enb_ue)
         return;
@@ -979,36 +1003,62 @@ void mme_metrics_enb_ue_connected_update(enb_ue_t *enb_ue)
     if (!mme_metrics_sgw_plmn_from_ue(mme_ue, sgw_addr, sizeof(sgw_addr),
             &plmn_id))
         return;
+    mme_metrics_sgw2_from_ue(mme_ue, sgw_addr, sgw2_addr, sizeof(sgw2_addr));
+    want2 = sgw2_addr[0] != '\0';
 
-    if (enb_ue->metrics_sgw_counted) {
-        if (strcmp(enb_ue->metrics_sgw_addr, sgw_addr) == 0 &&
-            memcmp(&enb_ue->metrics_plmn_id, &plmn_id,
-                sizeof(plmn_id)) == 0)
-            return;
+    same_plmn = memcmp(&enb_ue->metrics_plmn_id, &plmn_id,
+            sizeof(plmn_id)) == 0;
 
+    /* drop series no longer wanted */
+    if (enb_ue->metrics_sgw_counted && (!same_plmn ||
+            !mme_metrics_addr_in(enb_ue->metrics_sgw_addr,
+                true, sgw_addr, want2, sgw2_addr)))
         mme_metrics_inst_by_sgw_plmn_add(
                 enb_ue->metrics_sgw_addr, &enb_ue->metrics_plmn_id,
                 MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, -1);
-    }
+    if (enb_ue->metrics_sgw2_counted && (!same_plmn ||
+            !mme_metrics_addr_in(enb_ue->metrics_sgw2_addr,
+                true, sgw_addr, want2, sgw2_addr)))
+        mme_metrics_inst_by_sgw_plmn_add(
+                enb_ue->metrics_sgw2_addr, &enb_ue->metrics_plmn_id,
+                MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, -1);
 
-    mme_metrics_inst_by_sgw_plmn_add(sgw_addr, &plmn_id,
-            MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, 1);
+    /* add series not counted yet */
+    if (!same_plmn || !mme_metrics_addr_in(sgw_addr,
+                enb_ue->metrics_sgw_counted, enb_ue->metrics_sgw_addr,
+                enb_ue->metrics_sgw2_counted, enb_ue->metrics_sgw2_addr))
+        mme_metrics_inst_by_sgw_plmn_add(sgw_addr, &plmn_id,
+                MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, 1);
+    if (want2 && (!same_plmn || !mme_metrics_addr_in(sgw2_addr,
+                enb_ue->metrics_sgw_counted, enb_ue->metrics_sgw_addr,
+                enb_ue->metrics_sgw2_counted, enb_ue->metrics_sgw2_addr)))
+        mme_metrics_inst_by_sgw_plmn_add(sgw2_addr, &plmn_id,
+                MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, 1);
 
     ogs_cpystrn(enb_ue->metrics_sgw_addr, sgw_addr,
             sizeof(enb_ue->metrics_sgw_addr));
-    enb_ue->metrics_plmn_id = plmn_id;
     enb_ue->metrics_sgw_counted = true;
+    ogs_cpystrn(enb_ue->metrics_sgw2_addr, sgw2_addr,
+            sizeof(enb_ue->metrics_sgw2_addr));
+    enb_ue->metrics_sgw2_counted = want2;
+    enb_ue->metrics_plmn_id = plmn_id;
 }
 
 void mme_metrics_enb_ue_connected_clear(enb_ue_t *enb_ue)
 {
-    if (!enb_ue || !enb_ue->metrics_sgw_counted)
+    if (!enb_ue)
         return;
 
-    mme_metrics_inst_by_sgw_plmn_add(
-            enb_ue->metrics_sgw_addr, &enb_ue->metrics_plmn_id,
-            MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, -1);
+    if (enb_ue->metrics_sgw_counted)
+        mme_metrics_inst_by_sgw_plmn_add(
+                enb_ue->metrics_sgw_addr, &enb_ue->metrics_plmn_id,
+                MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, -1);
+    if (enb_ue->metrics_sgw2_counted)
+        mme_metrics_inst_by_sgw_plmn_add(
+                enb_ue->metrics_sgw2_addr, &enb_ue->metrics_plmn_id,
+                MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, -1);
     enb_ue->metrics_sgw_counted = false;
+    enb_ue->metrics_sgw2_counted = false;
 }
 
 /*

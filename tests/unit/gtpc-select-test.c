@@ -389,29 +389,41 @@ static void gtpc_select_pick_test(abts_case *tc, void *data)
 
 static void gtpc_select_pdn_place_test(abts_case *tc, void *data)
 {
-    /* no rule hit: always the UE's SGW, whatever the extra state */
+    /* wanted SGW is the primary's: stays there, used or not */
     ABTS_INT_EQUAL(tc, MME_PDN_SGW_PRIMARY,
-            mme_gtpc_pdn_sgw_place(false, true, false, false));
-    ABTS_INT_EQUAL(tc, MME_PDN_SGW_PRIMARY,
-            mme_gtpc_pdn_sgw_place(false, true, true, false));
-
-    /* rule points at the UE's own SGW: no extra context */
+            mme_gtpc_pdn_sgw_place(true, false, false, false));
     ABTS_INT_EQUAL(tc, MME_PDN_SGW_PRIMARY,
             mme_gtpc_pdn_sgw_place(true, true, false, false));
     ABTS_INT_EQUAL(tc, MME_PDN_SGW_PRIMARY,
-            mme_gtpc_pdn_sgw_place(true, true, true, false));
+            mme_gtpc_pdn_sgw_place(true, false, true, false));
 
-    /* rule points elsewhere, first time: open the extra context */
+    /*
+     * first PDN at attach matches a rule elsewhere: the unused primary
+     * moves there instead of opening a second context
+     */
+    ABTS_INT_EQUAL(tc, MME_PDN_SGW_RETARGET_PRIMARY,
+            mme_gtpc_pdn_sgw_place(false, true, false, false));
+
+    /* primary in use, other SGW wanted: open the extra context */
     ABTS_INT_EQUAL(tc, MME_PDN_SGW_NEW_EXTRA,
-            mme_gtpc_pdn_sgw_place(true, false, false, false));
+            mme_gtpc_pdn_sgw_place(false, false, false, false));
 
-    /* second PDN for the same other SGW: share the extra context */
+    /* second PDN for the extra's SGW: share it (even if primary unused) */
+    ABTS_INT_EQUAL(tc, MME_PDN_SGW_EXTRA,
+            mme_gtpc_pdn_sgw_place(false, false, true, true));
+    ABTS_INT_EQUAL(tc, MME_PDN_SGW_EXTRA,
+            mme_gtpc_pdn_sgw_place(false, true, true, true));
+    /* both contexts at the wanted SGW: the extra holds the TEID there */
     ABTS_INT_EQUAL(tc, MME_PDN_SGW_EXTRA,
             mme_gtpc_pdn_sgw_place(true, false, true, true));
 
-    /* would be a third SGW: stay on the UE's SGW */
+    /* primary emptied while the extra lives: primary moves */
+    ABTS_INT_EQUAL(tc, MME_PDN_SGW_RETARGET_PRIMARY,
+            mme_gtpc_pdn_sgw_place(false, true, true, false));
+
+    /* would be a third SGW */
     ABTS_INT_EQUAL(tc, MME_PDN_SGW_PRIMARY_LIMIT,
-            mme_gtpc_pdn_sgw_place(true, false, true, false));
+            mme_gtpc_pdn_sgw_place(false, false, true, false));
 }
 
 abts_suite *test_gtpc_select(abts_suite *suite)

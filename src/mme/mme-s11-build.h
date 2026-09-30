@@ -42,7 +42,7 @@ ogs_pkbuf_t *mme_s11_build_release_access_bearers_request(uint8_t type);
 ogs_pkbuf_t *mme_s11_build_downlink_data_notification_ack(
         uint8_t type, uint8_t cause_value);
 ogs_pkbuf_t *mme_s11_build_create_indirect_data_forwarding_tunnel_request(
-        uint8_t type, mme_ue_t *mme_ue);
+        uint8_t type, mme_ue_t *mme_ue, const sgw_ue_t *sgw_ue);
 
 ogs_pkbuf_t *mme_s11_build_bearer_resource_command(
         uint8_t type, mme_bearer_t *bearer, ogs_nas_eps_message_t *nas_message);

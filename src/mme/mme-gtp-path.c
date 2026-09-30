@@ -705,7 +705,8 @@ int mme_gtp_send_create_session_request(
         mme_sgw_reselect_for_ue_if_needed(mme_ue);
         sgw_ue = mme_sess_select_sgw_ue(enb_ue, sess);
     } else {
-        sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+        /* the S11 context this PDN relocates from */
+        sgw_ue = mme_sess_sgw_ue(sess);
     }
     if (!sgw_ue) {
         ogs_error("[%s] Create Session Request: SGW-UE gone "
@@ -937,6 +938,17 @@ static int mme_gtp_send_modify_bearer_to_sgw(
     }
 
     return rv;
+}
+
+int mme_gtp_send_modify_bearer_request_to_sgw(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue, sgw_ue_t *sgw_ue,
+        int uli_presence, int modify_action)
+{
+    ogs_assert(mme_ue);
+    ogs_assert(sgw_ue);
+
+    return mme_gtp_send_modify_bearer_to_sgw(enb_ue, mme_ue, sgw_ue,
+            sgw_ue, uli_presence, modify_action);
 }
 
 int mme_gtp_send_delete_session_request(
@@ -1751,26 +1763,89 @@ int mme_gtp_send_downlink_data_notification_ack(
     return rv;
 }
 
+/* Bearers of this S11 context with an eNB (create) / SGW (delete) tunnel */
+static int mme_sgw_ue_indirect_bearers(
+        mme_ue_t *mme_ue, const sgw_ue_t *sgw_ue, bool sgw_side)
+{
+    mme_sess_t *sess = NULL;
+    mme_bearer_t *bearer = NULL;
+    int n = 0;
+
+    ogs_list_for_each(&mme_ue->sess_list, sess) {
+        if (mme_sess_sgw_ue(sess) != sgw_ue)
+            continue;
+        ogs_list_for_each(&sess->bearer_list, bearer) {
+            if (sgw_side ?
+                    (MME_HAVE_SGW_DL_INDIRECT_TUNNEL(bearer) ||
+                     MME_HAVE_SGW_UL_INDIRECT_TUNNEL(bearer)) :
+                    (MME_HAVE_ENB_DL_INDIRECT_TUNNEL(bearer) ||
+                     MME_HAVE_ENB_UL_INDIRECT_TUNNEL(bearer)))
+                n++;
+        }
+    }
+
+    return n;
+}
+
+static int mme_gtp_send_create_indirect_tunnel_to_sgw(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue, sgw_ue_t *sgw_ue);
+
 int mme_gtp_send_create_indirect_data_forwarding_tunnel_request(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue)
+{
+    sgw_ue_t *ctx[2];
+    int i, sent = 0;
+
+    ogs_assert(enb_ue);
+    ogs_assert(mme_ue);
+    ctx[0] = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    ctx[1] = mme_ue_extra_sgw_ue(mme_ue);
+    if (!ctx[0]) {
+        ogs_error("[%s] Create Indirect Data Forwarding Tunnel: no SGW-UE",
+                mme_log_imsi(mme_ue));
+        return OGS_ERROR;
+    }
+
+    if (!ctx[1] || (!mme_sgw_ue_indirect_bearers(mme_ue, ctx[0], false) &&
+                !mme_sgw_ue_indirect_bearers(mme_ue, ctx[1], false))) {
+        mme_s11_fanout_start(mme_ue,
+                GTP_COUNTER_CREATE_INDIRECT_TUNNEL_BY_SGW, 1);
+        return mme_gtp_send_create_indirect_tunnel_to_sgw(
+                enb_ue, mme_ue, ctx[0]);
+    }
+
+    for (i = 0; i < 2; i++) {
+        if (!mme_sgw_ue_indirect_bearers(mme_ue, ctx[i], false))
+            continue;
+        if (mme_gtp_send_create_indirect_tunnel_to_sgw(
+                    enb_ue, mme_ue, ctx[i]) == OGS_OK)
+            sent++;
+        else
+            ogs_error("[%s] Create Indirect Data Forwarding Tunnel not sent "
+                    "to [%s]; its PDNs forward no data",
+                    mme_log_imsi(mme_ue), ctx[i]->sgw->addr_str);
+    }
+    /* responses are handled on this same thread, after we return */
+    mme_s11_fanout_start(mme_ue,
+            GTP_COUNTER_CREATE_INDIRECT_TUNNEL_BY_SGW, sent);
+
+    return sent ? OGS_OK : OGS_ERROR;
+}
+
+static int mme_gtp_send_create_indirect_tunnel_to_sgw(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue, sgw_ue_t *sgw_ue)
 {
     int rv;
     ogs_gtp2_header_t h;
     ogs_pkbuf_t *pkbuf = NULL;
     ogs_gtp_xact_t *xact = NULL;
-    sgw_ue_t *sgw_ue = NULL;
-
-    ogs_assert(enb_ue);
-    ogs_assert(mme_ue);
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    ogs_assert(sgw_ue);
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
     h.type = OGS_GTP2_CREATE_INDIRECT_DATA_FORWARDING_TUNNEL_REQUEST_TYPE;
     h.teid = sgw_ue->sgw_s11_teid;
 
     pkbuf = mme_s11_build_create_indirect_data_forwarding_tunnel_request(
-            h.type, mme_ue);
+            h.type, mme_ue, sgw_ue);
     if (!pkbuf) {
         ogs_error("mme_s11_build_create_indirect_data_forwarding_"
                 "tunnel_request() failed");
@@ -1795,24 +1870,54 @@ int mme_gtp_send_create_indirect_data_forwarding_tunnel_request(
     return rv;
 }
 
+static int mme_gtp_send_delete_indirect_tunnel_to_sgw(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue, sgw_ue_t *sgw_ue, int action);
+
 int mme_gtp_send_delete_indirect_data_forwarding_tunnel_request(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue, int action)
+{
+    sgw_ue_t *ctx[2];
+    int i, sent = 0;
+
+    ogs_assert(enb_ue);
+    ogs_assert(action);
+    ogs_assert(mme_ue);
+    ctx[0] = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    ctx[1] = mme_ue_extra_sgw_ue(mme_ue);
+    if (!ctx[0]) {
+        ogs_error("[%s] Delete Indirect Data Forwarding Tunnel: no SGW-UE",
+                mme_ue->imsi_bcd);
+        return OGS_ERROR;
+    }
+
+    if (!ctx[1] || (!mme_sgw_ue_indirect_bearers(mme_ue, ctx[0], true) &&
+                !mme_sgw_ue_indirect_bearers(mme_ue, ctx[1], true))) {
+        mme_s11_fanout_start(mme_ue,
+                GTP_COUNTER_DELETE_INDIRECT_TUNNEL_BY_SGW, 1);
+        return mme_gtp_send_delete_indirect_tunnel_to_sgw(
+                enb_ue, mme_ue, ctx[0], action);
+    }
+
+    for (i = 0; i < 2; i++) {
+        if (!mme_sgw_ue_indirect_bearers(mme_ue, ctx[i], true))
+            continue;
+        if (mme_gtp_send_delete_indirect_tunnel_to_sgw(
+                    enb_ue, mme_ue, ctx[i], action) == OGS_OK)
+            sent++;
+    }
+    mme_s11_fanout_start(mme_ue,
+            GTP_COUNTER_DELETE_INDIRECT_TUNNEL_BY_SGW, sent);
+
+    return sent ? OGS_OK : OGS_ERROR;
+}
+
+static int mme_gtp_send_delete_indirect_tunnel_to_sgw(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue, sgw_ue_t *sgw_ue, int action)
 {
     int rv;
     ogs_gtp2_header_t h;
     ogs_pkbuf_t *pkbuf = NULL;
     ogs_gtp_xact_t *xact = NULL;
-    sgw_ue_t *sgw_ue = NULL;
-
-    ogs_assert(enb_ue);
-    ogs_assert(action);
-    ogs_assert(mme_ue);
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-    if (!sgw_ue) {
-        ogs_error("[%s] Delete Indirect Data Forwarding Tunnel: no SGW-UE",
-                mme_ue->imsi_bcd);
-        return OGS_ERROR;
-    }
 
     memset(&h, 0, sizeof(ogs_gtp2_header_t));
     h.type = OGS_GTP2_DELETE_INDIRECT_DATA_FORWARDING_TUNNEL_REQUEST_TYPE;

@@ -32,7 +32,7 @@ extern "C" {
 #define OGS_TRACE_APN_LEN   101
 #define OGS_TRACE_PROC_LEN  32
 #define OGS_TRACE_IP_LEN    48
-#define OGS_TRACE_PREFIX_BUFSIZE 384
+#define OGS_TRACE_PREFIX_BUFSIZE 448
 
 typedef struct ogs_trace_ctx_s {
     char imsi[OGS_TRACE_IMSI_LEN];
@@ -52,6 +52,9 @@ typedef struct ogs_trace_ctx_s {
 
     uint32_t sgw_s5c_teid;
     uint32_t pgw_s5c_teid;
+
+    /* S11 peer address of the SGW carrying this PDN (MME) */
+    char sgw_ip[OGS_TRACE_IP_LEN];
 } ogs_trace_ctx_t;
 
 #define OGS_MAX_TRACE_IMSI_FILTERS 16

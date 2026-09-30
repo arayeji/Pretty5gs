@@ -595,7 +595,7 @@ static void reload_sgw_clear_all_rules(void)
     mme_sgw_t *sgw = NULL;
 
     ogs_list_for_each(&mme_self()->sgw_list, sgw) {
-        /* per-PDN rules are startup-only: wiping them would widen them */
+        /* per-PDN rules: replaced as a whole by reload_sgw_rule_apply() */
         if (mme_sgw_is_pdn_rule(sgw))
             continue;
 
@@ -1528,8 +1528,9 @@ static int reload_emergency_replace(ogs_yaml_iter_t *mme_iter)
     return added;
 }
 
+/* skip_apn: ignore sgwc entries with apn: (per_pdn rules, not UE SGWs) */
 static bool reload_gtpc_peer_wanted(
-        ogs_yaml_iter_t *gtpc_iter, bool pgw,
+        ogs_yaml_iter_t *gtpc_iter, bool pgw, bool skip_apn,
         ogs_sockaddr_t *peer_sa_list, const ogs_sockaddr_t *peer_addr,
         bool *resolve_failed)
 {
@@ -1564,6 +1565,7 @@ static bool reload_gtpc_peer_wanted(
                 const char *hostname[OGS_MAX_NUM_OF_HOSTNAME];
                 uint16_t port = ogs_gtp_self()->gtpc_port;
                 ogs_sockaddr_t *resolved = NULL;
+                bool has_apn = false;
 
                 if (ogs_yaml_iter_type(&peer_array) == YAML_MAPPING_NODE) {
                     memcpy(&peer_iter, &peer_array, sizeof(ogs_yaml_iter_t));
@@ -1605,8 +1607,13 @@ static bool reload_gtpc_peer_wanted(
                         const char *v = ogs_yaml_iter_value(&peer_iter);
                         if (v)
                             port = reload_yaml_parse_port(v, port);
+                    } else if (!strcmp(peer_key, "apn")) {
+                        has_apn = true;
                     }
                 }
+
+                if (skip_apn && has_apn)
+                    continue;
 
                 for (i = 0; i < num; i++) {
                     if (ogs_addaddrinfo(&resolved, family, hostname[i],
@@ -1650,9 +1657,15 @@ static void reload_gtpc_remove_stale(ogs_yaml_iter_t *gtpc_iter)
 
     ogs_list_for_each_safe(&mme_self()->sgw_list, next_sgw, sgw) {
         bool resolve_failed = false;
+        bool per_pdn =
+            mme_self()->sgwc_selection == MME_SGWC_SELECTION_PER_PDN;
 
-        if (reload_gtpc_peer_wanted(gtpc_iter, false, sgw->gnode.sa_list,
-                &sgw->gnode.addr, &resolve_failed))
+        /* apn: rules were replaced by reload_sgw_rules_finish() */
+        if (per_pdn && mme_sgw_is_pdn_rule(sgw))
+            continue;
+
+        if (reload_gtpc_peer_wanted(gtpc_iter, false, per_pdn,
+                sgw->gnode.sa_list, &sgw->gnode.addr, &resolve_failed))
             continue;
 
         if (resolve_failed) {
@@ -1688,8 +1701,8 @@ static void reload_gtpc_remove_stale(ogs_yaml_iter_t *gtpc_iter)
         if (!pgw_addr)
             continue;
 
-        if (reload_gtpc_peer_wanted(gtpc_iter, true, pgw->sa_list, NULL,
-                &resolve_failed))
+        if (reload_gtpc_peer_wanted(gtpc_iter, true, false, pgw->sa_list,
+                NULL, &resolve_failed))
             continue;
 
         if (resolve_failed) {
@@ -1707,6 +1720,224 @@ static void reload_gtpc_remove_stale(ogs_yaml_iter_t *gtpc_iter)
         mme_pgw_remove(pgw);
         mme_reload_lists_changed++;
     }
+}
+
+/* per_pdn: a UE entry at addr (never an apn: rule sharing the address) */
+static mme_sgw_t *reload_sgw_find_ue_node(const ogs_sockaddr_t *addr)
+{
+    mme_sgw_t *sgw = NULL;
+
+    ogs_list_for_each(&mme_self()->sgw_list, sgw)
+        if (!mme_sgw_is_pdn_rule(sgw) &&
+                ogs_sockaddr_is_equal(&sgw->gnode.addr, addr))
+            return sgw;
+    ogs_list_for_each(&mme_self()->sgw_list, sgw)
+        if (!mme_sgw_is_pdn_rule(sgw) && sgw->gnode.sa_list &&
+                ogs_sockaddr_check_any_match(
+                    sgw->gnode.sa_list, NULL, addr, false))
+            return sgw;
+
+    return NULL;
+}
+
+static bool reload_sgw_rule_same_apns(const mme_sgw_t *sgw,
+        const char **apn, int num_of_apn)
+{
+    int i, j;
+
+    if (sgw->num_of_apn != num_of_apn)
+        return false;
+    for (i = 0; i < num_of_apn; i++) {
+        for (j = 0; j < sgw->num_of_apn; j++)
+            if (apn[i] && sgw->apn[j] && !ogs_strcasecmp(apn[i], sgw->apn[j]))
+                break;
+        if (j == sgw->num_of_apn)
+            return false;
+    }
+
+    return true;
+}
+
+/* Existing rule node for this YAML entry (same address and APN set) */
+static mme_sgw_t *reload_sgw_rule_find(const ogs_sockaddr_t *addr,
+        const char **apn, int num_of_apn)
+{
+    mme_sgw_t *sgw = NULL;
+
+    ogs_list_for_each(&mme_self()->sgw_list, sgw) {
+        if (!mme_sgw_is_pdn_rule(sgw) || sgw->rule_seen)
+            continue;
+        if (!ogs_sockaddr_is_equal(&sgw->gnode.addr, addr))
+            continue;
+        if (reload_sgw_rule_same_apns(sgw, apn, num_of_apn))
+            return sgw;
+    }
+
+    return NULL;
+}
+
+/*
+ * Replace one per-PDN rule (sgwc entry with apn:) from the reloaded YAML:
+ * reuse the node with the same address and APN set, else add one. Rules
+ * the YAML no longer has are dropped by reload_sgw_rules_finish().
+ */
+static void reload_sgw_rule_apply(ogs_sockaddr_t *addr,
+        const char **apn, int num_of_apn,
+        const uint16_t *tac, int num_of_tac,
+        const uint32_t *e_cell_id, int num_of_e_cell_id,
+        const ogs_plmn_id_t *serving_plmn, const ogs_plmn_id_t *imsi_plmn,
+        const char *imsi_prefix, int selection_order)
+{
+    char peer_buf[OGS_ADDRSTRLEN];
+    mme_sgw_t *sgw = NULL;
+    bool changed = false;
+    int i, rv;
+
+    sgw = reload_sgw_rule_find(addr, apn, num_of_apn);
+    if (!sgw) {
+        if (num_of_apn > OGS_MAX_NUM_OF_APN) {
+            ogs_reload_audit_warn("sgwc apn list too long");
+            ogs_freeaddrinfo(addr);
+            return;
+        }
+        sgw = mme_sgw_add(addr);
+        if (!sgw) {
+            ogs_error("SIGHUP: failed to allocate SGW entry");
+            return;
+        }
+        rv = ogs_gtp_connect(
+                ogs_gtp_self()->gtpc_sock, ogs_gtp_self()->gtpc_sock6,
+                &sgw->gnode);
+        if (rv != OGS_OK) {
+            ogs_error("SIGHUP: gtp_connect() failed for SGW [%s]:%d",
+                    OGS_ADDR(sgw->gnode.sa_list, peer_buf),
+                    OGS_PORT(sgw->gnode.sa_list));
+            mme_sgw_remove(sgw);
+            return;
+        }
+        for (i = 0; i < num_of_apn; i++) {
+            sgw->apn[i] = ogs_strdup(apn[i]);
+            ogs_assert(sgw->apn[i]);
+        }
+        sgw->num_of_apn = num_of_apn;
+
+        ogs_reload_audit_note(" sgwc apn rule added [%s]:%d apn:%s%s",
+                OGS_ADDR(&sgw->gnode.addr, peer_buf),
+                OGS_PORT(&sgw->gnode.addr), apn[0],
+                num_of_apn > 1 ? ",..." : "");
+        /* inbound S11 for this address lands here: keep it alive */
+        if (mme_sgw_find_by_addr(&sgw->gnode.addr) == sgw) {
+            mme_gtp_send_sgw_echo(sgw);
+            mme_sgw_echo_schedule(sgw);
+        }
+        changed = true;
+    } else {
+        ogs_freeaddrinfo(addr);
+
+        if (sgw->rule_retired) {
+            ogs_reload_audit_note(" sgwc apn rule restored [%s]:%d",
+                    OGS_ADDR(&sgw->gnode.addr, peer_buf),
+                    OGS_PORT(&sgw->gnode.addr));
+            changed = true;
+        }
+        if (sgw->num_of_tac != num_of_tac ||
+                (num_of_tac && memcmp(sgw->tac, tac,
+                        sizeof(uint16_t) * num_of_tac)) ||
+                sgw->num_of_e_cell_id != num_of_e_cell_id ||
+                (num_of_e_cell_id && memcmp(sgw->e_cell_id, e_cell_id,
+                        sizeof(uint32_t) * num_of_e_cell_id)) ||
+                sgw->serving_plmn_present != (serving_plmn != NULL) ||
+                (serving_plmn && memcmp(&sgw->serving_plmn_id,
+                        serving_plmn, sizeof(*serving_plmn))) ||
+                sgw->imsi_plmn_present != (imsi_plmn != NULL) ||
+                (imsi_plmn && memcmp(&sgw->imsi_plmn_id,
+                        imsi_plmn, sizeof(*imsi_plmn))) ||
+                strcmp(sgw->imsi_prefix, imsi_prefix ? imsi_prefix : "") ||
+                sgw->selection_order != selection_order) {
+            ogs_reload_audit_note(" sgwc apn rule updated [%s]:%d apn:%s%s",
+                    OGS_ADDR(&sgw->gnode.addr, peer_buf),
+                    OGS_PORT(&sgw->gnode.addr), sgw->apn[0],
+                    sgw->num_of_apn > 1 ? ",..." : "");
+            changed = true;
+        }
+    }
+
+    sgw->num_of_tac = 0;
+    for (i = 0; i < num_of_tac && i < (int)ogs_global_conf()->max.tai; i++)
+        sgw->tac[sgw->num_of_tac++] = tac[i];
+    sgw->num_of_e_cell_id = 0;
+    for (i = 0; i < num_of_e_cell_id && i < OGS_MAX_NUM_OF_CELL_ID; i++)
+        sgw->e_cell_id[sgw->num_of_e_cell_id++] = e_cell_id[i];
+    sgw->serving_plmn_present = serving_plmn != NULL;
+    if (serving_plmn)
+        memcpy(&sgw->serving_plmn_id, serving_plmn, sizeof(*serving_plmn));
+    sgw->imsi_plmn_present = imsi_plmn != NULL;
+    if (imsi_plmn)
+        memcpy(&sgw->imsi_plmn_id, imsi_plmn, sizeof(*imsi_plmn));
+    ogs_cpystrn(sgw->imsi_prefix, imsi_prefix ? imsi_prefix : "",
+            sizeof(sgw->imsi_prefix));
+    sgw->selection_order = selection_order;
+
+    sgw->rule_seen = true;
+    sgw->rule_retired = false;
+    if (changed)
+        mme_reload_lists_changed++;
+}
+
+static void reload_sgw_rules_start(void)
+{
+    mme_sgw_t *sgw = NULL;
+
+    ogs_list_for_each(&mme_self()->sgw_list, sgw)
+        sgw->rule_seen = false;
+}
+
+/* Rules gone from the YAML: free them, or retire them while in use */
+static void reload_sgw_rules_finish(void)
+{
+    char peer_buf[OGS_ADDRSTRLEN];
+    mme_sgw_t *sgw = NULL, *next_sgw = NULL;
+    int ue_entries = 0;
+
+    if (mme_self()->sgwc_selection != MME_SGWC_SELECTION_PER_PDN)
+        return;
+
+    ogs_list_for_each_safe(&mme_self()->sgw_list, next_sgw, sgw) {
+        if (!mme_sgw_is_pdn_rule(sgw)) {
+            ue_entries++;
+            continue;
+        }
+        if (sgw->rule_seen)
+            continue;
+
+        if (mme_sgw_in_use(sgw)) {
+            if (!sgw->rule_retired) {
+                ogs_reload_audit_warn("sgwc apn rule removed, kept for "
+                        "its S11 contexts [%s]:%d",
+                        OGS_ADDR(&sgw->gnode.addr, peer_buf),
+                        OGS_PORT(&sgw->gnode.addr));
+                sgw->rule_retired = true;
+                mme_reload_lists_changed++;
+            }
+            continue;
+        }
+
+        ogs_reload_audit_note(" sgwc apn rule removed [%s]:%d",
+                OGS_ADDR(&sgw->gnode.addr, peer_buf),
+                OGS_PORT(&sgw->gnode.addr));
+        mme_sgw_remove(sgw);
+        mme_reload_lists_changed++;
+    }
+
+    /* a rule may now be the only node at its address: echo it */
+    ogs_list_for_each(&mme_self()->sgw_list, sgw)
+        if (mme_sgw_is_pdn_rule(sgw) &&
+                mme_sgw_find_by_addr(&sgw->gnode.addr) == sgw)
+            mme_sgw_echo_schedule(sgw);
+
+    if (!ue_entries)
+        ogs_reload_audit_warn("sgwc_selection per_pdn: no sgwc entry "
+                "without apn left; UEs fall back to the first rule");
 }
 
 static int reload_gtpc_client_entry_add_only(
@@ -1877,16 +2108,22 @@ static int reload_gtpc_client_entry_add_only(
 
         if (!pgw && num_of_apn &&
                 mme_self()->sgwc_selection == MME_SGWC_SELECTION_PER_PDN) {
-            ogs_reload_audit_note(" sgwc apn rule kept as loaded at "
-                    "startup (restart mmed to change per-PDN rules)");
-            ogs_freeaddrinfo(addr);
+            reload_sgw_rule_apply(addr, apn, num_of_apn,
+                    tac, num_of_tac, e_cell_id, num_of_e_cell_id,
+                    serving_plmn_parsed ? &serving_plmn : NULL,
+                    imsi_plmn_parsed ? &imsi_plmn : NULL,
+                    imsi_prefix_set ? imsi_prefix_buf : NULL,
+                    reload_gtpc_entry_selection_order(*entry_idx, order_v));
+            if (mme_reload_lists_changed > before)
+                added++;
             ogs_free(tac);
             (*entry_idx)++;
             continue;
         }
 
         if (!pgw) {
-            sgw = mme_sgw_find_by_addr(addr);
+            sgw = mme_self()->sgwc_selection == MME_SGWC_SELECTION_PER_PDN ?
+                reload_sgw_find_ue_node(addr) : mme_sgw_find_by_addr(addr);
             if (!sgw) {
                 char peer_buf[OGS_ADDRSTRLEN];
                 int rv;
@@ -2026,8 +2263,10 @@ int mme_reload_gtpc_client_add_only(ogs_yaml_iter_t *gtpc_iter)
 
                     ogs_yaml_iter_recurse(&client_iter, &sgwc_array);
                     reload_sgw_clear_all_rules();
+                    reload_sgw_rules_start();
                     added += reload_gtpc_client_entry_add_only(
                             &sgwc_array, false, &entry_idx);
+                    reload_sgw_rules_finish();
                     reload_gtpc_resort_sgw_list();
                 } else if (!strcmp(client_key, "smf")) {
                     ogs_yaml_iter_t smf_array;

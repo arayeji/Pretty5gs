@@ -509,6 +509,9 @@ void mme_s11_handle_create_session_response(
     }
 
     if (create_action == OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST) {
+        /* the relocating S11 context this PDN sits on */
+        if (mme_sess_sgw_ue(sess))
+            source_ue = mme_sess_sgw_ue(sess);
         target_ue = sgw_ue_find_by_id(source_ue->target_ue_id);
         if (!target_ue) {
             fail_reason = "No target SGW UE Context";
@@ -854,17 +857,7 @@ void mme_s11_handle_create_session_response(
     } else if (create_action == OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST) {
 
         GTP_COUNTER_CHECK(mme_ue, GTP_COUNTER_CREATE_SESSION_BY_PATH_SWITCH,
-            ogs_timer_start(source_ue->t_s11_holding,
-                    mme_timer_cfg(MME_TIMER_S11_HOLDING)->duration);
-
-            sgw_ue_associate_mme_ue(target_ue, mme_ue);
-            mme_metrics_sess_active_update(sess);
-            if (ECM_CONNECTED(mme_ue)) {
-                enb_ue_t *enb_ue = enb_ue_find_by_id(mme_ue->enb_ue_id);
-
-                if (enb_ue)
-                    mme_metrics_enb_ue_connected_update(enb_ue);
-            }
+            sgw_ue_relocation_complete(mme_ue);
             r = s1ap_send_path_switch_ack(mme_ue, true);
             ogs_expect(r == OGS_OK);
         );
@@ -1031,6 +1024,18 @@ void mme_s11_handle_modify_bearer_response(
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
             mme_ue->mme_s11_teid, sgw_ue->sgw_s11_teid);
 
+    /* the other S11 context during an SGW relocation (path switch) */
+    if (modify_action == OGS_GTP_MODIFY_IN_PATH_SWITCH_REQUEST &&
+            mme_ue->gtp_counter[
+                GTP_COUNTER_CREATE_SESSION_BY_PATH_SWITCH].request) {
+        GTP_COUNTER_CHECK(mme_ue, GTP_COUNTER_CREATE_SESSION_BY_PATH_SWITCH,
+            sgw_ue_relocation_complete(mme_ue);
+            r = s1ap_send_path_switch_ack(mme_ue, true);
+            ogs_expect(r == OGS_OK);
+        );
+        return;
+    }
+
     if (!mme_s11_fanout_done(mme_ue, GTP_COUNTER_MODIFY_BEARER_BY_SGW)) {
         ogs_debug("[%s] Modify Bearer Response: waiting for the other SGW",
                 mme_ue->imsi_bcd);
@@ -1076,6 +1081,7 @@ void mme_s11_handle_delete_session_response(
     mme_sess_t *sess = NULL;
     mme_ue_t *mme_ue = NULL;
     enb_ue_t *enb_ue = NULL;
+    ogs_gtp_node_t *gnode = NULL;
 
     ogs_assert(rsp);
 
@@ -1098,6 +1104,7 @@ void mme_s11_handle_delete_session_response(
     if (sess)
         mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     enb_ue = enb_ue_find_by_id(xact->enb_ue_id);
+    gnode = xact->gnode;
 
     rv = ogs_gtp_xact_commit(xact);
     if (rv != OGS_OK) {
@@ -1274,7 +1281,15 @@ void mme_s11_handle_delete_session_response(
     } else if (action == OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST) {
 
         /* Don't have to remove Session in X2 Handover with SGW relocation */
+        sgw_ue_t *held = mme_ue_held_sgw_source(mme_ue, gnode);
+
         ogs_assert(source_ue);
+
+        /* X2: the old S11 context one relocated PDN left behind */
+        if (held) {
+            sgw_ue_held_delete_answered(held);
+            return;
+        }
 
         GTP_COUNTER_CHECK(mme_ue, GTP_COUNTER_DELETE_SESSION_BY_PATH_SWITCH,
 
@@ -2503,6 +2518,7 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
     mme_bearer_t *bearer = NULL;
     mme_ue_t *mme_ue = NULL;
     enb_ue_t *source_ue = NULL;
+    ogs_gtp_node_t *gnode = NULL;
 
     ogs_gtp2_f_teid_t *teid = NULL;
 
@@ -2516,6 +2532,7 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
     ogs_assert(xact);
     mme_ue = mme_ue_find_by_id(OGS_POINTER_TO_UINT(xact->data));
     source_ue = enb_ue_find_by_id(xact->enb_ue_id);
+    gnode = xact->gnode;
 
     rv = ogs_gtp_xact_commit(xact);
     if (rv != OGS_OK) {
@@ -2533,7 +2550,7 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
                 "ENB(Source)-S1 Context has already been removed");
         return;
     }
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    sgw_ue = mme_ue_sgw_ue_by_gnode(mme_ue, gnode);
     if (!sgw_ue) {
         mme_ue_warn(mme_ue, source_ue, "s11", NULL,
                 "SGW-UE Context has already been removed "
@@ -2652,6 +2669,13 @@ void mme_s11_handle_create_indirect_data_forwarding_tunnel_response(
         }
     }
 
+    if (!mme_s11_fanout_done(mme_ue,
+                GTP_COUNTER_CREATE_INDIRECT_TUNNEL_BY_SGW)) {
+        ogs_debug("[%s] Create Indirect Data Forwarding Tunnel Response: "
+                "waiting for the other SGW", mme_ue->imsi_bcd);
+        return;
+    }
+
     r = s1ap_send_handover_command(source_ue);
     ogs_expect(r == OGS_OK);
 }
@@ -2667,6 +2691,7 @@ void mme_s11_handle_delete_indirect_data_forwarding_tunnel_response(
     mme_ue_t *mme_ue = NULL;
     enb_ue_t *enb_ue = NULL;
     sgw_ue_t *sgw_ue = NULL;
+    ogs_gtp_node_t *gnode = NULL;
 
     ogs_assert(rsp);
 
@@ -2687,6 +2712,7 @@ void mme_s11_handle_delete_indirect_data_forwarding_tunnel_response(
     }
     mme_ue = mme_ue_find_by_id(OGS_POINTER_TO_UINT(xact->data));
     enb_ue = enb_ue_find_by_id(xact->enb_ue_id);
+    gnode = xact->gnode;
 
     rv = ogs_gtp_xact_commit(xact);
     if (rv != OGS_OK) {
@@ -2699,7 +2725,7 @@ void mme_s11_handle_delete_indirect_data_forwarding_tunnel_response(
                 "MME-UE Context has already been removed");
         return;
     }
-    sgw_ue = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
+    sgw_ue = mme_ue_sgw_ue_by_gnode(mme_ue, gnode);
     if (!sgw_ue) {
         mme_ue_warn(mme_ue, enb_ue, "s11", NULL,
                 "SGW-UE Context has already been removed "
@@ -2779,6 +2805,13 @@ void mme_s11_handle_delete_indirect_data_forwarding_tunnel_response(
 
     ogs_debug("    MME_S11_TEID[%d] SGW_S11_TEID[%d]",
             mme_ue->mme_s11_teid, sgw_ue->sgw_s11_teid);
+
+    if (!mme_s11_fanout_done(mme_ue,
+                GTP_COUNTER_DELETE_INDIRECT_TUNNEL_BY_SGW)) {
+        ogs_debug("[%s] Delete Indirect Data Forwarding Tunnel Response: "
+                "waiting for the other SGW", mme_ue->imsi_bcd);
+        return;
+    }
 
     mme_ue_clear_indirect_tunnel(mme_ue);
 

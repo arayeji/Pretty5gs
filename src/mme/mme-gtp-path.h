@@ -41,6 +41,10 @@ int mme_gtp_send_create_session_request(
 int mme_gtp_send_modify_bearer_request(
         enb_ue_t *enb_ue, mme_ue_t *mme_ue,
         int uli_presence, int modify_action);
+/* bearer_to_modify_list entries on this S11 context only */
+int mme_gtp_send_modify_bearer_request_to_sgw(
+        enb_ue_t *enb_ue, mme_ue_t *mme_ue, sgw_ue_t *sgw_ue,
+        int uli_presence, int modify_action);
 int mme_gtp_send_delete_session_request(
         enb_ue_t *enb_ue, sgw_ue_t *sgw_ue, mme_sess_t *sess, int action);
 int mme_gtp_send_orphan_delete_session(

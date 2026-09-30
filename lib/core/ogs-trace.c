@@ -113,6 +113,8 @@ void ogs_trace_merge(const ogs_trace_ctx_t *ctx)
         self.mme_s11_teid = ctx->mme_s11_teid;
     if (ctx->sgw_s11_teid)
         self.sgw_s11_teid = ctx->sgw_s11_teid;
+    if (ctx->sgw_ip[0])
+        trace_copy_str(self.sgw_ip, sizeof(self.sgw_ip), ctx->sgw_ip);
 
     if (ctx->sgw_s5c_teid)
         self.sgw_s5c_teid = ctx->sgw_s5c_teid;
@@ -337,8 +339,8 @@ size_t ogs_trace_format_prefix(char *buf, size_t buflen)
 
     return ogs_snprintf(buf, buflen,
             "[IMSI:%s ENB:%s ENB_S1AP:%s MME_S1AP:%s EBI:%s "
-            "MME_S11:%s SGW_S11:%s SGW_S5:%s PGW_S5:%s PGW_IP:%s "
-            "IP:%s APN:%s PROC:%s]",
+            "MME_S11:%s SGW_S11:%s SGW_IP:%s SGW_S5:%s PGW_S5:%s "
+            "PGW_IP:%s IP:%s APN:%s PROC:%s]",
             self.imsi[0] ? self.imsi : "-",
             enb_id,
             enb_s1ap,
@@ -346,6 +348,7 @@ size_t ogs_trace_format_prefix(char *buf, size_t buflen)
             ebi,
             mme_s11,
             sgw_s11,
+            self.sgw_ip[0] ? self.sgw_ip : "-",
             sgw_s5,
             pgw_s5,
             self.pgw_ip[0] ? self.pgw_ip : "-",
