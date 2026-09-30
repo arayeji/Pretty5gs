@@ -2315,7 +2315,19 @@ void sgwc_sxa_handle_session_deletion_response(
     }
 
     if (pfcp_rsp->cause.presence) {
-        if (pfcp_rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
+        if (sess && pfcp_rsp->cause.u8 ==
+                OGS_PFCP_CAUSE_SESSION_CONTEXT_NOT_FOUND) {
+            /*
+             * The SGW-U no longer has this session, so the deletion has
+             * nothing left to do on the user plane. Treat it as done;
+             * failing here kept the SGW-C context forever while the
+             * MME/PGW released theirs.
+             */
+            ogs_warn("PFCP Session Deletion: SGW-U has no session "
+                    "SGWU-SEID[0x%llx]; releasing SGW-C context",
+                    (unsigned long long)sess->sgwu_sxa_seid);
+            sess->sgwu_sxa_seid = 0;
+        } else if (pfcp_rsp->cause.u8 != OGS_PFCP_CAUSE_REQUEST_ACCEPTED) {
             ogs_warn("PFCP Cause[%d] : Not Accepted", pfcp_rsp->cause.u8);
             cause_value = gtp_cause_from_pfcp(pfcp_rsp->cause.u8);
         }
@@ -2396,6 +2408,17 @@ void sgwc_sxa_handle_session_deletion_response(
         if (gtp_xact) {
             ogs_gtp_send_error_message(
                     gtp_xact, teid, gtp_message->h.type, cause_value);
+        }
+        /*
+         * The MME/PGW drops its side on the error, so the SGW-C context
+         * must go too. sgwu_sxa_seid stays set so sgwc_sess_remove()
+         * retries the SGW-U deletion by raw SEID.
+         */
+        if (sess) {
+            sgwc_ue_t *owner_ue = sgwc_ue_find_by_id(sess->sgwc_ue_id);
+
+            sgwc_sess_remove(sess);
+            sgwc_ue_remove_if_empty(owner_ue);
         }
         return;
     }
