@@ -959,39 +959,59 @@ static bool mme_metrics_sgw_plmn_from_ue(
     return true;
 }
 
-/* per_pdn: the UE's second SGW (extra S11 context), "" when none */
-static void mme_metrics_sgw2_from_ue(mme_ue_t *mme_ue,
-        const char *sgw_addr, char *sgw2_addr, int sgw2_addr_len)
+/* every other SGW the UE uses (extra S11 contexts), deduplicated */
+static int mme_metrics_sgw_more_from_ue(mme_ue_t *mme_ue,
+        const char *sgw_addr, char (*more)[OGS_ADDRSTRLEN], int max)
 {
-    sgw_ue_t *extra = mme_ue_extra_sgw_ue(mme_ue);
+    sgw_ue_t *ctx[MME_MAX_SGW_UE_PER_UE];
+    int i, j, n = 0, nctx;
 
-    sgw2_addr[0] = '\0';
-    if (!extra || !extra->sgw || !extra->sgw->addr_str[0])
-        return;
-    if (strcmp(extra->sgw->addr_str, sgw_addr) == 0)
-        return;
+    nctx = mme_ue_sgw_ue_list(mme_ue, ctx);
+    for (i = 0; i < nctx && n < max; i++) {
+        const char *a = NULL;
 
-    ogs_cpystrn(sgw2_addr, extra->sgw->addr_str, sgw2_addr_len);
+        if (!ctx[i]->sgw || !ctx[i]->sgw->addr_str[0])
+            continue;
+        a = ctx[i]->sgw->addr_str;
+        if (strcmp(a, sgw_addr) == 0)
+            continue;
+        for (j = 0; j < n && strcmp(more[j], a) != 0; j++)
+            ;
+        if (j < n)
+            continue;
+        ogs_cpystrn(more[n++], a, OGS_ADDRSTRLEN);
+    }
+
+    return n;
 }
 
-static bool mme_metrics_addr_in(const char *addr,
-        bool c1, const char *a1, bool c2, const char *a2)
+static bool mme_metrics_addr_in(const char *addr, bool counted,
+        const char *first, const char (*more)[OGS_ADDRSTRLEN], int num)
 {
-    return (c1 && strcmp(addr, a1) == 0) || (c2 && strcmp(addr, a2) == 0);
+    int i;
+
+    if (counted && strcmp(addr, first) == 0)
+        return true;
+    for (i = 0; i < num; i++)
+        if (strcmp(addr, more[i]) == 0)
+            return true;
+
+    return false;
 }
 
 /*
  * Count one enb_ue S1 context (same population as global enb_ue) under
- * each SGW the owning UE uses (two with a per_pdn extra S11 context) and
- * its IMSI home PLMN.
+ * each SGW the owning UE uses (one per distinct S11 peer) and its IMSI
+ * home PLMN.
  */
 void mme_metrics_enb_ue_connected_update(enb_ue_t *enb_ue)
 {
     mme_ue_t *mme_ue = NULL;
     char sgw_addr[OGS_ADDRSTRLEN] = "";
-    char sgw2_addr[OGS_ADDRSTRLEN] = "";
+    char more[MME_MAX_SGW_UE_PER_UE][OGS_ADDRSTRLEN];
     ogs_plmn_id_t plmn_id;
-    bool same_plmn, want2;
+    bool same_plmn;
+    int i, num;
 
     if (!enb_ue)
         return;
@@ -1003,8 +1023,17 @@ void mme_metrics_enb_ue_connected_update(enb_ue_t *enb_ue)
     if (!mme_metrics_sgw_plmn_from_ue(mme_ue, sgw_addr, sizeof(sgw_addr),
             &plmn_id))
         return;
-    mme_metrics_sgw2_from_ue(mme_ue, sgw_addr, sgw2_addr, sizeof(sgw2_addr));
-    want2 = sgw2_addr[0] != '\0';
+    num = mme_metrics_sgw_more_from_ue(
+            mme_ue, sgw_addr, more, MME_MAX_SGW_UE_PER_UE);
+    if (num > enb_ue->metrics_sgw_more_num) {
+        char (*grown)[OGS_ADDRSTRLEN] = ogs_realloc(
+                enb_ue->metrics_sgw_more, num * sizeof(*grown));
+
+        if (grown)
+            enb_ue->metrics_sgw_more = grown;
+        else
+            num = enb_ue->metrics_sgw_more_num;
+    }
 
     same_plmn = memcmp(&enb_ue->metrics_plmn_id, &plmn_id,
             sizeof(plmn_id)) == 0;
@@ -1012,40 +1041,46 @@ void mme_metrics_enb_ue_connected_update(enb_ue_t *enb_ue)
     /* drop series no longer wanted */
     if (enb_ue->metrics_sgw_counted && (!same_plmn ||
             !mme_metrics_addr_in(enb_ue->metrics_sgw_addr,
-                true, sgw_addr, want2, sgw2_addr)))
+                true, sgw_addr, (const char (*)[OGS_ADDRSTRLEN])more, num)))
         mme_metrics_inst_by_sgw_plmn_add(
                 enb_ue->metrics_sgw_addr, &enb_ue->metrics_plmn_id,
                 MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, -1);
-    if (enb_ue->metrics_sgw2_counted && (!same_plmn ||
-            !mme_metrics_addr_in(enb_ue->metrics_sgw2_addr,
-                true, sgw_addr, want2, sgw2_addr)))
-        mme_metrics_inst_by_sgw_plmn_add(
-                enb_ue->metrics_sgw2_addr, &enb_ue->metrics_plmn_id,
-                MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, -1);
+    for (i = 0; i < enb_ue->metrics_sgw_more_num; i++)
+        if (!same_plmn || !mme_metrics_addr_in(enb_ue->metrics_sgw_more[i],
+                    true, sgw_addr,
+                    (const char (*)[OGS_ADDRSTRLEN])more, num))
+            mme_metrics_inst_by_sgw_plmn_add(
+                    enb_ue->metrics_sgw_more[i], &enb_ue->metrics_plmn_id,
+                    MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, -1);
 
     /* add series not counted yet */
     if (!same_plmn || !mme_metrics_addr_in(sgw_addr,
                 enb_ue->metrics_sgw_counted, enb_ue->metrics_sgw_addr,
-                enb_ue->metrics_sgw2_counted, enb_ue->metrics_sgw2_addr))
+                (const char (*)[OGS_ADDRSTRLEN])enb_ue->metrics_sgw_more,
+                enb_ue->metrics_sgw_more_num))
         mme_metrics_inst_by_sgw_plmn_add(sgw_addr, &plmn_id,
                 MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, 1);
-    if (want2 && (!same_plmn || !mme_metrics_addr_in(sgw2_addr,
-                enb_ue->metrics_sgw_counted, enb_ue->metrics_sgw_addr,
-                enb_ue->metrics_sgw2_counted, enb_ue->metrics_sgw2_addr)))
-        mme_metrics_inst_by_sgw_plmn_add(sgw2_addr, &plmn_id,
-                MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, 1);
+    for (i = 0; i < num; i++)
+        if (!same_plmn || !mme_metrics_addr_in(more[i],
+                    enb_ue->metrics_sgw_counted, enb_ue->metrics_sgw_addr,
+                    (const char (*)[OGS_ADDRSTRLEN])enb_ue->metrics_sgw_more,
+                    enb_ue->metrics_sgw_more_num))
+            mme_metrics_inst_by_sgw_plmn_add(more[i], &plmn_id,
+                    MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, 1);
 
     ogs_cpystrn(enb_ue->metrics_sgw_addr, sgw_addr,
             sizeof(enb_ue->metrics_sgw_addr));
     enb_ue->metrics_sgw_counted = true;
-    ogs_cpystrn(enb_ue->metrics_sgw2_addr, sgw2_addr,
-            sizeof(enb_ue->metrics_sgw2_addr));
-    enb_ue->metrics_sgw2_counted = want2;
+    for (i = 0; i < num; i++)
+        ogs_cpystrn(enb_ue->metrics_sgw_more[i], more[i], OGS_ADDRSTRLEN);
+    enb_ue->metrics_sgw_more_num = num;
     enb_ue->metrics_plmn_id = plmn_id;
 }
 
 void mme_metrics_enb_ue_connected_clear(enb_ue_t *enb_ue)
 {
+    int i;
+
     if (!enb_ue)
         return;
 
@@ -1053,12 +1088,15 @@ void mme_metrics_enb_ue_connected_clear(enb_ue_t *enb_ue)
         mme_metrics_inst_by_sgw_plmn_add(
                 enb_ue->metrics_sgw_addr, &enb_ue->metrics_plmn_id,
                 MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, -1);
-    if (enb_ue->metrics_sgw2_counted)
+    for (i = 0; i < enb_ue->metrics_sgw_more_num; i++)
         mme_metrics_inst_by_sgw_plmn_add(
-                enb_ue->metrics_sgw2_addr, &enb_ue->metrics_plmn_id,
+                enb_ue->metrics_sgw_more[i], &enb_ue->metrics_plmn_id,
                 MME_METR_BY_SGW_PLMN_GAUGE_UE_ACTIVE, -1);
     enb_ue->metrics_sgw_counted = false;
-    enb_ue->metrics_sgw2_counted = false;
+    enb_ue->metrics_sgw_more_num = 0;
+    if (enb_ue->metrics_sgw_more)
+        ogs_free(enb_ue->metrics_sgw_more);
+    enb_ue->metrics_sgw_more = NULL;
 }
 
 /*

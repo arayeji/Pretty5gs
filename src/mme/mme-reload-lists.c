@@ -595,8 +595,8 @@ static void reload_sgw_clear_all_rules(void)
     mme_sgw_t *sgw = NULL;
 
     ogs_list_for_each(&mme_self()->sgw_list, sgw) {
-        /* per-PDN rules: replaced as a whole by reload_sgw_rule_apply() */
-        if (mme_sgw_is_pdn_rule(sgw))
+        /* apn: entries: replaced as a whole by reload_sgw_rule_apply() */
+        if (sgw->num_of_apn)
             continue;
 
         if (sgw->num_of_tac || sgw->num_of_e_cell_id ||
@@ -1657,14 +1657,12 @@ static void reload_gtpc_remove_stale(ogs_yaml_iter_t *gtpc_iter)
 
     ogs_list_for_each_safe(&mme_self()->sgw_list, next_sgw, sgw) {
         bool resolve_failed = false;
-        bool per_pdn =
-            mme_self()->sgwc_selection == MME_SGWC_SELECTION_PER_PDN;
 
-        /* apn: rules were replaced by reload_sgw_rules_finish() */
-        if (per_pdn && mme_sgw_is_pdn_rule(sgw))
+        /* apn: entries were replaced by reload_sgw_rules_finish() */
+        if (sgw->num_of_apn)
             continue;
 
-        if (reload_gtpc_peer_wanted(gtpc_iter, false, per_pdn,
+        if (reload_gtpc_peer_wanted(gtpc_iter, false, true,
                 sgw->gnode.sa_list, &sgw->gnode.addr, &resolve_failed))
             continue;
 
@@ -1722,17 +1720,17 @@ static void reload_gtpc_remove_stale(ogs_yaml_iter_t *gtpc_iter)
     }
 }
 
-/* per_pdn: a UE entry at addr (never an apn: rule sharing the address) */
+/* A UE entry at addr (never an apn: entry sharing the address) */
 static mme_sgw_t *reload_sgw_find_ue_node(const ogs_sockaddr_t *addr)
 {
     mme_sgw_t *sgw = NULL;
 
     ogs_list_for_each(&mme_self()->sgw_list, sgw)
-        if (!mme_sgw_is_pdn_rule(sgw) &&
+        if (!sgw->num_of_apn &&
                 ogs_sockaddr_is_equal(&sgw->gnode.addr, addr))
             return sgw;
     ogs_list_for_each(&mme_self()->sgw_list, sgw)
-        if (!mme_sgw_is_pdn_rule(sgw) && sgw->gnode.sa_list &&
+        if (!sgw->num_of_apn && sgw->gnode.sa_list &&
                 ogs_sockaddr_check_any_match(
                     sgw->gnode.sa_list, NULL, addr, false))
             return sgw;
@@ -1765,7 +1763,7 @@ static mme_sgw_t *reload_sgw_rule_find(const ogs_sockaddr_t *addr,
     mme_sgw_t *sgw = NULL;
 
     ogs_list_for_each(&mme_self()->sgw_list, sgw) {
-        if (!mme_sgw_is_pdn_rule(sgw) || sgw->rule_seen)
+        if (!sgw->num_of_apn || sgw->rule_seen)
             continue;
         if (!ogs_sockaddr_is_equal(&sgw->gnode.addr, addr))
             continue;
@@ -1899,11 +1897,8 @@ static void reload_sgw_rules_finish(void)
     mme_sgw_t *sgw = NULL, *next_sgw = NULL;
     int ue_entries = 0;
 
-    if (mme_self()->sgwc_selection != MME_SGWC_SELECTION_PER_PDN)
-        return;
-
     ogs_list_for_each_safe(&mme_self()->sgw_list, next_sgw, sgw) {
-        if (!mme_sgw_is_pdn_rule(sgw)) {
+        if (!sgw->num_of_apn) {
             ue_entries++;
             continue;
         }
@@ -1931,11 +1926,12 @@ static void reload_sgw_rules_finish(void)
 
     /* a rule may now be the only node at its address: echo it */
     ogs_list_for_each(&mme_self()->sgw_list, sgw)
-        if (mme_sgw_is_pdn_rule(sgw) &&
+        if (sgw->num_of_apn &&
                 mme_sgw_find_by_addr(&sgw->gnode.addr) == sgw)
             mme_sgw_echo_schedule(sgw);
 
-    if (!ue_entries)
+    if (!ue_entries &&
+            mme_self()->sgwc_selection == MME_SGWC_SELECTION_PER_PDN)
         ogs_reload_audit_warn("sgwc_selection per_pdn: no sgwc entry "
                 "without apn left; UEs fall back to the first rule");
 }
@@ -2106,8 +2102,7 @@ static int reload_gtpc_client_entry_add_only(
             continue;
         }
 
-        if (!pgw && num_of_apn &&
-                mme_self()->sgwc_selection == MME_SGWC_SELECTION_PER_PDN) {
+        if (!pgw && num_of_apn) {
             reload_sgw_rule_apply(addr, apn, num_of_apn,
                     tac, num_of_tac, e_cell_id, num_of_e_cell_id,
                     serving_plmn_parsed ? &serving_plmn : NULL,
@@ -2122,8 +2117,7 @@ static int reload_gtpc_client_entry_add_only(
         }
 
         if (!pgw) {
-            sgw = mme_self()->sgwc_selection == MME_SGWC_SELECTION_PER_PDN ?
-                reload_sgw_find_ue_node(addr) : mme_sgw_find_by_addr(addr);
+            sgw = reload_sgw_find_ue_node(addr);
             if (!sgw) {
                 char peer_buf[OGS_ADDRSTRLEN];
                 int rv;

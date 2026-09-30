@@ -391,45 +391,118 @@ static void gtpc_select_pdn_place_test(abts_case *tc, void *data)
 {
     /* wanted SGW is the primary's: stays there, used or not */
     ABTS_INT_EQUAL(tc, MME_PDN_SGW_PRIMARY,
-            mme_gtpc_pdn_sgw_place(true, false, false, false));
+            mme_gtpc_pdn_sgw_place(true, false, false));
     ABTS_INT_EQUAL(tc, MME_PDN_SGW_PRIMARY,
-            mme_gtpc_pdn_sgw_place(true, true, false, false));
-    ABTS_INT_EQUAL(tc, MME_PDN_SGW_PRIMARY,
-            mme_gtpc_pdn_sgw_place(true, false, true, false));
+            mme_gtpc_pdn_sgw_place(true, true, false));
 
     /*
      * first PDN at attach matches a rule elsewhere: the unused primary
      * moves there instead of opening a second context
      */
     ABTS_INT_EQUAL(tc, MME_PDN_SGW_RETARGET_PRIMARY,
-            mme_gtpc_pdn_sgw_place(false, true, false, false));
+            mme_gtpc_pdn_sgw_place(false, true, false));
 
-    /* primary in use, other SGW wanted: open the extra context */
+    /* primary in use, a new SGW wanted: open an extra context, however
+     * many the UE already has */
     ABTS_INT_EQUAL(tc, MME_PDN_SGW_NEW_EXTRA,
-            mme_gtpc_pdn_sgw_place(false, false, false, false));
+            mme_gtpc_pdn_sgw_place(false, false, false));
 
-    /* second PDN for the extra's SGW: share it (even if primary unused) */
+    /* another PDN for an extra's SGW: share it (even if primary unused) */
     ABTS_INT_EQUAL(tc, MME_PDN_SGW_EXTRA,
-            mme_gtpc_pdn_sgw_place(false, false, true, true));
+            mme_gtpc_pdn_sgw_place(false, false, true));
     ABTS_INT_EQUAL(tc, MME_PDN_SGW_EXTRA,
-            mme_gtpc_pdn_sgw_place(false, true, true, true));
-    /* both contexts at the wanted SGW: the extra holds the TEID there */
+            mme_gtpc_pdn_sgw_place(false, true, true));
+    /* primary and an extra at the wanted SGW: the extra holds the TEID */
     ABTS_INT_EQUAL(tc, MME_PDN_SGW_EXTRA,
-            mme_gtpc_pdn_sgw_place(true, false, true, true));
+            mme_gtpc_pdn_sgw_place(true, false, true));
+}
 
-    /* primary emptied while the extra lives: primary moves */
-    ABTS_INT_EQUAL(tc, MME_PDN_SGW_RETARGET_PRIMARY,
-            mme_gtpc_pdn_sgw_place(false, true, true, false));
+static void gtpc_select_relocation_plan_test(abts_case *tc, void *data)
+{
+    int join[4], group[4];
 
-    /* would be a third SGW */
-    ABTS_INT_EQUAL(tc, MME_PDN_SGW_PRIMARY_LIMIT,
-            mme_gtpc_pdn_sgw_place(false, false, true, false));
+    /* SGW 0,1,2 in the address table; contexts 0 (SGW 0), 1 (SGW 1) */
+    {
+        /* nothing wants to move */
+        int cur[2] = { 0, 1 }, want[2] = { 0, -1 };
+        int ctx_sgw[2] = { 0, 1 };
+        bool ready[2] = { true, true };
+
+        ABTS_INT_EQUAL(tc, 0, mme_gtpc_sgw_relocation_plan(
+                    2, cur, want, 2, ctx_sgw, ready, join, group));
+        ABTS_INT_EQUAL(tc, -1, join[0]);
+        ABTS_INT_EQUAL(tc, -1, group[0]);
+        ABTS_INT_EQUAL(tc, -1, join[1]);
+        ABTS_INT_EQUAL(tc, -1, group[1]);
+    }
+    {
+        /* one context splits: PDN 0 to SGW 1 (joins context 1),
+         * PDN 1 to SGW 2 (new), PDN 2 stays on context 0 */
+        int cur[3] = { 0, 0, 0 }, want[3] = { 1, 2, 0 };
+        int ctx_sgw[2] = { 0, 1 };
+        bool ready[2] = { true, true };
+        int cur2[4] = { 0, 0, 0, 1 }, want2[4] = { 1, 2, 0, -1 };
+
+        /* context 1 carries no PDN in the first set: nothing to join */
+        ABTS_INT_EQUAL(tc, 2, mme_gtpc_sgw_relocation_plan(
+                    3, cur, want, 2, ctx_sgw, ready, join, group));
+        ABTS_INT_EQUAL(tc, -1, join[0]);
+        ABTS_INT_EQUAL(tc, 1, group[0]);
+        ABTS_INT_EQUAL(tc, 2, group[1]);
+        ABTS_INT_EQUAL(tc, -1, group[2]);
+        ABTS_INT_EQUAL(tc, -1, join[2]);
+
+        ABTS_INT_EQUAL(tc, 2, mme_gtpc_sgw_relocation_plan(
+                    4, cur2, want2, 2, ctx_sgw, ready, join, group));
+        ABTS_INT_EQUAL(tc, 1, join[0]);
+        ABTS_INT_EQUAL(tc, -1, group[0]);
+        ABTS_INT_EQUAL(tc, -1, join[1]);
+        ABTS_INT_EQUAL(tc, 2, group[1]);
+        ABTS_INT_EQUAL(tc, -1, join[3]);
+        ABTS_INT_EQUAL(tc, -1, group[3]);
+    }
+    {
+        /* both contexts want the same new SGW 2: one shared new context */
+        int cur[2] = { 0, 1 }, want[2] = { 2, 2 };
+        int ctx_sgw[2] = { 0, 1 };
+        bool ready[2] = { true, true };
+
+        ABTS_INT_EQUAL(tc, 2, mme_gtpc_sgw_relocation_plan(
+                    2, cur, want, 2, ctx_sgw, ready, join, group));
+        ABTS_INT_EQUAL(tc, 2, group[0]);
+        ABTS_INT_EQUAL(tc, 2, group[1]);
+        ABTS_INT_EQUAL(tc, -1, join[0]);
+        ABTS_INT_EQUAL(tc, -1, join[1]);
+    }
+    {
+        /* contexts swap SGWs: neither keeps a PDN, so no join */
+        int cur[2] = { 0, 1 }, want[2] = { 1, 0 };
+        int ctx_sgw[2] = { 0, 1 };
+        bool ready[2] = { true, true };
+
+        ABTS_INT_EQUAL(tc, 2, mme_gtpc_sgw_relocation_plan(
+                    2, cur, want, 2, ctx_sgw, ready, join, group));
+        ABTS_INT_EQUAL(tc, 1, group[0]);
+        ABTS_INT_EQUAL(tc, 0, group[1]);
+    }
+    {
+        /* the context at the wanted SGW has no TEID yet: new context */
+        int cur[2] = { 0, 1 }, want[2] = { 1, -1 };
+        int ctx_sgw[2] = { 0, 1 };
+        bool ready[2] = { true, false };
+
+        ABTS_INT_EQUAL(tc, 1, mme_gtpc_sgw_relocation_plan(
+                    2, cur, want, 2, ctx_sgw, ready, join, group));
+        ABTS_INT_EQUAL(tc, -1, join[0]);
+        ABTS_INT_EQUAL(tc, 1, group[0]);
+    }
 }
 
 abts_suite *test_gtpc_select(abts_suite *suite)
 {
     suite = ADD_SUITE(suite)
 
+    abts_run_test(suite, gtpc_select_relocation_plan_test, NULL);
     abts_run_test(suite, gtpc_select_and_test, NULL);
     abts_run_test(suite, gtpc_select_or_within_key_test, NULL);
     abts_run_test(suite, gtpc_select_sgw_apn_never_wins_test, NULL);

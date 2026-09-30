@@ -193,12 +193,14 @@ typedef struct mme_context_s {
     } pgw_selection;
 
     /*
-     * mme.sgwc_selection (startup only)
+     * mme.sgwc_selection (SIGHUP reloadable, like the apn: rules)
      *   per_ue (default): one SGW per UE. apn: on an sgwc entry is
      *     ignored and the entry matches on its other keys, as before.
      *   per_pdn: an sgwc entry carrying apn: moves the PDNs it matches
-     *     (all keys ANDed, lowest order wins) onto its SGW. A UE holds at
-     *     most two S11 contexts. The apn: rules are SIGHUP reloadable.
+     *     (all keys ANDed, lowest order wins) onto its SGW. A UE holds
+     *     one S11 context per SGW its PDNs use.
+     * Switching mode keeps live PDNs where they are; new PDNs and the
+     * next SGW relocation follow the new mode.
      */
 #define MME_SGWC_SELECTION_PER_UE       0
 #define MME_SGWC_SELECTION_PER_PDN      1
@@ -543,8 +545,8 @@ typedef struct mme_sgw_s {
     /*
      * With mme.sgwc_selection: per_pdn, apn: makes this entry a per-PDN
      * rule that is never picked as a UE's SGW (mme_sgw_is_pdn_rule).
+     * Entries with apn: keep their own node in both modes.
      */
-#define MME_MAX_NUM_OF_SGW_PDN_RULE     32
     char            *apn[OGS_MAX_NUM_OF_APN];
     int             num_of_apn;
     /*
@@ -964,9 +966,9 @@ struct enb_ue_s {
      */
     bool            metrics_sgw_counted;
     char            metrics_sgw_addr[OGS_ADDRSTRLEN];
-    /* second SGW of a per_pdn UE (counted under both) */
-    bool            metrics_sgw2_counted;
-    char            metrics_sgw2_addr[OGS_ADDRSTRLEN];
+    /* further SGWs of a per_pdn UE (counted under each); heap, or NULL */
+    char            (*metrics_sgw_more)[OGS_ADDRSTRLEN];
+    int             metrics_sgw_more_num;
     ogs_plmn_id_t   metrics_plmn_id;
 
     /*
@@ -1514,13 +1516,18 @@ struct mme_ue_s {
 
     /* SGW UE context */
     ogs_pool_id_t sgw_ue_id;
-    /* Second S11 context for PDNs placed by mme.sgwc_selection: per_pdn */
-    ogs_pool_id_t extra_sgw_ue_id;
     /*
-     * Set by the SGW restart purge: the UE's S11 context on the SGW that
-     * did not restart, whose PDNs the owner deletes before local release.
+     * Further S11 contexts for PDNs placed by mme.sgwc_selection: per_pdn.
+     * Each one carries at least one PDN, so OGS_MAX_NUM_OF_SESS always fits.
      */
-    ogs_pool_id_t sgw_restart_other_ue_id;
+    ogs_pool_id_t extra_sgw_ue_id[OGS_MAX_NUM_OF_SESS];
+    int num_of_extra_sgw_ue;
+    /*
+     * Set by the SGW restart purge: the SGW that restarted. The owner
+     * deletes the PDNs the UE has on its other SGWs before local release.
+     */
+    bool            sgw_restart_pending;
+    ogs_sockaddr_t  sgw_restart_addr;
     /*
      * UE-level SGW when no S11 context follows it (every PDN placed by
      * an apn: rule); per_pdn without selection filters only.
@@ -1737,12 +1744,8 @@ bool mme_session_context_is_available(const mme_ue_t *mme_ue);
 
 #define CLEAR_SESSION_CONTEXT(__mME) \
     do { \
-        sgw_ue_t *sgw_ue = NULL; \
         ogs_assert((__mME)); \
-        sgw_ue = sgw_ue_find_by_id((__mME)->sgw_ue_id); \
-        if (sgw_ue) sgw_ue->sgw_s11_teid = 0; \
-        sgw_ue = mme_ue_extra_sgw_ue(__mME); \
-        if (sgw_ue) sgw_ue->sgw_s11_teid = 0; \
+        mme_ue_clear_sgw_s11_teids(__mME); \
     } while(0)
 
 #define MME_SESS_CLEAR(__sESS) \
@@ -1798,18 +1801,22 @@ typedef struct mme_sess_s {
     /* Related Context */
     ogs_pool_id_t   mme_ue_id;
     /*
-     * mme_ue->extra_sgw_ue_id when this PDN lives on the extra S11
-     * context, else invalid: the PDN follows mme_ue->sgw_ue_id (also
+     * One of mme_ue->extra_sgw_ue_id[] when this PDN lives on an extra
+     * S11 context, else invalid: the PDN follows mme_ue->sgw_ue_id (also
      * across SGW relocation). Resolve with mme_sess_sgw_ue().
      */
     ogs_pool_id_t   sgw_ue_id;
     /* placed by an sgwc apn: rule (per_pdn) */
     bool            sgw_rule;
+    /* X2 SGW relocation: the S11 context this PDN's Create Session went to */
+    ogs_pool_id_t   sgw_target_ue_id;
     /*
      * X2 SGW relocation: the old S11 context this PDN moved from, whose
-     * S11 holding timer sends it a Delete Session (scope indication).
+     * S11 holding timer sends it a Delete Session (scope indication);
+     * sgw_source_deleting once that request is out.
      */
     ogs_pool_id_t   sgw_source_ue_id;
+    bool            sgw_source_deleting;
 
     ogs_session_t   *session;
 
@@ -2220,17 +2227,25 @@ void mme_sgw_reselect_for_ue_if_needed(mme_ue_t *mme_ue);
 
 /*
  * mme.sgwc_selection: per_pdn. A UE has its primary S11 context
- * (mme_ue->sgw_ue_id) and at most one extra one; every PDN sits on
- * exactly one of them. With per_ue there is never an extra context and
- * all of these resolve to the primary one.
+ * (mme_ue->sgw_ue_id) and one extra one per further SGW its PDNs use;
+ * every PDN sits on exactly one of them. With per_ue there is never an
+ * extra context and all of these resolve to the primary one.
  */
+#define MME_MAX_SGW_UE_PER_UE (1 + OGS_MAX_NUM_OF_SESS)
 bool mme_sgw_is_pdn_rule(const mme_sgw_t *sgw);
-sgw_ue_t *mme_ue_extra_sgw_ue(const mme_ue_t *mme_ue);
+/* The UE's S11 contexts, primary first; returns how many were stored. */
+int mme_ue_sgw_ue_list(const mme_ue_t *mme_ue,
+        sgw_ue_t *ctx[MME_MAX_SGW_UE_PER_UE]);
+bool mme_ue_has_extra_sgw_ue(const mme_ue_t *mme_ue);
+/* Zero the SGW S11 TEID of every S11 context of the UE. */
+void mme_ue_clear_sgw_s11_teids(mme_ue_t *mme_ue);
 /* The S11 context carrying this PDN (primary unless placed on extra). */
 sgw_ue_t *mme_sess_sgw_ue(const mme_sess_t *sess);
+/* The S11 context this PDN relocates to (X2 path switch), else NULL. */
+sgw_ue_t *mme_sess_sgw_target_ue(const mme_sess_t *sess);
 /* Same for a bearer; primary when its session is already gone. */
 sgw_ue_t *mme_bearer_sgw_ue(const mme_bearer_t *bearer);
-/* The S11 context whose SGW is gnode's peer; primary when not the extra. */
+/* The S11 context whose SGW is gnode's peer; primary when none is. */
 sgw_ue_t *mme_ue_sgw_ue_by_gnode(
         const mme_ue_t *mme_ue, const ogs_gtp_node_t *gnode);
 /* true when the two contexts talk to the same SGW peer address */
@@ -2239,23 +2254,24 @@ bool mme_sgw_ue_same_peer(const sgw_ue_t *a, const sgw_ue_t *b);
 sgw_ue_t *mme_sess_select_sgw_ue(enb_ue_t *enb_ue, mme_sess_t *sess);
 /* Number of this UE's PDNs sitting on sgw_ue */
 int mme_sgw_ue_sess_count(const mme_ue_t *mme_ue, const sgw_ue_t *sgw_ue);
-/* Drop the extra context (local only, no S11 signalling). */
-void mme_ue_extra_sgw_remove(mme_ue_t *mme_ue);
+/* Drop every extra context (local only, no S11 signalling). */
+void mme_ue_extra_sgw_remove_all(mme_ue_t *mme_ue);
 
 /*
- * X2 SGW relocation, evaluated per S11 context. complete() runs once
- * every Create Session (relocating PDNs) and Modify Bearer (the other
- * context) answered: the targets take over and each source starts its
- * S11 holding timer.
+ * X2 SGW relocation, evaluated per PDN: each PDN follows its apn: rule,
+ * else the UE-level SGW. complete() runs once every Create Session
+ * (relocating PDNs) and Modify Bearer (contexts keeping PDNs) answered:
+ * the PDNs move to their targets and each source starts its S11
+ * holding timer.
  */
 void sgw_ue_relocation_complete(mme_ue_t *mme_ue);
-/* The held relocation source a Delete Session went to, else NULL. */
-sgw_ue_t *mme_ue_held_sgw_source(
-        const mme_ue_t *mme_ue, const ogs_gtp_node_t *gnode);
+/* The relocation source this PDN's Delete Session went to, else NULL. */
+sgw_ue_t *mme_sess_held_sgw_source(
+        const mme_sess_t *sess, const ogs_gtp_node_t *gnode);
 /* S11 holding expiry: Delete Session its moved PDNs at the old SGW. */
 void sgw_ue_holding_expire(sgw_ue_t *sgw_ue, mme_ue_t *mme_ue);
-/* One held-source Delete Session answer; frees the source on the last. */
-void sgw_ue_held_delete_answered(sgw_ue_t *source_ue);
+/* This PDN's source Delete Session answered; frees an idle source. */
+void mme_sess_held_delete_answered(mme_sess_t *sess);
 
 /*
  * One UE-level procedure answered by one S11 response per SGW. start()

@@ -1346,7 +1346,10 @@ cleanup:
         }
         mme_ue = mme_ue_find_by_id(sgw_ue->mme_ue_id);
         if (!mme_ue) {
+            /* a held relocation source outlived its UE */
             ogs_warn("MME-UE Context has already been removed");
+            if (e->timer_id == MME_TIMER_S11_HOLDING)
+                sgw_ue_remove(sgw_ue);
             break;
         }
 

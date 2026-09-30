@@ -512,7 +512,7 @@ void mme_s11_handle_create_session_response(
         /* the relocating S11 context this PDN sits on */
         if (mme_sess_sgw_ue(sess))
             source_ue = mme_sess_sgw_ue(sess);
-        target_ue = sgw_ue_find_by_id(source_ue->target_ue_id);
+        target_ue = mme_sess_sgw_target_ue(sess);
         if (!target_ue) {
             fail_reason = "No target SGW UE Context";
             fail_cause = OGS_GTP2_CAUSE_CONTEXT_NOT_FOUND;
@@ -1281,13 +1281,11 @@ void mme_s11_handle_delete_session_response(
     } else if (action == OGS_GTP_DELETE_IN_PATH_SWITCH_REQUEST) {
 
         /* Don't have to remove Session in X2 Handover with SGW relocation */
-        sgw_ue_t *held = mme_ue_held_sgw_source(mme_ue, gnode);
-
         ogs_assert(source_ue);
 
-        /* X2: the old S11 context one relocated PDN left behind */
-        if (held) {
-            sgw_ue_held_delete_answered(held);
+        /* X2: the old S11 context this relocated PDN left behind */
+        if (mme_sess_held_sgw_source(sess, gnode)) {
+            mme_sess_held_delete_answered(sess);
             return;
         }
 
@@ -1295,8 +1293,8 @@ void mme_s11_handle_delete_session_response(
 
             sgw_ue_source_deassociate_target(source_ue);
             sgw_ue_remove(source_ue);
-            /* Gn holding: the UE left E-UTRAN, per-PDN SGW goes too */
-            mme_ue_extra_sgw_remove(mme_ue);
+            /* Gn holding: the UE left E-UTRAN, per-PDN SGWs go too */
+            mme_ue_extra_sgw_remove_all(mme_ue);
 
         );
 
@@ -2080,7 +2078,7 @@ void mme_s11_handle_release_access_bearers_response(
             ogs_info("[%s] Release Access Bearers: SGW CONTEXT_NOT_FOUND "
                     "(action=%d) - clear local sessions, finish S1 release",
                     mme_ue->imsi_bcd, action);
-            if (!mme_ue_extra_sgw_ue(mme_ue)) {
+            if (!mme_ue_has_extra_sgw_ue(mme_ue)) {
                 CLEAR_SESSION_CONTEXT(mme_ue);
                 ogs_list_for_each_safe(&mme_ue->sess_list, next_sess, sess)
                     MME_SESS_CLEAR(sess);

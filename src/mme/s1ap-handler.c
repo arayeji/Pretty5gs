@@ -4061,21 +4061,19 @@ void s1ap_path_switch_request_complete(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
     } else if (relocation == SGW_WITH_RELOCATION) {
         mme_sess_t *sess = NULL;
         mme_bearer_t *bearer = NULL;
-        sgw_ue_t *ctx[2];
-        int i, n;
+        sgw_ue_t *ctx[MME_MAX_SGW_UE_PER_UE];
+        int i, n, nctx;
 
         /*
-         * One counter for the whole switch: Create Session for PDNs on a
-         * relocating S11 context, Modify Bearer for the other context.
+         * One counter for the whole switch: Create Session for every
+         * relocating PDN, Modify Bearer per context for the PDNs staying.
          * The last answer runs sgw_ue_relocation_complete() + the ack.
          */
         GTP_COUNTER_CLEAR(mme_ue, GTP_COUNTER_CREATE_SESSION_BY_PATH_SWITCH);
         mme_s11_fanout_start(mme_ue, GTP_COUNTER_MODIFY_BEARER_BY_SGW, 0);
 
         ogs_list_for_each(&mme_ue->sess_list, sess) {
-            sgw_ue_t *sgw_ue = mme_sess_sgw_ue(sess);
-
-            if (!sgw_ue || !sgw_ue_find_by_id(sgw_ue->target_ue_id))
+            if (!mme_sess_sgw_target_ue(sess))
                 continue;
 
             GTP_COUNTER_INCREMENT(
@@ -4087,16 +4085,14 @@ void s1ap_path_switch_request_complete(enb_ue_t *enb_ue, mme_ue_t *mme_ue)
                         "Path Switch Request", mme_ue->imsi_bcd);
         }
 
-        ctx[0] = sgw_ue_find_by_id(mme_ue->sgw_ue_id);
-        ctx[1] = mme_ue_extra_sgw_ue(mme_ue);
-        for (i = 0; i < 2; i++) {
-            if (!ctx[i] || sgw_ue_find_by_id(ctx[i]->target_ue_id))
-                continue;
-
+        nctx = mme_ue_sgw_ue_list(mme_ue, ctx);
+        for (i = 0; i < nctx; i++) {
             n = 0;
             ogs_list_for_each_entry(&mme_ue->bearer_to_modify_list,
                     bearer, to_modify_node)
-                if (mme_bearer_sgw_ue(bearer) == ctx[i])
+                if (mme_bearer_sgw_ue(bearer) == ctx[i] &&
+                        !mme_sess_sgw_target_ue(
+                            mme_sess_find_by_id(bearer->sess_id)))
                     n++;
             if (!n)
                 continue;

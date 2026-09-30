@@ -107,26 +107,40 @@ int mme_gtpc_sel_pick(const mme_gtpc_sel_keys_t *const *keys,
         const int *order, int num, const mme_gtpc_sel_facts_t *facts);
 
 /*
- * mme.sgwc_selection: per_pdn places each PDN on one of at most two S11
- * contexts per UE (primary and extra). The wanted SGW is the PDN's apn:
- * rule, else the UE-level SGW.
+ * mme.sgwc_selection: per_pdn places each PDN on one S11 context per
+ * SGW the UE uses (the primary one and any number of extra ones). The
+ * wanted SGW is the PDN's apn: rule, else the UE-level SGW.
  */
 typedef enum {
     MME_PDN_SGW_PRIMARY = 0,
-    MME_PDN_SGW_EXTRA,          /* reuse the existing extra context */
-    MME_PDN_SGW_NEW_EXTRA,      /* create the extra context */
-    MME_PDN_SGW_PRIMARY_LIMIT,  /* wanted a third SGW: UE-level context */
+    MME_PDN_SGW_EXTRA,          /* reuse the extra context at that SGW */
+    MME_PDN_SGW_NEW_EXTRA,      /* open an extra context there */
     MME_PDN_SGW_RETARGET_PRIMARY, /* primary unused: move it there */
 } mme_pdn_sgw_place_e;
 
 /*
  * wanted_is_primary:  the wanted SGW has the primary context's address
  * primary_unused:     no other PDN and no S11 TEID on the primary yet
- * have_extra:         the UE already holds the extra context
- * wanted_is_extra:    the wanted SGW has the extra context's address
+ * wanted_is_extra:    an extra context already sits at the wanted SGW
  */
 mme_pdn_sgw_place_e mme_gtpc_pdn_sgw_place(bool wanted_is_primary,
-        bool primary_unused, bool have_extra, bool wanted_is_extra);
+        bool primary_unused, bool wanted_is_extra);
+
+/*
+ * X2 SGW relocation plan for one UE's n PDNs over its nctx S11 contexts.
+ * SGWs are given as indices into one caller-side address table.
+ *   cur[i]        context PDN i sits on
+ *   want[i]       SGW PDN i wants at the new location, -1 to stay
+ *   ctx_sgw[c]    SGW of context c
+ *   ctx_ready[c]  context c holds an S11 TEID
+ * Out, per PDN: join[i] the context it moves into (one that keeps a PDN
+ * and has its TEID), else group[i] the SGW whose new context it opens;
+ * both -1 when it stays. PDNs wanting one SGW share one new context.
+ * Returns the number of PDNs that move.
+ */
+int mme_gtpc_sgw_relocation_plan(int n, const int *cur, const int *want,
+        int nctx, const int *ctx_sgw, const bool *ctx_ready,
+        int *join, int *group);
 
 #ifdef __cplusplus
 }

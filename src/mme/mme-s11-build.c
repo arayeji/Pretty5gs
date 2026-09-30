@@ -85,7 +85,7 @@ ogs_pkbuf_t *mme_s11_build_create_session_request(
     }
 
     if (create_action == OGS_GTP_CREATE_IN_PATH_SWITCH_REQUEST) {
-        sgw_ue = sgw_ue_find_by_id(sgw_ue->target_ue_id);
+        sgw_ue = mme_sess_sgw_target_ue(sess);
         if (!sgw_ue) {
             ogs_error("[%s] Create Session Request: no target SGW-UE",
                     mme_log_imsi(mme_ue));
@@ -503,7 +503,9 @@ ogs_pkbuf_t *mme_s11_build_modify_bearer_request(
     i = 0;
     ogs_list_for_each_entry(
             &mme_ue->bearer_to_modify_list, bearer, to_modify_node) {
-        if (only && mme_bearer_sgw_ue(bearer) != only)
+        if (only && (mme_bearer_sgw_ue(bearer) != only ||
+                    mme_sess_sgw_target_ue(
+                        mme_sess_find_by_id(bearer->sess_id))))
             continue;
 
         ogs_assert(i < OGS_BEARER_PER_UE);
@@ -545,7 +547,9 @@ ogs_pkbuf_t *mme_s11_build_modify_bearer_request(
             &mme_ue->bearer_to_modify_list, bearer, to_modify_node) {
         mme_sess_t *sess = NULL;
 
-        if (only && mme_bearer_sgw_ue(bearer) != only)
+        if (only && (mme_bearer_sgw_ue(bearer) != only ||
+                    mme_sess_sgw_target_ue(
+                        mme_sess_find_by_id(bearer->sess_id))))
             continue;
 
         sess = mme_sess_find_by_id(bearer->sess_id);

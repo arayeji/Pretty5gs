@@ -159,19 +159,55 @@ int mme_gtpc_sel_pick(const mme_gtpc_sel_keys_t *const *keys,
 }
 
 mme_pdn_sgw_place_e mme_gtpc_pdn_sgw_place(bool wanted_is_primary,
-        bool primary_unused, bool have_extra, bool wanted_is_extra)
+        bool primary_unused, bool wanted_is_extra)
 {
     /*
      * Extra first: after a primary reselect both contexts can point at
      * the same SGW, and the extra one already holds the S11 TEID there.
      */
-    if (have_extra && wanted_is_extra)
+    if (wanted_is_extra)
         return MME_PDN_SGW_EXTRA;
     if (wanted_is_primary)
         return MME_PDN_SGW_PRIMARY;
     if (primary_unused)
         return MME_PDN_SGW_RETARGET_PRIMARY;
-    if (have_extra)
-        return MME_PDN_SGW_PRIMARY_LIMIT;
     return MME_PDN_SGW_NEW_EXTRA;
+}
+
+int mme_gtpc_sgw_relocation_plan(int n, const int *cur, const int *want,
+        int nctx, const int *ctx_sgw, const bool *ctx_ready,
+        int *join, int *group)
+{
+    int i, j, c, moving = 0;
+
+    for (i = 0; i < n; i++) {
+        join[i] = -1;
+        group[i] = -1;
+        if (want[i] >= 0 && cur[i] >= 0 && cur[i] < nctx &&
+                want[i] != ctx_sgw[cur[i]])
+            group[i] = want[i];
+    }
+
+    for (i = 0; i < n; i++) {
+        if (group[i] < 0)
+            continue;
+        moving++;
+
+        for (c = 0; c < nctx; c++) {
+            bool keeps = false;
+
+            if (ctx_sgw[c] != want[i] || !ctx_ready[c])
+                continue;
+            for (j = 0; j < n && !keeps; j++)
+                keeps = cur[j] == c && group[j] < 0 && join[j] < 0;
+            if (keeps)
+                break;
+        }
+        if (c < nctx) {
+            join[i] = c;
+            group[i] = -1;
+        }
+    }
+
+    return moving;
 }
