@@ -745,9 +745,12 @@ int s1ap_send_ue_context_release_command(
     return rv;
 }
 
-/* Queue one Paging PDU to one eNB; refreshes t3413.pkbuf for retries. */
-static int paging_send_to_enb(
-        mme_ue_t *mme_ue, mme_enb_t *enb, S1AP_CNDomain_t cn_domain)
+/*
+ * Queue one Paging PDU to one eNB; refreshes t3413.pkbuf for retries.
+ * trace: dump this PDU for mme.trace_imsi (first eNB of the wave).
+ */
+static int paging_send_to_enb(mme_ue_t *mme_ue, mme_enb_t *enb,
+        S1AP_CNDomain_t cn_domain, bool trace)
 {
     ogs_pkbuf_t *s1apbuf = NULL;
     int rv;
@@ -766,6 +769,19 @@ static int paging_send_to_enb(
         ogs_error("ogs_pkbuf_copy() failed");
         ogs_pkbuf_free(s1apbuf);
         return OGS_ERROR;
+    }
+
+    /*
+     * S1 Paging is non-UE signalling, so s1ap_send_to_enb_ue() never
+     * traces it. Dump our own s1apbuf: t3413.pkbuf can be taken and
+     * freed by another thread at any time (MME_UE_TIMER_TAKE_PKBUF).
+     */
+    if (trace && ogs_trace_filter_active() && MME_UE_HAVE_IMSI(mme_ue)) {
+        ogs_trace_link_t link;
+
+        mme_s1ap_trace_link(&link, enb, 0);
+        ogs_trace_packet_link(mme_ue->imsi_bcd, "s1ap", "tx",
+                s1apbuf->data, s1apbuf->len, &link);
     }
 
     rv = s1ap_send_to_enb(enb, s1apbuf, S1AP_NON_UE_SIGNALLING);
@@ -804,7 +820,6 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
     bool enb_ids_heap = false;
     int n_enb = 0, n_cap = 0, n_match = 0;
     int i;
-    ogs_pool_id_t first_sent_enb_id = OGS_INVALID_POOL_ID;
 
     ogs_debug("S1-Paging");
 
@@ -892,14 +907,12 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
         if (!enb_serves_tai(enb, &mme_ue->tai))
             continue;
 
-        rv = paging_send_to_enb(mme_ue, enb, cn_domain);
+        rv = paging_send_to_enb(mme_ue, enb, cn_domain, !sent);
         if (rv != OGS_OK) {
             if (enb_ids_heap)
                 ogs_free(enb_ids);
             return rv;
         }
-        if (!sent)
-            first_sent_enb_id = enb->id;
         sent = true;
     }
 
@@ -920,24 +933,6 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
     /* Start T3413 */
     ogs_timer_start(mme_ue->t3413.timer,
             mme_timer_cfg(MME_TIMER_T3413)->duration);
-
-    /*
-     * S1 Paging is non-UE signalling, so s1ap_send_to_enb_ue() never
-     * traces it. Dump the PDU once per wave (not once per eNB) when
-     * this IMSI is in mme.trace_imsi; the endpoints are those of the
-     * first eNB paged in the wave.
-     */
-    if (ogs_trace_filter_active() &&
-            MME_UE_HAVE_IMSI(mme_ue) && mme_ue->t3413.pkbuf) {
-        ogs_trace_link_t link;
-        mme_enb_t *first_enb = mme_enb_find_by_id(first_sent_enb_id);
-
-        if (first_enb)
-            mme_s1ap_trace_link(&link, first_enb, 0);
-        ogs_trace_packet_link(mme_ue->imsi_bcd, "s1ap", "tx",
-                mme_ue->t3413.pkbuf->data, mme_ue->t3413.pkbuf->len,
-                first_enb ? &link : NULL);
-    }
 
     return OGS_OK;
 }
