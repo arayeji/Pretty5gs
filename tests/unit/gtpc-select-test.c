@@ -387,6 +387,82 @@ static void gtpc_select_pick_test(abts_case *tc, void *data)
     ABTS_INT_EQUAL(tc, -1, mme_gtpc_sel_pick(kp, order, 0, &facts));
 }
 
+/*
+ * smf list: plmn 432-11 (order 1), ims + 432-12 (order 0, force),
+ * plmn 432-12 (order 2). Only ims of 432-12 may land on the forced
+ * entry; every other 432-12 APN goes to the plain 432-12 entry.
+ */
+static void gtpc_select_smf_force_apn_plmn_test(abts_case *tc, void *data)
+{
+    mme_gtpc_sel_keys_t other, ims_home, home;
+    const mme_gtpc_sel_keys_t *kp[3];
+    int order[3];
+    mme_gtpc_sel_facts_t facts;
+    const char *apn_ims[OGS_MAX_NUM_OF_APN];
+
+    plmn_init();
+
+    memset(&other, 0, sizeof(other));
+    other.imsi_plmn_present = true;
+    other.imsi_plmn_id = plmn_other;
+
+    memset(&ims_home, 0, sizeof(ims_home));
+    apn_ims[0] = "ims";
+    ims_home.apn = apn_ims;
+    ims_home.num_of_apn = 1;
+    ims_home.imsi_plmn_present = true;
+    ims_home.imsi_plmn_id = plmn_home;
+
+    memset(&home, 0, sizeof(home));
+    home.imsi_plmn_present = true;
+    home.imsi_plmn_id = plmn_home;
+
+    kp[0] = &other;    order[0] = 1;
+    kp[1] = &ims_home; order[1] = 0;
+    kp[2] = &home;     order[2] = 2;
+
+    /* the forced entry alone: only ims of 432-12 */
+    sess_facts(&facts, "hiweb", IMSI_HOME, 1);
+    ABTS_TRUE(tc, mme_gtpc_sel_match(&ims_home, &facts) == false);
+    sess_facts(&facts, "backhaul", IMSI_HOME, 1);
+    ABTS_TRUE(tc, mme_gtpc_sel_match(&ims_home, &facts) == false);
+    sess_facts(&facts, "ims", IMSI_HOME, 1);
+    ABTS_TRUE(tc, mme_gtpc_sel_match(&ims_home, &facts) == true);
+
+    /* whole list */
+    sess_facts(&facts, "ims", IMSI_HOME, 1);
+    ABTS_INT_EQUAL(tc, 1, mme_gtpc_sel_pick(kp, order, 3, &facts));
+    sess_facts(&facts, "hiweb", IMSI_HOME, 1);
+    ABTS_INT_EQUAL(tc, 2, mme_gtpc_sel_pick(kp, order, 3, &facts));
+    sess_facts(&facts, "ims", IMSI_OTHER, 1);
+    ABTS_INT_EQUAL(tc, 0, mme_gtpc_sel_pick(kp, order, 3, &facts));
+    sess_facts(&facts, "hiweb", IMSI_OTHER, 1);
+    ABTS_INT_EQUAL(tc, 0, mme_gtpc_sel_pick(kp, order, 3, &facts));
+}
+
+/* sgwc per-UE entry with tac + plmn: both must match, not either. */
+static void gtpc_select_sgw_ue_tac_plmn_test(abts_case *tc, void *data)
+{
+    mme_gtpc_sel_keys_t keys;
+    mme_gtpc_sel_facts_t facts;
+    uint16_t tac[1] = { 7 };
+
+    plmn_init();
+
+    memset(&keys, 0, sizeof(keys));
+    keys.tac = tac;
+    keys.num_of_tac = 1;
+    keys.imsi_plmn_present = true;
+    keys.imsi_plmn_id = plmn_home;
+
+    sess_facts(&facts, NULL, IMSI_HOME, 7);
+    ABTS_TRUE(tc, mme_gtpc_sel_match(&keys, &facts) == true);
+    sess_facts(&facts, NULL, IMSI_HOME, 8);
+    ABTS_TRUE(tc, mme_gtpc_sel_match(&keys, &facts) == false);
+    sess_facts(&facts, NULL, IMSI_OTHER, 7);
+    ABTS_TRUE(tc, mme_gtpc_sel_match(&keys, &facts) == false);
+}
+
 static void gtpc_select_pdn_place_test(abts_case *tc, void *data)
 {
     /* wanted SGW is the primary's: stays there, used or not */
@@ -511,6 +587,8 @@ abts_suite *test_gtpc_select(abts_suite *suite)
     abts_run_test(suite, gtpc_select_serving_plmn_test, NULL);
     abts_run_test(suite, gtpc_select_imsi_prefix_test, NULL);
     abts_run_test(suite, gtpc_select_pick_test, NULL);
+    abts_run_test(suite, gtpc_select_smf_force_apn_plmn_test, NULL);
+    abts_run_test(suite, gtpc_select_sgw_ue_tac_plmn_test, NULL);
     abts_run_test(suite, gtpc_select_pdn_place_test, NULL);
 
     return suite;

@@ -286,6 +286,10 @@ mme:
 #    Optional order (lower = higher priority) and imsi_prefix filter.
 #    When several entries match, the lowest order wins.
 #    Default order follows list index (0, 10, 20, ...) when order is omitted.
+#  o On one sgwc/smf entry, all keys (apn, plmn_id, tac, e_cell_id,
+#    imsi_prefix, ...) must match; values of one key are alternatives.
+#    apn: ims + plmn_id 999/70 matches only ims sessions of 999/70, also
+#    with force: true; other APNs of 999/70 go to the next matching entry.
 #  gtpc:
 #    client:
 #      smf:

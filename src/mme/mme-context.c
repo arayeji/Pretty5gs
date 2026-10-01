@@ -4910,7 +4910,8 @@ static bool compare_pgw_info(
         const mme_pgw_t *pgw, const mme_sess_t *sess)
 {
     mme_ue_t *mme_ue = NULL;
-    int i;
+    mme_gtpc_sel_keys_t keys;
+    mme_gtpc_sel_facts_t facts;
 
     ogs_assert(pgw);
     ogs_assert(sess);
@@ -4919,39 +4920,33 @@ static bool compare_pgw_info(
     mme_ue = mme_ue_find_by_id(sess->mme_ue_id);
     ogs_assert(mme_ue);
 
-    if (sess->session && sess->session->name) {
-        for (i = 0; i < pgw->num_of_apn; i++)
-            if (!ogs_strcasecmp(pgw->apn[i], sess->session->name))
-                return true;
-    }
+    /* Every key on the entry must match, as for sgwc entries. */
+    memset(&keys, 0, sizeof(keys));
+    keys.apn = (const char **)pgw->apn;
+    keys.num_of_apn = pgw->num_of_apn;
+    keys.tac = pgw->tac;
+    keys.num_of_tac = pgw->num_of_tac;
+    keys.e_cell_id = pgw->e_cell_id;
+    keys.num_of_e_cell_id = pgw->num_of_e_cell_id;
+    keys.imsi_plmn_present = pgw->imsi_plmn_present;
+    keys.imsi_plmn_id = pgw->imsi_plmn_id;
+    keys.serving_plmn_present = pgw->serving_plmn_present;
+    keys.serving_plmn_id = pgw->serving_plmn_id;
+    keys.imsi_prefix = pgw->imsi_prefix;
 
-    for (i = 0; i < pgw->num_of_e_cell_id; i++)
-        if (pgw->e_cell_id[i] == mme_ue->e_cgi.cell_id)
-            return true;
+    memset(&facts, 0, sizeof(facts));
+    facts.apn = sess->session ? sess->session->name : NULL;
+    facts.tac_known = true;
+    facts.tac = mme_ue->tai.tac;
+    facts.e_cell_id_known = true;
+    facts.e_cell_id = mme_ue->e_cgi.cell_id;
+    facts.imsi_known = MME_UE_HAVE_IMSI(mme_ue);
+    facts.imsi_bcd = mme_ue->imsi_bcd;
+    facts.serving_plmn_known = true;
+    facts.serving_plmn_id = mme_ue->tai.plmn_id;
+    facts.inbound_roam = mme_ue_inbound_roam_on_tai(mme_ue, &mme_ue->tai);
 
-    for (i = 0; i < pgw->num_of_tac; i++)
-        if (pgw->tac[i] == mme_ue->tai.tac)
-            return true;
-
-    if (pgw->imsi_plmn_present && MME_UE_HAVE_IMSI(mme_ue) &&
-            ogs_plmn_id_imsi_prefix_match(
-                mme_ue->imsi_bcd, &pgw->imsi_plmn_id))
-        return true;
-
-    if (pgw->imsi_prefix[0] && MME_UE_HAVE_IMSI(mme_ue)) {
-        size_t len = strlen(pgw->imsi_prefix);
-
-        if (len > 0 && strncmp(mme_ue->imsi_bcd, pgw->imsi_prefix, len) == 0)
-            return true;
-    }
-
-    if (!mme_ue_inbound_roam_on_tai(mme_ue, &mme_ue->tai) &&
-            pgw->serving_plmn_present &&
-            memcmp(&pgw->serving_plmn_id, &mme_ue->tai.plmn_id,
-                OGS_PLMN_ID_LEN) == 0)
-        return true;
-
-    return false;
+    return mme_gtpc_sel_match(&keys, &facts);
 }
 
 static void mme_pgw_format_rule(
@@ -8934,7 +8929,8 @@ static bool mme_sgw_is_default(const mme_sgw_t *sgw)
 static bool compare_sgw_info(
         mme_sgw_t *node, enb_ue_t *enb_ue, mme_ue_t *mme_ue)
 {
-    int i;
+    mme_gtpc_sel_keys_t keys;
+    mme_gtpc_sel_facts_t facts;
 
     ogs_assert(node);
     ogs_assert(enb_ue);
@@ -8942,33 +8938,31 @@ static bool compare_sgw_info(
     if (mme_sgw_is_default(node) || mme_sgw_skip_for_ue(node))
         return false;
 
-    for (i = 0; i < node->num_of_tac; i++)
-        if (node->tac[i] == enb_ue->saved.tai.tac)
-            return true;
+    /* Every key on the entry must match (AND); apn entries are per-PDN. */
+    memset(&keys, 0, sizeof(keys));
+    keys.tac = node->tac;
+    keys.num_of_tac = node->num_of_tac;
+    keys.e_cell_id = node->e_cell_id;
+    keys.num_of_e_cell_id = node->num_of_e_cell_id;
+    keys.imsi_plmn_present = node->imsi_plmn_present;
+    keys.imsi_plmn_id = node->imsi_plmn_id;
+    keys.serving_plmn_present = node->serving_plmn_present;
+    keys.serving_plmn_id = node->serving_plmn_id;
+    keys.imsi_prefix = node->imsi_prefix;
 
-    for (i = 0; i < node->num_of_e_cell_id; i++)
-        if (node->e_cell_id[i] == enb_ue->saved.e_cgi.cell_id)
-            return true;
+    memset(&facts, 0, sizeof(facts));
+    facts.tac_known = true;
+    facts.tac = enb_ue->saved.tai.tac;
+    facts.e_cell_id_known = true;
+    facts.e_cell_id = enb_ue->saved.e_cgi.cell_id;
+    facts.imsi_known = mme_ue && MME_UE_HAVE_IMSI(mme_ue);
+    facts.imsi_bcd = mme_ue ? mme_ue->imsi_bcd : NULL;
+    facts.serving_plmn_known = true;
+    facts.serving_plmn_id = enb_ue->saved.tai.plmn_id;
+    facts.inbound_roam =
+        mme_ue_inbound_roam_on_tai(mme_ue, &enb_ue->saved.tai);
 
-    if (node->imsi_plmn_present && mme_ue && MME_UE_HAVE_IMSI(mme_ue) &&
-            ogs_plmn_id_imsi_prefix_match(
-                mme_ue->imsi_bcd, &node->imsi_plmn_id))
-        return true;
-
-    if (node->imsi_prefix[0] && mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
-        size_t len = strlen(node->imsi_prefix);
-
-        if (len > 0 && strncmp(mme_ue->imsi_bcd, node->imsi_prefix, len) == 0)
-            return true;
-    }
-
-    if (!mme_ue_inbound_roam_on_tai(mme_ue, &enb_ue->saved.tai) &&
-            node->serving_plmn_present &&
-            memcmp(&node->serving_plmn_id, &enb_ue->saved.tai.plmn_id,
-                OGS_PLMN_ID_LEN) == 0)
-        return true;
-
-    return false;
+    return mme_gtpc_sel_match(&keys, &facts);
 }
 
 static bool mme_sgw_list_has_filters(void)
