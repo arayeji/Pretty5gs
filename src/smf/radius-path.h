@@ -41,8 +41,15 @@ void smf_radius_accounting_interim_update(smf_sess_t *sess);
 int smf_radius_pod_open(void);
 void smf_radius_pod_close(void);
 
-/* Release cached RADIUS sockets / sockaddrs on shutdown. */
+/* Config lock; call once before shard workers start. */
+void smf_radius_init(void);
+
+/* Release the calling thread's cached RADIUS sockets / sockaddrs. */
 void smf_radius_servers_close(void);
+void smf_radius_thread_final(void);
+
+/* SMF_EVT_RADIUS_POD: tear down a PoD-accepted session on its owner. */
+void smf_radius_pod_handle(smf_event_t *e);
 
 /* Free any per-session radius resources (called from smf_sess_remove()). */
 void smf_radius_sess_clear(smf_sess_t *sess);
@@ -61,7 +68,10 @@ void smf_radius_pod_teardown_cancel(smf_sess_t *sess);
  * (server host, secrets, nas_identifier, pod_bind, pod_secret) are
  * duplicated into heap memory owned by this module so the caller may
  * free its own copies immediately. Scalar fields (ports, timers,
- * retries, select_mode) are copied atomically into smf_self()->radius.
+ * retries, select_mode) are copied into smf_self()->radius.
+ *
+ * Main never blocks here: if a shard is mid-exchange, the copy is
+ * installed a few ms later from a main timer (a newer call replaces it).
  *
  * The PoD listener is restarted when its bind address or port changes;
  * otherwise it keeps running so in-flight disconnects are not lost.

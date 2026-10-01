@@ -27,6 +27,7 @@ extern "C" {
 #endif
 
 void smf_gx_restoration_on_peer_connect(void);
+void smf_gx_restoration_owned(void);
 void smf_gx_peer_connect_event_push(void);
 
 #ifdef __cplusplus

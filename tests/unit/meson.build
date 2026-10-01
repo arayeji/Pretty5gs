@@ -33,11 +33,13 @@ testunit_unit_sources = files('''
     pfcp-buffer-test.c
     gtpc-select-test.c
     sbi-lock-test.c
+    smf-shard-test.c
 '''.split())
 
 testunit_unit_sources += files('../../src/mme/eplmn-config.c')
 testunit_unit_sources += files('../../src/mme/mme-access-control-match.c')
 testunit_unit_sources += files('../../src/mme/mme-gtpc-select-match.c')
+testunit_unit_sources += files('../../src/smf/smf-shard.c')
 
 testunit_unit_exe = executable('unit',
     sources : testunit_unit_sources,

@@ -126,12 +126,18 @@ static inline bool smf_uecm_anchor_in_vplmn(int state)
     return !(state & SMF_STATE_HR);
 }
 
-ogs_sbi_xact_t *smf_namf_comm_create_n1_n2_message_xact(
-        smf_sess_t *sess, ogs_sbi_stream_t *stream,
-        smf_n1_n2_message_transfer_param_t *param);
 void smf_namf_comm_send_n1_n2_message_transfer(
         smf_sess_t *sess, ogs_sbi_stream_t *stream,
         smf_n1_n2_message_transfer_param_t *param);
+/*
+ * N1N2 transfer held back until the Establishment Accept went out
+ * (replaces any earlier one). The xact lives on smf-main, keyed by id.
+ */
+void smf_namf_comm_set_pending_modification(
+        smf_sess_t *sess, ogs_sbi_stream_t *stream,
+        smf_n1_n2_message_transfer_param_t *param);
+void smf_namf_comm_send_pending_modification(smf_sess_t *sess);
+void smf_namf_comm_clear_pending_modification(smf_sess_t *sess);
 void smf_namf_comm_send_n1_n2_pdu_establishment_reject(
         smf_sess_t *sess, ogs_sbi_stream_t *stream);
 
@@ -239,6 +245,17 @@ void smf_sbi_send_released_data(
         smf_sess_t *sess, ogs_sbi_stream_t *stream);
 
 bool smf_sbi_send_status_notify(smf_sess_t *sess);
+
+/*
+ * Find or add the client and attach it to *slot (OGS_SBI_SETUP_CLIENT),
+ * on smf-main where the client list and its connections live.
+ */
+bool smf_sbi_setup_client(ogs_sbi_client_t **slot,
+        OpenAPI_uri_scheme_e scheme, char *fqdn, uint16_t fqdn_port,
+        ogs_sockaddr_t *addr, ogs_sockaddr_t *addr6);
+
+/* smf_sess_remove(): drop the session's clients, xacts and SBI object. */
+void smf_sbi_sess_teardown(smf_sess_t *sess);
 
 #ifdef __cplusplus
 }

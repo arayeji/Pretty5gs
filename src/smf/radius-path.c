@@ -22,6 +22,9 @@
 #include "gtp-path.h"
 #include "pfcp-path.h"
 #include "smf-trace.h"
+#include "smf-workers.h"
+
+#include <pthread.h>
 
 #ifndef _WIN32
 #include <sys/time.h>
@@ -1119,35 +1122,146 @@ static int radius_build_common_attrs(uint8_t *p, const char *user,
  *   stop trying it for this request".
  */
 /*
- * Drop any cached transport for a server slot. Called when the runtime
- * config replaces the server (host/port may have changed) and from
- * smf_radius_servers_close() at shutdown.
+ * Cached transport for the data path. Resolving the host string and
+ * opening a UDP socket on every Access-/Accounting-Request is expensive:
+ * at 100+ active UEs the SMF spent more time in getaddrinfo/socket/destroy
+ * than in the RADIUS exchange itself.
+ *
+ *   peer_auth / peer_acct - one shot DNS at first use, kept until the
+ *                           server slot is replaced.
+ *   sock                  - persistent UDP socket reused across requests;
+ *                           recv timeout is refreshed before each send so
+ *                           config changes take effect.
+ *   sock_timeout_ms       - timeout currently applied to `sock`.
+ *   bound_nas_ip          - local address sock was bound to (from
+ *                           radius.nas_ip), so a config change forces a
+ *                           rebind. NULL means unbound (kernel pick).
+ *   gen                   - radius_transport_gen this slot was built for;
+ *                           a runtime reconfig bumps the generation and
+ *                           every thread rebuilds lazily.
+ *
+ * One set per thread: each shard runs its own blocking exchanges.
  */
-static void radius_server_transport_clear(smf_radius_server_t *s)
+typedef struct radius_transport_s {
+    uint32_t        gen;
+    ogs_sockaddr_t *peer_auth;
+    ogs_sockaddr_t *peer_acct;
+    ogs_sock_t     *sock;
+    unsigned        sock_timeout_ms;
+    char           *bound_nas_ip;
+} radius_transport_t;
+
+static OGS_THREAD_LOCAL radius_transport_t
+    t_radius_transport[SMF_MAX_RADIUS_SERVERS];
+static uint32_t radius_transport_gen = 1;
+
+/*
+ * smf_self()->radius is rewritten by smf_radius_apply_runtime() on main
+ * while shards read it during their exchanges. Readers hold the lock for
+ * the whole exchange (the strings they use may be freed by a reload).
+ * Main never takes the read side and never waits on the write side: it
+ * is the only writer and installs a reload with trywrlock (see
+ * radius_apply_try()).
+ */
+static pthread_rwlock_t radius_cfg_lock;
+static bool radius_cfg_lock_ready = false;
+
+/* Before any shard starts. */
+void smf_radius_init(void)
 {
-    if (!s) return;
-    if (s->sock) {
-        ogs_sock_destroy(s->sock);
-        s->sock = NULL;
+    pthread_rwlockattr_t attr;
+
+    if (radius_cfg_lock_ready)
+        return;
+
+    pthread_rwlockattr_init(&attr);
+#if defined(__GLIBC__)
+    pthread_rwlockattr_setkind_np(&attr,
+            PTHREAD_RWLOCK_PREFER_WRITER_NONRECURSIVE_NP);
+#endif
+    ogs_assert(pthread_rwlock_init(&radius_cfg_lock, &attr) == 0);
+    pthread_rwlockattr_destroy(&attr);
+    radius_cfg_lock_ready = true;
+}
+
+static int radius_reload_pending;                   /* atomic */
+static smf_radius_config_t *radius_pending_cfg;     /* main only */
+static ogs_timer_t *radius_apply_timer;             /* main only */
+static void radius_cfg_free(smf_radius_config_t *cfg);
+
+/* Back off while main has a reload waiting so it is not starved. */
+static void radius_cfg_rdlock(void)
+{
+    if (!ogs_worker_self())
+        return;
+
+    for (;;) {
+        if (!__atomic_load_n(&radius_reload_pending, __ATOMIC_ACQUIRE)) {
+            pthread_rwlock_rdlock(&radius_cfg_lock);
+            if (!__atomic_load_n(&radius_reload_pending, __ATOMIC_ACQUIRE))
+                return;
+            pthread_rwlock_unlock(&radius_cfg_lock);
+        }
+        ogs_msleep(1);
     }
-    if (s->peer_auth) {
-        ogs_freeaddrinfo(s->peer_auth);
-        s->peer_auth = NULL;
+}
+
+static void radius_cfg_rdunlock(void)
+{
+    if (ogs_worker_self())
+        pthread_rwlock_unlock(&radius_cfg_lock);
+}
+
+static void radius_transport_clear(radius_transport_t *t)
+{
+    if (!t) return;
+    if (t->sock) {
+        ogs_sock_destroy(t->sock);
+        t->sock = NULL;
     }
-    if (s->peer_acct) {
-        ogs_freeaddrinfo(s->peer_acct);
-        s->peer_acct = NULL;
+    if (t->peer_auth) {
+        ogs_freeaddrinfo(t->peer_auth);
+        t->peer_auth = NULL;
     }
-    if (s->bound_nas_ip) {
-        ogs_free(s->bound_nas_ip);
-        s->bound_nas_ip = NULL;
+    if (t->peer_acct) {
+        ogs_freeaddrinfo(t->peer_acct);
+        t->peer_acct = NULL;
     }
-    s->sock_timeout_ms = 0;
+    if (t->bound_nas_ip) {
+        ogs_free(t->bound_nas_ip);
+        t->bound_nas_ip = NULL;
+    }
+    t->sock_timeout_ms = 0;
+}
+
+static radius_transport_t *radius_transport_get(int srv_idx)
+{
+    radius_transport_t *t;
+    uint32_t gen;
+
+    ogs_assert(srv_idx >= 0 && srv_idx < SMF_MAX_RADIUS_SERVERS);
+
+    t = &t_radius_transport[srv_idx];
+    gen = __atomic_load_n(&radius_transport_gen, __ATOMIC_ACQUIRE);
+    if (t->gen != gen) {
+        radius_transport_clear(t);
+        t->gen = gen;
+    }
+    return t;
+}
+
+/* Calling thread's transports; every shard calls this on exit. */
+void smf_radius_thread_final(void)
+{
+    int i;
+
+    for (i = 0; i < SMF_MAX_RADIUS_SERVERS; i++)
+        radius_transport_clear(&t_radius_transport[i]);
 }
 
 /*
- * Resolve `s->host` for the requested port, caching the result on the
- * server slot. The auth and accounting destinations get separate
+ * Resolve `s->host` for the requested port, caching the result in the
+ * thread's transport. The auth and accounting destinations get separate
  * sockaddrs because their service ports differ, but they share the
  * underlying address family so a single UDP socket per server can serve
  * both.
@@ -1156,20 +1270,21 @@ static void radius_server_transport_clear(smf_radius_server_t *s)
  * will surface an error and fail over).
  */
 static ogs_sockaddr_t *radius_server_peer_get(
-        smf_radius_server_t *s, uint16_t port)
+        smf_radius_server_t *s, radius_transport_t *t, uint16_t port)
 {
     ogs_sockaddr_t **slot;
 
     ogs_assert(s);
+    ogs_assert(t);
     ogs_assert(port);
 
     /* Callers only pass either auth_port or acct_port. Any other value is
      * treated as accounting so we still cache the resolution and avoid a
      * leak instead of dropping back to per-call ogs_getaddrinfo(). */
     if (port == s->auth_port)
-        slot = &s->peer_auth;
+        slot = &t->peer_auth;
     else
-        slot = &s->peer_acct;
+        slot = &t->peer_acct;
 
     if (*slot)
         return *slot;
@@ -1200,6 +1315,7 @@ static int radius_udp_exchange(int srv_idx, uint16_t port,
     int successes = 0, timeouts = 0;
     smf_radius_config_t *cfg = &smf_self()->radius;
     smf_radius_server_t *s;
+    radius_transport_t *t;
 
     ogs_assert(req);
     ogs_assert(res);
@@ -1212,7 +1328,8 @@ static int radius_udp_exchange(int srv_idx, uint16_t port,
         return OGS_ERROR;
     }
 
-    peer = radius_server_peer_get(s, port);
+    t = radius_transport_get(srv_idx);
+    peer = radius_server_peer_get(s, t, port);
     if (!peer)
         return OGS_ERROR;
 
@@ -1225,27 +1342,27 @@ static int radius_udp_exchange(int srv_idx, uint16_t port,
     {
         const char *want_bind = (cfg->nas_ip && cfg->nas_ip[0]) ?
                 cfg->nas_ip : "";
-        const char *have_bind = s->bound_nas_ip ? s->bound_nas_ip : "";
+        const char *have_bind = t->bound_nas_ip ? t->bound_nas_ip : "";
 
-        if (s->sock && (s->sock->family != peer->ogs_sa_family ||
+        if (t->sock && (t->sock->family != peer->ogs_sa_family ||
                 strcmp(want_bind, have_bind) != 0)) {
-            ogs_sock_destroy(s->sock);
-            s->sock = NULL;
-            s->sock_timeout_ms = 0;
-            if (s->bound_nas_ip) {
-                ogs_free(s->bound_nas_ip);
-                s->bound_nas_ip = NULL;
+            ogs_sock_destroy(t->sock);
+            t->sock = NULL;
+            t->sock_timeout_ms = 0;
+            if (t->bound_nas_ip) {
+                ogs_free(t->bound_nas_ip);
+                t->bound_nas_ip = NULL;
             }
         }
     }
-    if (!s->sock) {
-        s->sock = ogs_sock_socket(peer->ogs_sa_family,
+    if (!t->sock) {
+        t->sock = ogs_sock_socket(peer->ogs_sa_family,
                 SOCK_DGRAM, IPPROTO_UDP);
-        if (!s->sock) {
+        if (!t->sock) {
             ogs_error("RADIUS ogs_sock_socket() failed");
             return OGS_ERROR;
         }
-        s->sock_timeout_ms = 0;
+        t->sock_timeout_ms = 0;
 
         /*
          * Bind to radius.nas_ip so the UDP source address matches the
@@ -1260,28 +1377,28 @@ static int radius_udp_exchange(int srv_idx, uint16_t port,
                         cfg->nas_ip, 0, AI_PASSIVE) != OGS_OK || !local) {
                 ogs_error("RADIUS: cannot resolve nas_ip '%s' for bind",
                         cfg->nas_ip);
-                ogs_sock_destroy(s->sock);
-                s->sock = NULL;
+                ogs_sock_destroy(t->sock);
+                t->sock = NULL;
                 if (local)
                     ogs_freeaddrinfo(local);
                 return OGS_ERROR;
             }
 
-            if (ogs_sock_bind(s->sock, local) != OGS_OK) {
+            if (ogs_sock_bind(t->sock, local) != OGS_OK) {
                 char buf[OGS_ADDRSTRLEN];
 
                 ogs_error("RADIUS: bind to nas_ip %s failed "
                         "(is the address configured on this host?)",
                         OGS_ADDR(local, buf));
-                ogs_sock_destroy(s->sock);
-                s->sock = NULL;
+                ogs_sock_destroy(t->sock);
+                t->sock = NULL;
                 ogs_freeaddrinfo(local);
                 return OGS_ERROR;
             }
 
-            s->bound_nas_ip = ogs_strdup(cfg->nas_ip);
+            t->bound_nas_ip = ogs_strdup(cfg->nas_ip);
             ogs_info("RADIUS: client UDP bound to nas_ip %s",
-                    s->bound_nas_ip);
+                    t->bound_nas_ip);
             ogs_freeaddrinfo(local);
         }
     }
@@ -1289,25 +1406,25 @@ static int radius_udp_exchange(int srv_idx, uint16_t port,
     /* Refresh receive timeout only when it actually changed; on every
      * config reload the next call will pick up the new value, but most
      * calls find the timeout already correct. */
-    if (s->sock_timeout_ms != cfg->timeout_ms) {
-        sock_set_rcv_timeout(s->sock->fd, cfg->timeout_ms);
-        s->sock_timeout_ms = cfg->timeout_ms;
+    if (t->sock_timeout_ms != cfg->timeout_ms) {
+        sock_set_rcv_timeout(t->sock->fd, cfg->timeout_ms);
+        t->sock_timeout_ms = cfg->timeout_ms;
     }
 
     for (attempt = 0; attempt < cfg->retry; attempt++) {
         ssize_t snd, rcv;
         ogs_sockaddr_t from;
 
-        snd = ogs_sendto(s->sock->fd, req, req_len, 0, peer);
+        snd = ogs_sendto(t->sock->fd, req, req_len, 0, peer);
         if (snd != (ssize_t)req_len) {
             ogs_warn("RADIUS[%s] sendto incomplete (%d vs %u)",
                     s->host, (int)snd, (unsigned)req_len);
             continue;
         }
         /* Dump the exact on-wire request (incl. per-server authenticator). */
-        radius_trace_packet(imsi, "tx", req, req_len, s->sock->fd, peer);
+        radius_trace_packet(imsi, "tx", req, req_len, t->sock->fd, peer);
 
-        rcv = ogs_recvfrom(s->sock->fd, res, res_max, 0, &from);
+        rcv = ogs_recvfrom(t->sock->fd, res, res_max, 0, &from);
         if (rcv < RADIUS_HDR_LEN) {
             if (rcv < 0) {
                 /* recv timeout or network error: count as timeout so
@@ -1352,7 +1469,7 @@ static int radius_udp_exchange(int srv_idx, uint16_t port,
             }
         }
 
-        radius_trace_packet(imsi, "rx", res, *res_len, s->sock->fd, &from);
+        radius_trace_packet(imsi, "rx", res, *res_len, t->sock->fd, &from);
         rv = OGS_OK;
         successes++;
         break;
@@ -1360,16 +1477,18 @@ static int radius_udp_exchange(int srv_idx, uint16_t port,
 
     /* Update runtime health for the caller's benefit. */
     if (rv == OGS_OK) {
-        s->consecutive_failures = 0;
-        s->down_since = 0;
+        __atomic_store_n(&s->consecutive_failures, 0, __ATOMIC_RELAXED);
+        __atomic_store_n(&s->down_since, 0, __ATOMIC_RELAXED);
     } else if (successes == 0 && timeouts >= cfg->retry) {
-        s->consecutive_failures++;
-        if (s->consecutive_failures >= SMF_RADIUS_BLACKLIST_THRESHOLD
-                && s->down_since == 0) {
-            s->down_since = ogs_time_now();
+        int fails = __atomic_add_fetch(
+                &s->consecutive_failures, 1, __ATOMIC_RELAXED);
+        ogs_time_t up = 0;
+
+        if (fails >= SMF_RADIUS_BLACKLIST_THRESHOLD &&
+            __atomic_compare_exchange_n(&s->down_since, &up,
+                ogs_time_now(), false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
             ogs_warn("RADIUS[%s]: marked DOWN after %d consecutive timeouts",
-                    s->host, s->consecutive_failures);
-        }
+                    s->host, fails);
         /* Translate "all attempts timed out" into a distinct return so
          * the caller knows to fail over rather than give up. */
         return OGS_TIMEUP;
@@ -1525,7 +1644,20 @@ static int radius_exchange_with_failover(
 /* Access-Request (authorization)                                      */
 /* ------------------------------------------------------------------ */
 
+static int radius_authorize(smf_sess_t *sess);
+
 int smf_radius_authorize_for_session(smf_sess_t *sess)
+{
+    int rv;
+
+    radius_cfg_rdlock();
+    rv = radius_authorize(sess);
+    radius_cfg_rdunlock();
+
+    return rv;
+}
+
+static int radius_authorize(smf_sess_t *sess)
 {
     uint8_t pkt[RADIUS_PACKET_MAX];
     uint8_t res[RADIUS_PACKET_MAX];
@@ -1718,7 +1850,22 @@ static void radius_append_usage_counters(uint8_t **pp, smf_sess_t *sess,
     *pp = p;
 }
 
+static int radius_send_accounting_locked(
+        smf_sess_t *sess, uint32_t status_type);
+
 static int radius_send_accounting(smf_sess_t *sess, uint32_t status_type)
+{
+    int rv;
+
+    radius_cfg_rdlock();
+    rv = radius_send_accounting_locked(sess, status_type);
+    radius_cfg_rdunlock();
+
+    return rv;
+}
+
+static int radius_send_accounting_locked(
+        smf_sess_t *sess, uint32_t status_type)
 {
     uint8_t pkt[RADIUS_PACKET_MAX];
     uint8_t res[RADIUS_PACKET_MAX];
@@ -1880,14 +2027,19 @@ void smf_radius_accounting_session_started(smf_sess_t *sess)
 
     ogs_uuid_get(&uuid);
     ogs_uuid_format(idbuf, &uuid);
+    /* ctx lock: the PoD listener on main matches on acct_session_id */
+    ogs_metrics_dump_lock();
     sess->radius.acct_session_id = ogs_strdup(idbuf);
+    ogs_metrics_dump_unlock();
     ogs_assert(sess->radius.acct_session_id);
 
     sess->radius.start_time = ogs_time_now();
 
     if (radius_send_accounting(sess, RADIUS_ACCT_STATUS_START) != OGS_OK) {
+        ogs_metrics_dump_lock();
         ogs_free(sess->radius.acct_session_id);
         sess->radius.acct_session_id = NULL;
+        ogs_metrics_dump_unlock();
         return;
     }
     sess->radius.acct_started = true;
@@ -1959,8 +2111,10 @@ void smf_radius_sess_clear(smf_sess_t *sess)
         sess->radius.class_len = 0;
     }
     if (sess->radius.acct_session_id) {
+        ogs_metrics_dump_lock();
         ogs_free(sess->radius.acct_session_id);
         sess->radius.acct_session_id = NULL;
+        ogs_metrics_dump_unlock();
     }
     sess->radius.acct_started = false;
     sess->radius.start_time = 0;
@@ -2142,8 +2296,8 @@ static void pod_send_response(int code, uint8_t id,
  * cleans up UE state. As a last resort we remove the session directly
  * so Accounting-Stop is guaranteed to go out.
  *
- * Runs in the SMF main thread (ogs_timer_mgr_expire context), so all
- * session operations are safe.
+ * Runs on the owning shard's timer manager, so all session operations
+ * are safe.
  */
 static void pod_teardown_timeout_cb(void *data)
 {
@@ -2244,7 +2398,8 @@ static void pod_arm_teardown_timer(smf_sess_t *sess)
      */
     if (!sess->radius.teardown_timer) {
         sess->radius.teardown_timer = ogs_timer_add(
-                ogs_app()->timer_mgr, pod_teardown_timeout_cb,
+                ogs_worker_timer_mgr(ogs_app()->timer_mgr),
+                pod_teardown_timeout_cb,
                 OGS_UINT_TO_POINTER((unsigned)sess->id));
         if (!sess->radius.teardown_timer) {
             ogs_error("RADIUS PoD: ogs_timer_add() failed for sess_id=%d",
@@ -2273,6 +2428,9 @@ static void pod_recv_cb(short when, ogs_socket_t fd, void *data)
     const char *secret;
     size_t secret_len;
     smf_sess_t *sess;
+    ogs_pool_id_t sess_id;
+    int owner;
+    smf_event_t *e;
     smf_radius_config_t *cfg = &smf_self()->radius;
     uint8_t packet_copy[RADIUS_PACKET_MAX];
     char pod_imsi[OGS_MAX_IMSI_BCD_LEN + 1];
@@ -2392,10 +2550,14 @@ static void pod_recv_cb(short when, ogs_socket_t fd, void *data)
         return;
     }
 
+    /* Shards mutate the session lists and acct_session_id under the ctx
+     * lock; the teardown itself runs on the owning shard. */
+    ogs_metrics_dump_lock();
     sess = pod_find_session(attrs, attrs_len);
     if (!sess) {
         char ipbuf[OGS_ADDRSTRLEN];
 
+        ogs_metrics_dump_unlock();
         ogs_info("RADIUS Disconnect-Request: no matching session (from %s)",
                 OGS_ADDR(&from, ipbuf));
         pod_send_response(RADIUS_CODE_DISCONNECT_NAK, buf[1], saved_auth,
@@ -2403,6 +2565,8 @@ static void pod_recv_cb(short when, ogs_socket_t fd, void *data)
                 pod_imsi[0] ? pod_imsi : NULL);
         return;
     }
+    sess_id = sess->id;
+    owner = smf_sess_owner_shard(sess);
 
     {
         smf_ue_t *ue = smf_ue_find_by_id(sess->smf_ue_id);
@@ -2427,9 +2591,36 @@ static void pod_recv_cb(short when, ogs_socket_t fd, void *data)
                     sess->radius.acct_session_id : "",
                 OGS_ADDR(&from, ipbuf));
     }
+    ogs_metrics_dump_unlock();
 
     pod_send_response(RADIUS_CODE_DISCONNECT_ACK, buf[1], saved_auth, &from,
             0, secret, pod_imsi[0] ? pod_imsi : NULL);
+
+    e = smf_event_new(SMF_EVT_RADIUS_POD);
+    e->sess_id = sess_id;
+    smf_event_push_shard(owner, e);
+}
+
+/* SMF_EVT_RADIUS_POD on the shard owning the session. */
+void smf_radius_pod_handle(smf_event_t *e)
+{
+    smf_sess_t *sess;
+
+    ogs_assert(e);
+
+    sess = smf_sess_find_by_id(e->sess_id);
+    if (!sess) {
+        ogs_info("RADIUS PoD: sess_id=%d gone before teardown",
+                (int)e->sess_id);
+        return;
+    }
+    if (!smf_sess_owned_by_self(sess)) {
+        smf_event_t *ne = smf_event_new(SMF_EVT_RADIUS_POD);
+
+        ne->sess_id = e->sess_id;
+        smf_event_push_shard(smf_sess_owner_shard(sess), ne);
+        return;
+    }
 
     ogs_info("RADIUS PoD: releasing session "
             "(epc=%d, sess_id=%d, sgw_s5c_teid=0x%x)",
@@ -2442,9 +2633,8 @@ static void pod_recv_cb(short when, ogs_socket_t fd, void *data)
      * chain, which culminates in smf_sess_remove() -> RADIUS
      * Accounting-Stop.
      *
-     * We are inside the SMF main-loop pollset callback here so it is
-     * safe to invoke the GTPv2 send helper synchronously (same thread
-     * that runs the GTPv2 xact/state machine).
+     * This runs on the shard owning the session, which also owns its
+     * GTPv2 transactions, so the send helper can be called directly.
      */
     if (sess->epc) {
         smf_bearer_t *bearer = smf_default_bearer_in_sess(sess);
@@ -2594,18 +2784,22 @@ void smf_radius_pod_close(void)
 }
 
 /*
- * Release the cached UDP transport for every configured RADIUS server.
- * Called from smf_terminate() so we don't leak sockets / sockaddrs at
- * shutdown. Safe to call multiple times; clear() leaves slots in a
- * benign state.
+ * Release the calling thread's cached UDP transports. Called from
+ * smf_terminate() after the context is gone (session removal there can
+ * still send Accounting-Stop). Shards and smf-main free their own via
+ * smf_radius_thread_final(). Safe to call multiple times.
  */
 void smf_radius_servers_close(void)
 {
-    smf_radius_config_t *cfg = &smf_self()->radius;
-    int i;
+    smf_radius_thread_final();
 
-    for (i = 0; i < SMF_MAX_RADIUS_SERVERS; i++)
-        radius_server_transport_clear(&cfg->servers[i]);
+    if (radius_apply_timer) {
+        ogs_timer_delete(radius_apply_timer);
+        radius_apply_timer = NULL;
+    }
+    radius_cfg_free(radius_pending_cfg);
+    radius_pending_cfg = NULL;
+    __atomic_store_n(&radius_reload_pending, 0, __ATOMIC_RELEASE);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2641,12 +2835,117 @@ static void rad_replace_owned(const char **field, char **owned,
     if (old) ogs_free(old);
 }
 
-int smf_radius_apply_runtime(const smf_radius_config_t *new_cfg)
+/*
+ * Main never waits for a shard's exchange to finish: the new config is
+ * copied, then installed once the write lock is free (retried from a
+ * main timer). While a reload is pending, shards stop taking new read
+ * locks so the in-flight exchanges drain.
+ */
+#define RADIUS_APPLY_RETRY_MS 10
+
+static const char *radius_strdup_or_null(const char *s)
 {
-    smf_radius_config_t *cur = &smf_self()->radius;
-    bool pod_restart_needed = false;
+    return s ? ogs_strdup(s) : NULL;
+}
+
+static void radius_free_const(const char *s)
+{
+    if (s) ogs_free((char *)s);
+}
+
+static smf_radius_config_t *radius_cfg_dup(const smf_radius_config_t *src)
+{
+    smf_radius_config_t *dst = ogs_calloc(1, sizeof(*dst));
     int i;
 
+    ogs_assert(dst);
+    *dst = *src;
+
+    dst->server = NULL;
+    dst->secret = NULL;
+    dst->nas_id = radius_strdup_or_null(src->nas_id);
+    dst->nas_ip = radius_strdup_or_null(src->nas_ip);
+    dst->pod_bind = radius_strdup_or_null(src->pod_bind);
+    dst->pod_secret = radius_strdup_or_null(src->pod_secret);
+    for (i = 0; i < SMF_MAX_RADIUS_SERVERS; i++) {
+        dst->servers[i].host = radius_strdup_or_null(src->servers[i].host);
+        dst->servers[i].secret =
+            radius_strdup_or_null(src->servers[i].secret);
+    }
+
+    return dst;
+}
+
+static void radius_cfg_free(smf_radius_config_t *cfg)
+{
+    int i;
+
+    if (!cfg)
+        return;
+
+    radius_free_const(cfg->nas_id);
+    radius_free_const(cfg->nas_ip);
+    radius_free_const(cfg->pod_bind);
+    radius_free_const(cfg->pod_secret);
+    for (i = 0; i < SMF_MAX_RADIUS_SERVERS; i++) {
+        radius_free_const(cfg->servers[i].host);
+        radius_free_const(cfg->servers[i].secret);
+    }
+    ogs_free(cfg);
+}
+
+static bool radius_apply_locked(const smf_radius_config_t *new_cfg);
+static void radius_apply_try(void);
+
+static void radius_apply_timeout(void *data)
+{
+    radius_apply_try();
+}
+
+static void radius_apply_try(void)
+{
+    smf_radius_config_t *cfg = radius_pending_cfg;
+    bool pod_restart_needed;
+
+    if (!cfg)
+        return;
+
+    if (pthread_rwlock_trywrlock(&radius_cfg_lock) != 0) {
+        if (!radius_apply_timer) {
+            radius_apply_timer = ogs_timer_add(
+                    ogs_app()->timer_mgr, radius_apply_timeout, NULL);
+            ogs_assert(radius_apply_timer);
+        }
+        ogs_timer_start(radius_apply_timer,
+                ogs_time_from_msec(RADIUS_APPLY_RETRY_MS));
+        return;
+    }
+
+    radius_pending_cfg = NULL;
+    pod_restart_needed = radius_apply_locked(cfg);
+    __atomic_store_n(&radius_reload_pending, 0, __ATOMIC_RELEASE);
+    pthread_rwlock_unlock(&radius_cfg_lock);
+
+    radius_cfg_free(cfg);
+
+    /* Existing sessions may still hold a server_idx that no longer
+     * maps to the same AAA. radius_build_try_order() handles this
+     * defensively (it clamps and falls back to mode-based selection). */
+
+    /* Finally, (re)start the PoD listener if needed. */
+    if (pod_restart_needed) {
+        smf_radius_pod_close();
+        if (smf_self()->radius.pod_enabled) {
+            if (smf_radius_pod_open() != OGS_OK) {
+                ogs_error("RADIUS PoD: failed to reopen listener after "
+                        "runtime reconfig; PoD disabled until next apply");
+            }
+        }
+    }
+}
+
+int smf_radius_apply_runtime(const smf_radius_config_t *new_cfg)
+{
     ogs_assert(new_cfg);
 
     ogs_info("RADIUS: applying runtime config "
@@ -2655,6 +2954,22 @@ int smf_radius_apply_runtime(const smf_radius_config_t *new_cfg)
             new_cfg->num_servers,
             new_cfg->select_mode == SMF_RADIUS_SELECT_HASH_IMSI ?
                 "hash_imsi" : "primary_failover");
+
+    /* A newer reload replaces one that is still waiting. */
+    radius_cfg_free(radius_pending_cfg);
+    radius_pending_cfg = radius_cfg_dup(new_cfg);
+    __atomic_store_n(&radius_reload_pending, 1, __ATOMIC_RELEASE);
+
+    radius_apply_try();
+
+    return OGS_OK;
+}
+
+static bool radius_apply_locked(const smf_radius_config_t *new_cfg)
+{
+    smf_radius_config_t *cur = &smf_self()->radius;
+    bool pod_restart_needed = false;
+    int i;
 
     /* Decide up front whether the PoD listener needs a bounce. We do
      * this before mutating anything so a string compare against the
@@ -2669,8 +2984,6 @@ int smf_radius_apply_runtime(const smf_radius_config_t *new_cfg)
             pod_restart_needed = true;
     }
 
-    /* Scalars + enums first; safe to update without locking because all
-     * data-path consumers run on the SMF main thread. */
     cur->enabled               = new_cfg->enabled;
     cur->select_mode           = new_cfg->select_mode;
     cur->timeout_ms            = new_cfg->timeout_ms;
@@ -2695,10 +3008,10 @@ int smf_radius_apply_runtime(const smf_radius_config_t *new_cfg)
 
     /* Swap the servers array. Free any heap-owned strings first so the
      * slot is clean, then dup from new_cfg. */
+    /* Every thread drops its cached transports on next use: the new
+     * servers may resolve to a different host/port/family. */
+    __atomic_add_fetch(&radius_transport_gen, 1, __ATOMIC_RELEASE);
     for (i = 0; i < SMF_MAX_RADIUS_SERVERS; i++) {
-        /* Drop the cached UDP transport: the new server may resolve
-         * to a different host/port/family. */
-        radius_server_transport_clear(&cur->servers[i]);
         if (g_rad_owned_server_host[i]) {
             ogs_free(g_rad_owned_server_host[i]);
             g_rad_owned_server_host[i] = NULL;
@@ -2733,20 +3046,5 @@ int smf_radius_apply_runtime(const smf_radius_config_t *new_cfg)
         cur->num_servers++;
     }
 
-    /* Existing sessions may still hold a server_idx that no longer
-     * maps to the same AAA. radius_build_try_order() handles this
-     * defensively (it clamps and falls back to mode-based selection). */
-
-    /* Finally, (re)start the PoD listener if needed. */
-    if (pod_restart_needed) {
-        smf_radius_pod_close();
-        if (cur->pod_enabled) {
-            if (smf_radius_pod_open() != OGS_OK) {
-                ogs_error("RADIUS PoD: failed to reopen listener after "
-                        "runtime reconfig; PoD disabled until next apply");
-            }
-        }
-    }
-
-    return OGS_OK;
+    return pod_restart_needed;
 }

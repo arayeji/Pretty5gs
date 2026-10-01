@@ -45,6 +45,7 @@ abts_suite *test_tai_list(abts_suite *suite);
 abts_suite *test_pfcp_buffer(abts_suite *suite);
 abts_suite *test_gtpc_select(abts_suite *suite);
 abts_suite *test_sbi_lock(abts_suite *suite);
+abts_suite *test_smf_shard(abts_suite *suite);
 
 const struct testlist {
     abts_suite *(*func)(abts_suite *suite);
@@ -64,8 +65,9 @@ const struct testlist {
     {test_tai_list},
     {test_pfcp_buffer},
     {test_gtpc_select},
-    /* last: enables the process-wide SBI lock */
+    /* the last two flip process-wide switches: SBI lock, worker shards */
     {test_sbi_lock},
+    {test_smf_shard},
     {NULL},
 };
 

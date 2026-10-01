@@ -316,6 +316,31 @@ int ogs_gtp2_rx_reply_shard(const void *data, size_t len)
             ((1u << OGS_WORKER_ID_BITS) - 1));
 }
 
+int ogs_gtp1_rx_reply_shard(const void *data, size_t len)
+{
+    const ogs_gtp1_header_t *h = data;
+    uint32_t xid;
+    ogs_gtp_xact_stage_t stage;
+
+    if (!ogs_worker_shards_active())
+        return -1;
+    if (!data || len < OGS_GTPV1C_HEADER_LEN)
+        return -1;
+    if (h->version != 1 || !h->s)
+        return -1;
+
+    xid = OGS_GTP1_SQN_TO_XID(h->sqn);
+    stage = ogs_gtp1_xact_get_stage(h->type, xid);
+    if (stage != GTP_XACT_INTERMEDIATE_STAGE &&
+        stage != GTP_XACT_FINAL_STAGE)
+        return -1;
+
+    /* xact_next_xid(): GTPv1 xid space 0..0xffff split into
+     * 2^OGS_WORKER_ID_BITS per-shard windows */
+    return (int)((xid >> (16 - OGS_WORKER_ID_BITS)) &
+            ((1u << OGS_WORKER_ID_BITS) - 1));
+}
+
 static void ogs_gtp_xact_log_state(
         const ogs_gtp_xact_t *xact, uint8_t type, const char *why)
 {

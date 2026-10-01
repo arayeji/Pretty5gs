@@ -184,10 +184,20 @@ bool ogs_sbi_server_send_rspmem_persistent(
     return rc;
 }
 
+static ogs_sbi_server_send_hook_f server_send_hook;
+
+void ogs_sbi_server_set_send_hook(ogs_sbi_server_send_hook_f hook)
+{
+    server_send_hook = hook;
+}
+
 bool ogs_sbi_server_send_response(
         ogs_sbi_stream_t *stream, ogs_sbi_response_t *response)
 {
     bool rc;
+
+    if (server_send_hook && server_send_hook(stream, response))
+        return true;
 
     ogs_sbi_lock();
     rc = ogs_sbi_server_actions.send_response(stream, response);

@@ -38,7 +38,6 @@ bool smf_nsmf_handle_create_sm_context(
     ogs_nas_5gsm_header_t *gsm_header = NULL;
     ogs_pkbuf_t *n1smbuf = NULL;
 
-    ogs_sbi_client_t *client = NULL;
     OpenAPI_uri_scheme_e scheme = OpenAPI_uri_scheme_NULL;
     char *fqdn = NULL;
     uint16_t fqdn_port = 0;
@@ -309,21 +308,14 @@ bool smf_nsmf_handle_create_sm_context(
         ogs_strdup(SmContextCreateData->sm_context_status_uri);
     ogs_assert(sess->sm_context_status_uri);
 
-    client = ogs_sbi_client_find(scheme, fqdn, fqdn_port, addr, addr6);
-    if (!client) {
-        ogs_debug("%s: ogs_sbi_client_add()", OGS_FUNC);
-        client = ogs_sbi_client_add(scheme, fqdn, fqdn_port, addr, addr6);
-        if (!client) {
-            ogs_error("%s: ogs_sbi_client_add() failed", OGS_FUNC);
+    if (!smf_sbi_setup_client(&sess->namf.client,
+                scheme, fqdn, fqdn_port, addr, addr6)) {
+        ogs_free(fqdn);
+        ogs_freeaddrinfo(addr);
+        ogs_freeaddrinfo(addr6);
 
-            ogs_free(fqdn);
-            ogs_freeaddrinfo(addr);
-            ogs_freeaddrinfo(addr6);
-
-            return false;
-        }
+        return false;
     }
-    OGS_SBI_SETUP_CLIENT(&sess->namf, client);
 
     ogs_free(fqdn);
     ogs_freeaddrinfo(addr);
@@ -443,21 +435,14 @@ bool smf_nsmf_handle_create_sm_context(
             return OGS_ERROR;
         }
 
-        client = ogs_sbi_client_find(scheme, fqdn, fqdn_port, addr, addr6);
-        if (!client) {
-            ogs_debug("%s: ogs_sbi_client_add()", OGS_FUNC);
-            client = ogs_sbi_client_add(scheme, fqdn, fqdn_port, addr, addr6);
-            if (!client) {
-                ogs_error("%s: ogs_sbi_client_add() failed", OGS_FUNC);
+        if (!smf_sbi_setup_client(&sess->h_smf.client,
+                    scheme, fqdn, fqdn_port, addr, addr6)) {
+            ogs_free(fqdn);
+            ogs_freeaddrinfo(addr);
+            ogs_freeaddrinfo(addr6);
 
-                ogs_free(fqdn);
-                ogs_freeaddrinfo(addr);
-                ogs_freeaddrinfo(addr6);
-
-                return OGS_ERROR;
-            }
+            return OGS_ERROR;
         }
-        OGS_SBI_SETUP_CLIENT(&sess->h_smf, client);
 
         ogs_free(fqdn);
         ogs_freeaddrinfo(addr);
@@ -1254,7 +1239,6 @@ bool smf_nsmf_handle_create_data_in_hsmf(
         *pdu_session_establishment_request = NULL;
     ogs_nas_ssc_mode_t *ssc_mode = NULL;
 
-    ogs_sbi_client_t *client = NULL;
     OpenAPI_uri_scheme_e scheme = OpenAPI_uri_scheme_NULL;
     char *fqdn = NULL;
     uint16_t fqdn_port = 0;
@@ -1561,21 +1545,14 @@ bool smf_nsmf_handle_create_data_in_hsmf(
         ogs_strdup(PduSessionCreateData->vsmf_pdu_session_uri);
     ogs_assert(sess->vsmf_pdu_session_uri);
 
-    client = ogs_sbi_client_find(scheme, fqdn, fqdn_port, addr, addr6);
-    if (!client) {
-        ogs_debug("%s: ogs_sbi_client_add()", OGS_FUNC);
-        client = ogs_sbi_client_add(scheme, fqdn, fqdn_port, addr, addr6);
-        if (!client) {
-            ogs_error("%s: ogs_sbi_client_add() failed", OGS_FUNC);
+    if (!smf_sbi_setup_client(&sess->v_smf.client,
+                scheme, fqdn, fqdn_port, addr, addr6)) {
+        ogs_free(fqdn);
+        ogs_freeaddrinfo(addr);
+        ogs_freeaddrinfo(addr6);
 
-            ogs_free(fqdn);
-            ogs_freeaddrinfo(addr);
-            ogs_freeaddrinfo(addr6);
-
-            return false;
-        }
+        return false;
     }
-    OGS_SBI_SETUP_CLIENT(&sess->v_smf, client);
 
     ogs_free(fqdn);
     ogs_freeaddrinfo(addr);
@@ -1703,7 +1680,6 @@ bool smf_nsmf_handle_created_data_in_vsmf(
         ogs_sbi_header_t header;
 
         bool rc;
-        ogs_sbi_client_t *client = NULL;
         OpenAPI_uri_scheme_e scheme = OpenAPI_uri_scheme_NULL;
         char *fqdn = NULL;
         uint16_t fqdn_port = 0;
@@ -2042,24 +2018,19 @@ bool smf_nsmf_handle_created_data_in_vsmf(
             return false;
         }
 
-        client = ogs_sbi_client_find(scheme, fqdn, fqdn_port, addr, addr6);
-        if (!client) {
-            ogs_debug("[%s:%d] ogs_sbi_client_add()", smf_ue->supi, sess->psi);
-            client = ogs_sbi_client_add(scheme, fqdn, fqdn_port, addr, addr6);
-            if (!client) {
-                ogs_error("[%s:%d] ogs_sbi_client_add() failed",
-                        smf_ue->supi, sess->psi);
+        if (!smf_sbi_setup_client(&sess->pdu_session.client,
+                    scheme, fqdn, fqdn_port, addr, addr6)) {
+            ogs_error("[%s:%d] smf_sbi_setup_client() failed",
+                    smf_ue->supi, sess->psi);
 
-                ogs_sbi_header_free(&header);
+            ogs_sbi_header_free(&header);
 
-                ogs_free(fqdn);
-                ogs_freeaddrinfo(addr);
-                ogs_freeaddrinfo(addr6);
+            ogs_free(fqdn);
+            ogs_freeaddrinfo(addr);
+            ogs_freeaddrinfo(addr6);
 
-                return false;
-            }
+            return false;
         }
-        OGS_SBI_SETUP_CLIENT(&sess->pdu_session, client);
 
         ogs_free(fqdn);
         ogs_freeaddrinfo(addr);
@@ -2660,12 +2631,7 @@ bool smf_nsmf_handle_update_data_in_vsmf(
             if (sess->establishment_accept_sent == true) {
                 smf_namf_comm_send_n1_n2_message_transfer(sess, stream, &param);
             } else {
-                if (sess->pending_modification_xact)
-                    ogs_sbi_xact_remove(sess->pending_modification_xact);
-
-                sess->pending_modification_xact =
-                    smf_namf_comm_create_n1_n2_message_xact(
-                            sess, stream, &param);
+                smf_namf_comm_set_pending_modification(sess, stream, &param);
             }
         } else if (sess->nsmf_param.request_indication ==
                 OpenAPI_request_indication_UE_REQ_PDU_SES_MOD) {

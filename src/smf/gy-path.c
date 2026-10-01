@@ -21,6 +21,7 @@
 
 #include "fd-path.h"
 #include "smf-trace.h"
+#include "smf-workers.h"
 
 static struct session_handler *smf_gy_reg = NULL;
 static struct disp_hdl *hdl_gy_fb = NULL;
@@ -1294,14 +1295,13 @@ static void smf_gy_cca_cb(void *data, struct msg **msg)
         else
             e->gtp_xact_id = sess_data->xact_data[req_slot].id;
 
-        rv = ogs_queue_push(ogs_app()->queue, e);
+        rv = smf_event_post_to_sess_owner(sess, e);
         if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
+            ogs_error("smf_event_post_to_sess_owner() failed:%d", (int)rv);
             ogs_event_free(e);
             error++;
             goto cleanup;
         } else {
-            ogs_pollset_notify(ogs_app()->pollset);
             /* Transfer ownership of gy_message to event */
             gy_message = NULL;
         }
@@ -1455,14 +1455,13 @@ static int smf_gy_rar_cb(struct msg **msg, struct avp *avp,
 
     e->sess_id = sess->id;
     e->gy_message = gy_message;
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = smf_event_post_to_sess_owner(sess, e);
     if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        ogs_error("smf_event_post_to_sess_owner() failed:%d", (int)rv);
         ogs_event_free(e);
         result_code = OGS_DIAM_OUT_OF_SPACE;
         goto error_out;
     } else {
-        ogs_pollset_notify(ogs_app()->pollset);
         /* Transfer ownership of gy_message to event */
         gy_message = NULL;
     }

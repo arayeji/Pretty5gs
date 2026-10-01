@@ -277,6 +277,13 @@ static void smf_reload_session_sync(ogs_yaml_iter_t *smf_iter)
     ogs_pfcp_subnet_t *subnet = NULL, *next = NULL;
     char ip[OGS_ADDRSTRLEN];
     int removed = 0;
+    uint8_t prefixlen;
+
+    /*
+     * Shard workers allocate UE IPs from these subnets concurrently:
+     * the "no IPs allocated" test and the removal must be one step.
+     */
+    ogs_pfcp_object_lock();
 
     (void)smf_reload_session_add_only(smf_iter);
 
@@ -299,11 +306,14 @@ static void smf_reload_session_sync(ogs_yaml_iter_t *smf_iter)
             OGS_INET6_NTOP(&subnet->sub.sub[0], ip);
         else
             OGS_INET_NTOP(&subnet->sub.sub[0], ip);
+        prefixlen = subnet->prefixlen;
         ogs_pfcp_subnet_remove(subnet);
         removed++;
         smf_reload_lists_changed++;
-        ogs_reload_audit_note(" subnet removed %s/%u", ip, subnet->prefixlen);
+        ogs_reload_audit_note(" subnet removed %s/%u", ip, prefixlen);
     }
+
+    ogs_pfcp_object_unlock();
 
     if (removed > 0)
         ogs_reload_audit_note(" session pools synced (%d removed)", removed);
@@ -512,6 +522,8 @@ static int smf_reload_session_entry_add_only(
     subnet->selection_order = ogs_pfcp_entry_selection_order(
             *entry_idx, order_v);
     (*entry_idx)++;
+
+    ogs_pfcp_subnet_pool_generate(subnet);
 
     ogs_reload_audit_note(" subnet added %s/%s (dnn=%d)",
             ipstr, mask_or_numbits, dnn_seq_n > 0 ? dnn_seq_n :

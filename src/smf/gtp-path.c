@@ -43,38 +43,147 @@
 #include "smf-li.h"
 #include "smf-trace.h"
 #include "metrics.h"
+#include "smf-workers.h"
 
 static bool check_if_router_solicit(ogs_pkbuf_t *pkbuf);
 static void send_router_advertisement(smf_sess_t *sess, uint8_t *ip6_dst);
 
 static void bearer_timeout(ogs_gtp_xact_t *xact, void *data);
 
-static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
+/*
+ * Dedicated GTP-C RX helper (smf.gtpc_rx_thread). Not a protocol shard:
+ * it only reads, classifies and routes; it never parses into a context.
+ */
+static ogs_worker_t *gtpc_rx_worker = NULL;
+static uint64_t gtpc_rx_drop_count = 0;
+
+#define SMF_GTPC_RECV_BUDGET    512
+
+uint64_t smf_gtpc_rx_drops(void)
+{
+    return __atomic_load_n(&gtpc_rx_drop_count, __ATOMIC_RELAXED);
+}
+
+/*
+ * Pick the shard for a raw GTP-C datagram. Only the header (and the
+ * IMSI IE of a TEID-less create) is used; the shard re-checks ownership
+ * after the full parse (smf_worker_rehome_gtp2/1).
+ */
+static int smf_gtp_route(ogs_pkbuf_t *pkbuf, uint8_t gtp_ver)
+{
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN + 1];
+    uint32_t key = 0;
+    int shard;
+
+    if (!smf_workers_active())
+        return 0;
+
+    if (gtp_ver == 1) {
+        ogs_gtp1_header_t *h1 = (ogs_gtp1_header_t *)pkbuf->data;
+
+        if (h1->type == OGS_GTP1_ECHO_REQUEST_TYPE ||
+                h1->type == OGS_GTP1_ECHO_RESPONSE_TYPE)
+            return 0;
+
+        shard = ogs_gtp1_rx_reply_shard(pkbuf->data, pkbuf->len);
+        if (shard >= 0)
+            return smf_shard_clamp(shard, be16toh(h1->sqn));
+
+        if (h1->teid) {
+            key = be32toh(h1->teid);
+            return smf_shard_clamp(smf_shard_from_teid(key), key);
+        }
+
+        if (smf_gtpv1_peek_imsi_bcd(pkbuf, imsi_bcd,
+                    sizeof(imsi_bcd)) == OGS_OK) {
+            uint8_t imsi[OGS_MAX_IMSI_LEN];
+            int imsi_len = 0;
+
+            ogs_bcd_to_buffer(imsi_bcd, imsi, &imsi_len);
+            shard = smf_ue_owner_shard_by_imsi(imsi, imsi_len);
+            return shard >= 0 ? shard : smf_shard_for_new_imsi(imsi_bcd);
+        }
+        return 1;
+    } else {
+        ogs_gtp2_header_t *h2 = (ogs_gtp2_header_t *)pkbuf->data;
+        uint32_t sqn = h2->teid_presence ? h2->sqn : h2->sqn_only;
+
+        if (h2->type == OGS_GTP2_ECHO_REQUEST_TYPE ||
+                h2->type == OGS_GTP2_ECHO_RESPONSE_TYPE)
+            return 0;
+
+        /* Reply to OUR request: deliver to the thread holding the xact. */
+        shard = ogs_gtp2_rx_reply_shard(pkbuf->data, pkbuf->len);
+        if (shard >= 0)
+            return smf_shard_clamp(shard, OGS_GTP2_SQN_TO_XID(sqn));
+
+        if (h2->teid_presence && h2->teid &&
+                pkbuf->len >= OGS_GTPV2C_HEADER_LEN) {
+            key = be32toh(h2->teid);
+            /* An S11 CSR may carry a sibling PDN's TEID: same UE owner. */
+            return smf_shard_clamp(smf_shard_from_teid(key), key);
+        }
+
+        if (h2->type == OGS_GTP2_CREATE_SESSION_REQUEST_TYPE &&
+                smf_gtpv2_peek_imsi_bcd(pkbuf, imsi_bcd,
+                    sizeof(imsi_bcd)) == OGS_OK) {
+            uint8_t imsi[OGS_MAX_IMSI_LEN];
+            int imsi_len = 0;
+
+            ogs_bcd_to_buffer(imsi_bcd, imsi, &imsi_len);
+            shard = smf_ue_owner_shard_by_imsi(imsi, imsi_len);
+            return shard >= 0 ? shard : smf_shard_for_new_imsi(imsi_bcd);
+        }
+
+        key = OGS_GTP2_SQN_TO_XID(sqn);
+        return smf_shard_clamp(smf_shard_from_xid(key), key);
+    }
+}
+
+static int smf_gtpc_recv_one(ogs_sock_t *sock)
 {
     smf_event_t *e = NULL;
-    int rv;
+    int rv, shard;
     ssize_t size;
     ogs_pkbuf_t *pkbuf = NULL;
     ogs_sockaddr_t from;
     ogs_gtp_node_t *gnode = NULL;
+    smf_gtp_node_t *smf_gnode = NULL;
     uint8_t gtp_ver;
     char frombuf[OGS_ADDRSTRLEN];
 
-    ogs_assert(fd != INVALID_SOCKET);
+    ogs_assert(sock);
+    ogs_assert(sock->fd != INVALID_SOCKET);
 
     pkbuf = ogs_pkbuf_alloc(NULL, OGS_MAX_SDU_LEN);
     ogs_assert(pkbuf);
     ogs_pkbuf_put(pkbuf, OGS_MAX_SDU_LEN);
 
-    size = ogs_recvfrom(fd, pkbuf->data, pkbuf->len, 0, &from);
+    size = ogs_recvfrom(sock->fd, pkbuf->data, pkbuf->len, 0, &from);
     if (size <= 0) {
-        ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
-                "ogs_recvfrom() failed");
         ogs_pkbuf_free(pkbuf);
-        return;
+        if (size < 0 && ogs_socket_errno_would_block())
+            return 0;
+        if (size < 0)
+            ogs_log_message(OGS_LOG_ERROR, ogs_socket_errno,
+                    "ogs_recvfrom() failed");
+        return -1;
     }
 
     ogs_pkbuf_trim(pkbuf, size);
+
+    if (pkbuf->len < 8) {
+        ogs_warn("Rx short GTP-C datagram (%d bytes)", (int)pkbuf->len);
+        ogs_pkbuf_free(pkbuf);
+        return 1;
+    }
+
+    gtp_ver = ((ogs_gtp2_header_t *)pkbuf->data)->version;
+    if (gtp_ver != 1 && gtp_ver != 2) {
+        ogs_warn("Rx unexpected GTP version %u", gtp_ver);
+        ogs_pkbuf_free(pkbuf);
+        return 1;
+    }
 
     /*
      * Match SGW/SGSN by IP first. Some peers (and NAT) send GTP-C from
@@ -83,6 +192,7 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
      * while gtp_peers_active sat at 64). Refresh gnode->addr so replies
      * follow the latest source port.
      */
+    smf_peers_lock();
     gnode = ogs_gtp_node_find_by_addr(&smf_self()->sgw_s5c_list, &from);
     if (!gnode)
         gnode = ogs_gtp_node_find_by_addr_only(
@@ -92,86 +202,160 @@ static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
             memcpy(&gnode->addr, &from, sizeof(gnode->addr));
             gnode->addr.next = NULL;
         }
-        gnode->sock = data;
+        gnode->sock = sock;
         if (!gnode->data_ptr) {
             /* Peer existed without SMF wrapper (prior alloc failure / cleanup). */
             if (!smf_gtp_node_new(gnode)) {
+                smf_peers_unlock();
                 ogs_error("Failed to attach smf_gnode(%s:%u), "
                           "smf_gtp_node pool full (capacity=%llu); "
                           "ignoring msg",
                           OGS_ADDR(&from, frombuf), OGS_PORT(&from),
                           (unsigned long long)ogs_app()->pool.gtp_node);
                 ogs_pkbuf_free(pkbuf);
-                return;
+                return 1;
             }
         }
     } else {
         gnode = ogs_gtp_node_add_by_addr(&smf_self()->sgw_s5c_list, &from);
         if (!gnode) {
+            smf_peers_unlock();
             ogs_error("Failed to create new gnode(%s:%u), "
                       "libgtp node pool full (capacity=%llu); ignoring msg",
                       OGS_ADDR(&from, frombuf), OGS_PORT(&from),
                       (unsigned long long)ogs_app()->pool.gtp_node);
             ogs_pkbuf_free(pkbuf);
-            return;
+            return 1;
         }
-        gnode->sock = data;
+        gnode->sock = sock;
         if (!smf_gtp_node_new(gnode)) {
+            ogs_gtp_node_remove(&smf_self()->sgw_s5c_list, gnode);
+            smf_peers_unlock();
             ogs_error("Failed to create smf_gnode(%s:%u), "
                       "smf_gtp_node pool full (capacity=%llu) — "
                       "new peer IP (not just a new UDP port); ignoring msg",
                       OGS_ADDR(&from, frombuf), OGS_PORT(&from),
                       (unsigned long long)ogs_app()->pool.gtp_node);
-            ogs_gtp_node_remove(&smf_self()->sgw_s5c_list, gnode);
             ogs_pkbuf_free(pkbuf);
-            return;
+            return 1;
         }
         smf_metrics_inst_global_inc(SMF_METR_GLOB_GAUGE_GTP_PEERS_ACTIVE);
     }
+    smf_gnode = gnode->data_ptr;
+    smf_peers_unlock();
 
-    gtp_ver = ((ogs_gtp2_header_t *)pkbuf->data)->version;
-    switch (gtp_ver) {
-    case 1:
-        e = smf_event_new(SMF_EVT_GN_MESSAGE);
-        break;
-    case 2:
-        e = smf_event_new(SMF_EVT_S5C_MESSAGE);
-        break;
-    default:
-        ogs_warn("Rx unexpected GTP version %u", gtp_ver);
+    if (!smf_gnode) {
+        ogs_error("S5C/Gn RX without smf_gnode (%s:%u) — dropping ver[%u]",
+                  OGS_ADDR(&from, frombuf), OGS_PORT(&from), gtp_ver);
         ogs_pkbuf_free(pkbuf);
-        return;
+        return 1;
     }
-    ogs_assert(e);
-    e->gnode = gnode->data_ptr; /* smf_gtp_node_t */
-    if (!e->gnode) {
-        uint8_t msg_type = 0;
-        uint32_t teid = 0;
 
-        if (pkbuf->len >= 8) {
-            ogs_gtp2_header_t *h = (ogs_gtp2_header_t *)pkbuf->data;
-            msg_type = h->type;
-            if (gtp_ver == 2 && h->teid_presence && pkbuf->len >= 12)
-                teid = be32toh(h->teid);
-            else if (gtp_ver == 1 && pkbuf->len >= 8)
-                teid = be32toh(((ogs_gtp1_header_t *)pkbuf->data)->teid);
-        }
-        ogs_error("S5C/Gn RX without smf_gnode (%s:%u) — dropping "
-                  "ver[%u] type[%u] teid[0x%x]",
-                  OGS_ADDR(&from, frombuf), OGS_PORT(&from),
-                  gtp_ver, msg_type, teid);
-        ogs_pkbuf_free(pkbuf);
-        ogs_event_free(e);
-        return;
-    }
+    e = smf_event_new(gtp_ver == 1 ?
+            SMF_EVT_GN_MESSAGE : SMF_EVT_S5C_MESSAGE);
+    e->gnode = smf_gnode;
     e->pkbuf = pkbuf;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    shard = smf_gtp_route(pkbuf, gtp_ver);
+    rv = smf_event_push_shard(shard, e);
     if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        ogs_pkbuf_free(e->pkbuf);
-        ogs_event_free(e);
+        __atomic_fetch_add(&gtpc_rx_drop_count, 1, __ATOMIC_RELAXED);
+        return -1;
     }
+    return 1;
+}
+
+static void _gtpv1v2_c_recv_cb(short when, ogs_socket_t fd, void *data)
+{
+    ogs_sock_t *sock = data;
+    int budget = SMF_GTPC_RECV_BUDGET;
+
+    ogs_assert(fd != INVALID_SOCKET);
+    ogs_assert(sock);
+
+    while (budget-- > 0 && smf_gtpc_recv_one(sock) > 0)
+        ;
+}
+
+static void gtpc_rx_dispatch(ogs_worker_t *worker, void *data)
+{
+    (void)worker;
+    (void)data;
+}
+
+static void gtpc_rx_thread_init(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, _gtpv1v2_c_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list6, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, _gtpv1v2_c_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+
+    ogs_info("SMF GTP-C RX thread started");
+}
+
+static void gtpc_rx_thread_fini(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    (void)worker;
+
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+    ogs_list_for_each(&ogs_gtp_self()->gtpc_list6, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+}
+
+int smf_gtpc_rx_start(void)
+{
+    if (!smf_self()->gtpc_rx_thread)
+        return OGS_OK;
+    if (ogs_list_empty(&ogs_gtp_self()->gtpc_list) &&
+            ogs_list_empty(&ogs_gtp_self()->gtpc_list6))
+        return OGS_OK;
+
+    ogs_assert(!gtpc_rx_worker);
+
+    gtpc_rx_worker = ogs_worker_create(0, 64, 8, 64,
+            gtpc_rx_dispatch, NULL);
+    ogs_assert(gtpc_rx_worker);
+    ogs_worker_hooks(gtpc_rx_worker,
+            gtpc_rx_thread_init, gtpc_rx_thread_fini);
+    ogs_worker_set_name(gtpc_rx_worker, "smf-gtpc-rx");
+    ogs_worker_start(gtpc_rx_worker);
+
+    return OGS_OK;
+}
+
+void smf_gtpc_rx_stop(void)
+{
+    if (!gtpc_rx_worker)
+        return;
+
+    ogs_worker_destroy(gtpc_rx_worker);
+    gtpc_rx_worker = NULL;
+}
+
+bool smf_gtpc_rx_active(void)
+{
+    return gtpc_rx_worker != NULL;
 }
 
 static void _gtpv1_u_recv_cb(short when, ogs_socket_t fd, void *data)
@@ -253,41 +437,78 @@ static void _gtpv1_u_recv_cb(short when, ogs_socket_t fd, void *data)
     ogs_assert(ogs_pkbuf_pull(pkbuf, len));
 
     if (header_desc.type == OGS_GTPU_MSGTYPE_GPDU) {
-        smf_sess_t *sess = NULL;
         ogs_pfcp_far_t *far = NULL;
-
-        far = ogs_pfcp_far_find_by_teid(header_desc.teid);
-        if (!far) {
-            ogs_error("No FAR for TEID [%d]", header_desc.teid);
-            goto cleanup;
-        }
-
-        if (far->dst_if != OGS_PFCP_INTERFACE_CP_FUNCTION) {
-            ogs_error("Invalid Destination Interface [%d]", far->dst_if);
-            goto cleanup;
-        }
+        ogs_pool_id_t sess_id = OGS_INVALID_POOL_ID;
+        uint8_t dst_if = 0;
+        smf_event_t *e = NULL;
 
         if (header_desc.qos_flow_identifier) {
             ogs_error("QFI[%d] Found", header_desc.qos_flow_identifier);
             goto cleanup;
         }
 
-        ogs_assert(far->sess);
-        sess = SMF_SESS(far->sess);
-        ogs_assert(sess);
-
-        if (sess->ipv6 && check_if_router_solicit(pkbuf) == true) {
-            struct ip6_hdr *ip6_h = (struct ip6_hdr *)pkbuf->data;
-            ogs_assert(ip6_h);
-            send_router_advertisement(sess, ip6_h->ip6_src.s6_addr);
+        /*
+         * The FAR and its session belong to the owning shard; copy what
+         * we need under the PFCP object lock (FAR removal takes it too)
+         * and let the owner answer.
+         */
+        ogs_pfcp_object_lock();
+        far = ogs_pfcp_far_find_by_teid(header_desc.teid);
+        if (far) {
+            dst_if = far->dst_if;
+            if (far->sess) {
+                smf_sess_t *far_sess = SMF_SESS(far->sess);
+                sess_id = far_sess->id;
+            }
         }
+        ogs_pfcp_object_unlock();
+
+        if (!far) {
+            ogs_error("No FAR for TEID [%d]", header_desc.teid);
+            goto cleanup;
+        }
+
+        if (dst_if != OGS_PFCP_INTERFACE_CP_FUNCTION) {
+            ogs_error("Invalid Destination Interface [%d]", dst_if);
+            goto cleanup;
+        }
+
+        if (sess_id == OGS_INVALID_POOL_ID ||
+                check_if_router_solicit(pkbuf) != true)
+            goto cleanup;
+
+        e = smf_event_new(SMF_EVT_ROUTER_SOLICIT);
+        e->sess_id = sess_id;
+        e->pkbuf = pkbuf;
+        pkbuf = NULL;
+        smf_event_push_shard(smf_workers_active() ?
+                ogs_max(smf_sess_owner_shard_by_id(sess_id), 0) : 0, e);
     } else {
         ogs_error("[DROP] Invalid GTPU Type [%d]", header_desc.type);
         ogs_log_hexdump(OGS_LOG_ERROR, pkbuf->data, pkbuf->len);
     }
 
 cleanup:
-    ogs_pkbuf_free(pkbuf);
+    if (pkbuf)
+        ogs_pkbuf_free(pkbuf);
+}
+
+void smf_gtp_handle_router_solicit(smf_event_t *e)
+{
+    smf_sess_t *sess = NULL;
+    struct ip6_hdr *ip6_h = NULL;
+
+    ogs_assert(e);
+    ogs_assert(e->pkbuf);
+
+    sess = smf_sess_find_active_by_id(e->sess_id);
+    if (sess && sess->ipv6) {
+        ip6_h = (struct ip6_hdr *)e->pkbuf->data;
+        send_router_advertisement(sess, ip6_h->ip6_src.s6_addr);
+    }
+
+    ogs_pkbuf_free(e->pkbuf);
+    e->pkbuf = NULL;
 }
 
 int smf_gtp_open(void)
@@ -295,21 +516,28 @@ int smf_gtp_open(void)
     ogs_socknode_t *node = NULL;
     ogs_sock_t *sock = NULL;
 
+    /* With smf.gtpc_rx_thread the RX helper registers the polls. */
+    bool rx_offload = smf_self()->gtpc_rx_thread;
+
     ogs_list_for_each(&ogs_gtp_self()->gtpc_list, node) {
         sock = ogs_gtp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, _gtpv1v2_c_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!rx_offload) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, _gtpv1v2_c_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
     ogs_list_for_each(&ogs_gtp_self()->gtpc_list6, node) {
         sock = ogs_gtp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, _gtpv1v2_c_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!rx_offload) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, _gtpv1v2_c_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
 
     OGS_SETUP_GTPC_SERVER;

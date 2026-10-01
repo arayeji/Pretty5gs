@@ -23,6 +23,8 @@
 #include "pfcp-path.h"
 #include "smf-sm.h"
 #include "smf-trace.h"
+#include "s11-handler.h"
+#include "smf-workers.h"
 
 static void smf_ue_collision_clear(smf_ue_t *smf_ue)
 {
@@ -337,6 +339,25 @@ void smf_sess_collision_replace_complete(smf_sess_t *old_sess)
     old_sess->collision_replace = false;
     smf_sess_remove(old_sess);
 
+    if (smf_ue->collision_replace.bounce) {
+        smf_event_t *ne = smf_event_new(SMF_EVT_S5C_MESSAGE);
+        int shard = smf_ue->collision_replace.bounce_shard;
+
+        ne->gnode = smf_ue->collision_replace.bounce_gnode;
+        ne->pkbuf = pkbuf;
+        ne->xshard_done = true;
+        smf_ue->collision_replace.pkbuf = NULL;
+        smf_ue_collision_clear(smf_ue);
+
+        ogs_info("cross-shard collision replace done: Create handed back "
+                "to shard %d", shard);
+        smf_event_push_shard(shard, ne);
+
+        if (ogs_list_empty(&smf_ue->sess_list))
+            smf_ue_remove(smf_ue);
+        return;
+    }
+
     if (smf_ue->collision_replace.gtp2) {
         rv = ogs_gtp2_parse_msg(&gtp2_message, pkbuf);
         if (rv != OGS_OK) {
@@ -405,6 +426,71 @@ void smf_sess_collision_replace_complete(smf_sess_t *old_sess)
 
     ogs_fsm_dispatch(&new_sess->sm, &ev);
     smf_ue_collision_clear(smf_ue);
+}
+
+/*
+ * SMF_EVT_XSHARD_COLLISION on the shard owning the session that holds
+ * the static IPv4 requested by a Create Session Request whose UE lives
+ * on e->reply_shard. Release it (gracefully when the UPF has it, as the
+ * single-threaded collision replace does) and hand the untouched request
+ * back with xshard_done set. No GTP xact exists yet for the request.
+ */
+void smf_xshard_collision_release(smf_event_t *e)
+{
+    ogs_gtp2_message_t message;
+    smf_sess_t *old_sess = NULL;
+    smf_ue_t *old_ue = NULL;
+    smf_event_t *ne = NULL;
+
+    ogs_assert(e);
+    ogs_assert(e->pkbuf);
+
+    if (ogs_gtp2_parse_msg(&message, e->pkbuf) == OGS_OK &&
+            message.h.type == OGS_GTP2_CREATE_SESSION_REQUEST_TYPE)
+        old_sess = smf_sess_find_collision_by_ipv4_gtp2(&message);
+
+    if (old_sess && !smf_sess_owned_by_self(old_sess))
+        old_sess = NULL;    /* moved on meanwhile; requester re-checks */
+    if (old_sess && old_sess->s11_relay &&
+            !smf_s11_csr_is_s11(&message.create_session_request))
+        old_sess = NULL;    /* same exemption as the local path */
+
+    if (old_sess)
+        old_ue = smf_ue_find_active(old_sess->smf_ue_id);
+
+    if (old_sess && old_ue && !old_sess->s11_relay &&
+            !old_ue->collision_replace.pending &&
+            smf_sess_upf_established(old_sess)) {
+        e->gtp_xact_id = OGS_INVALID_POOL_ID;
+        if (smf_sess_collision_replace_begin(
+                    old_sess, old_ue, e, true, NULL)) {
+            old_ue->collision_replace.bounce = true;
+            old_ue->collision_replace.bounce_shard = e->reply_shard;
+            old_ue->collision_replace.bounce_gnode = e->gnode;
+            /* begin() parked its own copy */
+            ogs_pkbuf_free(e->pkbuf);
+            e->pkbuf = NULL;
+            return;
+        }
+    }
+
+    if (old_sess && old_ue && !old_sess->collision_replace) {
+        ogs_info("OLD Session Will Release [IMSI:%s,APN:%s] "
+                "(cross-shard static IP)",
+                old_ue->imsi_bcd, old_sess->session.name);
+        if (old_sess->upf_n4_seid)
+            smf_epc_pfcp_send_session_deletion_best_effort(old_sess);
+        smf_sess_remove(old_sess);
+        if (ogs_list_empty(&old_ue->sess_list))
+            smf_ue_remove(old_ue);
+    }
+
+    ne = smf_event_new(SMF_EVT_S5C_MESSAGE);
+    ne->gnode = e->gnode;
+    ne->pkbuf = e->pkbuf;
+    ne->xshard_done = true;
+    e->pkbuf = NULL;
+    smf_event_push_shard(e->reply_shard, ne);
 }
 
 void smf_sess_collision_on_pfcp_delete_timeout(smf_sess_t *sess)

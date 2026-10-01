@@ -325,6 +325,77 @@ void ogs_sbi_request_free(ogs_sbi_request_t *request)
     ogs_thread_mutex_unlock(&message_pool_mutex);
 }
 
+static bool http_hash_copy(ogs_hash_t *dst, ogs_hash_t *src)
+{
+    ogs_hash_index_t *hi;
+
+    for (hi = ogs_hash_first(src); hi; hi = ogs_hash_next(hi)) {
+        const char *key = ogs_hash_this_key(hi);
+        const char *val = ogs_hash_this_val(hi);
+        char *k = ogs_strdup(key), *v = val ? ogs_strdup(val) : NULL;
+
+        if (!k || (val && !v)) {
+            if (k) ogs_free(k);
+            if (v) ogs_free(v);
+            return false;
+        }
+        ogs_hash_set(dst, k, strlen(k), v);
+    }
+    return true;
+}
+
+ogs_sbi_request_t *ogs_sbi_request_copy(ogs_sbi_request_t *src)
+{
+    ogs_sbi_request_t *request = NULL;
+    int i;
+
+    ogs_assert(src);
+
+    request = ogs_sbi_request_new();
+    if (!request)
+        return NULL;
+
+    if (src->h.method && !(request->h.method = ogs_strdup(src->h.method)))
+        goto fail;
+    if (src->h.uri && !(request->h.uri = ogs_strdup(src->h.uri)))
+        goto fail;
+
+    if (!http_hash_copy(request->http.params, src->http.params) ||
+        !http_hash_copy(request->http.headers, src->http.headers))
+        goto fail;
+
+    if (src->http.content) {
+        request->http.content = ogs_malloc(src->http.content_length + 1);
+        if (!request->http.content)
+            goto fail;
+        memcpy(request->http.content,
+                src->http.content, src->http.content_length);
+        request->http.content[src->http.content_length] = 0;
+        request->http.content_length = src->http.content_length;
+    }
+
+    /* Parts parsed out of the multipart content are rebuilt on re-parse */
+    for (i = 0; !src->http.content && i < src->http.num_of_part; i++) {
+        ogs_sbi_part_t *s = &src->http.part[i], *d = &request->http.part[i];
+
+        request->http.num_of_part = i + 1;
+        if (s->content_id && !(d->content_id = ogs_strdup(s->content_id)))
+            goto fail;
+        if (s->content_type &&
+            !(d->content_type = ogs_strdup(s->content_type)))
+            goto fail;
+        if (s->pkbuf && !(d->pkbuf = ogs_pkbuf_copy(s->pkbuf)))
+            goto fail;
+    }
+
+    return request;
+
+fail:
+    ogs_error("ogs_sbi_request_copy() failed");
+    ogs_sbi_request_free(request);
+    return NULL;
+}
+
 void ogs_sbi_response_free(ogs_sbi_response_t *response)
 {
     ogs_assert(response);
@@ -1453,6 +1524,43 @@ void ogs_sbi_header_free(ogs_sbi_header_t *h)
     for (i = 0; i < OGS_SBI_MAX_NUM_OF_RESOURCE_COMPONENT &&
                         h->resource.component[i]; i++)
         ogs_free(h->resource.component[i]);
+}
+
+void ogs_sbi_header_clear_parsed(ogs_sbi_header_t *h)
+{
+    int i;
+    ogs_assert(h);
+
+    if (h->service.name) ogs_free(h->service.name);
+    h->service.name = NULL;
+    if (h->api.version) ogs_free(h->api.version);
+    h->api.version = NULL;
+
+    for (i = 0; i < OGS_SBI_MAX_NUM_OF_RESOURCE_COMPONENT &&
+                        h->resource.component[i]; i++) {
+        ogs_free(h->resource.component[i]);
+        h->resource.component[i] = NULL;
+    }
+}
+
+void ogs_sbi_http_clear_parsed_parts(ogs_sbi_http_message_t *http)
+{
+    int i;
+    ogs_assert(http);
+
+    if (!http->content)
+        return;
+
+    for (i = 0; i < http->num_of_part; i++) {
+        if (http->part[i].content_id)
+            ogs_free(http->part[i].content_id);
+        if (http->part[i].content_type)
+            ogs_free(http->part[i].content_type);
+        if (http->part[i].pkbuf)
+            ogs_pkbuf_free(http->part[i].pkbuf);
+        memset(&http->part[i], 0, sizeof(http->part[i]));
+    }
+    http->num_of_part = 0;
 }
 
 void ogs_sbi_http_hash_free(ogs_hash_t *hash)

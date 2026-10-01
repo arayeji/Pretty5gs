@@ -9,10 +9,14 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <pthread.h>
 
 static ogs_li_config_t smf_li_config;
 static ogs_li_target_set_t smf_li_targets;
 static bool smf_li_initialized = false;
+
+/* Admin thread edits the target set; every shard looks targets up. */
+static pthread_mutex_t smf_li_lock = PTHREAD_MUTEX_INITIALIZER;
 
 void smf_li_init(void)
 {
@@ -113,6 +117,7 @@ void smf_li_report_sess(smf_sess_t *sess, ogs_li_event_e event,
 {
     smf_ue_t *smf_ue = NULL;
     ogs_li_target_t *target = NULL;
+    ogs_li_target_t copy;
 
     if (!smf_li_initialized || !smf_li_config.enabled)
         return;
@@ -122,11 +127,16 @@ void smf_li_report_sess(smf_sess_t *sess, ogs_li_event_e event,
     if (!smf_ue || !smf_ue->imsi_bcd[0])
         return;
 
+    /* Copy out: the X2 POST blocks and the admin API may remove it. */
+    pthread_mutex_lock(&smf_li_lock);
     target = ogs_li_target_find_by_imsi(&smf_li_targets, smf_ue->imsi_bcd);
+    if (target)
+        copy = *target;
+    pthread_mutex_unlock(&smf_li_lock);
     if (!target)
         return;
 
-    smf_li_send_x2(target, event, detail);
+    smf_li_send_x2(&copy, event, detail);
 }
 
 int smf_admin_li_target(const ogs_metrics_query_t *q,
@@ -153,7 +163,13 @@ int smf_admin_li_target(const ogs_metrics_query_t *q,
             return 400;
         }
 
+        ogs_li_target_t copy;
+
+        pthread_mutex_lock(&smf_li_lock);
         target = ogs_li_target_add(&smf_li_targets, liid, imsi, msisdn);
+        if (target)
+            copy = *target;
+        pthread_mutex_unlock(&smf_li_lock);
         if (!target) {
             n = snprintf(body, body_cap,
                     "{\"error\":\"target pool full\"}\n");
@@ -163,7 +179,7 @@ int smf_admin_li_target(const ogs_metrics_query_t *q,
 
         n = snprintf(body, body_cap,
                 "{\"status\":\"active\",\"liid\":\"%s\",\"imsi\":\"%s\"}\n",
-                target->liid, target->imsi);
+                copy.liid, copy.imsi);
         *body_len = n > 0 ? (size_t)n : 0;
         return 200;
     }
@@ -171,10 +187,12 @@ int smf_admin_li_target(const ogs_metrics_query_t *q,
     if (!strcmp(action, "remove")) {
         bool removed = false;
 
+        pthread_mutex_lock(&smf_li_lock);
         if (liid)
             removed = ogs_li_target_remove_by_liid(&smf_li_targets, liid);
         else if (imsi)
             removed = ogs_li_target_remove_by_imsi(&smf_li_targets, imsi);
+        pthread_mutex_unlock(&smf_li_lock);
 
         if (!removed) {
             n = snprintf(body, body_cap,

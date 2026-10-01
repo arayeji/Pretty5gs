@@ -114,6 +114,16 @@ static void obj_unlock(void)
 #endif
 }
 
+void ogs_pfcp_object_lock(void)
+{
+    obj_lock();
+}
+
+void ogs_pfcp_object_unlock(void)
+{
+    obj_unlock();
+}
+
 static OGS_POOL(ogs_pfcp_node_pool, ogs_pfcp_node_t);
 
 static OGS_POOL(ogs_pfcp_far_pool, ogs_pfcp_far_t);
@@ -2782,12 +2792,11 @@ void ogs_pfcp_rule_remove_all(ogs_pfcp_pdr_t *pdr)
         ogs_pfcp_rule_remove(rule);
 }
 
-int ogs_pfcp_ue_pool_generate(void)
+static void subnet_pool_generate(ogs_pfcp_subnet_t *subnet)
 {
     int i, rv;
-    ogs_pfcp_subnet_t *subnet = NULL;
 
-    ogs_list_for_each(&self.subnet_list, subnet) {
+    {
         int maxbytes = 0;
         int lastindex = 0;
         uint32_t start[4], end[4], broadcast[4];
@@ -2803,7 +2812,7 @@ int ogs_pfcp_ue_pool_generate(void)
             lastindex = 1;
         } else {
             /* subnet->family might be AF_UNSPEC. So, skip it */
-            continue;
+            return;
         }
 
         for (i = 0; i < 4; i++) {
@@ -2875,11 +2884,58 @@ int ogs_pfcp_ue_pool_generate(void)
         }
         subnet->pool.size = subnet->pool.avail = poolindex;
     }
+}
+
+int ogs_pfcp_ue_pool_generate(void)
+{
+    ogs_pfcp_subnet_t *subnet = NULL;
+
+    obj_lock();
+    ogs_list_for_each(&self.subnet_list, subnet) {
+        if (subnet->pool_ready)
+            continue;
+        subnet_pool_generate(subnet);
+        subnet->pool_ready = true;
+    }
+    obj_unlock();
 
     return OGS_OK;
 }
 
+int ogs_pfcp_subnet_pool_generate(ogs_pfcp_subnet_t *subnet)
+{
+    ogs_assert(subnet);
+
+    obj_lock();
+    if (!subnet->pool_ready) {
+        subnet_pool_generate(subnet);
+        subnet->pool_ready = true;
+    }
+    obj_unlock();
+
+    return OGS_OK;
+}
+
+static ogs_pfcp_ue_ip_t *ue_ip_alloc_locked(
+        uint8_t *cause_value, int family, const char *dnn, uint8_t *addr);
+
+/*
+ * Subnet pools are shared by every SMF/UPF shard worker, and subnet
+ * selection walks the subnet list: allocate/free under the object lock.
+ */
 ogs_pfcp_ue_ip_t *ogs_pfcp_ue_ip_alloc(
+        uint8_t *cause_value, int family, const char *dnn, uint8_t *addr)
+{
+    ogs_pfcp_ue_ip_t *ue_ip = NULL;
+
+    obj_lock();
+    ue_ip = ue_ip_alloc_locked(cause_value, family, dnn, addr);
+    obj_unlock();
+
+    return ue_ip;
+}
+
+static ogs_pfcp_ue_ip_t *ue_ip_alloc_locked(
         uint8_t *cause_value, int family, const char *dnn, uint8_t *addr)
 {
     ogs_pfcp_subnet_t *subnet = NULL;
@@ -2965,7 +3021,9 @@ void ogs_pfcp_ue_ip_free(ogs_pfcp_ue_ip_t *ue_ip)
     if (ue_ip->static_ip) {
         ogs_free(ue_ip);
     } else {
+        obj_lock();
         ogs_pool_free(&subnet->pool, ue_ip);
+        obj_unlock();
     }
 }
 
@@ -3168,7 +3226,9 @@ static ogs_pfcp_subnet_t *subnet_add_with_dnns(
         ogs_pool_init(&subnet->pool, pool_size);
     }
 
+    obj_lock();
     ogs_list_add(&self.subnet_list, subnet);
+    obj_unlock();
 
     return subnet;
 }
@@ -3205,6 +3265,7 @@ void ogs_pfcp_subnet_remove(ogs_pfcp_subnet_t *subnet)
 {
     ogs_assert(subnet);
 
+    obj_lock();
     ogs_list_remove(&self.subnet_list, subnet);
 
     ogs_pool_final(&subnet->pool);
@@ -3214,6 +3275,7 @@ void ogs_pfcp_subnet_remove(ogs_pfcp_subnet_t *subnet)
     subnet->num_of_dnn = 0;
 
     ogs_pool_free(&ogs_pfcp_subnet_pool, subnet);
+    obj_unlock();
 }
 
 void ogs_pfcp_subnet_remove_all(void)
@@ -3368,15 +3430,17 @@ ogs_pfcp_subnet_t *ogs_pfcp_find_subnet(int family)
 
     ogs_assert(family == AF_INET || family == AF_INET6);
 
+    obj_lock();
     ogs_list_for_each(&self.subnet_list, subnet) {
         if ((subnet->family == AF_UNSPEC || subnet->family == family) &&
             (subnet->num_of_dnn == 0) &&
-            subnet->pool.avail &&
+            subnet->pool_ready && subnet->pool.avail &&
             subnet->selection_order < best_order) {
             best_order = subnet->selection_order;
             best = subnet;
         }
     }
+    obj_unlock();
 
     return best;
 }
@@ -3390,15 +3454,17 @@ ogs_pfcp_subnet_t *ogs_pfcp_find_subnet_by_dnn(int family, const char *dnn)
     ogs_assert(dnn);
     ogs_assert(family == AF_INET || family == AF_INET6);
 
+    obj_lock();
     ogs_list_for_each(&self.subnet_list, subnet) {
         if ((subnet->family == AF_UNSPEC || subnet->family == family) &&
             subnet_matches_ue_dnn(subnet, dnn) &&
-            subnet->pool.avail &&
+            subnet->pool_ready && subnet->pool.avail &&
             subnet->selection_order < best_order) {
             best_order = subnet->selection_order;
             best = subnet;
         }
     }
+    obj_unlock();
 
     return best;
 }

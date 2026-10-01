@@ -186,11 +186,85 @@ amf:
    PFCP peer list mutex in `lib/pfcp/context.c`.
 4. **Admin / SIGHUP / drain / orphan purge** fan-out to every shard.
 
+## Done (SMF shards, EPC)
+
+Same model as SGW-C: one process-global context, UEs owned by shards
+(0 = `smf-main`, 1..N = `smf-w0..`), owner in the top 4 bits of every
+local TEID / SEID and in the xid window of every GTP / PFCP request.
+
+1. **`src/smf/smf-workers.c`** — `smf.workers` (0..15), worker FSM =
+   `smf_state_operational`, per-shard xact pools and timer managers,
+   `smf_event_push_shard` / `fanout` / `fanout_others`. Pure routing
+   math and raw IMSI peeks live in `smf-shard.c` (unit-tested).
+2. **RX routers** (`smf_gtp_route`, `smf_pfcp_route`) — replies by xid
+   window, requests by TEID / SEID, new UEs by IMSI (existing owner
+   first, else hash); Echo, PFCP association / heartbeat / node report
+   and PFD stay on main. `smf.gtpc_rx_thread` / `smf.pfcp_rx_thread`
+   move recv off `smf-main` (`smf-gtpc-rx` / `smf-pfcp-rx`).
+3. **Rehome guard** after parse and before `xact_receive`: a message the
+   router misplaced is re-posted to the owner, never handled locally.
+   Create Session with a static IP held by another shard runs the
+   **cross-shard collision handshake**: the IP owner releases (graceful
+   replace or hard remove) and bounces the CSR back with `xshard_done`.
+4. **PFCP session messages** leave the node FSM: session establishment /
+   modification / deletion / report run on the session owner;
+   restoration and UPF reselection fan out (`SMF_EVT_N4_RESTORE`).
+5. **Diameter** Gx / Gy / S6b answers and RARs go straight from the
+   freeDiameter thread to the session owner
+   (`smf_event_post_to_sess_owner`); Gx peer reconnect fans out
+   `SMF_EVT_GX_RESTORE`.
+6. **RADIUS** — per-thread UDP transports (blocking exchanges never share
+   a socket), config under a writer-preferring rwlock for hot reload,
+   PoD verified and ACKed on main, teardown on the owner
+   (`SMF_EVT_RADIUS_POD`, watchdog on the owner's timer manager).
+7. **Fan-outs** — SGW restart purge (cutoff protects fresh sessions and
+   pending collision replaces), orphan sweep (per-shard gauge slots),
+   maintenance drain (per-shard batches, aggregated status).
+8. **Shared state** — context lock (`ogs_metrics_dump_lock`, recursive)
+   around UE/session hashes and `acct_session_id`; peers lock for gnode
+   lookup / recovery; metrics get-or-create, CDR writer, LI targets each
+   serialized.
+9. **`/admin/queues`** — main + shard depths, RX drops, event lag,
+   kernel RX backlog, verdict.
+10. **Tests** — `tests/unit/smf-shard-test.c`; `configs/load.yaml.in`
+    runs the EPC load test with `smf.workers: 4` and both RX threads.
+
+11. **5GC relay** (`src/smf/sbi-relay.c`) — SBI sockets, clients, xacts
+    and their timers stay on `smf-main`; 5G sessions are sharded like
+    EPC ones (new UE by SUPI hash, IMSI SUPIs hash like an EPC attach,
+    an existing UE keeps its owner, so EPC interworking lands on the
+    same shard).
+    - Server requests: main parses, picks the owner (SM context /
+      PDU session create by SUPI, modify / release / SM policy notify
+      by ref) and posts a copy (`ogs_sbi_request_copy`). The worker's
+      response goes back through `ogs_sbi_server_set_send_hook`
+      (`SMF_EVT_SBI_SEND`); main sends it if the stream (id + pointer)
+      still exists.
+    - Client responses: main finishes the xact, then moves the response
+      to the owner, which parses it again.
+    - Worker → main: `smf_main_call()` runs xact create / discover /
+      send, N1N2 transfer, pending modification, status notify, client
+      setup and SBI teardown synchronously on main (abandoned cleanly
+      on shutdown).
+    - 5GSM / NGAP / session release events are rehomed to the owner.
+    - `lib/sbi` request / response, nghttp2 stream and MHD session pools
+      are mutex-protected.
+12. **Thread-safety follow-ups** — trace binding is captured with every
+    cross-shard event and restored on the receiving thread; P-CSCF
+    round-robin index is atomic; subnets added at reload / by the admin
+    watcher get their UE IP pool generated; a RADIUS reload is installed
+    with `trywrlock` and retried from a main timer while shards back off
+    new reads, so main never blocks waiting for in-flight exchanges.
+
+Verified on WSL with `smf.workers: 2`: registration, slice, handover,
+transfer, VoNR and VoLTE (minus `rx-test`, which hangs without workers
+too) suites, plus the EPC load test with `workers: 4`.
+
 ## Remaining
 
 1. **Metrics** — per-PLMN/per-PGW gauges from workers: label by shard
    or aggregate via atomics (prom counters already locked).
-2. **Tests** — attach/VoLTE with `workers: 2`; optional TSAN job.
+2. **Tests** — optional TSAN job.
 3. **Admin session list dump** — still walks the calling thread's UE
    list; use IMSI-routed detach / atomic `sgwc_session_count()` for ops.
 4. **MME Stage C** — full UE sharding (S1AP RX offload already exists).
@@ -247,4 +321,16 @@ amf:
   Watch main vs `gtpc-rx`/`pfcp-rx`/`sgwc-w*` CPU, GTP/PFCP xact
   timeouts, and drain/SIGHUP. `inbound_roam.gtpc.teid_offset` must
   stay below 2^28 when workers > 0.
+- SMF staging trial (after SGW-C soaks):
+
+  ```yaml
+  smf:
+    workers: 4           # 0 = off (default); max 15
+    gtpc_rx_thread: true
+    pfcp_rx_thread: true
+  ```
+
+  Watch `smf-main` vs `smf-gtpc-rx`/`smf-pfcp-rx`/`smf-w*` CPU,
+  `/admin/queues`, GTP/PFCP xact timeouts, Gx CCA latency, RADIUS
+  accounting, and a UPF / SGW restart (restoration + purge fan-outs).
 - Then production during a night window with a rollback binary staged.

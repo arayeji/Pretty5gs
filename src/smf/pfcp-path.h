@@ -29,6 +29,15 @@ extern "C" {
 int smf_pfcp_open(void);
 void smf_pfcp_close(void);
 
+/* smf.pfcp_rx_thread: PFCP socket reads + parse + shard routing off main. */
+int smf_pfcp_rx_start(void);
+void smf_pfcp_rx_stop(void);
+bool smf_pfcp_rx_active(void);
+uint64_t smf_pfcp_rx_drops(void);
+
+/* Peers learned by the RX helper get their node FSM on main. */
+void smf_pfcp_node_ensure_fsm(ogs_pfcp_node_t *node);
+
 int smf_pfcp_send_modify_list(
         smf_sess_t *sess,
         ogs_pkbuf_t *(*modify_list)(

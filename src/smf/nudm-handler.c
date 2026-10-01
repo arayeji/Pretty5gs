@@ -427,7 +427,6 @@ bool smf_nudm_sdm_handle_subscription(smf_sess_t *sess, ogs_sbi_stream_t *stream
     ogs_sbi_message_t message;
 
     bool rc;
-    ogs_sbi_client_t *client = NULL;
     OpenAPI_uri_scheme_e scheme = OpenAPI_uri_scheme_NULL;
     char *fqdn = NULL;
     uint16_t fqdn_port = 0;
@@ -470,25 +469,19 @@ bool smf_nudm_sdm_handle_subscription(smf_sess_t *sess, ogs_sbi_stream_t *stream
         goto cleanup;
     }
 
-    client = ogs_sbi_client_find(scheme, fqdn, fqdn_port, addr, addr6);
-    if (!client) {
-        ogs_debug("[%s] ogs_sbi_client_add()", smf_ue->supi);
-        client = ogs_sbi_client_add(scheme, fqdn, fqdn_port, addr, addr6);
-        if (!client) {
-            strerror = ogs_msprintf("[%s] ogs_sbi_client_add() failed",
-                    smf_ue->supi);
+    if (!smf_sbi_setup_client(&sess->data_change_subscription.client,
+                scheme, fqdn, fqdn_port, addr, addr6)) {
+        strerror = ogs_msprintf("[%s] smf_sbi_setup_client() failed",
+                smf_ue->supi);
 
-            ogs_sbi_header_free(&header);
+        ogs_sbi_header_free(&header);
 
-            ogs_free(fqdn);
-            ogs_freeaddrinfo(addr);
-            ogs_freeaddrinfo(addr6);
+        ogs_free(fqdn);
+        ogs_freeaddrinfo(addr);
+        ogs_freeaddrinfo(addr6);
 
-            goto cleanup;
-        }
+        goto cleanup;
     }
-
-    OGS_SBI_SETUP_CLIENT(&sess->data_change_subscription, client);
 
     ogs_free(fqdn);
     ogs_freeaddrinfo(addr);

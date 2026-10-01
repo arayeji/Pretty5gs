@@ -20,6 +20,8 @@
 #include "context.h"
 #include "ngap-path.h"
 #include "sbi-path.h"
+#include "sbi-relay.h"
+#include "smf-workers.h"
 
 int smf_sbi_open(void)
 {
@@ -93,7 +95,62 @@ bool smf_sbi_send_request(
     return ogs_sbi_send_request_to_nf_instance(nf_instance, xact);
 }
 
+static int discover_and_send(
+        ogs_sbi_service_type_e service_type,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(smf_sess_t *sess, void *data),
+        smf_sess_t *sess, ogs_sbi_stream_t *stream, int state, void *data);
+
+typedef struct {
+    ogs_sbi_service_type_e service_type;
+    ogs_sbi_discovery_option_t *discovery_option;
+    ogs_sbi_request_t *(*build)(smf_sess_t *sess, void *data);
+    smf_sess_t *sess;
+    ogs_sbi_stream_t *stream;
+    int state;
+    void *data;
+    int rv;
+} discover_and_send_call_t;
+
+static void discover_and_send_on_main(void *arg)
+{
+    discover_and_send_call_t *c = arg;
+
+    c->rv = discover_and_send(c->service_type, c->discovery_option,
+            c->build, c->sess, c->stream, c->state, c->data);
+}
+
+/*
+ * xacts, their timers and the clients live on smf-main. The build
+ * callback runs there too, synchronously, while the owner waits.
+ */
 int smf_sbi_discover_and_send(
+        ogs_sbi_service_type_e service_type,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(smf_sess_t *sess, void *data),
+        smf_sess_t *sess, ogs_sbi_stream_t *stream, int state, void *data)
+{
+    discover_and_send_call_t c = {
+        .service_type = service_type,
+        .discovery_option = discovery_option,
+        .build = build,
+        .sess = sess,
+        .stream = stream,
+        .state = state,
+        .data = data,
+        .rv = OGS_ERROR,
+    };
+
+    if (smf_main_call(discover_and_send_on_main, &c) != OGS_OK) {
+        ogs_error("smf_sbi_discover_and_send(): SMF is shutting down");
+        if (discovery_option)
+            ogs_sbi_discovery_option_free(discovery_option);
+        return OGS_RETRY;
+    }
+    return c.rv;
+}
+
+static int discover_and_send(
         ogs_sbi_service_type_e service_type,
         ogs_sbi_discovery_option_t *discovery_option,
         ogs_sbi_request_t *(*build)(smf_sess_t *sess, void *data),
@@ -236,7 +293,7 @@ int smf_sbi_discover_and_send(
     return OGS_OK;
 }
 
-ogs_sbi_xact_t *smf_namf_comm_create_n1_n2_message_xact(
+static ogs_sbi_xact_t *create_n1_n2_message_xact(
         smf_sess_t *sess, ogs_sbi_stream_t *stream,
         smf_n1_n2_message_transfer_param_t *param)
 {
@@ -278,21 +335,21 @@ ogs_sbi_xact_t *smf_namf_comm_create_n1_n2_message_xact(
     return xact;
 }
 
-void smf_namf_comm_send_n1_n2_message_transfer(
-        smf_sess_t *sess, ogs_sbi_stream_t *stream,
-        smf_n1_n2_message_transfer_param_t *param)
+typedef struct {
+    smf_sess_t *sess;
+    ogs_sbi_stream_t *stream;
+    smf_n1_n2_message_transfer_param_t *param;
+} n1_n2_call_t;
+
+static void send_n1_n2_message_transfer_on_main(void *arg)
 {
+    n1_n2_call_t *c = arg;
     ogs_sbi_xact_t *xact = NULL;
     int r;
 
-    ogs_assert(sess);
-    ogs_assert(param);
-    ogs_assert(param->state);
-    ogs_assert(param->n1smbuf || param->n2smbuf);
-
-    xact = smf_namf_comm_create_n1_n2_message_xact(sess, stream, param);
+    xact = create_n1_n2_message_xact(c->sess, c->stream, c->param);
     if (!xact) {
-        ogs_error("smf_namf_comm_create_n1_n2_message_xact() failed");
+        ogs_error("create_n1_n2_message_xact() failed");
         return;
     }
 
@@ -302,6 +359,99 @@ void smf_namf_comm_send_n1_n2_message_transfer(
         ogs_sbi_xact_remove(xact);
         ogs_assert(r != OGS_ERROR);
     }
+}
+
+void smf_namf_comm_send_n1_n2_message_transfer(
+        smf_sess_t *sess, ogs_sbi_stream_t *stream,
+        smf_n1_n2_message_transfer_param_t *param)
+{
+    n1_n2_call_t c = { .sess = sess, .stream = stream, .param = param };
+
+    ogs_assert(sess);
+    ogs_assert(param);
+    ogs_assert(param->state);
+    ogs_assert(param->n1smbuf || param->n2smbuf);
+
+    if (smf_main_call(send_n1_n2_message_transfer_on_main, &c) != OGS_OK)
+        ogs_error("N1N2 message transfer dropped: SMF is shutting down");
+}
+
+static void pending_modification_clear_on_main(void *arg)
+{
+    smf_sess_t *sess = arg;
+    ogs_sbi_xact_t *xact = NULL;
+
+    if (sess->pending_modification_xact_id >= OGS_MIN_POOL_ID &&
+        sess->pending_modification_xact_id <= OGS_MAX_POOL_ID)
+        xact = ogs_sbi_xact_find_by_id(sess->pending_modification_xact_id);
+    if (xact)
+        ogs_sbi_xact_remove(xact);
+
+    sess->pending_modification_xact_id = OGS_INVALID_POOL_ID;
+}
+
+static void pending_modification_set_on_main(void *arg)
+{
+    n1_n2_call_t *c = arg;
+    ogs_sbi_xact_t *xact = NULL;
+
+    pending_modification_clear_on_main(c->sess);
+
+    xact = create_n1_n2_message_xact(c->sess, c->stream, c->param);
+    if (xact)
+        c->sess->pending_modification_xact_id = xact->id;
+}
+
+static void pending_modification_send_on_main(void *arg)
+{
+    smf_sess_t *sess = arg;
+    ogs_sbi_xact_t *xact = NULL;
+
+    if (sess->pending_modification_xact_id >= OGS_MIN_POOL_ID &&
+        sess->pending_modification_xact_id <= OGS_MAX_POOL_ID)
+        xact = ogs_sbi_xact_find_by_id(sess->pending_modification_xact_id);
+    sess->pending_modification_xact_id = OGS_INVALID_POOL_ID;
+
+    if (!xact)
+        return;
+
+    if (ogs_sbi_discover_and_send(xact) != OGS_OK) {
+        ogs_error("ogs_sbi_discover_and_send() failed");
+        ogs_sbi_xact_remove(xact);
+    }
+}
+
+void smf_namf_comm_set_pending_modification(
+        smf_sess_t *sess, ogs_sbi_stream_t *stream,
+        smf_n1_n2_message_transfer_param_t *param)
+{
+    n1_n2_call_t c = { .sess = sess, .stream = stream, .param = param };
+
+    ogs_assert(sess);
+    ogs_assert(param);
+
+    if (smf_main_call(pending_modification_set_on_main, &c) != OGS_OK)
+        ogs_error("Pending modification dropped: SMF is shutting down");
+}
+
+void smf_namf_comm_send_pending_modification(smf_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    if (sess->pending_modification_xact_id == OGS_INVALID_POOL_ID)
+        return;
+    if (smf_main_call(pending_modification_send_on_main, sess) != OGS_OK)
+        ogs_error("Pending modification dropped: SMF is shutting down");
+}
+
+void smf_namf_comm_clear_pending_modification(smf_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    if (sess->pending_modification_xact_id == OGS_INVALID_POOL_ID)
+        return;
+    if (smf_main_call(pending_modification_clear_on_main, sess) != OGS_OK)
+        sess->pending_modification_xact_id = OGS_INVALID_POOL_ID;
 }
 
 void smf_namf_comm_send_n1_n2_pdu_establishment_reject(
@@ -932,7 +1082,44 @@ int smf_sbi_cleanup_session(
     return r;
 }
 
+typedef struct {
+    smf_sess_t *sess;
+    bool (*fn)(smf_sess_t *sess);
+    bool rc;
+} notify_call_t;
+
+static void notify_on_main(void *arg)
+{
+    notify_call_t *c = arg;
+
+    c->rc = c->fn(c->sess);
+}
+
+static bool notify_via_main(bool (*fn)(smf_sess_t *sess), smf_sess_t *sess)
+{
+    notify_call_t c = { .sess = sess, .fn = fn, .rc = false };
+
+    if (smf_main_call(notify_on_main, &c) != OGS_OK) {
+        ogs_error("Status notify dropped: SMF is shutting down");
+        return true;
+    }
+    return c.rc;
+}
+
+static bool send_sm_context_status_notify(smf_sess_t *sess);
+static bool send_status_notify(smf_sess_t *sess);
+
 bool smf_sbi_send_sm_context_status_notify(smf_sess_t *sess)
+{
+    return notify_via_main(send_sm_context_status_notify, sess);
+}
+
+bool smf_sbi_send_status_notify(smf_sess_t *sess)
+{
+    return notify_via_main(send_status_notify, sess);
+}
+
+static bool send_sm_context_status_notify(smf_sess_t *sess)
 {
     bool rc;
     ogs_sbi_request_t *request = NULL;
@@ -1143,7 +1330,7 @@ void smf_sbi_send_released_data(
     ogs_assert(true == ogs_sbi_server_send_response(stream, response));
 }
 
-bool smf_sbi_send_status_notify(smf_sess_t *sess)
+static bool send_status_notify(smf_sess_t *sess)
 {
     bool rc;
     ogs_sbi_request_t *request = NULL;
@@ -1166,4 +1353,105 @@ bool smf_sbi_send_status_notify(smf_sess_t *sess)
     ogs_sbi_request_free(request);
 
     return rc;
+}
+
+typedef struct {
+    ogs_sbi_client_t **slot;
+    OpenAPI_uri_scheme_e scheme;
+    char *fqdn;
+    uint16_t fqdn_port;
+    ogs_sockaddr_t *addr;
+    ogs_sockaddr_t *addr6;
+    bool ok;
+} setup_client_call_t;
+
+static void setup_client_on_main(void *arg)
+{
+    setup_client_call_t *c = arg;
+    ogs_sbi_client_t *client = NULL;
+    struct {
+        ogs_sbi_client_t *client;
+    } ctx = { *c->slot }, *pctx = &ctx;
+
+    client = ogs_sbi_client_find(
+            c->scheme, c->fqdn, c->fqdn_port, c->addr, c->addr6);
+    if (!client) {
+        ogs_debug("%s: ogs_sbi_client_add()", OGS_FUNC);
+        client = ogs_sbi_client_add(
+                c->scheme, c->fqdn, c->fqdn_port, c->addr, c->addr6);
+        if (!client) {
+            ogs_error("%s: ogs_sbi_client_add() failed", OGS_FUNC);
+            return;
+        }
+    }
+
+    OGS_SBI_SETUP_CLIENT(pctx, client);
+    *c->slot = ctx.client;
+    c->ok = true;
+}
+
+bool smf_sbi_setup_client(ogs_sbi_client_t **slot,
+        OpenAPI_uri_scheme_e scheme, char *fqdn, uint16_t fqdn_port,
+        ogs_sockaddr_t *addr, ogs_sockaddr_t *addr6)
+{
+    setup_client_call_t c = {
+        .slot = slot, .scheme = scheme,
+        .fqdn = fqdn, .fqdn_port = fqdn_port,
+        .addr = addr, .addr6 = addr6,
+        .ok = false,
+    };
+
+    ogs_assert(slot);
+
+    if (smf_main_call(setup_client_on_main, &c) != OGS_OK)
+        return false;
+    return c.ok;
+}
+
+static void sess_teardown_on_main(void *arg)
+{
+    smf_sess_t *sess = arg;
+    ogs_sbi_client_t **slots[] = {
+        &sess->namf.client,
+        &sess->pdu_session.client,
+        &sess->policy_association.client,
+        &sess->data_change_subscription.client,
+        &sess->h_smf.client,
+        &sess->v_smf.client,
+    };
+    int i;
+
+    for (i = 0; i < (int)OGS_ARRAY_SIZE(slots); i++) {
+        if (*slots[i])
+            ogs_sbi_client_remove(*slots[i]);
+        *slots[i] = NULL;
+    }
+
+    pending_modification_clear_on_main(sess);
+
+    /* the session slot may be reused by another shard right after this */
+    if (smf_workers_active())
+        ogs_sbi_xact_remove_all(&sess->sbi);
+
+    ogs_sbi_object_free(&sess->sbi);
+}
+
+void smf_sbi_sess_teardown(smf_sess_t *sess)
+{
+    ogs_assert(sess);
+
+    /* EPC sessions never touch the SBI stack: no main round trip */
+    if (sess->epc && ogs_list_count(&sess->sbi.xact_list) == 0 &&
+        !sess->namf.client && !sess->pdu_session.client &&
+        !sess->policy_association.client &&
+        !sess->data_change_subscription.client &&
+        !sess->h_smf.client && !sess->v_smf.client &&
+        sess->pending_modification_xact_id == OGS_INVALID_POOL_ID) {
+        ogs_sbi_object_free(&sess->sbi);
+        return;
+    }
+
+    if (smf_main_call(sess_teardown_on_main, sess) != OGS_OK)
+        ogs_error("SBI state of session not released: "
+                "SMF is shutting down");
 }
