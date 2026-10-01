@@ -65,6 +65,21 @@ int ogs_yaml_iter_next(ogs_yaml_iter_t *iter)
     return 0;
 }
 
+int ogs_yaml_iter_next_value(ogs_yaml_iter_t *iter)
+{
+    ogs_assert(iter);
+    ogs_assert(iter->node);
+
+    if (iter->node->type == YAML_SCALAR_NODE) {
+        if (iter->scalar_visited)
+            return 0;
+        iter->scalar_visited = 1;
+        return 1;
+    }
+
+    return ogs_yaml_iter_next(iter);
+}
+
 void ogs_yaml_iter_recurse(ogs_yaml_iter_t *parent, ogs_yaml_iter_t *iter)
 {
     ogs_assert(parent);

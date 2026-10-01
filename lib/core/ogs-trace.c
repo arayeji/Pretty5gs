@@ -368,6 +368,8 @@ static OGS_THREAD_LOCAL struct {
     uint8_t *data;
     size_t len;
     char proto[16];
+    bool link_present;
+    ogs_trace_link_t link;
 } packet_rx;
 
 static void packet_rx_clear(void)
@@ -378,6 +380,7 @@ static void packet_rx_clear(void)
     }
     packet_rx.len = 0;
     packet_rx.proto[0] = '\0';
+    packet_rx.link_present = false;
 }
 
 static struct {
@@ -434,12 +437,122 @@ static size_t trace_b64_encode(char *out, size_t out_size,
     return o;
 }
 
-void ogs_trace_packet(const char *imsi, const char *proto, const char *dir,
-        const void *data, size_t len)
+static void trace_endpoint_fmt(char *out, size_t out_size,
+        const ogs_sockaddr_t *addr)
 {
-    char b64[((OGS_TRACE_PACKET_MAX + 2) / 3) * 4 + 1];
-    size_t dump_len;
-    int truncated = 0;
+    char ip[OGS_ADDRSTRLEN];
+
+    out[0] = '\0';
+    if (!addr)
+        return;
+    if (addr->ogs_sa_family != AF_INET && addr->ogs_sa_family != AF_INET6)
+        return;
+    if (!OGS_ADDR((ogs_sockaddr_t *)addr, ip))
+        return;
+
+    if (addr->ogs_sa_family == AF_INET6)
+        ogs_snprintf(out, out_size, "[%s]:%u", ip, OGS_PORT(addr));
+    else
+        ogs_snprintf(out, out_size, "%s:%u", ip, OGS_PORT(addr));
+}
+
+void ogs_trace_link_set(ogs_trace_link_t *link, ogs_trace_l4_e l4,
+        const ogs_sockaddr_t *local, const ogs_sockaddr_t *remote)
+{
+    ogs_assert(link);
+
+    memset(link, 0, sizeof(*link));
+    if (trace_filter.count == 0)
+        return;
+
+    link->l4 = l4;
+    trace_endpoint_fmt(link->local, sizeof(link->local), local);
+    trace_endpoint_fmt(link->remote, sizeof(link->remote), remote);
+    link->ts = ogs_time_now();
+}
+
+void ogs_trace_link_set_sock(ogs_trace_link_t *link, ogs_trace_l4_e l4,
+        const ogs_sock_t *sock, const ogs_sockaddr_t *remote)
+{
+    ogs_trace_link_set(link, l4, sock ? &sock->local_addr : NULL, remote);
+}
+
+void ogs_trace_link_set_fd(ogs_trace_link_t *link, ogs_trace_l4_e l4, int fd)
+{
+    ogs_sockaddr_t local, remote;
+    socklen_t len;
+    bool have_local = false, have_remote = false;
+
+    ogs_assert(link);
+
+    memset(link, 0, sizeof(*link));
+    if (trace_filter.count == 0 || fd < 0)
+        return;
+
+    memset(&local, 0, sizeof(local));
+    memset(&remote, 0, sizeof(remote));
+    len = sizeof(local.ss);
+    have_local = getsockname(fd, &local.sa, &len) == 0;
+    len = sizeof(remote.ss);
+    have_remote = getpeername(fd, &remote.sa, &len) == 0;
+
+    ogs_trace_link_set(link, l4, have_local ? &local : NULL,
+            have_remote ? &remote : NULL);
+}
+
+static const char *trace_l4_name(uint8_t l4)
+{
+    switch (l4) {
+    case OGS_TRACE_L4_UDP:
+        return "udp";
+    case OGS_TRACE_L4_SCTP:
+        return "sctp";
+    case OGS_TRACE_L4_TCP:
+        return "tcp";
+    default:
+        return NULL;
+    }
+}
+
+/* " ts=.. l4=.. src=.. dst=.. [sid=..] [ppid=..]" */
+static void trace_link_fmt(char *out, size_t out_size, const char *dir,
+        const ogs_trace_link_t *link, ogs_time_t ts)
+{
+    const char *l4 = link ? trace_l4_name(link->l4) : NULL;
+    const char *src = NULL, *dst = NULL;
+    size_t o;
+
+    o = ogs_snprintf(out, out_size, " ts=%lld.%06lld",
+            (long long)(ts / OGS_USEC_PER_SEC),
+            (long long)(ts % OGS_USEC_PER_SEC));
+    if (!l4 || o >= out_size)
+        return;
+
+    if (dir && !strcmp(dir, "tx")) {
+        src = link->local;
+        dst = link->remote;
+    } else {
+        src = link->remote;
+        dst = link->local;
+    }
+    o += ogs_snprintf(out + o, out_size - o, " l4=%s src=%s dst=%s", l4,
+            src[0] ? src : "-", dst[0] ? dst : "-");
+    if (link->sctp_stream_present && o < out_size)
+        o += ogs_snprintf(out + o, out_size - o, " sid=%u",
+                link->sctp_stream);
+    if (link->sctp_ppid && o < out_size)
+        ogs_snprintf(out + o, out_size - o, " ppid=%u", link->sctp_ppid);
+}
+
+void ogs_trace_packet_link(const char *imsi, const char *proto,
+        const char *dir, const void *data, size_t len,
+        const ogs_trace_link_t *link)
+{
+    char b64[((OGS_TRACE_PACKET_SEG + 2) / 3) * 4 + 1];
+    char meta[2 * OGS_TRACE_ENDPOINT_LEN + 96];
+    size_t dump_len, off;
+    int truncated = 0, seg, nseg;
+    ogs_time_t ts;
     static volatile uint32_t rate_sec;
     static volatile uint32_t rate_count;
     uint32_t now_sec, n;
@@ -453,12 +566,14 @@ void ogs_trace_packet(const char *imsi, const char *proto, const char *dir,
         return;
 
     /*
-     * Cap PACKET log rate. Unbounded ogs_info(base64) after enabling
-     * trace saturated the process log lock and starved the MHD metrics
-     * thread — the whole admin/metrics API looked dead.
+     * Cap PACKET log rate (per packet, not per seg line). Unbounded
+     * ogs_info(base64) after enabling trace saturated the process log
+     * lock and starved the MHD metrics thread — the whole admin/metrics
+     * API looked dead.
      */
 #define OGS_TRACE_PACKET_PER_SEC  200
-    now_sec = (uint32_t)ogs_time_sec(ogs_time_now());
+    ts = ogs_time_now();
+    now_sec = (uint32_t)ogs_time_sec(ts);
     if (now_sec != rate_sec) {
         rate_sec = now_sec;
         rate_count = 0;
@@ -472,25 +587,47 @@ void ogs_trace_packet(const char *imsi, const char *proto, const char *dir,
         dump_len = OGS_TRACE_PACKET_MAX;
         truncated = 1;
     }
+    if (link && link->ts)
+        ts = link->ts;
+    trace_link_fmt(meta, sizeof(meta), dir, link, ts);
 
-    if (!trace_b64_encode(b64, sizeof(b64), (const uint8_t *)data, dump_len))
-        return;
+    nseg = (int)((dump_len + OGS_TRACE_PACKET_SEG - 1) / OGS_TRACE_PACKET_SEG);
 
     /*
      * Force-emit so PACKET still appears when the core domain is below
      * info. Do not rely on sticky TLS IMSI to elevate generic logs.
      */
     ogs_log_force_push();
-    ogs_log_printf(OGS_LOG_INFO, OGS_LOG_DOMAIN, 0,
-            __FILE__, __LINE__, OGS_FUNC, 0,
-            "[IMSI:%s] PACKET: proto=%s dir=%s len=%zu%s b64=%s",
-            imsi,
-            proto && proto[0] ? proto : "-",
-            dir && dir[0] ? dir : "-",
-            len,
-            truncated ? " trunc=1" : "",
-            b64);
+    for (seg = 0, off = 0; seg < nseg; seg++, off += OGS_TRACE_PACKET_SEG) {
+        size_t chunk = dump_len - off;
+        char segbuf[48] = "";
+
+        if (chunk > OGS_TRACE_PACKET_SEG)
+            chunk = OGS_TRACE_PACKET_SEG;
+        if (!trace_b64_encode(b64, sizeof(b64),
+                    (const uint8_t *)data + off, chunk))
+            break;
+        if (nseg > 1)
+            ogs_snprintf(segbuf, sizeof(segbuf), " seg=%d/%d off=%zu",
+                    seg + 1, nseg, off);
+
+        ogs_log_printf(OGS_LOG_INFO, OGS_LOG_DOMAIN, 0,
+                __FILE__, __LINE__, OGS_FUNC, 0,
+                "[IMSI:%s] PACKET: proto=%s dir=%s len=%zu%s%s%s b64=%s",
+                imsi,
+                proto && proto[0] ? proto : "-",
+                dir && dir[0] ? dir : "-",
+                len, meta, segbuf,
+                truncated ? " trunc=1" : "",
+                b64);
+    }
     ogs_log_force_pop();
+}
+
+void ogs_trace_packet(const char *imsi, const char *proto, const char *dir,
+        const void *data, size_t len)
+{
+    ogs_trace_packet_link(imsi, proto, dir, data, len, NULL);
 }
 
 void ogs_trace_packet_ctx(const char *proto, const char *dir,
@@ -501,7 +638,8 @@ void ogs_trace_packet_ctx(const char *proto, const char *dir,
     ogs_trace_packet(self.imsi, proto, dir, data, len);
 }
 
-void ogs_trace_packet_bind_rx(const char *proto, const void *data, size_t len)
+void ogs_trace_packet_bind_rx_link(const char *proto, const void *data,
+        size_t len, const ogs_trace_link_t *link)
 {
     size_t copy_len;
 
@@ -526,6 +664,20 @@ void ogs_trace_packet_bind_rx(const char *proto, const void *data, size_t len)
         ogs_cpystrn(packet_rx.proto, proto, sizeof(packet_rx.proto));
     else
         ogs_cpystrn(packet_rx.proto, "-", sizeof(packet_rx.proto));
+
+    /* the dump may come later: keep when it was received */
+    if (link)
+        packet_rx.link = *link;
+    else
+        memset(&packet_rx.link, 0, sizeof(packet_rx.link));
+    if (!packet_rx.link.ts)
+        packet_rx.link.ts = ogs_time_now();
+    packet_rx.link_present = true;
+}
+
+void ogs_trace_packet_bind_rx(const char *proto, const void *data, size_t len)
+{
+    ogs_trace_packet_bind_rx_link(proto, data, len, NULL);
 }
 
 void ogs_trace_packet_on_imsi(const char *imsi)
@@ -535,8 +687,9 @@ void ogs_trace_packet_on_imsi(const char *imsi)
     if (!imsi || !imsi[0])
         return;
 
-    ogs_trace_packet(imsi, packet_rx.proto, "rx",
-            packet_rx.data, packet_rx.len);
+    ogs_trace_packet_link(imsi, packet_rx.proto, "rx",
+            packet_rx.data, packet_rx.len,
+            packet_rx.link_present ? &packet_rx.link : NULL);
     packet_rx_clear();
 }
 
@@ -545,8 +698,8 @@ bool ogs_trace_filter_active(void)
     return trace_filter.count > 0;
 }
 
-bool ogs_trace_packet_steal_rx(uint8_t **data, size_t *len,
-        char *proto, size_t proto_size)
+bool ogs_trace_packet_steal_rx_link(uint8_t **data, size_t *len,
+        char *proto, size_t proto_size, ogs_trace_link_t *link)
 {
     ogs_assert(data);
     ogs_assert(len);
@@ -555,6 +708,8 @@ bool ogs_trace_packet_steal_rx(uint8_t **data, size_t *len,
     *len = 0;
     if (proto && proto_size)
         proto[0] = '\0';
+    if (link)
+        memset(link, 0, sizeof(*link));
 
     if (!packet_rx.data || !packet_rx.len)
         return false;
@@ -563,11 +718,20 @@ bool ogs_trace_packet_steal_rx(uint8_t **data, size_t *len,
     *len = packet_rx.len;
     if (proto && proto_size)
         ogs_cpystrn(proto, packet_rx.proto, proto_size);
+    if (link && packet_rx.link_present)
+        *link = packet_rx.link;
 
     packet_rx.data = NULL;
     packet_rx.len = 0;
     packet_rx.proto[0] = '\0';
+    packet_rx.link_present = false;
     return true;
+}
+
+bool ogs_trace_packet_steal_rx(uint8_t **data, size_t *len,
+        char *proto, size_t proto_size)
+{
+    return ogs_trace_packet_steal_rx_link(data, len, proto, proto_size, NULL);
 }
 
 void ogs_trace_packet_free_buf(uint8_t *data)

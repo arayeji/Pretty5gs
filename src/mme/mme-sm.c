@@ -1121,7 +1121,13 @@ cleanup:
         pkbuf = e->pkbuf;
         ogs_assert(pkbuf);
 
-        ogs_trace_packet_bind_rx("gtp", pkbuf->data, pkbuf->len);
+        if (ogs_trace_filter_active()) {
+            ogs_trace_link_t link;
+
+            ogs_gtp_trace_link(&link, e->gnode);
+            ogs_trace_packet_bind_rx_link("gtp", pkbuf->data, pkbuf->len,
+                    &link);
+        }
 
         if (ogs_gtp2_parse_msg(&gtp_message, pkbuf) != OGS_OK) {
             ogs_error("ogs_gtp2_parse_msg() failed");
@@ -1163,8 +1169,7 @@ cleanup:
                             gtp_message.h.teid : 0,
                         sqn, rv, why);
                 if (MME_UE_HAVE_IMSI(ue_hint))
-                    ogs_trace_packet(ue_hint->imsi_bcd, "gtp", "rx",
-                            pkbuf->data, pkbuf->len);
+                    ogs_trace_packet_on_imsi(ue_hint->imsi_bcd);
                 if (gtp_message.h.type ==
                         OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE)
                     mme_ue_progress(ue_hint, "create_session_rsp_late");
@@ -1241,13 +1246,9 @@ cleanup:
             ogs_trace_packet_bind_rx(NULL, NULL, 0);
         } else if (mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
             ogs_gtp_xact_set_imsi(xact, mme_ue->imsi_bcd);
-            ogs_trace_packet(mme_ue->imsi_bcd, "gtp", "rx",
-                    pkbuf->data, pkbuf->len);
-            ogs_trace_packet_bind_rx(NULL, NULL, 0); /* avoid on_imsi dup */
+            ogs_trace_packet_on_imsi(mme_ue->imsi_bcd);
         } else if (xact && xact->imsi_bcd[0]) {
-            ogs_trace_packet(xact->imsi_bcd, "gtp", "rx",
-                    pkbuf->data, pkbuf->len);
-            ogs_trace_packet_bind_rx(NULL, NULL, 0);
+            ogs_trace_packet_on_imsi(xact->imsi_bcd);
         }
 
         switch (gtp_message.h.type) {

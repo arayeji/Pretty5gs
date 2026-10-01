@@ -20,6 +20,7 @@
  */
 
 #include "fd-path.h"
+#include "smf-trace.h"
 
 static struct session_handler *smf_gy_reg = NULL;
 static struct disp_hdl *hdl_gy_fb = NULL;
@@ -1008,6 +1009,7 @@ void smf_gy_send_ccr(smf_sess_t *sess, ogs_pool_id_t xact_id,
     }
 
     /* Send the request */
+    smf_trace_diameter(sess, "tx", req);
     ret = fd_msg_send(&req, smf_gy_cca_cb, svg);
     ogs_assert(ret == 0);
 
@@ -1113,6 +1115,7 @@ static void smf_gy_cca_cb(void *data, struct msg **msg)
         error++;
         goto cleanup;
     }
+    smf_trace_diameter(sess, "rx", *msg);
 
     /* Value of Result Code */
     ret = fd_msg_search_avp(*msg, ogs_diam_result_code, &avp);
@@ -1391,19 +1394,21 @@ static int smf_gy_rar_cb(struct msg **msg, struct avp *avp,
     int rv;
     int ret;
 
-    struct msg *ans;
+    struct msg *ans, *qry;
     union avp_value val;
     struct sess_state *sess_data = NULL;
     smf_event_t *e = NULL;
     smf_sess_t *sess = NULL;
     ogs_diam_gy_message_t *gy_message = NULL;
     uint32_t result_code = OGS_DIAM_UNKNOWN_SESSION_ID;
+    char trace_imsi[OGS_MAX_IMSI_BCD_LEN+1] = "";
 
     ogs_assert(msg);
 
     ogs_debug("Re-Auth-Request");
 
     /* Create answer header */
+    qry = *msg;
     ret = fd_msg_new_answer_from_req(fd_g_config->cnf_dict, msg, 0);
     ogs_assert(ret == 0);
     ans = *msg;
@@ -1435,6 +1440,8 @@ static int smf_gy_rar_cb(struct msg **msg, struct avp *avp,
         result_code = OGS_DIAM_UNKNOWN_SESSION_ID;
         goto error_out;
     }
+    smf_trace_diameter_imsi(sess, trace_imsi, sizeof(trace_imsi));
+    ogs_diam_trace_msg(trace_imsi, "rx", qry);
 
     /* TODO: parsing of msg into gy_message */
 
@@ -1485,6 +1492,7 @@ static int smf_gy_rar_cb(struct msg **msg, struct avp *avp,
     (void)gy_store_sess_state(session, &sess_data);
 
     /* Send the answer */
+    ogs_diam_trace_msg(trace_imsi, "tx", ans);
     ret = fd_msg_send(msg, NULL, NULL);
     if (ret != 0) {
         ogs_error("Failed to send answer message");
@@ -1522,6 +1530,7 @@ error_out:
         (void)gy_store_sess_state(session, &sess_data);
 
     /* Send error response */
+    ogs_diam_trace_msg(trace_imsi, "tx", ans);
     ret = fd_msg_send(msg, NULL, NULL);
     ogs_assert(ret == 0);
 

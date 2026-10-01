@@ -33,6 +33,15 @@ void ogs_mme_trace_from_ids(
         ogs_pool_id_t enb_ue_id, ogs_pool_id_t mme_ue_id,
         const char *apn, const char *proc);
 
+/* PACKET link of enb's S1AP association; stream_no < 0: not known */
+void mme_s1ap_trace_link(ogs_trace_link_t *link,
+        const mme_enb_t *enb, int stream_no);
+/* PACKET dump of a received S1AP PDU with its association endpoints */
+void mme_s1ap_trace_rx(const mme_enb_t *enb, const char *imsi_bcd,
+        const ogs_pkbuf_t *pkbuf);
+/* Bind an S1AP RX for the dump once the IMSI is known */
+void mme_s1ap_trace_bind_rx(const mme_enb_t *enb, const ogs_pkbuf_t *pkbuf);
+
 /* Move TLS-bound S1AP RX copy onto enb_ue for dump after IMSI is known. */
 void mme_enb_ue_s1ap_trace_take_bound(enb_ue_t *enb_ue);
 void mme_enb_ue_s1ap_trace_dump(enb_ue_t *enb_ue, const char *imsi_bcd);

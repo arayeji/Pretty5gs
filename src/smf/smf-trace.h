@@ -37,6 +37,10 @@ void smf_trace_bind_gtp(ogs_gtp_xact_t *xact, smf_ue_t *smf_ue);
 void smf_trace_bind_pfcp(ogs_pfcp_xact_t *xact, smf_sess_t *sess);
 void smf_trace_pfcp_rx(ogs_pfcp_xact_t *xact, smf_sess_t *sess,
         const void *data, size_t len);
+/* PACKET dump of a Gx/Gy/S6b message; tx must precede fd_msg_send() */
+void smf_trace_diameter(smf_sess_t *sess, const char *dir, struct msg *msg);
+/* Empty unless the UE is traced */
+void smf_trace_diameter_imsi(smf_sess_t *sess, char *imsi, size_t size);
 
 /*
  * Enriched per-UE log: full ogs_trace_format_prefix on one line.

@@ -136,6 +136,24 @@ ogs_pkbuf_t *ogs_pfcp_recvfrom(ogs_socket_t fd, ogs_sockaddr_t *from)
     return pkbuf;
 }
 
+void ogs_pfcp_trace_link(ogs_trace_link_t *link,
+        const ogs_pfcp_node_t *node, const ogs_sockaddr_t *from)
+{
+    const ogs_sockaddr_t *remote = from;
+    ogs_sock_t *sock = NULL;
+
+    ogs_assert(link);
+
+    if (!remote && node)
+        remote = node->current_addr ? node->current_addr : node->addr_list;
+    if (remote && remote->ogs_sa_family == AF_INET6)
+        sock = ogs_pfcp_self()->pfcp_sock6;
+    else if (remote)
+        sock = ogs_pfcp_self()->pfcp_sock;
+
+    ogs_trace_link_set_sock(link, OGS_TRACE_L4_UDP, sock, remote);
+}
+
 int ogs_pfcp_sendto(ogs_pfcp_node_t *node, ogs_pkbuf_t *pkbuf)
 {
     ssize_t sent;

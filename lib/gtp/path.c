@@ -104,6 +104,14 @@ int ogs_gtp_send(ogs_gtp_node_t *gnode, ogs_pkbuf_t *pkbuf)
     return OGS_OK;
 }
 
+void ogs_gtp_trace_link(ogs_trace_link_t *link, const ogs_gtp_node_t *gnode)
+{
+    ogs_assert(link);
+
+    ogs_trace_link_set_sock(link, OGS_TRACE_L4_UDP,
+            gnode ? gnode->sock : NULL, gnode ? &gnode->addr : NULL);
+}
+
 int ogs_gtp_sendto(ogs_gtp_node_t *gnode, ogs_pkbuf_t *pkbuf)
 {
     ssize_t sent;

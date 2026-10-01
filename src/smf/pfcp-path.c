@@ -149,7 +149,11 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
      * header off pkbuf (otherwise RX dumps are IE-only / "malformed").
      * The bind keeps the pre-pull pointer; pkbuf headroom stays valid.
      */
-    ogs_trace_packet_bind_rx("pfcp", pkbuf->data, pkbuf->len);
+    if (ogs_trace_filter_active()) {
+        ogs_trace_link_t link;
+        ogs_pfcp_trace_link(&link, NULL, &from);
+        ogs_trace_packet_bind_rx_link("pfcp", pkbuf->data, pkbuf->len, &link);
+    }
     if ((message = ogs_pfcp_parse_msg(pkbuf)) == NULL) {
         ogs_error("ogs_pfcp_parse_msg() failed");
         ogs_trace_packet_bind_rx(NULL, NULL, 0);

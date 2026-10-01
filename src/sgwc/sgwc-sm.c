@@ -397,7 +397,12 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         ogs_assert(e);
         recvbuf = e->pkbuf;
         ogs_assert(recvbuf);
-        ogs_trace_packet_bind_rx("gtp", recvbuf->data, recvbuf->len);
+        if (ogs_trace_filter_active()) {
+            ogs_trace_link_t link;
+            ogs_gtp_trace_link(&link, e->gnode);
+            ogs_trace_packet_bind_rx_link(
+                    "gtp", recvbuf->data, recvbuf->len, &link);
+        }
 
         if (recvbuf->len >= sizeof(ogs_gtp1_header_t)) {
             uint8_t gtp_ver = ((ogs_gtp1_header_t *)recvbuf->data)->version;
@@ -460,9 +465,7 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
         } else if (sgwc_ue && sgwc_ue->imsi_bcd[0]) {
             /* Prefer TEID-resolved IMSI (handlers may return before on_imsi). */
             ogs_gtp_xact_set_imsi(gtp_xact, sgwc_ue->imsi_bcd);
-            ogs_trace_packet(sgwc_ue->imsi_bcd, "gtp", "rx",
-                    recvbuf->data, recvbuf->len);
-            ogs_trace_packet_bind_rx(NULL, NULL, 0);
+            ogs_trace_packet_on_imsi(sgwc_ue->imsi_bcd);
         }
 
         switch(gtp_message.h.type) {
@@ -490,9 +493,7 @@ void sgwc_state_operational(ogs_fsm_t *s, sgwc_event_t *e)
             /* Create Session often arrives with TEID=0; dump after UE exists. */
             if (sgwc_ue && sgwc_ue->imsi_bcd[0]) {
                 ogs_gtp_xact_set_imsi(gtp_xact, sgwc_ue->imsi_bcd);
-                ogs_trace_packet(sgwc_ue->imsi_bcd, "gtp", "rx",
-                        recvbuf->data, recvbuf->len);
-                ogs_trace_packet_bind_rx(NULL, NULL, 0);
+                ogs_trace_packet_on_imsi(sgwc_ue->imsi_bcd);
             }
             sgwc_s11_handle_create_session_request(
                     sgwc_ue, gtp_xact, recvbuf, &gtp_message);

@@ -34,6 +34,7 @@ testunit_core_sources = files('''
     fsm-test.c
     hash-test.c
     uuid-test.c
+    trace-test.c
     abts-main.c
 '''.split())
 

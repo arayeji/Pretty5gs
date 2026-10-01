@@ -374,7 +374,7 @@ int hss_context_parse_config(void)
                         } else
                             ogs_assert_if_reached();
 
-                        while (ogs_yaml_iter_next(&trace_iter)) {
+                        while (ogs_yaml_iter_next_value(&trace_iter)) {
                             const char *v = ogs_yaml_iter_value(&trace_iter);
 
                             if (v && ogs_trace_filter_add(v) != OGS_OK)
@@ -419,7 +419,7 @@ static int hss_reload_trace_imsi_replace(ogs_yaml_iter_t *hss_iter)
             break;
         }
 
-        while (ogs_yaml_iter_next(&trace_iter)) {
+        while (ogs_yaml_iter_next_value(&trace_iter)) {
             const char *v = ogs_yaml_iter_value(&trace_iter);
 
             if (!v || !v[0])

@@ -21,6 +21,7 @@
 #include "ogs-s1ap.h"
 
 #include "mme-context.h"
+#include "mme-trace.h"
 #include "mme-event.h"
 #include "s1ap-path.h"
 #include "s1ap-tx.h"
@@ -40,6 +41,7 @@ typedef struct tx_job_s {
     uint16_t        stream_no;       /* snapshot of enb_ue->enb_ostream_id */
     ogs_pkbuf_t     *emmbuf;         /* secured NAS PDU (ownership: job) */
     char            imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1]; /* for PACKET dump */
+    ogs_trace_link_t trace_link;     /* snapshot: workers never see enb */
 } tx_job_t;
 
 /*
@@ -276,8 +278,9 @@ static void tx_dispatch(ogs_worker_t *worker, void *data)
         ogs_error("s1ap-tx: DownlinkNASTransport encode failed "
                 "(MME_UE_S1AP_ID[%u])", job->mme_ue_s1ap_id);
     else if (job->imsi_bcd[0])
-        ogs_trace_packet(job->imsi_bcd, "s1ap", "tx",
-                s1apbuf->data, s1apbuf->len);
+        ogs_trace_packet_link(job->imsi_bcd, "s1ap", "tx",
+                s1apbuf->data, s1apbuf->len,
+                job->trace_link.l4 ? &job->trace_link : NULL);
 
     if (tx_direct)
         /* NULL s1apbuf still completes: pending must be decremented */
@@ -383,9 +386,13 @@ int s1ap_tx_post_dlnas(enb_ue_t *enb_ue, ogs_pkbuf_t *emmbuf)
     {
         mme_ue_t *mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
 
-        if (mme_ue && MME_UE_HAVE_IMSI(mme_ue))
+        if (mme_ue && MME_UE_HAVE_IMSI(mme_ue) &&
+                ogs_trace_filter_active() &&
+                ogs_trace_filter_match(mme_ue->imsi_bcd)) {
             ogs_cpystrn(job->imsi_bcd, mme_ue->imsi_bcd,
                     sizeof(job->imsi_bcd));
+            mme_s1ap_trace_link(&job->trace_link, enb, job->stream_no);
+        }
     }
 
     /*

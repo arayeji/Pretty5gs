@@ -480,11 +480,12 @@ static bool sgsap_pkbuf_imsi_bcd(const ogs_pkbuf_t *pkbuf,
     return false;
 }
 
-void sgsap_trace_packet(const char *imsi, const char *dir,
-        const ogs_pkbuf_t *pkbuf)
+void sgsap_trace_packet(const mme_vlr_t *vlr, const char *imsi,
+        const char *dir, const ogs_pkbuf_t *pkbuf, int stream_no)
 {
     char peeked[OGS_MAX_IMSI_BCD_LEN + 1];
     const char *use = imsi;
+    ogs_trace_link_t link;
 
     if (!pkbuf || !pkbuf->data || !pkbuf->len)
         return;
@@ -495,7 +496,14 @@ void sgsap_trace_packet(const char *imsi, const char *dir,
             return;
         use = peeked;
     }
-    ogs_trace_packet(use, "sgsap", dir, pkbuf->data, pkbuf->len);
+    ogs_trace_link_set_fd(&link, OGS_TRACE_L4_SCTP,
+            vlr && vlr->sock ? vlr->sock->fd : -1);
+    if (link.l4 != OGS_TRACE_L4_NONE && stream_no >= 0) {
+        link.sctp_stream_present = true;
+        link.sctp_stream = (uint16_t)stream_no;
+    }
+    ogs_trace_packet_link(use, "sgsap", dir, pkbuf->data, pkbuf->len,
+            link.l4 != OGS_TRACE_L4_NONE ? &link : NULL);
 }
 
 int sgsap_send_to_vlr_with_sid(
@@ -517,7 +525,7 @@ int sgsap_send_to_vlr_with_sid(
         return OGS_ERROR;
     }
 
-    sgsap_trace_packet(NULL, "tx", pkbuf);
+    sgsap_trace_packet(vlr, NULL, "tx", pkbuf, stream_no);
 
     ogs_debug("    StreamNO[%d] VLR-IP[%s]",
             stream_no, ogs_sockaddr_to_string_static(vlr->sa_list));

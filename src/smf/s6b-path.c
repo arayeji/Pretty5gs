@@ -18,6 +18,7 @@
  */
 
 #include "fd-path.h"
+#include "smf-trace.h"
 
 static struct session_handler *smf_s6b_reg = NULL;
 static struct disp_hdl *hdl_s6b_fb = NULL;
@@ -362,6 +363,7 @@ void smf_s6b_send_aar(smf_sess_t *sess, ogs_gtp_xact_t *xact)
     ogs_assert(sess_data == NULL);
 
     /* Send the request */
+    smf_trace_diameter(sess, "tx", req);
     ret = fd_msg_send(&req, smf_s6b_aaa_cb, svg);
     ogs_assert(ret == 0);
 
@@ -425,6 +427,7 @@ static void smf_s6b_aaa_cb(void *data, struct msg **msg)
         sess_data = NULL;
         goto cleanup;
     }
+    smf_trace_diameter(sess, "rx", *msg);
 
     /* Allocate S6B message structure */
     s6b_message = ogs_calloc(1, sizeof(ogs_diam_s6b_message_t));
@@ -719,6 +722,7 @@ void smf_s6b_send_str(smf_sess_t *sess, ogs_gtp_xact_t *xact, uint32_t cause)
     ogs_assert(sess_data == NULL);
 
     /* Send the request */
+    smf_trace_diameter(sess, "tx", req);
     ret = fd_msg_send(&req, smf_s6b_sta_cb, svg);
     ogs_assert(ret == 0);
 
@@ -782,6 +786,7 @@ static void smf_s6b_sta_cb(void *data, struct msg **msg)
         sess_data = NULL;
         goto cleanup;
     }
+    smf_trace_diameter(sess, "rx", *msg);
 
     /* Allocate S6B message structure */
     s6b_message = ogs_calloc(1, sizeof(ogs_diam_s6b_message_t));

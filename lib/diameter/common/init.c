@@ -174,6 +174,9 @@ int ogs_diam_init(int mode, const char *conffile, ogs_diam_config_t *fd_config)
     /* Initialize FD logger */
     CHECK_FCT_DO( ogs_diam_logger_init(), goto error );
 
+    /* PACKET dumps with connection endpoints for traced IMSIs */
+    CHECK_FCT_DO( ogs_diam_trace_init(), goto error );
+
     /* Initialize FD stats */
     CHECK_FCT_DO( ogs_diam_stats_init(mode, &fd_config->stats), goto error );
 
@@ -254,6 +257,7 @@ error:
 void ogs_diam_final()
 {
     ogs_diam_stats_final();
+    ogs_diam_trace_final();
     ogs_diam_logger_final();
 
     CHECK_FCT_DO( fd_core_shutdown(), ogs_error("fd_core_shutdown() failed") );

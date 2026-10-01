@@ -253,6 +253,8 @@ static void recv_handler(ogs_sock_t *sock)
         ogs_pkbuf_free(pkbuf);
     } else if (flags & MSG_EOR) {
         ogs_pkbuf_trim(pkbuf, size);
+        ogs_sctp_ppid_in_pkbuf(pkbuf) = sinfo.ppid;
+        ogs_sctp_stream_no_in_pkbuf(pkbuf) = sinfo.stream_no;
 
         sgsap_event_push(MME_EVENT_SGSAP_MESSAGE, sock, NULL, pkbuf, 0, 0);
         return;

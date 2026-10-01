@@ -1653,7 +1653,7 @@ int sgwc_context_parse_config(void)
                         } else
                             ogs_assert_if_reached();
 
-                        while (ogs_yaml_iter_next(&trace_iter)) {
+                        while (ogs_yaml_iter_next_value(&trace_iter)) {
                             const char *v = ogs_yaml_iter_value(&trace_iter);
 
                             if (v && ogs_trace_filter_add(v) != OGS_OK)

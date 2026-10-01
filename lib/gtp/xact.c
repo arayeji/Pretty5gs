@@ -40,10 +40,15 @@ static void gtp_xact_trace_tx(ogs_gtp_xact_t *xact, ogs_pkbuf_t *pkbuf)
 {
     if (!xact || !pkbuf || !pkbuf->data || !pkbuf->len)
         return;
-    if (!xact->imsi_bcd[0])
+    if (!xact->imsi_bcd[0] || !ogs_trace_filter_active())
         return;
-    ogs_trace_packet(xact->imsi_bcd, "gtp", "tx",
-            pkbuf->data, pkbuf->len);
+    {
+        ogs_trace_link_t link;
+
+        ogs_gtp_trace_link(&link, xact->gnode);
+        ogs_trace_packet_link(xact->imsi_bcd, "gtp", "tx",
+                pkbuf->data, pkbuf->len, &link);
+    }
 }
 
 /*

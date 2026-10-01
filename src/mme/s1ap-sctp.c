@@ -332,6 +332,8 @@ static int s1ap_recv_handler(ogs_sock_t *sock)
         return 1;
     } else if (flags & MSG_EOR) {
         ogs_pkbuf_trim(pkbuf, size);
+        ogs_sctp_ppid_in_pkbuf(pkbuf) = sinfo.ppid;
+        ogs_sctp_stream_no_in_pkbuf(pkbuf) = sinfo.stream_no;
 
         addr = ogs_calloc(1, sizeof(ogs_sockaddr_t));
         ogs_assert(addr);

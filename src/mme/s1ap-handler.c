@@ -1233,8 +1233,7 @@ void s1ap_handle_initial_ue_message(
          * carries the NAS PDU copy (not the full S1AP message).
          */
         if (pkbuf && MME_UE_HAVE_IMSI(mme_ue_from_stmsi)) {
-            ogs_trace_packet(mme_ue_from_stmsi->imsi_bcd, "s1ap", "rx",
-                    pkbuf->data, pkbuf->len);
+            mme_s1ap_trace_rx(enb, mme_ue_from_stmsi->imsi_bcd, pkbuf);
             ogs_trace_packet_bind_rx(NULL, NULL, 0);
         }
 
@@ -1263,8 +1262,7 @@ void s1ap_handle_initial_ue_message(
         mme_ue_t *trace_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
 
         if (trace_ue && MME_UE_HAVE_IMSI(trace_ue)) {
-            ogs_trace_packet(trace_ue->imsi_bcd, "s1ap", "rx",
-                    pkbuf->data, pkbuf->len);
+            mme_s1ap_trace_rx(enb, trace_ue->imsi_bcd, pkbuf);
             /* Drop TLS bind — already dumped from the live buffer. */
             ogs_trace_packet_bind_rx(NULL, NULL, 0);
         } else if (ogs_trace_filter_active()) {
@@ -1365,8 +1363,7 @@ void s1ap_handle_uplink_nas_transport(
 
     /* Dump on this thread (main/shard) before NAS is handed to UE worker. */
     if (pkbuf && mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
-        ogs_trace_packet(mme_ue->imsi_bcd, "s1ap", "rx",
-                pkbuf->data, pkbuf->len);
+        mme_s1ap_trace_rx(enb, mme_ue->imsi_bcd, pkbuf);
         ogs_trace_packet_bind_rx(NULL, NULL, 0);
     } else if (pkbuf && ogs_trace_filter_active()) {
         mme_enb_ue_s1ap_trace_take_bound(enb_ue);
@@ -1681,8 +1678,7 @@ void s1ap_handle_initial_context_setup_response(
 
     /* Stage-C shard never hits s1ap-sm bind_rx/on_imsi — dump here. */
     if (pkbuf && mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
-        ogs_trace_packet(mme_ue->imsi_bcd, "s1ap", "rx",
-                pkbuf->data, pkbuf->len);
+        mme_s1ap_trace_rx(enb, mme_ue->imsi_bcd, pkbuf);
         ogs_trace_packet_bind_rx(NULL, NULL, 0);
     }
 
@@ -2009,8 +2005,7 @@ void s1ap_handle_initial_context_setup_failure(
 
     mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
     if (pkbuf && mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
-        ogs_trace_packet(mme_ue->imsi_bcd, "s1ap", "rx",
-                pkbuf->data, pkbuf->len);
+        mme_s1ap_trace_rx(enb, mme_ue->imsi_bcd, pkbuf);
         ogs_trace_packet_bind_rx(NULL, NULL, 0);
     }
     {
@@ -2639,8 +2634,7 @@ void s1ap_handle_ue_context_release_request(
 
     mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
     if (pkbuf && mme_ue && MME_UE_HAVE_IMSI(mme_ue)) {
-        ogs_trace_packet(mme_ue->imsi_bcd, "s1ap", "rx",
-                pkbuf->data, pkbuf->len);
+        mme_s1ap_trace_rx(enb, mme_ue->imsi_bcd, pkbuf);
         ogs_trace_packet_bind_rx(NULL, NULL, 0);
     }
     if (mme_ue) {
@@ -2756,8 +2750,7 @@ void s1ap_handle_ue_context_release_complete(
         mme_ue_t *trace_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
 
         if (trace_ue && MME_UE_HAVE_IMSI(trace_ue)) {
-            ogs_trace_packet(trace_ue->imsi_bcd, "s1ap", "rx",
-                    pkbuf->data, pkbuf->len);
+            mme_s1ap_trace_rx(enb, trace_ue->imsi_bcd, pkbuf);
             ogs_trace_packet_bind_rx(NULL, NULL, 0);
         }
     }

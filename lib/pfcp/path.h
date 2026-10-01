@@ -57,6 +57,12 @@ typedef struct ogs_pfcp_xact_s ogs_pfcp_xact_t;
 
 ogs_sock_t *ogs_pfcp_server(ogs_socknode_t *node);
 int ogs_pfcp_sendto(ogs_pfcp_node_t *node, ogs_pkbuf_t *pkbuf);
+/*
+ * PACKET trace endpoints towards node; from is the RX source address
+ * (NULL: the address the node is sent to)
+ */
+void ogs_pfcp_trace_link(ogs_trace_link_t *link,
+        const ogs_pfcp_node_t *node, const ogs_sockaddr_t *from);
 
 ogs_pkbuf_t *ogs_pfcp_recvfrom(ogs_socket_t fd, ogs_sockaddr_t *from);
 

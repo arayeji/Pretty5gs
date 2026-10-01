@@ -96,22 +96,67 @@ bool ogs_trace_should_emit(int domain);
 
 /*
  * PACKET dumps for NMS PCAP rebuild. Zero cost when the IMSI filter is
- * empty; when active, emits one INFO line:
- *   PACKET: proto=<name> dir=<rx|tx> len=<n> b64=<base64>
- * Payload is capped (OGS_TRACE_PACKET_MAX) so a traced flood cannot
- * balloon journald. Never called for untraced subscribers.
+ * empty; when active, emits INFO lines:
+ *   PACKET: proto=<name> dir=<rx|tx> len=<n> ts=<sec.usec>
+ *           [l4=<udp|sctp|tcp> src=<ip:port> dst=<ip:port>
+ *            [sid=<sctp stream>] [ppid=<sctp ppid>]]
+ *           [seg=<i>/<n> off=<byte offset>] [trunc=1] b64=<base64>
+ * src/dst are the socket endpoints of the link (IPv6 as [addr]:port), so
+ * the NMS can rebuild IP + UDP/SCTP/TCP headers around the payload.
+ * Payloads above OGS_TRACE_PACKET_SEG bytes are split into seg lines (a
+ * log line is capped at OGS_HUGE_LEN); OGS_TRACE_PACKET_MAX bounds the
+ * whole dump. Never called for untraced subscribers.
  */
-#define OGS_TRACE_PACKET_MAX        2048
+#define OGS_TRACE_PACKET_MAX        65535
+#define OGS_TRACE_PACKET_SEG        4096
 #define OGS_TRACE_ALIAS_KEY_LEN     20
 #define OGS_MAX_TRACE_ALIASES       16
+#define OGS_TRACE_ENDPOINT_LEN      (OGS_TRACE_IP_LEN + 8)
 
 typedef enum {
     OGS_TRACE_ALIAS_MSISDN = 1,
     OGS_TRACE_ALIAS_IMEI = 2,
 } ogs_trace_alias_type_e;
 
+typedef enum {
+    OGS_TRACE_L4_NONE = 0,
+    OGS_TRACE_L4_UDP,
+    OGS_TRACE_L4_SCTP,
+    OGS_TRACE_L4_TCP,
+} ogs_trace_l4_e;
+
+/* Link a PACKET travelled on; the local side is the socket's own address */
+typedef struct ogs_trace_link_s {
+    uint8_t l4;                 /* ogs_trace_l4_e */
+    char local[OGS_TRACE_ENDPOINT_LEN];
+    char remote[OGS_TRACE_ENDPOINT_LEN];
+    bool sctp_stream_present;
+    uint16_t sctp_stream;
+    uint32_t sctp_ppid;         /* 0: not printed */
+    int64_t ts;                 /* capture time (usec), 0: when logged */
+} ogs_trace_link_t;
+
+struct ogs_sockaddr_s;
+struct ogs_sock_s;
+
+/*
+ * Fill link from socket addresses; either may be NULL. Formats only while
+ * a trace filter is active, so hot paths may call it unconditionally.
+ */
+void ogs_trace_link_set(ogs_trace_link_t *link, ogs_trace_l4_e l4,
+        const struct ogs_sockaddr_s *local,
+        const struct ogs_sockaddr_s *remote);
+/* Same, local side from sock (NULL allowed) */
+void ogs_trace_link_set_sock(ogs_trace_link_t *link, ogs_trace_l4_e l4,
+        const struct ogs_sock_s *sock, const struct ogs_sockaddr_s *remote);
+/* Both sides of a connected socket (getsockname / getpeername) */
+void ogs_trace_link_set_fd(ogs_trace_link_t *link, ogs_trace_l4_e l4, int fd);
+
 void ogs_trace_packet(const char *imsi, const char *proto, const char *dir,
         const void *data, size_t len);
+void ogs_trace_packet_link(const char *imsi, const char *proto,
+        const char *dir, const void *data, size_t len,
+        const ogs_trace_link_t *link);
 /* Uses thread-local ogs_trace_get()->imsi; no-op if unset/unmatched. */
 void ogs_trace_packet_ctx(const char *proto, const char *dir,
         const void *data, size_t len);
@@ -121,6 +166,9 @@ void ogs_trace_packet_ctx(const char *proto, const char *dir,
  * filter is empty (no-op). Call before handlers that may set IMSI.
  */
 void ogs_trace_packet_bind_rx(const char *proto, const void *data, size_t len);
+/* The bound RX keeps link (NULL: none) and its capture time */
+void ogs_trace_packet_bind_rx_link(const char *proto, const void *data,
+        size_t len, const ogs_trace_link_t *link);
 void ogs_trace_packet_on_imsi(const char *imsi);
 /*
  * Cross-thread RX PACKET handoff (MME workers): bind copies into TLS
@@ -131,6 +179,9 @@ void ogs_trace_packet_on_imsi(const char *imsi);
 bool ogs_trace_filter_active(void);
 bool ogs_trace_packet_steal_rx(uint8_t **data, size_t *len,
         char *proto, size_t proto_size);
+/* Same, also moving the bound link out (link may be NULL) */
+bool ogs_trace_packet_steal_rx_link(uint8_t **data, size_t *len,
+        char *proto, size_t proto_size, ogs_trace_link_t *link);
 void ogs_trace_packet_free_buf(uint8_t *data);
 
 /*

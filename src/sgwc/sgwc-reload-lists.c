@@ -705,7 +705,7 @@ static int sgwc_reload_trace_imsi_replace(ogs_yaml_iter_t *sgwc_iter)
             break;
         }
 
-        while (ogs_yaml_iter_next(&trace_iter)) {
+        while (ogs_yaml_iter_next_value(&trace_iter)) {
             const char *v = ogs_yaml_iter_value(&trace_iter);
 
             if (!v || !v[0])

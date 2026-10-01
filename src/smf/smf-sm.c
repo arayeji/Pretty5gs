@@ -325,7 +325,12 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         ogs_assert(e);
         recvbuf = e->pkbuf;
         ogs_assert(recvbuf);
-        ogs_trace_packet_bind_rx("gtp", recvbuf->data, recvbuf->len);
+        if (ogs_trace_filter_active()) {
+            ogs_trace_link_t link;
+            ogs_gtp_trace_link(&link, e->gnode ? e->gnode->gnode : NULL);
+            ogs_trace_packet_bind_rx_link(
+                    "gtp", recvbuf->data, recvbuf->len, &link);
+        }
 
         smf_gnode = e->gnode;
         if (!smf_gnode) {
@@ -390,9 +395,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             smf_ue_t *trace_ue = smf_ue_find_by_id(sess->smf_ue_id);
             if (trace_ue && trace_ue->imsi_bcd[0]) {
                 ogs_gtp_xact_set_imsi(gtp_xact, trace_ue->imsi_bcd);
-                ogs_trace_packet(trace_ue->imsi_bcd, "gtp", "rx",
-                        recvbuf->data, recvbuf->len);
-                ogs_trace_packet_bind_rx(NULL, NULL, 0);
+                ogs_trace_packet_on_imsi(trace_ue->imsi_bcd);
             }
         }
 
@@ -528,9 +531,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                 smf_ue_t *trace_ue = smf_ue_find_by_id(sess->smf_ue_id);
                 if (trace_ue && trace_ue->imsi_bcd[0]) {
                     ogs_gtp_xact_set_imsi(gtp_xact, trace_ue->imsi_bcd);
-                    ogs_trace_packet(trace_ue->imsi_bcd, "gtp", "rx",
-                            recvbuf->data, recvbuf->len);
-                    ogs_trace_packet_bind_rx(NULL, NULL, 0);
+                    ogs_trace_packet_on_imsi(trace_ue->imsi_bcd);
                 }
             }
 

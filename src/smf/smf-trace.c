@@ -160,6 +160,28 @@ void smf_trace_pfcp_rx(ogs_pfcp_xact_t *xact, smf_sess_t *sess,
     ogs_trace_packet_on_imsi(smf_ue->imsi_bcd);
 }
 
+void smf_trace_diameter_imsi(smf_sess_t *sess, char *imsi, size_t size)
+{
+    smf_ue_t *smf_ue;
+
+    ogs_assert(imsi && size);
+    imsi[0] = '\0';
+    if (!sess || !ogs_trace_filter_active())
+        return;
+    smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
+    if (smf_ue && smf_ue->imsi_bcd[0])
+        ogs_cpystrn(imsi, smf_ue->imsi_bcd, size);
+}
+
+void smf_trace_diameter(smf_sess_t *sess, const char *dir, struct msg *msg)
+{
+    char imsi[OGS_MAX_IMSI_BCD_LEN+1];
+
+    smf_trace_diameter_imsi(sess, imsi, sizeof(imsi));
+    if (imsi[0])
+        ogs_diam_trace_msg(imsi, dir, msg);
+}
+
 void smf_ue_log(
         smf_ue_t *smf_ue, smf_sess_t *sess,
         const char *proc, int level, const char *fmt, ...)

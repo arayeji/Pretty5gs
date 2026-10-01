@@ -173,9 +173,13 @@ int s1ap_send_to_enb_ue(enb_ue_t *enb_ue, ogs_pkbuf_t *pkbuf)
     }
 
     mme_ue = mme_ue_find_by_id(enb_ue->mme_ue_id);
-    if (mme_ue && MME_UE_HAVE_IMSI(mme_ue))
-        ogs_trace_packet(mme_ue->imsi_bcd, "s1ap", "tx",
-                pkbuf->data, pkbuf->len);
+    if (mme_ue && MME_UE_HAVE_IMSI(mme_ue) && ogs_trace_filter_active()) {
+        ogs_trace_link_t link;
+
+        mme_s1ap_trace_link(&link, enb, enb_ue->enb_ostream_id);
+        ogs_trace_packet_link(mme_ue->imsi_bcd, "s1ap", "tx",
+                pkbuf->data, pkbuf->len, &link);
+    }
 
     rv = s1ap_send_to_enb(enb, pkbuf, enb_ue->enb_ostream_id);
     mme_expect_sent(rv);
@@ -800,6 +804,7 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
     bool enb_ids_heap = false;
     int n_enb = 0, n_cap = 0, n_match = 0;
     int i;
+    ogs_pool_id_t first_sent_enb_id = OGS_INVALID_POOL_ID;
 
     ogs_debug("S1-Paging");
 
@@ -893,6 +898,8 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
                 ogs_free(enb_ids);
             return rv;
         }
+        if (!sent)
+            first_sent_enb_id = enb->id;
         sent = true;
     }
 
@@ -917,12 +924,20 @@ int s1ap_send_paging(mme_ue_t *mme_ue, S1AP_CNDomain_t cn_domain)
     /*
      * S1 Paging is non-UE signalling, so s1ap_send_to_enb_ue() never
      * traces it. Dump the PDU once per wave (not once per eNB) when
-     * this IMSI is in mme.trace_imsi. ogs_trace_packet is a no-op
-     * when the filter is empty or does not match.
+     * this IMSI is in mme.trace_imsi; the endpoints are those of the
+     * first eNB paged in the wave.
      */
-    if (MME_UE_HAVE_IMSI(mme_ue) && mme_ue->t3413.pkbuf)
-        ogs_trace_packet(mme_ue->imsi_bcd, "s1ap", "tx",
-                mme_ue->t3413.pkbuf->data, mme_ue->t3413.pkbuf->len);
+    if (ogs_trace_filter_active() &&
+            MME_UE_HAVE_IMSI(mme_ue) && mme_ue->t3413.pkbuf) {
+        ogs_trace_link_t link;
+        mme_enb_t *first_enb = mme_enb_find_by_id(first_sent_enb_id);
+
+        if (first_enb)
+            mme_s1ap_trace_link(&link, first_enb, 0);
+        ogs_trace_packet_link(mme_ue->imsi_bcd, "s1ap", "tx",
+                mme_ue->t3413.pkbuf->data, mme_ue->t3413.pkbuf->len,
+                first_enb ? &link : NULL);
+    }
 
     return OGS_OK;
 }

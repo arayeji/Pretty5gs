@@ -18,6 +18,7 @@
  */
 
 #include "fd-path.h"
+#include "smf-trace.h"
 
 static struct session_handler *smf_gx_reg = NULL;
 static struct disp_hdl *hdl_gx_fb = NULL;
@@ -800,6 +801,7 @@ send_ccr:
     }
 
     /* Send the request */
+    smf_trace_diameter(sess, "tx", req);
     ret = fd_msg_send(&req, smf_gx_cca_cb, svg);
     ogs_assert(ret == 0);
 
@@ -889,6 +891,7 @@ static void smf_gx_cca_cb(void *data, struct msg **msg)
         error++;
         goto cleanup;
     }
+    smf_trace_diameter(sess, "rx", *msg);
 
     if (sess_data->xact_data[req_slot].cc_req_no != cc_request_number) {
         ogs_error("CC-Request-Number mismatch: expected[%d], got[%d]",
@@ -1318,6 +1321,7 @@ static int smf_gx_rar_cb( struct msg **msg, struct avp *avp,
 
     uint32_t result_code = OGS_DIAM_UNKNOWN_SESSION_ID;
     int error = 0;
+    char trace_imsi[OGS_MAX_IMSI_BCD_LEN+1] = "";
 
     ogs_assert(msg);
 
@@ -1350,6 +1354,8 @@ static int smf_gx_rar_cb( struct msg **msg, struct avp *avp,
         error = 1;
         goto out;
     }
+    smf_trace_diameter_imsi(sess, trace_imsi, sizeof(trace_imsi));
+    ogs_diam_trace_msg(trace_imsi, "rx", qry);
 
     ret = fd_msg_browse(qry, MSG_BRW_FIRST_CHILD, &avp, NULL);
     ogs_assert(ret == 0);
@@ -1516,6 +1522,7 @@ static int smf_gx_rar_cb( struct msg **msg, struct avp *avp,
     (void)gx_store_sess_state(session, &sess_data);
 
     /* Send the answer */
+    ogs_diam_trace_msg(trace_imsi, "tx", ans);
     ret = fd_msg_send(msg, NULL, NULL);
     ogs_assert(ret == 0);
 
@@ -1548,6 +1555,7 @@ out:
     if (sess_data)
         (void)gx_store_sess_state(session, &sess_data);
 
+    ogs_diam_trace_msg(trace_imsi, "tx", ans);
     ret = fd_msg_send(msg, NULL, NULL);
     ogs_assert(ret == 0);
 

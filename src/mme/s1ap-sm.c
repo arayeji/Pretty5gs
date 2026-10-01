@@ -27,6 +27,7 @@
 #include "mme-event.h"
 #include "mme-timer.h"
 #include "mme-sm.h"
+#include "mme-trace.h"
 
 void s1ap_state_initial(ogs_fsm_t *s, mme_event_t *e)
 {
@@ -76,7 +77,7 @@ void s1ap_state_operational(ogs_fsm_t *s, mme_event_t *e)
         ogs_assert(pdu);
 
         if (e->pkbuf)
-            ogs_trace_packet_bind_rx("s1ap", e->pkbuf->data, e->pkbuf->len);
+            mme_s1ap_trace_bind_rx(enb, e->pkbuf);
 
         if (!enb->state.s1_setup_success &&
             !(pdu->present == S1AP_S1AP_PDU_PR_initiatingMessage &&

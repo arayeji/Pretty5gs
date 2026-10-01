@@ -46,10 +46,15 @@ static void pfcp_xact_trace_tx(ogs_pfcp_xact_t *xact, ogs_pkbuf_t *pkbuf)
      * to thread-local IMSI attributed PFCP Heartbeat/Association (no IMSI)
      * to whichever subscriber was last sticky — flooding NMS PACKET views.
      */
-    if (!xact->imsi_bcd[0])
+    if (!xact->imsi_bcd[0] || !ogs_trace_filter_active())
         return;
-    ogs_trace_packet(xact->imsi_bcd, "pfcp", "tx",
-            pkbuf->data, pkbuf->len);
+    {
+        ogs_trace_link_t link;
+
+        ogs_pfcp_trace_link(&link, xact->node, NULL);
+        ogs_trace_packet_link(xact->imsi_bcd, "pfcp", "tx",
+                pkbuf->data, pkbuf->len, &link);
+    }
 }
 
 /*

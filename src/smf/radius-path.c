@@ -147,11 +147,24 @@ static void sock_set_rcv_timeout(ogs_socket_t fd, unsigned ms)
 
 /* NMS PCAP rebuild: filter-gated PACKET dump (same shape as gtp/pfcp). */
 static void radius_trace_packet(const char *imsi, const char *dir,
-        const void *data, size_t len)
+        const void *data, size_t len, ogs_socket_t fd,
+        const ogs_sockaddr_t *peer)
 {
+    ogs_trace_link_t link;
+    ogs_sockaddr_t local;
+    socklen_t local_len = sizeof(local.ss);
+
     if (!imsi || !imsi[0] || !data || !len)
         return;
-    ogs_trace_packet(imsi, "radius", dir, data, len);
+    if (!ogs_trace_filter_active())
+        return;
+
+    memset(&local, 0, sizeof(local));
+    if (getsockname(fd, &local.sa, &local_len) != 0)
+        local.ogs_sa_family = 0;
+    ogs_trace_link_set(&link, OGS_TRACE_L4_UDP,
+            local.ogs_sa_family ? &local : NULL, peer);
+    ogs_trace_packet_link(imsi, "radius", dir, data, len, &link);
 }
 
 static const char *radius_username(smf_ue_t *ue)
@@ -1292,7 +1305,7 @@ static int radius_udp_exchange(int srv_idx, uint16_t port,
             continue;
         }
         /* Dump the exact on-wire request (incl. per-server authenticator). */
-        radius_trace_packet(imsi, "tx", req, req_len);
+        radius_trace_packet(imsi, "tx", req, req_len, s->sock->fd, peer);
 
         rcv = ogs_recvfrom(s->sock->fd, res, res_max, 0, &from);
         if (rcv < RADIUS_HDR_LEN) {
@@ -1339,7 +1352,7 @@ static int radius_udp_exchange(int srv_idx, uint16_t port,
             }
         }
 
-        radius_trace_packet(imsi, "rx", res, *res_len);
+        radius_trace_packet(imsi, "rx", res, *res_len, s->sock->fd, &from);
         rv = OGS_OK;
         successes++;
         break;
@@ -2110,7 +2123,7 @@ static void pod_send_response(int code, uint8_t id,
     if (ogs_sendto(s_pod_sock->fd, pkt, total_len, 0, to) != (ssize_t)total_len)
         ogs_warn("RADIUS PoD: failed to send response code=%d", code);
     else
-        radius_trace_packet(imsi, "tx", pkt, total_len);
+        radius_trace_packet(imsi, "tx", pkt, total_len, s_pod_sock->fd, to);
 }
 
 /*
@@ -2367,7 +2380,8 @@ static void pod_recv_cb(short when, ogs_socket_t fd, void *data)
             pod_imsi[slen] = '\0';
         }
     }
-    radius_trace_packet(pod_imsi[0] ? pod_imsi : NULL, "rx", buf, plen);
+    radius_trace_packet(pod_imsi[0] ? pod_imsi : NULL, "rx", buf, plen,
+            fd, &from);
 
     /* CoA-Request not implemented: NAK with Unsupported-Service. */
     if (buf[0] == RADIUS_CODE_COA_REQUEST) {
@@ -2400,7 +2414,7 @@ static void pod_recv_cb(short when, ogs_socket_t fd, void *data)
         if (imsi && imsi[0] && !pod_imsi[0]) {
             ogs_cpystrn(pod_imsi, imsi, sizeof(pod_imsi));
             /* RX was skipped earlier (no User-Name); dump now with IMSI. */
-            radius_trace_packet(pod_imsi, "rx", buf, plen);
+            radius_trace_packet(pod_imsi, "rx", buf, plen, fd, &from);
         } else if (imsi && imsi[0]) {
             ogs_cpystrn(pod_imsi, imsi, sizeof(pod_imsi));
         }

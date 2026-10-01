@@ -189,6 +189,12 @@ ogs_sock_t *ogs_sock_accept(ogs_sock_t *sock)
 
     memcpy(&new_sock->remote_addr, &addr, sizeof(new_sock->remote_addr));
 
+    /* the address the peer reached: exact even on a wildcard listener */
+    addrlen = sizeof(new_sock->local_addr.ss);
+    if (getsockname(new_fd, &new_sock->local_addr.sa, &addrlen) != 0)
+        memcpy(&new_sock->local_addr, &sock->local_addr,
+                sizeof(new_sock->local_addr));
+
     return new_sock;
 }
 

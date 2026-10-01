@@ -50,10 +50,13 @@ typedef struct {
     yaml_node_t *node;
     yaml_node_pair_t *pair;
     yaml_node_item_t *item;
+    int scalar_visited;
 } ogs_yaml_iter_t;
 
 void ogs_yaml_iter_init(ogs_yaml_iter_t *iter, yaml_document_t *document);
 int ogs_yaml_iter_next(ogs_yaml_iter_t *iter);
+/* Like ogs_yaml_iter_next(), but a lone scalar node yields once. */
+int ogs_yaml_iter_next_value(ogs_yaml_iter_t *iter);
 void ogs_yaml_iter_recurse(ogs_yaml_iter_t *parent, ogs_yaml_iter_t *iter);
 
 int ogs_yaml_iter_type(ogs_yaml_iter_t *iter);

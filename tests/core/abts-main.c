@@ -38,6 +38,7 @@ abts_suite *test_tlv(abts_suite *suite);
 abts_suite *test_fsm(abts_suite *suite);
 abts_suite *test_hash(abts_suite *suite);
 abts_suite *test_uuid(abts_suite *suite);
+abts_suite *test_trace(abts_suite *suite);
 
 const struct testlist {
     abts_suite *(*func)(abts_suite *suite);
@@ -60,6 +61,7 @@ const struct testlist {
     {test_fsm},
     {test_hash},
     {test_uuid},
+    {test_trace},
     {NULL},
 };
 

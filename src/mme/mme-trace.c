@@ -25,7 +25,54 @@ struct mme_s1ap_trace_rx_s {
     uint8_t *data;
     size_t len;
     char proto[16];
+    ogs_trace_link_t link;
 };
+
+void mme_s1ap_trace_link(ogs_trace_link_t *link,
+        const mme_enb_t *enb, int stream_no)
+{
+    ogs_assert(link);
+
+    ogs_trace_link_set_sock(link, OGS_TRACE_L4_SCTP,
+            enb ? enb->sctp.sock : NULL, enb ? enb->sctp.addr : NULL);
+    if (link->l4 == OGS_TRACE_L4_NONE)
+        return;
+    link->sctp_ppid = OGS_SCTP_S1AP_PPID;
+    if (stream_no >= 0) {
+        link->sctp_stream_present = true;
+        link->sctp_stream = (uint16_t)stream_no;
+    }
+}
+
+void mme_s1ap_trace_rx(const mme_enb_t *enb, const char *imsi_bcd,
+        const ogs_pkbuf_t *pkbuf)
+{
+    ogs_trace_link_t link;
+
+    if (!pkbuf || !ogs_trace_filter_active())
+        return;
+
+    mme_s1ap_trace_link(&link, enb,
+            (int)ogs_sctp_stream_no_in_pkbuf(pkbuf));
+    if (ogs_sctp_ppid_in_pkbuf(pkbuf))
+        link.sctp_ppid = (uint32_t)ogs_sctp_ppid_in_pkbuf(pkbuf);
+    ogs_trace_packet_link(imsi_bcd, "s1ap", "rx",
+            pkbuf->data, pkbuf->len, &link);
+}
+
+void mme_s1ap_trace_bind_rx(const mme_enb_t *enb, const ogs_pkbuf_t *pkbuf)
+{
+    ogs_trace_link_t link;
+
+    if (!pkbuf || !ogs_trace_filter_active())
+        return;
+
+    mme_s1ap_trace_link(&link, enb,
+            (int)ogs_sctp_stream_no_in_pkbuf(pkbuf));
+    if (ogs_sctp_ppid_in_pkbuf(pkbuf))
+        link.sctp_ppid = (uint32_t)ogs_sctp_ppid_in_pkbuf(pkbuf);
+    ogs_trace_packet_bind_rx_link("s1ap", pkbuf->data, pkbuf->len, &link);
+}
 
 static void s1ap_trace_rx_free(struct mme_s1ap_trace_rx_s *blob)
 {
@@ -52,12 +99,14 @@ void mme_enb_ue_s1ap_trace_take_bound(enb_ue_t *enb_ue)
     uint8_t *data = NULL;
     size_t len = 0;
     char proto[16];
+    ogs_trace_link_t link;
     struct mme_s1ap_trace_rx_s *blob, *old;
 
     ogs_assert(enb_ue);
 
     mme_enb_ue_s1ap_trace_clear(enb_ue);
-    if (!ogs_trace_packet_steal_rx(&data, &len, proto, sizeof(proto)))
+    if (!ogs_trace_packet_steal_rx_link(
+                &data, &len, proto, sizeof(proto), &link))
         return;
 
     blob = ogs_calloc(1, sizeof(*blob));
@@ -68,6 +117,7 @@ void mme_enb_ue_s1ap_trace_take_bound(enb_ue_t *enb_ue)
     blob->data = data;
     blob->len = len;
     ogs_cpystrn(blob->proto, proto, sizeof(blob->proto));
+    blob->link = link;
 
     old = __atomic_exchange_n(&enb_ue->s1ap_trace_rx, blob, __ATOMIC_ACQ_REL);
     if (old)
@@ -88,9 +138,10 @@ void mme_enb_ue_s1ap_trace_dump(enb_ue_t *enb_ue, const char *imsi_bcd)
         return;
 
     if (blob->data && blob->len)
-        ogs_trace_packet(imsi_bcd,
+        ogs_trace_packet_link(imsi_bcd,
                 blob->proto[0] ? blob->proto : "s1ap",
-                "rx", blob->data, blob->len);
+                "rx", blob->data, blob->len,
+                blob->link.l4 != OGS_TRACE_L4_NONE ? &blob->link : NULL);
     s1ap_trace_rx_free(blob);
 }
 
@@ -547,40 +598,6 @@ void mme_log_radio(
 void mme_trace_diameter(
         const char *imsi_bcd, const char *dir, struct msg *msg)
 {
-    uint8_t *buf = NULL;
-    size_t len = 0;
-    int ret;
-
-    if (!imsi_bcd || !imsi_bcd[0] || !msg)
-        return;
-    if (ogs_trace_filter_count() == 0)
-        return;
-    if (!ogs_trace_filter_match(imsi_bcd))
-        return;
-
-    /*
-     * Same path as HSS hss_trace_diameter(). Previously a no-op because an
-     * older bufferize ASSERT could abort MME; only run when filter matches
-     * and treat bufferize failure as a WARN (no PACKET), never crash the
-     * attach path on a missing dump.
-     */
-    ret = fd_msg_update_length(msg);
-    if (ret != 0) {
-        ogs_warn("[IMSI:%s] PACKET diameter %s: fd_msg_update_length failed (%d)",
-                imsi_bcd, dir && dir[0] ? dir : "-", ret);
-        return;
-    }
-
-    ret = fd_msg_bufferize(msg, &buf, &len);
-    if (ret != 0 || !buf || !len) {
-        ogs_warn("[IMSI:%s] PACKET diameter %s: fd_msg_bufferize failed "
-                "(ret=%d len=%zu) — no PACKET line",
-                imsi_bcd, dir && dir[0] ? dir : "-", ret, len);
-        if (buf)
-            free(buf);
-        return;
-    }
-
-    ogs_trace_packet(imsi_bcd, "diameter", dir, buf, len);
-    free(buf);
+    /* tx is dumped when freeDiameter sends it, with the peer endpoints */
+    ogs_diam_trace_msg(imsi_bcd, dir, msg);
 }

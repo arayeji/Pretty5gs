@@ -68,6 +68,8 @@ int ogs_gtp_connect(ogs_sock_t *ipv4, ogs_sock_t *ipv6, ogs_gtp_node_t *gnode);
 
 int ogs_gtp_send(ogs_gtp_node_t *gnode, ogs_pkbuf_t *pkbuf);
 int ogs_gtp_sendto(ogs_gtp_node_t *gnode, ogs_pkbuf_t *pkbuf);
+/* PACKET trace endpoints of the S11/S5/Gn path to gnode */
+void ogs_gtp_trace_link(ogs_trace_link_t *link, const ogs_gtp_node_t *gnode);
 
 int ogs_gtp_send_with_teid(
         ogs_sock_t *sock,
