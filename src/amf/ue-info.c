@@ -620,7 +620,9 @@ size_t amf_dump_ue_info_paged(char *buf, size_t buflen,
     /*
      * Synchronise with the AMF main thread - it owns the lists we
      * are about to walk, and MHD now runs on its own poll thread.
+     * UE shards (amf.workers) change them under amf_ctx_lock().
      */
+    amf_ctx_lock();
     ogs_metrics_dump_lock();
 
     amf_ue_t *ue = NULL;
@@ -663,6 +665,7 @@ size_t amf_dump_ue_info_paged(char *buf, size_t buflen,
     }
 
     ogs_metrics_dump_unlock();
+    amf_ctx_unlock();
 
     /* add trailing pager info (json_pager_finalize will free 'root') */
     json_pager_add_trailing(root, no_paging, page, page_size, emitted, total,

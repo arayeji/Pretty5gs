@@ -71,6 +71,10 @@ int amf_initialize(void)
     rv = amf_sbi_open();
     if (rv != OGS_OK) return rv;
 
+    /* UE shards before any NGAP thread can route to them */
+    rv = amf_workers_start(amf_self()->workers);
+    if (rv != OGS_OK) return rv;
+
     /*
      * Side queue and close registry must exist before any thread can
      * post or confirm into them.
@@ -109,6 +113,9 @@ static void event_termination(void)
 {
     ogs_sbi_nf_instance_t *nf_instance = NULL;
 
+    /* runs beside amf_main() and the shards */
+    ogs_sbi_lock();
+
     /* Sending NF Instance De-registration to NRF */
     ogs_list_for_each(&ogs_sbi_self()->nf_instance_list, nf_instance)
         ogs_sbi_nf_fsm_fini(nf_instance);
@@ -121,6 +128,8 @@ static void event_termination(void)
     ogs_assert(t_termination_holding);
 #define TERMINATION_HOLDING_TIME ogs_time_from_msec(300)
     ogs_timer_start(t_termination_holding, TERMINATION_HOLDING_TIME);
+
+    ogs_sbi_unlock();
 
     /* Sending termination event to the queue */
     amf_event_term();
@@ -135,8 +144,12 @@ void amf_terminate(void)
     ogs_thread_destroy(thread);
     ogs_timer_delete(t_termination_holding);
 
-    /* main is joined, so nothing posts SEND/DRAIN anymore: stop the IO
-     * threads before any socket teardown so no send races a destroy */
+    /* shards send NGAP too: join them before the IO threads go */
+    amf_workers_stop();
+
+    /* main and the shards are joined, so nothing posts SEND/DRAIN
+     * anymore: stop the IO threads before any socket teardown so no
+     * send races a destroy */
     ngap_io_stop();
 
     ngap_close();
@@ -153,6 +166,8 @@ void amf_terminate(void)
     ogs_metrics_context_close(ogs_metrics_self());
 
     amf_context_final();
+    /* UE timers of the shards are gone: free their timer managers */
+    amf_workers_final();
     ogs_sbi_context_final();
 
     amf_metrics_final();
@@ -169,16 +184,25 @@ static void amf_main(void *data)
 
     /* sole consumer of ogs_app()->queue: must never block pushing to it */
     amf_event_mark_main_thread();
+    ogs_sbi_lock_mark_poller();
 
     /* private pkbuf pool for the main loop (amf.pkbuf_thread_pool) */
     amf_pkbuf_thread_pool_attach();
 
+    ogs_sbi_lock();
     ogs_fsm_init(&amf_sm, amf_state_initial, amf_state_final, 0);
+    ogs_sbi_unlock();
 
     for ( ;; ) {
+        ogs_time_t timeout = 0;
+
         /* events were left queued by the batch cap: do not sleep */
-        ogs_pollset_poll(ogs_app()->pollset, backlog ? 0 :
-                ogs_timer_mgr_next(ogs_app()->timer_mgr));
+        if (!backlog) {
+            ogs_sbi_lock();
+            timeout = ogs_timer_mgr_next(ogs_app()->timer_mgr);
+            ogs_sbi_unlock();
+        }
+        ogs_pollset_poll(ogs_app()->pollset, timeout);
 
         /*
          * After ogs_pollset_poll(), ogs_timer_mgr_expire() must be called.
@@ -191,7 +215,9 @@ static void amf_main(void *data)
          * because 'if rv == OGS_DONE' statement is exiting and
          * not calling ogs_timer_mgr_expire().
          */
+        ogs_sbi_lock();
         ogs_timer_mgr_expire(ogs_app()->timer_mgr);
+        ogs_sbi_unlock();
 
         /*
          * Bound work per poll cycle: under a registration storm the
@@ -224,12 +250,16 @@ static void amf_main(void *data)
                 }
 
                 ogs_assert(e);
-                amf_event_dispatch_begin();
-                do {
-                    ogs_fsm_dispatch(&amf_sm, e);
-                    ogs_event_free(e);
-                } while ((e = amf_event_local_pop()));
-                amf_event_dispatch_end();
+                if (!amf_workers_route(e)) {
+                    amf_event_dispatch_begin();
+                    ogs_sbi_lock();
+                    do {
+                        ogs_fsm_dispatch(&amf_sm, e);
+                        ogs_event_free(e);
+                    } while ((e = amf_event_local_pop()));
+                    ogs_sbi_unlock();
+                    amf_event_dispatch_end();
+                }
 
                 if (++batch >= batch_max) {
                     backlog = true;
@@ -240,5 +270,7 @@ static void amf_main(void *data)
     }
 done:
 
+    ogs_sbi_lock();
     ogs_fsm_fini(&amf_sm, 0);
+    ogs_sbi_unlock();
 }

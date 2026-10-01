@@ -34,6 +34,10 @@ extern "C" {
  */
 bool amf_namf_oam_handler(ogs_sbi_stream_t *stream, ogs_sbi_message_t *message, ogs_sbi_request_t *request);
 
+/* Release the calling thread's UEs on a deleted PLMN (amf.workers shard) */
+int amf_namf_oam_release_local_ues_of_plmn(
+        const ogs_plmn_id_t *deleted_plmn_id);
+
 /* Individual endpoint handlers */
 bool namf_oam_handle_plmns_get(ogs_sbi_stream_t *stream, ogs_sbi_message_t *message);
 bool namf_oam_handle_plmns_post(ogs_sbi_stream_t *stream,

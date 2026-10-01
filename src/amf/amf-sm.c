@@ -29,6 +29,7 @@
 #include "nas-security.h"
 #include "ngap-io.h"
 #include "ngap-free.h"
+#include "amf-workers.h"
 
 static bool amf_sockaddr_valid(const ogs_sockaddr_t *addr)
 {
@@ -853,9 +854,8 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
              */
             ogs_warn("gNB-N2[%s] reconnected; replacing stale context",
                     OGS_ADDR(addr, buf));
-            amf_sbi_send_deactivate_all_ue_in_gnb(
+            amf_workers_gnb_teardown(
                     gnb, AMF_REMOVE_S1_CONTEXT_BY_LO_CONNREFUSED);
-            amf_gnb_remove(gnb);
             gnb = NULL;
         }
 
@@ -933,9 +933,8 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
             } else {
                 ogs_info("gNB-N2[%s] connection refused!!!",
                         OGS_ADDR(gnb->sctp.addr, buf));
-                amf_sbi_send_deactivate_all_ue_in_gnb(
+                amf_workers_gnb_teardown(
                         gnb, AMF_REMOVE_S1_CONTEXT_BY_LO_CONNREFUSED);
-                amf_gnb_remove(gnb);
             }
         } else {
             ogs_warn("gNB-N2 connection refused, Already Removed! "
@@ -965,14 +964,25 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
         ogs_assert(e->ngap.sock);
         gnb = amf_gnb_find_by_sock(e->ngap.sock);
         if (gnb) {
-            amf_sbi_send_deactivate_all_ue_in_gnb(
+            amf_workers_gnb_teardown(
                     gnb, AMF_REMOVE_S1_CONTEXT_BY_LO_CONNREFUSED);
-            amf_gnb_remove(gnb);
         } else
             ngap_sock_close_orphan(e->ngap.sock);
         break;
 
     case AMF_EVENT_NGAP_MESSAGE:
+        if (amf_shard_self() >= 0) {
+            /* routed by main: heap PDU, gNB by id, no address */
+            gnb = amf_gnb_find_by_id_any(e->gnb_id);
+            if (gnb)
+                ngap_state_operational(&gnb->sm, e);
+            else
+                ogs_warn("[%d] NGAP MESSAGE for removed gNB - dropped",
+                        e->gnb_id);
+            amf_ngap_message_drop(e);
+            break;
+        }
+
         sock = e->ngap.sock;
         ogs_assert(sock);
         addr = e->ngap.addr;
@@ -1194,6 +1204,16 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
         ogs_assert(OGS_FSM_STATE(&amf_ue->sm));
 
         ogs_fsm_dispatch(&amf_ue->sm, e);
+        break;
+
+    case AMF_EVENT_SHARD_GNB_REMOVE:
+    case AMF_EVENT_SHARD_GNB_REMOVE_DONE:
+    case AMF_EVENT_SHARD_NG_RESET_ALL:
+    case AMF_EVENT_SHARD_NG_RESET_PARTIAL:
+    case AMF_EVENT_SHARD_UE_EVICT:
+    case AMF_EVENT_SHARD_OAM_RELEASE:
+    case AMF_EVENT_SBI_DISCOVER_CB:
+        amf_workers_handle_event(e);
         break;
 
     default:

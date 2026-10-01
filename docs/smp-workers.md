@@ -115,13 +115,63 @@ amf:
   non-blocking full-queue post, startup barrier, cross-thread pkbufs,
   multi-producer.
 
-**Phase 2 (not started): AMF UE shards (`amf.workers`).** Needs
-`amf_ctx_lock` over pools/hashes/lists, shard bits in
-AMF_UE_NGAP_ID, `being_removed` exactly-once removal, an opt-in
-recursive lock for the process-global `lib/sbi` state (client/server
-pools, `xact_list`, NF instances) with pollset dispatch hooks in
-`lib/core`, per-worker UE timers, NGAP/SBI routing + rehome and gNB
-fan-out to owners.
+## Done (AMF UE shards, phase 2)
+
+```yaml
+amf:
+  workers: 2                   # 0..15 UE shard threads (amf-wN); forces
+                               # ngap_io_thread >= 1
+```
+
+- **Ownership.** A UE unit (`amf_ue`, its sessions, its `ran_ue`s and
+  their timers) belongs to one shard (`owner_wid`) for life and runs
+  only there; UE timers live on the shard's timer manager
+  (`amf_timer_mgr()`). Main keeps gNB/SCTP, NG Setup/Reset, RAN
+  configuration, NRF and OAM, and owns no UE while workers are on.
+- **Shard bits.** AMF-UE-NGAP-ID bits 36..39 and M-TMSI bits 16..19
+  (unused by the allocator, stripped on free) carry `wid + 1`. With
+  workers off both IDs are unchanged.
+- **Routing (main, `amf_workers_route()`).** NGAP UE messages by the
+  AMF-UE-NGAP-ID bits, else the gNB's RAN-UE-NGAP-ID. InitialUEMessage:
+  existing RAN-UE-NGAP-ID, then 5G-S-TMSI (GUTI hash, else M-TMSI bits,
+  which covers a GUTI the owner has not confirmed yet), then a quiet
+  NAS identity peek, then a hash of (gNB, RAN-UE-NGAP-ID). Main
+  heap-decodes when RX workers are off. SBI responses and CLIENT_WAIT
+  timers go by transaction -> UE/session -> owner; SBI requests by
+  `ue-contexts/{id}` or `namf-callback/{supi}`; NNRF and OAM stay on
+  main. A full shard queue answers an SBI request with 503.
+- **Locks.** Order: `ogs_sbi_lock()` (opt-in, recursive, process-wide
+  `lib/sbi` state and the `ogs_app()` timer manager) -> `amf_ctx_lock()`
+  (pools, hashes, lists) -> metrics dump lock. Main holds the SBI lock
+  for timer next/expire, event dispatch and, via the pollset dispatch
+  hooks, poll handlers; shards hold it for SBI events and shard control
+  events only. NGAP/NAS handlers reach `lib/sbi` through helpers that
+  lock themselves. Removing a UE or session drops its transactions, so
+  `xact->sbi_object` stays valid under the SBI lock.
+- **gNB fan-out.** Teardown (`amf_workers_gnb_teardown()`): unhash +
+  `being_removed`, every shard releases its UEs on that gNB, the last
+  `SHARD_GNB_REMOVE_DONE` frees it. NG Reset (all/partial) and OAM PLMN
+  release fan out the same way; the NG Reset ACK is sent exactly once.
+- **Cross-shard re-registration.** When the identity is only learnt
+  after InitialUE (unknown GUTI -> Identity Response, or a fresh SUCI
+  later matched by SUPI) the OLD context can sit on another shard. The
+  new owner takes its sessions (as upstream) and posts
+  `SHARD_UE_EVICT`; the old owner releases the old NG context at once
+  (upstream holds it until the new registration authenticates) and
+  removes the rest. Hash entries are re-inserted under the new UE's own
+  key, since a replaced entry keeps the old key that the evict frees.
+- **Accepted deviations / races.** No rehome: an owner never changes,
+  so cross-shard re-registration evicts instead. Paging reads
+  `supported_ta_list` and OAM reads `plmn_support` without a lock
+  (config-time data). The old owner may still be running an NGAP/NAS
+  event of the evicted UE while its sessions move (re-registration
+  window only). gNB teardown is asynchronous, so a late CONNREFUSED for
+  a socket already being removed logs "connection refused, Already
+  Removed!" (harmless).
+- Tests: `tests/unit` `sbi-lock-test` (recursion, mutual exclusion),
+  `tests/core` `poll-test` (dispatch hooks), `tests/load5gc` now runs
+  with `workers: 2`; 5GC suites (registration, slice, transfer,
+  transfer-error, vonr, handover, non3gpp) pass with workers off and on.
 
 ## Done (SGW-C shards)
 

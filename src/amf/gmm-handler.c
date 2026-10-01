@@ -1169,7 +1169,23 @@ ogs_nas_5gmm_cause_t gmm_handle_security_mode_complete(amf_ue_t *amf_ue,
     return OGS_5GMM_CAUSE_REQUEST_ACCEPTED;
 }
 
+static int handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
+        ogs_nas_5gs_ul_nas_transport_t *ul_nas_transport);
+
+/* SMF selection walks NF instances the main thread may remove */
 int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
+        ogs_nas_5gs_ul_nas_transport_t *ul_nas_transport)
+{
+    int rv;
+
+    ogs_sbi_lock();
+    rv = handle_ul_nas_transport(ran_ue, amf_ue, ul_nas_transport);
+    ogs_sbi_unlock();
+
+    return rv;
+}
+
+static int handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
         ogs_nas_5gs_ul_nas_transport_t *ul_nas_transport)
 {
     int r;

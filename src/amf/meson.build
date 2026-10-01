@@ -62,6 +62,7 @@ libamf_sources = files('''
     gmm-sm.c
 
     amf-sm.c
+    amf-workers.c
 
     init.c
     metrics.c

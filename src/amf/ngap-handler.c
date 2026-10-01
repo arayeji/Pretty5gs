@@ -4694,11 +4694,71 @@ void ngap_handle_ran_configuration_update(
     ogs_expect(OGS_OK == ngap_send_ran_configuration_update_ack(gnb));
 }
 
+void ngap_ng_reset_partial_release(ran_ue_t *ran_ue)
+{
+    int old_xact_count = 0, new_xact_count = 0;
+    amf_ue_t *amf_ue = NULL;
+
+    ogs_assert(ran_ue);
+
+    amf_ue = amf_ue_find_by_id(ran_ue->amf_ue_id);
+    /*
+     * Issues #1928
+     *
+     * By ran_ue_deassociate(amf_ue->ran_ue),
+     * 'ran_ue->amf_ue' could be NULL.
+     *
+     * As such, we should not use the ogs_assert() like the following.
+     * ogs_assert(ran_ue->amf_ue);
+     */
+    if (amf_ue) {
+        old_xact_count = amf_sess_xact_count(amf_ue);
+
+        amf_sbi_send_deactivate_all_sessions(
+            ran_ue, amf_ue, AMF_REMOVE_S1_CONTEXT_BY_RESET_PARTIAL,
+            NGAP_Cause_PR_radioNetwork,
+            NGAP_CauseRadioNetwork_failure_in_radio_interface_procedure);
+
+        new_xact_count = amf_sess_xact_count(amf_ue);
+    } else {
+        ogs_warn("UE(amf-ue) context has already been removed");
+        ogs_warn("   AMF_UE_NGAP_ID[%lld] RAN_UE_NGAP_ID[%lld]",
+                    (long long)ran_ue->amf_ue_ngap_id,
+                    (long long)ran_ue->ran_ue_ngap_id);
+    }
+
+    if (old_xact_count == new_xact_count) ran_ue_remove(ran_ue);
+}
+
+void ngap_ng_reset_partial_try_ack(amf_gnb_t *gnb)
+{
+    ogs_pkbuf_t *ack = NULL;
+    int r;
+
+    ogs_assert(gnb);
+
+    /* The GNB_UE context where PartOfNG_interface was requested remains */
+    if (!amf_gnb_ng_reset_partial_done(gnb))
+        return;
+
+    /* another shard may have sent it already */
+    ack = amf_gnb_take_ng_reset_ack(gnb);
+    if (!ack) {
+        ogs_assert(amf_workers_running());
+        return;
+    }
+
+    r = ngap_send_to_gnb(gnb, ack, NGAP_NON_UE_SIGNALLING);
+    ogs_expect(r == OGS_OK);
+}
+
 void ngap_handle_ng_reset(
         amf_gnb_t *gnb, ogs_ngap_message_t *message)
 {
     char buf[OGS_ADDRSTRLEN];
-    int i, r, old_xact_count = 0, new_xact_count = 0;
+    int i, r;
+    ogs_pool_id_t *shard_ids = NULL;
+    int num_of_shard_ids = 0;
 
     NGAP_InitiatingMessage_t *initiatingMessage = NULL;
     NGAP_NGReset_t *NGReset = NULL;
@@ -4707,8 +4767,6 @@ void ngap_handle_ng_reset(
     NGAP_Cause_t *Cause = NULL;
     NGAP_ResetType_t *ResetType = NULL;
     NGAP_UE_associatedLogicalNG_connectionList_t *partOfNG_Interface = NULL;
-
-    ran_ue_t *iter = NULL;
 
     ogs_assert(gnb);
     ogs_assert(gnb->sctp.sock);
@@ -4761,6 +4819,12 @@ void ngap_handle_ng_reset(
     case NGAP_ResetType_PR_nG_Interface:
         ogs_warn("    NGAP_ResetType_PR_nG_Interface");
 
+        if (amf_workers_running()) {
+            /* every shard releases its UEs; the last one sends the ACK */
+            amf_workers_ng_reset_all(gnb);
+            break;
+        }
+
         amf_sbi_send_deactivate_all_ue_in_gnb(
                 gnb, AMF_REMOVE_S1_CONTEXT_BY_RESET_ALL);
 
@@ -4806,21 +4870,34 @@ void ngap_handle_ng_reset(
         partOfNG_Interface = ResetType->choice.partOfNG_Interface;
         ogs_assert(partOfNG_Interface);
 
-        if (gnb->ng_reset_ack)
-            ogs_pkbuf_free(gnb->ng_reset_ack);
+        {
+            ogs_pkbuf_t *ack =
+                ogs_ngap_build_ng_reset_ack(partOfNG_Interface);
 
-        gnb->ng_reset_ack = ogs_ngap_build_ng_reset_ack(partOfNG_Interface);
+            amf_ctx_lock();
+            if (gnb->ng_reset_ack)
+                ogs_pkbuf_free(gnb->ng_reset_ack);
+            gnb->ng_reset_ack = ack;
+            amf_ctx_unlock();
+        }
         if (!gnb->ng_reset_ack) {
             ogs_error("ogs_ngap_build_ng_reset_ack() failed");
             return;
         }
 
+        if (amf_workers_running() && partOfNG_Interface->list.count) {
+            shard_ids = ogs_calloc(partOfNG_Interface->list.count,
+                    sizeof(*shard_ids));
+            ogs_assert(shard_ids);
+        }
+
+        /* shards may free their ran_ue's between lookup and flagging */
+        amf_ctx_lock();
         for (i = 0; i < partOfNG_Interface->list.count; i++) {
             NGAP_UE_associatedLogicalNG_connectionItem_t *item = NULL;
             uint64_t amf_ue_ngap_id;
 
             ran_ue_t *ran_ue = NULL;
-            amf_ue_t *amf_ue = NULL;
 
             item = (NGAP_UE_associatedLogicalNG_connectionItem_t *)
                         partOfNG_Interface->list.array[i];
@@ -4870,53 +4947,32 @@ void ngap_handle_ng_reset(
             /* RAN_UE Context where PartOfNG_interface was requested */
             ran_ue->part_of_ng_reset_requested = true;
 
-            amf_ue = amf_ue_find_by_id(ran_ue->amf_ue_id);
             /*
-             * Issues #1928
-             *
-             * By ran_ue_deassociate(amf_ue->ran_ue),
-             * 'ran_ue->amf_ue' could be NULL.
-             *
-             * As such, we should not use the ogs_assert() like the following.
-             * ogs_assert(ran_ue->amf_ue);
+             * Shard-owned: flag every item first, then hand them over,
+             * so no shard can see the set complete half-way.
              */
-            if (amf_ue) {
-                old_xact_count = amf_sess_xact_count(amf_ue);
-
-                amf_sbi_send_deactivate_all_sessions(
-                    ran_ue, amf_ue, AMF_REMOVE_S1_CONTEXT_BY_RESET_PARTIAL,
-                    NGAP_Cause_PR_radioNetwork,
-                    NGAP_CauseRadioNetwork_failure_in_radio_interface_procedure);
-
-                new_xact_count = amf_sess_xact_count(amf_ue);
-            } else {
-                ogs_warn("UE(amf-ue) context has already been removed");
-                ogs_warn("   AMF_UE_NGAP_ID[%lld] RAN_UE_NGAP_ID[%lld]",
-                            (long long)ran_ue->amf_ue_ngap_id,
-                            (long long)ran_ue->ran_ue_ngap_id);
+            if (shard_ids) {
+                shard_ids[num_of_shard_ids++] = ran_ue->id;
+                continue;
             }
 
-            if (old_xact_count == new_xact_count) ran_ue_remove(ran_ue);
+            ngap_ng_reset_partial_release(ran_ue);
         }
+        amf_ctx_unlock();
 
-        ogs_list_for_each(&gnb->ran_ue_list, iter) {
-            if (iter->part_of_ng_reset_requested == true) {
-                /* The GNB_UE context
-                 * where PartOfNG_interface was requested
-                 * still remains */
-                return;
+        for (i = 0; i < num_of_shard_ids; i++) {
+            if (!amf_workers_ng_reset_partial(shard_ids[i], gnb->id)) {
+                ran_ue_t *ran_ue = ran_ue_find_by_id(shard_ids[i]);
+                if (ran_ue)
+                    ngap_ng_reset_partial_release(ran_ue);
             }
         }
+        if (shard_ids)
+            ogs_free(shard_ids);
 
-        /* All GNB_UE context
-         * where PartOfNG_interface was requested
-         * REMOVED */
-        ogs_assert(gnb->ng_reset_ack);
-        r = ngap_send_to_gnb(gnb, gnb->ng_reset_ack, NGAP_NON_UE_SIGNALLING);
-        ogs_expect(r == OGS_OK);
-
-        /* Clear NG-Reset Ack Buffer */
-        gnb->ng_reset_ack = NULL;
+        /* All GNB_UE context where PartOfNG_interface was requested
+         * REMOVED: send and clear the NG-Reset Ack Buffer */
+        ngap_ng_reset_partial_try_ack(gnb);
         break;
     default:
         ogs_warn("Invalid ResetType[%d]", ResetType->present);

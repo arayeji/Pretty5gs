@@ -54,6 +54,35 @@ int ngap_send_to_gnb(amf_gnb_t *gnb, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
     ogs_assert(pkbuf);
     ogs_assert(gnb);
 
+    ogs_sctp_ppid_in_pkbuf(pkbuf) = OGS_SCTP_NGAP_PPID;
+    ogs_sctp_stream_no_in_pkbuf(pkbuf) = stream_no;
+
+    /*
+     * Shards send to gNBs that main may be tearing down: the socket and
+     * address are only stable under the context lock, and the IO thread
+     * takes over the send before main can close the socket.
+     */
+    if (ngap_io_active()) {
+        int rv;
+
+        amf_ctx_lock();
+        if (gnb->being_removed || !gnb->sctp.sock ||
+                gnb->sctp.sock->fd == INVALID_SOCKET) {
+            amf_ctx_unlock();
+            ogs_warn("[%d] gNB is being removed - NGAP send dropped",
+                    gnb->gnb_id);
+            ogs_pkbuf_free(pkbuf);
+            return OGS_ERROR;
+        }
+        ogs_debug("    IP[%s] RAN_ID[%d]",
+                OGS_ADDR(gnb->sctp.addr, buf), gnb->gnb_id);
+        rv = ngap_io_post_send(gnb->sctp.sock, pkbuf, gnb->sctp.addr,
+                gnb->sctp.type != SOCK_STREAM);
+        amf_ctx_unlock();
+
+        return rv;
+    }
+
     ogs_assert(gnb->sctp.sock);
     if (gnb->sctp.sock->fd == INVALID_SOCKET) {
         ogs_error("gNB SCTP socket has already been destroyed");
@@ -64,14 +93,6 @@ int ngap_send_to_gnb(amf_gnb_t *gnb, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
 
     ogs_debug("    IP[%s] RAN_ID[%d]",
             OGS_ADDR(gnb->sctp.addr, buf), gnb->gnb_id);
-
-    ogs_sctp_ppid_in_pkbuf(pkbuf) = OGS_SCTP_NGAP_PPID;
-    ogs_sctp_stream_no_in_pkbuf(pkbuf) = stream_no;
-
-    /* dedicated IO thread owns the write side (amf.ngap_io_thread) */
-    if (ngap_io_active())
-        return ngap_io_post_send(gnb->sctp.sock, pkbuf, gnb->sctp.addr,
-                gnb->sctp.type != SOCK_STREAM);
 
     if (gnb->sctp.type == SOCK_STREAM) {
         ogs_sctp_write_to_buffer(&gnb->sctp, pkbuf);
@@ -119,7 +140,7 @@ int ngap_delayed_send_to_ran_ue(
         e = amf_event_new(AMF_EVENT_NGAP_TIMER);
         ogs_assert(e);
         e->timer = ogs_timer_add(
-                ogs_app()->timer_mgr, amf_timer_ng_delayed_send, e);
+                amf_timer_mgr(), amf_timer_ng_delayed_send, e);
         ogs_assert(e->timer);
         e->pkbuf = pkbuf;
         e->ran_ue_id = ran_ue->id;
@@ -525,7 +546,11 @@ int ngap_send_paging(amf_ue_t *amf_ue)
         return OGS_NOTFOUND;
     }
 
+    /* gnb_list is main's; shards page under the context lock */
+    amf_ctx_lock();
     ogs_list_for_each(&amf_self()->gnb_list, gnb) {
+        if (gnb->being_removed)
+            continue;
         for (i = 0; i < gnb->num_of_supported_ta_list; i++) {
             for (j = 0; j < gnb->supported_ta_list[i].num_of_bplmn_list; j++) {
                 if (memcmp(&gnb->supported_ta_list[i].bplmn_list[j].plmn_id,
@@ -538,6 +563,7 @@ int ngap_send_paging(amf_ue_t *amf_ue)
                         ngapbuf = ngap_build_paging(amf_ue);
                         if (!ngapbuf) {
                             ogs_error("ngap_build_paging() failed");
+                            amf_ctx_unlock();
                             return OGS_ERROR;
                         }
                     }
@@ -546,6 +572,7 @@ int ngap_send_paging(amf_ue_t *amf_ue)
                     if (!amf_ue->t3513.pkbuf) {
                         ogs_error("ogs_pkbuf_copy() failed");
                         ogs_pkbuf_free(ngapbuf);
+                        amf_ctx_unlock();
                         return OGS_ERROR;
                     }
 
@@ -554,12 +581,14 @@ int ngap_send_paging(amf_ue_t *amf_ue)
                     rv = ngap_send_to_gnb(gnb, ngapbuf, NGAP_NON_UE_SIGNALLING);
                     if (rv != OGS_OK) {
                         ogs_error("ngap_send_to_gnb() failed");
+                        amf_ctx_unlock();
                         return rv;
                     }
                 }
             }
         }
     }
+    amf_ctx_unlock();
 
     /* Start T3513 */
     ogs_timer_start(amf_ue->t3513.timer, 

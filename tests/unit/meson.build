@@ -32,6 +32,7 @@ testunit_unit_sources = files('''
     tai-list-test.c
     pfcp-buffer-test.c
     gtpc-select-test.c
+    sbi-lock-test.c
 '''.split())
 
 testunit_unit_sources += files('../../src/mme/eplmn-config.c')

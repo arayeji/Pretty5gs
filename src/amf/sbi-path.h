@@ -99,6 +99,9 @@ int amf_sess_sbi_discover_by_nsi(
         ran_ue_t *ran_ue, amf_sess_t *sess,
         ogs_sbi_service_type_e service_type,
         ogs_sbi_discovery_option_t *discovery_option, int state);
+/* NSI discovery response; on the session's shard with amf.workers */
+int amf_sbi_discover_by_nsi_handler(
+        int status, ogs_sbi_response_t *response, void *data);
 
 void amf_sbi_send_activating_session(
         ran_ue_t *ran_ue, amf_sess_t *sess, int state);
@@ -108,6 +111,8 @@ void amf_sbi_send_deactivate_session(
 void amf_sbi_send_deactivate_all_sessions(
         ran_ue_t *ran_ue, amf_ue_t *amf_ue, int state, int group, int cause);
 void amf_sbi_send_deactivate_all_ue_in_gnb(amf_gnb_t *gnb, int state);
+/* Same, limited to the calling thread's ran_ue's (amf.workers shard) */
+void amf_sbi_send_deactivate_own_ue_in_gnb(ogs_pool_id_t gnb_id, int state);
 
 void amf_sbi_send_release_session(
         ran_ue_t *ran_ue, amf_sess_t *sess, int state, void *data);

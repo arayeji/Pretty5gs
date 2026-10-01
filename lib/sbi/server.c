@@ -175,13 +175,25 @@ void ogs_sbi_server_stop_all(void)
 bool ogs_sbi_server_send_rspmem_persistent(
         ogs_sbi_stream_t *stream, ogs_sbi_response_t *response)
 {
-    return ogs_sbi_server_actions.send_rspmem_persistent(stream, response);
+    bool rc;
+
+    ogs_sbi_lock();
+    rc = ogs_sbi_server_actions.send_rspmem_persistent(stream, response);
+    ogs_sbi_unlock();
+
+    return rc;
 }
 
 bool ogs_sbi_server_send_response(
         ogs_sbi_stream_t *stream, ogs_sbi_response_t *response)
 {
-    return ogs_sbi_server_actions.send_response(stream, response);
+    bool rc;
+
+    ogs_sbi_lock();
+    rc = ogs_sbi_server_actions.send_response(stream, response);
+    ogs_sbi_unlock();
+
+    return rc;
 }
 
 bool ogs_sbi_server_send_problem(
@@ -259,7 +271,13 @@ ogs_pool_id_t ogs_sbi_id_from_stream(ogs_sbi_stream_t *stream)
 
 void *ogs_sbi_stream_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_sbi_server_actions.stream_find_by_id(id);
+    void *stream;
+
+    ogs_sbi_lock();
+    stream = ogs_sbi_server_actions.stream_find_by_id(id);
+    ogs_sbi_unlock();
+
+    return stream;
 }
 
 int ogs_sbi_server_attach_xact(ogs_sbi_xact_t *xact)

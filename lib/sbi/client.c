@@ -101,7 +101,26 @@ void ogs_sbi_client_final(void)
     curl_global_cleanup();
 }
 
+static ogs_sbi_client_t *client_add(
+        OpenAPI_uri_scheme_e scheme,
+        char *fqdn, uint16_t fqdn_port,
+        ogs_sockaddr_t *addr, ogs_sockaddr_t *addr6);
+
 ogs_sbi_client_t *ogs_sbi_client_add(
+        OpenAPI_uri_scheme_e scheme,
+        char *fqdn, uint16_t fqdn_port,
+        ogs_sockaddr_t *addr, ogs_sockaddr_t *addr6)
+{
+    ogs_sbi_client_t *client = NULL;
+
+    ogs_sbi_lock();
+    client = client_add(scheme, fqdn, fqdn_port, addr, addr6);
+    ogs_sbi_unlock();
+
+    return client;
+}
+
+static ogs_sbi_client_t *client_add(
         OpenAPI_uri_scheme_e scheme,
         char *fqdn, uint16_t fqdn_port,
         ogs_sockaddr_t *addr, ogs_sockaddr_t *addr6)
@@ -195,9 +214,12 @@ void ogs_sbi_client_remove(ogs_sbi_client_t *client)
         ogs_debug("- addr6 [%s:%d]",
                 OGS_ADDR(client->addr6, buf), OGS_PORT(client->addr6));
 
+    ogs_sbi_lock();
+
     /* ogs_sbi_client_t is always created with reference context */
     if (OGS_OBJECT_IS_REF(client)) {
         OGS_OBJECT_UNREF(client);
+        ogs_sbi_unlock();
         return;
     }
 
@@ -236,6 +258,8 @@ void ogs_sbi_client_remove(ogs_sbi_client_t *client)
         ogs_freeaddrinfo(client->addr6);
 
     ogs_pool_free(&client_pool, client);
+
+    ogs_sbi_unlock();
 }
 
 void ogs_sbi_client_remove_all(void)
@@ -255,6 +279,7 @@ ogs_sbi_client_t *ogs_sbi_client_find(
 
     ogs_assert(scheme);
 
+    ogs_sbi_lock();
     ogs_list_for_each(&ogs_sbi_self()->client_list, client) {
         if (client->scheme != scheme)
             continue;
@@ -287,6 +312,7 @@ ogs_sbi_client_t *ogs_sbi_client_find(
 
         break;
     }
+    ogs_sbi_unlock();
 
     return client;
 }
@@ -796,7 +822,9 @@ bool ogs_sbi_client_send_request(
     }
     ogs_debug("[%s] %s", request->h.method, request->h.uri);
 
+    ogs_sbi_lock();
     conn = connection_add(client, client_cb, request, data);
+    ogs_sbi_unlock();
     if (!conn) {
         ogs_error("connection_add() failed");
         return false;

@@ -44,6 +44,7 @@ abts_suite *test_inbound_roam_apn_yaml(abts_suite *suite);
 abts_suite *test_tai_list(abts_suite *suite);
 abts_suite *test_pfcp_buffer(abts_suite *suite);
 abts_suite *test_gtpc_select(abts_suite *suite);
+abts_suite *test_sbi_lock(abts_suite *suite);
 
 const struct testlist {
     abts_suite *(*func)(abts_suite *suite);
@@ -63,6 +64,8 @@ const struct testlist {
     {test_tai_list},
     {test_pfcp_buffer},
     {test_gtpc_select},
+    /* last: enables the process-wide SBI lock */
+    {test_sbi_lock},
     {NULL},
 };
 

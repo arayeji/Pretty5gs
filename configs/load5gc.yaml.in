@@ -185,7 +185,8 @@ amf:
   network_name:
     full: Open5GS
   amf_name: open5gs-amf0
-  # SMP transport offload (see docs/amf-smp.md)
+  # SMP transport offload and UE shards (see docs/smp-workers.md)
+  workers: 2
   ngap_rx_workers: 2
   ngap_io_thread: 2
   pkbuf_thread_pool: 256

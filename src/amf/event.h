@@ -58,6 +58,21 @@ typedef enum {
     AMF_EVENT_5GSM_MESSAGE,
     AMF_EVENT_5GSM_TIMER,
 
+    /* amf.workers: main -> shard, release own UEs of gnb_id */
+    AMF_EVENT_SHARD_GNB_REMOVE,
+    /* shard -> main: done with gnb_id, last one frees the gNB */
+    AMF_EVENT_SHARD_GNB_REMOVE_DONE,
+    /* main -> shard: NG Reset (all) for gnb_id */
+    AMF_EVENT_SHARD_NG_RESET_ALL,
+    /* main -> owner: NG Reset (partial) item ran_ue_id of gnb_id */
+    AMF_EVENT_SHARD_NG_RESET_PARTIAL,
+    /* shard -> owner: drop stale amf_ue_id (cross-shard SUCI/SUPI) */
+    AMF_EVENT_SHARD_UE_EVICT,
+    /* main -> shard: OAM release of the UEs on plmn_id */
+    AMF_EVENT_SHARD_OAM_RELEASE,
+    /* main -> owner: NSI discovery callback (status in h.sbi.state) */
+    AMF_EVENT_SBI_DISCOVER_CB,
+
     MAX_NUM_OF_AMF_EVENT,
 
 } amf_event_e;
@@ -91,6 +106,10 @@ typedef struct amf_event_s {
     ogs_pool_id_t sess_id;
 
     ogs_timer_t *timer;
+
+    /* amf.workers */
+    int shard_arg;              /* SHARD_GNB_REMOVE: release state */
+    ogs_plmn_id_t plmn_id;      /* SHARD_OAM_RELEASE */
 } amf_event_t;
 
 OGS_STATIC_ASSERT(OGS_EVENT_SIZE >= sizeof(amf_event_t));
@@ -105,14 +124,19 @@ const char *amf_event_get_name(amf_event_t *e);
  * never happen. Push through amf_queue_push_main(): it never blocks
  * main and only retries briefly (~20 ms) on other threads.
  *
+ * On a UE shard (amf.workers) the event stays on that shard: UE timers
+ * and NGAP->NAS hand-offs belong to the UE's owner, not to main.
+ *
  * Returns OGS_OK (queued, pollset notified), OGS_RETRY (full; caller
  * frees the event) or OGS_DONE (queue terminated).
  */
 void amf_event_mark_main_thread(void);
 bool amf_event_on_main_thread(void);
 int amf_queue_push_main(void *event);
+/* Always ogs_app()->queue, from any thread (shard -> main) */
+int amf_queue_push_to_main(void *event);
 
-/* main loop: bracket each dispatch, then drain what it pushed */
+/* main loop and shards: bracket each dispatch, then drain what it pushed */
 void amf_event_dispatch_begin(void);
 void amf_event_dispatch_end(void);
 void *amf_event_local_pop(void);

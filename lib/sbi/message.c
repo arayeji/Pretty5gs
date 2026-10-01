@@ -24,6 +24,8 @@
 
 static OGS_POOL(request_pool, ogs_sbi_request_t);
 static OGS_POOL(response_pool, ogs_sbi_response_t);
+/* request/response objects are built and freed on NF worker threads */
+static ogs_thread_mutex_t message_pool_mutex;
 
 static char *build_json(ogs_sbi_message_t *message);
 static int parse_json(ogs_sbi_message_t *message,
@@ -43,6 +45,7 @@ static void http_message_free(ogs_sbi_http_message_t *http);
 
 void ogs_sbi_message_init(int num_of_request_pool, int num_of_response_pool)
 {
+    ogs_thread_mutex_init(&message_pool_mutex);
     ogs_pool_init(&request_pool, num_of_request_pool);
     ogs_pool_init(&response_pool, num_of_response_pool);
 }
@@ -51,6 +54,7 @@ void ogs_sbi_message_final(void)
 {
     ogs_pool_final(&request_pool);
     ogs_pool_final(&response_pool);
+    ogs_thread_mutex_destroy(&message_pool_mutex);
 }
 
 void ogs_sbi_message_free(ogs_sbi_message_t *message)
@@ -252,7 +256,9 @@ ogs_sbi_request_t *ogs_sbi_request_new(void)
 {
     ogs_sbi_request_t *request = NULL;
 
+    ogs_thread_mutex_lock(&message_pool_mutex);
     ogs_pool_alloc(&request_pool, &request);
+    ogs_thread_mutex_unlock(&message_pool_mutex);
     if (!request) {
         ogs_error("ogs_pool_alloc() failed");
         return NULL;
@@ -279,7 +285,9 @@ ogs_sbi_response_t *ogs_sbi_response_new(void)
 {
     ogs_sbi_response_t *response = NULL;
 
+    ogs_thread_mutex_lock(&message_pool_mutex);
     ogs_pool_alloc(&response_pool, &response);
+    ogs_thread_mutex_unlock(&message_pool_mutex);
     if (!response) {
         ogs_error("ogs_pool_alloc() failed");
         return NULL;
@@ -312,7 +320,9 @@ void ogs_sbi_request_free(ogs_sbi_request_t *request)
     ogs_sbi_header_free(&request->h);
     http_message_free(&request->http);
 
+    ogs_thread_mutex_lock(&message_pool_mutex);
     ogs_pool_free(&request_pool, request);
+    ogs_thread_mutex_unlock(&message_pool_mutex);
 }
 
 void ogs_sbi_response_free(ogs_sbi_response_t *response)
@@ -325,7 +335,9 @@ void ogs_sbi_response_free(ogs_sbi_response_t *response)
     ogs_sbi_header_free(&response->h);
     http_message_free(&response->http);
 
+    ogs_thread_mutex_lock(&message_pool_mutex);
     ogs_pool_free(&response_pool, response);
+    ogs_thread_mutex_unlock(&message_pool_mutex);
 }
 
 ogs_sbi_request_t *ogs_sbi_build_request(ogs_sbi_message_t *message)

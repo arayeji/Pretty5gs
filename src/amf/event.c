@@ -85,6 +85,21 @@ const char *amf_event_get_name(amf_event_t *e)
     case AMF_EVENT_5GSM_TIMER:
         return "AMF_EVENT_5GSM_TIMER";
 
+    case AMF_EVENT_SHARD_GNB_REMOVE:
+        return "AMF_EVENT_SHARD_GNB_REMOVE";
+    case AMF_EVENT_SHARD_GNB_REMOVE_DONE:
+        return "AMF_EVENT_SHARD_GNB_REMOVE_DONE";
+    case AMF_EVENT_SHARD_NG_RESET_ALL:
+        return "AMF_EVENT_SHARD_NG_RESET_ALL";
+    case AMF_EVENT_SHARD_NG_RESET_PARTIAL:
+        return "AMF_EVENT_SHARD_NG_RESET_PARTIAL";
+    case AMF_EVENT_SHARD_UE_EVICT:
+        return "AMF_EVENT_SHARD_UE_EVICT";
+    case AMF_EVENT_SHARD_OAM_RELEASE:
+        return "AMF_EVENT_SHARD_OAM_RELEASE";
+    case AMF_EVENT_SBI_DISCOVER_CB:
+        return "AMF_EVENT_SBI_DISCOVER_CB";
+
     default:
         break;
     }
@@ -157,23 +172,24 @@ bool amf_event_on_main_thread(void)
  * With RX workers several NGAP messages of one UE are often queued at
  * once; appending the hand-off to the tail would run them as
  * NGAP1 NGAP2 NAS1 NAS2 and the second InitialUEMessage would see a
- * UE context the first one has not finished with. Main thread only.
+ * UE context the first one has not finished with. One FIFO per
+ * dispatching thread: main and each UE shard (amf.workers).
  */
 #define AMF_LOCAL_EVENT_MAX 64
-static void *local_events[AMF_LOCAL_EVENT_MAX];
-static int local_head, local_count;
-static bool main_dispatching;
+static OGS_THREAD_LOCAL void *local_events[AMF_LOCAL_EVENT_MAX];
+static OGS_THREAD_LOCAL int local_head, local_count;
+static OGS_THREAD_LOCAL bool dispatching;
 
 void amf_event_dispatch_begin(void)
 {
-    ogs_assert(thread_is_main);
-    main_dispatching = true;
+    ogs_assert(thread_is_main || amf_shard_self() >= 0);
+    dispatching = true;
 }
 
 void amf_event_dispatch_end(void)
 {
-    ogs_assert(thread_is_main);
-    main_dispatching = false;
+    ogs_assert(thread_is_main || amf_shard_self() >= 0);
+    dispatching = false;
 }
 
 void *amf_event_local_pop(void)
@@ -194,17 +210,27 @@ void *amf_event_local_pop(void)
 
 int amf_queue_push_main(void *event)
 {
-    int rv, tries = 0;
-
     ogs_assert(event);
 
-    if (thread_is_main && main_dispatching &&
-            local_count < AMF_LOCAL_EVENT_MAX) {
+    if (dispatching && local_count < AMF_LOCAL_EVENT_MAX) {
         local_events[(local_head + local_count) % AMF_LOCAL_EVENT_MAX] =
             event;
         local_count++;
         return OGS_OK;
     }
+
+    /* UE timers and hand-offs on a shard never leave it */
+    if (amf_shard_self() >= 0)
+        return amf_workers_post_self(event);
+
+    return amf_queue_push_to_main(event);
+}
+
+int amf_queue_push_to_main(void *event)
+{
+    int rv, tries = 0;
+
+    ogs_assert(event);
 
     for (;;) {
         rv = ogs_queue_trypush(ogs_app()->queue, event);

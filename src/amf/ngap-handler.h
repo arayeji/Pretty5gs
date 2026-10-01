@@ -81,6 +81,9 @@ void ngap_handle_ran_configuration_update(
 
 void ngap_handle_ng_reset(
         amf_gnb_t *gnb, ogs_ngap_message_t *message);
+/* NG Reset (partial) per ran_ue, on the ran_ue's owner thread */
+void ngap_ng_reset_partial_release(ran_ue_t *ran_ue);
+void ngap_ng_reset_partial_try_ack(amf_gnb_t *gnb);
 void ngap_handle_error_indication(
         amf_gnb_t *gnb, ogs_ngap_message_t *message);
 

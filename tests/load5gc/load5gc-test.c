@@ -19,8 +19,9 @@
 
 /*
  * AMF SMP load test: exercises the AMF with the NGAP transport offload
- * enabled (load5gc.yaml: ngap_rx_workers=2, ngap_io_thread=2,
- * pkbuf_thread_pool=256).
+ * and the UE shards enabled (load5gc.yaml: workers=2, ngap_rx_workers=2,
+ * ngap_io_thread=2, pkbuf_thread_pool=256). The parallel gNBs spread
+ * their UEs over the shards, so main routes every UE message.
  *
  * Scenarios:
  *   1. NG-Setup churn         - gNB add/remove against the RX workers and
@@ -570,7 +571,7 @@ abts_suite *test_load5gc(abts_suite *suite)
 {
     suite = ADD_SUITE(suite)
 
-    LOAD_MARK("knobs: ngap_rx_workers=2 ngap_io_thread=2 "
+    LOAD_MARK("knobs: workers=2 ngap_rx_workers=2 ngap_io_thread=2 "
             "pkbuf_thread_pool=256; synthetic PLMN 999/70");
     LOAD_MARK("flows: ngsetup_churn | mass_registration(%d gNB x %d UE) | "
             "idle_service_request(%d gNB x %d UE)",

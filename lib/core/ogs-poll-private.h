@@ -50,7 +50,24 @@ typedef struct ogs_pollset_s {
     } notify;
 
     unsigned int capacity;
+
+    /* see ogs_pollset_set_dispatch_hooks() */
+    ogs_pollset_hook_f dispatch_enter;
+    ogs_pollset_hook_f dispatch_leave;
+    void *dispatch_data;
 } ogs_pollset_t;
+
+#define ogs_pollset_dispatch_enter(__pOLLSET) \
+    do { \
+        if ((__pOLLSET)->dispatch_enter) \
+            (__pOLLSET)->dispatch_enter((__pOLLSET)->dispatch_data); \
+    } while (0)
+
+#define ogs_pollset_dispatch_leave(__pOLLSET) \
+    do { \
+        if ((__pOLLSET)->dispatch_leave) \
+            (__pOLLSET)->dispatch_leave((__pOLLSET)->dispatch_data); \
+    } while (0)
 
 #ifdef __cplusplus
 }
