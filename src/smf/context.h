@@ -97,34 +97,17 @@ typedef struct smf_radius_server_s {
     bool        is_primary;
     int         weight;    /* reserved for future weighted selection */
 
-    /* Runtime health (file-static state, not part of config). */
+    /*
+     * Runtime health (file-static state, not part of config). Shared by
+     * every shard; updated with relaxed atomics.
+     *
+     * The cached transport (resolved peers + UDP socket) lives per thread
+     * in radius-path.c: exchanges are blocking send/recv, so a socket
+     * shared between shards would hand one shard's reply to another.
+     */
     int         consecutive_failures;
     ogs_time_t  down_since;
     ogs_time_t  last_probe;
-
-    /*
-     * Cached transport for the data path. Resolving the host string and
-     * opening a UDP socket on every Access-/Accounting-Request is
-     * expensive: at 100+ active UEs the SMF spent more time in
-     * getaddrinfo/socket/destroy than in the RADIUS exchange itself.
-     *
-     *   peer_auth / peer_acct - one shot DNS at first use, kept until the
-     *                           server slot is replaced.
-     *   sock                  - persistent UDP socket reused across all
-     *                           requests; recv timeout is refreshed before
-     *                           each send so config changes take effect.
-     *   sock_timeout_ms       - tracks the timeout currently applied to
-     *                           `sock`, lets us skip the setsockopt() when
-     *                           cfg->timeout_ms has not moved.
-     *   bound_nas_ip          - local address sock was bound to (from
-     *                           radius.nas_ip), so a config change forces
-     *                           a rebind. NULL means unbound (kernel pick).
-     */
-    ogs_sockaddr_t *peer_auth;
-    ogs_sockaddr_t *peer_acct;
-    ogs_sock_t     *sock;
-    unsigned        sock_timeout_ms;
-    char           *bound_nas_ip;
 } smf_radius_server_t;
 
 typedef struct smf_radius_config_s {
@@ -435,6 +418,14 @@ typedef struct smf_context_s {
     bool collapsed;
 
     /*
+     * SMP RX helpers (smf.gtpc_rx_thread / smf.pfcp_rx_thread): move the
+     * GTP-C / PFCP socket reads + parse + shard routing off the main
+     * loop onto a dedicated thread. Not protocol shards.
+     */
+    bool gtpc_rx_thread;
+    bool pfcp_rx_thread;
+
+    /*
      * Batched /admin/maintenance/drain bookkeeping (see smf-sm.c).
      * Sessions are drained in fixed-size UE batches paced by a timer so
      * a large drain cannot monopolise the main thread or burst-flood
@@ -442,7 +433,8 @@ typedef struct smf_context_s {
      */
     uint32_t drain_generation;
     bool     drain_force;
-    bool     drain_active;
+    /* Shards still draining / sessions processed; atomics only. */
+    int      drain_shards_active;
     uint32_t drain_processed;
 
     /*
@@ -466,7 +458,10 @@ typedef struct smf_gtp_node_s {
     ogs_gtp_node_t *gnode;
     ogs_metrics_inst_t *metrics[_SMF_METR_GTP_NODE_MAX];
 
-    /* TS 29.274 Recovery: SGW (S5/S8) peer restart detection */
+    /*
+     * TS 29.274 Recovery: SGW (S5/S8) peer restart detection. Shared by
+     * every shard talking to this peer: read/update under smf_peers_lock().
+     */
     uint8_t         peer_recovery;
     bool            peer_recovery_valid;
 } smf_gtp_node_t;
@@ -474,6 +469,13 @@ typedef struct smf_gtp_node_s {
 typedef struct smf_ue_s {
     ogs_lnode_t lnode;
     ogs_pool_id_t id;
+
+    /*
+     * Shard that owns this UE and every one of its sessions: 0 = main
+     * thread, 1..N = smf-wN (ogs_worker_self_id() of the creator). All
+     * session TEIDs/SEIDs carry it in their top OGS_WORKER_ID_BITS.
+     */
+    int owner_shard;
 
     /* SUPI */
     char *supi;
@@ -516,6 +518,14 @@ typedef struct smf_ue_s {
         ogs_gtp_node_t *gtp_node;
         uint32_t peer_teid;
         bool peer_teid_presence;
+        /*
+         * SMP cross-shard static-IP collision: the parked Create belongs
+         * to a UE on `bounce_shard`; once the UPF deletion completes, the
+         * raw request is handed back there instead of being created here.
+         */
+        bool bounce;
+        int bounce_shard;
+        smf_gtp_node_t *bounce_gnode;
     } collision_replace;
 
     ogs_list_t sess_list;
@@ -1172,6 +1182,36 @@ void smf_context_init(void);
 void smf_context_final(void);
 smf_context_t *smf_self(void);
 
+/*
+ * SMP concurrency (see smf-workers.c):
+ *  - smf_ctx_lock() guards the shared containers (pools, hashes,
+ *    smf_ue_list, UE sess_list membership). It is the recursive
+ *    metrics dump lock, so /pdu-info readers never see a half-linked
+ *    session. Never hold it across blocking I/O (RADIUS, CDR, LI).
+ *  - Per-UE/session fields are owner-thread only.
+ *  - smf_peers_lock() guards sgw_s5c_list and gnode address updates.
+ */
+void smf_ctx_lock(void);
+void smf_ctx_unlock(void);
+void smf_peers_lock(void);
+void smf_peers_unlock(void);
+
+bool smf_ue_owned_by_self(const smf_ue_t *smf_ue);
+ogs_pool_id_t *smf_ue_ids_collect_owned(int *out_count);
+ogs_pool_id_t *smf_sess_ids_collect(smf_ue_t *smf_ue, int *out_count);
+int smf_sess_owner_shard(const smf_sess_t *sess);
+bool smf_sess_owned_by_self(const smf_sess_t *sess);
+int smf_session_count(void);
+typedef void (*smf_owned_sess_cb_f)(
+        smf_ue_t *smf_ue, smf_sess_t *sess, void *arg);
+int smf_owned_sess_foreach(smf_owned_sess_cb_f cb, void *arg);
+
+/* Owner shard lookups for RX routers (any thread); -1 = not found. */
+int smf_ue_owner_shard_by_imsi(const uint8_t *imsi, int imsi_len);
+int smf_sess_owner_shard_by_ipv4(uint32_t addr, ogs_pool_id_t *smf_ue_id);
+int smf_sess_owner_shard_by_seid(uint64_t seid);
+int smf_sess_owner_shard_by_id(ogs_pool_id_t sess_id);
+
 int smf_context_parse_config(void);
 
 int smf_use_gy_iface(void);
@@ -1236,6 +1276,10 @@ void smf_sess_remove_all(smf_ue_t *smf_ue);
  * out_purged is non-NULL it receives how many were torn down. Main thread only.
  */
 int smf_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged);
+/* Store this shard's orphan count; returns the all-shard total. */
+int smf_orphan_publish(int shard_remaining);
+/* SMF_EVT_SGW_RESTART_PURGE on each shard. */
+void smf_sgw_purge_owned(smf_gtp_node_t *smf_gnode, ogs_time_t cutoff);
 
 /* Periodic orphan sweep timer (no-op when smf.orphan.enabled is false). */
 void smf_orphan_timer_start(void);

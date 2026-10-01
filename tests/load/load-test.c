@@ -20,7 +20,10 @@
 /*
  * SMP load test: exercises the MME with REAL sharding enabled
  * (load.yaml: workers=4, stage_c=1, s1ap_rx_workers=2, s1ap_tx_workers=2,
- *  s1ap_tx_direct=1, s1ap_io_thread=2, pkbuf_thread_pool=256).
+ *  s1ap_tx_direct=1, s1ap_io_thread=2, pkbuf_thread_pool=256) and the
+ * SMF with its own shards (workers=4, gtpc_rx_thread, pfcp_rx_thread):
+ * every attach creates a PDN on an SMF shard picked by IMSI, and the
+ * Gx CCA, PFCP responses/reports and detach teardown must all reach it.
  *
  * Scenarios:
  *   1. S1-Setup churn         - eNB add/remove against the IO threads'
@@ -778,6 +781,7 @@ abts_suite *test_load(abts_suite *suite)
 
     LOAD_MARK("knobs: workers=4 stage_c=1 rx=2 tx=2 tx_direct=1 io=2 "
             "pkbuf_thread_pool=256; synthetic PLMN 999/70");
+    LOAD_MARK("knobs: smf workers=4 gtpc_rx_thread=1 pfcp_rx_thread=1");
     LOAD_MARK("flows: s1setup_churn | mass_attach_detach(%d eNB x %d UE) | "
             "idle_SR_TAU(%d eNB x %d UE) | paging | cross_enb_tau",
             LOAD_NUM_ENB, LOAD_UES_PER_ENB,

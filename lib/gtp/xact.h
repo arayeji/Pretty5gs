@@ -199,6 +199,8 @@ void ogs_gtp_xact_final(void);
  * messages (route those by TEID / UE owner) or when shards are off.
  */
 int ogs_gtp2_rx_reply_shard(const void *data, size_t len);
+/* Same for GTPv1-C (Gn/Gp): responses to our Update/Delete PDP Context. */
+int ogs_gtp1_rx_reply_shard(const void *data, size_t len);
 
 ogs_gtp_xact_t *ogs_gtp1_xact_local_create(ogs_gtp_node_t *gnode,
         ogs_gtp1_header_t *hdesc, ogs_pkbuf_t *pkbuf,

@@ -13,6 +13,9 @@
 #include "admin-api.h"
 #include "smf-li.h"
 #include "runtime-config.h"
+#include "gtp-path.h"
+#include "pfcp-path.h"
+#include "smf-workers.h"
 
 #include <stdarg.h>
 #include <string.h>
@@ -75,15 +78,12 @@ static int smf_admin_maintenance_queue(smf_event_e id, int force,
     }
     e->admin_force = force;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = smf_event_push_main(e);
     if (rv != OGS_OK) {
-        ogs_event_free(e);
         *body_len = fmt_json_status(body, body_cap,
                 ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
         return ADMIN_HTTP_SERVICE_UNAVAIL;
     }
-
-    ogs_pollset_notify(ogs_app()->pollset);
 
     *body_len = fmt_json_status(body, body_cap, ADMIN_HTTP_ACCEPTED,
             "maintenance event queued");
@@ -108,8 +108,10 @@ size_t smf_dump_maintenance_status(char *buf, size_t buflen,
 
     ogs_metrics_dump_lock();
     maintenance = smf_self()->maintenance_mode;
-    drain_active = smf_self()->drain_active;
-    drain_processed = smf_self()->drain_processed;
+    drain_active = __atomic_load_n(
+            &smf_self()->drain_shards_active, __ATOMIC_RELAXED) > 0;
+    drain_processed = __atomic_load_n(
+            &smf_self()->drain_processed, __ATOMIC_RELAXED);
     sess_count = smf_count_sessions();
     ogs_metrics_dump_unlock();
 
@@ -202,19 +204,15 @@ static int smf_admin_session_detach(const ogs_metrics_query_t *q,
     e->smf_ue_id = smf_ue_id;
     e->admin_force = q->force ? 1 : 0;
 
-    int rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_event_free(e);
+    if (smf_event_push_main(e) != OGS_OK) {
         *body_len = fmt_json_status(body, body_cap,
                 ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
         return ADMIN_HTTP_SERVICE_UNAVAIL;
     }
 
-    ogs_pollset_notify(ogs_app()->pollset);
-
     *body_len = fmt_json_status(body, body_cap, ADMIN_HTTP_ACCEPTED,
             "session detach queued for imsi=%s mode=%s",
-            q->imsi, e->admin_force ? "force" : "graceful");
+            q->imsi, q->force ? "force" : "graceful");
     return ADMIN_HTTP_ACCEPTED;
 }
 
@@ -278,18 +276,15 @@ static int smf_admin_session_delete(const ogs_metrics_query_t *q,
     e->admin_sess_id = sess_id;
     e->admin_force = q->force ? 1 : 0;
 
-    if (ogs_queue_push(ogs_app()->queue, e) != OGS_OK) {
-        ogs_event_free(e);
+    if (smf_event_push_main(e) != OGS_OK) {
         *body_len = fmt_json_status(body, body_cap,
                 ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
         return ADMIN_HTTP_SERVICE_UNAVAIL;
     }
 
-    ogs_pollset_notify(ogs_app()->pollset);
-
     *body_len = fmt_json_status(body, body_cap, ADMIN_HTTP_ACCEPTED,
             "session delete queued for imsi=%s apn=%s mode=%s",
-            q->imsi, q->apn, e->admin_force ? "force" : "graceful");
+            q->imsi, q->apn, q->force ? "force" : "graceful");
     return ADMIN_HTTP_ACCEPTED;
 }
 
@@ -381,16 +376,12 @@ static int smf_admin_purge_seid(const ogs_metrics_query_t *q,
     e->admin_seid = q->seid;
     e->admin_upf_addr = upf_addr; /* freed by the event handler */
 
-    int rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        if (upf_addr) ogs_freeaddrinfo(upf_addr);
-        ogs_event_free(e);
+    /* smf_event_free() releases admin_upf_addr on failure */
+    if (smf_event_push_main(e) != OGS_OK) {
         *body_len = fmt_json_status(body, body_cap,
                 ADMIN_HTTP_SERVICE_UNAVAIL, "event queue full");
         return ADMIN_HTTP_SERVICE_UNAVAIL;
     }
-
-    ogs_pollset_notify(ogs_app()->pollset);
 
     *body_len = fmt_json_status(body, body_cap, ADMIN_HTTP_ACCEPTED,
             "purge-seid queued seid=0x%"PRIx64"%s%s",
@@ -399,12 +390,102 @@ static int smf_admin_purge_seid(const ogs_metrics_query_t *q,
     return ADMIN_HTTP_ACCEPTED;
 }
 
+/*
+ * /admin/queues — "is the SMF working or wedged?". Twin of the SGW-C /
+ * MME endpoint: main event queue + shard worker queue depths, RX drops
+ * and the event dispatch lag. Diagnostic reads (torn values acceptable).
+ *
+ * verdict:
+ *   ok     - queues shallow, lag below the xact-defer threshold
+ *   behind - lag >= 1.5s, main queue > 75% full or >= 1MB unread in the
+ *            GTP-C / PFCP socket (overloaded but draining)
+ */
+static size_t smf_dump_queue_status(char *buf, size_t buflen,
+        size_t page, size_t page_size, const ogs_metrics_query_t *q)
+{
+    size_t off = 0;
+    int written, i, n;
+    unsigned int depth, cap;
+    long long lag_ms;
+    const char *verdict = "ok";
+
+    (void)page;
+    (void)page_size;
+    (void)q;
+
+    if (!buf || buflen == 0)
+        return 0;
+
+#define QSTAT_APPEND(...) do { \
+        written = snprintf(buf + off, buflen - off, __VA_ARGS__); \
+        if (written < 0) return off; \
+        off += (size_t)written; \
+        if (off >= buflen) return buflen - 1; \
+    } while (0)
+
+    lag_ms = (long long)(smf_event_lag() / 1000);
+
+    depth = ogs_queue_size(ogs_app()->queue);
+    cap = ogs_queue_capacity(ogs_app()->queue);
+
+    if (lag_ms >= 1500 || (cap && depth > cap - cap / 4))
+        verdict = "behind";
+
+    QSTAT_APPEND("{\"event_lag_ms\":%lld,"
+            "\"gtpc_rx_thread\":%s,\"pfcp_rx_thread\":%s,"
+            "\"gtpc_rx_drops\":%llu,\"pfcp_rx_drops\":%llu,"
+            "\"main\":{\"depth\":%u,\"cap\":%u},"
+            "\"shards\":[",
+            lag_ms,
+            smf_gtpc_rx_active() ? "true" : "false",
+            smf_pfcp_rx_active() ? "true" : "false",
+            (unsigned long long)smf_gtpc_rx_drops(),
+            (unsigned long long)smf_pfcp_rx_drops(),
+            depth, cap);
+
+    n = smf_workers_count();
+    for (i = 0; i < n; i++) {
+        int d = smf_workers_queue_depth(i);
+        QSTAT_APPEND("%s{\"id\":%d,\"depth\":%d}", i ? "," : "",
+                i, d < 0 ? 0 : d);
+    }
+    QSTAT_APPEND("],");
+
+    {
+        uint64_t gtpc = 0, pfcp = 0;
+
+        if (ogs_gtp_self()->gtpc_sock)
+            gtpc += ogs_socket_rx_backlog(ogs_gtp_self()->gtpc_sock->fd);
+        if (ogs_gtp_self()->gtpc_sock6)
+            gtpc += ogs_socket_rx_backlog(ogs_gtp_self()->gtpc_sock6->fd);
+        if (ogs_pfcp_self()->pfcp_sock)
+            pfcp += ogs_socket_rx_backlog(ogs_pfcp_self()->pfcp_sock->fd);
+        if (ogs_pfcp_self()->pfcp_sock6)
+            pfcp += ogs_socket_rx_backlog(ogs_pfcp_self()->pfcp_sock6->fd);
+
+        if (gtpc >= 1024 * 1024 || pfcp >= 1024 * 1024)
+            verdict = "behind";
+
+        QSTAT_APPEND("\"gtpc_rx_backlog_bytes\":%llu,"
+                "\"pfcp_rx_backlog_bytes\":%llu,",
+                (unsigned long long)gtpc, (unsigned long long)pfcp);
+    }
+
+    QSTAT_APPEND("\"verdict\":\"%s\"}\n", verdict);
+
+#undef QSTAT_APPEND
+
+    return off < buflen ? off : buflen - 1;
+}
+
 void smf_admin_api_register(void)
 {
     ogs_metrics_register_custom_ep(smf_dump_runtime_config,
             "/admin/config");
     ogs_metrics_register_custom_ep(smf_dump_maintenance_status,
             "/admin/maintenance");
+    ogs_metrics_register_custom_ep(smf_dump_queue_status,
+            "/admin/queues");
     ogs_metrics_register_admin_ep(smf_admin_maintenance_enable,
             "/admin/maintenance/enable",
             OGS_METRICS_ADMIN_METHOD_POST);

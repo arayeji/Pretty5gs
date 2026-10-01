@@ -41,6 +41,7 @@
 #include "collision-replace.h"
 #include "smf-trace.h"
 #include "metrics.h"
+#include "smf-workers.h"
 
 #define SMF_RECOVERY_COUNTER_FILE "/var/lib/open5gs/smf_recovery_counter"
 
@@ -145,7 +146,6 @@ static OGS_POOL(smf_sess_pool, smf_sess_t);
 static OGS_POOL(smf_n4_seid_pool, ogs_pool_id_t);
 
 static bool smf_sess_on_ue_list(const smf_sess_t *sess);
-static bool smf_ue_on_list(const smf_ue_t *smf_ue);
 
 static void smf_sess_sm_data_init(smf_sess_t *sess)
 {
@@ -161,10 +161,297 @@ static void smf_sess_sm_data_init(smf_sess_t *sess)
 
 static int context_initialized = 0;
 
+/* Shared across shard workers; only ever changed with atomics. */
 static int num_of_smf_sess = 0;
 
 static void stats_add_smf_session(void);
 static void stats_remove_smf_session(smf_sess_t *sess);
+
+void smf_ctx_lock(void)
+{
+    ogs_metrics_dump_lock();
+}
+
+void smf_ctx_unlock(void)
+{
+    ogs_metrics_dump_unlock();
+}
+
+/*
+ * RECURSIVE: the GTP-C RX path finds/adds a peer and then attaches the
+ * smf_gtp_node_t wrapper while still holding it.
+ */
+#if defined(_WIN32)
+static ogs_thread_mutex_t smf_peers_mutex;
+#else
+static pthread_mutex_t smf_peers_mutex;
+#endif
+static int smf_peers_mutex_ready = 0;
+
+static void smf_peers_mutex_setup(void)
+{
+#if defined(_WIN32)
+    ogs_thread_mutex_init(&smf_peers_mutex);
+#else
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&smf_peers_mutex, &attr);
+    pthread_mutexattr_destroy(&attr);
+#endif
+    smf_peers_mutex_ready = 1;
+}
+
+static void smf_peers_mutex_teardown(void)
+{
+    if (!smf_peers_mutex_ready)
+        return;
+    smf_peers_mutex_ready = 0;
+#if defined(_WIN32)
+    ogs_thread_mutex_destroy(&smf_peers_mutex);
+#else
+    pthread_mutex_destroy(&smf_peers_mutex);
+#endif
+}
+
+void smf_peers_lock(void)
+{
+    if (!smf_peers_mutex_ready)
+        return;
+#if defined(_WIN32)
+    ogs_thread_mutex_lock(&smf_peers_mutex);
+#else
+    pthread_mutex_lock(&smf_peers_mutex);
+#endif
+}
+
+void smf_peers_unlock(void)
+{
+    if (!smf_peers_mutex_ready)
+        return;
+#if defined(_WIN32)
+    ogs_thread_mutex_unlock(&smf_peers_mutex);
+#else
+    pthread_mutex_unlock(&smf_peers_mutex);
+#endif
+}
+
+int smf_session_count(void)
+{
+    return __atomic_load_n(&num_of_smf_sess, __ATOMIC_RELAXED);
+}
+
+/*
+ * Put the calling shard's id in the top OGS_WORKER_ID_BITS of a locally
+ * allocated SEID/TEID (S5C, S11, Gn and N4 share the value) so every
+ * later message routes to the owner with a shift. Strict no-op when
+ * protocol sharding is off.
+ */
+static uint32_t smf_shard_compose(uint32_t raw)
+{
+    if (!ogs_worker_shards_active())
+        return raw;
+
+    ogs_assert(raw < (1u << (32 - OGS_WORKER_ID_BITS)));
+
+    return ((uint32_t)ogs_worker_self_id() << (32 - OGS_WORKER_ID_BITS))
+        | raw;
+}
+
+int smf_sess_owner_shard(const smf_sess_t *sess)
+{
+    ogs_assert(sess);
+    return (int)(((uint32_t)sess->smf_n4_seid >> (32 - OGS_WORKER_ID_BITS)) &
+            ((1u << OGS_WORKER_ID_BITS) - 1));
+}
+
+bool smf_sess_owned_by_self(const smf_sess_t *sess)
+{
+    if (!ogs_worker_shards_active())
+        return true;
+    return smf_sess_owner_shard(sess) == ogs_worker_self_id();
+}
+
+bool smf_ue_owned_by_self(const smf_ue_t *smf_ue)
+{
+    ogs_assert(smf_ue);
+
+    if (!ogs_worker_shards_active())
+        return true;
+    return smf_ue->owner_shard == ogs_worker_self_id();
+}
+
+/*
+ * RX-router lookups: may run on any thread, so they copy the owner out
+ * under the ctx lock instead of returning a pointer the owner could
+ * free concurrently. -1 = not found.
+ */
+int smf_ue_owner_shard_by_imsi(const uint8_t *imsi, int imsi_len)
+{
+    smf_ue_t *smf_ue = NULL;
+    int shard = -1;
+
+    if (!imsi || imsi_len <= 0)
+        return -1;
+
+    smf_ctx_lock();
+    smf_ue = ogs_hash_get(self.imsi_hash, imsi, imsi_len);
+    if (smf_ue)
+        shard = smf_ue->owner_shard;
+    smf_ctx_unlock();
+
+    return shard;
+}
+
+int smf_sess_owner_shard_by_ipv4(uint32_t addr, ogs_pool_id_t *smf_ue_id)
+{
+    smf_sess_t *sess = NULL;
+    int shard = -1;
+
+    smf_ctx_lock();
+    sess = ogs_hash_get(self.ipv4_hash, &addr, OGS_IPV4_LEN);
+    if (sess) {
+        shard = smf_sess_owner_shard(sess);
+        if (smf_ue_id)
+            *smf_ue_id = sess->smf_ue_id;
+    }
+    smf_ctx_unlock();
+
+    return shard;
+}
+
+int smf_sess_owner_shard_by_seid(uint64_t seid)
+{
+    smf_sess_t *sess = NULL;
+    int shard = -1;
+
+    smf_ctx_lock();
+    sess = ogs_hash_get(self.smf_n4_seid_hash, &seid, sizeof(seid));
+    if (sess)
+        shard = smf_sess_owner_shard(sess);
+    smf_ctx_unlock();
+
+    return shard;
+}
+
+int smf_sess_owner_shard_by_id(ogs_pool_id_t sess_id)
+{
+    smf_sess_t *sess = NULL;
+    int shard = -1;
+
+    smf_ctx_lock();
+    sess = smf_sess_find_by_id(sess_id);
+    if (sess)
+        shard = smf_sess_owner_shard(sess);
+    smf_ctx_unlock();
+
+    return shard;
+}
+
+/*
+ * Collect the pool ids of every UE the CALLING thread owns, under the
+ * ctx lock. Returns an ogs_malloc'd array the caller frees, or NULL
+ * when it owns none. Ids (not pointers) so each is re-validated with
+ * smf_ue_find_active() while being processed.
+ */
+ogs_pool_id_t *smf_ue_ids_collect_owned(int *out_count)
+{
+    smf_ue_t *smf_ue = NULL;
+    ogs_pool_id_t *ids = NULL;
+    int count = 0, capacity = 0;
+
+    ogs_assert(out_count);
+    *out_count = 0;
+
+    smf_ctx_lock();
+    ogs_list_for_each(&self.smf_ue_list, smf_ue) {
+        if (!smf_ue_owned_by_self(smf_ue))
+            continue;
+        if (count == capacity) {
+            capacity = capacity ? capacity * 2 : 256;
+            ids = ids ? ogs_realloc(ids, sizeof(*ids) * capacity) :
+                    ogs_malloc(sizeof(*ids) * capacity);
+            ogs_assert(ids);
+        }
+        ids[count++] = smf_ue->id;
+    }
+    smf_ctx_unlock();
+
+    *out_count = count;
+    return ids;
+}
+
+/*
+ * Same, for the sessions of one owned UE (sess_list is only mutated by
+ * the owner, but /pdu-info and the main thread may read it).
+ */
+ogs_pool_id_t *smf_sess_ids_collect(smf_ue_t *smf_ue, int *out_count)
+{
+    smf_sess_t *sess = NULL;
+    ogs_pool_id_t *ids = NULL;
+    int count = 0, capacity = 0;
+
+    ogs_assert(smf_ue);
+    ogs_assert(out_count);
+    *out_count = 0;
+
+    smf_ctx_lock();
+    ogs_list_for_each(&smf_ue->sess_list, sess) {
+        if (count == capacity) {
+            capacity = capacity ? capacity * 2 : 8;
+            ids = ids ? ogs_realloc(ids, sizeof(*ids) * capacity) :
+                    ogs_malloc(sizeof(*ids) * capacity);
+            ogs_assert(ids);
+        }
+        ids[count++] = sess->id;
+    }
+    smf_ctx_unlock();
+
+    *out_count = count;
+    return ids;
+}
+
+/*
+ * Visit every session of every UE the calling shard owns. Works on id
+ * snapshots, so `cb` may remove the session (or its UE); every id is
+ * re-validated before the callback. Returns the number of callbacks.
+ */
+int smf_owned_sess_foreach(smf_owned_sess_cb_f cb, void *arg)
+{
+    ogs_pool_id_t *ue_ids = NULL, *sess_ids = NULL;
+    int ue_count = 0, sess_count = 0, i, j, visited = 0;
+
+    ogs_assert(cb);
+
+    ue_ids = smf_ue_ids_collect_owned(&ue_count);
+    for (i = 0; i < ue_count; i++) {
+        smf_ue_t *smf_ue = smf_ue_find_active(ue_ids[i]);
+
+        if (!smf_ue)
+            continue;
+
+        sess_ids = smf_sess_ids_collect(smf_ue, &sess_count);
+        for (j = 0; j < sess_count; j++) {
+            smf_sess_t *sess = smf_sess_find_active_by_id(sess_ids[j]);
+
+            smf_ue = smf_ue_find_active(ue_ids[i]);
+            if (!smf_ue)
+                break;
+            if (!sess || sess->smf_ue_id != smf_ue->id)
+                continue;
+
+            cb(smf_ue, sess, arg);
+            visited++;
+        }
+        if (sess_ids)
+            ogs_free(sess_ids);
+        sess_ids = NULL;
+    }
+    if (ue_ids)
+        ogs_free(ue_ids);
+
+    return visited;
+}
 
 int smf_ctf_config_init(smf_ctf_config_t *ctf_config)
 {
@@ -240,6 +527,8 @@ void smf_context_init(void)
     self.gtpc_recovery = 0;
     self.recovery_counter_file = SMF_RECOVERY_COUNTER_FILE;
 
+    smf_peers_mutex_setup();
+
     smf_li_init();
 
     context_initialized = 1;
@@ -289,6 +578,8 @@ void smf_context_final(void)
         ogs_free(self.p_cscf6[i]);
 
     ogs_pool_final(&smf_gtp_node_pool);
+
+    smf_peers_mutex_teardown();
 
     context_initialized = 0;
 }
@@ -1670,6 +1961,12 @@ int smf_context_parse_config(void)
                     }
                 } else if (!strcmp(smf_key, "collapsed")) {
                     self.collapsed = ogs_yaml_iter_bool(&smf_iter);
+                } else if (!strcmp(smf_key, "workers")) {
+                    /* handled by smf_workers_parse_config() */
+                } else if (!strcmp(smf_key, "gtpc_rx_thread")) {
+                    self.gtpc_rx_thread = ogs_yaml_iter_bool(&smf_iter);
+                } else if (!strcmp(smf_key, "pfcp_rx_thread")) {
+                    self.pfcp_rx_thread = ogs_yaml_iter_bool(&smf_iter);
                 } else if (!strcmp(smf_key, "pfcp")) {
                     /* handle config in pfcp library */
                 } else if (!strcmp(smf_key, "upf")) {
@@ -1775,7 +2072,9 @@ smf_gtp_node_t *smf_gtp_node_new(ogs_gtp_node_t *gnode)
     smf_gtp_node_t *smf_gnode = NULL;
     char addr[OGS_ADDRSTRLEN];
 
+    smf_peers_lock();
     ogs_pool_alloc(&smf_gtp_node_pool, &smf_gnode);
+    smf_peers_unlock();
     if (!smf_gnode) {
         ogs_error("ogs_pool_alloc() failed: smf_gtp_node pool full "
                 "(capacity=%llu from max.gtp_peer / max.peer)",
@@ -1801,29 +2100,33 @@ void smf_gtp_node_free(smf_gtp_node_t *smf_gnode)
     if (smf_gnode->gnode)
         smf_gnode->gnode->data_ptr = NULL; /* Drop backpointer */
     smf_metrics_free_inst_gtp_node(smf_gnode->metrics);
+    smf_peers_lock();
     ogs_pool_free(&smf_gtp_node_pool, smf_gnode);
+    smf_peers_unlock();
 }
 
 static smf_ue_t *smf_ue_add(void)
 {
     smf_ue_t *smf_ue = NULL;
 
+    /*
+     * /pdu-info walks self.smf_ue_list on the MHD thread and shard
+     * workers allocate concurrently: pool + list under the ctx lock.
+     */
+    smf_ctx_lock();
     ogs_pool_id_calloc(&smf_ue_pool, &smf_ue);
     if (!smf_ue) {
+        smf_ctx_unlock();
         ogs_error("Maximum number of smf_ue[%lld] reached",
                     (long long)ogs_global_conf()->max.ue);
         return NULL;
     }
 
     ogs_list_init(&smf_ue->sess_list);
+    smf_ue->owner_shard = ogs_worker_self_id();
 
-    /*
-     * /pdu-info walks self.smf_ue_list on the MHD thread. Guard
-     * the list mutation - the reader uses the metrics dump lock.
-     */
-    ogs_metrics_dump_lock();
     ogs_list_add(&self.smf_ue_list, smf_ue);
-    ogs_metrics_dump_unlock();
+    smf_ctx_unlock();
 
     smf_metrics_inst_global_inc(SMF_METR_GLOB_GAUGE_UES_ACTIVE);
     /* ogs_debug() evaluates args even when debug is off; don't walk the
@@ -1863,8 +2166,10 @@ static int smf_ue_set_supi(smf_ue_t *smf_ue, const char *supi)
         return OGS_OK;
     }
 
+    smf_ctx_lock();
     indexed_smf_ue = smf_ue_find_by_supi((char *)supi);
     if (indexed_smf_ue && indexed_smf_ue != smf_ue) {
+        smf_ctx_unlock();
         ogs_fatal("SUPI[%s] already indexed", supi);
         ogs_assert_if_reached();
         return OGS_ERROR;
@@ -1875,6 +2180,7 @@ static int smf_ue_set_supi(smf_ue_t *smf_ue, const char *supi)
 
     ogs_hash_set(self.supi_hash,
             smf_ue->supi, strlen(smf_ue->supi), smf_ue);
+    smf_ctx_unlock();
 
     return OGS_OK;
 }
@@ -1924,8 +2230,10 @@ static int smf_ue_set_imsi_bcd(smf_ue_t *smf_ue, const char *imsi_bcd)
         return OGS_OK;
     }
 
+    smf_ctx_lock();
     indexed_smf_ue = smf_ue_find_by_imsi(imsi, imsi_len);
     if (indexed_smf_ue && indexed_smf_ue != smf_ue) {
+        smf_ctx_unlock();
         ogs_fatal("IMSI[%s] already indexed", imsi_bcd);
         ogs_assert_if_reached();
         return OGS_ERROR;
@@ -1937,6 +2245,7 @@ static int smf_ue_set_imsi_bcd(smf_ue_t *smf_ue, const char *imsi_bcd)
 
     ogs_hash_set(self.imsi_hash,
             smf_ue->imsi, smf_ue->imsi_len, smf_ue);
+    smf_ctx_unlock();
 
     {
         ogs_plmn_id_t plmn_id;
@@ -2013,6 +2322,12 @@ smf_ue_t *smf_ue_add_by_supi(char *supi)
         smf_ue = smf_ue_find_by_imsi(imsi, imsi_len);
     }
 
+    if (smf_ue && !smf_ue_owned_by_self(smf_ue)) {
+        ogs_error("[%s] UE owned by shard %d, not %d",
+                supi, smf_ue->owner_shard, ogs_worker_self_id());
+        return NULL;
+    }
+
     if (!smf_ue) {
         smf_ue = smf_ue_add();
         if (!smf_ue) {
@@ -2074,6 +2389,14 @@ smf_ue_t *smf_ue_add_by_imsi(uint8_t *imsi, int imsi_len)
     if (!smf_ue)
         smf_ue = smf_ue_find_by_supi(supi);
 
+    if (smf_ue && !smf_ue_owned_by_self(smf_ue)) {
+        /* Routers rehome by IMSI before we get here; never adopt. */
+        ogs_error("[%s] UE owned by shard %d, not %d",
+                imsi_bcd, smf_ue->owner_shard, ogs_worker_self_id());
+        smf_ue = NULL;
+        goto error;
+    }
+
     if (!smf_ue) {
         smf_ue = smf_ue_add();
         if (!smf_ue) {
@@ -2111,14 +2434,16 @@ void smf_ue_remove(smf_ue_t *smf_ue)
     smf_ue_collision_abort(smf_ue);
 
     /*
-     * Hold the dump lock for the whole teardown - /pdu-info drills
-     * into smf_ue->sess_list and each session's bearer/PDR/QER
-     * sublists, all of which are about to be released here.
+     * Sessions first, outside the ctx lock: each smf_sess_remove()
+     * unlinks its session from sess_list under the lock before
+     * releasing anything /pdu-info could drill into, and then does
+     * blocking work (RADIUS Accounting-Stop, CDR) that must never
+     * stall the other shards.
      */
-    ogs_metrics_dump_lock();
-    ogs_list_remove(&self.smf_ue_list, smf_ue);
-
     smf_sess_remove_all(smf_ue);
+
+    smf_ctx_lock();
+    ogs_list_remove(&self.smf_ue_list, smf_ue);
 
     if (smf_ue->supi) {
         ogs_hash_set(self.supi_hash, smf_ue->supi, strlen(smf_ue->supi), NULL);
@@ -2139,13 +2464,18 @@ void smf_ue_remove(smf_ue_t *smf_ue)
     }
 
     ogs_pool_id_free(&smf_ue_pool, smf_ue);
-    ogs_metrics_dump_unlock();
+    smf_ctx_unlock();
 
     smf_metrics_inst_global_dec(SMF_METR_GLOB_GAUGE_UES_ACTIVE);
     /* See smf_ue_add(): never walk the UE list unless debug will print. */
-    if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG))
-        ogs_debug("[Removed] Number of SMF-UEs is now %d",
-                ogs_list_count(&self.smf_ue_list));
+    if (ogs_log_domain_prints(OGS_LOG_DOMAIN, OGS_LOG_DEBUG)) {
+        int count;
+
+        smf_ctx_lock();
+        count = ogs_list_count(&self.smf_ue_list);
+        smf_ctx_unlock();
+        ogs_debug("[Removed] Number of SMF-UEs is now %d", count);
+    }
 }
 
 void smf_ue_remove_all(void)
@@ -2171,14 +2501,27 @@ smf_ue_t *smf_ue_find_by_supi(char *supi)
         return NULL;
     }
 
-    return (smf_ue_t *)ogs_hash_get(self.supi_hash, supi, supi_len);
+    {
+        smf_ue_t *smf_ue;
+
+        smf_ctx_lock();
+        smf_ue = (smf_ue_t *)ogs_hash_get(self.supi_hash, supi, supi_len);
+        smf_ctx_unlock();
+        return smf_ue;
+    }
 }
 
 smf_ue_t *smf_ue_find_by_imsi(uint8_t *imsi, int imsi_len)
 {
+    smf_ue_t *smf_ue;
+
     ogs_assert(imsi);
     ogs_assert(imsi_len);
-    return (smf_ue_t *)ogs_hash_get(self.imsi_hash, imsi, imsi_len);
+
+    smf_ctx_lock();
+    smf_ue = (smf_ue_t *)ogs_hash_get(self.imsi_hash, imsi, imsi_len);
+    smf_ctx_unlock();
+    return smf_ue;
 }
 
 smf_ue_t *smf_ue_find_by_imsi_bcd(const char *imsi_bcd)
@@ -2268,6 +2611,9 @@ void smf_sess_select_upf(smf_sess_t *sess)
 {
     ogs_assert(sess);
 
+    /* The RR cursor and pfcp_peer_list are shared by every shard. */
+    ogs_pfcp_peer_lock();
+
     /*
      * When used for the first time, if last node is set,
      * the search is performed from the first UPF in a round-robin manner.
@@ -2289,6 +2635,8 @@ void smf_sess_select_upf(smf_sess_t *sess)
         ogs_error("No suitable UPF found for session");
         ogs_assert(sess->pfcp_node == NULL);
     }
+
+    ogs_pfcp_peer_unlock();
 }
 
 smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)
@@ -2300,7 +2648,9 @@ smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)
     ogs_assert(smf_ue);
     ogs_assert(apn);
 
+    smf_ctx_lock();
     ogs_pool_id_calloc(&smf_sess_pool, &sess);
+    smf_ctx_unlock();
     if (!sess) {
         ogs_error("Maximum number of session[%lld] reached",
                     (long long)ogs_app()->pool.sess);
@@ -2320,14 +2670,16 @@ smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)
     sess->radius.server_idx = -1;
 
     /* Set TEID & SEID */
+    smf_ctx_lock();
     ogs_pool_alloc(&smf_n4_seid_pool, &sess->smf_n4_seid_node);
     ogs_assert(sess->smf_n4_seid_node);
 
-    sess->smf_n4_teid = *(sess->smf_n4_seid_node);
-    sess->smf_n4_seid = *(sess->smf_n4_seid_node);
+    sess->smf_n4_teid = smf_shard_compose(*(sess->smf_n4_seid_node));
+    sess->smf_n4_seid = sess->smf_n4_teid;
 
     ogs_hash_set(self.smf_n4_seid_hash, &sess->smf_n4_seid,
             sizeof(sess->smf_n4_seid), sess);
+    smf_ctx_unlock();
 
     /* Set Charging ID */
     sess->charging.id = sess->index;
@@ -2355,7 +2707,9 @@ smf_sess_t *smf_sess_add_by_apn(smf_ue_t *smf_ue, char *apn, uint8_t rat_type)
 
     sess->smf_ue_id = smf_ue->id;
 
+    smf_ctx_lock();
     ogs_list_add(&smf_ue->sess_list, sess);
+    smf_ctx_unlock();
 
     stats_add_smf_session();
     /*
@@ -2629,7 +2983,9 @@ smf_sess_t *smf_sess_add_by_psi(smf_ue_t *smf_ue, uint8_t psi)
     ogs_assert(smf_ue);
     ogs_assert(psi != OGS_NAS_PDU_SESSION_IDENTITY_UNASSIGNED);
 
+    smf_ctx_lock();
     ogs_pool_id_calloc(&smf_sess_pool, &sess);
+    smf_ctx_unlock();
     if (!sess) {
         ogs_error("Maximum number of session[%lld] reached",
             (long long)ogs_app()->pool.sess);
@@ -2656,17 +3012,20 @@ smf_sess_t *smf_sess_add_by_psi(smf_ue_t *smf_ue, uint8_t psi)
     sess->radius.server_idx = -1;
 
     /* Set TEID & SEID */
+    smf_ctx_lock();
     ogs_pool_alloc(&smf_n4_seid_pool, &sess->smf_n4_seid_node);
     if (!sess->smf_n4_seid_node) {
+        smf_ctx_unlock();
         ogs_error("Could not allocate SMF-N4-SEID");
         goto fail;
     }
 
-    sess->smf_n4_teid = *(sess->smf_n4_seid_node);
-    sess->smf_n4_seid = *(sess->smf_n4_seid_node);
+    sess->smf_n4_teid = smf_shard_compose(*(sess->smf_n4_seid_node));
+    sess->smf_n4_seid = sess->smf_n4_teid;
 
     ogs_hash_set(self.smf_n4_seid_hash, &sess->smf_n4_seid,
             sizeof(sess->smf_n4_seid), sess);
+    smf_ctx_unlock();
 
     /* Set SmContextRef in 5GC */
     sess->sm_context_ref = ogs_msprintf("%d", sess->index);
@@ -2703,7 +3062,9 @@ smf_sess_t *smf_sess_add_by_psi(smf_ue_t *smf_ue, uint8_t psi)
 
     sess->smf_ue_id = smf_ue->id;
 
+    smf_ctx_lock();
     ogs_list_add(&smf_ue->sess_list, sess);
+    smf_ctx_unlock();
 
     smf_metrics_inst_global_inc(SMF_METR_GLOB_GAUGE_PFCP_SESSIONS_ACTIVE);
     stats_add_smf_session();
@@ -2712,9 +3073,11 @@ smf_sess_t *smf_sess_add_by_psi(smf_ue_t *smf_ue, uint8_t psi)
 
 fail:
     if (sess->smf_n4_seid_node) {
+        smf_ctx_lock();
         ogs_hash_set(self.smf_n4_seid_hash, &sess->smf_n4_seid,
                 sizeof(sess->smf_n4_seid), NULL);
         ogs_pool_free(&smf_n4_seid_pool, sess->smf_n4_seid_node);
+        smf_ctx_unlock();
         sess->smf_n4_seid_node = NULL;
     }
     if (sess->sm_context_ref) {
@@ -2730,7 +3093,9 @@ fail:
     ogs_pfcp_pool_final(&sess->pfcp);
     smf_qfi_pool_final(sess);
     smf_pf_precedence_pool_final(sess);
+    smf_ctx_lock();
     ogs_pool_id_free(&smf_sess_pool, sess);
+    smf_ctx_unlock();
     return NULL;
 }
 
@@ -2897,9 +3262,11 @@ static void smf_sess_log_ue_ip_ok(smf_ue_t *smf_ue, smf_sess_t *sess)
             pool6[0] ? pool6 : "-");
 }
 
+static uint8_t smf_sess_assign_ue_ip_locked(
+        smf_sess_t *sess, smf_ue_t *smf_ue, bool *assigned);
+
 uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
 {
-    ogs_pfcp_subnet_t *subnet6 = NULL;
     smf_ue_t *smf_ue = NULL;
 
     uint8_t cause_value = OGS_PFCP_CAUSE_REQUEST_ACCEPTED;
@@ -2955,6 +3322,33 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
 
     sess->paa.session_type = sess->session.session_type;
     ogs_assert(sess->session.session_type);
+
+    {
+        bool assigned = false;
+
+        /*
+         * The ipv4/ipv6 hashes are shared by every shard (static-IP
+         * collision lookups, GTP-U RS, /pdu-info), so allocation and
+         * indexing happen as one step under the ctx lock.
+         */
+        smf_ctx_lock();
+        cause_value = smf_sess_assign_ue_ip_locked(sess, smf_ue, &assigned);
+        smf_ctx_unlock();
+
+        if (assigned)
+            smf_sess_log_ue_ip_ok(smf_ue, sess);
+    }
+
+    return cause_value;
+}
+
+static uint8_t smf_sess_assign_ue_ip_locked(
+        smf_sess_t *sess, smf_ue_t *smf_ue, bool *assigned)
+{
+    ogs_pfcp_subnet_t *subnet6 = NULL;
+    uint8_t cause_value = OGS_PFCP_CAUSE_REQUEST_ACCEPTED;
+
+    *assigned = false;
 
     if (sess->ipv4) {
         ogs_hash_set(smf_self()->ipv4_hash,
@@ -3059,7 +3453,7 @@ uint8_t smf_sess_set_ue_ip(smf_sess_t *sess)
     }
 
 ue_ip_assigned:
-    smf_sess_log_ue_ip_ok(smf_ue, sess);
+    *assigned = true;
 
     return cause_value;
 }
@@ -3070,6 +3464,7 @@ void smf_sess_set_paging_n1n2message_location(
     ogs_assert(sess);
     ogs_assert(n1n2message_location);
 
+    smf_ctx_lock();
     if (sess->paging.n1n2message_location) {
         ogs_hash_set(self.n1n2message_hash,
                 sess->paging.n1n2message_location,
@@ -3085,6 +3480,7 @@ void smf_sess_set_paging_n1n2message_location(
             sess->paging.n1n2message_location,
             strlen(sess->paging.n1n2message_location),
             sess);
+    smf_ctx_unlock();
 }
 
 static bool smf_sgw_recovery_is_restart(uint8_t stored, uint8_t received)
@@ -3101,154 +3497,226 @@ static bool smf_sgw_recovery_is_restart(uint8_t stored, uint8_t received)
     return (uint8_t)(received - stored) < 128;
 }
 
-static void smf_sgw_purge_sessions(ogs_gtp_node_t *gnode)
+typedef struct {
+    ogs_gtp_node_t *gnode;
+    ogs_time_t cutoff;
+    int purged;
+} sgw_purge_arg_t;
+
+static void sgw_purge_one(smf_ue_t *ue, smf_sess_t *sess, void *data)
 {
-    smf_ue_t *ue = NULL, *next_ue = NULL;
-    smf_sess_t *sess = NULL, *next_sess = NULL;
+    sgw_purge_arg_t *arg = data;
+
+    if (!sess->epc)
+        return;
+    if (sess->gnode != arg->gnode)
+        return;
+    /* A session set up by the restarted SGW after detection is live. */
+    if (sess->created && sess->created > arg->cutoff)
+        return;
+    /* Already being torn down by a collision replace that owns a parked
+     * Create; removing it here would strand that request. */
+    if (sess->collision_replace)
+        return;
+
+    ogs_warn("[%s] SGW recovery restart: delete PDN apn=%s",
+            ue->imsi_bcd,
+            sess->session.name ? sess->session.name : "-");
+
+    smf_epc_pfcp_send_session_deletion_best_effort(sess);
+    smf_sess_remove(sess);
+    arg->purged++;
+
+    if (ogs_list_empty(&ue->sess_list))
+        smf_ue_remove(ue);
+}
+
+/*
+ * Per 3GPP TS 23.007, on detecting an S-GW restart the P-GW/SMF deletes the
+ * PDN connections anchored on that S-GW. The SGW has lost all of its state,
+ * so we must NOT signal it back (no S5-C Delete Session Response/Request):
+ * tear the data plane down on the UPF best-effort and free the local PDN
+ * context. Only EPC (GTP-C) sessions are affected; 5GC PDU sessions follow
+ * their own AMF/SBI-driven lifecycle. Runs on every shard for the sessions
+ * it owns (SMF_EVT_SGW_RESTART_PURGE).
+ */
+void smf_sgw_purge_owned(smf_gtp_node_t *smf_gnode, ogs_time_t cutoff)
+{
+    sgw_purge_arg_t arg;
     char buf[OGS_ADDRSTRLEN];
-    int purged = 0;
 
-    ogs_assert(gnode);
+    ogs_assert(smf_gnode);
+    ogs_assert(smf_gnode->gnode);
 
-    ogs_warn("SGW [%s]:%d recovery restart: purging SMF PDN sessions",
-            OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr));
+    memset(&arg, 0, sizeof(arg));
+    arg.gnode = smf_gnode->gnode;
+    arg.cutoff = cutoff;
 
-    /*
-     * Per 3GPP TS 23.007, on detecting an S-GW restart the P-GW/SMF deletes the
-     * PDN connections anchored on that S-GW. The SGW has lost all of its state,
-     * so we must NOT signal it back (no S5-C Delete Session Response/Request):
-     * tear the data plane down on the UPF best-effort and free the local PDN
-     * context. Only EPC (GTP-C) sessions are affected; 5GC PDU sessions follow
-     * their own AMF/SBI-driven lifecycle.
-     */
-    ogs_list_for_each_safe(&self.smf_ue_list, next_ue, ue) {
-        ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
-            if (!sess->epc)
-                continue;
-            if (sess->gnode != gnode)
-                continue;
+    smf_owned_sess_foreach(sgw_purge_one, &arg);
 
-            ogs_warn("[%s] SGW recovery restart: delete PDN apn=%s",
-                    ue->imsi_bcd,
-                    sess->session.name ? sess->session.name : "-");
-
-            smf_epc_pfcp_send_session_deletion_best_effort(sess);
-            smf_sess_remove(sess);
-            purged++;
-        }
-        if (ogs_list_empty(&ue->sess_list))
-            smf_ue_remove(ue);
-    }
-
-    ogs_warn("SGW [%s]:%d recovery restart: purged %d PDN session(s)",
-            OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr), purged);
+    if (arg.purged)
+        ogs_warn("SGW [%s]:%d recovery restart: purged %d PDN session(s) "
+                "on shard %d",
+                OGS_ADDR(&arg.gnode->addr, buf), OGS_PORT(&arg.gnode->addr),
+                arg.purged, ogs_worker_self_id());
 }
 
 bool smf_sgw_recovery_update(smf_gtp_node_t *smf_gnode, uint8_t recovery)
 {
     ogs_gtp_node_t *gnode = NULL;
     char buf[OGS_ADDRSTRLEN];
+    uint8_t stored;
+    smf_event_t tmpl;
 
     ogs_assert(smf_gnode);
     gnode = smf_gnode->gnode;
     ogs_assert(gnode);
 
+    /* Every shard talking to this SGW checks the same counter. */
+    smf_peers_lock();
     if (!smf_gnode->peer_recovery_valid) {
         smf_gnode->peer_recovery = recovery;
         smf_gnode->peer_recovery_valid = true;
+        smf_peers_unlock();
         ogs_info("SGW [%s]:%d recovery=%u (initial)",
                 OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr),
                 recovery);
         return false;
     }
 
-    /* Unchanged: keep the stored value, do nothing. */
-    if (recovery == smf_gnode->peer_recovery)
-        return false;
+    stored = smf_gnode->peer_recovery;
 
-    if (!smf_sgw_recovery_is_restart(smf_gnode->peer_recovery, recovery)) {
+    /* Unchanged: keep the stored value, do nothing. */
+    if (recovery == stored) {
+        smf_peers_unlock();
+        return false;
+    }
+
+    if (!smf_sgw_recovery_is_restart(stored, recovery)) {
+        smf_peers_unlock();
         /* Older / out-of-order: do NOT advance the baseline and do NOT purge. */
         ogs_warn("SGW [%s]:%d ignoring non-newer recovery %u (stored %u)",
                 OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr),
-                recovery, smf_gnode->peer_recovery);
+                recovery, stored);
         return false;
     }
 
-    ogs_warn("SGW [%s]:%d recovery changed %u -> %u (restart)",
-            OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr),
-            smf_gnode->peer_recovery, recovery);
     smf_gnode->peer_recovery = recovery;
-    smf_sgw_purge_sessions(gnode);
+    smf_peers_unlock();
+
+    ogs_warn("SGW [%s]:%d recovery changed %u -> %u (restart): "
+            "purging SMF PDN sessions",
+            OGS_ADDR(&gnode->addr, buf), OGS_PORT(&gnode->addr),
+            stored, recovery);
+
+    /* This shard now, synchronously (as before); the others via events. */
+    memset(&tmpl, 0, sizeof(tmpl));
+    tmpl.h.id = SMF_EVT_SGW_RESTART_PURGE;
+    tmpl.gnode = smf_gnode;
+    tmpl.cutoff = ogs_time_now();
+
+    smf_sgw_purge_owned(smf_gnode, tmpl.cutoff);
+    smf_event_fanout_others(&tmpl);
     return true;
 }
 
-int smf_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
+typedef struct {
+    bool do_purge;
+    ogs_time_t grace;
+    ogs_time_t now;
+    int remaining;
+    int purged;
+} orphan_arg_t;
+
+static void orphan_one(smf_ue_t *ue, smf_sess_t *sess, void *data)
 {
-    smf_ue_t *ue = NULL, *next_ue = NULL;
-    smf_sess_t *sess = NULL, *next_sess = NULL;
-    ogs_time_t now = ogs_time_now();
-    int remaining = 0, purged = 0;
+    orphan_arg_t *arg = data;
+    bool is_orphan, aged_out;
 
-    /*
-     * Main-thread only: walks and mutates smf_ue_list / sess_list and may send
-     * a best-effort PFCP delete to the UPF. Only EPC sessions are considered;
-     * 5GC PDU sessions follow their own AMF/SBI-driven release lifecycle.
-     */
-    ogs_list_for_each_safe(&self.smf_ue_list, next_ue, ue) {
-        ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
-            bool is_orphan, aged_out;
+    if (!sess->epc)
+        return;
 
-            if (!sess->epc)
-                continue;
+    is_orphan = (!sess->metrics_session_counted ||
+                 sess->upf_n4_seid == 0);
+    if (!is_orphan)
+        return;
 
-            is_orphan = (!sess->metrics_session_counted ||
-                         sess->upf_n4_seid == 0);
-            if (!is_orphan)
-                continue;
+    aged_out = (sess->created == 0) ||
+            ((arg->now - sess->created) > arg->grace);
 
-            aged_out = (sess->created == 0) ||
-                    ((now - sess->created) > grace);
-
-            if (do_purge && aged_out) {
-                ogs_info("orphan sweep: purge imsi=%s apn=%s "
-                         "(counted=%d upf_n4_seid=0x%" PRIx64 ")",
-                         ue->imsi_bcd,
-                         sess->session.name ? sess->session.name : "-",
-                         sess->metrics_session_counted,
-                         (uint64_t)sess->upf_n4_seid);
-                /* Best-effort PFCP delete (no-op if no UPF SEID), then free. */
-                smf_epc_pfcp_send_session_deletion_best_effort(sess);
-                smf_sess_remove(sess);
-                purged++;
-                continue; /* sess is freed; do not count as remaining */
-            }
-
-            remaining++;
-        }
+    if (arg->do_purge && aged_out) {
+        ogs_info("orphan sweep: purge imsi=%s apn=%s "
+                 "(counted=%d upf_n4_seid=0x%" PRIx64 ")",
+                 ue->imsi_bcd,
+                 sess->session.name ? sess->session.name : "-",
+                 sess->metrics_session_counted,
+                 (uint64_t)sess->upf_n4_seid);
+        /* Best-effort PFCP delete (no-op if no UPF SEID), then free. */
+        smf_epc_pfcp_send_session_deletion_best_effort(sess);
+        smf_sess_remove(sess);
+        arg->purged++;
         if (ogs_list_empty(&ue->sess_list))
             smf_ue_remove(ue);
+        return; /* sess is freed; do not count as remaining */
     }
 
-    if (out_purged)
-        *out_purged = purged;
+    arg->remaining++;
+}
 
-    return remaining;
+/*
+ * Sweeps the sessions the CALLING shard owns (each shard gets its own
+ * SMF_EVT_ORPHAN_SWEEP copy). Only EPC sessions are considered; 5GC PDU
+ * sessions follow their own AMF/SBI-driven release lifecycle.
+ */
+int smf_orphan_sweep(bool do_purge, ogs_time_t grace, int *out_purged)
+{
+    orphan_arg_t arg;
+
+    memset(&arg, 0, sizeof(arg));
+    arg.do_purge = do_purge;
+    arg.grace = grace;
+    arg.now = ogs_time_now();
+
+    smf_owned_sess_foreach(orphan_one, &arg);
+
+    if (out_purged)
+        *out_purged = arg.purged;
+
+    return arg.remaining;
+}
+
+/*
+ * The smf_sessions_orphan gauge is the sum of every shard's count. Each
+ * shard publishes its own slot; the reporting shard sums all slots.
+ */
+static int orphan_remaining_by_shard[OGS_MAX_WORKERS];
+
+int smf_orphan_publish(int shard_remaining)
+{
+    int i, total = 0;
+    int self_id = ogs_worker_self_id();
+
+    ogs_assert(self_id >= 0 && self_id < OGS_MAX_WORKERS);
+    __atomic_store_n(&orphan_remaining_by_shard[self_id],
+            shard_remaining, __ATOMIC_RELAXED);
+
+    for (i = 0; i < OGS_MAX_WORKERS; i++)
+        total += __atomic_load_n(&orphan_remaining_by_shard[i],
+                __ATOMIC_RELAXED);
+
+    return total;
 }
 
 static void orphan_sweep_timer_cb(void *data)
 {
-    smf_event_t *e = NULL;
-    int rv;
+    smf_event_t tmpl;
 
-    e = smf_event_new(SMF_EVT_ORPHAN_SWEEP);
-    ogs_assert(e);
-    e->h.timer_id = SMF_TIMER_ORPHAN_SWEEP;
+    /* Main-thread timer: one sweep copy per shard. */
+    memset(&tmpl, 0, sizeof(tmpl));
+    tmpl.h.id = SMF_EVT_ORPHAN_SWEEP;
+    tmpl.h.timer_id = SMF_TIMER_ORPHAN_SWEEP;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed [%d] for orphan sweep", (int)rv);
-        ogs_event_free(e);
-    }
+    smf_event_fanout(&tmpl);
 }
 
 void smf_orphan_timer_start(void)
@@ -3311,7 +3779,9 @@ void smf_sess_remove(smf_sess_t *sess)
                     sess->ipv4 ? OGS_INET_NTOP(&sess->ipv4->addr, buf1) : "",
                     sess->ipv6 ? OGS_INET6_NTOP(&sess->ipv6->addr, buf2) : "");
 
+            smf_ctx_lock();
             ogs_list_remove(&smf_ue->sess_list, sess);
+            smf_ctx_unlock();
         } else {
             ogs_warn("UE not found while removing session (sess_id=%d)",
                     (int)sess->id);
@@ -3326,8 +3796,10 @@ void smf_sess_remove(smf_sess_t *sess)
     smf_ga_cdr_session_stop(sess);
     smf_ga_sess_clear(sess);
 
+    smf_ctx_lock();
     ogs_hash_set(self.smf_n4_seid_hash, &sess->smf_n4_seid,
             sizeof(sess->smf_n4_seid), NULL);
+    smf_ctx_unlock();
 
     memset(&e, 0, sizeof(e));
     e.sess_id = sess->id;
@@ -3347,6 +3819,7 @@ void smf_sess_remove(smf_sess_t *sess)
         OGS_PCC_RULE_FREE(&sess->policy.pcc_rule[i]);
     sess->policy.num_of_pcc_rule = 0;
 
+    smf_ctx_lock();
     if (sess->ipv4) {
         ogs_hash_set(self.ipv4_hash, sess->ipv4->addr, OGS_IPV4_LEN, NULL);
         ogs_pfcp_ue_ip_free(sess->ipv4);
@@ -3364,6 +3837,7 @@ void smf_sess_remove(smf_sess_t *sess)
                 NULL);
         ogs_free(sess->paging.n1n2message_location);
     }
+    smf_ctx_unlock();
 
     if (sess->sm_context_ref)
         ogs_free(sess->sm_context_ref);
@@ -3487,8 +3961,10 @@ void smf_sess_remove(smf_sess_t *sess)
     smf_metrics_inst_global_dec(SMF_METR_GLOB_GAUGE_PFCP_SESSIONS_ACTIVE);
     stats_remove_smf_session(sess);
 
+    smf_ctx_lock();
     ogs_pool_free(&smf_n4_seid_pool, sess->smf_n4_seid_node);
     ogs_pool_id_free(&smf_sess_pool, sess);
+    smf_ctx_unlock();
 }
 
 void smf_sess_remove_all(smf_ue_t *smf_ue)
@@ -3508,27 +3984,36 @@ smf_sess_t *smf_sess_find_by_teid(uint32_t teid)
 
 smf_sess_t *smf_sess_find_by_seid(uint64_t seid)
 {
-    return ogs_hash_get(self.smf_n4_seid_hash, &seid, sizeof(seid));
+    smf_sess_t *sess;
+
+    smf_ctx_lock();
+    sess = ogs_hash_get(self.smf_n4_seid_hash, &seid, sizeof(seid));
+    smf_ctx_unlock();
+    return sess;
 }
 
 static bool smf_sess_on_ue_list(const smf_sess_t *sess)
 {
     smf_ue_t *smf_ue = NULL;
     smf_sess_t *iter = NULL;
+    bool found = false;
 
     if (!sess)
         return false;
 
+    smf_ctx_lock();
     smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
-    if (!smf_ue)
-        return false;
-
-    ogs_list_for_each(&smf_ue->sess_list, iter) {
-        if (iter == sess)
-            return true;
+    if (smf_ue) {
+        ogs_list_for_each(&smf_ue->sess_list, iter) {
+            if (iter == sess) {
+                found = true;
+                break;
+            }
+        }
     }
+    smf_ctx_unlock();
 
-    return false;
+    return found;
 }
 
 smf_sess_t *smf_sess_find_active_by_id(ogs_pool_id_t id)
@@ -3590,7 +4075,12 @@ smf_sess_t *smf_sess_find_by_psi(smf_ue_t *smf_ue, uint8_t psi)
 
 smf_sess_t *smf_sess_find(uint32_t index)
 {
-    return ogs_pool_find(&smf_sess_pool, index);
+    smf_sess_t *sess;
+
+    smf_ctx_lock();
+    sess = ogs_pool_find(&smf_sess_pool, index);
+    smf_ctx_unlock();
+    return sess;
 }
 
 smf_sess_t *smf_sess_find_by_charging_id(uint32_t charging_id)
@@ -3613,25 +4103,40 @@ smf_sess_t *smf_sess_find_by_pdu_session_ref(char *pdu_session_ref)
 
 smf_sess_t *smf_sess_find_by_ipv4(uint32_t addr)
 {
+    smf_sess_t *sess;
+
     ogs_assert(self.ipv4_hash);
-    return (smf_sess_t *)ogs_hash_get(self.ipv4_hash, &addr, OGS_IPV4_LEN);
+    smf_ctx_lock();
+    sess = (smf_sess_t *)ogs_hash_get(self.ipv4_hash, &addr, OGS_IPV4_LEN);
+    smf_ctx_unlock();
+    return sess;
 }
 
 smf_sess_t *smf_sess_find_by_ipv6(uint32_t *addr6)
 {
+    smf_sess_t *sess;
+
     ogs_assert(self.ipv6_hash);
     ogs_assert(addr6);
-    return (smf_sess_t *)ogs_hash_get(
+    smf_ctx_lock();
+    sess = (smf_sess_t *)ogs_hash_get(
             self.ipv6_hash, addr6, OGS_IPV6_DEFAULT_PREFIX_LEN >> 3);
+    smf_ctx_unlock();
+    return sess;
 }
 
 smf_sess_t *smf_sess_find_by_paging_n1n2message_location(
         char *n1n2message_location)
 {
+    smf_sess_t *sess;
+
     ogs_assert(self.n1n2message_hash);
     ogs_assert(n1n2message_location);
-    return (smf_sess_t *)ogs_hash_get(self.n1n2message_hash,
+    smf_ctx_lock();
+    sess = (smf_sess_t *)ogs_hash_get(self.n1n2message_hash,
             n1n2message_location, strlen(n1n2message_location));
+    smf_ctx_unlock();
+    return sess;
 }
 
 ogs_pcc_rule_t *smf_pcc_rule_find_by_id(smf_sess_t *sess, char *pcc_rule_id)
@@ -3664,7 +4169,9 @@ smf_bearer_t *smf_qos_flow_add(smf_sess_t *sess)
 
     ogs_assert(sess);
 
+    smf_ctx_lock();
     ogs_pool_id_calloc(&smf_bearer_pool, &qos_flow);
+    smf_ctx_unlock();
     ogs_assert(qos_flow);
 
     smf_pf_identifier_pool_init(qos_flow);
@@ -3808,7 +4315,9 @@ smf_bearer_t *smf_qos_flow_add(smf_sess_t *sess)
 
     qos_flow->sess_id = sess->id;
 
+    smf_ctx_lock();
     ogs_list_add(&sess->bearer_list, qos_flow);
+    smf_ctx_unlock();
     smf_metrics_inst_by_5qi_add(&sess->serving_plmn_id, &sess->s_nssai,
             sess->session.qos.index, SMF_METR_GAUGE_SM_QOSFLOWNBR, 1);
     smf_metrics_inst_global_inc(SMF_METR_GLOB_GAUGE_BEARERS_ACTIVE);
@@ -3827,7 +4336,9 @@ smf_bearer_t *smf_vcn_tunnel_add(smf_sess_t *sess)
 
     ogs_assert(sess);
 
+    smf_ctx_lock();
     ogs_pool_id_calloc(&smf_bearer_pool, &qos_flow);
+    smf_ctx_unlock();
     ogs_assert(qos_flow);
 
     /*
@@ -3910,7 +4421,9 @@ smf_bearer_t *smf_vcn_tunnel_add(smf_sess_t *sess)
 
     qos_flow->sess_id = sess->id;
 
+    smf_ctx_lock();
     ogs_list_add(&sess->bearer_list, qos_flow);
+    smf_ctx_unlock();
 
     return qos_flow;
 }
@@ -4247,7 +4760,9 @@ smf_bearer_t *smf_bearer_add(smf_sess_t *sess)
 
     ogs_assert(sess);
 
+    smf_ctx_lock();
     ogs_pool_id_calloc(&smf_bearer_pool, &bearer);
+    smf_ctx_unlock();
     ogs_assert(bearer);
 
     smf_pf_identifier_pool_init(bearer);
@@ -4468,7 +4983,9 @@ smf_bearer_t *smf_bearer_add(smf_sess_t *sess)
 
     bearer->sess_id = sess->id;
 
+    smf_ctx_lock();
     ogs_list_add(&sess->bearer_list, bearer);
+    smf_ctx_unlock();
 
     smf_metrics_inst_global_inc(SMF_METR_GLOB_GAUGE_BEARERS_ACTIVE);
     return bearer;
@@ -4485,7 +5002,9 @@ int smf_bearer_remove(smf_bearer_t *bearer)
         return OGS_ERROR;
     }
 
+    smf_ctx_lock();
     ogs_list_remove(&sess->bearer_list, bearer);
+    smf_ctx_unlock();
 
     ogs_assert(bearer->dl_pdr);
     ogs_pfcp_pdr_remove(bearer->dl_pdr);
@@ -4520,7 +5039,9 @@ int smf_bearer_remove(smf_bearer_t *bearer)
     if (SMF_IS_QOF_FLOW(bearer))
         ogs_pool_free(&sess->qfi_pool, bearer->qfi_node);
 
+    smf_ctx_lock();
     ogs_pool_id_free(&smf_bearer_pool, bearer);
+    smf_ctx_unlock();
 
     smf_metrics_inst_global_dec(SMF_METR_GLOB_GAUGE_BEARERS_ACTIVE);
     return OGS_OK;
@@ -4687,71 +5208,78 @@ smf_bearer_t *smf_default_bearer_in_sess(smf_sess_t *sess)
 
 smf_ue_t *smf_ue_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&smf_ue_pool, id);
+    smf_ue_t *smf_ue;
+
+    smf_ctx_lock();
+    smf_ue = ogs_pool_find_by_id(&smf_ue_pool, id);
+    smf_ctx_unlock();
+    return smf_ue;
 }
 
-static bool smf_ue_on_list(const smf_ue_t *smf_ue)
-{
-    smf_ue_t *iter = NULL;
-
-    if (!smf_ue)
-        return false;
-
-    ogs_list_for_each(&self.smf_ue_list, iter) {
-        if (iter == smf_ue)
-            return true;
-    }
-
-    return false;
-}
-
+/*
+ * smf_ue_add()/smf_ue_remove() change pool membership and smf_ue_list
+ * membership inside one ctx-locked section, so a live pool id is on
+ * the list. This used to be an O(#UE) list walk per lookup.
+ */
 smf_ue_t *smf_ue_find_active(ogs_pool_id_t id)
 {
-    smf_ue_t *smf_ue = smf_ue_find_by_id(id);
-
-    if (!smf_ue)
-        return NULL;
-
-    if (!smf_ue_on_list(smf_ue))
-        return NULL;
-
-    return smf_ue;
+    return smf_ue_find_by_id(id);
 }
 
 smf_sess_t *smf_sess_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&smf_sess_pool, id);
+    smf_sess_t *sess;
+
+    smf_ctx_lock();
+    sess = ogs_pool_find_by_id(&smf_sess_pool, id);
+    smf_ctx_unlock();
+    return sess;
 }
 
 bool smf_pfcp_peer_in_use(const ogs_pfcp_node_t *node)
 {
     int i;
     smf_sess_t *sess = NULL;
+    bool in_use = false;
 
     ogs_assert(node);
 
+    smf_ctx_lock();
     for (i = 0; i < smf_sess_pool.size; i++) {
         sess = smf_sess_pool.index[i];
-        if (sess && sess->pfcp_node == node)
-            return true;
+        if (sess && sess->pfcp_node == node) {
+            in_use = true;
+            break;
+        }
     }
+    smf_ctx_unlock();
 
-    return false;
+    return in_use;
 }
 
 smf_bearer_t *smf_bearer_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&smf_bearer_pool, id);
+    smf_bearer_t *bearer;
+
+    smf_ctx_lock();
+    bearer = ogs_pool_find_by_id(&smf_bearer_pool, id);
+    smf_ctx_unlock();
+    return bearer;
 }
 
 smf_bearer_t *smf_qos_flow_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&smf_bearer_pool, id);
+    return smf_bearer_find_by_id(id);
 }
 
 smf_pf_t *smf_pf_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&smf_pf_pool, id);
+    smf_pf_t *pf;
+
+    smf_ctx_lock();
+    pf = ogs_pool_find_by_id(&smf_pf_pool, id);
+    smf_ctx_unlock();
+    return pf;
 }
 
 smf_pf_t *smf_pf_add(smf_bearer_t *bearer)
@@ -4763,13 +5291,17 @@ smf_pf_t *smf_pf_add(smf_bearer_t *bearer)
     sess = smf_sess_find_by_id(bearer->sess_id);
     ogs_assert(sess);
 
+    smf_ctx_lock();
     ogs_pool_id_calloc(&smf_pf_pool, &pf);
+    smf_ctx_unlock();
     ogs_assert(pf);
 
     ogs_pool_alloc(&bearer->pf_identifier_pool, &pf->identifier_node);
     if (!pf->identifier_node) {
         ogs_error("smf_pf_add: Expectation `pf->identifier_node' failed");
+        smf_ctx_lock();
         ogs_pool_id_free(&smf_pf_pool, pf);
+        smf_ctx_unlock();
         return NULL;
     }
 
@@ -4781,7 +5313,9 @@ smf_pf_t *smf_pf_add(smf_bearer_t *bearer)
     if (!pf->precedence_node) {
         ogs_error("smf_pf_add: Expectation `pf->precedence_node' failed");
         ogs_pool_free(&bearer->pf_identifier_pool, pf->identifier_node);
+        smf_ctx_lock();
         ogs_pool_id_free(&smf_pf_pool, pf);
+        smf_ctx_unlock();
         return NULL;
     }
 
@@ -4794,7 +5328,9 @@ smf_pf_t *smf_pf_add(smf_bearer_t *bearer)
 
     pf->bearer_id = bearer->id;
 
+    smf_ctx_lock();
     ogs_list_add(&bearer->pf_list, pf);
+    smf_ctx_unlock();
 
     return pf;
 }
@@ -4810,7 +5346,9 @@ int smf_pf_remove(smf_pf_t *pf)
     sess = smf_sess_find_by_id(bearer->sess_id);
     ogs_assert(sess);
 
+    smf_ctx_lock();
     ogs_list_remove(&bearer->pf_list, pf);
+    smf_ctx_unlock();
     if (pf->flow_description)
         ogs_free(pf->flow_description);
 
@@ -4820,7 +5358,9 @@ int smf_pf_remove(smf_pf_t *pf)
         ogs_pool_free(
                 &sess->pf_precedence_pool, pf->precedence_node);
 
+    smf_ctx_lock();
     ogs_pool_id_free(&smf_pf_pool, pf);
+    smf_ctx_unlock();
 
     return OGS_OK;
 }
@@ -5233,16 +5773,18 @@ void smf_pf_precedence_pool_final(smf_sess_t *sess)
 
 static void stats_add_smf_session(void)
 {
-    num_of_smf_sess = num_of_smf_sess + 1;
-    ogs_debug("[Added] Number of SMF-Sessions is now %d", num_of_smf_sess);
+    int n = __atomic_add_fetch(&num_of_smf_sess, 1, __ATOMIC_RELAXED);
+    ogs_debug("[Added] Number of SMF-Sessions is now %d", n);
 }
 
 static void stats_remove_smf_session(smf_sess_t *sess)
 {
+    int n;
+
     ogs_assert(sess);
 
-    num_of_smf_sess = num_of_smf_sess - 1;
-    ogs_debug("[Removed] Number of SMF-Sessions is now %d", num_of_smf_sess);
+    n = __atomic_sub_fetch(&num_of_smf_sess, 1, __ATOMIC_RELAXED);
+    ogs_debug("[Removed] Number of SMF-Sessions is now %d", n);
 }
 
 int smf_instance_get_load(void)

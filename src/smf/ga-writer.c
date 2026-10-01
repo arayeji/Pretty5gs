@@ -35,6 +35,7 @@
 #include <unistd.h>
 #define smf_mkdir(p) mkdir((p), 0755)
 #endif
+#include <pthread.h>
 
 /* ================================================================== */
 /*  On-disk framing                                                   */
@@ -1043,7 +1044,35 @@ static void write_record(const uint8_t *rec, size_t rec_len)
 /*  Public API                                                        */
 /* ================================================================== */
 
+/*
+ * Shards emit CDRs concurrently: the spool file, the counters in `g`,
+ * cdr_local_seq and (during apply_runtime) smf_self()->cdr are all
+ * serialized by this lock.
+ */
+static pthread_mutex_t ga_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static int ga_writer_open_locked(void);
+static void ga_writer_close_locked(void);
+
 int smf_ga_writer_open(void)
+{
+    int rv;
+
+    pthread_mutex_lock(&ga_lock);
+    rv = ga_writer_open_locked();
+    pthread_mutex_unlock(&ga_lock);
+
+    return rv;
+}
+
+void smf_ga_writer_close(void)
+{
+    pthread_mutex_lock(&ga_lock);
+    ga_writer_close_locked();
+    pthread_mutex_unlock(&ga_lock);
+}
+
+static int ga_writer_open_locked(void)
 {
     smf_cdr_config_t *cfg = &smf_self()->cdr;
     char path[512];
@@ -1083,7 +1112,7 @@ int smf_ga_writer_open(void)
     return OGS_OK;
 }
 
-void smf_ga_writer_close(void)
+static void ga_writer_close_locked(void)
 {
     if (g.fp)
         rotate_locked();
@@ -1103,14 +1132,20 @@ static void emit(smf_sess_t *sess, bool is_stop)
     uint8_t rec[SMF_GA_RECORD_MAX];
     size_t n;
 
-    if (!smf_self()->cdr.enabled || !g.initialized) return;
+    pthread_mutex_lock(&ga_lock);
+    if (!smf_self()->cdr.enabled || !g.initialized) {
+        pthread_mutex_unlock(&ga_lock);
+        return;
+    }
     n = build_pgw_record(sess, rec, sizeof(rec), is_stop);
     if (!n) {
+        pthread_mutex_unlock(&ga_lock);
         ogs_warn("smf_ga_writer: BER encode failed (sess_id=%d)",
                 (int)sess->id);
         return;
     }
     write_record(rec, n);
+    pthread_mutex_unlock(&ga_lock);
 
     sess->cdr.last_ul_octets = sess->gy.ul_octets;
     sess->cdr.last_dl_octets = sess->gy.dl_octets;
@@ -1208,9 +1243,11 @@ int smf_ga_writer_apply_runtime(const smf_cdr_config_t *new_cfg)
              cur->node_id ? cur->node_id : "(unset)",
              new_cfg->node_id ? new_cfg->node_id : "(unset)");
 
+    pthread_mutex_lock(&ga_lock);
+
     /* 1. Close any currently-open writer so the active file rotates
      *    into ready/ before we change its target directory. */
-    smf_ga_writer_close();
+    ga_writer_close_locked();
 
     /* 2. Reseat the strings into our owned heap. */
     replace_owned_string(&cur->spool_dir,     &g_owned_spool_dir,
@@ -1241,16 +1278,19 @@ int smf_ga_writer_apply_runtime(const smf_cdr_config_t *new_cfg)
      *    the SMF keeps serving sessions; the watcher will report the
      *    error in its next heartbeat. */
     if (!cur->enabled) {
+        pthread_mutex_unlock(&ga_lock);
         ogs_info("smf_ga_writer: now disabled by admin");
         return OGS_OK;
     }
 
-    int rv = smf_ga_writer_open();
+    int rv = ga_writer_open_locked();
     if (rv != OGS_OK) {
+        cur->enabled = false;
+        pthread_mutex_unlock(&ga_lock);
         ogs_error("smf_ga_writer: reopen after apply_runtime failed "
                   "— writer is disabled until the next successful update");
-        cur->enabled = false;
         return OGS_ERROR;
     }
+    pthread_mutex_unlock(&ga_lock);
     return OGS_OK;
 }

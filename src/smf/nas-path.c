@@ -20,9 +20,8 @@
 #include "nas-path.h"
 
 void nas_5gs_send_to_gsm(
-        smf_sess_t *sess, ogs_sbi_stream_t *stream, ogs_pkbuf_t *pkbuf)
+        smf_sess_t *sess,         ogs_sbi_stream_t *stream, ogs_pkbuf_t *pkbuf)
 {
-    int rv;
     smf_event_t *e = NULL;
 
     ogs_assert(sess);
@@ -41,10 +40,6 @@ void nas_5gs_send_to_gsm(
         e->h.sbi.data = OGS_UINT_TO_POINTER(stream_id);;
     }
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        ogs_pkbuf_free(e->pkbuf);
-        ogs_event_free(e);
-    }
+    /* 5GC sessions and SBI live on main: never block on our own queue */
+    smf_event_push_local(e);
 }

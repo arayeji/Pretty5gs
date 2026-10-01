@@ -18,6 +18,7 @@
  */
 
 #include "fd-path.h"
+#include "smf-workers.h"
 
 static struct session_handler *smf_gx_reg = NULL;
 static struct disp_hdl *hdl_gx_fb = NULL;
@@ -1195,14 +1196,13 @@ process_message:
         e->sess_id = sess->id;
         e->gx_message = gx_message;
         e->gtp_xact_id = sess_data->xact_data[req_slot].id;
-        rv = ogs_queue_push(ogs_app()->queue, e);
+        rv = smf_event_post_to_sess_owner(sess, e);
         if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
+            ogs_error("smf_event_post_to_sess_owner() failed:%d", (int)rv);
             ogs_event_free(e);
             error++;
             goto cleanup;
         } else {
-            ogs_pollset_notify(ogs_app()->pollset);
             gx_message = NULL; /* Transfer ownership to event */
         }
     }
@@ -1483,9 +1483,9 @@ static int smf_gx_rar_cb( struct msg **msg, struct avp *avp,
 
         e->sess_id = sess->id;
         e->gx_message = gx_message;
-        rv = ogs_queue_push(ogs_app()->queue, e);
+        rv = smf_event_post_to_sess_owner(sess, e);
         if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
+            ogs_error("smf_event_post_to_sess_owner() failed:%d", (int)rv);
             OGS_SESSION_DATA_FREE(&gx_message->session_data);
             ogs_free(gx_message);
             ogs_event_free(e);
@@ -1493,7 +1493,6 @@ static int smf_gx_rar_cb( struct msg **msg, struct avp *avp,
             result_code = OGS_DIAM_UNABLE_TO_DELIVER;
             goto out;
         } else {
-            ogs_pollset_notify(ogs_app()->pollset);
             /* gx_message ownership transferred to event queue */
             gx_message = NULL;
         }

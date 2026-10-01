@@ -257,6 +257,8 @@ void smf_metrics_pfcp_peer_up(const char *addr, int up)
     ogs_cpystrn(key->addr, addr, sizeof(key->addr));
     key->t = SMF_METR_PFCP_PEER_GAUGE_UP;
 
+    /* SMP shards share these hashes / inst lists. */
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_pfcp_peer,
             key, sizeof(*key));
 
@@ -273,6 +275,7 @@ void smf_metrics_pfcp_peer_up(const char *addr, int up)
     }
 
     ogs_metrics_inst_set(metrics, up ? 1 : 0);
+    ogs_metrics_dump_unlock();
 }
 
 /* BY SLICE */
@@ -353,6 +356,7 @@ void smf_metrics_inst_by_slice_add(ogs_plmn_id_t *plmn,
 
     slice_key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_slice,
             slice_key, sizeof(*slice_key));
 
@@ -385,6 +389,7 @@ void smf_metrics_inst_by_slice_add(ogs_plmn_id_t *plmn,
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 /*
@@ -560,6 +565,7 @@ void smf_metrics_inst_by_5qi_add(ogs_plmn_id_t *plmn,
     fiveqi_key->fiveqi = fiveqi;
     fiveqi_key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_5qi,
             fiveqi_key, sizeof(*fiveqi_key));
 
@@ -595,6 +601,7 @@ void smf_metrics_inst_by_5qi_add(ogs_plmn_id_t *plmn,
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 int smf_metrics_free_inst_by_5qi(ogs_metrics_inst_t **inst)
@@ -660,6 +667,7 @@ void smf_metrics_inst_by_cause_add(int cause,
     cause_key->cause = (uint8_t)cause;
     cause_key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_cause,
             cause_key, sizeof(*cause_key));
 
@@ -680,6 +688,7 @@ void smf_metrics_inst_by_cause_add(int cause,
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 int smf_metrics_free_inst_by_cause(ogs_metrics_inst_t **inst)
@@ -736,6 +745,7 @@ void smf_metrics_inst_by_plmn_add(ogs_plmn_id_t *plmn,
     plmn_key->plmn_id = *plmn;
     plmn_key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_plmn,
             plmn_key, sizeof(*plmn_key));
 
@@ -754,6 +764,7 @@ void smf_metrics_inst_by_plmn_add(ogs_plmn_id_t *plmn,
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 /* BY RAT */
@@ -809,6 +820,7 @@ void smf_metrics_inst_by_rat_add(
             sizeof(rat_key->gtp_if));
     rat_key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_rat,
             rat_key, sizeof(*rat_key));
 
@@ -825,6 +837,7 @@ void smf_metrics_inst_by_rat_add(
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 /* BY VISITED NETWORK (outbound roaming) */
@@ -882,6 +895,7 @@ void smf_metrics_inst_by_visited_add(
             sizeof(visited_key->apn));
     visited_key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_visited,
             visited_key, sizeof(*visited_key));
 
@@ -899,6 +913,7 @@ void smf_metrics_inst_by_visited_add(
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 void smf_metrics_init(void)

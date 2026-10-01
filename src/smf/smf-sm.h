@@ -51,6 +51,16 @@ void smf_pfcp_state_will_associate(ogs_fsm_t *s, smf_event_t *e);
 void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e);
 void smf_pfcp_state_exception(ogs_fsm_t *s, smf_event_t *e);
 
+/* Session-level N4 on the owning shard (outside the node FSM). */
+void smf_pfcp_session_dispatch(
+        ogs_pfcp_node_t *node, ogs_pfcp_xact_t *xact, smf_event_t *e);
+void smf_pfcp_session_timer(smf_event_t *e);
+
+/* SMF_EVT_N4_RESTORE kinds (e->h.timer_id) */
+#define SMF_N4_RESTORE_REESTABLISH  1   /* UPF restarted: re-establish */
+#define SMF_N4_RESTORE_RESELECT     2   /* UPF lost: release (5GC)     */
+void smf_pfcp_restore_owned(ogs_pfcp_node_t *node, int kind);
+
 #define smf_sm_debug(__pe) \
     ogs_debug("%s(): %s", __func__, smf_event_get_name(__pe))
 

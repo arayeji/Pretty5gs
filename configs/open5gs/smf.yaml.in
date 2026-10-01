@@ -28,6 +28,21 @@ smf:
 #  sessions; PGW-initiated Create Bearer towards relayed roamers is
 #  rejected. See docs/collapsed-saegw.md. Default: false.
 #  collapsed: true
+#
+#  SMP shard workers (EPC: S5/S8-C, S11, Gn/Gp, N4, Gx/Gy/S6b, RADIUS).
+#  Each UE and all of its sessions live on one shard (picked by IMSI,
+#  or next to an existing static IP holder); locally allocated TEIDs,
+#  SEIDs and sequence numbers carry the owner, so every GTP-C / PFCP
+#  message and Diameter answer is routed straight to it. The main thread
+#  keeps node-level work: PFCP association/heartbeat, GTP Echo, SBI/5GC
+#  sessions, admin API and reload. 0..15; default 0 (single-threaded).
+#  pool.sess (global.max.ue) must stay below 2^28 when enabled.
+#  See docs/smp-workers.md.
+#  workers: 4
+#  Receive GTP-C / PFCP on dedicated threads that hand each datagram
+#  to its owner shard, so a busy main loop never delays signalling.
+#  gtpc_rx_thread: true
+#  pfcp_rx_thread: true
   sbi:
     server:
       - address: 127.0.0.4

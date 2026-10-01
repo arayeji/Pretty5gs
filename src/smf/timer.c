@@ -56,7 +56,6 @@ const char *smf_timer_get_name(int timer_id)
 
 static void timer_send_event(int timer_id, void *data)
 {
-    int rv;
     smf_event_t *e = NULL;
     ogs_assert(data);
 
@@ -74,12 +73,8 @@ static void timer_send_event(int timer_id, void *data)
         break;
     }
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed [%d] in %s",
-                (int)rv, smf_timer_get_name(timer_id));
-        ogs_event_free(e);
-    }
+    /* PFCP node timers live on main's timer manager (node FSM is main's) */
+    smf_event_push_main(e);
 }
 
 void smf_timer_pfcp_association(void *data)

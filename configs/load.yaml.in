@@ -99,6 +99,13 @@ sgwc:
         - address: 127.0.0.6
 
 smf:
+  # ---- SMP load-test topology: SMF shards on ----------------------
+  # UE/session shard workers; GTP-C and PFCP receive offloaded to
+  # dedicated RX threads that route datagrams straight to the owner
+  workers: 4
+  gtpc_rx_thread: true
+  pfcp_rx_thread: true
+  # -----------------------------------------------------------------
   pfcp:
     server:
       - address: 127.0.0.4

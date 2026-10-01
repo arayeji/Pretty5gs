@@ -28,6 +28,7 @@
 #include "event.h"
 #include "fd-path.h"
 #include "smf-sm.h"
+#include "smf-workers.h"
 
 static bool smf_gx_restoration_eligible(smf_sess_t *sess)
 {
@@ -52,68 +53,69 @@ static bool smf_gx_restoration_eligible(smf_sess_t *sess)
     return true;
 }
 
-void smf_gx_restoration_on_peer_connect(void)
+static void gx_restore_one(smf_ue_t *smf_ue, smf_sess_t *sess, void *arg)
 {
-    smf_ue_t *smf_ue = NULL;
-    smf_sess_t *sess = NULL;
+    int *count = arg;
     char buf4[OGS_ADDRSTRLEN];
     char buf6[OGS_ADDRSTRLEN];
+
+    if (!smf_gx_restoration_eligible(sess))
+        return;
+
+    if (sess->gx_sid) {
+        ogs_free(sess->gx_sid);
+        sess->gx_sid = NULL;
+    }
+
+    sess->sm_data.gx_restoration_in_flight = true;
+    if (smf_gx_send_ccr(sess, OGS_INVALID_POOL_ID,
+                OGS_DIAM_GX_CC_REQUEST_TYPE_INITIAL_REQUEST) != OGS_OK) {
+        sess->sm_data.gx_restoration_in_flight = false;
+        ogs_warn("[%s] Gx restoration CCR-I failed DNN:%s",
+                smf_ue->imsi_bcd,
+                sess->session.name ? sess->session.name : "-");
+        return;
+    }
+
+    (*count)++;
+    ogs_info("[%s] Gx restoration CCR-I DNN:%s IPv4:%s IPv6:%s",
+            smf_ue->imsi_bcd,
+            sess->session.name ? sess->session.name : "-",
+            sess->ipv4 ?
+                OGS_INET_NTOP(&sess->ipv4->addr, buf4) : "-",
+            sess->ipv6 ?
+                OGS_INET6_NTOP(&sess->ipv6->addr, buf6) : "-");
+}
+
+/* SMF_EVT_GX_RESTORE on every shard: replay for the sessions it owns. */
+void smf_gx_restoration_owned(void)
+{
     int count = 0;
+
+    smf_owned_sess_foreach(gx_restore_one, &count);
+
+    if (count)
+        ogs_info("Gx restoration: replayed CCR-I for %d active session(s)",
+                count);
+}
+
+/* SMF_EVT_GX_PEER_CONNECT (main): fan the replay out to every shard. */
+void smf_gx_restoration_on_peer_connect(void)
+{
+    smf_event_t tmpl;
 
     if (!ogs_diam_is_relay_or_app_advertised(OGS_DIAM_GX_APPLICATION_ID)) {
         ogs_debug("Gx peer connect: Gx application not advertised yet");
         return;
     }
 
-    ogs_list_for_each(&smf_self()->smf_ue_list, smf_ue) {
-        ogs_list_for_each(&smf_ue->sess_list, sess) {
-            if (!smf_gx_restoration_eligible(sess))
-                continue;
-
-            if (sess->gx_sid) {
-                ogs_free(sess->gx_sid);
-                sess->gx_sid = NULL;
-            }
-
-            sess->sm_data.gx_restoration_in_flight = true;
-            if (smf_gx_send_ccr(sess, OGS_INVALID_POOL_ID,
-                        OGS_DIAM_GX_CC_REQUEST_TYPE_INITIAL_REQUEST) != OGS_OK) {
-                sess->sm_data.gx_restoration_in_flight = false;
-                ogs_warn("[%s] Gx restoration CCR-I failed DNN:%s",
-                        smf_ue->imsi_bcd,
-                        sess->session.name ? sess->session.name : "-");
-                continue;
-            }
-
-            count++;
-            ogs_info("[%s] Gx restoration CCR-I DNN:%s IPv4:%s IPv6:%s",
-                    smf_ue->imsi_bcd,
-                    sess->session.name ? sess->session.name : "-",
-                    sess->ipv4 ?
-                        OGS_INET_NTOP(&sess->ipv4->addr, buf4) : "-",
-                    sess->ipv6 ?
-                        OGS_INET6_NTOP(&sess->ipv6->addr, buf6) : "-");
-        }
-    }
-
-    if (count)
-        ogs_info("Gx restoration: replayed CCR-I for %d active session(s)", count);
+    memset(&tmpl, 0, sizeof(tmpl));
+    tmpl.h.id = SMF_EVT_GX_RESTORE;
+    smf_event_fanout(&tmpl);
 }
 
 void smf_gx_peer_connect_event_push(void)
 {
-    smf_event_t *e = NULL;
-    int rv;
-
-    e = smf_event_new(SMF_EVT_GX_PEER_CONNECT);
-    ogs_assert(e);
-
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        ogs_event_free(e);
-        return;
-    }
-
-    ogs_pollset_notify(ogs_app()->pollset);
+    /* freeDiameter thread -> main */
+    smf_event_push_main(smf_event_new(SMF_EVT_GX_PEER_CONNECT));
 }

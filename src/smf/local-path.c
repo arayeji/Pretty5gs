@@ -22,7 +22,6 @@
 void smf_trigger_session_release(smf_sess_t *sess,
     ogs_sbi_stream_t *stream, int pfcp_trigger)
 {
-    int rv;
     smf_event_t *e;
     ogs_pool_id_t sid;
 
@@ -47,10 +46,6 @@ void smf_trigger_session_release(smf_sess_t *sess,
         e->h.sbi.data = OGS_UINT_TO_POINTER(sid);
     }
 
-    /* Push event to the application queue */
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push failed:%d", rv);
-        ogs_event_free(e);
-    }
+    /* The caller runs on the session owner: queue behind its traffic. */
+    smf_event_push_local(e);
 }

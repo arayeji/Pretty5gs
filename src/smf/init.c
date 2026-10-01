@@ -31,6 +31,7 @@
 #include "pdu-info.h"
 #include "admin-api.h"
 #include "smf-reload-lists.h"
+#include "smf-workers.h"
 #ifdef OPEN5GS_ADMIN_WATCHER
 #include "smf-admin-watcher.h"
 #endif
@@ -40,20 +41,7 @@ static void smf_main(void *data);
 
 static void smf_sighup_handler(void)
 {
-    smf_event_t *e = NULL;
-    int rv;
-
-    e = smf_event_new(SMF_EVT_CONFIG_RELOAD);
-    ogs_assert(e);
-
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        ogs_event_free(e);
-        return;
-    }
-
-    ogs_pollset_notify(ogs_app()->pollset);
+    smf_event_push_main(smf_event_new(SMF_EVT_CONFIG_RELOAD));
 }
 
 static int initialized = 0;
@@ -64,6 +52,9 @@ int smf_initialize(void)
 
 #define APP_NAME "smf"
     rv = ogs_app_parse_local_conf(APP_NAME);
+    if (rv != OGS_OK) return rv;
+
+    rv = smf_workers_parse_config();
     if (rv != OGS_OK) return rv;
 
     smf_metrics_init();
@@ -79,6 +70,14 @@ int smf_initialize(void)
 
     rv = ogs_pfcp_xact_init();
     if (rv != OGS_OK) return rv;
+
+    /*
+     * When the event queue lags, replies that arrived in time are still
+     * waiting to be dispatched; defer GTP/PFCP retransmit give-ups so a
+     * signaling storm does not turn into false "peer no response".
+     */
+    ogs_gtp_xact_set_lag_cb(smf_event_lag);
+    ogs_pfcp_xact_set_lag_cb(smf_event_lag);
 
     rv = ogs_log_config_domain(
             ogs_app()->logger.domain, ogs_app()->logger.level);
@@ -116,6 +115,8 @@ int smf_initialize(void)
     rv = smf_sbi_open();
     if (rv != 0) return OGS_ERROR;
 
+    smf_radius_init();
+
     rv = smf_radius_pod_open();
     if (rv != 0) return OGS_ERROR;
 
@@ -124,7 +125,16 @@ int smf_initialize(void)
 
     ogs_app_sighup_handler_set(smf_sighup_handler);
 
-    thread = ogs_thread_create(smf_main, NULL);
+    rv = smf_workers_start();
+    if (rv != OGS_OK) return rv;
+
+    /* RX helpers after shards_enable (workers_start): not protocol shards */
+    rv = smf_gtpc_rx_start();
+    if (rv != OGS_OK) return rv;
+    rv = smf_pfcp_rx_start();
+    if (rv != OGS_OK) return rv;
+
+    thread = ogs_thread_create_named(smf_main, NULL, "smf-main");
     if (!thread) return OGS_ERROR;
 
     /* dumper /pdu-info */
@@ -178,9 +188,17 @@ void smf_terminate(void)
     ogs_thread_destroy(thread);
     ogs_timer_delete(t_termination_holding);
 
+    /*
+     * RX helpers first: while alive they still recv/classify and can post
+     * into dying worker queues. Then join shards (their timer managers
+     * stay alive until smf_workers_final(), after context final).
+     */
+    smf_gtpc_rx_stop();
+    smf_pfcp_rx_stop();
+    smf_workers_stop();
+
     smf_ga_writer_close();
     smf_radius_pod_close();
-    smf_radius_servers_close();
     smf_gtp_close();
     smf_pfcp_close();
     smf_sbi_close();
@@ -190,6 +208,10 @@ void smf_terminate(void)
     smf_fd_final();
 
     smf_context_final();
+    smf_radius_servers_close();
+
+    /* session timers on worker timer managers are gone; free them */
+    smf_workers_final();
 
     ogs_pfcp_context_final();
     ogs_sbi_context_final();
@@ -238,6 +260,7 @@ static void smf_main(void *data)
                 break;
 
             ogs_assert(e);
+            smf_event_lag_observe(e);
             ogs_fsm_dispatch(&smf_sm, e);
             ogs_event_free(e);
         }
@@ -245,4 +268,5 @@ static void smf_main(void *data)
 done:
 
     ogs_fsm_fini(&smf_sm, 0);
+    smf_radius_thread_final();
 }

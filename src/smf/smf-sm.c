@@ -39,6 +39,8 @@
 #include "binding.h"
 #include "gx-restoration.h"
 #include "metrics.h"
+#include "radius-path.h"
+#include "smf-workers.h"
 
 /*
  * Batched /admin/maintenance/drain.
@@ -54,7 +56,16 @@
 #define SMF_ADMIN_DRAIN_BATCH       256 /* UEs per batch */
 #define SMF_ADMIN_DRAIN_INTERVAL    ogs_time_from_msec(100)
 
-static ogs_timer_t *t_admin_drain = NULL;
+/*
+ * SMP: every shard drains the UEs it owns with its own pacing timer
+ * (on its own timer manager), so the drain state is per thread. Only
+ * the generation is shared: main bumps it before fanning the drain out.
+ */
+static OGS_THREAD_LOCAL ogs_timer_t *t_admin_drain = NULL;
+static OGS_THREAD_LOCAL bool drain_active = false;
+static OGS_THREAD_LOCAL bool drain_force = false;
+static OGS_THREAD_LOCAL uint32_t drain_generation = 0;
+static OGS_THREAD_LOCAL uint32_t drain_processed = 0;
 
 static void smf_admin_drain_step(void);
 
@@ -64,78 +75,125 @@ static void admin_drain_timer_cb(void *data)
     smf_admin_drain_step();
 }
 
-static void smf_admin_drain_begin(bool force)
+/* Main: SMF_EVT_ADMIN_MAINTENANCE_DRAIN from the admin API. */
+static void smf_admin_drain_request(bool force)
 {
+    smf_event_t tmpl;
+
     smf_self()->drain_generation++;
     if (smf_self()->drain_generation == 0)
         smf_self()->drain_generation = 1;
     smf_self()->drain_force = force;
-    smf_self()->drain_active = true;
-    smf_self()->drain_processed = 0;
+    __atomic_store_n(&smf_self()->drain_processed, 0, __ATOMIC_RELAXED);
+
+    memset(&tmpl, 0, sizeof(tmpl));
+    tmpl.h.id = SMF_EVT_ADMIN_MAINTENANCE_DRAIN;
+    tmpl.h.timer_id = 1;    /* per-shard copy */
+    tmpl.admin_force = force;
+    smf_event_fanout(&tmpl);
+}
+
+/* Every shard: its copy of the drain. */
+static void smf_admin_drain_begin(bool force)
+{
+    int owned = 0;
+    ogs_pool_id_t *ids = smf_ue_ids_collect_owned(&owned);
+
+    if (ids)
+        ogs_free(ids);
+
+    drain_generation = smf_self()->drain_generation;
+    drain_force = force;
+    if (!drain_active)
+        __atomic_add_fetch(&smf_self()->drain_shards_active, 1,
+                __ATOMIC_RELAXED);
+    drain_active = true;
+    drain_processed = 0;
 
     ogs_info("admin maintenance drain: start mode=%s ue_count=%d "
-            "batch=%d interval=%dms",
-            force ? "force" : "graceful",
-            ogs_list_count(&smf_self()->smf_ue_list),
+            "batch=%d interval=%dms shard=%d",
+            force ? "force" : "graceful", owned,
             SMF_ADMIN_DRAIN_BATCH,
-            (int)ogs_time_to_msec(SMF_ADMIN_DRAIN_INTERVAL));
+            (int)ogs_time_to_msec(SMF_ADMIN_DRAIN_INTERVAL),
+            ogs_worker_self_id());
 
     smf_admin_drain_step();
 }
 
 static void smf_admin_drain_step(void)
 {
-    smf_ue_t *ue = NULL, *next_ue = NULL;
-    smf_sess_t *sess = NULL, *next_sess = NULL;
+    ogs_pool_id_t *ue_ids = NULL, *sess_ids = NULL;
+    int ue_count = 0, sess_count = 0, i, j;
     int ues = 0, sessions = 0;
     bool more = false;
     int rv;
 
-    if (!smf_self()->drain_active)
+    if (!drain_active)
         return;
 
-    ogs_list_for_each_safe(&smf_self()->smf_ue_list, next_ue, ue) {
-        if (ue->drain_generation == smf_self()->drain_generation)
+    ue_ids = smf_ue_ids_collect_owned(&ue_count);
+    for (i = 0; i < ue_count; i++) {
+        smf_ue_t *ue = smf_ue_find_active(ue_ids[i]);
+
+        if (!ue || ue->drain_generation == drain_generation)
             continue;
         if (ues >= SMF_ADMIN_DRAIN_BATCH) {
             more = true;
             break;
         }
-        ue->drain_generation = smf_self()->drain_generation;
+        ue->drain_generation = drain_generation;
         ues++;
 
-        ogs_list_for_each_safe(&ue->sess_list, next_sess, sess) {
+        sess_ids = smf_sess_ids_collect(ue, &sess_count);
+        for (j = 0; j < sess_count; j++) {
+            smf_sess_t *sess = smf_sess_find_active_by_id(sess_ids[j]);
+
+            if (!sess)
+                continue;
             rv = smf_epc_pfcp_send_session_deletion_best_effort(sess);
             ogs_expect(rv == OGS_OK);
-            if (smf_self()->drain_force)
+            if (drain_force)
                 smf_sess_remove(sess);
             sessions++;
         }
-        if (smf_self()->drain_force && ogs_list_empty(&ue->sess_list))
+        if (sess_ids)
+            ogs_free(sess_ids);
+        sess_ids = NULL;
+
+        if (drain_force && ogs_list_empty(&ue->sess_list))
             smf_ue_remove(ue);
     }
+    if (ue_ids)
+        ogs_free(ue_ids);
 
-    smf_self()->drain_processed += sessions;
+    drain_processed += sessions;
+    __atomic_add_fetch(&smf_self()->drain_processed, (uint32_t)sessions,
+            __ATOMIC_RELAXED);
 
     if (more) {
         if (!t_admin_drain) {
             t_admin_drain = ogs_timer_add(
-                    ogs_app()->timer_mgr, admin_drain_timer_cb, NULL);
+                    ogs_worker_timer_mgr(ogs_app()->timer_mgr),
+                    admin_drain_timer_cb, NULL);
             ogs_assert(t_admin_drain);
         }
         ogs_timer_start(t_admin_drain, SMF_ADMIN_DRAIN_INTERVAL);
         return;
     }
 
-    smf_self()->drain_active = false;
-    ogs_info("admin maintenance drain: %s %u session(s)",
-            smf_self()->drain_force ? "removed" : "initiated teardown for",
-            smf_self()->drain_processed);
+    drain_active = false;
+    __atomic_sub_fetch(&smf_self()->drain_shards_active, 1, __ATOMIC_RELAXED);
+    ogs_info("admin maintenance drain: %s %u session(s) shard=%d",
+            drain_force ? "removed" : "initiated teardown for",
+            drain_processed, ogs_worker_self_id());
 }
 
 static void smf_admin_drain_timer_stop(void)
 {
-    smf_self()->drain_active = false;
+    if (drain_active)
+        __atomic_sub_fetch(&smf_self()->drain_shards_active, 1,
+                __ATOMIC_RELAXED);
+    drain_active = false;
 
     if (!t_admin_drain)
         return;
@@ -244,14 +302,28 @@ static void smf_admin_detach_one_session(smf_sess_t *sess, int admin_force)
     }
 }
 
+/* Admin events arrive on main; re-post to the shard owning the target. */
+static void smf_admin_forward(smf_event_t *e, int shard)
+{
+    smf_event_t *ne = smf_event_new(e->h.id);
+
+    ne->smf_ue_id = e->smf_ue_id;
+    ne->admin_sess_id = e->admin_sess_id;
+    ne->admin_force = e->admin_force;
+    ne->admin_seid = e->admin_seid;
+    smf_event_push_shard(shard, ne);
+}
+
 void smf_state_initial(ogs_fsm_t *s, smf_event_t *e)
 {
     smf_sm_debug(e);
 
     ogs_assert(s);
 
-    /* Start the periodic orphan sweep on the main thread (owns timer_mgr). */
-    smf_orphan_timer_start();
+    /* Start the periodic orphan sweep on the main thread (owns timer_mgr);
+     * shard workers run the same FSM and receive fanned-out sweeps. */
+    if (!ogs_worker_self())
+        smf_orphan_timer_start();
 
     OGS_FSM_TRAN(s, &smf_state_operational);
 }
@@ -262,7 +334,8 @@ void smf_state_final(ogs_fsm_t *s, smf_event_t *e)
 
     ogs_assert(s);
 
-    smf_orphan_timer_stop();
+    if (!ogs_worker_self())
+        smf_orphan_timer_stop();
     smf_admin_drain_timer_stop();
 }
 
@@ -353,6 +426,10 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             break;
         }
         e->gtp2_message = &gtp2_message;
+
+        /* SMP: bounce to the owning shard before creating the xact here */
+        if (smf_worker_rehome_gtp2(e, &gtp2_message))
+            break;
 
         ogs_gtp2_sender_f_teid(&gtp2_sender_f_teid, &gtp2_message);
 
@@ -482,6 +559,22 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                 if (!old_sess)
                     old_sess = smf_sess_find_collision_by_ipv4_gtp2(
                             &gtp2_message);
+                if (old_sess && !smf_sess_owned_by_self(old_sess)) {
+                    /*
+                     * The static IP is still held on another shard (the
+                     * handshake raced a newer holder). Never touch it;
+                     * the peer's retransmission retries the handshake.
+                     */
+                    ogs_warn("Create Session: requested static IP held by "
+                            "shard %d - rejecting for retry",
+                            smf_sess_owner_shard(old_sess));
+                    ogs_gtp2_send_error_message(gtp_xact,
+                            gtp2_sender_f_teid.teid_presence ?
+                                gtp2_sender_f_teid.teid : 0,
+                            OGS_GTP2_CREATE_SESSION_RESPONSE_TYPE,
+                            OGS_GTP2_CAUSE_NO_RESOURCES_AVAILABLE);
+                    break;
+                }
                 /*
                  * An S5 Create Session Request (from an SGW-C) can never
                  * legitimately collide with an S8-relay session: relay
@@ -795,6 +888,9 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         }
         e->gtp1_message = &gtp1_message;
 
+        if (smf_worker_rehome_gtp1(e, &gtp1_message))
+            break;
+
         if (gtp1_message.h.teid != 0) {
             sess = smf_sess_find_active_by_teid(gtp1_message.h.teid);
         }
@@ -981,40 +1077,108 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         }
         pfcp_node = e->pfcp_node;
         ogs_assert(pfcp_node);
+        if (!ogs_worker_self())
+            smf_pfcp_node_ensure_fsm(pfcp_node);
         ogs_assert(OGS_FSM_STATE(&pfcp_node->sm));
 
-        rv = ogs_pfcp_xact_receive(pfcp_node, &pfcp_message->h, &pfcp_xact);
-        if (rv != OGS_OK) {
-            ogs_pkbuf_free(recvbuf);
-            ogs_pfcp_message_free(pfcp_message);
-            break;
-        }
+        {
+            uint8_t type = pfcp_message->h.type;
+            bool node_level = smf_pfcp_type_is_node_level(type) ||
+                type == OGS_PFCP_NODE_REPORT_REQUEST_TYPE ||
+                type == OGS_PFCP_NODE_REPORT_RESPONSE_TYPE ||
+                type == OGS_PFCP_PFD_MANAGEMENT_REQUEST_TYPE ||
+                type == OGS_PFCP_PFD_MANAGEMENT_RESPONSE_TYPE;
 
-        e->pfcp_xact_id = pfcp_xact ? pfcp_xact->id : OGS_INVALID_POOL_ID;
+            /* The node FSM (heartbeat/association) is main-owned. */
+            if (node_level && ogs_worker_self()) {
+                ogs_error("Node-level PFCP type[%d] on a shard worker - "
+                        "dropped", type);
+                ogs_pkbuf_free(recvbuf);
+                ogs_pfcp_message_free(pfcp_message);
+                break;
+            }
 
-        e->gtp2_message = NULL;
-        if (pfcp_xact->gtpbuf) {
-            rv = ogs_gtp2_parse_msg(&gtp2_message, pfcp_xact->gtpbuf);
-            e->gtp2_message = &gtp2_message;
-        }
+            rv = ogs_pfcp_xact_receive(
+                    pfcp_node, &pfcp_message->h, &pfcp_xact);
+            if (rv != OGS_OK) {
+                ogs_pkbuf_free(recvbuf);
+                ogs_pfcp_message_free(pfcp_message);
+                break;
+            }
 
-        ogs_fsm_dispatch(&pfcp_node->sm, e);
-        if (OGS_FSM_CHECK(&pfcp_node->sm, smf_pfcp_state_exception)) {
-            ogs_error("PFCP state machine exception");
+            e->pfcp_xact_id = pfcp_xact ?
+                pfcp_xact->id : OGS_INVALID_POOL_ID;
+
+            e->gtp2_message = NULL;
+            if (pfcp_xact->gtpbuf) {
+                rv = ogs_gtp2_parse_msg(&gtp2_message, pfcp_xact->gtpbuf);
+                e->gtp2_message = &gtp2_message;
+            }
+
+            if (node_level) {
+                ogs_fsm_dispatch(&pfcp_node->sm, e);
+                if (OGS_FSM_CHECK(&pfcp_node->sm, smf_pfcp_state_exception))
+                    ogs_error("PFCP state machine exception");
+            } else if (!OGS_FSM_CHECK(&pfcp_node->sm,
+                        smf_pfcp_state_associated)) {
+                ogs_warn("cannot handle PFCP message type[%d] "
+                        "(peer not associated)", type);
+            } else {
+                smf_pfcp_session_dispatch(pfcp_node, pfcp_xact, e);
+            }
         }
 
         ogs_pkbuf_free(recvbuf);
         ogs_pfcp_message_free(pfcp_message);
         break;
     case SMF_EVT_N4_TIMER:
+        ogs_assert(e);
+        /* Session timers fire on the session owner; node timers on main. */
+        if (e->h.timer_id == SMF_TIMER_PFCP_NO_ESTABLISHMENT_RESPONSE ||
+                e->h.timer_id == SMF_TIMER_PFCP_NO_DELETION_RESPONSE) {
+            smf_pfcp_session_timer(e);
+            break;
+        }
+        OGS_GNUC_FALLTHROUGH;
     case SMF_EVT_N4_NO_HEARTBEAT:
     case SMF_EVT_N4_REASSOCIATE:
         ogs_assert(e);
         pfcp_node = e->pfcp_node;
         ogs_assert(pfcp_node);
+        if (ogs_worker_self()) {
+            ogs_error("%s on a shard worker - dropped",
+                    smf_event_get_name(e));
+            break;
+        }
         ogs_assert(OGS_FSM_STATE(&pfcp_node->sm));
 
         ogs_fsm_dispatch(&pfcp_node->sm, e);
+        break;
+
+    case SMF_EVT_N4_RESTORE:
+        ogs_assert(e->pfcp_node);
+        smf_pfcp_restore_owned(e->pfcp_node, e->h.timer_id);
+        break;
+
+    case SMF_EVT_SGW_RESTART_PURGE:
+        ogs_assert(e->gnode);
+        smf_sgw_purge_owned(e->gnode, e->cutoff);
+        break;
+
+    case SMF_EVT_GX_RESTORE:
+        smf_gx_restoration_owned();
+        break;
+
+    case SMF_EVT_ROUTER_SOLICIT:
+        smf_gtp_handle_router_solicit(e);
+        break;
+
+    case SMF_EVT_RADIUS_POD:
+        smf_radius_pod_handle(e);
+        break;
+
+    case SMF_EVT_XSHARD_COLLISION:
+        smf_xshard_collision_release(e);
         break;
 
     case OGS_EVENT_SBI_SERVER:
@@ -2042,13 +2206,22 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         break;
 
     case SMF_EVT_ADMIN_MAINTENANCE_DRAIN:
-        smf_self()->maintenance_mode = true;
-        smf_admin_drain_begin(e->admin_force ? true : false);
+        if (e->h.timer_id == 0) {
+            /* admin API request (main): mode on, then one copy per shard */
+            smf_self()->maintenance_mode = true;
+            smf_admin_drain_request(e->admin_force ? true : false);
+        } else {
+            smf_admin_drain_begin(e->admin_force ? true : false);
+        }
         break;
 
     case SMF_EVT_ADMIN_DETACH_SESSION:
         {
             smf_ue_t *smf_ue = smf_ue_find_by_id(e->smf_ue_id);
+            if (smf_ue && !smf_ue_owned_by_self(smf_ue)) {
+                smf_admin_forward(e, smf_ue->owner_shard);
+                break;
+            }
             if (smf_ue) {
                 ogs_info("admin session detach: imsi=%s mode=%s",
                         smf_ue->imsi_bcd,
@@ -2063,6 +2236,10 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
     case SMF_EVT_ADMIN_DETACH_SESS_ONE:
         {
             smf_sess_t *admin_sess = smf_sess_find_by_id(e->admin_sess_id);
+            if (admin_sess && !smf_sess_owned_by_self(admin_sess)) {
+                smf_admin_forward(e, smf_sess_owner_shard(admin_sess));
+                break;
+            }
             if (admin_sess)
                 smf_admin_detach_one_session(admin_sess, e->admin_force);
             else
@@ -2087,11 +2264,15 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         {
             int purged = 0, remaining;
 
+            int total;
+
+            /* One copy per shard: each sweeps the sessions it owns. */
             remaining = smf_orphan_sweep(smf_self()->orphan.purge,
                     ogs_time_from_sec(smf_self()->orphan.grace_s), &purged);
+            total = smf_orphan_publish(remaining);
 
             smf_metrics_inst_global_set(
-                    SMF_METR_GLOB_GAUGE_SESSIONS_ORPHAN, remaining);
+                    SMF_METR_GLOB_GAUGE_SESSIONS_ORPHAN, total);
 
             if (purged)
                 ogs_warn("orphan sweep: purged %d session(s), %d remaining",
@@ -2099,8 +2280,9 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             else
                 ogs_debug("orphan sweep: %d orphan(s)", remaining);
 
-            /* Re-arm for the next interval (timer is one-shot). */
-            if (smf_self()->orphan.enabled && smf_self()->orphan.t_sweep)
+            /* Re-arm for the next interval (one-shot, main-owned timer). */
+            if (!ogs_worker_self() &&
+                    smf_self()->orphan.enabled && smf_self()->orphan.t_sweep)
                 ogs_timer_start(smf_self()->orphan.t_sweep,
                         ogs_time_from_sec(smf_self()->orphan.interval_s));
         }

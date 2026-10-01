@@ -43,6 +43,9 @@ bool smf_sess_collision_replace_begin_gtp1(
 void smf_sess_collision_replace_complete(smf_sess_t *old_sess);
 void smf_sess_collision_on_pfcp_delete_timeout(smf_sess_t *sess);
 
+/* SMF_EVT_XSHARD_COLLISION handler (SMP static-IP collision handshake). */
+void smf_xshard_collision_release(smf_event_t *e);
+
 #ifdef __cplusplus
 }
 #endif

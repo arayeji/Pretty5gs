@@ -82,8 +82,12 @@ libsmf_sources = files('''
     gx-restoration.h
     smf-pfcp-vendor.h
     admin-api.h
+    smf-workers.h
+    smf-shard.h
 
     init.c
+    smf-workers.c
+    smf-shard.c
     event.c
     timer.c
     context.c

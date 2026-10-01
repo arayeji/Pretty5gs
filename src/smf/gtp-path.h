@@ -29,6 +29,15 @@ extern "C" {
 int smf_gtp_open(void);
 void smf_gtp_close(void);
 
+/* smf.gtpc_rx_thread: GTP-C socket reads + shard routing off main. */
+int smf_gtpc_rx_start(void);
+void smf_gtpc_rx_stop(void);
+bool smf_gtpc_rx_active(void);
+uint64_t smf_gtpc_rx_drops(void);
+
+/* SMF_EVT_ROUTER_SOLICIT on the owning shard (frees e->pkbuf). */
+void smf_gtp_handle_router_solicit(smf_event_t *e);
+
 int smf_gtp1_send_create_pdp_context_response(
         smf_sess_t *sess, ogs_gtp_xact_t *xact);
 int smf_gtp1_send_delete_pdp_context_response(

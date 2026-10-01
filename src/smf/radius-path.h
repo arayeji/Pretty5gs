@@ -41,8 +41,15 @@ void smf_radius_accounting_interim_update(smf_sess_t *sess);
 int smf_radius_pod_open(void);
 void smf_radius_pod_close(void);
 
-/* Release cached RADIUS sockets / sockaddrs on shutdown. */
+/* Config lock; call once before shard workers start. */
+void smf_radius_init(void);
+
+/* Release the calling thread's cached RADIUS sockets / sockaddrs. */
 void smf_radius_servers_close(void);
+void smf_radius_thread_final(void);
+
+/* SMF_EVT_RADIUS_POD: tear down a PoD-accepted session on its owner. */
+void smf_radius_pod_handle(smf_event_t *e);
 
 /* Free any per-session radius resources (called from smf_sess_remove()). */
 void smf_radius_sess_clear(smf_sess_t *sess);

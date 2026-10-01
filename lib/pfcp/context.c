@@ -114,6 +114,16 @@ static void obj_unlock(void)
 #endif
 }
 
+void ogs_pfcp_object_lock(void)
+{
+    obj_lock();
+}
+
+void ogs_pfcp_object_unlock(void)
+{
+    obj_unlock();
+}
+
 static OGS_POOL(ogs_pfcp_node_pool, ogs_pfcp_node_t);
 
 static OGS_POOL(ogs_pfcp_far_pool, ogs_pfcp_far_t);
@@ -2879,7 +2889,26 @@ int ogs_pfcp_ue_pool_generate(void)
     return OGS_OK;
 }
 
+static ogs_pfcp_ue_ip_t *ue_ip_alloc_locked(
+        uint8_t *cause_value, int family, const char *dnn, uint8_t *addr);
+
+/*
+ * Subnet pools are shared by every SMF/UPF shard worker, and subnet
+ * selection walks the subnet list: allocate/free under the object lock.
+ */
 ogs_pfcp_ue_ip_t *ogs_pfcp_ue_ip_alloc(
+        uint8_t *cause_value, int family, const char *dnn, uint8_t *addr)
+{
+    ogs_pfcp_ue_ip_t *ue_ip = NULL;
+
+    obj_lock();
+    ue_ip = ue_ip_alloc_locked(cause_value, family, dnn, addr);
+    obj_unlock();
+
+    return ue_ip;
+}
+
+static ogs_pfcp_ue_ip_t *ue_ip_alloc_locked(
         uint8_t *cause_value, int family, const char *dnn, uint8_t *addr)
 {
     ogs_pfcp_subnet_t *subnet = NULL;
@@ -2965,7 +2994,9 @@ void ogs_pfcp_ue_ip_free(ogs_pfcp_ue_ip_t *ue_ip)
     if (ue_ip->static_ip) {
         ogs_free(ue_ip);
     } else {
+        obj_lock();
         ogs_pool_free(&subnet->pool, ue_ip);
+        obj_unlock();
     }
 }
 
@@ -3168,7 +3199,9 @@ static ogs_pfcp_subnet_t *subnet_add_with_dnns(
         ogs_pool_init(&subnet->pool, pool_size);
     }
 
+    obj_lock();
     ogs_list_add(&self.subnet_list, subnet);
+    obj_unlock();
 
     return subnet;
 }
@@ -3205,6 +3238,7 @@ void ogs_pfcp_subnet_remove(ogs_pfcp_subnet_t *subnet)
 {
     ogs_assert(subnet);
 
+    obj_lock();
     ogs_list_remove(&self.subnet_list, subnet);
 
     ogs_pool_final(&subnet->pool);
@@ -3214,6 +3248,7 @@ void ogs_pfcp_subnet_remove(ogs_pfcp_subnet_t *subnet)
     subnet->num_of_dnn = 0;
 
     ogs_pool_free(&ogs_pfcp_subnet_pool, subnet);
+    obj_unlock();
 }
 
 void ogs_pfcp_subnet_remove_all(void)
@@ -3368,6 +3403,7 @@ ogs_pfcp_subnet_t *ogs_pfcp_find_subnet(int family)
 
     ogs_assert(family == AF_INET || family == AF_INET6);
 
+    obj_lock();
     ogs_list_for_each(&self.subnet_list, subnet) {
         if ((subnet->family == AF_UNSPEC || subnet->family == family) &&
             (subnet->num_of_dnn == 0) &&
@@ -3377,6 +3413,7 @@ ogs_pfcp_subnet_t *ogs_pfcp_find_subnet(int family)
             best = subnet;
         }
     }
+    obj_unlock();
 
     return best;
 }
@@ -3390,6 +3427,7 @@ ogs_pfcp_subnet_t *ogs_pfcp_find_subnet_by_dnn(int family, const char *dnn)
     ogs_assert(dnn);
     ogs_assert(family == AF_INET || family == AF_INET6);
 
+    obj_lock();
     ogs_list_for_each(&self.subnet_list, subnet) {
         if ((subnet->family == AF_UNSPEC || subnet->family == family) &&
             subnet_matches_ue_dnn(subnet, dnn) &&
@@ -3399,6 +3437,7 @@ ogs_pfcp_subnet_t *ogs_pfcp_find_subnet_by_dnn(int family, const char *dnn)
             best = subnet;
         }
     }
+    obj_unlock();
 
     return best;
 }

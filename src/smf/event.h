@@ -77,6 +77,17 @@ typedef enum {
 
     SMF_EVT_ORPHAN_SWEEP,           /* periodic orphan metric + optional purge */
 
+    /*
+     * SMP cross-shard events (smf-workers.c). Fan-outs reach every shard
+     * (workers + main); each acts only on the UEs it owns.
+     */
+    SMF_EVT_N4_RESTORE,             /* fan-out: pfcp_node, timer_id=kind */
+    SMF_EVT_SGW_RESTART_PURGE,      /* fan-out: gnode restarted          */
+    SMF_EVT_GX_RESTORE,             /* fan-out: Gx peer (re)connected    */
+    SMF_EVT_ROUTER_SOLICIT,         /* to owner: sess_id, pkbuf=IPv6 RS  */
+    SMF_EVT_RADIUS_POD,             /* to owner: sess_id                 */
+    SMF_EVT_XSHARD_COLLISION,       /* to owner of old sess: release it  */
+
     SMF_EVT_TOP,
 
 } smf_event_e;
@@ -131,11 +142,42 @@ typedef struct smf_event_s {
      * owns and frees admin_upf_addr. */
     uint64_t admin_seid;
     ogs_sockaddr_t *admin_upf_addr;
+
+    /*
+     * SMF_EVT_XSHARD_COLLISION: shard that parked the new request and
+     * wants the old session gone (reply target), 0 = main.
+     */
+    int reply_shard;
+    /* S5C CSR already went through the cross-shard collision handshake. */
+    bool xshard_done;
+
+    /*
+     * SMF_EVT_SGW_RESTART_PURGE: only sessions created at or before this
+     * wall-clock time are purged (a fresh session from the restarted SGW
+     * may already exist when a shard dequeues its copy).
+     */
+    ogs_time_t cutoff;
+
+    /* Monotonic enqueue time for the event-lag estimator; 0 = unknown. */
+    ogs_time_t created_at;
 } smf_event_t;
 
 OGS_STATIC_ASSERT(OGS_EVENT_SIZE >= sizeof(smf_event_t));
 
 smf_event_t *smf_event_new(int id);
+/* Frees the event and any pkbuf / PFCP message / admin address it owns. */
+void smf_event_free(smf_event_t *e);
+
+/*
+ * SMP delivery (all non-blocking; each frees the event on failure):
+ *  - push_main:  main app queue (trypush + pollset wake).
+ *  - push_local: the calling thread's own queue (worker or main).
+ */
+int smf_event_push_main(smf_event_t *e);
+int smf_event_push_local(smf_event_t *e);
+
+void smf_event_lag_observe(const smf_event_t *e);
+ogs_time_t smf_event_lag(void);
 
 const char *smf_event_get_name(smf_event_t *e);
 

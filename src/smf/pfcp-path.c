@@ -20,6 +20,7 @@
 #include "sbi-path.h"
 #include "context.h"
 #include "pfcp-path.h"
+#include "smf-workers.h"
 
 bool smf_pfcp_type_is_node_level(uint8_t type)
 {
@@ -81,11 +82,27 @@ uint32_t smf_pfcp_urr_usage_report_trigger2diam_gy_reporting_reason(ogs_pfcp_usa
     return OGS_DIAM_GY_REPORTING_REASON_UNUSED_QUOTA_TIMER;
 }
 
+/*
+ * Dedicated PFCP RX helper (smf.pfcp_rx_thread). Not a protocol shard.
+ */
+static ogs_worker_t *pfcp_rx_worker = NULL;
+static uint64_t pfcp_rx_drop_count = 0;
+
+#define SMF_PFCP_RECV_BUDGET    512
+
+uint64_t smf_pfcp_rx_drops(void)
+{
+    return __atomic_load_n(&pfcp_rx_drop_count, __ATOMIC_RELAXED);
+}
+
 static void pfcp_node_fsm_init(ogs_pfcp_node_t *node, bool try_to_associate)
 {
     smf_event_t e;
 
     ogs_assert(node);
+
+    /* FSM + heartbeat/association timers belong on main. */
+    ogs_assert(!ogs_worker_self());
 
     memset(&e, 0, sizeof(e));
     e.pfcp_node = node;
@@ -97,6 +114,22 @@ static void pfcp_node_fsm_init(ogs_pfcp_node_t *node, bool try_to_associate)
     }
 
     ogs_fsm_init(&node->sm, smf_pfcp_state_initial, smf_pfcp_state_final, &e);
+}
+
+void smf_pfcp_node_ensure_fsm(ogs_pfcp_node_t *node)
+{
+    ogs_assert(node);
+
+    if (OGS_FSM_STATE(&node->sm))
+        return;
+
+    /* Peers learned by the RX helper get their FSM on main. */
+    if (ogs_worker_self()) {
+        ogs_error("PFCP node has no FSM on a non-main thread");
+        return;
+    }
+
+    pfcp_node_fsm_init(node, false);
 }
 
 static void pfcp_node_fsm_fini(ogs_pfcp_node_t *node)
@@ -114,7 +147,43 @@ static void pfcp_node_fsm_fini(ogs_pfcp_node_t *node)
         ogs_timer_delete(node->t_association);
 }
 
-static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
+/*
+ * Node-level PFCP (association, heartbeat, node report, PFD) runs the
+ * main-owned node FSM. Session messages route by our SEID's shard bits;
+ * SEID-less session responses by the SQN xid partition.
+ */
+static int smf_pfcp_route(ogs_pfcp_message_t *message)
+{
+    uint8_t type = message->h.type;
+    uint32_t key;
+
+    if (!smf_workers_active())
+        return 0;
+
+    if (smf_pfcp_type_is_node_level(type) ||
+            type == OGS_PFCP_NODE_REPORT_REQUEST_TYPE ||
+            type == OGS_PFCP_NODE_REPORT_RESPONSE_TYPE ||
+            type == OGS_PFCP_PFD_MANAGEMENT_REQUEST_TYPE ||
+            type == OGS_PFCP_PFD_MANAGEMENT_RESPONSE_TYPE)
+        return 0;
+
+    if (message->h.seid_presence && message->h.seid != 0) {
+        /* parse_msg converts SEID to host order */
+        key = (uint32_t)message->h.seid;
+        return smf_shard_clamp(smf_shard_from_seid(message->h.seid), key);
+    }
+
+    /* SQN left in network order; OGS_PFCP_SQN_TO_XID expects that */
+    key = OGS_PFCP_SQN_TO_XID(message->h.seid_presence ?
+            message->h.sqn : message->h.sqn_only);
+    return smf_shard_clamp(smf_shard_from_xid(key), key);
+}
+
+/*
+ * Read ONE PFCP datagram; returns 1 if a datagram was consumed (keep
+ * draining), 0 when the socket is empty / on error (stop for this wakeup).
+ */
+static int smf_pfcp_recv_one(ogs_socket_t fd)
 {
     int rv;
 
@@ -131,8 +200,9 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
 
     pkbuf = ogs_pfcp_recvfrom(fd, &from);
     if (!pkbuf) {
-        ogs_error("ogs_pfcp_recvfrom() failed");
-        return;
+        /* empty socket (EAGAIN) or receive error; a level-triggered
+         * pollset re-fires if datagrams remain */
+        return 0;
     }
 
     e = smf_event_new(SMF_EVT_N4_MESSAGE);
@@ -155,7 +225,7 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
         ogs_trace_packet_bind_rx(NULL, NULL, 0);
         ogs_pkbuf_free(pkbuf);
         ogs_event_free(e);
-        return;
+        return 1;
     }
     /* Drop node-level bind and sticky IMSI before any DEBUG. Otherwise
      * ogs_log elevates DEBUG for the last traced UE on this thread and
@@ -212,7 +282,9 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
             ogs_debug("Added PFCP-Node: addr_list %s",
                     ogs_sockaddr_to_string_static(node->addr_list));
 
-            pfcp_node_fsm_init(node, false);
+            /* RX helper: main runs smf_pfcp_node_ensure_fsm() instead */
+            if (!ogs_worker_self())
+                pfcp_node_fsm_init(node, false);
 
         } else {
             ogs_error("Cannot find PFCP-Node: type [%d] node_id %s from %s",
@@ -226,10 +298,13 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
     } else {
         ogs_debug("Found PFCP-Node: addr_list %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
+        /* merge mutates addr_list; serialize with shards / reload */
+        ogs_pfcp_peer_lock();
         ogs_expect(OGS_OK == ogs_pfcp_node_merge(
                     node,
                     pfcp_status == OGS_PFCP_STATUS_SUCCESS ?  &node_id : NULL,
                     &from));
+        ogs_pfcp_peer_unlock();
         ogs_debug("Merged PFCP-Node: addr_list %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
     }
@@ -238,41 +313,138 @@ static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
     e->pkbuf = pkbuf;
     e->pfcp_message = message;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        goto cleanup;
-    }
+    /* Association/heartbeat must never block the PFCP RX path. */
+    rv = smf_event_push_shard(smf_pfcp_route(message), e);
+    if (rv != OGS_OK)
+        __atomic_fetch_add(&pfcp_rx_drop_count, 1, __ATOMIC_RELAXED);
 
-    return;
+    return 1;
 
 cleanup:
     ogs_pkbuf_free(pkbuf);
     ogs_pfcp_message_free(message);
     ogs_event_free(e);
+    return 1;
+}
+
+/*
+ * Drain the PFCP socket per poll wakeup (bounded): under a session storm
+ * the UPF answers faster than one datagram per main-loop iteration, the
+ * kernel buffer fills and dropped replies become false PFCP timeouts.
+ */
+static void pfcp_recv_cb(short when, ogs_socket_t fd, void *data)
+{
+    int budget = SMF_PFCP_RECV_BUDGET;
+
+    while (budget-- > 0 && smf_pfcp_recv_one(fd) > 0)
+        ;
+}
+
+static void pfcp_rx_dispatch(ogs_worker_t *worker, void *data)
+{
+    (void)worker;
+    (void)data;
+}
+
+static void pfcp_rx_thread_init(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_list, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, pfcp_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_list6, node) {
+        ogs_assert(node->sock);
+        node->poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, node->sock->fd, pfcp_recv_cb, node->sock);
+        ogs_assert(node->poll);
+    }
+
+    ogs_info("SMF PFCP RX thread started");
+}
+
+static void pfcp_rx_thread_fini(ogs_worker_t *worker)
+{
+    ogs_socknode_t *node = NULL;
+
+    (void)worker;
+
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_list, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+    ogs_list_for_each(&ogs_pfcp_self()->pfcp_list6, node) {
+        if (node->poll) {
+            ogs_pollset_remove(node->poll);
+            node->poll = NULL;
+        }
+    }
+}
+
+int smf_pfcp_rx_start(void)
+{
+    if (!smf_self()->pfcp_rx_thread)
+        return OGS_OK;
+
+    ogs_assert(!pfcp_rx_worker);
+
+    pfcp_rx_worker = ogs_worker_create(0, 64, 8, 64,
+            pfcp_rx_dispatch, NULL);
+    ogs_assert(pfcp_rx_worker);
+    ogs_worker_hooks(pfcp_rx_worker,
+            pfcp_rx_thread_init, pfcp_rx_thread_fini);
+    ogs_worker_set_name(pfcp_rx_worker, "smf-pfcp-rx");
+    ogs_worker_start(pfcp_rx_worker);
+
+    return OGS_OK;
+}
+
+void smf_pfcp_rx_stop(void)
+{
+    if (!pfcp_rx_worker)
+        return;
+
+    ogs_worker_destroy(pfcp_rx_worker);
+    pfcp_rx_worker = NULL;
+}
+
+bool smf_pfcp_rx_active(void)
+{
+    return pfcp_rx_worker != NULL;
 }
 
 int smf_pfcp_open(void)
 {
     ogs_socknode_t *node = NULL;
     ogs_sock_t *sock = NULL;
+    /* With smf.pfcp_rx_thread the RX helper registers the polls. */
+    bool rx_offload = smf_self()->pfcp_rx_thread;
 
     /* PFCP Server */
     ogs_list_for_each(&ogs_pfcp_self()->pfcp_list, node) {
         sock = ogs_pfcp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, pfcp_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!rx_offload) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, pfcp_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
     ogs_list_for_each(&ogs_pfcp_self()->pfcp_list6, node) {
         sock = ogs_pfcp_server(node);
         if (!sock) return OGS_ERROR;
 
-        node->poll = ogs_pollset_add(ogs_app()->pollset,
-                OGS_POLLIN, sock->fd, pfcp_recv_cb, sock);
-        ogs_assert(node->poll);
+        if (!rx_offload) {
+            node->poll = ogs_pollset_add(ogs_app()->pollset,
+                    OGS_POLLIN, sock->fd, pfcp_recv_cb, sock);
+            ogs_assert(node->poll);
+        }
     }
 
     OGS_SETUP_PFCP_SERVER;
@@ -304,7 +476,6 @@ static void sess_5gc_timeout(ogs_pfcp_xact_t *xact, void *data)
     int trigger;
     char *strerror = NULL;
     smf_event_t *e = NULL;
-    int rv;
 
     ogs_assert(xact);
     ogs_assert(data);
@@ -347,11 +518,8 @@ static void sess_5gc_timeout(ogs_pfcp_xact_t *xact, void *data)
         e->h.timer_id = SMF_TIMER_PFCP_NO_ESTABLISHMENT_RESPONSE;
         e->pfcp_node = sess->pfcp_node;
 
-        rv = ogs_queue_push(ogs_app()->queue, e);
-        if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
-            ogs_event_free(e);
-        }
+        /* xact timers fire on the session owner's thread */
+        smf_event_push_local(e);
         break;
     }
     case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE: {
@@ -440,11 +608,7 @@ static void sess_5gc_timeout(ogs_pfcp_xact_t *xact, void *data)
         e->h.timer_id = SMF_TIMER_PFCP_NO_DELETION_RESPONSE;
         e->pfcp_node = sess->pfcp_node;
 
-        rv = ogs_queue_push(ogs_app()->queue, e);
-        if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
-            ogs_event_free(e);
-        }
+        smf_event_push_local(e);
         break;
     default:
         ogs_error("Not implemented [type:%d]", type);
@@ -1552,17 +1716,12 @@ bool smf_pfcp_remove_upf_peer(ogs_pfcp_node_t *node)
 
 void smf_pfcp_request_reassociation(ogs_pfcp_node_t *node)
 {
-    int rv;
     smf_event_t *e = NULL;
 
     ogs_assert(node);
 
+    /* node FSM is main-owned */
     e = smf_event_new(SMF_EVT_N4_REASSOCIATE);
     e->pfcp_node = node;
-
-    rv = ogs_queue_push(ogs_app()->queue, e);
-    if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
-        ogs_event_free(e);
-    }
+    smf_event_push_main(e);
 }

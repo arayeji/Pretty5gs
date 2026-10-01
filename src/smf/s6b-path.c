@@ -18,6 +18,7 @@
  */
 
 #include "fd-path.h"
+#include "smf-workers.h"
 
 static struct session_handler *smf_s6b_reg = NULL;
 static struct disp_hdl *hdl_s6b_fb = NULL;
@@ -510,15 +511,12 @@ static void smf_s6b_aaa_cb(void *data, struct msg **msg)
     e->gtp_xact_id = sess_data->xact_id;
     e->s6b_message = s6b_message;
 
-    ret = ogs_queue_push(ogs_app()->queue, e);
+    ret = smf_event_post_to_sess_owner(sess, e);
     if (ret != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)ret);
+        ogs_error("smf_event_post_to_sess_owner() failed:%d", (int)ret);
         ogs_event_free(e);
         goto cleanup;
     }
-
-    /* Notify the event loop */
-    ogs_pollset_notify(ogs_app()->pollset);
 
     /* Event successfully queued, clear pointer to avoid double-free */
     s6b_message = NULL;
@@ -864,15 +862,12 @@ static void smf_s6b_sta_cb(void *data, struct msg **msg)
         e->sess_id = sess->id;
         e->s6b_message = s6b_message;
 
-        rv = ogs_queue_push(ogs_app()->queue, e);
+        rv = smf_event_post_to_sess_owner(sess, e);
         if (rv != OGS_OK) {
-            ogs_error("ogs_queue_push() failed:%d", (int)rv);
+            ogs_error("smf_event_post_to_sess_owner() failed:%d", (int)rv);
             ogs_event_free(e);
             goto cleanup;
         }
-
-        /* Notify the event loop */
-        ogs_pollset_notify(ogs_app()->pollset);
 
         /* Event successfully queued, clear pointer to avoid double-free */
         s6b_message = NULL;
