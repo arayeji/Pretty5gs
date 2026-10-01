@@ -27,6 +27,27 @@
 #include "nsmf-handler.h"
 #include "nnssf-handler.h"
 #include "nas-security.h"
+#include "ngap-io.h"
+#include "ngap-free.h"
+
+static bool amf_sockaddr_valid(const ogs_sockaddr_t *addr)
+{
+    return addr && (addr->ogs_sa_family == AF_INET ||
+            addr->ogs_sa_family == AF_INET6);
+}
+
+/* Free an NGAP_MESSAGE event payload that is not going to be dispatched */
+static void amf_ngap_message_drop(amf_event_t *e)
+{
+    if (e->ngap.rx_decoded) {
+        ngap_free_defer(e->ngap.message, e->pkbuf);
+        e->ngap.message = NULL;
+        e->ngap.rx_decoded = false;
+    } else if (e->pkbuf) {
+        ogs_pkbuf_free(e->pkbuf);
+    }
+    e->pkbuf = NULL;
+}
 
 void amf_state_initial(ogs_fsm_t *s, amf_event_t *e)
 {
@@ -808,7 +829,13 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
         sock = e->ngap.sock;
         ogs_assert(sock);
         addr = e->ngap.addr;
-        ogs_assert(addr);
+        if (!amf_sockaddr_valid(addr)) {
+            ogs_error("NGAP LO_ACCEPT: invalid peer address (family=%u)",
+                    addr ? addr->ogs_sa_family : 0);
+            if (addr) ogs_free(addr);
+            ogs_sock_destroy(sock);
+            break;
+        }
 
         ogs_info("gNB-N2 accepted[%s] in master_sm module",
             OGS_ADDR(addr, buf));
@@ -845,7 +872,12 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
         sock = e->ngap.sock;
         ogs_assert(sock);
         addr = e->ngap.addr;
-        ogs_assert(addr);
+        if (!amf_sockaddr_valid(addr)) {
+            ogs_error("NGAP SCTP_COMM_UP: invalid peer address (family=%u)",
+                    addr ? addr->ogs_sa_family : 0);
+            if (addr) ogs_free(addr);
+            break;
+        }
 
         max_num_of_ostreams = e->ngap.max_num_of_ostreams;
 
@@ -876,9 +908,16 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
         sock = e->ngap.sock;
         ogs_assert(sock);
         addr = e->ngap.addr;
-        ogs_assert(addr);
 
-        gnb = amf_gnb_find_by_addr(addr);
+        /*
+         * Prefer the address lookup; fall back to the sock (the IO
+         * thread may raise CONNREFUSED without a usable address).
+         */
+        gnb = NULL;
+        if (amf_sockaddr_valid(addr))
+            gnb = amf_gnb_find_by_addr(addr);
+        if (!gnb)
+            gnb = amf_gnb_find_by_sock(sock);
         if (gnb) {
             if (gnb->sctp.sock != sock) {
                 /*
@@ -890,34 +929,88 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
                  */
                 ogs_warn("Stale CONNREFUSED for [%s] ignored "
                         "(socket already replaced by reconnect)",
-                        OGS_ADDR(addr, buf));
+                        OGS_ADDR(gnb->sctp.addr, buf));
             } else {
                 ogs_info("gNB-N2[%s] connection refused!!!",
-                        OGS_ADDR(addr, buf));
+                        OGS_ADDR(gnb->sctp.addr, buf));
                 amf_sbi_send_deactivate_all_ue_in_gnb(
                         gnb, AMF_REMOVE_S1_CONTEXT_BY_LO_CONNREFUSED);
                 amf_gnb_remove(gnb);
             }
         } else {
-            ogs_warn("gNB-N2[%s] connection refused, Already Removed!",
-                    OGS_ADDR(addr, buf));
+            ogs_warn("gNB-N2 connection refused, Already Removed! "
+                    "(family=%u sock:%p)",
+                    addr ? addr->ogs_sa_family : 0, (void *)sock);
         }
-        ogs_free(addr);
+        if (addr) ogs_free(addr);
 
         break;
+
+    case AMF_EVENT_NGAP_RX_SOCK_CLOSED:
+        /* the owning RX worker confirmed poll removal; the close
+         * registry destroys the socket on the last confirmation */
+        ogs_assert(e->ngap.sock);
+        ngap_sock_close_confirm(e->ngap.sock, NGAP_SOCK_CONFIRM_RX);
+        break;
+
+    case AMF_EVENT_NGAP_IO_DRAINED:
+        /* the IO thread dropped its write queue / POLLOUT for the sock */
+        ogs_assert(e->ngap.sock);
+        ngap_sock_close_confirm(e->ngap.sock, NGAP_SOCK_CONFIRM_IO);
+        break;
+
+    case AMF_EVENT_NGAP_RX_WATCH_FAILED:
+        /* an RX worker could not watch this gNB socket (fd died in
+         * the accept->watch race): release UEs like CONNREFUSED */
+        ogs_assert(e->ngap.sock);
+        gnb = amf_gnb_find_by_sock(e->ngap.sock);
+        if (gnb) {
+            amf_sbi_send_deactivate_all_ue_in_gnb(
+                    gnb, AMF_REMOVE_S1_CONTEXT_BY_LO_CONNREFUSED);
+            amf_gnb_remove(gnb);
+        } else
+            ngap_sock_close_orphan(e->ngap.sock);
+        break;
+
     case AMF_EVENT_NGAP_MESSAGE:
         sock = e->ngap.sock;
         ogs_assert(sock);
         addr = e->ngap.addr;
-        ogs_assert(addr);
         pkbuf = e->pkbuf;
         ogs_assert(pkbuf);
+
+        if (!amf_sockaddr_valid(addr)) {
+            ogs_error("NGAP MESSAGE: invalid peer address (family=%u)",
+                    addr ? addr->ogs_sa_family : 0);
+            if (addr) ogs_free(addr);
+            amf_ngap_message_drop(e);
+            break;
+        }
 
         gnb = amf_gnb_find_by_addr(addr);
         ogs_free(addr);
 
-        ogs_assert(gnb);
+        if (!gnb) {
+            /* with RX workers a message can be in flight while main
+             * removes the gNB context */
+            ogs_warn("NGAP MESSAGE for removed gNB - dropped");
+            amf_ngap_message_drop(e);
+            break;
+        }
         ogs_assert(OGS_FSM_STATE(&gnb->sm));
+
+        if (e->ngap.rx_decoded) {
+            /* APER decode already done on the RX worker */
+            e->gnb_id = gnb->id;
+            ogs_fsm_dispatch(&gnb->sm, e);
+
+            /* handlers never retain IE pointers into the PDU */
+            ngap_free_defer(e->ngap.message, pkbuf);
+            e->ngap.message = NULL;
+            e->ngap.rx_decoded = false;
+            e->pkbuf = NULL;
+            break;
+        }
 
         rc = ogs_ngap_decode(&ngap_message, pkbuf);
         if (rc == OGS_OK) {
@@ -930,7 +1023,6 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
                     gnb, NULL, NULL, NGAP_Cause_PR_protocol, 
                     NGAP_CauseProtocol_abstract_syntax_error_falsely_constructed_message);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
 
         ogs_ngap_free(&ngap_message);
@@ -941,6 +1033,13 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
         ran_ue = ran_ue_find_by_id(e->ran_ue_id);
         if (!ran_ue) {
             ogs_error("NG Context has already been removed");
+            /* a delayed-send event owns its pkbuf and one-shot timer */
+            if (e->h.timer_id == AMF_TIMER_NG_DELAYED_SEND) {
+                if (e->pkbuf)
+                    ogs_pkbuf_free(e->pkbuf);
+                if (e->timer)
+                    ogs_timer_delete(e->timer);
+            }
             break;
         }
 
@@ -951,7 +1050,6 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
 
             r = ngap_send_to_ran_ue(ran_ue, pkbuf);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             ogs_timer_delete(e->timer);
             break;
         case AMF_TIMER_NG_HOLDING:
@@ -996,7 +1094,6 @@ void amf_state_operational(ogs_fsm_t *s, amf_event_t *e)
                             NGAP_CauseMisc_control_processing_overload,
                             NGAP_UE_CTX_REL_NG_CONTEXT_REMOVE, 0);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                     ogs_pkbuf_free(pkbuf);
                     break;
                 }

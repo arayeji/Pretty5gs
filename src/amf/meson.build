@@ -46,6 +46,9 @@ libamf_sources = files('''
     sbi-path.c
 
     ngap-sctp.c
+    ngap-rx.c
+    ngap-io.c
+    ngap-free.c
     ngap-build.c
     ngap-handler.c
     ngap-path.c

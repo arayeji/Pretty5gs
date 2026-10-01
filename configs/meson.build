@@ -35,6 +35,7 @@ example_conf = '''
     attach.yaml
     collapsed.yaml
     load.yaml
+    load5gc.yaml
     310014.yaml
     csfb.yaml
     volte.yaml

@@ -188,7 +188,6 @@ int amf_nudm_sdm_handle_provisioned(
                     ran_ue_find_by_id(amf_ue->ran_ue_id), amf_ue,
                     OGS_5GMM_CAUSE_NO_NETWORK_SLICES_AVAILABLE);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return OGS_ERROR;
         }
 
@@ -198,7 +197,6 @@ int amf_nudm_sdm_handle_provisioned(
                     ran_ue_find_by_id(amf_ue->ran_ue_id), amf_ue,
                     OGS_5GMM_CAUSE_5GS_SERVICES_NOT_ALLOWED);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return OGS_ERROR;
         }
 
@@ -207,7 +205,6 @@ int amf_nudm_sdm_handle_provisioned(
                 amf_nudm_sdm_build_get,
                 amf_ue, state, (char *)OGS_SBI_RESOURCE_NAME_SMF_SELECT_DATA);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         break;
 
     CASE(OGS_SBI_RESOURCE_NAME_SMF_SELECT_DATA)
@@ -309,7 +306,6 @@ int amf_nudm_sdm_handle_provisioned(
                 amf_ue, state,
                 (char *)OGS_SBI_RESOURCE_NAME_UE_CONTEXT_IN_SMF_DATA);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         break;
 
     CASE(OGS_SBI_RESOURCE_NAME_UE_CONTEXT_IN_SMF_DATA)
@@ -321,7 +317,6 @@ int amf_nudm_sdm_handle_provisioned(
                     amf_npcf_am_policy_control_build_create,
                     amf_ue, state, NULL);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
         else {
             r = amf_ue_sbi_discover_and_send(
@@ -329,7 +324,6 @@ int amf_nudm_sdm_handle_provisioned(
                     amf_nudm_sdm_build_subscription,
                     amf_ue, state, (char *)OGS_SBI_RESOURCE_NAME_AM_DATA);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
         break;
 
@@ -351,7 +345,6 @@ int amf_nudm_sdm_handle_provisioned(
             r = nas_5gs_send_gmm_reject_from_sbi(
                     amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return OGS_ERROR;
         }
 
@@ -366,7 +359,6 @@ int amf_nudm_sdm_handle_provisioned(
             r = nas_5gs_send_gmm_reject_from_sbi(
                     amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
 
             return OGS_ERROR;
         }
@@ -379,7 +371,6 @@ int amf_nudm_sdm_handle_provisioned(
             r = nas_5gs_send_gmm_reject_from_sbi(
                     amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
 
             return OGS_ERROR;
         }
@@ -393,7 +384,6 @@ int amf_nudm_sdm_handle_provisioned(
             r = nas_5gs_send_gmm_reject_from_sbi(
                     amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
 
             return OGS_ERROR;
         }
@@ -409,7 +399,6 @@ int amf_nudm_sdm_handle_provisioned(
                 r = nas_5gs_send_gmm_reject_from_sbi(
                         amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
 
                 ogs_free(fqdn);
                 ogs_freeaddrinfo(addr);
@@ -433,7 +422,6 @@ int amf_nudm_sdm_handle_provisioned(
                 OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL, NULL,
                 amf_npcf_am_policy_control_build_create, amf_ue, state, NULL);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         break;
 
     DEFAULT

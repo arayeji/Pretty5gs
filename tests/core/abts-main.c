@@ -33,6 +33,7 @@ abts_suite *test_timer(abts_suite *suite);
 abts_suite *test_thread(abts_suite *suite);
 abts_suite *test_socket(abts_suite *suite);
 abts_suite *test_queue(abts_suite *suite);
+abts_suite *test_worker(abts_suite *suite);
 abts_suite *test_poll(abts_suite *suite);
 abts_suite *test_tlv(abts_suite *suite);
 abts_suite *test_fsm(abts_suite *suite);
@@ -55,6 +56,7 @@ const struct testlist {
     {test_thread},
     {test_socket},
     {test_queue},
+    {test_worker},
     {test_poll},
     {test_tlv},
     {test_fsm},

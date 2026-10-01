@@ -196,7 +196,6 @@ void ngap_state_operational(ogs_fsm_t *s, amf_event_t *e)
             r = ngap_send_to_ran_ue(
                     ran_ue_find_by_id(e->ran_ue_id), e->pkbuf);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
 
             ogs_timer_delete(e->timer);
             break;

@@ -58,7 +58,6 @@ static bool amf_nnrf_try_old_amf_discovery_fallback(
     CLEAR_AMF_UE_TIMER(amf_ue->t3570);
     r = nas_5gs_send_identity_request(amf_ue);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 
     return true;
 }
@@ -105,14 +104,12 @@ static void amf_nnrf_send_session_failure_to_ran(
                 OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED,
                 AMF_NAS_BACKOFF_TIME);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else {
         r = ngap_send_error_indication2(
                 ran_ue,
                 NGAP_Cause_PR_transport,
                 NGAP_CauseTransport_transport_resource_unavailable);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     }
 }
 
@@ -213,7 +210,6 @@ void amf_nnrf_handle_nf_discover(
             r = nas_5gs_send_gmm_reject_from_sbi(amf_ue,
                     OGS_SBI_HTTP_STATUS_GATEWAY_TIMEOUT);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             break;
         case OGS_SBI_OBJ_SESS_TYPE:
             ogs_warn("[%d:%d] (NF discover) No [%s]", sess->psi, sess->pti,
@@ -304,7 +300,6 @@ void amf_nnrf_handle_failed_amf_discovery(
         r = nas_5gs_send_gmm_reject_from_sbi(amf_ue,
                 OGS_SBI_HTTP_STATUS_GATEWAY_TIMEOUT);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         break;
 
     case OGS_SBI_OBJ_SESS_TYPE:

@@ -128,7 +128,6 @@ static ran_ue_t *ngap_find_ran_ue_by_message_ue_ids(
         r = ngap_send_error_indication(gnb, NULL, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return NULL;
     }
 
@@ -137,7 +136,6 @@ static ran_ue_t *ngap_find_ran_ue_by_message_ue_ids(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return NULL;
     }
 
@@ -146,7 +144,6 @@ static ran_ue_t *ngap_find_ran_ue_by_message_ue_ids(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return NULL;
     }
 
@@ -156,7 +153,6 @@ static ran_ue_t *ngap_find_ran_ue_by_message_ue_ids(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return NULL;
     }
 
@@ -169,7 +165,6 @@ static ran_ue_t *ngap_find_ran_ue_by_message_ue_ids(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return NULL;
     }
 
@@ -184,7 +179,6 @@ static ran_ue_t *ngap_find_ran_ue_by_message_ue_ids(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return NULL;
     }
 
@@ -199,7 +193,6 @@ static ran_ue_t *ngap_find_ran_ue_by_message_ue_ids(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return NULL;
     }
 
@@ -305,7 +298,6 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
         cause = NGAP_CauseProtocol_semantic_error;
         r = ngap_send_ng_setup_failure(gnb, group, cause);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -316,7 +308,6 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
         cause = NGAP_CauseProtocol_semantic_error;
         r = ngap_send_ng_setup_failure(gnb, group, cause);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -328,7 +319,6 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
         cause = NGAP_CauseProtocol_semantic_error;
         r = ngap_send_ng_setup_failure(gnb, group, cause);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -338,7 +328,6 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
         cause = NGAP_CauseProtocol_semantic_error;
         r = ngap_send_ng_setup_failure(gnb, group, cause);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -347,7 +336,6 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
         cause = NGAP_CauseProtocol_semantic_error;
         r = ngap_send_ng_setup_failure(gnb, group, cause);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -388,7 +376,6 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
             cause = NGAP_CauseProtocol_semantic_error;
             r = ngap_send_ng_setup_failure(gnb, group, cause);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -425,7 +412,6 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
                 cause = NGAP_CauseProtocol_semantic_error;
                 r = ngap_send_ng_setup_failure(gnb, group, cause);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return;
             }
 
@@ -441,7 +427,6 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
                 cause = NGAP_CauseProtocol_semantic_error;
                 r = ngap_send_ng_setup_failure(gnb, group, cause);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return;
             }
 
@@ -483,7 +468,6 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
                     cause = NGAP_CauseProtocol_semantic_error;
                     r = ngap_send_ng_setup_failure(gnb, group, cause);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                     return;
                 }
 
@@ -521,7 +505,6 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
 
         r = ngap_send_ng_setup_failure(gnb, group, cause);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -541,7 +524,6 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
 
         r = ngap_send_ng_setup_failure(gnb, group, cause);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -553,7 +535,6 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
 
         r = ngap_send_ng_setup_failure(gnb, group, cause);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -566,7 +547,6 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
 
         r = ngap_send_ng_setup_failure(gnb, group, cause);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -575,7 +555,6 @@ void ngap_handle_ng_setup_request(amf_gnb_t *gnb, ogs_ngap_message_t *message)
     gnb->state.ng_setup_success = true;
     r = ngap_send_ng_setup_response(gnb);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 }
 
 void ngap_handle_initial_ue_message(amf_gnb_t *gnb, ogs_ngap_message_t *message)
@@ -640,7 +619,6 @@ void ngap_handle_initial_ue_message(amf_gnb_t *gnb, ogs_ngap_message_t *message)
         r = ngap_send_error_indication(gnb, NULL, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -677,7 +655,6 @@ void ngap_handle_initial_ue_message(amf_gnb_t *gnb, ogs_ngap_message_t *message)
                 NGAP_Cause_PR_protocol,
                 NGAP_CauseProtocol_message_not_compatible_with_receiver_state);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -687,7 +664,6 @@ void ngap_handle_initial_ue_message(amf_gnb_t *gnb, ogs_ngap_message_t *message)
                 NGAP_Cause_PR_misc,
                 NGAP_CauseMisc_control_processing_overload);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -733,7 +709,6 @@ void ngap_handle_initial_ue_message(amf_gnb_t *gnb, ogs_ngap_message_t *message)
         r = ngap_send_error_indication(gnb, &ran_ue->ran_ue_ngap_id, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -744,7 +719,6 @@ void ngap_handle_initial_ue_message(amf_gnb_t *gnb, ogs_ngap_message_t *message)
         r = ngap_send_error_indication(gnb, &ran_ue->ran_ue_ngap_id, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_unspecified);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -753,7 +727,6 @@ void ngap_handle_initial_ue_message(amf_gnb_t *gnb, ogs_ngap_message_t *message)
         r = ngap_send_error_indication(gnb, &ran_ue->ran_ue_ngap_id, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -913,7 +886,6 @@ void ngap_handle_uplink_nas_transport(
                 NGAP_CauseRadioNetwork_unspecified,
                 NGAP_UE_CTX_REL_NG_CONTEXT_REMOVE, 0);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -922,7 +894,6 @@ void ngap_handle_uplink_nas_transport(
         r = ngap_send_error_indication(gnb, &ran_ue->ran_ue_ngap_id, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -933,7 +904,6 @@ void ngap_handle_uplink_nas_transport(
         r = ngap_send_error_indication(gnb, &ran_ue->ran_ue_ngap_id, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_unspecified);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -943,7 +913,6 @@ void ngap_handle_uplink_nas_transport(
                 gnb, &ran_ue->ran_ue_ngap_id, &ran_ue->amf_ue_ngap_id,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -961,7 +930,6 @@ void ngap_handle_uplink_nas_transport(
                 NGAP_Cause_PR_protocol,
                 NGAP_CauseProtocol_message_not_compatible_with_receiver_state);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
     ogs_debug("    SERVED_TAI_INDEX[%d]", served_tai_index);
@@ -1054,7 +1022,6 @@ void ngap_handle_ue_radio_capability_info_indication(
                 gnb, &ran_ue->ran_ue_ngap_id, &ran_ue->amf_ue_ngap_id,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1145,7 +1112,6 @@ void ngap_handle_initial_context_setup_response(
                 NGAP_CauseRadioNetwork_unspecified,
                 NGAP_UE_CTX_REL_NG_CONTEXT_REMOVE, 0);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1158,7 +1124,6 @@ void ngap_handle_initial_context_setup_response(
             r = ngap_send_error_indication2(ran_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -1168,7 +1133,6 @@ void ngap_handle_initial_context_setup_response(
             r = ngap_send_error_indication2(ran_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -1178,7 +1142,6 @@ void ngap_handle_initial_context_setup_response(
             r = ngap_send_error_indication2(ran_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -1190,7 +1153,6 @@ void ngap_handle_initial_context_setup_response(
                     NGAP_Cause_PR_radioNetwork,
                     NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -1201,7 +1163,6 @@ void ngap_handle_initial_context_setup_response(
                     NGAP_Cause_PR_radioNetwork,
                     NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -1221,7 +1182,6 @@ void ngap_handle_initial_context_setup_response(
                 amf_nsmf_pdusession_build_update_sm_context,
                 ran_ue, sess, AMF_UPDATE_SM_CONTEXT_ACTIVATED, &param);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         ogs_pkbuf_free(param.n2smbuf);
     }
@@ -1257,7 +1217,6 @@ void ngap_handle_initial_context_setup_response(
                 r = nas_send_pdu_session_modification_command(sess,
                             sess->gsm_message.n1buf, sess->gsm_message.n2buf);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
 
                 /* n1buf is de-allocated
                  * in gmm_build_dl_nas_transport() */
@@ -1273,7 +1232,6 @@ void ngap_handle_initial_context_setup_response(
                 r = nas_send_pdu_session_release_command(sess,
                             sess->gsm_message.n1buf, sess->gsm_message.n2buf);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
 
                 /* n1buf is de-allocated
                  * in gmm_build_dl_nas_transport() */
@@ -1322,7 +1280,6 @@ void ngap_handle_initial_context_setup_response(
         param.guti = 1;
         r = nas_5gs_send_configuration_update_command(amf_ue, &param);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         AMF_UE_CLEAR_PAGING_INFO(amf_ue);
     }
@@ -1394,7 +1351,6 @@ void ngap_handle_initial_context_setup_failure(
                 gnb, &ran_ue->ran_ue_ngap_id, &ran_ue->amf_ue_ngap_id,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
     ogs_debug("    Cause[Group:%d Cause:%d]",
@@ -1435,7 +1391,6 @@ void ngap_handle_initial_context_setup_failure(
                 NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release,
                 NGAP_UE_CTX_REL_NG_CONTEXT_REMOVE, 0);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     }
 }
 
@@ -1664,7 +1619,6 @@ void ngap_handle_ue_context_release_request(
         r = ngap_send_error_indication(gnb, NULL, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1673,7 +1627,6 @@ void ngap_handle_ue_context_release_request(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1682,7 +1635,6 @@ void ngap_handle_ue_context_release_request(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1692,7 +1644,6 @@ void ngap_handle_ue_context_release_request(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1705,7 +1656,6 @@ void ngap_handle_ue_context_release_request(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1720,7 +1670,6 @@ void ngap_handle_ue_context_release_request(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1735,7 +1684,6 @@ void ngap_handle_ue_context_release_request(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1749,7 +1697,6 @@ void ngap_handle_ue_context_release_request(
                 gnb, &ran_ue->ran_ue_ngap_id, &ran_ue->amf_ue_ngap_id,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1771,7 +1718,6 @@ void ngap_handle_ue_context_release_request(
                 gnb, &ran_ue->ran_ue_ngap_id, &ran_ue->amf_ue_ngap_id,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1783,7 +1729,6 @@ void ngap_handle_ue_context_release_request(
                 Cause->present, (int)Cause->choice.radioNetwork,
                 NGAP_UE_CTX_REL_NG_CONTEXT_REMOVE, 0);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else {
         int xact_count = amf_sess_xact_count(amf_ue);
 
@@ -1805,7 +1750,6 @@ void ngap_handle_ue_context_release_request(
                             ran_ue, NGAP_Cause_PR_protocol,
                             NGAP_CauseProtocol_semantic_error);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                     return;
                 }
 
@@ -1816,7 +1760,6 @@ void ngap_handle_ue_context_release_request(
                             ran_ue, NGAP_Cause_PR_protocol,
                             NGAP_CauseProtocol_semantic_error);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                     return;
                 }
 
@@ -1835,7 +1778,6 @@ void ngap_handle_ue_context_release_request(
                     Cause->present, (int)Cause->choice.radioNetwork,
                     NGAP_UE_CTX_REL_NG_REMOVE_AND_UNLINK, 0);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
     }
 }
@@ -1890,7 +1832,6 @@ void ngap_handle_ue_context_release_complete(
         r = ngap_send_error_indication(gnb, NULL, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1899,7 +1840,6 @@ void ngap_handle_ue_context_release_complete(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1908,7 +1848,6 @@ void ngap_handle_ue_context_release_complete(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1918,7 +1857,6 @@ void ngap_handle_ue_context_release_complete(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1931,7 +1869,6 @@ void ngap_handle_ue_context_release_complete(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -1946,7 +1883,6 @@ void ngap_handle_ue_context_release_complete(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -2064,7 +2000,6 @@ void ngap_handle_ue_context_release_action(ran_ue_t *ran_ue)
 
         r = ngap_send_handover_cancel_ack(ran_ue);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         break;
     case NGAP_UE_CTX_REL_NG_HANDOVER_FAILURE:
         ogs_warn("    Action: NG handover failure");
@@ -2171,7 +2106,6 @@ void ngap_handle_pdu_session_resource_setup_response(
                 NGAP_CauseRadioNetwork_unspecified,
                 NGAP_UE_CTX_REL_NG_CONTEXT_REMOVE, 0);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -2188,7 +2122,6 @@ void ngap_handle_pdu_session_resource_setup_response(
                         NGAP_Cause_PR_protocol,
                         NGAP_CauseProtocol_semantic_error);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return;
             }
 
@@ -2200,7 +2133,6 @@ void ngap_handle_pdu_session_resource_setup_response(
                         NGAP_Cause_PR_protocol,
                         NGAP_CauseProtocol_semantic_error);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return;
             }
 
@@ -2212,7 +2144,6 @@ void ngap_handle_pdu_session_resource_setup_response(
                         NGAP_Cause_PR_protocol,
                         NGAP_CauseProtocol_semantic_error);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return;
             }
 
@@ -2224,7 +2155,6 @@ void ngap_handle_pdu_session_resource_setup_response(
                         NGAP_Cause_PR_radioNetwork,
                         NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return;
             }
 
@@ -2235,7 +2165,6 @@ void ngap_handle_pdu_session_resource_setup_response(
                         NGAP_Cause_PR_radioNetwork,
                         NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return;
             }
 
@@ -2255,7 +2184,6 @@ void ngap_handle_pdu_session_resource_setup_response(
                     amf_nsmf_pdusession_build_update_sm_context,
                     ran_ue, sess, AMF_UPDATE_SM_CONTEXT_ACTIVATED, &param);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
 
             ogs_pkbuf_free(param.n2smbuf);
         }
@@ -2273,7 +2201,6 @@ void ngap_handle_pdu_session_resource_setup_response(
                         NGAP_Cause_PR_protocol,
                         NGAP_CauseProtocol_semantic_error);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return;
             }
 
@@ -2287,7 +2214,6 @@ void ngap_handle_pdu_session_resource_setup_response(
                         NGAP_Cause_PR_protocol,
                         NGAP_CauseProtocol_semantic_error);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return;
             }
 
@@ -2299,7 +2225,6 @@ void ngap_handle_pdu_session_resource_setup_response(
                         NGAP_Cause_PR_protocol,
                         NGAP_CauseProtocol_semantic_error);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return;
             }
 
@@ -2313,7 +2238,6 @@ void ngap_handle_pdu_session_resource_setup_response(
                         NGAP_Cause_PR_radioNetwork,
                         NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return;
             }
 
@@ -2324,7 +2248,6 @@ void ngap_handle_pdu_session_resource_setup_response(
                         NGAP_Cause_PR_radioNetwork,
                         NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return;
             }
 
@@ -2381,7 +2304,6 @@ void ngap_handle_pdu_session_resource_setup_response(
                     amf_nsmf_pdusession_build_update_sm_context,
                     ran_ue, sess, AMF_UPDATE_SM_CONTEXT_SETUP_FAIL, &param);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
 
             ogs_pkbuf_free(param.n2smbuf);
         }
@@ -2390,7 +2312,6 @@ void ngap_handle_pdu_session_resource_setup_response(
         r = ngap_send_error_indication2(ran_ue,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     }
 }
 
@@ -2474,7 +2395,6 @@ void ngap_handle_pdu_session_resource_modify_response(
                 NGAP_CauseRadioNetwork_unspecified,
                 NGAP_UE_CTX_REL_NG_CONTEXT_REMOVE, 0);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -2483,7 +2403,6 @@ void ngap_handle_pdu_session_resource_modify_response(
         r = ngap_send_error_indication2(ran_ue,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -2497,7 +2416,6 @@ void ngap_handle_pdu_session_resource_modify_response(
             r = ngap_send_error_indication2(ran_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -2507,7 +2425,6 @@ void ngap_handle_pdu_session_resource_modify_response(
             r = ngap_send_error_indication2(ran_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -2517,7 +2434,6 @@ void ngap_handle_pdu_session_resource_modify_response(
             r = ngap_send_error_indication2(ran_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -2529,7 +2445,6 @@ void ngap_handle_pdu_session_resource_modify_response(
                     NGAP_Cause_PR_radioNetwork,
                     NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -2540,7 +2455,6 @@ void ngap_handle_pdu_session_resource_modify_response(
                     NGAP_Cause_PR_radioNetwork,
                     NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -2555,7 +2469,6 @@ void ngap_handle_pdu_session_resource_modify_response(
                 amf_nsmf_pdusession_build_update_sm_context,
                 ran_ue, sess, AMF_UPDATE_SM_CONTEXT_MODIFIED, &param);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         ogs_pkbuf_free(param.n2smbuf);
     }
@@ -2642,7 +2555,6 @@ void ngap_handle_pdu_session_resource_release_response(
                 NGAP_CauseRadioNetwork_unspecified,
                 NGAP_UE_CTX_REL_NG_CONTEXT_REMOVE, 0);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -2651,7 +2563,6 @@ void ngap_handle_pdu_session_resource_release_response(
         r = ngap_send_error_indication2(ran_ue,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -2665,7 +2576,6 @@ void ngap_handle_pdu_session_resource_release_response(
             r = ngap_send_error_indication2(ran_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -2675,7 +2585,6 @@ void ngap_handle_pdu_session_resource_release_response(
             r = ngap_send_error_indication2(ran_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -2685,7 +2594,6 @@ void ngap_handle_pdu_session_resource_release_response(
             r = ngap_send_error_indication2(ran_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -2697,7 +2605,6 @@ void ngap_handle_pdu_session_resource_release_response(
                     NGAP_Cause_PR_radioNetwork,
                     NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -2708,7 +2615,6 @@ void ngap_handle_pdu_session_resource_release_response(
                     NGAP_Cause_PR_radioNetwork,
                     NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -2723,7 +2629,6 @@ void ngap_handle_pdu_session_resource_release_response(
                 amf_nsmf_pdusession_build_update_sm_context,
                 ran_ue, sess, AMF_UPDATE_SM_CONTEXT_N2_RELEASED, &param);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         ogs_pkbuf_free(param.n2smbuf);
 
@@ -2796,7 +2701,6 @@ void ngap_handle_uplink_ran_configuration_transfer(
             r = ngap_send_error_indication(gnb, NULL, NULL,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -2806,7 +2710,6 @@ void ngap_handle_uplink_ran_configuration_transfer(
             r = ngap_send_error_indication(gnb, NULL, NULL,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -2823,7 +2726,6 @@ void ngap_handle_uplink_ran_configuration_transfer(
             r = ngap_send_error_indication(gnb, NULL, NULL,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -2833,7 +2735,6 @@ void ngap_handle_uplink_ran_configuration_transfer(
             r = ngap_send_error_indication(gnb, NULL, NULL,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -2852,7 +2753,6 @@ void ngap_handle_uplink_ran_configuration_transfer(
             r = ngap_send_error_indication(gnb, NULL, NULL,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -2948,7 +2848,6 @@ void ngap_handle_path_switch_request(
         r = ngap_send_error_indication(gnb, NULL, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -2957,7 +2856,6 @@ void ngap_handle_path_switch_request(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -2966,7 +2864,6 @@ void ngap_handle_path_switch_request(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -2976,7 +2873,6 @@ void ngap_handle_path_switch_request(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -2989,7 +2885,6 @@ void ngap_handle_path_switch_request(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3002,7 +2897,6 @@ void ngap_handle_path_switch_request(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3020,7 +2914,6 @@ void ngap_handle_path_switch_request(
                 (uint64_t *)RAN_UE_NGAP_ID, &amf_ue_ngap_id,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3032,7 +2925,6 @@ void ngap_handle_path_switch_request(
                 (uint64_t *)RAN_UE_NGAP_ID, &amf_ue_ngap_id,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_unspecified);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3042,7 +2934,6 @@ void ngap_handle_path_switch_request(
                 (uint64_t *)RAN_UE_NGAP_ID, &amf_ue_ngap_id,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3052,7 +2943,6 @@ void ngap_handle_path_switch_request(
                 (uint64_t *)RAN_UE_NGAP_ID, &amf_ue_ngap_id,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3062,7 +2952,6 @@ void ngap_handle_path_switch_request(
                 (uint64_t *)RAN_UE_NGAP_ID, &amf_ue_ngap_id,
                 NGAP_Cause_PR_nas, NGAP_CauseNas_authentication_failure);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3080,7 +2969,6 @@ void ngap_handle_path_switch_request(
                 NGAP_Cause_PR_protocol,
                 NGAP_CauseProtocol_message_not_compatible_with_receiver_state);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
     ogs_debug("    SERVED_TAI_INDEX[%d]", served_tai_index);
@@ -3102,7 +2990,6 @@ void ngap_handle_path_switch_request(
                 NGAP_Cause_PR_protocol,
                 NGAP_CauseProtocol_message_not_compatible_with_receiver_state);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
     if (nRintegrityProtectionAlgorithms->size != sizeof(nr_ia)) {
@@ -3115,7 +3002,6 @@ void ngap_handle_path_switch_request(
                 NGAP_Cause_PR_protocol,
                 NGAP_CauseProtocol_message_not_compatible_with_receiver_state);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
     if (eUTRAencryptionAlgorithms->size != sizeof(eutra_ea)) {
@@ -3127,7 +3013,6 @@ void ngap_handle_path_switch_request(
                 NGAP_Cause_PR_protocol,
                 NGAP_CauseProtocol_message_not_compatible_with_receiver_state);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
     if (eUTRAintegrityProtectionAlgorithms->size != sizeof(eutra_ia)) {
@@ -3140,7 +3025,6 @@ void ngap_handle_path_switch_request(
                 NGAP_Cause_PR_protocol,
                 NGAP_CauseProtocol_message_not_compatible_with_receiver_state);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
     /*
@@ -3235,7 +3119,6 @@ void ngap_handle_path_switch_request(
             r = ngap_send_error_indication2(ran_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -3245,7 +3128,6 @@ void ngap_handle_path_switch_request(
             r = ngap_send_error_indication2(ran_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -3255,7 +3137,6 @@ void ngap_handle_path_switch_request(
             r = ngap_send_error_indication2(ran_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -3267,7 +3148,6 @@ void ngap_handle_path_switch_request(
                     NGAP_Cause_PR_radioNetwork,
                     NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -3278,7 +3158,6 @@ void ngap_handle_path_switch_request(
                     NGAP_Cause_PR_radioNetwork,
                     NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -3294,7 +3173,6 @@ void ngap_handle_path_switch_request(
                 ran_ue, sess,
                 AMF_UPDATE_SM_CONTEXT_PATH_SWITCH_REQUEST, &param);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         ogs_pkbuf_free(param.n2smbuf);
     }
@@ -3395,7 +3273,6 @@ void ngap_handle_handover_required(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3404,7 +3281,6 @@ void ngap_handle_handover_required(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3414,7 +3290,6 @@ void ngap_handle_handover_required(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3427,7 +3302,6 @@ void ngap_handle_handover_required(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3444,7 +3318,6 @@ void ngap_handle_handover_required(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3453,7 +3326,6 @@ void ngap_handle_handover_required(
         r = ngap_send_error_indication2(source_ue,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3462,7 +3334,6 @@ void ngap_handle_handover_required(
         r = ngap_send_error_indication2(source_ue,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3471,7 +3342,6 @@ void ngap_handle_handover_required(
         r = ngap_send_error_indication2(source_ue,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3480,7 +3350,6 @@ void ngap_handle_handover_required(
         r = ngap_send_error_indication2(source_ue,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
     targetRANNodeID = TargetID->choice.targetRANNodeID;
@@ -3489,7 +3358,6 @@ void ngap_handle_handover_required(
         r = ngap_send_error_indication2(source_ue,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3500,7 +3368,6 @@ void ngap_handle_handover_required(
         r = ngap_send_error_indication2(source_ue,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3510,7 +3377,6 @@ void ngap_handle_handover_required(
         r = ngap_send_error_indication2(source_ue,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3522,7 +3388,6 @@ void ngap_handle_handover_required(
         r = ngap_send_error_indication2(source_ue,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3531,7 +3396,6 @@ void ngap_handle_handover_required(
         r = ngap_send_error_indication2(source_ue,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3540,7 +3404,6 @@ void ngap_handle_handover_required(
         r = ngap_send_error_indication2(source_ue,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3549,7 +3412,6 @@ void ngap_handle_handover_required(
         r = ngap_send_error_indication2(source_ue,
                 NGAP_Cause_PR_nas, NGAP_CauseNas_authentication_failure);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3599,7 +3461,6 @@ void ngap_handle_handover_required(
         r = ngap_send_error_indication2(source_ue, NGAP_Cause_PR_misc,
                 NGAP_CauseMisc_control_processing_overload);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3640,7 +3501,6 @@ void ngap_handle_handover_required(
             r = ngap_send_error_indication2(source_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -3650,7 +3510,6 @@ void ngap_handle_handover_required(
             r = ngap_send_error_indication2(source_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -3660,7 +3519,6 @@ void ngap_handle_handover_required(
             r = ngap_send_error_indication2(source_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -3672,7 +3530,6 @@ void ngap_handle_handover_required(
                     NGAP_Cause_PR_radioNetwork,
                     NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -3683,7 +3540,6 @@ void ngap_handle_handover_required(
                     NGAP_Cause_PR_radioNetwork,
                     NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -3702,7 +3558,6 @@ void ngap_handle_handover_required(
                 source_ue, sess,
                 AMF_UPDATE_SM_CONTEXT_HANDOVER_REQUIRED, &param);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         ogs_pkbuf_free(param.n2smbuf);
     }
@@ -3786,7 +3641,6 @@ void ngap_handle_handover_request_ack(
         r = ngap_send_error_indication(gnb, NULL, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3795,7 +3649,6 @@ void ngap_handle_handover_request_ack(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3804,7 +3657,6 @@ void ngap_handle_handover_request_ack(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3814,7 +3666,6 @@ void ngap_handle_handover_request_ack(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3827,7 +3678,6 @@ void ngap_handle_handover_request_ack(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3836,7 +3686,6 @@ void ngap_handle_handover_request_ack(
         r = ngap_send_error_indication(gnb, NULL, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3851,7 +3700,6 @@ void ngap_handle_handover_request_ack(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_inconsistent_remote_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
     amf_ue = amf_ue_find_by_id(target_ue->amf_ue_id);
@@ -3863,7 +3711,6 @@ void ngap_handle_handover_request_ack(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3879,7 +3726,6 @@ void ngap_handle_handover_request_ack(
         r = ngap_send_error_indication2(target_ue,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3888,7 +3734,6 @@ void ngap_handle_handover_request_ack(
         r = ngap_send_error_indication2(target_ue,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -3906,7 +3751,6 @@ void ngap_handle_handover_request_ack(
             r = ngap_send_error_indication2(target_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -3916,7 +3760,6 @@ void ngap_handle_handover_request_ack(
             r = ngap_send_error_indication2(target_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -3926,7 +3769,6 @@ void ngap_handle_handover_request_ack(
             r = ngap_send_error_indication2(target_ue,
                     NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -3938,7 +3780,6 @@ void ngap_handle_handover_request_ack(
                     NGAP_Cause_PR_radioNetwork,
                     NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -3949,7 +3790,6 @@ void ngap_handle_handover_request_ack(
                     NGAP_Cause_PR_radioNetwork,
                     NGAP_CauseRadioNetwork_unknown_PDU_session_ID);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -3967,7 +3807,6 @@ void ngap_handle_handover_request_ack(
                 target_ue, sess,
                 AMF_UPDATE_SM_CONTEXT_HANDOVER_REQ_ACK, &param);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         ogs_pkbuf_free(param.n2smbuf);
     }
@@ -4023,7 +3862,6 @@ void ngap_handle_handover_failure(
         r = ngap_send_error_indication(gnb, NULL, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4032,7 +3870,6 @@ void ngap_handle_handover_failure(
         r = ngap_send_error_indication(gnb, NULL, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4042,7 +3879,6 @@ void ngap_handle_handover_failure(
         r = ngap_send_error_indication(gnb, NULL, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4055,7 +3891,6 @@ void ngap_handle_handover_failure(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4068,7 +3903,6 @@ void ngap_handle_handover_failure(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_inconsistent_remote_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4085,7 +3919,6 @@ void ngap_handle_handover_failure(
                 gnb, &target_ue->ran_ue_ngap_id, &target_ue->amf_ue_ngap_id,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
     ogs_debug("    Cause[Group:%d Cause:%d]",
@@ -4093,13 +3926,11 @@ void ngap_handle_handover_failure(
 
     r = ngap_send_handover_preparation_failure(source_ue, Cause);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 
     r = ngap_send_ran_ue_context_release_command(target_ue,
             NGAP_Cause_PR_radioNetwork, NGAP_CauseRadioNetwork_ho_failure_in_target_5GC_ngran_node_or_target_system,
             NGAP_UE_CTX_REL_NG_HANDOVER_FAILURE, 0);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 }
 
 void ngap_handle_handover_cancel(
@@ -4158,7 +3989,6 @@ void ngap_handle_handover_cancel(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4167,7 +3997,6 @@ void ngap_handle_handover_cancel(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4177,7 +4006,6 @@ void ngap_handle_handover_cancel(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4190,7 +4018,6 @@ void ngap_handle_handover_cancel(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4203,7 +4030,6 @@ void ngap_handle_handover_cancel(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_inconsistent_remote_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
     amf_ue = amf_ue_find_by_id(source_ue->amf_ue_id);
@@ -4215,7 +4041,6 @@ void ngap_handle_handover_cancel(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4232,7 +4057,6 @@ void ngap_handle_handover_cancel(
                 gnb, &source_ue->ran_ue_ngap_id, &source_ue->amf_ue_ngap_id,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
     ogs_debug("    Cause[Group:%d Cause:%d]",
@@ -4245,7 +4069,6 @@ void ngap_handle_handover_cancel(
                     NGAP_Cause_PR_radioNetwork,
                     NGAP_CauseRadioNetwork_handover_cancelled);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -4259,7 +4082,6 @@ void ngap_handle_handover_cancel(
                 amf_nsmf_pdusession_build_update_sm_context,
                 source_ue, sess, AMF_UPDATE_SM_CONTEXT_HANDOVER_CANCEL, &param);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     }
 }
 
@@ -4320,7 +4142,6 @@ void ngap_handle_uplink_ran_status_transfer(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4329,7 +4150,6 @@ void ngap_handle_uplink_ran_status_transfer(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4339,7 +4159,6 @@ void ngap_handle_uplink_ran_status_transfer(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4352,7 +4171,6 @@ void ngap_handle_uplink_ran_status_transfer(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4365,7 +4183,6 @@ void ngap_handle_uplink_ran_status_transfer(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_inconsistent_remote_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
     amf_ue = amf_ue_find_by_id(source_ue->amf_ue_id);
@@ -4377,7 +4194,6 @@ void ngap_handle_uplink_ran_status_transfer(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4394,7 +4210,6 @@ void ngap_handle_uplink_ran_status_transfer(
                 gnb, &source_ue->ran_ue_ngap_id, &source_ue->amf_ue_ngap_id,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4463,7 +4278,6 @@ void ngap_handle_handover_notification(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4472,7 +4286,6 @@ void ngap_handle_handover_notification(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4482,7 +4295,6 @@ void ngap_handle_handover_notification(
         r = ngap_send_error_indication(gnb, (uint64_t *)RAN_UE_NGAP_ID, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4495,7 +4307,6 @@ void ngap_handle_handover_notification(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4508,7 +4319,6 @@ void ngap_handle_handover_notification(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_inconsistent_remote_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
     amf_ue = amf_ue_find_by_id(target_ue->amf_ue_id);
@@ -4520,7 +4330,6 @@ void ngap_handle_handover_notification(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_unknown_local_UE_NGAP_ID);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4529,7 +4338,6 @@ void ngap_handle_handover_notification(
         r = ngap_send_error_indication(gnb, &target_ue->ran_ue_ngap_id, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4540,7 +4348,6 @@ void ngap_handle_handover_notification(
         r = ngap_send_error_indication(gnb, &target_ue->ran_ue_ngap_id, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_unspecified);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4580,7 +4387,6 @@ void ngap_handle_handover_notification(
             NGAP_UE_CTX_REL_NG_HANDOVER_COMPLETE,
             ogs_local_conf()->time.handover.duration);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 
     /* Save the number of ongoing SMF transactions before processing sessions */
     xact_count = amf_sess_xact_count(amf_ue);
@@ -4600,7 +4406,6 @@ void ngap_handle_handover_notification(
                 amf_nsmf_pdusession_build_update_sm_context,
                 source_ue, sess, AMF_UPDATE_SM_CONTEXT_HANDOVER_NOTIFY, &param);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     }
 
     /*
@@ -4613,7 +4418,6 @@ void ngap_handle_handover_notification(
                 NGAP_Cause_PR_radioNetwork,
                 NGAP_CauseRadioNetwork_partial_handover);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     }
 }
 
@@ -4674,7 +4478,6 @@ void ngap_handle_ran_configuration_update(
             cause = NGAP_CauseProtocol_semantic_error;
             r = ngap_send_ran_configuration_update_failure(gnb, group, cause);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -4683,7 +4486,6 @@ void ngap_handle_ran_configuration_update(
             cause = NGAP_CauseProtocol_semantic_error;
             r = ngap_send_ran_configuration_update_failure(gnb, group, cause);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -4721,7 +4523,6 @@ void ngap_handle_ran_configuration_update(
                 r = ngap_send_ran_configuration_update_failure(
                         gnb, group, cause);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return;
             }
 
@@ -4759,7 +4560,6 @@ void ngap_handle_ran_configuration_update(
                     r = ngap_send_ran_configuration_update_failure(
                             gnb, group, cause);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                     return;
                 }
 
@@ -4776,7 +4576,6 @@ void ngap_handle_ran_configuration_update(
                     r = ngap_send_ran_configuration_update_failure(
                             gnb, group, cause);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                     return;
                 }
 
@@ -4821,7 +4620,6 @@ void ngap_handle_ran_configuration_update(
                         r = ngap_send_ran_configuration_update_failure(
                                 gnb, group, cause);
                         ogs_expect(r == OGS_OK);
-                        ogs_assert(r != OGS_ERROR);
                         return;
                     }
 
@@ -4862,7 +4660,6 @@ void ngap_handle_ran_configuration_update(
 
             r = ngap_send_ran_configuration_update_failure(gnb, group, cause);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -4875,7 +4672,6 @@ void ngap_handle_ran_configuration_update(
 
             r = ngap_send_ran_configuration_update_failure(gnb, group, cause);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
 
@@ -4888,7 +4684,6 @@ void ngap_handle_ran_configuration_update(
 
             r = ngap_send_ran_configuration_update_failure(gnb, group, cause);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return;
         }
     }
@@ -4948,7 +4743,6 @@ void ngap_handle_ng_reset(
         r = ngap_send_error_indication(gnb, NULL, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -4960,7 +4754,6 @@ void ngap_handle_ng_reset(
         r = ngap_send_error_indication(gnb, NULL, NULL,
                 NGAP_Cause_PR_protocol, NGAP_CauseProtocol_semantic_error);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return;
     }
 
@@ -5003,7 +4796,6 @@ void ngap_handle_ng_reset(
         if (ogs_list_count(&gnb->ran_ue_list) == 0) {
             r = ngap_send_ng_reset_ack(gnb, NULL);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
 
         break;
@@ -5122,7 +4914,6 @@ void ngap_handle_ng_reset(
         ogs_assert(gnb->ng_reset_ack);
         r = ngap_send_to_gnb(gnb, gnb->ng_reset_ack, NGAP_NON_UE_SIGNALLING);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         /* Clear NG-Reset Ack Buffer */
         gnb->ng_reset_ack = NULL;

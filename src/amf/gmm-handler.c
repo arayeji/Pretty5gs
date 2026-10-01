@@ -873,7 +873,6 @@ ogs_nas_5gmm_cause_t gmm_handle_service_update(
     if (amf_sess_xact_count(amf_ue) == xact_count) {
         r = nas_5gs_send_service_accept(amf_ue);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     }
 
     return OGS_5GMM_CAUSE_REQUEST_ACCEPTED;
@@ -939,7 +938,6 @@ int gmm_handle_deregistration_request(amf_ue_t *amf_ue,
                     amf_nudm_sdm_build_subscription_delete,
                     amf_ue, state, NULL);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         } else if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
             r = amf_ue_sbi_discover_and_send(
                     OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL,
@@ -947,11 +945,9 @@ int gmm_handle_deregistration_request(amf_ue_t *amf_ue,
                     amf_npcf_am_policy_control_build_delete,
                     amf_ue, state, NULL);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         } else {
             r = nas_5gs_send_de_registration_accept(amf_ue);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
     }
 
@@ -1003,7 +999,6 @@ int gmm_handle_authentication_response(amf_ue_t *amf_ue,
             OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
             amf_nausf_auth_build_authenticate_confirmation, amf_ue, 0, NULL);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 
     return OGS_OK;
 }
@@ -1203,7 +1198,6 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
         r = nas_5gs_send_gmm_status(
                 amf_ue, OGS_5GMM_CAUSE_INVALID_MANDATORY_INFORMATION);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -1212,7 +1206,6 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
         r = nas_5gs_send_gmm_status(
                 amf_ue, OGS_5GMM_CAUSE_INVALID_MANDATORY_INFORMATION);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -1221,7 +1214,6 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
         r = nas_5gs_send_gmm_status(
                 amf_ue, OGS_5GMM_CAUSE_INVALID_MANDATORY_INFORMATION);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -1231,7 +1223,6 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
         r = nas_5gs_send_gmm_status(
                 amf_ue, OGS_5GMM_CAUSE_INVALID_MANDATORY_INFORMATION);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -1242,7 +1233,6 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
         r = nas_5gs_send_gmm_status(
                 amf_ue, OGS_5GMM_CAUSE_INVALID_MANDATORY_INFORMATION);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -1284,7 +1274,6 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                 r = nas_5gs_send_gmm_status(amf_ue,
                     OGS_5GMM_CAUSE_INSUFFICIENT_USER_PLANE_RESOURCES_FOR_THE_PDU_SESSION);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return OGS_ERROR;
             }
         }
@@ -1419,7 +1408,6 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                 r = nas_5gs_send_gmm_status(amf_ue,
                         OGS_5GMM_CAUSE_DNN_NOT_SUPPORTED_OR_NOT_SUBSCRIBED_IN_THE_SLICE);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return OGS_ERROR;
             }
 
@@ -1617,7 +1605,6 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                             amf_nnssf_nsselection_build_get,
                             ran_ue, sess, state, &param);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
 
                     ogs_sbi_discovery_option_free(v_discovery_option);
 
@@ -1635,7 +1622,6 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                             amf_nsmf_pdusession_build_create_sm_context,
                             ran_ue, sess, state, NULL);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
 
                 } else {
                     ogs_error("Invalid state [%d]", state);
@@ -1656,7 +1642,6 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                         AMF_UPDATE_SM_CONTEXT_DUPLICATED_PDU_SESSION_ID,
                         &param);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
 
         } else {
@@ -1666,7 +1651,6 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                 r = nas_5gs_send_back_gsm_message(ran_ue, sess,
                         OGS_5GMM_CAUSE_DNN_NOT_SUPPORTED_OR_NOT_SUBSCRIBED_IN_THE_SLICE, 0);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return OGS_ERROR;
             }
 
@@ -1686,7 +1670,6 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                         ran_ue, sess,
                         AMF_UPDATE_SM_CONTEXT_N1_RELEASED, &param);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             } else {
                 amf_nsmf_pdusession_sm_context_param_t param;
 
@@ -1698,7 +1681,6 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                         amf_nsmf_pdusession_build_update_sm_context,
                         ran_ue, sess, AMF_UPDATE_SM_CONTEXT_MODIFIED, &param);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
 
             switch (gsm_header->message_type) {
@@ -1731,7 +1713,6 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
                     r = nas_5gs_send_configuration_update_command(
                             amf_ue, &param);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
 
                     AMF_UE_CLEAR_PAGING_INFO(amf_ue);
                 }
@@ -1754,7 +1735,6 @@ int gmm_handle_ul_nas_transport(ran_ue_t *ran_ue, amf_ue_t *amf_ue,
         r = nas_5gs_send_gmm_status(amf_ue,
                 OGS_5GMM_CAUSE_MESSAGE_TYPE_NON_EXISTENT_OR_NOT_IMPLEMENTED);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 

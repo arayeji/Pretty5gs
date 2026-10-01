@@ -23,6 +23,7 @@
 
 #include "ngap-build.h"
 #include "ngap-path.h"
+#include "ngap-io.h"
 #include "nas-security.h"
 #include "nas-path.h"
 #include "sbi-path.h"
@@ -66,6 +67,11 @@ int ngap_send_to_gnb(amf_gnb_t *gnb, ogs_pkbuf_t *pkbuf, uint16_t stream_no)
 
     ogs_sctp_ppid_in_pkbuf(pkbuf) = OGS_SCTP_NGAP_PPID;
     ogs_sctp_stream_no_in_pkbuf(pkbuf) = stream_no;
+
+    /* dedicated IO thread owns the write side (amf.ngap_io_thread) */
+    if (ngap_io_active())
+        return ngap_io_post_send(gnb->sctp.sock, pkbuf, gnb->sctp.addr,
+                gnb->sctp.type != SOCK_STREAM);
 
     if (gnb->sctp.type == SOCK_STREAM) {
         ogs_sctp_write_to_buffer(&gnb->sctp, pkbuf);
@@ -141,9 +147,9 @@ int ngap_send_to_5gsm(amf_ue_t *amf_ue, ogs_pkbuf_t *esmbuf)
     ogs_assert(e);
     e->amf_ue_id = amf_ue->id;
     e->pkbuf = esmbuf;
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = amf_queue_push_main(e);
     if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        ogs_error("amf_queue_push_main() failed:%d", (int)rv);
         ogs_pkbuf_free(e->pkbuf);
         ogs_event_free(e);
     }
@@ -317,7 +323,7 @@ int ngap_send_to_nas(ran_ue_t *ran_ue,
         e->ngap.code = procedureCode;
         e->nas.type = security_header_type.type;
         e->pkbuf = nasbuf;
-        rv = ogs_queue_push(ogs_app()->queue, e);
+        rv = amf_queue_push_main(e);
         if (rv != OGS_OK) {
             ogs_error("ngap_send_to_nas() failed:%d", (int)rv);
             ogs_pkbuf_free(e->pkbuf);

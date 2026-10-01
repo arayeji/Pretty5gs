@@ -29,6 +29,7 @@ testunit_core_sources = files('''
     thread-test.c
     socket-test.c
     queue-test.c
+    worker-test.c
     poll-test.c
     tlv-test.c
     fsm-test.c

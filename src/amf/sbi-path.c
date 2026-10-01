@@ -134,7 +134,6 @@ int amf_ue_sbi_discover_and_send(
         r = nas_5gs_send_gmm_reject_from_sbi(
                 amf_ue, OGS_SBI_HTTP_STATUS_GATEWAY_TIMEOUT);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -147,7 +146,6 @@ int amf_ue_sbi_discover_and_send(
         r = nas_5gs_send_gmm_reject_from_sbi(
                 amf_ue, OGS_SBI_HTTP_STATUS_GATEWAY_TIMEOUT);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return rv;
     }
 
@@ -213,7 +211,6 @@ int amf_sess_sbi_discover_and_send(
                 ran_ue, sess,
                 OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED, AMF_NAS_BACKOFF_TIME);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -239,7 +236,6 @@ int amf_sess_sbi_discover_and_send(
                 ran_ue, sess,
                 OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED, AMF_NAS_BACKOFF_TIME);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return rv;
     }
 
@@ -345,7 +341,6 @@ static int client_discover_cb(
         r = nas_5gs_send_back_gsm_message(ran_ue, sess,
             OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED, AMF_NAS_BACKOFF_TIME);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         goto cleanup;
     }
@@ -355,7 +350,6 @@ static int client_discover_cb(
         r = nas_5gs_send_back_gsm_message(ran_ue, sess,
             OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED, AMF_NAS_BACKOFF_TIME);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         goto cleanup;
     }
@@ -365,7 +359,6 @@ static int client_discover_cb(
         r = nas_5gs_send_back_gsm_message(ran_ue, sess,
             OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED, AMF_NAS_BACKOFF_TIME);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         goto cleanup;
     }
@@ -382,7 +375,6 @@ static int client_discover_cb(
                 OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED,
                 AMF_NAS_BACKOFF_TIME);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         goto cleanup;
     }
@@ -481,7 +473,6 @@ static int client_discover_cb(
                 amf_nnssf_nsselection_build_get, ran_ue, sess,
                 AMF_SMF_SELECTION_IN_HPLMN_IN_HOME_ROUTED, &param);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         ogs_sbi_discovery_option_free(v_discovery_option);
 
@@ -492,7 +483,6 @@ static int client_discover_cb(
                 amf_nsmf_pdusession_build_create_sm_context,
                 ran_ue, sess, next_state, NULL);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
     } else {
         ogs_error("Invalid NEXT state [%d]", next_state);
@@ -588,7 +578,6 @@ void amf_sbi_send_activating_session(
             amf_nsmf_pdusession_build_update_sm_context,
             ran_ue, sess, state, &param);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 }
 
 void amf_sbi_send_deactivate_session(
@@ -611,7 +600,6 @@ void amf_sbi_send_deactivate_session(
             amf_nsmf_pdusession_build_update_sm_context,
             ran_ue, sess, state, &param);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 }
 
 void amf_sbi_send_deactivate_all_sessions(
@@ -704,7 +692,6 @@ void amf_sbi_send_release_session(
             amf_nsmf_pdusession_build_release_sm_context,
             ran_ue, sess, state, data);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 
     /* Prevent to invoke SMF for this session */
     CLEAR_SESSION_CONTEXT(sess);

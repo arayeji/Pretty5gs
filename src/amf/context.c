@@ -18,6 +18,8 @@
  */
 
 #include "ngap-path.h"
+#include "ngap-rx.h"
+#include "ngap-io.h"
 
 static amf_context_t self;
 
@@ -42,12 +44,94 @@ static void stats_add_amf_session(void);
 static void stats_remove_amf_session(void);
 static bool amf_namf_comm_parse_guti(ogs_nas_5gs_guti_t *guti, char *ue_context_id);
 
+/*
+ * Per-thread pkbuf pools (amf.pkbuf_thread_pool, default 0 = off).
+ *
+ * The default pkbuf pool has one mutex taken by every alloc/free from
+ * every thread. Each AMF thread may attach a private pool; frees route
+ * to the owning pool via pkbuf->pool and exhaustion falls back to the
+ * default pool. Buffers cross threads, so pools are destroyed only at
+ * process shutdown, never at thread exit.
+ */
+#define AMF_MAX_PKBUF_THREAD_POOLS \
+    (1 /* amf_main */ + 2 * (OGS_MAX_WORKERS - 1) /* shard + rx */ + \
+     4 /* io */ + 4 /* headroom */)
+
+static ogs_thread_mutex_t pkbuf_tp_mutex;
+static bool pkbuf_tp_mutex_ready = false;
+static ogs_pkbuf_pool_t *pkbuf_tp[AMF_MAX_PKBUF_THREAD_POOLS];
+static int num_pkbuf_tp = 0;
+
+void amf_pkbuf_thread_pool_attach(void)
+{
+    ogs_pkbuf_config_t config;
+    ogs_pkbuf_pool_t *pool = NULL;
+    int n = self.pkbuf_thread_pool;
+
+    if (n <= 0 || !pkbuf_tp_mutex_ready)
+        return;
+
+    memset(&config, 0, sizeof config);
+    config.cluster_128_pool = n * 4;
+    config.cluster_256_pool = n * 2;
+    config.cluster_512_pool = n;
+    config.cluster_1024_pool = n;
+    config.cluster_2048_pool = n;
+    config.cluster_8192_pool = ogs_max(n / 4, 16);
+    config.cluster_32768_pool = 0;
+    config.cluster_big_pool = 0;
+
+    /* ogs_pkbuf_pool_create() touches an unlocked global pool array
+     * and workers start concurrently */
+    ogs_thread_mutex_lock(&pkbuf_tp_mutex);
+    if (num_pkbuf_tp >= AMF_MAX_PKBUF_THREAD_POOLS) {
+        ogs_thread_mutex_unlock(&pkbuf_tp_mutex);
+        ogs_error("pkbuf thread pool registry full (%d); "
+                "thread keeps using the default pool", num_pkbuf_tp);
+        return;
+    }
+    pool = ogs_pkbuf_pool_create(&config);
+    if (pool)
+        pkbuf_tp[num_pkbuf_tp++] = pool;
+    ogs_thread_mutex_unlock(&pkbuf_tp_mutex);
+
+    if (!pool) {
+        ogs_warn("pkbuf thread pool create failed; using default pool");
+        return;
+    }
+
+    ogs_pkbuf_thread_pool_set(pool);
+}
+
+void amf_pkbuf_thread_pools_final(void)
+{
+    int i;
+
+    if (!pkbuf_tp_mutex_ready)
+        return;
+
+    for (i = 0; i < num_pkbuf_tp; i++) {
+        if (pkbuf_tp[i])
+            ogs_pkbuf_pool_destroy(pkbuf_tp[i]);
+        pkbuf_tp[i] = NULL;
+    }
+    num_pkbuf_tp = 0;
+
+    ogs_thread_mutex_destroy(&pkbuf_tp_mutex);
+    pkbuf_tp_mutex_ready = false;
+}
+
 void amf_context_init(void)
 {
     ogs_assert(context_initialized == 0);
 
     /* Initialize AMF context */
     memset(&self, 0, sizeof(amf_context_t));
+
+    if (!pkbuf_tp_mutex_ready) {
+        ogs_thread_mutex_init(&pkbuf_tp_mutex);
+        pkbuf_tp_mutex_ready = true;
+    }
 
     ogs_log_install_domain(&__ogs_sctp_domain, "sctp", ogs_core()->log.level);
     ogs_log_install_domain(&__ogs_ngap_domain, "ngap", ogs_core()->log.level);
@@ -88,6 +172,8 @@ void amf_context_init(void)
     ogs_assert(self.gnb_addr_hash);
     self.gnb_id_hash = ogs_hash_make();
     ogs_assert(self.gnb_id_hash);
+    self.gnb_sock_hash = ogs_hash_make();
+    ogs_assert(self.gnb_sock_hash);
     self.guti_ue_hash = ogs_hash_make();
     ogs_assert(self.guti_ue_hash);
     self.suci_hash = ogs_hash_make();
@@ -109,6 +195,8 @@ void amf_context_final(void)
     ogs_hash_destroy(self.gnb_addr_hash);
     ogs_assert(self.gnb_id_hash);
     ogs_hash_destroy(self.gnb_id_hash);
+    ogs_assert(self.gnb_sock_hash);
+    ogs_hash_destroy(self.gnb_sock_hash);
 
     ogs_assert(self.guti_ue_hash);
     ogs_hash_destroy(self.guti_ue_hash);
@@ -1090,6 +1178,46 @@ int amf_context_parse_config(void)
                     /* handle config in sbi library */
                 } else if (!strcmp(amf_key, "metrics")) {
                     /* handle config in metrics library */
+                } else if (!strcmp(amf_key, "ngap_rx_workers")) {
+                    const char *v = ogs_yaml_iter_value(&amf_iter);
+                    if (v) {
+                        self.ngap_rx_workers = atoi(v);
+                        if (self.ngap_rx_workers < 0 ||
+                            self.ngap_rx_workers > OGS_MAX_WORKERS - 1) {
+                            ogs_error("amf.ngap_rx_workers must be 0..%d",
+                                    OGS_MAX_WORKERS - 1);
+                            self.ngap_rx_workers = 0;
+                        }
+                    }
+                } else if (!strcmp(amf_key, "ngap_io_thread")) {
+                    const char *v = ogs_yaml_iter_value(&amf_iter);
+                    if (v) {
+                        self.ngap_io_thread = atoi(v);
+                        if (self.ngap_io_thread < 0)
+                            self.ngap_io_thread = 0;
+                        if (self.ngap_io_thread > 4) {
+                            ogs_error("amf.ngap_io_thread must be 0..4; "
+                                    "clamped to 4");
+                            self.ngap_io_thread = 4;
+                        }
+                    }
+                } else if (!strcmp(amf_key, "ngap_io_write_queue_max")) {
+                    const char *v = ogs_yaml_iter_value(&amf_iter);
+                    if (v) {
+                        self.ngap_io_write_queue_max = atoi(v);
+                        if (self.ngap_io_write_queue_max < 0)
+                            self.ngap_io_write_queue_max = 0;
+                    }
+                } else if (!strcmp(amf_key, "ngap_io_stall_teardown_sec")) {
+                    const char *v = ogs_yaml_iter_value(&amf_iter);
+                    if (v) self.ngap_io_stall_teardown_sec = atoi(v);
+                } else if (!strcmp(amf_key, "pkbuf_thread_pool")) {
+                    const char *v = ogs_yaml_iter_value(&amf_iter);
+                    if (v) {
+                        self.pkbuf_thread_pool = atoi(v);
+                        if (self.pkbuf_thread_pool < 0)
+                            self.pkbuf_thread_pool = 0;
+                    }
                 } else
                     ogs_warn("unknown key `%s`", amf_key);
             }
@@ -1276,9 +1404,16 @@ amf_gnb_t *amf_gnb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
     gnb->sctp.type = amf_gnb_sock_type(gnb->sctp.sock);
 
     if (gnb->sctp.type == SOCK_STREAM) {
-        gnb->sctp.poll.read = ogs_pollset_add(ogs_app()->pollset,
-            OGS_POLLIN, sock->fd, ngap_recv_upcall, sock);
-        ogs_assert(gnb->sctp.poll.read);
+        if (ngap_rx_active()) {
+            /* the owning RX worker polls this socket (ngap-rx.c) */
+            ngap_rx_watch_sock(sock);
+            gnb->sctp.poll.read = NULL;
+        } else {
+            gnb->sctp.poll.read = ogs_pollset_add(ogs_app()->pollset,
+                OGS_POLLIN, sock->fd, ngap_recv_upcall, sock);
+            ogs_assert(gnb->sctp.poll.read);
+        }
+        ogs_list_init(&gnb->sctp.write_queue);
     }
 
     gnb->max_num_of_ostreams = 0;
@@ -1288,6 +1423,8 @@ amf_gnb_t *amf_gnb_add(ogs_sock_t *sock, ogs_sockaddr_t *addr)
 
     ogs_hash_set(self.gnb_addr_hash,
             gnb->sctp.addr, sizeof(ogs_sockaddr_t), gnb);
+    ogs_hash_set(self.gnb_sock_hash,
+            &gnb->sctp.sock, sizeof(gnb->sctp.sock), gnb);
 
     memset(&e, 0, sizeof(e));
     e.gnb_id = gnb->id;
@@ -1332,10 +1469,80 @@ void amf_gnb_remove(amf_gnb_t *gnb)
 
     ogs_hash_set(self.gnb_addr_hash,
             gnb->sctp.addr, sizeof(ogs_sockaddr_t), NULL);
+    ogs_hash_set(self.gnb_sock_hash,
+            &gnb->sctp.sock, sizeof(gnb->sctp.sock), NULL);
     if (gnb->gnb_id_presence == true)
         ogs_hash_set(self.gnb_id_hash, &gnb->gnb_id, sizeof(gnb->gnb_id), NULL);
 
-    ogs_sctp_flush_and_destroy(&gnb->sctp);
+    if (gnb->sctp.type == SOCK_STREAM &&
+            (ngap_rx_active() || ngap_io_active())) {
+        /*
+         * Multi-phase teardown: the RX worker owns the read poll and/or
+         * an IO thread owns the write queue. The socket is destroyed
+         * only after every owner confirms (AMF_EVENT_NGAP_RX_SOCK_CLOSED
+         * / AMF_EVENT_NGAP_IO_DRAINED through the close registry).
+         *
+         * Register BEFORE posting unwatch/drain so a fast worker cannot
+         * confirm an unregistered sock (a destroy there would let
+         * accept() recycle the pointer under the registry).
+         */
+        ogs_pkbuf_t *wq_pkbuf = NULL, *wq_next = NULL;
+        ogs_sock_t *sock = gnb->sctp.sock;
+        int wait_mask = 0;
+
+        if (ngap_rx_active() && ngap_rx_owned(sock))
+            wait_mask |= NGAP_SOCK_CONFIRM_RX;
+        if (ngap_io_active())
+            wait_mask |= NGAP_SOCK_CONFIRM_IO;
+
+        if (wait_mask)
+            ngap_sock_close_register(sock, wait_mask);
+
+        if (wait_mask & NGAP_SOCK_CONFIRM_RX)
+            (void)ngap_rx_unwatch_sock(sock);
+        if (wait_mask & NGAP_SOCK_CONFIRM_IO) {
+            if (!ngap_io_drain_sock(sock)) {
+                ogs_error("ngap-io: DRAIN failed for sock:%p; "
+                        "forcing IO confirm", (void *)sock);
+                ngap_sock_close_confirm(sock, NGAP_SOCK_CONFIRM_IO);
+            }
+        }
+
+        ogs_free(gnb->sctp.addr);
+
+        /* main-side read poll exists only when RX workers are off */
+        if (gnb->sctp.poll.read)
+            ogs_pollset_remove(gnb->sctp.poll.read);
+        if (gnb->sctp.poll.write)
+            ogs_pollset_remove(gnb->sctp.poll.write);
+
+        ogs_list_for_each_safe(&gnb->sctp.write_queue, wq_next, wq_pkbuf) {
+            ogs_list_remove(&gnb->sctp.write_queue, wq_pkbuf);
+            ogs_pkbuf_free(wq_pkbuf);
+        }
+
+        if (!wait_mask)
+            ogs_sctp_destroy(sock);
+    } else if (gnb->sctp.type == SOCK_STREAM && !gnb->sctp.poll.read) {
+        /* RX workers already stopped (shutdown): their poll entry died
+         * with the worker pollset, and ogs_sctp_flush_and_destroy()
+         * would assert on the missing poll.read */
+        ogs_pkbuf_t *wq_pkbuf = NULL, *wq_next = NULL;
+
+        ogs_free(gnb->sctp.addr);
+
+        if (gnb->sctp.poll.write)
+            ogs_pollset_remove(gnb->sctp.poll.write);
+
+        ogs_sctp_destroy(gnb->sctp.sock);
+
+        ogs_list_for_each_safe(&gnb->sctp.write_queue, wq_next, wq_pkbuf) {
+            ogs_list_remove(&gnb->sctp.write_queue, wq_pkbuf);
+            ogs_pkbuf_free(wq_pkbuf);
+        }
+    } else {
+        ogs_sctp_flush_and_destroy(&gnb->sctp);
+    }
 
     ogs_pool_id_free(&amf_gnb_pool, gnb);
     ogs_metrics_dump_unlock();
@@ -1404,6 +1611,13 @@ int amf_gnb_sock_type(ogs_sock_t *sock)
 amf_gnb_t *amf_gnb_find_by_id(ogs_pool_id_t id)
 {
     return ogs_pool_find_by_id(&amf_gnb_pool, id);
+}
+
+amf_gnb_t *amf_gnb_find_by_sock(const void *sock)
+{
+    ogs_assert(sock);
+    return (amf_gnb_t *)ogs_hash_get(
+            self.gnb_sock_hash, &sock, sizeof(sock));
 }
 
 /** ran_ue_context handling function */

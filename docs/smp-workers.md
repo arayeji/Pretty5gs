@@ -72,6 +72,57 @@ the single-threaded daemon.
   asserts) messages for removed eNBs; worker pushes wake the main
   pollset; worker-side error paths skip main-thread hashes.
 
+## Done (AMF NGAP transport offload, phase 1)
+
+Ports of the MME S1AP helpers to NGAP. All knobs default to 0 (off);
+with every knob off the AMF behaves like the single-threaded daemon.
+
+```yaml
+amf:
+  ngap_rx_workers: 2           # 0..15: SCTP recv + APER decode threads
+  ngap_io_thread: 2            # 0..4: SCTP send threads (sticky per socket)
+  ngap_io_write_queue_max: 10240     # per-socket send FIFO, 0 = default
+  ngap_io_stall_teardown_sec: 10     # <0 disables stall teardown
+  pkbuf_thread_pool: 256       # per-thread pkbuf pool (no-op on talloc builds)
+```
+
+- `src/amf/ngap-rx.[ch]` (`ngap-rx%d`) — port of `s1ap-rx`: accepted
+  gNB sockets go to RX workers that drain + decode and post
+  pre-decoded `AMF_EVENT_NGAP_MESSAGE`s; WATCH/UNWATCH and
+  `AMF_EVENT_NGAP_RX_SOCK_CLOSED` / `_RX_WATCH_FAILED`.
+- `src/amf/ngap-io.[ch]` (`ngap-io%d`) — port of `s1ap-io` without the
+  congestion heartbeat: per-socket FIFO, non-blocking `sendmsg` +
+  POLLOUT, EPIPE marks send-dead, ETIMEDOUT/stall pushes CONNREFUSED.
+  Owns the two-phase socket close registry (RX + IO confirms).
+- `src/amf/ngap-free.[ch]` (`ngap-free`) — deferred ASN.1/pkbuf free.
+- `src/amf/event.c` — `amf_queue_push_main()` never blocks main;
+  CONNREFUSED side queue (coalesced per socket); must-deliver close
+  confirms retry then force-confirm; main batch cap 128.
+- Accepted SCTP sockets are now non-blocking with the event
+  subscription (`ogs_sctp_tune_connected`), and the 444
+  `ogs_assert(r != OGS_ERROR)` send-path aborts are `ogs_expect`.
+- **Ordering** (both found by `tests/registration`): on main the
+  recv handler reads one message per wakeup (level-triggered poll), and
+  events a dispatch pushes for itself (NGAP -> 5GMM/5GSM hand-off) run
+  right after it, ahead of the queue. Without the latter, two queued
+  InitialUEMessages for one UE ran as NGAP1 NGAP2 NAS1 NAS2.
+- Deliberate deviations from MME: no NGAP TX encode offload
+  (`s1ap_tx_workers` analog), no IO congestion heartbeat / overload
+  control, no SIGHUP reload.
+- Tests: `tests/load5gc` (`load5gc.yaml`, knobs on): NG-Setup churn,
+  4 gNBs x 12 UEs parallel registration/PDU session/dereg, 4 x 4
+  idle/service request. `tests/core` `worker-test`: FIFO dispatch,
+  non-blocking full-queue post, startup barrier, cross-thread pkbufs,
+  multi-producer.
+
+**Phase 2 (not started): AMF UE shards (`amf.workers`).** Needs
+`amf_ctx_lock` over pools/hashes/lists, shard bits in
+AMF_UE_NGAP_ID, `being_removed` exactly-once removal, an opt-in
+recursive lock for the process-global `lib/sbi` state (client/server
+pools, `xact_list`, NF instances) with pollset dispatch hooks in
+`lib/core`, per-worker UE timers, NGAP/SBI routing + rehome and gNB
+fan-out to owners.
+
 ## Done (SGW-C shards)
 
 1. **`src/sgwc/sgwc-workers.c` + `init.c`** — parse `sgwc.workers`

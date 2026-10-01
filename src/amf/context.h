@@ -137,6 +137,23 @@ typedef struct amf_context_s {
         } t3502, t3512;
     } time;
 
+    /*
+     * SMP knobs (docs/amf-smp.md). All default 0: AMF then runs the
+     * legacy single-threaded path, bit-identical to before.
+     *   ngap_rx_workers   0..15  SCTP recv + APER decode off main
+     *   ngap_io_thread    0..4   SCTP send threads (write side)
+     *   ngap_io_write_queue_max    per-gNB TX backlog cap (0 = 10240)
+     *   ngap_io_stall_teardown_sec full-queue teardown (0 = 10, <0 off)
+     *   pkbuf_thread_pool N      per-thread pkbuf pools (0 = off)
+     */
+    int             ngap_rx_workers;
+    int             ngap_io_thread;
+    int             ngap_io_write_queue_max;
+    int             ngap_io_stall_teardown_sec;
+    int             pkbuf_thread_pool;
+
+    ogs_hash_t      *gnb_sock_hash; /* hash table (sock pointer : GNB) */
+
 } amf_context_t;
 
 typedef struct amf_gnb_s {
@@ -613,7 +630,6 @@ struct amf_ue_s {
                     NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release, \
                     NGAP_UE_CTX_REL_NG_CONTEXT_REMOVE, 0); \
             ogs_expect(r == OGS_OK); \
-            ogs_assert(r != OGS_ERROR); \
         } \
         (__aMF)->ran_ue_holding_id = OGS_INVALID_POOL_ID; \
     } while(0)
@@ -998,6 +1014,16 @@ amf_gnb_t *amf_gnb_find_by_gnb_id(uint32_t gnb_id);
 int amf_gnb_set_gnb_id(amf_gnb_t *gnb, uint32_t gnb_id, uint8_t gnb_id_length);
 int amf_gnb_sock_type(ogs_sock_t *sock);
 amf_gnb_t *amf_gnb_find_by_id(ogs_pool_id_t id);
+amf_gnb_t *amf_gnb_find_by_sock(const void *sock);
+
+/*
+ * Per-thread pkbuf pools (amf.pkbuf_thread_pool). Attach from every
+ * thread's init (amf_main and each worker); no-op when the knob is 0.
+ * Pools outlive their threads and are destroyed once, after
+ * ogs_sctp_final(), by amf_pkbuf_thread_pools_final().
+ */
+void amf_pkbuf_thread_pool_attach(void);
+void amf_pkbuf_thread_pools_final(void);
 
 ran_ue_t *ran_ue_add(amf_gnb_t *gnb, uint64_t ran_ue_ngap_id);
 void ran_ue_remove(ran_ue_t *ran_ue);

@@ -154,7 +154,6 @@ int amf_nausf_auth_handle_authenticate(
 
     r = nas_5gs_send_authentication_request(amf_ue);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 
     return OGS_OK;
 }
