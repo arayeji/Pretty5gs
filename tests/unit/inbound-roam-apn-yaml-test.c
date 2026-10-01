@@ -5,7 +5,7 @@
  *
  * Regression: ogs_yaml sequence iteration must next() only in the loop
  * body. An extra next() in the while condition skips every other item —
- * the bug that dropped inbound_roam.apn_rule[1] (e.g. 43235 deny ims).
+ * the bug that dropped inbound_roam.apn_rule[1] (e.g. 99972 deny ims).
  */
 
 #include "ogs-core.h"
@@ -123,9 +123,9 @@ static void inbound_roam_apn_rule_yaml_count_test(abts_case *tc, void *data)
         "mme:\n"
         "  inbound_roam:\n"
         "    apn_rule:\n"
-        "      - plmn_id: { mcc: 432, mnc: 11 }\n"
-        "        allowed_apn: [mcinet]\n"
-        "      - plmn_id: { mcc: \"432\", mnc: \"35\" }\n"
+        "      - plmn_id: { mcc: 999, mnc: 71 }\n"
+        "        allowed_apn: [partner]\n"
+        "      - plmn_id: { mcc: \"999\", mnc: \"72\" }\n"
         "        denied_apn: [ims]\n";
 
     ABTS_INT_EQUAL(tc, 2, count_sequence_maps_correct(yaml));

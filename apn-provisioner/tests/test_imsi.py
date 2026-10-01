@@ -7,8 +7,8 @@ def test_oma_worked_example():
 
 
 def test_network_example():
-    # 432129951539038 -> 49 23 21 99 15 35 09 83 (real subscriber, 2.4)
-    assert imsi_to_semi_octets("432129951539038").hex() == "4923219915350983"
+    # 001010123456789 -> 09 10 10 10 32 54 76 98 (test PLMN 001-01)
+    assert imsi_to_semi_octets("001010123456789").hex() == "0910101032547698"
 
 
 def test_even_length_padding():
@@ -19,7 +19,7 @@ def test_even_length_padding():
 
 
 def test_mac_is_uppercase_hex_40():
-    mac = netwpin_mac("432129951539038", b"\x03\x0b\x6a\x00")
+    mac = netwpin_mac("001010123456789", b"\x03\x0b\x6a\x00")
     assert len(mac) == 40
     assert mac == mac.upper()
     assert all(c in "0123456789ABCDEF" for c in mac)

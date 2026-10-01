@@ -23,16 +23,16 @@
 
 #include "../../src/mme/mme-gtpc-select-match.h"
 
-#define IMSI_HOME       "432120123456789"
-#define IMSI_OTHER      "432110123456789"
+#define IMSI_HOME       "999700123456789"
+#define IMSI_OTHER      "999710123456789"
 
-static ogs_plmn_id_t plmn_home;     /* 432-12, matches IMSI_HOME */
-static ogs_plmn_id_t plmn_other;    /* 432-11, matches IMSI_OTHER */
+static ogs_plmn_id_t plmn_home;     /* 999-70, matches IMSI_HOME */
+static ogs_plmn_id_t plmn_other;    /* 999-71, matches IMSI_OTHER */
 
 static void plmn_init(void)
 {
-    ogs_plmn_id_build(&plmn_home, 432, 12, 2);
-    ogs_plmn_id_build(&plmn_other, 432, 11, 2);
+    ogs_plmn_id_build(&plmn_home, 999, 70, 2);
+    ogs_plmn_id_build(&plmn_other, 999, 71, 2);
 }
 
 /* Facts as the MME knows them when it picks an SMF for one session. */
@@ -53,7 +53,7 @@ static void sess_facts(mme_gtpc_sel_facts_t *facts,
 }
 
 /*
- * One smf entry, apn: [ims] + plmn_id: 432-12 — that APN for that IMSI
+ * One smf entry, apn: [ims] + plmn_id: 999-70 — that APN for that IMSI
  * PLMN only, not either of them.
  */
 static void gtpc_select_and_test(abts_case *tc, void *data)
@@ -74,7 +74,7 @@ static void gtpc_select_and_test(abts_case *tc, void *data)
     /* An entry carrying keys is never the default entry. */
     ABTS_TRUE(tc, mme_gtpc_sel_keys_are_empty(&keys) == false);
 
-    /* ims + 432-12 -> hit */
+    /* ims + 999-70 -> hit */
     sess_facts(&facts, "ims", IMSI_HOME, 1);
     ABTS_TRUE(tc, mme_gtpc_sel_match(&keys, &facts) == true);
 
@@ -179,12 +179,12 @@ static void gtpc_select_sgw_apn_never_wins_test(abts_case *tc, void *data)
 /*
  * The deployed sgwc shape:
  *
- *   - address: A   apn: ims   plmn_id: 432-12   order: 0
- *   - address: B              plmn_id: 432-12   order: 1
- *   - address: C              plmn_id: 999-12   order: 2
+ *   - address: A   apn: ims   plmn_id: 999-70   order: 0
+ *   - address: B              plmn_id: 999-70   order: 1
+ *   - address: C              plmn_id: 999-71   order: 2
  *   - address: D                                order: 3   <- default
  *
- * An ims session of a 432-12 sub must take A on order 0; any other APN
+ * An ims session of a 999-70 sub must take A on order 0; any other APN
  * of the same sub must take B; a roamer must fall through to C / D.
  */
 static void gtpc_select_sgw_apn_plmn_order_test(abts_case *tc, void *data)
@@ -226,13 +226,13 @@ static void gtpc_select_sgw_apn_plmn_order_test(abts_case *tc, void *data)
 /* lowest order among matching entries wins, else the default */
 #define PICK(fp) do {                                                   winner = "D"; best = 0x7fffffff;                                    for (i = 0; i < 4; i++) {                                               if (mme_gtpc_sel_keys_are_empty(list[i].k))                             continue;                                                       if (!mme_gtpc_sel_match(list[i].k, (fp)))                               continue;                                                       if (list[i].order < best) {                                             best = list[i].order; winner = list[i].name;                    }                                                               }                                                               } while (0)
 
-    /* ims session of a 432-12 sub -> A wins on order 0 */
+    /* ims session of a 999-70 sub -> A wins on order 0 */
     sess_facts(&facts, "ims", IMSI_HOME, 1);
     PICK(&facts);
     ABTS_STR_EQUAL(tc, "A", winner);
 
-    /* hiweb session of the same sub -> B; A must not steal it */
-    sess_facts(&facts, "hiweb", IMSI_HOME, 1);
+    /* corp session of the same sub -> B; A must not steal it */
+    sess_facts(&facts, "corp", IMSI_HOME, 1);
     PICK(&facts);
     ABTS_STR_EQUAL(tc, "B", winner);
 
@@ -242,12 +242,12 @@ static void gtpc_select_sgw_apn_plmn_order_test(abts_case *tc, void *data)
     ABTS_STR_EQUAL(tc, "B", winner);
 
     /* other-PLMN sub -> C */
-    sess_facts(&facts, "mcinet", IMSI_OTHER, 1);
+    sess_facts(&facts, "partner", IMSI_OTHER, 1);
     PICK(&facts);
     ABTS_STR_EQUAL(tc, "C", winner);
 
     /* nothing matches -> the keyless default */
-    sess_facts(&facts, "mtnirancell", "432350123456789", 1);
+    sess_facts(&facts, "visitor", "999720123456789", 1);
     PICK(&facts);
     ABTS_STR_EQUAL(tc, "D", winner);
 #undef PICK
@@ -293,7 +293,7 @@ static void gtpc_select_serving_plmn_test(abts_case *tc, void *data)
     ABTS_TRUE(tc, mme_gtpc_sel_match(&keys, &facts) == false);
 }
 
-/* apn: [ims] + imsi_prefix: 43212 */
+/* apn: [ims] + imsi_prefix: 99970 */
 static void gtpc_select_imsi_prefix_test(abts_case *tc, void *data)
 {
     mme_gtpc_sel_keys_t keys;
@@ -306,7 +306,7 @@ static void gtpc_select_imsi_prefix_test(abts_case *tc, void *data)
     apn[0] = "ims";
     keys.apn = apn;
     keys.num_of_apn = 1;
-    keys.imsi_prefix = "43212";
+    keys.imsi_prefix = "99970";
 
     sess_facts(&facts, "ims", IMSI_HOME, 1);
     ABTS_TRUE(tc, mme_gtpc_sel_match(&keys, &facts) == true);
@@ -322,7 +322,7 @@ static void gtpc_select_imsi_prefix_test(abts_case *tc, void *data)
  * sgwc_selection: per_pdn rules (every one carries apn:)
  *
  *   [0] apn: ims                      order: 5
- *   [1] apn: ims    plmn_id: 432-12   order: 1
+ *   [1] apn: ims    plmn_id: 999-70   order: 1
  *   [2] apn: [ims, volte]             order: 5   (ties [0], [0] listed first)
  */
 static void gtpc_select_pick_test(abts_case *tc, void *data)
@@ -388,9 +388,9 @@ static void gtpc_select_pick_test(abts_case *tc, void *data)
 }
 
 /*
- * smf list: plmn 432-11 (order 1), ims + 432-12 (order 0, force),
- * plmn 432-12 (order 2). Only ims of 432-12 may land on the forced
- * entry; every other 432-12 APN goes to the plain 432-12 entry.
+ * smf list: plmn 999-71 (order 1), ims + 999-70 (order 0, force),
+ * plmn 999-70 (order 2). Only ims of 999-70 may land on the forced
+ * entry; every other 999-70 APN goes to the plain 999-70 entry.
  */
 static void gtpc_select_smf_force_apn_plmn_test(abts_case *tc, void *data)
 {
@@ -421,8 +421,8 @@ static void gtpc_select_smf_force_apn_plmn_test(abts_case *tc, void *data)
     kp[1] = &ims_home; order[1] = 0;
     kp[2] = &home;     order[2] = 2;
 
-    /* the forced entry alone: only ims of 432-12 */
-    sess_facts(&facts, "hiweb", IMSI_HOME, 1);
+    /* the forced entry alone: only ims of 999-70 */
+    sess_facts(&facts, "corp", IMSI_HOME, 1);
     ABTS_TRUE(tc, mme_gtpc_sel_match(&ims_home, &facts) == false);
     sess_facts(&facts, "backhaul", IMSI_HOME, 1);
     ABTS_TRUE(tc, mme_gtpc_sel_match(&ims_home, &facts) == false);
@@ -432,11 +432,11 @@ static void gtpc_select_smf_force_apn_plmn_test(abts_case *tc, void *data)
     /* whole list */
     sess_facts(&facts, "ims", IMSI_HOME, 1);
     ABTS_INT_EQUAL(tc, 1, mme_gtpc_sel_pick(kp, order, 3, &facts));
-    sess_facts(&facts, "hiweb", IMSI_HOME, 1);
+    sess_facts(&facts, "corp", IMSI_HOME, 1);
     ABTS_INT_EQUAL(tc, 2, mme_gtpc_sel_pick(kp, order, 3, &facts));
     sess_facts(&facts, "ims", IMSI_OTHER, 1);
     ABTS_INT_EQUAL(tc, 0, mme_gtpc_sel_pick(kp, order, 3, &facts));
-    sess_facts(&facts, "hiweb", IMSI_OTHER, 1);
+    sess_facts(&facts, "corp", IMSI_OTHER, 1);
     ABTS_INT_EQUAL(tc, 0, mme_gtpc_sel_pick(kp, order, 3, &facts));
 }
 

@@ -3,7 +3,7 @@ from tests import nas_fixtures as fx
 
 
 def test_initial_ue_message():
-    nas = fx.make_attach_request(fx.make_imsi_id("432129951539038"),
+    nas = fx.make_attach_request(fx.make_imsi_id("001010123456789"),
                                  fx.make_pdn_connectivity_request(None))
     payload = fx.s1ap_initial_ue(enb_ue_id=555, nas_pdu=nas)
     ev = decode_s1ap(payload)

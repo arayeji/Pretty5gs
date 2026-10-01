@@ -5,7 +5,7 @@ from apn_provisioner.s1ap import decode_s1ap
 from apn_provisioner.s1_source import iter_s1ap_from_pcap, parse_event_payload
 from tests import nas_fixtures as fx
 
-IMSI = "432129951539038"
+IMSI = "001010123456789"
 
 
 def test_pcap_roundtrip(tmp_path):
@@ -26,8 +26,8 @@ def test_pcap_roundtrip(tmp_path):
     assert ev.enb_ue_id == 555
 
 
-def _event_payload(imsi, msisdn="989951079038", imei="351234067890151",
-                   imeisv="3512340678901512", mcc="432", mnc="12"):
+def _event_payload(imsi, msisdn="10000000001", imei="351234067890151",
+                   imeisv="3512340678901512", mcc="001", mnc="01"):
     return (f"event=attach imsi={imsi} msisdn={msisdn} imei={imei} "
             f"imeisv={imeisv} mcc={mcc} mnc={mnc} apn_absent=1\n")
 
@@ -36,19 +36,19 @@ def test_parse_event_payload():
     evt = parse_event_payload(_event_payload(IMSI))
     assert evt is not None
     assert evt.imsi == IMSI
-    assert evt.msisdn == "989951079038"
+    assert evt.msisdn == "10000000001"
     assert evt.imei == "351234067890151"
     assert evt.imeisv == "3512340678901512"
-    assert evt.mcc == "432" and evt.mnc == "12"
+    assert evt.mcc == "001" and evt.mnc == "01"
     assert evt.apn_absent is True
 
 
 def test_parse_event_payload_handles_missing_fields():
     evt = parse_event_payload(
-        "event=attach imsi=432000000000001 "
-        "msisdn=- imei=- imeisv=- mcc=432 mnc=12 apn_absent=1")
+        "event=attach imsi=001010000000001 "
+        "msisdn=- imei=- imeisv=- mcc=001 mnc=01 apn_absent=1")
     assert evt is not None
-    assert evt.imsi == "432000000000001"
+    assert evt.imsi == "001010000000001"
     assert evt.msisdn is None
     assert evt.imei is None
     assert evt.imeisv is None
@@ -88,4 +88,4 @@ def test_unix_datagram_source_end_to_end(tmp_path):
 
     assert len(out) == 1
     assert out[0].imsi == IMSI
-    assert out[0].msisdn == "989951079038"
+    assert out[0].msisdn == "10000000001"

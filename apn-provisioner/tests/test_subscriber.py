@@ -3,17 +3,17 @@ from apn_provisioner.subscriber import select_subscriber
 
 def test_default_indicator_slice_and_first_session():
     doc = {
-        "imsi": "432129951539038",
-        "msisdn": ["989951079038"],
+        "imsi": "001010123456789",
+        "msisdn": ["10000000001"],
         "slice": [
             {"sst": 1, "session": [{"name": "other"}]},
             {"sst": 1, "default_indicator": True,
-             "session": [{"name": "hiweb"}, {"name": "ims"}]},
+             "session": [{"name": "myapn"}, {"name": "ims"}]},
         ],
     }
     sub = select_subscriber(doc)
-    assert sub.apn == "hiweb"          # default slice, first data session
-    assert sub.msisdn == "989951079038"
+    assert sub.apn == "myapn"          # default slice, first data session
+    assert sub.msisdn == "10000000001"
 
 
 def test_skips_ims_when_it_is_first_in_slice():
@@ -21,10 +21,10 @@ def test_skips_ims_when_it_is_first_in_slice():
         "imsi": "1", "msisdn": ["9"],
         "slice": [{"default_indicator": True, "session": [
             {"name": "ims", "qos": {"index": 5}},
-            {"name": "hiweb", "qos": {"index": 9}},
+            {"name": "myapn", "qos": {"index": 9}},
         ]}],
     }
-    assert select_subscriber(doc).apn == "hiweb"
+    assert select_subscriber(doc).apn == "myapn"
 
 
 def test_skips_qci5_even_if_named_oddly():
@@ -32,10 +32,10 @@ def test_skips_qci5_even_if_named_oddly():
         "imsi": "1", "msisdn": ["9"],
         "slice": [{"session": [
             {"name": "voice", "qos": {"index": 5}},
-            {"name": "hiweb", "qos": {"index": 9}},
+            {"name": "myapn", "qos": {"index": 9}},
         ]}],
     }
-    assert select_subscriber(doc).apn == "hiweb"
+    assert select_subscriber(doc).apn == "myapn"
 
 
 def test_honours_default_dnn_indicator_among_data_apns():
@@ -44,10 +44,10 @@ def test_honours_default_dnn_indicator_among_data_apns():
         "slice": [{"session": [
             {"name": "ims", "qos": {"index": 5}},
             {"name": "register", "qos": {"index": 9}},
-            {"name": "hiweb", "qos": {"index": 9}, "default_dnn_indicator": True},
+            {"name": "myapn", "qos": {"index": 9}, "default_dnn_indicator": True},
         ]}],
     }
-    assert select_subscriber(doc).apn == "hiweb"
+    assert select_subscriber(doc).apn == "myapn"
 
 
 def test_ims_only_slice_is_skipped():

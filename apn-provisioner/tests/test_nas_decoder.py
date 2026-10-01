@@ -1,7 +1,7 @@
 from apn_provisioner.nas_decoder import decode_nas, parse_eps_mobile_identity
 from tests import nas_fixtures as fx
 
-IMSI = "432129951539038"
+IMSI = "001010123456789"
 IMEISV = "3512340678901512"  # 14-digit IMEI + 2-digit SV
 
 

@@ -3,7 +3,7 @@ from apn_provisioner.nas_decoder import decode_nas
 from apn_provisioner.s1ap import decode_s1ap
 from tests import nas_fixtures as fx
 
-IMSI = "432129951539038"
+IMSI = "001010123456789"
 IMEISV = "3512340678901512"
 ASSOC = "10.0.0.10<->10.0.0.20"
 UPLINK = {"InitialUEMessage", "UplinkNASTransport"}

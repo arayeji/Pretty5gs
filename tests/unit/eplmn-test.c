@@ -132,7 +132,7 @@ static void eplmn_nas_encoding_test(abts_case *tc, void *data)
     uint8_t *encoded = NULL;
     int rv;
 
-    ogs_plmn_id_build(&plmn_id, 432, 12, 2);
+    ogs_plmn_id_build(&plmn_id, 999, 70, 2);
     rv = mme_eplmn_build_nas_list(&nas_list, 1, &plmn_id);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
     ABTS_INT_EQUAL(tc, 3, nas_list.length);
@@ -144,13 +144,13 @@ static void eplmn_nas_encoding_test(abts_case *tc, void *data)
      * whereas the NAS/BCD wire order (TS 23.003 12.1) is
      *   MCC2|MCC1, MNC3|MCC3, MNC2|MNC1
      * The two coincide only for 2-digit MNCs, where ogs_plmn_id_build()
-     * parks the 0xf filler in mnc1 - which is why the 432-12 case below
+     * parks the 0xf filler in mnc1 - which is why the 999-70 case below
      * used to pass while any 3-digit MNC did not.
      */
     nas_plmn = &nas_list.nas_plmn_id[0];
-    ABTS_INT_EQUAL(tc, 0x34, *((uint8_t *)nas_plmn));
-    ABTS_INT_EQUAL(tc, 0xf2, *((uint8_t *)nas_plmn + 1));
-    ABTS_INT_EQUAL(tc, 0x21, *((uint8_t *)nas_plmn + 2));
+    ABTS_INT_EQUAL(tc, 0x99, *((uint8_t *)nas_plmn));
+    ABTS_INT_EQUAL(tc, 0xf9, *((uint8_t *)nas_plmn + 1));
+    ABTS_INT_EQUAL(tc, 0x07, *((uint8_t *)nas_plmn + 2));
 
     /* 3-digit MNC: MCC 310 / MNC 260 encodes as 13 00 62 */
     ogs_plmn_id_build(&plmn_id, 310, 260, 3);
@@ -162,7 +162,7 @@ static void eplmn_nas_encoding_test(abts_case *tc, void *data)
     ABTS_INT_EQUAL(tc, 0x62, *((uint8_t *)nas_plmn + 2));
 
     memset(&nas_list, 0, sizeof(nas_list));
-    ogs_plmn_id_build(&plmn_id, 432, 12, 2);
+    ogs_plmn_id_build(&plmn_id, 999, 70, 2);
     mme_eplmn_build_nas_list(&nas_list, 1, &plmn_id);
 
     pkbuf = ogs_pkbuf_alloc(NULL, OGS_MAX_SDU_LEN);
@@ -177,9 +177,9 @@ static void eplmn_nas_encoding_test(abts_case *tc, void *data)
     encoded = pkbuf->data;
     ABTS_INT_EQUAL(tc, 4, ogs_nas_eps_encode_plmn_list(pkbuf, &nas_list));
     ABTS_INT_EQUAL(tc, 3, encoded[0]);      /* length octet */
-    ABTS_INT_EQUAL(tc, 0x34, encoded[1]);
-    ABTS_INT_EQUAL(tc, 0xf2, encoded[2]);
-    ABTS_INT_EQUAL(tc, 0x21, encoded[3]);
+    ABTS_INT_EQUAL(tc, 0x99, encoded[1]);
+    ABTS_INT_EQUAL(tc, 0xf9, encoded[2]);
+    ABTS_INT_EQUAL(tc, 0x07, encoded[3]);
 
     ogs_pkbuf_free(pkbuf);
 }
@@ -191,10 +191,10 @@ static void eplmn_serving_only_test(abts_case *tc, void *data)
     ogs_nas_plmn_list_t nas_list;
     int rv;
 
-    ogs_plmn_id_build(&eplmn[0], 432, 12, 2);
-    ogs_plmn_id_build(&eplmn[1], 432, 11, 2);
-    ogs_plmn_id_build(&eplmn[2], 432, 35, 2);
-    ogs_plmn_id_build(&serving, 432, 11, 2);
+    ogs_plmn_id_build(&eplmn[0], 999, 70, 2);
+    ogs_plmn_id_build(&eplmn[1], 999, 71, 2);
+    ogs_plmn_id_build(&eplmn[2], 999, 72, 2);
+    ogs_plmn_id_build(&serving, 999, 71, 2);
 
     ABTS_INT_EQUAL(tc, 1, mme_eplmn_count_for_serving(
                 &serving, true, 3, eplmn));
@@ -210,7 +210,7 @@ static void eplmn_serving_only_test(abts_case *tc, void *data)
         ABTS_TRUE(tc, memcmp(&expected, &nas_list, sizeof(nas_list)) == 0);
     }
 
-    ogs_plmn_id_build(&serving, 432, 99, 2);
+    ogs_plmn_id_build(&serving, 999, 79, 2);
     ABTS_INT_EQUAL(tc, 3, mme_eplmn_count_for_serving(
                 &serving, true, 3, eplmn));
     rv = mme_eplmn_build_nas_list_for_serving(
@@ -218,7 +218,7 @@ static void eplmn_serving_only_test(abts_case *tc, void *data)
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
     ABTS_INT_EQUAL(tc, 9, nas_list.length);
 
-    ogs_plmn_id_build(&serving, 432, 11, 2);
+    ogs_plmn_id_build(&serving, 999, 71, 2);
     ABTS_INT_EQUAL(tc, 3, mme_eplmn_count_for_serving(
                 &serving, false, 3, eplmn));
     rv = mme_eplmn_build_nas_list_for_serving(
@@ -234,15 +234,15 @@ static void eplmn_imsi_only_test(abts_case *tc, void *data)
     ogs_nas_plmn_list_t nas_list, expected;
     int rv;
 
-    ogs_plmn_id_build(&eplmn[0], 432, 12, 2);
-    ogs_plmn_id_build(&eplmn[1], 432, 11, 2);
-    ogs_plmn_id_build(&eplmn[2], 432, 35, 2);
+    ogs_plmn_id_build(&eplmn[0], 999, 70, 2);
+    ogs_plmn_id_build(&eplmn[1], 999, 71, 2);
+    ogs_plmn_id_build(&eplmn[2], 999, 72, 2);
 
-    /* IMSI home 432-11 while camping on 432-12 → send 432-11 only */
+    /* IMSI home 999-71 while camping on 999-70 → send 999-71 only */
     ABTS_INT_EQUAL(tc, 1, mme_eplmn_count_for_imsi(
-                "432112940251599", true, 3, eplmn));
+                "999710000000001", true, 3, eplmn));
     rv = mme_eplmn_build_nas_list_for_imsi(
-            &nas_list, "432112940251599", true, 3, eplmn);
+            &nas_list, "999710000000001", true, 3, eplmn);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
     rv = mme_eplmn_build_nas_list(&expected, 1, &eplmn[1]);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
@@ -251,15 +251,15 @@ static void eplmn_imsi_only_test(abts_case *tc, void *data)
 
     /* Home PLMN not in list → full list */
     ABTS_INT_EQUAL(tc, 3, mme_eplmn_count_for_imsi(
-                "432990123456789", true, 3, eplmn));
+                "999790123456789", true, 3, eplmn));
     rv = mme_eplmn_build_nas_list_for_imsi(
-            &nas_list, "432990123456789", true, 3, eplmn);
+            &nas_list, "999790123456789", true, 3, eplmn);
     ABTS_INT_EQUAL(tc, OGS_OK, rv);
     ABTS_INT_EQUAL(tc, 9, nas_list.length);
 
     /* imsi_plmn_only off → always full list */
     ABTS_INT_EQUAL(tc, 3, mme_eplmn_count_for_imsi(
-                "432112940251599", false, 3, eplmn));
+                "999710000000001", false, 3, eplmn));
 }
 
 abts_suite *test_eplmn(abts_suite *suite)

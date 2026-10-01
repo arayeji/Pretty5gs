@@ -14,7 +14,7 @@ def _find_char(root, ctype):
 
 
 def test_roundtrip_wbxml_structure():
-    apn = "hiweb"
+    apn = "myapn"
     wbxml = cp.build_wbxml(apn)
     root = decode_wbxml(wbxml)
     assert root.tag == "wap-provisioningdoc"
@@ -22,13 +22,13 @@ def test_roundtrip_wbxml_structure():
 
     boot = _find_char(root, "BOOTSTRAP")[0]
     parms = {p.attrs["name"]: p.attrs.get("value", "") for p in boot.children}
-    assert parms["NAME"] == "HiWEB"
+    assert parms["NAME"] == cp.BOOTSTRAP_NAME
 
     napdef = _find_char(root, "NAPDEF")[0]
     np = {p.attrs["name"]: p.attrs.get("value", "") for p in napdef.children}
-    assert np["NAPID"] == "HIWEBGPRS"
+    assert np["NAPID"] == cp.NAPID
     assert np["BEARER"] == "GSM-GPRS"
-    assert np["NAME"] == "HiWEB Internet"
+    assert np["NAME"] == cp.NAP_NAME
     assert np["NAP-ADDRESS"] == apn  # dynamic APN from HSS
     assert np["NAP-ADDRTYPE"] == "APN"
     assert "INTERNET" in np  # flag parm, empty value
@@ -36,8 +36,8 @@ def test_roundtrip_wbxml_structure():
     app = _find_char(root, "APPLICATION")[0]
     ap = {p.attrs["name"]: p.attrs.get("value", "") for p in app.children}
     assert ap["APPID"] == "w2"
-    assert ap["NAME"] == "HiWEB Internet"  # NAME stays on code page 0
-    assert ap["TO-NAPID"] == "HIWEBGPRS"  # links back to the NAPDEF
+    assert ap["NAME"] == cp.NAP_NAME  # NAME stays on code page 0
+    assert ap["TO-NAPID"] == cp.NAPID  # links back to the NAPDEF
 
 
 def test_dynamic_apn_flows_through():
@@ -49,7 +49,7 @@ def test_dynamic_apn_flows_through():
 
 
 def test_roundtrip_wsp_push():
-    msg = cp.build_message("432129951539038", "989951079038", "hiweb", ref=3)
+    msg = cp.build_message("001010123456789", "10000000001", "myapn", ref=3)
     parsed = decode_wsp_push(msg.wsp_pdu)
     assert parsed.content_type == "application/vnd.wap.connectivity-wbxml"
     assert parsed.sec == "NETWPIN"
@@ -65,7 +65,7 @@ def test_malformed_is_rejected():
 
 
 def test_tshark_validation_optional():
-    msg = cp.build_message("432129951539038", "989951079038", "hiweb", ref=3)
+    msg = cp.build_message("001010123456789", "10000000001", "myapn", ref=3)
     out = run_tshark_validation(msg.wsp_pdu)
     if out is None:
         pytest.skip("tshark not installed; run on a host with tshark (see README)")

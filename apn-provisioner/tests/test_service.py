@@ -4,7 +4,7 @@ from apn_provisioner.store import Store
 from apn_provisioner.subscriber import Subscriber
 from tests import nas_fixtures as fx
 
-IMSI = "432129951539038"
+IMSI = "001010123456789"
 IMEISV = "3512340678901512"
 ASSOC = "10.0.0.10<->10.0.0.20"
 
@@ -39,7 +39,7 @@ def _make_service(tmp_path, dry_run):
     cfg = Config()
     cfg.dry_run = dry_run
     store = Store(str(tmp_path / "s.db"))
-    lookup = FakeLookup({IMSI: Subscriber(IMSI, "989951079038", "hiweb")})
+    lookup = FakeLookup({IMSI: Subscriber(IMSI, "10000000001", "myapn")})
     sender = FakeSender()
     return Service(cfg, store, lookup, sender), sender, store
 
@@ -71,7 +71,7 @@ def test_live_send_path(tmp_path):
     assert svc.metrics.sends == 1
     assert len(sender.sent) == 1
     msisdn, segments = sender.sent[0]
-    assert msisdn == "989951079038"
+    assert msisdn == "10000000001"
     assert len(segments) >= 2  # concatenated
     rec = store.get_record(IMSI)
     assert rec.last_result == "sent"
@@ -105,8 +105,8 @@ def test_attach_event_dry_run_would_send(tmp_path):
     from apn_provisioner.s1_source import AttachEvent
     svc, sender, store = _make_service(tmp_path, dry_run=True)
     svc.process_attach_event(AttachEvent(
-        imsi=IMSI, msisdn="989951079038", imei=IMEISV[:14], imeisv=IMEISV,
-        mcc="432", mnc="12", apn_absent=True))
+        imsi=IMSI, msisdn="10000000001", imei=IMEISV[:14], imeisv=IMEISV,
+        mcc="001", mnc="01", apn_absent=True))
     assert svc.metrics.correlations_resolved == 1
     assert svc.metrics.skips["dry_run"] == 1
     assert sender.sent == []
@@ -120,21 +120,21 @@ def test_attach_event_live_send_uses_msisdn_hint(tmp_path):
     from apn_provisioner.s1_source import AttachEvent
     cfg = Config(); cfg.dry_run = False
     store = Store(str(tmp_path / "s.db"))
-    lookup = FakeLookup({IMSI: Subscriber(IMSI, "", "hiweb")})  # no MSISDN in HSS
+    lookup = FakeLookup({IMSI: Subscriber(IMSI, "", "myapn")})  # no MSISDN in HSS
     sender = FakeSender()
     svc = Service(cfg, store, lookup, sender)
     svc.process_attach_event(AttachEvent(
-        imsi=IMSI, msisdn="989951079038", imei=IMEISV[:14], imeisv=IMEISV,
+        imsi=IMSI, msisdn="10000000001", imei=IMEISV[:14], imeisv=IMEISV,
         apn_absent=True))
     assert svc.metrics.sends == 1
-    assert sender.sent[0][0] == "989951079038"
+    assert sender.sent[0][0] == "10000000001"
 
 
 def test_guti_resolves_after_learning(tmp_path):
     """A GUTI-only re-attach resolves once the IMSI<->GUTI was learned earlier."""
     cfg = Config(); cfg.dry_run = True
     store = Store(str(tmp_path / "s.db"))
-    svc = Service(cfg, store, FakeLookup({IMSI: Subscriber(IMSI, "989", "hiweb")}),
+    svc = Service(cfg, store, FakeLookup({IMSI: Subscriber(IMSI, "100", "myapn")}),
                   FakeSender())
     guti = fx.make_guti_id(mtmsi=0x55667788)
     store.learn_guti(guti, IMSI)  # learned from an earlier attach with IMSI

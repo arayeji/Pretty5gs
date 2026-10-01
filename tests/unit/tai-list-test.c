@@ -34,13 +34,13 @@ static void tai_list_serving_only_test(abts_case *tc, void *data)
      *   bits 7-6 type of list
      *   bits 5-1 number of elements - 1
      * One TAI of type 2 (TAIs belonging to different PLMNs) is
-     * (2 << 5) | 0 = 0x40, followed by PLMN 432-12 (34 f2 21) and
-     * TAC 16003 (3e 83).
+     * (2 << 5) | 0 = 0x40, followed by PLMN 999-70 (99 f9 07) and
+     * TAC 12345 (30 39).
      */
-    uint8_t expected[] = { 0x40, 0x34, 0xf2, 0x21, 0x3e, 0x83 };
+    uint8_t expected[] = { 0x40, 0x99, 0xf9, 0x07, 0x30, 0x39 };
 
-    ogs_plmn_id_build(&serving.plmn_id, 432, 12, 2);
-    serving.tac = 16003;
+    ogs_plmn_id_build(&serving.plmn_id, 999, 70, 2);
+    serving.tac = 12345;
 
     ABTS_INT_EQUAL(tc, OGS_OK,
             ogs_nas_tai_list_build_serving_only(&tai_list, &serving));
@@ -75,8 +75,8 @@ static void tai_list_truncation_fallback_test(abts_case *tc, void *data)
     list0 = ogs_calloc(1, sizeof(ogs_eps_tai0_list_t));
     ABTS_PTR_NOTNULL(tc, list0);
 
-    ogs_plmn_id_build(&serving.plmn_id, 432, 12, 2);
-    serving.tac = 16003;
+    ogs_plmn_id_build(&serving.plmn_id, 999, 70, 2);
+    serving.tac = 12345;
 
     /*
      * Fill type-0 partial lists until the 96-octet NAS cap is exceeded.
@@ -85,7 +85,7 @@ static void tai_list_truncation_fallback_test(abts_case *tc, void *data)
     for (i = 0; i < OGS_MAX_NUM_OF_EPS_TAI0_PARTIAL_LIST; i++) {
         list0->tai[i].type = OGS_TAI0_TYPE;
         list0->tai[i].num = OGS_MAX_NUM_OF_TAI;
-        ogs_plmn_id_build(&list0->tai[i].plmn_id, 432, 12, 2);
+        ogs_plmn_id_build(&list0->tai[i].plmn_id, 999, 70, 2);
         for (j = 0; j < OGS_MAX_NUM_OF_TAI; j++)
             list0->tai[i].tac[j] = 10000 + (i * OGS_MAX_NUM_OF_TAI) + j;
     }
@@ -104,7 +104,7 @@ static void tai_list_truncation_fallback_test(abts_case *tc, void *data)
     ABTS_INT_EQUAL(tc, OGS_TAI0_TYPE, (tai_list.buffer[0] >> 5) & 0x03);
     /* serving TAC must have been prioritized to the front */
     tac = be16toh(*(uint16_t *)(tai_list.buffer + 4));
-    ABTS_INT_EQUAL(tc, 16003, tac);
+    ABTS_INT_EQUAL(tc, 12345, tac);
 
     ogs_free(list0);
 }
