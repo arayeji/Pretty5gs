@@ -27,6 +27,7 @@
 #include "ogs-nas-5gs.h"
 
 #include "amf-sm.h"
+#include "amf-workers.h"
 #include "timer.h"
 #include "metrics.h"
 
@@ -137,6 +138,25 @@ typedef struct amf_context_s {
         } t3502, t3512;
     } time;
 
+    /*
+     * SMP knobs (docs/smp-workers.md). All default 0: AMF then runs the
+     * legacy single-threaded path, bit-identical to before.
+     *   ngap_rx_workers   0..15  SCTP recv + APER decode off main
+     *   ngap_io_thread    0..4   SCTP send threads (write side)
+     *   ngap_io_write_queue_max    per-gNB TX backlog cap (0 = 10240)
+     *   ngap_io_stall_teardown_sec full-queue teardown (0 = 10, <0 off)
+     *   pkbuf_thread_pool N      per-thread pkbuf pools (0 = off)
+     *   workers           0..15  UE shard threads (amf-workers.c)
+     */
+    int             ngap_rx_workers;
+    int             ngap_io_thread;
+    int             ngap_io_write_queue_max;
+    int             ngap_io_stall_teardown_sec;
+    int             pkbuf_thread_pool;
+    int             workers;
+
+    ogs_hash_t      *gnb_sock_hash; /* hash table (sock pointer : GNB) */
+
 } amf_context_t;
 
 typedef struct amf_gnb_s {
@@ -175,6 +195,16 @@ typedef struct amf_gnb_s {
     ogs_pkbuf_t     *ng_reset_ack; /* Reset message */
 
     ogs_list_t      ran_ue_list;
+
+    /*
+     * amf.workers: teardown runs on every shard before the context is
+     * freed. While being_removed, lookups return NULL and sends drop.
+     * remove_pending counts shards that have not confirmed yet.
+     * ng_reset_all_pending makes the NG Reset (all) ACK exactly-once.
+     */
+    bool            being_removed;
+    int             remove_pending;
+    bool            ng_reset_all_pending;
 
 } amf_gnb_t;
 
@@ -245,6 +275,9 @@ struct ran_ue_s {
     /* Related Context */
     ogs_pool_id_t   gnb_id;
     ogs_pool_id_t   amf_ue_id;
+
+    /* amf.workers: shard index 0..N-1 that owns this context, -1 = main */
+    int             owner_wid;
 }; 
 
 typedef struct amf_ue_memento_s {
@@ -311,6 +344,10 @@ typedef struct amf_ue_memento_s {
 struct amf_ue_s {
     ogs_sbi_object_t sbi;
     ogs_pool_id_t id;
+
+    /* amf.workers: shard index 0..N-1 that owns this UE, -1 = main.
+     * Its ran_ue(s), sessions and timers live on the same shard. */
+    int owner_wid;
 
     ogs_fsm_t sm;
 
@@ -613,7 +650,6 @@ struct amf_ue_s {
                     NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release, \
                     NGAP_UE_CTX_REL_NG_CONTEXT_REMOVE, 0); \
             ogs_expect(r == OGS_OK); \
-            ogs_assert(r != OGS_ERROR); \
         } \
         (__aMF)->ran_ue_holding_id = OGS_INVALID_POOL_ID; \
     } while(0)
@@ -998,6 +1034,68 @@ amf_gnb_t *amf_gnb_find_by_gnb_id(uint32_t gnb_id);
 int amf_gnb_set_gnb_id(amf_gnb_t *gnb, uint32_t gnb_id, uint8_t gnb_id_length);
 int amf_gnb_sock_type(ogs_sock_t *sock);
 amf_gnb_t *amf_gnb_find_by_id(ogs_pool_id_t id);
+amf_gnb_t *amf_gnb_find_by_sock(const void *sock);
+
+/*
+ * amf.workers context lock. Guards the pools, hashes and lists shared
+ * by the shards (gNB, ran_ue, amf_ue, sess, m_tmsi). Recursive per
+ * thread, no-op until enabled. Lock order: SBI lock, then this lock,
+ * then the metrics dump lock; never take the SBI lock while holding
+ * it unless the SBI lock is already held.
+ */
+void amf_ctx_lock_enable(void);
+void amf_ctx_lock(void);
+void amf_ctx_unlock(void);
+
+/* Timer manager for contexts created on the calling thread */
+ogs_timer_mgr_t *amf_timer_mgr(void);
+
+/* gNB lookup that still returns a gNB being removed (teardown only) */
+amf_gnb_t *amf_gnb_find_by_id_any(ogs_pool_id_t id);
+
+/*
+ * amf.workers gNB teardown: amf_gnb_remove_begin() unhashes the gNB,
+ * blocks sends and closes the socket; every shard then releases its own
+ * UEs and confirms; the last confirmation frees the gNB through
+ * amf_gnb_remove_finish(). Without workers amf_gnb_remove() does all.
+ */
+void amf_gnb_remove_begin(amf_gnb_t *gnb);
+void amf_gnb_remove_finish(amf_gnb_t *gnb);
+
+/* Take gnb->ng_reset_ack (NULL if another thread already sent it) */
+ogs_pkbuf_t *amf_gnb_take_ng_reset_ack(amf_gnb_t *gnb);
+/* true when no ran_ue of the gNB still waits for a partial NG Reset */
+bool amf_gnb_ng_reset_partial_done(amf_gnb_t *gnb);
+/* NG Reset (all): send the ACK once the gNB has no ran_ue left */
+void amf_gnb_ng_reset_all_try_ack(amf_gnb_t *gnb);
+
+/* Shard owner lookups for routing on main: -1 = main or not found */
+int amf_ue_owner_by_id(ogs_pool_id_t amf_ue_id);
+int amf_sess_owner_by_id(ogs_pool_id_t sess_id);
+int ran_ue_owner_by_id(ogs_pool_id_t ran_ue_id);
+int amf_ue_owner(amf_ue_t *amf_ue);
+int amf_ue_owner_by_ue_context_id(char *ue_context_id);
+int amf_ue_owner_by_supi(char *supi);
+int amf_ue_owner_by_guti(ogs_nas_5gs_guti_t *guti);
+/* Same search as amf_ue_find_by_message(), without its log lines */
+int amf_ue_owner_by_message(ogs_nas_5gs_message_t *message);
+
+/*
+ * On a shard the guti/suci/supi/ue-context-id finds only return UEs of
+ * that shard. This one searches every shard and returns the UE's id and
+ * owner; the pointer itself is never handed out.
+ */
+ogs_pool_id_t amf_ue_find_by_message_any(
+        ogs_nas_5gs_message_t *message, int *owner_wid);
+
+/*
+ * Per-thread pkbuf pools (amf.pkbuf_thread_pool). Attach from every
+ * thread's init (amf_main and each worker); no-op when the knob is 0.
+ * Pools outlive their threads and are destroyed once, after
+ * ogs_sctp_final(), by amf_pkbuf_thread_pools_final().
+ */
+void amf_pkbuf_thread_pool_attach(void);
+void amf_pkbuf_thread_pools_final(void);
 
 ran_ue_t *ran_ue_add(amf_gnb_t *gnb, uint64_t ran_ue_ngap_id);
 void ran_ue_remove(ran_ue_t *ran_ue);

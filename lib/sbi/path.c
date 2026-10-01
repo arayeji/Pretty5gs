@@ -244,7 +244,20 @@ static int client_discover_cb(
     return OGS_OK;
 }
 
+static int discover_and_send(ogs_sbi_xact_t *xact);
+
 int ogs_sbi_discover_and_send(ogs_sbi_xact_t *xact)
+{
+    int rv;
+
+    ogs_sbi_lock();
+    rv = discover_and_send(xact);
+    ogs_sbi_unlock();
+
+    return rv;
+}
+
+static int discover_and_send(ogs_sbi_xact_t *xact)
 {
     bool rc;
     ogs_sbi_client_t *client = NULL, *scp_client = NULL;
@@ -573,7 +586,20 @@ int ogs_sbi_discover_and_send(ogs_sbi_xact_t *xact)
     return OGS_OK;
 }
 
+static int discover_only(ogs_sbi_xact_t *xact);
+
 int ogs_sbi_discover_only(ogs_sbi_xact_t *xact)
+{
+    int rv;
+
+    ogs_sbi_lock();
+    rv = discover_only(xact);
+    ogs_sbi_unlock();
+
+    return rv;
+}
+
+static int discover_only(ogs_sbi_xact_t *xact)
 {
     ogs_sbi_nf_instance_t *nf_instance = NULL;
 
@@ -634,7 +660,22 @@ int ogs_sbi_discover_only(ogs_sbi_xact_t *xact)
     return OGS_NOTFOUND;
 }
 
+static bool send_request_to_nf_instance(
+        ogs_sbi_nf_instance_t *nf_instance, ogs_sbi_xact_t *xact);
+
 bool ogs_sbi_send_request_to_nf_instance(
+        ogs_sbi_nf_instance_t *nf_instance, ogs_sbi_xact_t *xact)
+{
+    bool rc;
+
+    ogs_sbi_lock();
+    rc = send_request_to_nf_instance(nf_instance, xact);
+    ogs_sbi_unlock();
+
+    return rc;
+}
+
+static bool send_request_to_nf_instance(
         ogs_sbi_nf_instance_t *nf_instance, ogs_sbi_xact_t *xact)
 {
     ogs_sbi_request_t *request = NULL;
@@ -776,7 +817,24 @@ bool ogs_sbi_send_request_with_sepp_discovery(
     return rc;
 }
 
+static bool send_request_to_client(
+        ogs_sbi_client_t *client, ogs_sbi_client_cb_f client_cb,
+        ogs_sbi_request_t *request, void *data);
+
 bool ogs_sbi_send_request_to_client(
+        ogs_sbi_client_t *client, ogs_sbi_client_cb_f client_cb,
+        ogs_sbi_request_t *request, void *data)
+{
+    bool rc;
+
+    ogs_sbi_lock();
+    rc = send_request_to_client(client, client_cb, request, data);
+    ogs_sbi_unlock();
+
+    return rc;
+}
+
+static bool send_request_to_client(
         ogs_sbi_client_t *client, ogs_sbi_client_cb_f client_cb,
         ogs_sbi_request_t *request, void *data)
 {

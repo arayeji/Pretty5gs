@@ -72,6 +72,107 @@ the single-threaded daemon.
   asserts) messages for removed eNBs; worker pushes wake the main
   pollset; worker-side error paths skip main-thread hashes.
 
+## Done (AMF NGAP transport offload, phase 1)
+
+Ports of the MME S1AP helpers to NGAP. All knobs default to 0 (off);
+with every knob off the AMF behaves like the single-threaded daemon.
+
+```yaml
+amf:
+  ngap_rx_workers: 2           # 0..15: SCTP recv + APER decode threads
+  ngap_io_thread: 2            # 0..4: SCTP send threads (sticky per socket)
+  ngap_io_write_queue_max: 10240     # per-socket send FIFO, 0 = default
+  ngap_io_stall_teardown_sec: 10     # <0 disables stall teardown
+  pkbuf_thread_pool: 256       # per-thread pkbuf pool (no-op on talloc builds)
+```
+
+- `src/amf/ngap-rx.[ch]` (`ngap-rx%d`) — port of `s1ap-rx`: accepted
+  gNB sockets go to RX workers that drain + decode and post
+  pre-decoded `AMF_EVENT_NGAP_MESSAGE`s; WATCH/UNWATCH and
+  `AMF_EVENT_NGAP_RX_SOCK_CLOSED` / `_RX_WATCH_FAILED`.
+- `src/amf/ngap-io.[ch]` (`ngap-io%d`) — port of `s1ap-io` without the
+  congestion heartbeat: per-socket FIFO, non-blocking `sendmsg` +
+  POLLOUT, EPIPE marks send-dead, ETIMEDOUT/stall pushes CONNREFUSED.
+  Owns the two-phase socket close registry (RX + IO confirms).
+- `src/amf/ngap-free.[ch]` (`ngap-free`) — deferred ASN.1/pkbuf free.
+- `src/amf/event.c` — `amf_queue_push_main()` never blocks main;
+  CONNREFUSED side queue (coalesced per socket); must-deliver close
+  confirms retry then force-confirm; main batch cap 128.
+- Accepted SCTP sockets are now non-blocking with the event
+  subscription (`ogs_sctp_tune_connected`), and the 444
+  `ogs_assert(r != OGS_ERROR)` send-path aborts are `ogs_expect`.
+- **Ordering** (both found by `tests/registration`): on main the
+  recv handler reads one message per wakeup (level-triggered poll), and
+  events a dispatch pushes for itself (NGAP -> 5GMM/5GSM hand-off) run
+  right after it, ahead of the queue. Without the latter, two queued
+  InitialUEMessages for one UE ran as NGAP1 NGAP2 NAS1 NAS2.
+- Deliberate deviations from MME: no NGAP TX encode offload
+  (`s1ap_tx_workers` analog), no IO congestion heartbeat / overload
+  control, no SIGHUP reload.
+- Tests: `tests/load5gc` (`load5gc.yaml`, knobs on): NG-Setup churn,
+  4 gNBs x 12 UEs parallel registration/PDU session/dereg, 4 x 4
+  idle/service request. `tests/core` `worker-test`: FIFO dispatch,
+  non-blocking full-queue post, startup barrier, cross-thread pkbufs,
+  multi-producer.
+
+## Done (AMF UE shards, phase 2)
+
+```yaml
+amf:
+  workers: 2                   # 0..15 UE shard threads (amf-wN); forces
+                               # ngap_io_thread >= 1
+```
+
+- **Ownership.** A UE unit (`amf_ue`, its sessions, its `ran_ue`s and
+  their timers) belongs to one shard (`owner_wid`) for life and runs
+  only there; UE timers live on the shard's timer manager
+  (`amf_timer_mgr()`). Main keeps gNB/SCTP, NG Setup/Reset, RAN
+  configuration, NRF and OAM, and owns no UE while workers are on.
+- **Shard bits.** AMF-UE-NGAP-ID bits 36..39 and M-TMSI bits 16..19
+  (unused by the allocator, stripped on free) carry `wid + 1`. With
+  workers off both IDs are unchanged.
+- **Routing (main, `amf_workers_route()`).** NGAP UE messages by the
+  AMF-UE-NGAP-ID bits, else the gNB's RAN-UE-NGAP-ID. InitialUEMessage:
+  existing RAN-UE-NGAP-ID, then 5G-S-TMSI (GUTI hash, else M-TMSI bits,
+  which covers a GUTI the owner has not confirmed yet), then a quiet
+  NAS identity peek, then a hash of (gNB, RAN-UE-NGAP-ID). Main
+  heap-decodes when RX workers are off. SBI responses and CLIENT_WAIT
+  timers go by transaction -> UE/session -> owner; SBI requests by
+  `ue-contexts/{id}` or `namf-callback/{supi}`; NNRF and OAM stay on
+  main. A full shard queue answers an SBI request with 503.
+- **Locks.** Order: `ogs_sbi_lock()` (opt-in, recursive, process-wide
+  `lib/sbi` state and the `ogs_app()` timer manager) -> `amf_ctx_lock()`
+  (pools, hashes, lists) -> metrics dump lock. Main holds the SBI lock
+  for timer next/expire, event dispatch and, via the pollset dispatch
+  hooks, poll handlers; shards hold it for SBI events and shard control
+  events only. NGAP/NAS handlers reach `lib/sbi` through helpers that
+  lock themselves. Removing a UE or session drops its transactions, so
+  `xact->sbi_object` stays valid under the SBI lock.
+- **gNB fan-out.** Teardown (`amf_workers_gnb_teardown()`): unhash +
+  `being_removed`, every shard releases its UEs on that gNB, the last
+  `SHARD_GNB_REMOVE_DONE` frees it. NG Reset (all/partial) and OAM PLMN
+  release fan out the same way; the NG Reset ACK is sent exactly once.
+- **Cross-shard re-registration.** When the identity is only learnt
+  after InitialUE (unknown GUTI -> Identity Response, or a fresh SUCI
+  later matched by SUPI) the OLD context can sit on another shard. The
+  new owner takes its sessions (as upstream) and posts
+  `SHARD_UE_EVICT`; the old owner releases the old NG context at once
+  (upstream holds it until the new registration authenticates) and
+  removes the rest. Hash entries are re-inserted under the new UE's own
+  key, since a replaced entry keeps the old key that the evict frees.
+- **Accepted deviations / races.** No rehome: an owner never changes,
+  so cross-shard re-registration evicts instead. Paging reads
+  `supported_ta_list` and OAM reads `plmn_support` without a lock
+  (config-time data). The old owner may still be running an NGAP/NAS
+  event of the evicted UE while its sessions move (re-registration
+  window only). gNB teardown is asynchronous, so a late CONNREFUSED for
+  a socket already being removed logs "connection refused, Already
+  Removed!" (harmless).
+- Tests: `tests/unit` `sbi-lock-test` (recursion, mutual exclusion),
+  `tests/core` `poll-test` (dispatch hooks), `tests/load5gc` now runs
+  with `workers: 2`; 5GC suites (registration, slice, transfer,
+  transfer-error, vonr, handover, non3gpp) pass with workers off and on.
+
 ## Done (SGW-C shards)
 
 1. **`src/sgwc/sgwc-workers.c` + `init.c`** — parse `sgwc.workers`

@@ -18,6 +18,7 @@
  */
 
 #include "namf-oam.h"
+#include "amf-workers.h"
 #include "sbi-path.h"
 #include "ngap-path.h"
 #include "nsmf-handler.h"
@@ -133,15 +134,39 @@ static int count_unique_plmns(void)
  * The actual UE removal is handled asynchronously by the framework after all
  * sessions are released and RAN context is freed.
  */
-static int release_ues_of_plmn(const ogs_plmn_id_t *deleted_plmn_id)
+/*
+ * UEs of the calling thread only (all UEs without amf.workers). The ids
+ * are snapshot under the context lock: the release itself takes the SBI
+ * lock, which must not nest inside it.
+ */
+int amf_namf_oam_release_local_ues_of_plmn(
+        const ogs_plmn_id_t *deleted_plmn_id)
 {
-    amf_ue_t *amf_ue = NULL, *next_ue = NULL;
+    amf_ue_t *amf_ue = NULL;
+    ogs_pool_id_t *ids = NULL;
+    int i, count = 0, num = 0;
+    int self_wid = amf_shard_self();
     int released = 0;
     char deleted_plmn_str[OGS_PLMNIDSTRLEN];
 
     ogs_plmn_id_to_string(deleted_plmn_id, deleted_plmn_str);
 
-    ogs_list_for_each_safe(&amf_self()->amf_ue_list, next_ue, amf_ue) {
+    amf_ctx_lock();
+    count = ogs_list_count(&amf_self()->amf_ue_list);
+    if (count) {
+        ids = ogs_calloc(count, sizeof(*ids));
+        ogs_assert(ids);
+        ogs_list_for_each(&amf_self()->amf_ue_list, amf_ue) {
+            if (amf_ue->owner_wid == self_wid && num < count)
+                ids[num++] = amf_ue->id;
+        }
+    }
+    amf_ctx_unlock();
+
+    for (i = 0; i < num; i++) {
+        amf_ue = amf_ue_find_by_id(ids[i]);
+        if (!amf_ue)
+            continue;
 
         if (!(AMF_UE_HAVE_SUCI(amf_ue) || AMF_UE_HAVE_SUPI(amf_ue)))
             continue;
@@ -179,12 +204,26 @@ static int release_ues_of_plmn(const ogs_plmn_id_t *deleted_plmn_id)
         }
     }
 
+    if (ids)
+        ogs_free(ids);
+
     if (released > 0) {
         ogs_info("[OAM] Initiated release for %d UE(s) and their PDU sessions for deleted PLMN %s",
                  released, deleted_plmn_str);
     }
 
     return released;
+}
+
+static int release_ues_of_plmn(const ogs_plmn_id_t *deleted_plmn_id)
+{
+    if (amf_workers_running()) {
+        /* each shard releases its own UEs */
+        amf_workers_oam_release_plmn(deleted_plmn_id);
+        return 0;
+    }
+
+    return amf_namf_oam_release_local_ues_of_plmn(deleted_plmn_id);
 }
 
 /*
@@ -345,9 +384,11 @@ bool namf_oam_handle_plmns_get(ogs_sbi_stream_t *stream,  ogs_sbi_message_t *mes
         cJSON_AddItemToArray(plmns_array, plmn_obj);
     }
 
+    amf_ctx_lock();
+
     /* Count total connected gNBs */
     ogs_list_for_each(&amf_self()->gnb_list, gnb) {
-        if (gnb->state.ng_setup_success)
+        if (gnb->state.ng_setup_success && !gnb->being_removed)
             total_gnbs++;
     }
 
@@ -356,6 +397,8 @@ bool namf_oam_handle_plmns_get(ogs_sbi_stream_t *stream,  ogs_sbi_message_t *mes
         if (AMF_UE_HAVE_SUCI(amf_ue))
             total_ues++;
     }
+
+    amf_ctx_unlock();
 
     /* Add statistics to response */
     cJSON_AddNumberToObject(root, "total_plmns", count_unique_plmns());

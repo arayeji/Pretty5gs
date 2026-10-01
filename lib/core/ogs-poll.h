@@ -42,6 +42,17 @@ void ogs_pollset_remove(ogs_poll_t *poll);
 
 void *ogs_pollset_self_handler_data(void);
 
+/*
+ * Optional hooks around the handler phase of one ogs_pollset_poll():
+ * `enter` runs after the wait returned ready descriptors and before the
+ * first handler, `leave` after the last one. Never called around the
+ * wait itself, so a lock taken in `enter` is not held while sleeping.
+ * Set before the pollset is shared; NULL clears.
+ */
+typedef void (*ogs_pollset_hook_f)(void *data);
+void ogs_pollset_set_dispatch_hooks(ogs_pollset_t *pollset,
+        ogs_pollset_hook_f enter, ogs_pollset_hook_f leave, void *data);
+
 typedef struct ogs_pollset_actions_s {
     void (*init)(ogs_pollset_t *pollset);
     void (*cleanup)(ogs_pollset_t *pollset);

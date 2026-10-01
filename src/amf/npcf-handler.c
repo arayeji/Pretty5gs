@@ -47,7 +47,6 @@ int amf_npcf_am_policy_control_handle_create(
                 amf_ue->supi, recvmsg->res_status);
         r = nas_5gs_send_gmm_reject_from_sbi(amf_ue, recvmsg->res_status);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -56,7 +55,6 @@ int amf_npcf_am_policy_control_handle_create(
         r = nas_5gs_send_gmm_reject_from_sbi(
                 amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -66,7 +64,6 @@ int amf_npcf_am_policy_control_handle_create(
         r = nas_5gs_send_gmm_reject_from_sbi(
                 amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -75,7 +72,6 @@ int amf_npcf_am_policy_control_handle_create(
         r = nas_5gs_send_gmm_reject_from_sbi(
                 amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -89,7 +85,6 @@ int amf_npcf_am_policy_control_handle_create(
         r = nas_5gs_send_gmm_reject_from_sbi(
                 amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -101,7 +96,6 @@ int amf_npcf_am_policy_control_handle_create(
         r = nas_5gs_send_gmm_reject_from_sbi(
                 amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -114,7 +108,6 @@ int amf_npcf_am_policy_control_handle_create(
         r = nas_5gs_send_gmm_reject_from_sbi(
                 amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         return OGS_ERROR;
     }
@@ -130,7 +123,6 @@ int amf_npcf_am_policy_control_handle_create(
             r = nas_5gs_send_gmm_reject_from_sbi(
                     amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
 
             ogs_free(fqdn);
             ogs_freeaddrinfo(addr);

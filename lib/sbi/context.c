@@ -30,6 +30,68 @@ static OGS_POOL(subscription_spec_pool, ogs_sbi_subscription_spec_t);
 static OGS_POOL(subscription_data_pool, ogs_sbi_subscription_data_t);
 static OGS_POOL(nf_info_pool, ogs_sbi_nf_info_t);
 
+/*
+ * Opt-in big lock for NFs that run SBI work on more than one thread.
+ * Everything in lib/sbi (context pools/lists, xacts, client/server,
+ * and the ogs_app() pollset/timer_mgr they register with) assumes a
+ * single thread. Once enabled, the NF must hold it on every thread
+ * that touches lib/sbi, including the main loop around poll handlers,
+ * timer expiry and event dispatch. Recursive per thread.
+ *
+ * Other threads may start curl or xact timers on ogs_app()->timer_mgr,
+ * so their outermost unlock wakes the poller to recompute its timeout.
+ */
+static bool sbi_lock_enabled;
+static ogs_thread_mutex_t sbi_lock_mutex;
+static OGS_THREAD_LOCAL int sbi_lock_depth;
+static OGS_THREAD_LOCAL bool sbi_lock_poller;
+
+void ogs_sbi_lock_mark_poller(void)
+{
+    sbi_lock_poller = true;
+}
+
+void ogs_sbi_lock_enable(void)
+{
+    if (sbi_lock_enabled)
+        return;
+
+    ogs_thread_mutex_init(&sbi_lock_mutex);
+    sbi_lock_enabled = true;
+}
+
+bool ogs_sbi_lock_is_enabled(void)
+{
+    return sbi_lock_enabled;
+}
+
+void ogs_sbi_lock(void)
+{
+    if (!sbi_lock_enabled)
+        return;
+
+    if (sbi_lock_depth++ == 0)
+        ogs_thread_mutex_lock(&sbi_lock_mutex);
+}
+
+void ogs_sbi_unlock(void)
+{
+    if (!sbi_lock_enabled)
+        return;
+
+    ogs_assert(sbi_lock_depth > 0);
+    if (--sbi_lock_depth == 0) {
+        ogs_thread_mutex_unlock(&sbi_lock_mutex);
+        if (!sbi_lock_poller && ogs_app()->pollset)
+            ogs_pollset_notify(ogs_app()->pollset);
+    }
+}
+
+bool ogs_sbi_lock_held(void)
+{
+    return !sbi_lock_enabled || sbi_lock_depth > 0;
+}
+
 void ogs_sbi_context_init(OpenAPI_nf_type_e nf_type)
 {
     char nf_instance_id[OGS_UUID_FORMATTED_LENGTH + 1];
@@ -2579,6 +2641,8 @@ void ogs_sbi_object_free(ogs_sbi_object_t *sbi_object)
 
     ogs_assert(sbi_object);
 
+    ogs_sbi_lock();
+
     if (ogs_list_count(&sbi_object->xact_list)) {
         ogs_sbi_xact_t *xact = NULL; \
         ogs_error("SBI running [%d]", ogs_list_count(&sbi_object->xact_list));
@@ -2596,9 +2660,35 @@ void ogs_sbi_object_free(ogs_sbi_object_t *sbi_object)
     }
     if (sbi_object->home_nsmf_pdusession.nf_instance_id)
         ogs_free(sbi_object->home_nsmf_pdusession.nf_instance_id);
+
+    ogs_sbi_unlock();
 }
 
+static ogs_sbi_xact_t *xact_add(
+        ogs_pool_id_t sbi_object_id,
+        ogs_sbi_object_t *sbi_object,
+        ogs_sbi_service_type_e service_type,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_build_f build, void *context, void *data);
+
 ogs_sbi_xact_t *ogs_sbi_xact_add(
+        ogs_pool_id_t sbi_object_id,
+        ogs_sbi_object_t *sbi_object,
+        ogs_sbi_service_type_e service_type,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_build_f build, void *context, void *data)
+{
+    ogs_sbi_xact_t *xact = NULL;
+
+    ogs_sbi_lock();
+    xact = xact_add(sbi_object_id, sbi_object, service_type,
+            discovery_option, build, context, data);
+    ogs_sbi_unlock();
+
+    return xact;
+}
+
+static ogs_sbi_xact_t *xact_add(
         ogs_pool_id_t sbi_object_id,
         ogs_sbi_object_t *sbi_object,
         ogs_sbi_service_type_e service_type,
@@ -2711,6 +2801,8 @@ void ogs_sbi_xact_remove(ogs_sbi_xact_t *xact)
 
     ogs_assert(xact);
 
+    ogs_sbi_lock();
+
     sbi_object = xact->sbi_object;
     ogs_assert(sbi_object);
 
@@ -2762,6 +2854,8 @@ void ogs_sbi_xact_remove(ogs_sbi_xact_t *xact)
 
     ogs_list_remove(&sbi_object->xact_list, xact);
     ogs_pool_id_free(&xact_pool, xact);
+
+    ogs_sbi_unlock();
 }
 
 void ogs_sbi_xact_remove_all(ogs_sbi_object_t *sbi_object)
@@ -2770,13 +2864,21 @@ void ogs_sbi_xact_remove_all(ogs_sbi_object_t *sbi_object)
 
     ogs_assert(sbi_object);
 
+    ogs_sbi_lock();
     ogs_list_for_each_safe(&sbi_object->xact_list, next_xact, xact)
         ogs_sbi_xact_remove(xact);
+    ogs_sbi_unlock();
 }
 
 ogs_sbi_xact_t *ogs_sbi_xact_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&xact_pool, id);
+    ogs_sbi_xact_t *xact = NULL;
+
+    ogs_sbi_lock();
+    xact = ogs_pool_find_by_id(&xact_pool, id);
+    ogs_sbi_unlock();
+
+    return xact;
 }
 
 ogs_sbi_subscription_spec_t *ogs_sbi_subscription_spec_add(

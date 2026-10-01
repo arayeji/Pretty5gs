@@ -1,0 +1,292 @@
+/*
+ * Copyright (C) 2026 by Ahmad Raeiji <ahmad.rayeji@gmail.com>
+ *
+ * This file is part of Open5GS / Pretty5GS.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#include "ogs-sctp.h"
+
+#include "event.h"
+#include "ngap-path.h"
+#include "ngap-rx.h"
+#include "ngap-io.h"
+
+static ogs_worker_t *rx_workers[OGS_MAX_WORKERS];
+static int rx_worker_count = 0;
+static int rx_next_worker = 0;          /* round-robin cursor, main only */
+static ogs_hash_t *rx_owner_hash = NULL; /* sock -> rx_owner_t*, main only */
+
+/* worker-side: sock -> rx_watch_t*, touched only by the owning worker */
+static OGS_THREAD_LOCAL ogs_hash_t *rx_poll_hash = NULL;
+
+/*
+ * ogs_hash stores key POINTERS, not copies: a key must stay valid for
+ * the entry's whole lifetime. Both maps therefore embed the sock
+ * pointer (the key) in a heap entry.
+ */
+typedef struct rx_owner_s {
+    ogs_sock_t *sock;   /* hash key storage */
+    int         wid;    /* owning worker index */
+} rx_owner_t;
+
+typedef struct rx_watch_s {
+    ogs_sock_t *sock;   /* hash key storage */
+    ogs_poll_t *poll;
+} rx_watch_t;
+
+typedef struct rx_cmd_s {
+#define RX_CMD_WATCH    1
+#define RX_CMD_UNWATCH  2
+    int op;
+    ogs_sock_t *sock;
+} rx_cmd_t;
+
+static void rx_thread_init(ogs_worker_t *worker)
+{
+    amf_pkbuf_thread_pool_attach();
+
+    rx_poll_hash = ogs_hash_make();
+    ogs_assert(rx_poll_hash);
+}
+
+static void rx_thread_fini(ogs_worker_t *worker)
+{
+    ogs_hash_index_t *hi = NULL;
+
+    for (hi = ogs_hash_first(rx_poll_hash); hi; hi = ogs_hash_next(hi)) {
+        rx_watch_t *watch = ogs_hash_this_val(hi);
+        if (watch)
+            ogs_free(watch);
+    }
+    ogs_hash_destroy(rx_poll_hash);
+    rx_poll_hash = NULL;
+}
+
+static void rx_dispatch(ogs_worker_t *worker, void *data)
+{
+    rx_cmd_t *cmd = data;
+    ogs_poll_t *poll = NULL;
+    rx_watch_t *watch = NULL;
+
+    ogs_assert(cmd);
+    ogs_assert(cmd->sock);
+
+    switch (cmd->op) {
+    case RX_CMD_WATCH:
+        poll = ogs_pollset_add(worker->pollset,
+                OGS_POLLIN, cmd->sock->fd, ngap_recv_upcall, cmd->sock);
+        if (!poll) {
+            /*
+             * epoll_ctl failed: the gNB fd was closed between accept
+             * and this WATCH (reconnect storm). Not fatal: main tears
+             * the half-created gNB down through the normal two-phase
+             * path; the UNWATCH for an un-hashed socket is tolerated.
+             */
+            ogs_error("ngap-rx: WATCH failed (fd %d gone); dropping gNB",
+                    cmd->sock->fd);
+            amf_sctp_event_push(AMF_EVENT_NGAP_RX_WATCH_FAILED,
+                    cmd->sock, NULL, NULL, 0, 0);
+            break;
+        }
+        watch = ogs_calloc(1, sizeof(*watch));
+        ogs_assert(watch);
+        watch->sock = cmd->sock;
+        watch->poll = poll;
+        ogs_hash_set(rx_poll_hash, &watch->sock, sizeof(watch->sock), watch);
+        break;
+
+    case RX_CMD_UNWATCH:
+        watch = ogs_hash_get(rx_poll_hash, &cmd->sock, sizeof(cmd->sock));
+        if (watch) {
+            ogs_pollset_remove(watch->poll);
+            ogs_hash_set(rx_poll_hash,
+                    &watch->sock, sizeof(watch->sock), NULL);
+            ogs_free(watch);
+        } else
+            ogs_error("ngap-rx: UNWATCH for unknown socket");
+
+        /* confirm to main: safe to destroy the socket now */
+        amf_sctp_event_push(AMF_EVENT_NGAP_RX_SOCK_CLOSED,
+                cmd->sock, NULL, NULL, 0, 0);
+        break;
+
+    default:
+        ogs_fatal("ngap-rx: unknown command %d", cmd->op);
+        ogs_assert_if_reached();
+    }
+
+    ogs_free(cmd);
+}
+
+int ngap_rx_workers_start(int count)
+{
+    int i;
+
+    ogs_assert(count > 0 && count <= OGS_MAX_WORKERS - 1);
+    ogs_assert(rx_worker_count == 0);
+
+    rx_owner_hash = ogs_hash_make();
+    ogs_assert(rx_owner_hash);
+
+    for (i = 0; i < count; i++) {
+        char tname[16];
+
+        /* the command queue only carries WATCH/UNWATCH, a few per gNB
+         * lifetime */
+        rx_workers[i] = ogs_worker_create(i,
+                ogs_min(ogs_app()->pool.event, 65536), 64,
+                ogs_global_conf()->max.peer * 2 + 64,
+                rx_dispatch, NULL);
+        ogs_assert(rx_workers[i]);
+        ogs_worker_hooks(rx_workers[i], rx_thread_init, rx_thread_fini);
+        ogs_snprintf(tname, sizeof(tname), "ngap-rx%d", i);
+        ogs_worker_set_name(rx_workers[i], tname);
+        ogs_worker_start(rx_workers[i]);
+    }
+
+    rx_worker_count = count;
+    ogs_info("NGAP RX decode offload: %d worker(s)", count);
+
+    return OGS_OK;
+}
+
+void ngap_rx_workers_stop(void)
+{
+    int i;
+    ogs_hash_index_t *hi = NULL;
+
+    for (i = 0; i < rx_worker_count; i++) {
+        ogs_worker_destroy(rx_workers[i]);
+        rx_workers[i] = NULL;
+    }
+    rx_worker_count = 0;
+
+    if (rx_owner_hash) {
+        for (hi = ogs_hash_first(rx_owner_hash); hi; hi = ogs_hash_next(hi)) {
+            rx_owner_t *owner = ogs_hash_this_val(hi);
+            if (owner)
+                ogs_free(owner);
+        }
+        ogs_hash_destroy(rx_owner_hash);
+        rx_owner_hash = NULL;
+    }
+}
+
+bool ngap_rx_active(void)
+{
+    return rx_worker_count > 0;
+}
+
+/* Returns false if the worker command queue rejected the post. */
+static bool rx_post(ogs_worker_t *worker, int op, ogs_sock_t *sock)
+{
+    rx_cmd_t *cmd = NULL;
+    int rv;
+
+    if (!worker) {
+        ogs_error("ngap-rx: %s post with NULL worker sock:%p",
+                op == RX_CMD_WATCH ? "WATCH" : "UNWATCH", (void *)sock);
+        return false;
+    }
+
+    cmd = ogs_calloc(1, sizeof(*cmd));
+    ogs_assert(cmd);
+    cmd->op = op;
+    cmd->sock = sock;
+
+    rv = ogs_worker_post(worker, cmd);
+    if (rv != OGS_OK) {
+        ogs_error("ngap-rx: %s post failed (%d) sock:%p",
+                op == RX_CMD_WATCH ? "WATCH" : "UNWATCH",
+                (int)rv, (void *)sock);
+        ogs_free(cmd);
+        return false;
+    }
+    return true;
+}
+
+void ngap_rx_watch_sock(ogs_sock_t *sock)
+{
+    int wid;
+    rx_owner_t *owner = NULL;
+
+    ogs_assert(sock);
+    ogs_assert(rx_worker_count > 0);
+
+    wid = rx_next_worker;
+    rx_next_worker = (rx_next_worker + 1) % rx_worker_count;
+
+    owner = ogs_calloc(1, sizeof(*owner));
+    ogs_assert(owner);
+    owner->sock = sock;
+    owner->wid = wid;
+    ogs_hash_set(rx_owner_hash, &owner->sock, sizeof(owner->sock), owner);
+
+    if (!rx_post(rx_workers[wid], RX_CMD_WATCH, sock)) {
+        /* same handling as the accept->watch fd race */
+        ogs_hash_set(rx_owner_hash, &owner->sock, sizeof(owner->sock), NULL);
+        ogs_free(owner);
+        amf_sctp_event_push(AMF_EVENT_NGAP_RX_WATCH_FAILED,
+                sock, NULL, NULL, 0, 0);
+    }
+}
+
+amf_gnb_t *ngap_rx_safe_gnb_lookup(ogs_sockaddr_t *addr)
+{
+    if (ogs_worker_self() || !addr)
+        return NULL;
+
+    return amf_gnb_find_by_addr(addr);
+}
+
+bool ngap_rx_owned(ogs_sock_t *sock)
+{
+    ogs_assert(sock);
+
+    if (!rx_owner_hash)
+        return false;
+
+    return ogs_hash_get(rx_owner_hash, &sock, sizeof(sock)) != NULL;
+}
+
+bool ngap_rx_unwatch_sock(ogs_sock_t *sock)
+{
+    rx_owner_t *owner = NULL;
+    int wid;
+
+    ogs_assert(sock);
+
+    if (!rx_owner_hash)
+        return false;
+
+    owner = ogs_hash_get(rx_owner_hash, &sock, sizeof(sock));
+    if (!owner)
+        return false;
+
+    wid = owner->wid;
+    ogs_hash_set(rx_owner_hash, &owner->sock, sizeof(owner->sock), NULL);
+    ogs_free(owner);
+    if (!rx_post(rx_workers[wid], RX_CMD_UNWATCH, sock)) {
+        /*
+         * The worker will never confirm; force the RX confirm so the
+         * close registry can complete. The worker's poll entry dies
+         * with its pollset at shutdown.
+         */
+        ngap_sock_close_confirm(sock, NGAP_SOCK_CONFIRM_RX);
+    }
+
+    return true;
+}

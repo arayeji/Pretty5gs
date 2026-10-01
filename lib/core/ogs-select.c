@@ -192,6 +192,8 @@ static int select_process(ogs_pollset_t *pollset, ogs_time_t timeout)
         return OGS_TIMEUP;
     }
 
+    ogs_pollset_dispatch_enter(pollset);
+
     ogs_list_for_each_safe(&context->list, next_poll, poll) {
         short when = 0;
         if ((poll->when & OGS_POLLIN) &&
@@ -208,6 +210,8 @@ static int select_process(ogs_pollset_t *pollset, ogs_time_t timeout)
             poll->handler(when, poll->fd, poll->data);
         }
     }
-    
+
+    ogs_pollset_dispatch_leave(pollset);
+
     return OGS_OK;
 }

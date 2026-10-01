@@ -20,6 +20,8 @@
 #include "ogs-sctp.h"
 #include "ogs-app.h"
 
+#include "context.h"
+
 int app_initialize(const char *const argv[])
 {
     int rv;
@@ -39,5 +41,7 @@ void app_terminate(void)
 {
     amf_terminate();
     ogs_sctp_final();
+    /* after ogs_sctp_final(): nothing can free a pooled pkbuf anymore */
+    amf_pkbuf_thread_pools_final();
     ogs_info("AMF terminate...done");
 }

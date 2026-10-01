@@ -18,6 +18,7 @@
  */
 
 #include "context.h"
+#include "ngap-handler.h"
 
 static amf_timer_cfg_t g_amf_timer_cfg[MAX_NUM_OF_AMF_TIMER] = {
     /* Paging procedure for EPS services initiated */
@@ -112,9 +113,11 @@ void amf_timer_ng_delayed_send(void *data)
 
     e->h.timer_id = AMF_TIMER_NG_DELAYED_SEND;
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = amf_queue_push_main(e);
     if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        ogs_error("amf_queue_push_main() failed:%d", (int)rv);
+        if (e->pkbuf)
+            ogs_pkbuf_free(e->pkbuf);
         ogs_timer_delete(e->timer);
         ogs_event_free(e);
     }
@@ -133,7 +136,7 @@ static void gmm_timer_event_send(
     e->h.timer_id = timer_id;
     e->amf_ue_id = OGS_POINTER_TO_UINT(data);
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = amf_queue_push_main(e);
     if (rv != OGS_OK) {
         ogs_error("ogs_queue_push() failed:%d in %s",
                 (int)rv, amf_timer_get_name(timer_id));
@@ -179,10 +182,23 @@ void amf_timer_ng_holding_timer_expire(void *data)
     e->h.timer_id = AMF_TIMER_NG_HOLDING;
     e->ran_ue_id = OGS_POINTER_TO_UINT(data);
 
-    rv = ogs_queue_push(ogs_app()->queue, e);
+    rv = amf_queue_push_main(e);
     if (rv != OGS_OK) {
-        ogs_error("ogs_queue_push() failed:%d", (int)rv);
+        ran_ue_t *ran_ue = NULL;
+
+        ogs_error("amf_queue_push_main() failed:%d", (int)rv);
         ogs_event_free(e);
+
+        /*
+         * A lost holding-timer event leaves the NG context parked
+         * forever. The timer fires on the thread that owns the
+         * ran_ue, so run the implicit release right here.
+         */
+        ran_ue = ran_ue_find_by_id(OGS_POINTER_TO_UINT(data));
+        if (ran_ue) {
+            ogs_warn("Implicit NG release (event queue full)");
+            ngap_handle_ue_context_release_action(ran_ue);
+        }
     }
 }
 

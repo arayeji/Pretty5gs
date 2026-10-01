@@ -220,6 +220,8 @@ void amf_metrics_inst_by_slice_add(ogs_plmn_id_t *plmn,
 
     slice_key->t = t;
 
+    /* UE shard threads add instances concurrently (amf.workers) */
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_slice,
             slice_key, sizeof(*slice_key));
 
@@ -252,6 +254,7 @@ void amf_metrics_inst_by_slice_add(ogs_plmn_id_t *plmn,
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 int amf_metrics_free_inst_by_slice(ogs_metrics_inst_t **inst)
@@ -322,6 +325,7 @@ void amf_metrics_inst_by_cause_add(uint8_t cause,
     cause_key->cause = cause;
     cause_key->t = t;
 
+    ogs_metrics_dump_lock();
     metrics = ogs_hash_get(metrics_hash_by_cause,
             cause_key, sizeof(*cause_key));
 
@@ -341,6 +345,7 @@ void amf_metrics_inst_by_cause_add(uint8_t cause,
     }
 
     ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
 }
 
 int amf_metrics_free_inst_by_cause(ogs_metrics_inst_t **inst)

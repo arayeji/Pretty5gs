@@ -162,7 +162,6 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                 amf_ue->t3570.retry_count++;
                 r = nas_5gs_send_identity_request(amf_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
             break;
 
@@ -178,7 +177,6 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                 r = nas_5gs_send_de_registration_request(amf_ue,
                         OpenAPI_deregistration_reason_NULL, 0);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
             break;
 
@@ -244,14 +242,12 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                         amf_nudm_sdm_build_subscription_delete,
                         amf_ue, state, NULL);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             } else if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
                 r = amf_ue_sbi_discover_and_send(
                     OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL, NULL,
                     amf_npcf_am_policy_control_build_delete,
                     amf_ue, state, NULL);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
             break;
 
@@ -357,11 +353,9 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                                     amf_npcf_am_policy_control_build_delete,
                                     amf_ue, state, NULL);
                             ogs_expect(r == OGS_OK);
-                            ogs_assert(r != OGS_ERROR);
                         } else {
                             r = nas_5gs_send_de_registration_accept(amf_ue);
                             ogs_expect(r == OGS_OK);
-                            ogs_assert(r != OGS_ERROR);
                         }
 
                     } else if (state ==
@@ -386,7 +380,6 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                                         amf_npcf_am_policy_control_build_delete,
                                         amf_ue, state, NULL);
                                 ogs_expect(r == OGS_OK);
-                                ogs_assert(r != OGS_ERROR);
                             }
                         }
                     }
@@ -496,7 +489,6 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                                 amf_nudm_uecm_build_registration_delete,
                                 amf_ue, state, NULL);
                         ogs_expect(r == OGS_OK);
-                        ogs_assert(r != OGS_ERROR);
                     } else {
                         ogs_fatal("[%s:%d] Invalid state [%d] in (%s:%s)",
                                 amf_ue->supi, state, sbi_message->res_status,
@@ -598,7 +590,6 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                                     amf_nausf_auth_build_authenticate_delete,
                                     amf_ue, state, NULL);
                                 ogs_expect(r == OGS_OK);
-                                ogs_assert(r != OGS_ERROR);
                             } else if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
                                 r = amf_ue_sbi_discover_and_send(
                                         OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL,
@@ -606,11 +597,9 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                                         amf_npcf_am_policy_control_build_delete,
                                         amf_ue, state, NULL);
                                 ogs_expect(r == OGS_OK);
-                                ogs_assert(r != OGS_ERROR);
                             } else {
                                 r = nas_5gs_send_de_registration_accept(amf_ue);
                                 ogs_expect(r == OGS_OK);
-                                ogs_assert(r != OGS_ERROR);
                             }
                         } else if (state ==
                                 AMF_NETWORK_INITIATED_IMPLICIT_DE_REGISTERED ||
@@ -622,7 +611,6 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                                         amf_nausf_auth_build_authenticate_delete,
                                         amf_ue, state, NULL);
                                 ogs_expect(r == OGS_OK);
-                                ogs_assert(r != OGS_ERROR);
                             } else {
                                 memset(&param, 0, sizeof(param));
                                 param.ue_location = true;
@@ -641,7 +629,6 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                                                 amf_npcf_am_policy_control_build_delete,
                                                 amf_ue, state, NULL);
                                         ogs_expect(r == OGS_OK);
-                                        ogs_assert(r != OGS_ERROR);
                                     }
                                 }
                             }
@@ -739,7 +726,6 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                         state == AMF_UE_INITIATED_DE_REGISTERED) {
                         r = nas_5gs_send_de_registration_accept(amf_ue);
                         ogs_expect(r == OGS_OK);
-                        ogs_assert(r != OGS_ERROR);
 
                         PCF_AM_POLICY_CLEAR(amf_ue);
                     } else if (state ==
@@ -761,7 +747,6 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                                     NGAP_CauseMisc_om_intervention,
                                     NGAP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
                             ogs_expect(r == OGS_OK);
-                            ogs_assert(r != OGS_ERROR);
                         }
                     } else {
                         ogs_fatal("Invalid state [%d]", state);
@@ -814,7 +799,6 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                             CLEAR_AMF_UE_TIMER(amf_ue->t3570);
                             r = nas_5gs_send_identity_request(amf_ue);
                             ogs_expect(r == OGS_OK);
-                            ogs_assert(r != OGS_ERROR);
                             break;
                         }
                     }
@@ -834,7 +818,6 @@ void gmm_state_de_registered(ogs_fsm_t *s, amf_event_t *e)
                                 amf_nausf_auth_build_authenticate,
                                 amf_ue, 0, NULL);
                         ogs_expect(r == OGS_OK);
-                        ogs_assert(r != OGS_ERROR);
                     }
 
                     OGS_FSM_TRAN(s, &gmm_state_authentication);
@@ -943,7 +926,6 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
                 /* If t3513 is timeout, the saved pkbuf is used.  */
                 r = ngap_send_paging(amf_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
             break;
 
@@ -959,7 +941,6 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
                 r = nas_5gs_send_de_registration_request(amf_ue,
                         OpenAPI_deregistration_reason_NULL, 0);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
             break;
 
@@ -980,7 +961,6 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
                  */
                 r = nas_5gs_send_configuration_update_command(amf_ue, NULL);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
             break;
 
@@ -995,7 +975,6 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
                 amf_ue->t3570.retry_count++;
                 r = nas_5gs_send_identity_request(amf_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
             break;
 
@@ -1061,14 +1040,12 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
                         amf_nudm_sdm_build_subscription_delete,
                         amf_ue, state, NULL);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             } else if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
                 r = amf_ue_sbi_discover_and_send(
                     OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL, NULL,
                     amf_npcf_am_policy_control_build_delete,
                     amf_ue, state, NULL);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
             break;
 
@@ -1173,11 +1150,9 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
                                     amf_npcf_am_policy_control_build_delete,
                                     amf_ue, state, NULL);
                             ogs_expect(r == OGS_OK);
-                            ogs_assert(r != OGS_ERROR);
                         } else {
                             r = nas_5gs_send_de_registration_accept(amf_ue);
                             ogs_expect(r == OGS_OK);
-                            ogs_assert(r != OGS_ERROR);
                         }
 
                     } else if (state ==
@@ -1202,7 +1177,6 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
                                         amf_npcf_am_policy_control_build_delete,
                                         amf_ue, state, NULL);
                                 ogs_expect(r == OGS_OK);
-                                ogs_assert(r != OGS_ERROR);
                             }
                         }
                     }
@@ -1289,7 +1263,6 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
                                 amf_nudm_uecm_build_registration_delete,
                                 amf_ue, state, NULL);
                         ogs_expect(r == OGS_OK);
-                        ogs_assert(r != OGS_ERROR);
                     } else if (state == AMF_UE_INITIATED_DE_REGISTERED) {
 /*
  * Issues: #4209
@@ -1394,7 +1367,6 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
                                         amf_nausf_auth_build_authenticate_delete,
                                         amf_ue, state, NULL);
                                 ogs_expect(r == OGS_OK);
-                                ogs_assert(r != OGS_ERROR);
 
                             } else {
                                 memset(&param, 0, sizeof(param));
@@ -1414,7 +1386,6 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
                                                 amf_npcf_am_policy_control_build_delete,
                                                 amf_ue, state, NULL);
                                         ogs_expect(r == OGS_OK);
-                                        ogs_assert(r != OGS_ERROR);
                                     }
                                 }
                             }
@@ -1503,7 +1474,6 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
                                     NGAP_CauseMisc_om_intervention,
                                     NGAP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
                             ogs_expect(r == OGS_OK);
-                            ogs_assert(r != OGS_ERROR);
                         }
 
                     } else {
@@ -1557,7 +1527,6 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
                             CLEAR_AMF_UE_TIMER(amf_ue->t3570);
                             r = nas_5gs_send_identity_request(amf_ue);
                             ogs_expect(r == OGS_OK);
-                            ogs_assert(r != OGS_ERROR);
                             break;
                         }
                     }
@@ -1579,7 +1548,6 @@ void gmm_state_registered(ogs_fsm_t *s, amf_event_t *e)
                                 amf_nausf_auth_build_authenticate,
                                 amf_ue, 0, NULL);
                         ogs_expect(r == OGS_OK);
-                        ogs_assert(r != OGS_ERROR);
                     }
 
                     OGS_FSM_TRAN(s, &gmm_state_authentication);
@@ -1696,7 +1664,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                             gmm_cause);
                 r = nas_5gs_send_registration_reject(ran_ue, amf_ue, gmm_cause);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             }
@@ -1729,7 +1696,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                         amf_namf_comm_build_ue_context_transfer,
                         amf_ue, state, nas_message);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 break;
             }
 
@@ -1737,7 +1703,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                 CLEAR_AMF_UE_TIMER(amf_ue->t3570);
                 r = nas_5gs_send_identity_request(amf_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 break;
             }
 
@@ -1758,7 +1723,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                     r = nas_5gs_send_registration_reject(
                             ran_ue, amf_ue, gmm_cause);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                     AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                     break;
                 }
@@ -1771,7 +1735,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                                 ran_ue, amf_ue,
                                 OGS_5GMM_CAUSE_NO_NETWORK_SLICES_AVAILABLE);
                         ogs_expect(r == OGS_OK);
-                        ogs_assert(r != OGS_ERROR);
                         AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                         break;
                     }
@@ -1782,7 +1745,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                                 amf_nudm_uecm_build_registration,
                                 amf_ue, 0, NULL);
                         ogs_expect(r == OGS_OK);
-                        ogs_assert(r != OGS_ERROR);
                         OGS_FSM_TRAN(s, &gmm_state_initial_context_setup);
                         break;
                     } else if (!PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
@@ -1792,7 +1754,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                                 amf_npcf_am_policy_control_build_create,
                                 amf_ue, 0, NULL);
                         ogs_expect(r == OGS_OK);
-                        ogs_assert(r != OGS_ERROR);
                         OGS_FSM_TRAN(s, &gmm_state_initial_context_setup);
                         break;
                     }
@@ -1800,7 +1761,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                     CLEAR_AMF_UE_TIMER(amf_ue->t3550);
                     r = nas_5gs_send_registration_accept(amf_ue);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 }
 
                 if (amf_ue->next.m_tmsi)
@@ -1824,7 +1784,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                             amf_nausf_auth_build_authenticate,
                             amf_ue, 0, NULL);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 }
 
                 OGS_FSM_TRAN(s, &gmm_state_authentication);
@@ -1841,7 +1800,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                     OGS_5GMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK
                     );
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             }
@@ -1853,7 +1811,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                             amf_ue->suci, gmm_cause);
                 r = nas_5gs_send_service_reject(ran_ue, amf_ue, gmm_cause);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             }
@@ -1864,7 +1821,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                     OGS_5GMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK
                     );
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             }
@@ -1875,7 +1831,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                     OGS_5GMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK
                     );
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             }
@@ -1894,7 +1849,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                             amf_ue->suci, gmm_cause);
                 r = nas_5gs_send_service_reject(ran_ue, amf_ue, gmm_cause);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             }
@@ -1910,7 +1864,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                         NGAP_Cause_PR_protocol,
                         NGAP_CauseProtocol_semantic_error);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             }
@@ -1926,7 +1879,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                             gmm_cause, amf_ue->nas.message_type);
                 r = nas_5gs_send_gmm_reject(ran_ue, amf_ue, gmm_cause);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             }
@@ -1935,7 +1887,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                 ogs_error("No SUCI");
                 r = nas_5gs_send_gmm_reject(ran_ue, amf_ue, gmm_cause);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             }
@@ -1954,7 +1905,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                         amf_nausf_auth_build_authenticate,
                         amf_ue, 0, NULL);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
 
             OGS_FSM_TRAN(s, &gmm_state_authentication);
@@ -1997,7 +1947,6 @@ static void common_register_state(ogs_fsm_t *s, amf_event_t *e,
                         NGAP_Cause_PR_misc, NGAP_CauseMisc_om_intervention,
                         NGAP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
             break;
 
@@ -2127,7 +2076,6 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
                 ogs_error("gmm_handle_authentication_response() failed");
                 r = nas_5gs_send_authentication_reject(amf_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             }
@@ -2165,7 +2113,6 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
                         amf_nausf_auth_build_authenticate,
                         amf_ue, 0, NULL);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return;
 
             case OGS_5GMM_CAUSE_SYNCH_FAILURE:
@@ -2190,7 +2137,6 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
                         amf_nausf_auth_build_authenticate,
                         amf_ue, 0, authentication_failure_parameter->auts);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 return;
 
             default:
@@ -2202,7 +2148,6 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
 
             r = nas_5gs_send_authentication_reject(amf_ue);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
             break;
 
@@ -2216,7 +2161,6 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
                             amf_ue->suci, gmm_cause);
                 r = nas_5gs_send_registration_reject(ran_ue, amf_ue, gmm_cause);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             }
@@ -2225,7 +2169,6 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
                     OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
                     amf_nausf_auth_build_authenticate, amf_ue, 0, NULL);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             break;
 
         case OGS_NAS_5GS_5GMM_STATUS:
@@ -2255,14 +2198,12 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
                         amf_ue->suci);
                 r = nas_5gs_send_authentication_reject(amf_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                 break;
             } else {
                 amf_ue->t3560.retry_count++;
                 r = nas_5gs_send_authentication_request(amf_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
             break;
         default:
@@ -2294,7 +2235,6 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
                     r = nas_5gs_send_gmm_reject_from_sbi(
                             amf_ue, sbi_message->res_status);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                     AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                     break;
                 }
@@ -2308,7 +2248,6 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
                                 amf_ue->suci);
                         r = nas_5gs_send_authentication_reject(amf_ue);
                         ogs_expect(r == OGS_OK);
-                        ogs_assert(r != OGS_ERROR);
                         AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                         break;
                     }
@@ -2321,7 +2260,6 @@ void gmm_state_authentication(ogs_fsm_t *s, amf_event_t *e)
                                 amf_ue->suci);
                         r = nas_5gs_send_authentication_reject(amf_ue);
                         ogs_expect(r == OGS_OK);
-                        ogs_assert(r != OGS_ERROR);
                         AMF_RESTORE_CONTEXT_ON_FAILURE(amf_ue, s);
                         break;
                     } else {
@@ -2524,7 +2462,6 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
         CLEAR_AMF_UE_TIMER(amf_ue->t3560);
         r = nas_5gs_send_security_mode_command(amf_ue);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         break;
     case OGS_FSM_EXIT_SIG:
         break;
@@ -2593,7 +2530,6 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                             amf_ue->suci, gmm_cause, amf_ue->nas.message_type);
                 r = nas_5gs_send_gmm_reject(ran_ue, amf_ue, gmm_cause);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 OGS_FSM_TRAN(s, gmm_state_exception);
                 break;
             }
@@ -2625,7 +2561,6 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                         amf_ue, state,
                         (void *)OpenAPI_ue_context_transfer_status_TRANSFERRED);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
 
                 amf_ue->amf_ue_context_transfer_state =
                     REGISTRATION_STATUS_UPDATE_NEW_AMF_STATE;
@@ -2642,7 +2577,6 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                     OGS_SBI_SERVICE_TYPE_NUDM_UECM, NULL,
                     amf_nudm_uecm_build_registration, amf_ue, 0, NULL);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
 
             if (amf_ue->nas.message_type == OGS_NAS_5GS_REGISTRATION_REQUEST) {
                 OGS_FSM_TRAN(s, &gmm_state_initial_context_setup);
@@ -2671,7 +2605,6 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                             amf_ue->suci, gmm_cause);
                 r = nas_5gs_send_registration_reject(ran_ue, amf_ue, gmm_cause);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 OGS_FSM_TRAN(s, gmm_state_exception);
                 break;
             }
@@ -2680,7 +2613,6 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                     OGS_SBI_SERVICE_TYPE_NAUSF_AUTH, NULL,
                     amf_nausf_auth_build_authenticate, amf_ue, 0, NULL);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
 
             OGS_FSM_TRAN(s, &gmm_state_authentication);
             break;
@@ -2691,7 +2623,6 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                     OGS_5GMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK
                     );
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             OGS_FSM_TRAN(s, &gmm_state_exception);
             break;
 
@@ -2782,7 +2713,6 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                     amf_namf_comm_handle_registration_status_update_response(
                             sbi_message, amf_ue);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
 
                     amf_ue->amf_ue_context_transfer_state =
                         UE_CONTEXT_INITIAL_STATE;
@@ -2798,7 +2728,6 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                             OGS_SBI_SERVICE_TYPE_NUDM_UECM, NULL,
                             amf_nudm_uecm_build_registration, amf_ue, 0, NULL);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
 
                     if (amf_ue->nas.message_type ==
                             OGS_NAS_5GS_REGISTRATION_REQUEST) {
@@ -2843,13 +2772,11 @@ void gmm_state_security_mode(ogs_fsm_t *s, amf_event_t *e)
                         ran_ue_find_by_id(amf_ue->ran_ue_id), amf_ue,
                         OGS_5GMM_CAUSE_SECURITY_MODE_REJECTED_UNSPECIFIED);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 OGS_FSM_TRAN(&amf_ue->sm, &gmm_state_exception);
             } else {
                 amf_ue->t3560.retry_count++;
                 r = nas_5gs_send_security_mode_command(amf_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
             break;
         default:
@@ -2966,7 +2893,6 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
                             ran_ue_find_by_id(amf_ue->ran_ue_id), amf_ue,
                             OGS_5GMM_CAUSE_5GS_SERVICES_NOT_ALLOWED);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                     OGS_FSM_TRAN(&amf_ue->sm, &gmm_state_exception);
                     break;
                 }
@@ -2979,7 +2905,6 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
                             amf_ue, state,
                             (char *)OGS_SBI_RESOURCE_NAME_AM_DATA);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                     break;
 
                 DEFAULT
@@ -3039,7 +2964,6 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
                             ran_ue_find_by_id(amf_ue->ran_ue_id), amf_ue,
                             OGS_5GMM_CAUSE_5GS_SERVICES_NOT_ALLOWED);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                     OGS_FSM_TRAN(&amf_ue->sm, &gmm_state_exception);
                     break;
                 }
@@ -3083,7 +3007,6 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
                     CLEAR_AMF_UE_TIMER(amf_ue->t3550);
                     r = nas_5gs_send_registration_accept(amf_ue);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
 
                     /* In nsmf-handler.c
                      *
@@ -3202,7 +3125,6 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
             gmm_param.nitz = 1;
             r = nas_5gs_send_configuration_update_command(amf_ue, &gmm_param);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
 
             switch (amf_ue->nas.registration.value) {
             case OGS_NAS_5GS_REGISTRATION_TYPE_INITIAL:
@@ -3236,7 +3158,6 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
                             amf_ue->suci, gmm_cause);
                 r = nas_5gs_send_registration_reject(ran_ue, amf_ue, gmm_cause);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 OGS_FSM_TRAN(s, gmm_state_exception);
                 break;
             }
@@ -3256,7 +3177,6 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
                         amf_nausf_auth_build_authenticate,
                         amf_ue, 0, NULL);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
             OGS_FSM_TRAN(s, &gmm_state_authentication);
             break;
@@ -3266,7 +3186,6 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
             r = nas_5gs_send_service_reject(ran_ue, amf_ue,
                 OGS_5GMM_CAUSE_UE_IDENTITY_CANNOT_BE_DERIVED_BY_THE_NETWORK);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             OGS_FSM_TRAN(s, &gmm_state_exception);
             break;
 
@@ -3300,7 +3219,6 @@ void gmm_state_initial_context_setup(ogs_fsm_t *s, amf_event_t *e)
                 amf_ue->t3550.retry_count++;
                 r = nas_5gs_send_registration_accept(amf_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
             break;
         default:
@@ -3409,7 +3327,6 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
                     amf_ue, state,
                     (void *)OpenAPI_ue_context_transfer_status_NOT_TRANSFERRED);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
 
             amf_ue->amf_ue_context_transfer_state =
                 REGISTRATION_STATUS_UPDATE_NEW_AMF_STATE;
@@ -3433,7 +3350,6 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
                     NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release,
                     NGAP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
         break;
     case OGS_FSM_EXIT_SIG:
@@ -3469,7 +3385,6 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
                             gmm_cause);
                 r = nas_5gs_send_registration_reject(ran_ue, amf_ue, gmm_cause);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
                 OGS_FSM_TRAN(s, gmm_state_exception);
                 break;
             }
@@ -3478,7 +3393,6 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
                 CLEAR_AMF_UE_TIMER(amf_ue->t3570);
                 r = nas_5gs_send_identity_request(amf_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
 
                 OGS_FSM_TRAN(s, &gmm_state_de_registered);
                 break;
@@ -3501,7 +3415,6 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
                     r = nas_5gs_send_registration_reject(
                             ran_ue, amf_ue, gmm_cause);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                     OGS_FSM_TRAN(s, gmm_state_exception);
                     break;
                 }
@@ -3514,7 +3427,6 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
                                 ran_ue, amf_ue,
                                 OGS_5GMM_CAUSE_NO_NETWORK_SLICES_AVAILABLE);
                         ogs_expect(r == OGS_OK);
-                        ogs_assert(r != OGS_ERROR);
                         OGS_FSM_TRAN(s, gmm_state_exception);
                         break;
                     }
@@ -3526,7 +3438,6 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
                                 amf_npcf_am_policy_control_build_create,
                                 amf_ue, 0, NULL);
                         ogs_expect(r == OGS_OK);
-                        ogs_assert(r != OGS_ERROR);
                         OGS_FSM_TRAN(s, &gmm_state_initial_context_setup);
                         break;
                     }
@@ -3534,7 +3445,6 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
                     CLEAR_AMF_UE_TIMER(amf_ue->t3550);
                     r = nas_5gs_send_registration_accept(amf_ue);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 }
 
                 if (amf_ue->next.m_tmsi)
@@ -3558,7 +3468,6 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
                             amf_nausf_auth_build_authenticate,
                             amf_ue, 0, NULL);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 }
 
                 OGS_FSM_TRAN(s, &gmm_state_authentication);
@@ -3783,7 +3692,6 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
                     amf_namf_comm_handle_registration_status_update_response(
                             sbi_message, amf_ue);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
 
                     amf_ue->amf_ue_context_transfer_state =
                         UE_CONTEXT_INITIAL_STATE;
@@ -3806,7 +3714,6 @@ void gmm_state_exception(ogs_fsm_t *s, amf_event_t *e)
                                 NGAP_Cause_PR_nas, NGAP_CauseNas_normal_release,
                                 NGAP_UE_CTX_REL_UE_CONTEXT_REMOVE, 0);
                         ogs_expect(r == OGS_OK);
-                        ogs_assert(r != OGS_ERROR);
                     }
                     break;
 

@@ -218,6 +218,8 @@ static int kqueue_process(ogs_pollset_t *pollset, ogs_time_t timeout)
         return OGS_TIMEUP;
     }
 
+    ogs_pollset_dispatch_enter(pollset);
+
     for (i = 0; i < n; i++) {
         ogs_poll_t *poll = NULL;
         short when = 0;
@@ -308,7 +310,9 @@ static int kqueue_process(ogs_pollset_t *pollset, ogs_time_t timeout)
             poll->handler(when, poll->fd, poll->data);
         }
     }
-    
+
+    ogs_pollset_dispatch_leave(pollset);
+
     return OGS_OK;
 }
 

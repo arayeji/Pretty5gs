@@ -60,6 +60,16 @@ ogs_pollset_t *ogs_pollset_create(unsigned int capacity)
     return pollset;
 }
 
+void ogs_pollset_set_dispatch_hooks(ogs_pollset_t *pollset,
+        ogs_pollset_hook_f enter, ogs_pollset_hook_f leave, void *data)
+{
+    ogs_assert(pollset);
+
+    pollset->dispatch_enter = enter;
+    pollset->dispatch_leave = leave;
+    pollset->dispatch_data = data;
+}
+
 void ogs_pollset_destroy(ogs_pollset_t *pollset)
 {
     ogs_assert(pollset);

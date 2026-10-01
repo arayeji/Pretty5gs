@@ -54,8 +54,13 @@ void ngap_state_operational(ogs_fsm_t *s, amf_event_t *e)
 
     amf_sm_debug(e);
 
-    gnb = amf_gnb_find_by_id(e->gnb_id);
-    ogs_assert(gnb);
+    /* a gNB being torn down still runs its exit signal and the UE
+     * messages a shard had already queued for it */
+    gnb = amf_gnb_find_by_id_any(e->gnb_id);
+    if (!gnb) {
+        ogs_error("[%d] gNB has already been removed", e->gnb_id);
+        return;
+    }
 
     switch (e->h.id) {
     case OGS_FSM_ENTRY_SIG:
@@ -196,7 +201,6 @@ void ngap_state_operational(ogs_fsm_t *s, amf_event_t *e)
             r = ngap_send_to_ran_ue(
                     ran_ue_find_by_id(e->ran_ue_id), e->pkbuf);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
 
             ogs_timer_delete(e->timer);
             break;

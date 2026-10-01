@@ -208,7 +208,6 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
                  */
                     r = ngap_send_to_ran_ue(ran_ue, ngapbuf);
                     ogs_expect(r == OGS_OK);
-                    ogs_assert(r != OGS_ERROR);
                 } else {
                     sess->pdu_session_establishment_accept = ngapbuf;
                 }
@@ -302,12 +301,10 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
 
                 r = ngap_send_paging(amf_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
 
             } else if (CM_CONNECTED(amf_ue)) {
                 r = nas_send_pdu_session_setup_request(sess, NULL, n2buf);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
 
             } else {
 
@@ -363,14 +360,12 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
 
             r = ngap_send_paging(amf_ue);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
 
         } else if (CM_CONNECTED(amf_ue)) {
             if (CONTEXT_SETUP_ESTABLISHED(amf_ue)) {
                 r = nas_send_pdu_session_modification_command(
                         sess, n1buf, n2buf);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             } else {
                 /* Store 5GSM Message */
                 ogs_warn("[Session MODIFY] Context setup is not established");
@@ -437,14 +432,12 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
 
                 r = ngap_send_paging(amf_ue);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
 
         } else if (CM_CONNECTED(amf_ue)) {
             if (CONTEXT_SETUP_ESTABLISHED(amf_ue)) {
                 r = nas_send_pdu_session_release_command(sess, n1buf, n2buf);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             } else {
                 /* Store 5GSM Message */
                 ogs_warn("[Session RELEASE] Context setup is not established");
@@ -484,7 +477,6 @@ int amf_namf_comm_handle_n1_n2_message_transfer(
                 ran_ue_find_by_id(sess->ran_ue_id), sess,
                 OGS_NAS_PAYLOAD_CONTAINER_N1_SM_INFORMATION, n1buf);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         amf_sess_remove(sess);
         break;
@@ -691,7 +683,6 @@ int amf_namf_callback_handle_dereg_notify(
                 DeregistrationData->dereg_reason,
                 OGS_5GMM_CAUSE_5GS_SERVICES_NOT_ALLOWED);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         state = AMF_NETWORK_INITIATED_EXPLICIT_DE_REGISTERED;
 
@@ -711,7 +702,6 @@ int amf_namf_callback_handle_dereg_notify(
                 amf_nudm_sdm_build_subscription_delete,
                 amf_ue, state, NULL);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
         r = amf_ue_sbi_discover_and_send(
                 OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL,
@@ -719,7 +709,6 @@ int amf_namf_callback_handle_dereg_notify(
                 amf_npcf_am_policy_control_build_delete,
                 amf_ue, state, NULL);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     }
 
 cleanup:
@@ -1053,7 +1042,6 @@ int amf_namf_callback_handle_sdm_data_change_notify(
                     amf_ue,
                     OpenAPI_deregistration_reason_REREGISTRATION_REQUIRED, 0);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
 
             state = AMF_NETWORK_INITIATED_EXPLICIT_DE_REGISTERED;
 
@@ -1063,7 +1051,6 @@ int amf_namf_callback_handle_sdm_data_change_notify(
                         amf_nudm_sdm_build_subscription_delete,
                         amf_ue, state, NULL);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             } else if (PCF_AM_POLICY_ASSOCIATED(amf_ue)) {
                 r = amf_ue_sbi_discover_and_send(
                         OGS_SBI_SERVICE_TYPE_NPCF_AM_POLICY_CONTROL,
@@ -1071,7 +1058,6 @@ int amf_namf_callback_handle_sdm_data_change_notify(
                         amf_npcf_am_policy_control_build_delete,
                         amf_ue, state, NULL);
                 ogs_expect(r == OGS_OK);
-                ogs_assert(r != OGS_ERROR);
             }
 
         } else if (ambr_changed) {
@@ -1082,7 +1068,6 @@ int amf_namf_callback_handle_sdm_data_change_notify(
 
             r = ngap_send_to_ran_ue(ran_ue, ngapbuf);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
         }
     }
 

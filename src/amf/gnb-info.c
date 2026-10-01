@@ -172,10 +172,15 @@ size_t amf_dump_gnb_info_paged(char *buf, size_t buflen,
      * gNBs and ran_ue's concurrently. See lib/metrics/context.h
      * for the lock contract.
      */
+    amf_ctx_lock();
     ogs_metrics_dump_lock();
 
     amf_gnb_t *gnb = NULL;
     ogs_list_for_each(&ctxt->gnb_list, gnb) {
+        /* socket already closed, UEs being released on the shards */
+        if (gnb->being_removed)
+            continue;
+
         /* Server-side filter: gnb_id and/or sctp peer IP. */
         if (q && q->has_enb_id && gnb->gnb_id != q->enb_id)
             continue;
@@ -308,6 +313,7 @@ size_t amf_dump_gnb_info_paged(char *buf, size_t buflen,
     }
 
     ogs_metrics_dump_unlock();
+    amf_ctx_unlock();
 
     json_pager_add_trailing(root, no_paging, page, page_size, emitted, total,
             has_next && !oom,"/gnb-info", oom);

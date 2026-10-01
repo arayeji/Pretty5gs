@@ -503,6 +503,15 @@ typedef struct ogs_sbi_nf_info_s {
     };
 } ogs_sbi_nf_info_t;
 
+/* Opt-in recursive lock for multi-threaded NFs (see context.c). */
+void ogs_sbi_lock_enable(void);
+bool ogs_sbi_lock_is_enabled(void);
+/* Call on the thread that polls ogs_app()->pollset */
+void ogs_sbi_lock_mark_poller(void);
+void ogs_sbi_lock(void);
+void ogs_sbi_unlock(void);
+bool ogs_sbi_lock_held(void);
+
 void ogs_sbi_context_init(OpenAPI_nf_type_e nf_type);
 void ogs_sbi_context_final(void);
 ogs_sbi_context_t *ogs_sbi_self(void);

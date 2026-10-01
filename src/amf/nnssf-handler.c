@@ -61,7 +61,6 @@ int amf_nnssf_nsselection_handle_get(
                 amf_ue->supi, recvmsg->res_status);
         r = nas_5gs_send_gmm_status(amf_ue, recvmsg->res_status);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -71,7 +70,6 @@ int amf_nnssf_nsselection_handle_get(
         r = nas_5gs_send_gmm_reject_from_sbi(
                 amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -81,7 +79,6 @@ int amf_nnssf_nsselection_handle_get(
         r = nas_5gs_send_gmm_reject_from_sbi(
                 amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -90,7 +87,6 @@ int amf_nnssf_nsselection_handle_get(
         r = nas_5gs_send_gmm_reject_from_sbi(
                 amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -100,7 +96,6 @@ int amf_nnssf_nsselection_handle_get(
             r = nas_5gs_send_gmm_reject_from_sbi(
                     amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
             return OGS_ERROR;
         }
 
@@ -163,7 +158,6 @@ int amf_nnssf_nsselection_handle_get(
                 amf_nsmf_pdusession_build_create_sm_context,
                 ran_ue, sess, AMF_CREATE_SM_CONTEXT_NO_STATE, &param);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     } else {
         /*
          * In Home Routed, obtaining NRF from NSSF and selecting SMF
@@ -178,7 +172,6 @@ int amf_nnssf_nsselection_handle_get(
             r = nas_5gs_send_gmm_reject_from_sbi(
                     amf_ue, OGS_SBI_HTTP_STATUS_INTERNAL_SERVER_ERROR);
             ogs_expect(r == OGS_OK);
-            ogs_assert(r != OGS_ERROR);
 
             ogs_sbi_discovery_option_free(discovery_option);
 
@@ -210,7 +203,6 @@ int amf_nnssf_nsselection_handle_get(
                 ran_ue, sess,
                 OGS_SBI_SERVICE_TYPE_NSMF_PDUSESSION, discovery_option, state);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
     }
 
     return OGS_OK;

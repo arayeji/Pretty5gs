@@ -657,6 +657,90 @@ static void test8_func(abts_case *tc, void *data)
     ogs_pollset_destroy(pollset);
 }
 
+static int test9_enter, test9_leave, test9_called;
+static bool test9_inside, test9_hooked;
+
+static void test9_hook_enter(void *data)
+{
+    abts_case *tc = data;
+
+    ABTS_TRUE(tc, !test9_inside);
+    test9_inside = true;
+    test9_enter++;
+}
+
+static void test9_hook_leave(void *data)
+{
+    abts_case *tc = data;
+
+    ABTS_TRUE(tc, test9_inside);
+    test9_inside = false;
+    test9_leave++;
+}
+
+static void test9_handler(short when, ogs_socket_t fd, void *data)
+{
+    abts_case *tc = data;
+    char buf[16];
+
+    ABTS_TRUE(tc, test9_inside == test9_hooked);
+    ABTS_TRUE(tc, ogs_recv(fd, buf, sizeof(buf), 0) > 0);
+    test9_called++;
+}
+
+static void test9_func(abts_case *tc, void *data)
+{
+    int rv, i;
+    ogs_socket_t fd[2][2];
+    ogs_poll_t *poll[2];
+    ogs_pollset_t *pollset = ogs_pollset_create(512);
+    ABTS_PTR_NOTNULL(tc, pollset);
+
+    ogs_pollset_set_dispatch_hooks(pollset,
+            test9_hook_enter, test9_hook_leave, tc);
+    test9_hooked = true;
+
+    for (i = 0; i < 2; i++) {
+        rv = ogs_socketpair(AF_SOCKPAIR, SOCK_STREAM, 0, fd[i]);
+        ABTS_INT_EQUAL(tc, OGS_OK, rv);
+        poll[i] = ogs_pollset_add(pollset, OGS_POLLIN,
+                fd[i][1], test9_handler, tc);
+        ABTS_PTR_NOTNULL(tc, poll[i]);
+    }
+
+    /* nothing ready: the hooks never run around the wait */
+    rv = ogs_pollset_poll(pollset, ogs_time_from_msec(50));
+    ABTS_INT_EQUAL(tc, OGS_TIMEUP, rv);
+    ABTS_INT_EQUAL(tc, 0, test9_enter);
+
+    /* two ready handlers: one enter/leave pair around both */
+    for (i = 0; i < 2; i++)
+        ABTS_INT_EQUAL(tc, 1, ogs_send(fd[i][0], "x", 1, 0));
+    rv = ogs_pollset_poll(pollset, OGS_INFINITE_TIME);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    ABTS_INT_EQUAL(tc, 2, test9_called);
+    ABTS_INT_EQUAL(tc, 1, test9_enter);
+    ABTS_INT_EQUAL(tc, 1, test9_leave);
+    ABTS_TRUE(tc, !test9_inside);
+
+    /* cleared hooks are not called anymore */
+    ogs_pollset_set_dispatch_hooks(pollset, NULL, NULL, NULL);
+    test9_hooked = false;
+    ABTS_INT_EQUAL(tc, 1, ogs_send(fd[0][0], "x", 1, 0));
+    rv = ogs_pollset_poll(pollset, OGS_INFINITE_TIME);
+    ABTS_INT_EQUAL(tc, OGS_OK, rv);
+    ABTS_INT_EQUAL(tc, 3, test9_called);
+    ABTS_INT_EQUAL(tc, 1, test9_enter);
+
+    for (i = 0; i < 2; i++) {
+        ogs_pollset_remove(poll[i]);
+        ogs_closesocket(fd[i][0]);
+        ogs_closesocket(fd[i][1]);
+    }
+
+    ogs_pollset_destroy(pollset);
+}
+
 abts_suite *test_poll(abts_suite *suite)
 {
     suite = ADD_SUITE(suite)
@@ -672,6 +756,7 @@ abts_suite *test_poll(abts_suite *suite)
     abts_run_test(suite, test6_func, NULL);
     abts_run_test(suite, test7_func, NULL);
     abts_run_test(suite, test8_func, NULL);
+    abts_run_test(suite, test9_func, NULL);
 
     return suite;
 }

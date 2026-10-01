@@ -89,7 +89,55 @@ bool amf_sbi_send_request(
     return ogs_sbi_send_request_to_nf_instance(nf_instance, xact);
 }
 
+/*
+ * The public SBI helpers below run under ogs_sbi_lock() as a whole: NF
+ * instances, clients and transactions they hold pointers to may
+ * otherwise be removed by the main thread (amf.workers).
+ */
+static int ue_sbi_discover_and_send(
+        ogs_sbi_service_type_e service_type,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(amf_ue_t *amf_ue, void *data),
+        amf_ue_t *amf_ue, int state, void *data);
+static int sess_sbi_discover_and_send(
+        ogs_sbi_service_type_e service_type,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(amf_sess_t *sess, void *data),
+        ran_ue_t *ran_ue, amf_sess_t *sess, int state, void *data);
+
 int amf_ue_sbi_discover_and_send(
+        ogs_sbi_service_type_e service_type,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(amf_ue_t *amf_ue, void *data),
+        amf_ue_t *amf_ue, int state, void *data)
+{
+    int rv;
+
+    ogs_sbi_lock();
+    rv = ue_sbi_discover_and_send(service_type, discovery_option,
+            build, amf_ue, state, data);
+    ogs_sbi_unlock();
+
+    return rv;
+}
+
+int amf_sess_sbi_discover_and_send(
+        ogs_sbi_service_type_e service_type,
+        ogs_sbi_discovery_option_t *discovery_option,
+        ogs_sbi_request_t *(*build)(amf_sess_t *sess, void *data),
+        ran_ue_t *ran_ue, amf_sess_t *sess, int state, void *data)
+{
+    int rv;
+
+    ogs_sbi_lock();
+    rv = sess_sbi_discover_and_send(service_type, discovery_option,
+            build, ran_ue, sess, state, data);
+    ogs_sbi_unlock();
+
+    return rv;
+}
+
+static int ue_sbi_discover_and_send(
         ogs_sbi_service_type_e service_type,
         ogs_sbi_discovery_option_t *discovery_option,
         ogs_sbi_request_t *(*build)(amf_ue_t *amf_ue, void *data),
@@ -134,7 +182,6 @@ int amf_ue_sbi_discover_and_send(
         r = nas_5gs_send_gmm_reject_from_sbi(
                 amf_ue, OGS_SBI_HTTP_STATUS_GATEWAY_TIMEOUT);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -147,7 +194,6 @@ int amf_ue_sbi_discover_and_send(
         r = nas_5gs_send_gmm_reject_from_sbi(
                 amf_ue, OGS_SBI_HTTP_STATUS_GATEWAY_TIMEOUT);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return rv;
     }
 
@@ -159,7 +205,7 @@ static void amf_sbi_xact_ctx_free(void *data)
     ogs_free(data);
 }
 
-int amf_sess_sbi_discover_and_send(
+static int sess_sbi_discover_and_send(
         ogs_sbi_service_type_e service_type,
         ogs_sbi_discovery_option_t *discovery_option,
         ogs_sbi_request_t *(*build)(amf_sess_t *sess, void *data),
@@ -213,7 +259,6 @@ int amf_sess_sbi_discover_and_send(
                 ran_ue, sess,
                 OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED, AMF_NAS_BACKOFF_TIME);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return OGS_ERROR;
     }
 
@@ -239,13 +284,21 @@ int amf_sess_sbi_discover_and_send(
                 ran_ue, sess,
                 OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED, AMF_NAS_BACKOFF_TIME);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
         return rv;
     }
 
     return OGS_OK;
 }
 static int client_discover_cb(
+        int status, ogs_sbi_response_t *response, void *data)
+{
+    if (amf_workers_post_discover_cb(status, response, data))
+        return OGS_OK;
+
+    return amf_sbi_discover_by_nsi_handler(status, response, data);
+}
+
+int amf_sbi_discover_by_nsi_handler(
         int status, ogs_sbi_response_t *response, void *data)
 {
     int r, i, rv;
@@ -345,7 +398,6 @@ static int client_discover_cb(
         r = nas_5gs_send_back_gsm_message(ran_ue, sess,
             OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED, AMF_NAS_BACKOFF_TIME);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         goto cleanup;
     }
@@ -355,7 +407,6 @@ static int client_discover_cb(
         r = nas_5gs_send_back_gsm_message(ran_ue, sess,
             OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED, AMF_NAS_BACKOFF_TIME);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         goto cleanup;
     }
@@ -365,7 +416,6 @@ static int client_discover_cb(
         r = nas_5gs_send_back_gsm_message(ran_ue, sess,
             OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED, AMF_NAS_BACKOFF_TIME);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         goto cleanup;
     }
@@ -382,7 +432,6 @@ static int client_discover_cb(
                 OGS_5GMM_CAUSE_PAYLOAD_WAS_NOT_FORWARDED,
                 AMF_NAS_BACKOFF_TIME);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         goto cleanup;
     }
@@ -481,7 +530,6 @@ static int client_discover_cb(
                 amf_nnssf_nsselection_build_get, ran_ue, sess,
                 AMF_SMF_SELECTION_IN_HPLMN_IN_HOME_ROUTED, &param);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
         ogs_sbi_discovery_option_free(v_discovery_option);
 
@@ -492,7 +540,6 @@ static int client_discover_cb(
                 amf_nsmf_pdusession_build_create_sm_context,
                 ran_ue, sess, next_state, NULL);
         ogs_expect(r == OGS_OK);
-        ogs_assert(r != OGS_ERROR);
 
     } else {
         ogs_error("Invalid NEXT state [%d]", next_state);
@@ -515,7 +562,27 @@ cleanup:
     return OGS_ERROR;
 }
 
+static int sess_sbi_discover_by_nsi(
+        ran_ue_t *ran_ue, amf_sess_t *sess,
+        ogs_sbi_service_type_e service_type,
+        ogs_sbi_discovery_option_t *discovery_option, int state);
+
 int amf_sess_sbi_discover_by_nsi(
+        ran_ue_t *ran_ue, amf_sess_t *sess,
+        ogs_sbi_service_type_e service_type,
+        ogs_sbi_discovery_option_t *discovery_option, int state)
+{
+    int rv;
+
+    ogs_sbi_lock();
+    rv = sess_sbi_discover_by_nsi(
+            ran_ue, sess, service_type, discovery_option, state);
+    ogs_sbi_unlock();
+
+    return rv;
+}
+
+static int sess_sbi_discover_by_nsi(
         ran_ue_t *ran_ue, amf_sess_t *sess,
         ogs_sbi_service_type_e service_type,
         ogs_sbi_discovery_option_t *discovery_option, int state)
@@ -588,7 +655,6 @@ void amf_sbi_send_activating_session(
             amf_nsmf_pdusession_build_update_sm_context,
             ran_ue, sess, state, &param);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 }
 
 void amf_sbi_send_deactivate_session(
@@ -611,7 +677,6 @@ void amf_sbi_send_deactivate_session(
             amf_nsmf_pdusession_build_update_sm_context,
             ran_ue, sess, state, &param);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 }
 
 void amf_sbi_send_deactivate_all_sessions(
@@ -652,44 +717,86 @@ static void amf_sbi_release_ran_ue_on_gnb_remove(
     }
 }
 
-void amf_sbi_send_deactivate_all_ue_in_gnb(amf_gnb_t *gnb, int state)
+static void deactivate_ran_ue_in_gnb(ran_ue_t *ran_ue, int state)
 {
     amf_ue_t *amf_ue = NULL;
-    ran_ue_t *ran_ue = NULL, *ran_ue_next;
+    int old_xact_count = 0, new_xact_count = 0;
 
-    ogs_list_for_each_safe(&gnb->ran_ue_list, ran_ue_next, ran_ue) {
-        int old_xact_count = 0, new_xact_count = 0;
+    amf_ue = amf_ue_find_by_id(ran_ue->amf_ue_id);
 
-        amf_ue = amf_ue_find_by_id(ran_ue->amf_ue_id);
+    if (amf_ue) {
+        old_xact_count = amf_sess_xact_count(amf_ue);
 
-        if (amf_ue) {
-            old_xact_count = amf_sess_xact_count(amf_ue);
+        amf_sbi_send_deactivate_all_sessions(
+            ran_ue, amf_ue, state, NGAP_Cause_PR_radioNetwork,
+            NGAP_CauseRadioNetwork_failure_in_radio_interface_procedure);
 
-            amf_sbi_send_deactivate_all_sessions(
-                ran_ue, amf_ue, state, NGAP_Cause_PR_radioNetwork,
-                NGAP_CauseRadioNetwork_failure_in_radio_interface_procedure);
+        new_xact_count = amf_sess_xact_count(amf_ue);
 
-            new_xact_count = amf_sess_xact_count(amf_ue);
+        if (old_xact_count == new_xact_count)
+            amf_sbi_release_ran_ue_on_gnb_remove(amf_ue, ran_ue);
+    } else {
+        ogs_warn("amf_sbi_send_deactivate_all_ue_in_gnb()");
+        ogs_warn("    RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] State[%d]",
+            (long long)ran_ue->ran_ue_ngap_id,
+            (long long)ran_ue->amf_ue_ngap_id,
+            state);
 
-            if (old_xact_count == new_xact_count)
-                amf_sbi_release_ran_ue_on_gnb_remove(amf_ue, ran_ue);
+        if (state == AMF_REMOVE_S1_CONTEXT_BY_LO_CONNREFUSED ||
+            state == AMF_REMOVE_S1_CONTEXT_BY_RESET_ALL) {
+            ran_ue_remove(ran_ue);
         } else {
-            ogs_warn("amf_sbi_send_deactivate_all_ue_in_gnb()");
-            ogs_warn("    RAN_UE_NGAP_ID[%lld] AMF_UE_NGAP_ID[%lld] State[%d]",
-                (long long)ran_ue->ran_ue_ngap_id,
-                (long long)ran_ue->amf_ue_ngap_id,
-                state);
-
-            if (state == AMF_REMOVE_S1_CONTEXT_BY_LO_CONNREFUSED ||
-                state == AMF_REMOVE_S1_CONTEXT_BY_RESET_ALL) {
-                ran_ue_remove(ran_ue);
-            } else {
-                /* At this point, it does not support other action */
-                ogs_fatal("Invalid state [%d]", state);
-                ogs_assert_if_reached();
-            }
+            /* At this point, it does not support other action */
+            ogs_fatal("Invalid state [%d]", state);
+            ogs_assert_if_reached();
         }
     }
+}
+
+void amf_sbi_send_deactivate_all_ue_in_gnb(amf_gnb_t *gnb, int state)
+{
+    ran_ue_t *ran_ue = NULL, *ran_ue_next;
+
+    ogs_list_for_each_safe(&gnb->ran_ue_list, ran_ue_next, ran_ue)
+        deactivate_ran_ue_in_gnb(ran_ue, state);
+}
+
+void amf_sbi_send_deactivate_own_ue_in_gnb(ogs_pool_id_t gnb_id, int state)
+{
+    amf_gnb_t *gnb = NULL;
+    ran_ue_t *ran_ue = NULL;
+    ogs_pool_id_t *ids = NULL;
+    int i, count, num = 0;
+    int self_wid = amf_shard_self();
+
+    /* the gNB may already be in teardown: its ran_ue_list stays valid */
+    amf_ctx_lock();
+    gnb = amf_gnb_find_by_id_any(gnb_id);
+    if (!gnb) {
+        amf_ctx_unlock();
+        return;
+    }
+    count = ogs_list_count(&gnb->ran_ue_list);
+    if (count) {
+        ids = ogs_calloc(count, sizeof(*ids));
+        ogs_assert(ids);
+        ogs_list_for_each(&gnb->ran_ue_list, ran_ue) {
+            if (ran_ue->owner_wid == self_wid && num < count)
+                ids[num++] = ran_ue->id;
+        }
+    }
+    amf_ctx_unlock();
+
+    /* releasing one ran_ue may remove others: resolve each id again */
+    for (i = 0; i < num; i++) {
+        ran_ue = ran_ue_find_by_id(ids[i]);
+        if (ran_ue && ran_ue->owner_wid == self_wid &&
+                ran_ue->gnb_id == gnb_id)
+            deactivate_ran_ue_in_gnb(ran_ue, state);
+    }
+
+    if (ids)
+        ogs_free(ids);
 }
 
 void amf_sbi_send_release_session(
@@ -704,7 +811,6 @@ void amf_sbi_send_release_session(
             amf_nsmf_pdusession_build_release_sm_context,
             ran_ue, sess, state, data);
     ogs_expect(r == OGS_OK);
-    ogs_assert(r != OGS_ERROR);
 
     /* Prevent to invoke SMF for this session */
     CLEAR_SESSION_CONTEXT(sess);
@@ -773,6 +879,7 @@ bool amf_sbi_send_n1_n2_failure_notify(
         return false;
     }
 
+    /* client_notify_cb() touches no AMF context: it may run on main */
     rc = ogs_sbi_send_request_to_client(
             client, client_notify_cb, request, NULL);
     ogs_expect(rc == true);

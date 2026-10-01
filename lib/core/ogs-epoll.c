@@ -307,6 +307,8 @@ static int epoll_process(ogs_pollset_t *pollset, ogs_time_t timeout)
         return OGS_TIMEUP;
     }
 
+    ogs_pollset_dispatch_enter(pollset);
+
     for (i = 0; i < num_of_poll; i++) {
         struct epoll_map_s *map = NULL;
         uint32_t received;
@@ -357,6 +359,8 @@ static int epoll_process(ogs_pollset_t *pollset, ogs_time_t timeout)
                 map->write->handler(when, map->write->fd, map->write->data);
         }
     }
-    
+
+    ogs_pollset_dispatch_leave(pollset);
+
     return OGS_OK;
 }
