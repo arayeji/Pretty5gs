@@ -84,9 +84,11 @@ libsmf_sources = files('''
     admin-api.h
     smf-workers.h
     smf-shard.h
+    sbi-relay.h
 
     init.c
     smf-workers.c
+    sbi-relay.c
     smf-shard.c
     event.c
     timer.c

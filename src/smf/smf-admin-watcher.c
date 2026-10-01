@@ -395,10 +395,8 @@ static void apply_one_subnet(pending_subnet_t *p)
         return;
     }
 
-    /* If no dev was given, reuse the first tun dev if any already exists;
-     * otherwise ogs_pfcp_subnet_add with ifname=NULL is valid — see
-     * lib/pfcp/context.c. */
-    const char *ifname = p->dev;
+    /* ogs_pfcp_subnet_add() requires an ifname: default like smf.yaml. */
+    const char *ifname = p->dev ? p->dev : ogs_pfcp_self()->tun_ifname;
 
     ogs_pfcp_subnet_t *subnet = ogs_pfcp_subnet_add(
             ipstr, prefix, p->gateway, p->dnn, ifname);
@@ -407,6 +405,7 @@ static void apply_one_subnet(pending_subnet_t *p)
                 ipstr, prefix, p->dnn);
         return;
     }
+    ogs_pfcp_subnet_pool_generate(subnet);
 
     ogs_info("admin-watcher: added subnet %s dnn=%s (rev=%lld)",
             p->cidr, p->dnn, (long long)p->revision);

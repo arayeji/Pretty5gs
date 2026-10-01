@@ -32,6 +32,7 @@
 #include "admin-api.h"
 #include "smf-reload-lists.h"
 #include "smf-workers.h"
+#include "sbi-relay.h"
 #ifdef OPEN5GS_ADMIN_WATCHER
 #include "smf-admin-watcher.h"
 #endif
@@ -125,6 +126,8 @@ int smf_initialize(void)
 
     ogs_app_sighup_handler_set(smf_sighup_handler);
 
+    smf_sbi_relay_init();
+
     rv = smf_workers_start();
     if (rv != OGS_OK) return rv;
 
@@ -212,6 +215,7 @@ void smf_terminate(void)
 
     /* session timers on worker timer managers are gone; free them */
     smf_workers_final();
+    smf_sbi_relay_final();
 
     ogs_pfcp_context_final();
     ogs_sbi_context_final();
@@ -261,11 +265,14 @@ static void smf_main(void *data)
 
             ogs_assert(e);
             smf_event_lag_observe(e);
+            smf_event_trace_rx_restore(e);
             ogs_fsm_dispatch(&smf_sm, e);
             ogs_event_free(e);
         }
     }
 done:
+    /* workers blocked in smf_main_call() must not wait for us any more */
+    smf_main_call_shutdown();
 
     ogs_fsm_fini(&smf_sm, 0);
     smf_radius_thread_final();

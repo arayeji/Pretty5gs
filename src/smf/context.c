@@ -42,6 +42,7 @@
 #include "smf-trace.h"
 #include "metrics.h"
 #include "smf-workers.h"
+#include "sbi-path.h"
 
 #define SMF_RECOVERY_COUNTER_FILE "/var/lib/open5gs/smf_recovery_counter"
 
@@ -167,14 +168,23 @@ static int num_of_smf_sess = 0;
 static void stats_add_smf_session(void);
 static void stats_remove_smf_session(smf_sess_t *sess);
 
+static OGS_THREAD_LOCAL int ctx_lock_depth;
+
 void smf_ctx_lock(void)
 {
     ogs_metrics_dump_lock();
+    ctx_lock_depth++;
 }
 
 void smf_ctx_unlock(void)
 {
+    ctx_lock_depth--;
     ogs_metrics_dump_unlock();
+}
+
+bool smf_ctx_lock_held(void)
+{
+    return ctx_lock_depth > 0;
 }
 
 /*
@@ -341,8 +351,56 @@ int smf_sess_owner_shard_by_id(ogs_pool_id_t sess_id)
 
     smf_ctx_lock();
     sess = smf_sess_find_by_id(sess_id);
-    if (sess)
+    /* smf_n4_seid (which carries the owner) is set just after calloc */
+    if (sess && sess->smf_n4_seid)
         shard = smf_sess_owner_shard(sess);
+    smf_ctx_unlock();
+
+    return shard;
+}
+
+/* sm_context_ref / pdu_session_ref (the session pool index). */
+int smf_sess_owner_shard_by_ref(const char *ref)
+{
+    smf_sess_t *sess = NULL;
+    int shard = -1;
+
+    if (!ref)
+        return -1;
+
+    smf_ctx_lock();
+    sess = smf_sess_find((uint32_t)atoll(ref));
+    if (sess && sess->smf_n4_seid)
+        shard = smf_sess_owner_shard(sess);
+    smf_ctx_unlock();
+
+    return shard;
+}
+
+/* Same keys as smf_ue_add_by_supi(): SUPI, then the IMSI alias. */
+int smf_ue_owner_shard_by_supi(const char *supi)
+{
+    smf_ue_t *smf_ue = NULL;
+    char imsi_bcd[OGS_MAX_IMSI_BCD_LEN+1];
+    uint8_t imsi[OGS_MAX_IMSI_LEN];
+    int imsi_len = 0, shard = -1;
+    bool imsi_supi = false;
+
+    if (!supi || !*supi)
+        return -1;
+
+    memset(imsi_bcd, 0, sizeof(imsi_bcd));
+
+    smf_ctx_lock();
+    smf_ue = ogs_hash_get(self.supi_hash, supi, strlen(supi));
+    if (!smf_ue &&
+        ogs_supi_to_imsi_bcd(supi, imsi_bcd, &imsi_supi) == OGS_OK &&
+        imsi_supi == true) {
+        ogs_bcd_to_buffer(imsi_bcd, imsi, &imsi_len);
+        smf_ue = ogs_hash_get(self.imsi_hash, imsi, imsi_len);
+    }
+    if (smf_ue)
+        shard = smf_ue->owner_shard;
     smf_ctx_unlock();
 
     return shard;
@@ -3135,6 +3193,12 @@ smf_sess_t *smf_sess_add_by_sm_context(ogs_sbi_message_t *message)
     }
 
     smf_ue = smf_ue_find_by_supi(SmContextCreateData->supi);
+    if (smf_ue && !smf_ue_owned_by_self(smf_ue)) {
+        ogs_error("[%s] UE owned by shard %d, not %d",
+                SmContextCreateData->supi, smf_ue->owner_shard,
+                ogs_worker_self_id());
+        return NULL;
+    }
     if (!smf_ue) {
         smf_ue = smf_ue_add_by_supi(SmContextCreateData->supi);
         if (!smf_ue) {
@@ -3191,6 +3255,12 @@ smf_sess_t *smf_sess_add_by_pdu_session(ogs_sbi_message_t *message)
     }
 
     smf_ue = smf_ue_find_by_supi(PduSessionCreateData->supi);
+    if (smf_ue && !smf_ue_owned_by_self(smf_ue)) {
+        ogs_error("[%s] UE owned by shard %d, not %d",
+                PduSessionCreateData->supi, smf_ue->owner_shard,
+                ogs_worker_self_id());
+        return NULL;
+    }
     if (!smf_ue) {
         smf_ue = smf_ue_add_by_supi(PduSessionCreateData->supi);
         if (!smf_ue) {
@@ -3849,20 +3919,10 @@ void smf_sess_remove(smf_sess_t *sess)
         ogs_free(sess->gy_sid);
     if (sess->s6b_sid)
         ogs_free(sess->s6b_sid);
-    if (sess->namf.client)
-        ogs_sbi_client_remove(sess->namf.client);
 
     CLEAR_PDU_SESSION(sess);
-    if (sess->pdu_session.client)
-        ogs_sbi_client_remove(sess->pdu_session.client);
-
     PCF_SM_POLICY_CLEAR(sess);
-    if (sess->policy_association.client)
-        ogs_sbi_client_remove(sess->policy_association.client);
-
     UDM_SDM_CLEAR(sess);
-    if (sess->data_change_subscription.client)
-        ogs_sbi_client_remove(sess->data_change_subscription.client);
 
     if (sess->session.name)
         ogs_free(sess->session.name);
@@ -3910,12 +3970,8 @@ void smf_sess_remove(smf_sess_t *sess)
         ogs_free(sess->h_smf_uri);
     if (sess->h_smf_id)
         ogs_free(sess->h_smf_id);
-    if (sess->h_smf.client)
-        ogs_sbi_client_remove(sess->h_smf.client);
     if (sess->vsmf_pdu_session_uri)
         ogs_free(sess->vsmf_pdu_session_uri);
-    if (sess->v_smf.client)
-        ogs_sbi_client_remove(sess->v_smf.client);
 
     if (sess->n1SmBufFromUe)
         ogs_pkbuf_free(sess->n1SmBufFromUe);
@@ -3928,11 +3984,8 @@ void smf_sess_remove(smf_sess_t *sess)
             sess->h_smf_qos_flows_add_mod_request_list);
     CLEAR_QOS_FLOWS_REL_REQUEST_LIST(sess->h_smf_qos_flows_rel_request_list);
 
-    if (sess->pending_modification_xact)
-        ogs_sbi_xact_remove(sess->pending_modification_xact);
-
-    /* Free SBI object memory */
-    ogs_sbi_object_free(&sess->sbi);
+    /* Clients, pending xact and SBI object memory (on smf-main) */
+    smf_sbi_sess_teardown(sess);
 
     if (sess->aaa_server_identifier.name)
         ogs_free(sess->aaa_server_identifier.name);
@@ -5442,6 +5495,13 @@ static const uint8_t *ipcp_contains_option(
 #include "../version.h"
 static const char *pap_welcome = "Welcome to open5gs-smfd " OPEN5GS_VERSION;
 
+/* Round-robin shared by every shard; num must be > 0. */
+static int smf_p_cscf_next(unsigned int *index, int num)
+{
+    return (int)(__atomic_fetch_add(index, 1, __ATOMIC_RELAXED) %
+            (unsigned int)num);
+}
+
 int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
 {
     int rv;
@@ -5628,30 +5688,26 @@ int smf_pco_build(uint8_t *pco_buf, uint8_t *buffer, int length)
             break;
         case OGS_PCO_ID_P_CSCF_IPV4_ADDRESS_REQUEST:
             if (smf_self()->num_of_p_cscf) {
-                rv = ogs_ipsubnet(&p_cscf,
-                    smf_self()->p_cscf[smf_self()->p_cscf_index], NULL);
+                rv = ogs_ipsubnet(&p_cscf, smf_self()->p_cscf[
+                        smf_p_cscf_next(&smf_self()->p_cscf_index,
+                            smf_self()->num_of_p_cscf)], NULL);
                 ogs_assert(rv == OGS_OK);
                 smf.ids[smf.num_of_id].id = ue.ids[i].id;
                 smf.ids[smf.num_of_id].len = OGS_IPV4_LEN;
                 smf.ids[smf.num_of_id].data = p_cscf.sub;
                 smf.num_of_id++;
-
-                smf_self()->p_cscf_index++;
-                smf_self()->p_cscf_index %= smf_self()->num_of_p_cscf;
             }
             break;
         case OGS_PCO_ID_P_CSCF_IPV6_ADDRESS_REQUEST:
             if (smf_self()->num_of_p_cscf6) {
-                rv = ogs_ipsubnet(&p_cscf6,
-                    smf_self()->p_cscf6[smf_self()->p_cscf6_index], NULL);
+                rv = ogs_ipsubnet(&p_cscf6, smf_self()->p_cscf6[
+                        smf_p_cscf_next(&smf_self()->p_cscf6_index,
+                            smf_self()->num_of_p_cscf6)], NULL);
                 ogs_assert(rv == OGS_OK);
                 smf.ids[smf.num_of_id].id = ue.ids[i].id;
                 smf.ids[smf.num_of_id].len = OGS_IPV6_LEN;
                 smf.ids[smf.num_of_id].data = p_cscf6.sub;
                 smf.num_of_id++;
-
-                smf_self()->p_cscf6_index++;
-                smf_self()->p_cscf6_index %= smf_self()->num_of_p_cscf6;
             }
             break;
         case OGS_PCO_ID_IPV4_LINK_MTU_REQUEST:

@@ -41,6 +41,7 @@
 #include "metrics.h"
 #include "radius-path.h"
 #include "smf-workers.h"
+#include "sbi-relay.h"
 
 /*
  * Batched /admin/maintenance/drain.
@@ -312,6 +313,46 @@ static void smf_admin_forward(smf_event_t *e, int shard)
     ne->admin_force = e->admin_force;
     ne->admin_seid = e->admin_seid;
     smf_event_push_shard(shard, ne);
+}
+
+/*
+ * sm_context_ref is a pool index, so the slot main routed by may have
+ * been reused by another shard before the request is handled here.
+ */
+static bool sbi_sess_is_foreign(smf_sess_t *sess,
+        ogs_sbi_stream_t *stream, ogs_sbi_message_t *message)
+{
+    if (smf_sess_owned_by_self(sess))
+        return false;
+
+    ogs_error("[%s] session owned by shard %d, not %d",
+            message->h.uri, smf_sess_owner_shard(sess),
+            ogs_worker_self_id());
+    ogs_assert(true ==
+        ogs_sbi_server_send_error(stream,
+            OGS_SBI_HTTP_STATUS_SERVICE_UNAVAILABLE, message,
+            "Session moved", NULL, NULL));
+    return true;
+}
+
+/* 5GSM / NGAP / release event for a session another shard owns. */
+static bool sess_event_rehome(smf_event_t *e, smf_sess_t *sess)
+{
+    smf_event_t *ne = NULL;
+
+    if (smf_sess_owned_by_self(sess))
+        return false;
+
+    ne = smf_event_new(e->h.id);
+    ne->sess_id = e->sess_id;
+    ne->pkbuf = e->pkbuf;
+    ne->ngap.type = e->ngap.type;
+    ne->h.sbi.data = e->h.sbi.data;
+    ne->h.sbi.state = e->h.sbi.state;
+    e->pkbuf = NULL;
+
+    smf_event_push_shard(smf_sess_owner_shard(sess), ne);
+    return true;
 }
 
 void smf_state_initial(ogs_fsm_t *s, smf_event_t *e)
@@ -1181,6 +1222,14 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         smf_xshard_collision_release(e);
         break;
 
+    case SMF_EVT_MAIN_CALL:
+        smf_main_call_dispatch(e);
+        break;
+
+    case SMF_EVT_SBI_SEND:
+        smf_sbi_relay_send_dispatch(e);
+        break;
+
     case OGS_EVENT_SBI_SERVER:
         sbi_request = e->h.sbi.request;
         ogs_assert(sbi_request);
@@ -1222,6 +1271,11 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                 ogs_sbi_server_send_error(
                     stream, OGS_SBI_HTTP_STATUS_BAD_REQUEST,
                     &sbi_message, "Not supported version", NULL, NULL));
+            ogs_sbi_message_free(&sbi_message);
+            break;
+        }
+
+        if (smf_sbi_relay_server_request(e, &sbi_message)) {
             ogs_sbi_message_free(&sbi_message);
             break;
         }
@@ -1321,7 +1375,8 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     break;
                 END
 
-                if (sess) {
+                if (sess &&
+                    !sbi_sess_is_foreign(sess, stream, &sbi_message)) {
                     smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
                     ogs_assert(smf_ue);
                     ogs_assert(OGS_FSM_STATE(&sess->sm));
@@ -1400,7 +1455,8 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                             NULL));
                 END
 
-                if (sess) {
+                if (sess &&
+                    !sbi_sess_is_foreign(sess, stream, &sbi_message)) {
                     smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
                     ogs_assert(smf_ue);
                     ogs_assert(OGS_FSM_STATE(&sess->sm));
@@ -1449,7 +1505,8 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                     break;
                 END
 
-                if (sess) {
+                if (sess &&
+                    !sbi_sess_is_foreign(sess, stream, &sbi_message)) {
                     smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
                     ogs_assert(smf_ue);
                     ogs_assert(OGS_FSM_STATE(&sess->sm));
@@ -1501,6 +1558,8 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                             sbi_message.h.resource.component[1], NULL));
                     break;
                 }
+                if (sbi_sess_is_foreign(sess, stream, &sbi_message))
+                    break;
 
                 SWITCH(sbi_message.h.resource.component[2])
                 CASE(OGS_SBI_RESOURCE_NAME_UPDATE)
@@ -1716,34 +1775,51 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         CASE(OGS_SBI_SERVICE_NAME_NPCF_SMPOLICYCONTROL)
         CASE(OGS_SBI_SERVICE_NAME_NAMF_COMM)
         CASE(OGS_SBI_SERVICE_NAME_NSMF_PDUSESSION)
-            sbi_xact_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
-            ogs_assert(sbi_xact_id >= OGS_MIN_POOL_ID &&
-                    sbi_xact_id <= OGS_MAX_POOL_ID);
+            if (e->sbi_relayed) {
+                /* main already consumed the xact */
+                sbi_object_id = e->sess_id;
+            } else {
+                sbi_xact_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
+                ogs_assert(sbi_xact_id >= OGS_MIN_POOL_ID &&
+                        sbi_xact_id <= OGS_MAX_POOL_ID);
 
-            sbi_xact = ogs_sbi_xact_find_by_id(sbi_xact_id);
-            if (!sbi_xact) {
-                /* CLIENT_WAIT timer could remove SBI transaction
-                 * before receiving SBI message */
-                ogs_error("SBI transaction has already been removed [%d]",
-                        sbi_xact_id);
-                break;
+                sbi_xact = ogs_sbi_xact_find_by_id(sbi_xact_id);
+                if (!sbi_xact) {
+                    /* CLIENT_WAIT timer could remove SBI transaction
+                     * before receiving SBI message */
+                    ogs_error("SBI transaction has already been removed [%d]",
+                            sbi_xact_id);
+                    break;
+                }
+
+                sbi_object_id = sbi_xact->sbi_object_id;
+                ogs_assert(sbi_object_id >= OGS_MIN_POOL_ID &&
+                        sbi_object_id <= OGS_MAX_POOL_ID);
+
+                if (sbi_xact->assoc_stream_id >= OGS_MIN_POOL_ID &&
+                    sbi_xact->assoc_stream_id <= OGS_MAX_POOL_ID)
+                    e->h.sbi.data =
+                        OGS_UINT_TO_POINTER(sbi_xact->assoc_stream_id);
+
+                e->h.sbi.state = sbi_xact->state;
+
+                ogs_sbi_xact_remove(sbi_xact);
+
+                if (smf_sbi_relay_client_response(
+                            e, sbi_object_id, OGS_INVALID_POOL_ID)) {
+                    sbi_response = NULL;
+                    break;
+                }
             }
-
-            sbi_object_id = sbi_xact->sbi_object_id;
-            ogs_assert(sbi_object_id >= OGS_MIN_POOL_ID &&
-                    sbi_object_id <= OGS_MAX_POOL_ID);
-
-            if (sbi_xact->assoc_stream_id >= OGS_MIN_POOL_ID &&
-                sbi_xact->assoc_stream_id <= OGS_MAX_POOL_ID)
-                e->h.sbi.data = OGS_UINT_TO_POINTER(sbi_xact->assoc_stream_id);
-
-            e->h.sbi.state = sbi_xact->state;
-
-            ogs_sbi_xact_remove(sbi_xact);
 
             sess = smf_sess_find_by_id(sbi_object_id);
             if (!sess) {
                 ogs_error("Session has already been removed");
+                break;
+            }
+            if (!smf_sess_owned_by_self(sess)) {
+                ogs_error("SBI response for a session of shard %d",
+                        smf_sess_owner_shard(sess));
                 break;
             }
             smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
@@ -1757,35 +1833,61 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             break;
 
         CASE(OGS_SBI_SERVICE_NAME_NUDM_UECM)
-            sbi_xact_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
-            ogs_assert(sbi_xact_id >= OGS_MIN_POOL_ID &&
-                    sbi_xact_id <= OGS_MAX_POOL_ID);
+            if (e->sbi_relayed) {
+                /* main already consumed the xact */
+                sbi_object_id = e->sess_id;
+                if (e->sbi_stream_id >= OGS_MIN_POOL_ID &&
+                    e->sbi_stream_id <= OGS_MAX_POOL_ID)
+                    stream = ogs_sbi_stream_find_by_id(e->sbi_stream_id);
+                state = e->h.sbi.state;
+                ogs_assert(state);
+            } else {
+                ogs_pool_id_t assoc_stream_id = OGS_INVALID_POOL_ID;
 
-            sbi_xact = ogs_sbi_xact_find_by_id(sbi_xact_id);
-            if (!sbi_xact) {
-                /* CLIENT_WAIT timer could remove SBI transaction
-                 * before receiving SBI message */
-                ogs_error("SBI transaction has already been removed [%d]",
-                        sbi_xact_id);
-                break;
+                sbi_xact_id = OGS_POINTER_TO_UINT(e->h.sbi.data);
+                ogs_assert(sbi_xact_id >= OGS_MIN_POOL_ID &&
+                        sbi_xact_id <= OGS_MAX_POOL_ID);
+
+                sbi_xact = ogs_sbi_xact_find_by_id(sbi_xact_id);
+                if (!sbi_xact) {
+                    /* CLIENT_WAIT timer could remove SBI transaction
+                     * before receiving SBI message */
+                    ogs_error("SBI transaction has already been removed [%d]",
+                            sbi_xact_id);
+                    break;
+                }
+
+                sbi_object_id = sbi_xact->sbi_object_id;
+                ogs_assert(sbi_object_id >= OGS_MIN_POOL_ID &&
+                        sbi_object_id <= OGS_MAX_POOL_ID);
+
+                if (sbi_xact->assoc_stream_id >= OGS_MIN_POOL_ID &&
+                    sbi_xact->assoc_stream_id <= OGS_MAX_POOL_ID) {
+                    assoc_stream_id = sbi_xact->assoc_stream_id;
+                    stream = ogs_sbi_stream_find_by_id(assoc_stream_id);
+                }
+
+                state = sbi_xact->state;
+                ogs_assert(state);
+
+                ogs_sbi_xact_remove(sbi_xact);
+
+                e->h.sbi.state = state;
+                if (smf_sbi_relay_client_response(
+                            e, sbi_object_id, assoc_stream_id)) {
+                    sbi_response = NULL;
+                    break;
+                }
             }
-
-            sbi_object_id = sbi_xact->sbi_object_id;
-            ogs_assert(sbi_object_id >= OGS_MIN_POOL_ID &&
-                    sbi_object_id <= OGS_MAX_POOL_ID);
-
-            if (sbi_xact->assoc_stream_id >= OGS_MIN_POOL_ID &&
-                sbi_xact->assoc_stream_id <= OGS_MAX_POOL_ID)
-                stream = ogs_sbi_stream_find_by_id(sbi_xact->assoc_stream_id);
-
-            state = sbi_xact->state;
-            ogs_assert(state);
-
-            ogs_sbi_xact_remove(sbi_xact);
 
             sess = smf_sess_find_by_id(sbi_object_id);
             if (!sess) {
                 ogs_error("Session has already been removed");
+                break;
+            }
+            if (!smf_sess_owned_by_self(sess)) {
+                ogs_error("SBI response for a session of shard %d",
+                        smf_sess_owner_shard(sess));
                 break;
             }
             smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
@@ -2006,7 +2108,8 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         END
 
         ogs_sbi_message_free(&sbi_message);
-        ogs_sbi_response_free(sbi_response);
+        if (sbi_response)   /* NULL: relayed to the session owner */
+            ogs_sbi_response_free(sbi_response);
         break;
 
     case OGS_EVENT_SBI_TIMER:
@@ -2113,6 +2216,19 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
 
             ogs_sbi_xact_remove(sbi_xact);
 
+            if (smf_workers_active() &&
+                smf_sess_owner_shard_by_id(sbi_object_id) > 0) {
+                /* worker-owned session: answer without touching it */
+                ogs_error("[sess:%d] Cannot receive SBI message",
+                        sbi_object_id);
+                if (stream)
+                    ogs_assert(true ==
+                        ogs_sbi_server_send_error(stream,
+                            OGS_SBI_HTTP_STATUS_GATEWAY_TIMEOUT, NULL,
+                            "Cannot receive SBI message", NULL, NULL));
+                break;
+            }
+
             sess = smf_sess_find_by_id(sbi_object_id);
             if (!sess) {
                 ogs_error("Session has already been removed");
@@ -2141,17 +2257,19 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         pkbuf = e->pkbuf;
         ogs_assert(pkbuf);
 
-        if (ogs_nas_5gsm_decode(&nas_message, pkbuf) != OGS_OK) {
-            ogs_error("ogs_nas_5gsm_decode() failed");
-            ogs_pkbuf_free(pkbuf);
-            return;
-        }
-
         sess = smf_sess_find_by_id(e->sess_id);
         if (!sess) {
             ogs_error("Session has already been removed");
             ogs_pkbuf_free(pkbuf);
             break;
+        }
+        if (sess_event_rehome(e, sess))
+            break;
+
+        if (ogs_nas_5gsm_decode(&nas_message, pkbuf) != OGS_OK) {
+            ogs_error("ogs_nas_5gsm_decode() failed");
+            ogs_pkbuf_free(pkbuf);
+            return;
         }
 
         e->nas.message = &nas_message;
@@ -2171,6 +2289,8 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             ogs_pkbuf_free(pkbuf);
             break;
         }
+        if (sess_event_rehome(e, sess))
+            break;
 
         ogs_fsm_dispatch(&sess->sm, e);
 
@@ -2183,6 +2303,8 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             ogs_error("Session has already been removed");
             break;
         }
+        if (sess_event_rehome(e, sess))
+            break;
 
         ogs_fsm_dispatch(&sess->sm, e);
         break;

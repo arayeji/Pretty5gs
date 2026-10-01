@@ -2792,12 +2792,11 @@ void ogs_pfcp_rule_remove_all(ogs_pfcp_pdr_t *pdr)
         ogs_pfcp_rule_remove(rule);
 }
 
-int ogs_pfcp_ue_pool_generate(void)
+static void subnet_pool_generate(ogs_pfcp_subnet_t *subnet)
 {
     int i, rv;
-    ogs_pfcp_subnet_t *subnet = NULL;
 
-    ogs_list_for_each(&self.subnet_list, subnet) {
+    {
         int maxbytes = 0;
         int lastindex = 0;
         uint32_t start[4], end[4], broadcast[4];
@@ -2813,7 +2812,7 @@ int ogs_pfcp_ue_pool_generate(void)
             lastindex = 1;
         } else {
             /* subnet->family might be AF_UNSPEC. So, skip it */
-            continue;
+            return;
         }
 
         for (i = 0; i < 4; i++) {
@@ -2885,6 +2884,34 @@ int ogs_pfcp_ue_pool_generate(void)
         }
         subnet->pool.size = subnet->pool.avail = poolindex;
     }
+}
+
+int ogs_pfcp_ue_pool_generate(void)
+{
+    ogs_pfcp_subnet_t *subnet = NULL;
+
+    obj_lock();
+    ogs_list_for_each(&self.subnet_list, subnet) {
+        if (subnet->pool_ready)
+            continue;
+        subnet_pool_generate(subnet);
+        subnet->pool_ready = true;
+    }
+    obj_unlock();
+
+    return OGS_OK;
+}
+
+int ogs_pfcp_subnet_pool_generate(ogs_pfcp_subnet_t *subnet)
+{
+    ogs_assert(subnet);
+
+    obj_lock();
+    if (!subnet->pool_ready) {
+        subnet_pool_generate(subnet);
+        subnet->pool_ready = true;
+    }
+    obj_unlock();
 
     return OGS_OK;
 }
@@ -3407,7 +3434,7 @@ ogs_pfcp_subnet_t *ogs_pfcp_find_subnet(int family)
     ogs_list_for_each(&self.subnet_list, subnet) {
         if ((subnet->family == AF_UNSPEC || subnet->family == family) &&
             (subnet->num_of_dnn == 0) &&
-            subnet->pool.avail &&
+            subnet->pool_ready && subnet->pool.avail &&
             subnet->selection_order < best_order) {
             best_order = subnet->selection_order;
             best = subnet;
@@ -3431,7 +3458,7 @@ ogs_pfcp_subnet_t *ogs_pfcp_find_subnet_by_dnn(int family, const char *dnn)
     ogs_list_for_each(&self.subnet_list, subnet) {
         if ((subnet->family == AF_UNSPEC || subnet->family == family) &&
             subnet_matches_ue_dnn(subnet, dnn) &&
-            subnet->pool.avail &&
+            subnet->pool_ready && subnet->pool.avail &&
             subnet->selection_order < best_order) {
             best_order = subnet->selection_order;
             best = subnet;

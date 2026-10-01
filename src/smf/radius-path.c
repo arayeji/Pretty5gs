@@ -1145,9 +1145,10 @@ static uint32_t radius_transport_gen = 1;
 /*
  * smf_self()->radius is rewritten by smf_radius_apply_runtime() on main
  * while shards read it during their exchanges. Readers hold the lock for
- * the whole exchange (the strings they use may be freed by a reload);
- * writers are preferred so a busy data path cannot starve a reload.
- * Main never takes the read side: it is the only writer.
+ * the whole exchange (the strings they use may be freed by a reload).
+ * Main never takes the read side and never waits on the write side: it
+ * is the only writer and installs a reload with trywrlock (see
+ * radius_apply_try()).
  */
 static pthread_rwlock_t radius_cfg_lock;
 static bool radius_cfg_lock_ready = false;
@@ -1170,10 +1171,26 @@ void smf_radius_init(void)
     radius_cfg_lock_ready = true;
 }
 
+static int radius_reload_pending;                   /* atomic */
+static smf_radius_config_t *radius_pending_cfg;     /* main only */
+static ogs_timer_t *radius_apply_timer;             /* main only */
+static void radius_cfg_free(smf_radius_config_t *cfg);
+
+/* Back off while main has a reload waiting so it is not starved. */
 static void radius_cfg_rdlock(void)
 {
-    if (ogs_worker_self())
-        pthread_rwlock_rdlock(&radius_cfg_lock);
+    if (!ogs_worker_self())
+        return;
+
+    for (;;) {
+        if (!__atomic_load_n(&radius_reload_pending, __ATOMIC_ACQUIRE)) {
+            pthread_rwlock_rdlock(&radius_cfg_lock);
+            if (!__atomic_load_n(&radius_reload_pending, __ATOMIC_ACQUIRE))
+                return;
+            pthread_rwlock_unlock(&radius_cfg_lock);
+        }
+        ogs_msleep(1);
+    }
 }
 
 static void radius_cfg_rdunlock(void)
@@ -2761,6 +2778,14 @@ void smf_radius_pod_close(void)
 void smf_radius_servers_close(void)
 {
     smf_radius_thread_final();
+
+    if (radius_apply_timer) {
+        ogs_timer_delete(radius_apply_timer);
+        radius_apply_timer = NULL;
+    }
+    radius_cfg_free(radius_pending_cfg);
+    radius_pending_cfg = NULL;
+    __atomic_store_n(&radius_reload_pending, 0, __ATOMIC_RELEASE);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2796,12 +2821,117 @@ static void rad_replace_owned(const char **field, char **owned,
     if (old) ogs_free(old);
 }
 
-int smf_radius_apply_runtime(const smf_radius_config_t *new_cfg)
+/*
+ * Main never waits for a shard's exchange to finish: the new config is
+ * copied, then installed once the write lock is free (retried from a
+ * main timer). While a reload is pending, shards stop taking new read
+ * locks so the in-flight exchanges drain.
+ */
+#define RADIUS_APPLY_RETRY_MS 10
+
+static const char *radius_strdup_or_null(const char *s)
 {
-    smf_radius_config_t *cur = &smf_self()->radius;
-    bool pod_restart_needed = false;
+    return s ? ogs_strdup(s) : NULL;
+}
+
+static void radius_free_const(const char *s)
+{
+    if (s) ogs_free((char *)s);
+}
+
+static smf_radius_config_t *radius_cfg_dup(const smf_radius_config_t *src)
+{
+    smf_radius_config_t *dst = ogs_calloc(1, sizeof(*dst));
     int i;
 
+    ogs_assert(dst);
+    *dst = *src;
+
+    dst->server = NULL;
+    dst->secret = NULL;
+    dst->nas_id = radius_strdup_or_null(src->nas_id);
+    dst->nas_ip = radius_strdup_or_null(src->nas_ip);
+    dst->pod_bind = radius_strdup_or_null(src->pod_bind);
+    dst->pod_secret = radius_strdup_or_null(src->pod_secret);
+    for (i = 0; i < SMF_MAX_RADIUS_SERVERS; i++) {
+        dst->servers[i].host = radius_strdup_or_null(src->servers[i].host);
+        dst->servers[i].secret =
+            radius_strdup_or_null(src->servers[i].secret);
+    }
+
+    return dst;
+}
+
+static void radius_cfg_free(smf_radius_config_t *cfg)
+{
+    int i;
+
+    if (!cfg)
+        return;
+
+    radius_free_const(cfg->nas_id);
+    radius_free_const(cfg->nas_ip);
+    radius_free_const(cfg->pod_bind);
+    radius_free_const(cfg->pod_secret);
+    for (i = 0; i < SMF_MAX_RADIUS_SERVERS; i++) {
+        radius_free_const(cfg->servers[i].host);
+        radius_free_const(cfg->servers[i].secret);
+    }
+    ogs_free(cfg);
+}
+
+static bool radius_apply_locked(const smf_radius_config_t *new_cfg);
+static void radius_apply_try(void);
+
+static void radius_apply_timeout(void *data)
+{
+    radius_apply_try();
+}
+
+static void radius_apply_try(void)
+{
+    smf_radius_config_t *cfg = radius_pending_cfg;
+    bool pod_restart_needed;
+
+    if (!cfg)
+        return;
+
+    if (pthread_rwlock_trywrlock(&radius_cfg_lock) != 0) {
+        if (!radius_apply_timer) {
+            radius_apply_timer = ogs_timer_add(
+                    ogs_app()->timer_mgr, radius_apply_timeout, NULL);
+            ogs_assert(radius_apply_timer);
+        }
+        ogs_timer_start(radius_apply_timer,
+                ogs_time_from_msec(RADIUS_APPLY_RETRY_MS));
+        return;
+    }
+
+    radius_pending_cfg = NULL;
+    pod_restart_needed = radius_apply_locked(cfg);
+    __atomic_store_n(&radius_reload_pending, 0, __ATOMIC_RELEASE);
+    pthread_rwlock_unlock(&radius_cfg_lock);
+
+    radius_cfg_free(cfg);
+
+    /* Existing sessions may still hold a server_idx that no longer
+     * maps to the same AAA. radius_build_try_order() handles this
+     * defensively (it clamps and falls back to mode-based selection). */
+
+    /* Finally, (re)start the PoD listener if needed. */
+    if (pod_restart_needed) {
+        smf_radius_pod_close();
+        if (smf_self()->radius.pod_enabled) {
+            if (smf_radius_pod_open() != OGS_OK) {
+                ogs_error("RADIUS PoD: failed to reopen listener after "
+                        "runtime reconfig; PoD disabled until next apply");
+            }
+        }
+    }
+}
+
+int smf_radius_apply_runtime(const smf_radius_config_t *new_cfg)
+{
     ogs_assert(new_cfg);
 
     ogs_info("RADIUS: applying runtime config "
@@ -2810,6 +2940,22 @@ int smf_radius_apply_runtime(const smf_radius_config_t *new_cfg)
             new_cfg->num_servers,
             new_cfg->select_mode == SMF_RADIUS_SELECT_HASH_IMSI ?
                 "hash_imsi" : "primary_failover");
+
+    /* A newer reload replaces one that is still waiting. */
+    radius_cfg_free(radius_pending_cfg);
+    radius_pending_cfg = radius_cfg_dup(new_cfg);
+    __atomic_store_n(&radius_reload_pending, 1, __ATOMIC_RELEASE);
+
+    radius_apply_try();
+
+    return OGS_OK;
+}
+
+static bool radius_apply_locked(const smf_radius_config_t *new_cfg)
+{
+    smf_radius_config_t *cur = &smf_self()->radius;
+    bool pod_restart_needed = false;
+    int i;
 
     /* Decide up front whether the PoD listener needs a bounce. We do
      * this before mutating anything so a string compare against the
@@ -2823,9 +2969,6 @@ int smf_radius_apply_runtime(const smf_radius_config_t *new_cfg)
                 strcmp(old_bind, new_bind) != 0)
             pod_restart_needed = true;
     }
-
-    /* Shards read this config during their exchanges; wait them out. */
-    pthread_rwlock_wrlock(&radius_cfg_lock);
 
     cur->enabled               = new_cfg->enabled;
     cur->select_mode           = new_cfg->select_mode;
@@ -2889,22 +3032,5 @@ int smf_radius_apply_runtime(const smf_radius_config_t *new_cfg)
         cur->num_servers++;
     }
 
-    pthread_rwlock_unlock(&radius_cfg_lock);
-
-    /* Existing sessions may still hold a server_idx that no longer
-     * maps to the same AAA. radius_build_try_order() handles this
-     * defensively (it clamps and falls back to mode-based selection). */
-
-    /* Finally, (re)start the PoD listener if needed. */
-    if (pod_restart_needed) {
-        smf_radius_pod_close();
-        if (cur->pod_enabled) {
-            if (smf_radius_pod_open() != OGS_OK) {
-                ogs_error("RADIUS PoD: failed to reopen listener after "
-                        "runtime reconfig; PoD disabled until next apply");
-            }
-        }
-    }
-
-    return OGS_OK;
+    return pod_restart_needed;
 }

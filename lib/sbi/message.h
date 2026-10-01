@@ -659,6 +659,8 @@ void ogs_sbi_message_free(ogs_sbi_message_t *message);
 
 ogs_sbi_request_t *ogs_sbi_request_new(void);
 void ogs_sbi_request_free(ogs_sbi_request_t *request);
+/* Deep copy of method, uri and the http part; the parsed header is not copied. */
+ogs_sbi_request_t *ogs_sbi_request_copy(ogs_sbi_request_t *src);
 ogs_sbi_request_t *ogs_sbi_build_request(ogs_sbi_message_t *message);
 int ogs_sbi_parse_request(
         ogs_sbi_message_t *message, ogs_sbi_request_t *request);
@@ -680,6 +682,9 @@ ogs_pkbuf_t *ogs_sbi_find_part_by_content_id(
 
 int ogs_sbi_parse_header(ogs_sbi_message_t *message, ogs_sbi_header_t *header);
 void ogs_sbi_header_free(ogs_sbi_header_t *h);
+/* Drop what ogs_sbi_parse_header() added (method/uri are kept). */
+void ogs_sbi_header_clear_parsed(ogs_sbi_header_t *h);
+void ogs_sbi_http_clear_parsed_parts(ogs_sbi_http_message_t *http);
 
 void ogs_sbi_http_hash_free(ogs_hash_t *hash);
 

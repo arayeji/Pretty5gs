@@ -129,15 +129,19 @@ typedef struct ogs_sbi_session_s {
 } ogs_sbi_session_t;
 
 static OGS_POOL(session_pool, ogs_sbi_session_t);
+/* stream_find_by_id() is also called from SMF shard workers. */
+static ogs_thread_mutex_t session_pool_mutex;
 
 static void server_init(int num_of_session_pool, int num_of_stream_pool)
 {
     ogs_pool_init(&session_pool, num_of_session_pool);
+    ogs_thread_mutex_init(&session_pool_mutex);
 }
 
 static void server_final(void)
 {
     ogs_pool_final(&session_pool);
+    ogs_thread_mutex_destroy(&session_pool_mutex);
 }
 
 static ogs_sbi_session_t *session_add(ogs_sbi_server_t *server,
@@ -149,7 +153,9 @@ static ogs_sbi_session_t *session_add(ogs_sbi_server_t *server,
     ogs_assert(request);
     ogs_assert(connection);
 
+    ogs_thread_mutex_lock(&session_pool_mutex);
     ogs_pool_id_calloc(&session_pool, &sbi_sess);
+    ogs_thread_mutex_unlock(&session_pool_mutex);
     ogs_assert(sbi_sess);
 
     sbi_sess->server = server;
@@ -163,7 +169,9 @@ static ogs_sbi_session_t *session_add(ogs_sbi_server_t *server,
             OGS_UINT_TO_POINTER(sbi_sess->id));
     if (!sbi_sess->timer) {
         ogs_error("ogs_timer_add() failed");
+        ogs_thread_mutex_lock(&session_pool_mutex);
         ogs_pool_id_free(&session_pool, sbi_sess);
+        ogs_thread_mutex_unlock(&session_pool_mutex);
         return NULL;
     }
 
@@ -267,7 +275,9 @@ static void session_remove(ogs_sbi_session_t *sbi_sess)
 
     MHD_resume_connection(connection);
 
+    ogs_thread_mutex_lock(&session_pool_mutex);
     ogs_pool_id_free(&session_pool, sbi_sess);
+    ogs_thread_mutex_unlock(&session_pool_mutex);
 }
 
 static void session_timer_expired(void *data)
@@ -276,7 +286,7 @@ static void session_timer_expired(void *data)
     ogs_sbi_session_t *sbi_sess = NULL;
 
     if (sbi_sess_id >= OGS_MIN_POOL_ID && sbi_sess_id <= OGS_MAX_POOL_ID)
-        sbi_sess = ogs_pool_find_by_id(&session_pool, sbi_sess_id);
+        sbi_sess = stream_find_by_id(sbi_sess_id);
     else
         ogs_error("Invalid Session ID [%d]", sbi_sess_id);
 
@@ -739,5 +749,11 @@ static ogs_pool_id_t id_from_stream(ogs_sbi_stream_t *stream)
 
 static void *stream_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&session_pool, id);
+    void *sbi_sess;
+
+    ogs_thread_mutex_lock(&session_pool_mutex);
+    sbi_sess = ogs_pool_find_by_id(&session_pool, id);
+    ogs_thread_mutex_unlock(&session_pool_mutex);
+
+    return sbi_sess;
 }

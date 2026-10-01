@@ -312,6 +312,7 @@ static int smf_pfcp_recv_one(ogs_socket_t fd)
     e->pfcp_node = node;
     e->pkbuf = pkbuf;
     e->pfcp_message = message;
+    smf_event_trace_rx_capture(e);
 
     /* Association/heartbeat must never block the PFCP RX path. */
     rv = smf_event_push_shard(smf_pfcp_route(message), e);

@@ -355,10 +355,10 @@ typedef struct smf_context_s {
 #define MAX_NUM_OF_P_CSCF           16
     char            *p_cscf[MAX_NUM_OF_P_CSCF];
     int             num_of_p_cscf;
-    int             p_cscf_index;
+    unsigned int    p_cscf_index;   /* atomic: smf_p_cscf_next() */
     char            *p_cscf6[MAX_NUM_OF_P_CSCF];
     int             num_of_p_cscf6;
-    int             p_cscf6_index;
+    unsigned int    p_cscf6_index;  /* atomic: smf_p_cscf_next() */
 
     ogs_list_t      sgw_s5c_list;   /* SGW GTPC Node List */
     ogs_list_t      ip_pool_list;
@@ -1113,7 +1113,8 @@ typedef struct smf_sess_s {
     smf_nsmf_pdusession_param_t nsmf_param;
 
     bool establishment_accept_sent;
-    ogs_sbi_xact_t *pending_modification_xact;
+    /* smf-main may free the xact (timeout): keep only its id */
+    ogs_pool_id_t pending_modification_xact_id;
 
     /*
      * CDR bookkeeping (filled by src/smf/ga-writer.c). Independent from
@@ -1193,6 +1194,8 @@ smf_context_t *smf_self(void);
  */
 void smf_ctx_lock(void);
 void smf_ctx_unlock(void);
+/* True while the calling thread holds smf_ctx_lock(). */
+bool smf_ctx_lock_held(void);
 void smf_peers_lock(void);
 void smf_peers_unlock(void);
 
@@ -1211,6 +1214,8 @@ int smf_ue_owner_shard_by_imsi(const uint8_t *imsi, int imsi_len);
 int smf_sess_owner_shard_by_ipv4(uint32_t addr, ogs_pool_id_t *smf_ue_id);
 int smf_sess_owner_shard_by_seid(uint64_t seid);
 int smf_sess_owner_shard_by_id(ogs_pool_id_t sess_id);
+int smf_sess_owner_shard_by_ref(const char *ref);
+int smf_ue_owner_shard_by_supi(const char *supi);
 
 int smf_context_parse_config(void);
 

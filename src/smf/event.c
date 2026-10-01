@@ -19,6 +19,22 @@
 
 #include "event.h"
 #include "ogs-pfcp.h"
+#include "ogs-sbi.h"
+
+struct smf_event_trace_rx_s {
+    uint8_t *data;
+    size_t len;
+    char proto[OGS_TRACE_PROC_LEN];
+};
+
+static void smf_event_trace_rx_release(smf_event_t *e)
+{
+    if (!e->trace_rx)
+        return;
+    ogs_trace_packet_free_buf(e->trace_rx->data);
+    ogs_free(e->trace_rx);
+    e->trace_rx = NULL;
+}
 
 /*
  * Events cross threads in SMP mode (RX router or Diameter thread
@@ -48,7 +64,49 @@ void smf_event_free(smf_event_t *e)
         ogs_pfcp_message_free(e->pfcp_message);
     if (e->admin_upf_addr)
         ogs_freeaddrinfo(e->admin_upf_addr);
+    if (e->sbi_relayed) {
+        if (e->h.sbi.request)
+            ogs_sbi_request_free(e->h.sbi.request);
+        if (e->h.sbi.response)
+            ogs_sbi_response_free(e->h.sbi.response);
+    }
+    smf_event_trace_rx_release(e);
     ogs_event_free(e);
+}
+
+void smf_event_trace_rx_capture(smf_event_t *e)
+{
+    struct smf_event_trace_rx_s *rx = NULL;
+    uint8_t *data = NULL;
+    size_t len = 0;
+    char proto[OGS_TRACE_PROC_LEN];
+
+    ogs_assert(e);
+
+    smf_event_trace_rx_release(e);
+    if (!ogs_trace_packet_steal_rx(&data, &len, proto, sizeof(proto)))
+        return;
+
+    rx = ogs_calloc(1, sizeof(*rx));
+    if (!rx) {
+        ogs_trace_packet_free_buf(data);
+        return;
+    }
+    rx->data = data;
+    rx->len = len;
+    ogs_cpystrn(rx->proto, proto, sizeof(rx->proto));
+    e->trace_rx = rx;
+}
+
+void smf_event_trace_rx_restore(smf_event_t *e)
+{
+    ogs_assert(e);
+
+    if (!e->trace_rx)
+        return;
+    ogs_trace_packet_bind_rx(
+            e->trace_rx->proto, e->trace_rx->data, e->trace_rx->len);
+    smf_event_trace_rx_release(e);
 }
 
 int smf_event_push_main(smf_event_t *e)
@@ -218,6 +276,10 @@ const char *smf_event_get_name(smf_event_t *e)
         return "SMF_EVT_RADIUS_POD";
     case SMF_EVT_XSHARD_COLLISION:
         return "SMF_EVT_XSHARD_COLLISION";
+    case SMF_EVT_MAIN_CALL:
+        return "SMF_EVT_MAIN_CALL";
+    case SMF_EVT_SBI_SEND:
+        return "SMF_EVT_SBI_SEND";
 
     default:
        break;

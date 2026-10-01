@@ -68,7 +68,10 @@ void smf_radius_pod_teardown_cancel(smf_sess_t *sess);
  * (server host, secrets, nas_identifier, pod_bind, pod_secret) are
  * duplicated into heap memory owned by this module so the caller may
  * free its own copies immediately. Scalar fields (ports, timers,
- * retries, select_mode) are copied atomically into smf_self()->radius.
+ * retries, select_mode) are copied into smf_self()->radius.
+ *
+ * Main never blocks here: if a shard is mid-exchange, the copy is
+ * installed a few ms later from a main timer (a newer call replaces it).
  *
  * The PoD listener is restarted when its bind address or port changes;
  * otherwise it keeps running so in-flight disconnects are not lost.

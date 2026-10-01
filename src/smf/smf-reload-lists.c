@@ -523,6 +523,8 @@ static int smf_reload_session_entry_add_only(
             *entry_idx, order_v);
     (*entry_idx)++;
 
+    ogs_pfcp_subnet_pool_generate(subnet);
+
     ogs_reload_audit_note(" subnet added %s/%s (dnn=%d)",
             ipstr, mask_or_numbits, dnn_seq_n > 0 ? dnn_seq_n :
             (dnn_scalar ? 1 : 0));

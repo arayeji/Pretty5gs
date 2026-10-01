@@ -87,6 +87,8 @@ typedef enum {
     SMF_EVT_ROUTER_SOLICIT,         /* to owner: sess_id, pkbuf=IPv6 RS  */
     SMF_EVT_RADIUS_POD,             /* to owner: sess_id                 */
     SMF_EVT_XSHARD_COLLISION,       /* to owner of old sess: release it  */
+    SMF_EVT_MAIN_CALL,              /* to main: smf_main_call() record   */
+    SMF_EVT_SBI_SEND,               /* to main: response for a stream    */
 
     SMF_EVT_TOP,
 
@@ -160,6 +162,20 @@ typedef struct smf_event_s {
 
     /* Monotonic enqueue time for the event-lag estimator; 0 = unknown. */
     ogs_time_t created_at;
+
+    /*
+     * PACKET RX dump bound by the receiving thread, re-bound by the
+     * thread that dispatches the event. NULL unless a trace filter is on.
+     */
+    struct smf_event_trace_rx_s *trace_rx;
+
+    /*
+     * SBI event handed by main to the 5GC session owner (sbi-relay.c).
+     * The worker owns h.sbi.request (a copy) / h.sbi.response; main has
+     * already done the xact part, sbi_stream_id is its assoc stream.
+     */
+    bool sbi_relayed;
+    ogs_pool_id_t sbi_stream_id;
 } smf_event_t;
 
 OGS_STATIC_ASSERT(OGS_EVENT_SIZE >= sizeof(smf_event_t));
@@ -178,6 +194,11 @@ int smf_event_push_local(smf_event_t *e);
 
 void smf_event_lag_observe(const smf_event_t *e);
 ogs_time_t smf_event_lag(void);
+
+/* Move this thread's ogs_trace_packet_bind_rx() buffer into the event. */
+void smf_event_trace_rx_capture(smf_event_t *e);
+/* On the dispatching thread: re-bind (and release) the captured buffer. */
+void smf_event_trace_rx_restore(smf_event_t *e);
 
 const char *smf_event_get_name(smf_event_t *e);
 

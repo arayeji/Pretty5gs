@@ -476,14 +476,21 @@ static void smf_worker_thread_fini(ogs_worker_t *worker)
 static void smf_worker_dispatch(ogs_worker_t *worker, void *data)
 {
     smf_event_t *e = data;
+    int id;
 
     ogs_assert(worker);
     ogs_assert(e);
 
     ogs_trace_clear();
     smf_event_lag_observe(e);
+    smf_event_trace_rx_restore(e);
+    /* FSM transitions overwrite e->h.id with ENTRY/EXIT signals */
+    id = e->h.id;
     ogs_fsm_dispatch(&worker_fsm, e);
     ogs_trace_clear();
+    /* main's copy of a relayed request; the server owns the original */
+    if (e->sbi_relayed && id == OGS_EVENT_SBI_SERVER && e->h.sbi.request)
+        ogs_sbi_request_free(e->h.sbi.request);
     /* handlers take ownership of pkbuf / pfcp_message they consume */
     ogs_event_free(e);
 }

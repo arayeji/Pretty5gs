@@ -40,6 +40,6 @@ void ngap_send_to_n2sm(smf_sess_t *sess,
         e->h.sbi.data = OGS_UINT_TO_POINTER(stream_id);;
     }
 
-    /* 5GC sessions and SBI live on main: never block on our own queue */
+    /* The caller runs on the session owner: never block on our own queue */
     smf_event_push_local(e);
 }

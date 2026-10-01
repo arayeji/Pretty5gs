@@ -128,21 +128,45 @@ local TEID / SEID and in the xid window of every GTP / PFCP request.
 10. **Tests** — `tests/unit/smf-shard-test.c`; `configs/load.yaml.in`
     runs the EPC load test with `smf.workers: 4` and both RX threads.
 
-**5GC stays on main**: SBI I/O and 5G sessions are handled on
-`smf-main` exactly as before (their SEIDs carry shard 0, so N4 routes
-back to main). A 5G create for a SUPI whose UE is owned by a worker
-(EPC interworking) is rejected until the SBI relay lands.
+11. **5GC relay** (`src/smf/sbi-relay.c`) — SBI sockets, clients, xacts
+    and their timers stay on `smf-main`; 5G sessions are sharded like
+    EPC ones (new UE by SUPI hash, IMSI SUPIs hash like an EPC attach,
+    an existing UE keeps its owner, so EPC interworking lands on the
+    same shard).
+    - Server requests: main parses, picks the owner (SM context /
+      PDU session create by SUPI, modify / release / SM policy notify
+      by ref) and posts a copy (`ogs_sbi_request_copy`). The worker's
+      response goes back through `ogs_sbi_server_set_send_hook`
+      (`SMF_EVT_SBI_SEND`); main sends it if the stream (id + pointer)
+      still exists.
+    - Client responses: main finishes the xact, then moves the response
+      to the owner, which parses it again.
+    - Worker → main: `smf_main_call()` runs xact create / discover /
+      send, N1N2 transfer, pending modification, status notify, client
+      setup and SBI teardown synchronously on main (abandoned cleanly
+      on shutdown).
+    - 5GSM / NGAP / session release events are rehomed to the owner.
+    - `lib/sbi` request / response, nghttp2 stream and MHD session pools
+      are mutex-protected.
+12. **Thread-safety follow-ups** — trace binding is captured with every
+    cross-shard event and restored on the receiving thread; P-CSCF
+    round-robin index is atomic; subnets added at reload / by the admin
+    watcher get their UE IP pool generated; a RADIUS reload is installed
+    with `trywrlock` and retried from a main timer while shards back off
+    new reads, so main never blocks waiting for in-flight exchanges.
+
+Verified on WSL with `smf.workers: 2`: registration, slice, handover,
+transfer, VoNR and VoLTE (minus `rx-test`, which hangs without workers
+too) suites, plus the EPC load test with `workers: 4`.
 
 ## Remaining
 
-1. **SMF 5GC relay** — shard 5G sessions with SBI kept on main
-   (request/response relay between `smf-main` and the owner shard).
-2. **Metrics** — per-PLMN/per-PGW gauges from workers: label by shard
+1. **Metrics** — per-PLMN/per-PGW gauges from workers: label by shard
    or aggregate via atomics (prom counters already locked).
-3. **Tests** — attach/VoLTE with `workers: 2`; optional TSAN job.
-4. **Admin session list dump** — still walks the calling thread's UE
+2. **Tests** — optional TSAN job.
+3. **Admin session list dump** — still walks the calling thread's UE
    list; use IMSI-routed detach / atomic `sgwc_session_count()` for ops.
-5. **MME Stage C** — full UE sharding (S1AP RX offload already exists).
+4. **MME Stage C** — full UE sharding (S1AP RX offload already exists).
    Do not enable MME UE shards before SGW-C soaks in production.
 
 ## Audit follow-ups (2026-07-16 review)

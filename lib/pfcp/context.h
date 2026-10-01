@@ -400,6 +400,8 @@ typedef struct ogs_pfcp_subnet_s {
     int             family;         /* AF_INET or AF_INET6 */
     uint8_t         prefixlen;      /* prefixlen */
     OGS_POOL(pool, ogs_pfcp_ue_ip_t);
+    /* Addresses generated; subnet selection ignores the pool until set. */
+    bool            pool_ready;
 
     ogs_pfcp_dev_t  *dev;           /* Related Context */
     int             selection_order;
@@ -544,6 +546,8 @@ void ogs_pfcp_rule_remove(ogs_pfcp_rule_t *rule);
 void ogs_pfcp_rule_remove_all(ogs_pfcp_pdr_t *pdr);
 
 int ogs_pfcp_ue_pool_generate(void);
+/* For a subnet added at runtime, once its ranges are set. Idempotent. */
+int ogs_pfcp_subnet_pool_generate(ogs_pfcp_subnet_t *subnet);
 ogs_pfcp_ue_ip_t *ogs_pfcp_ue_ip_alloc(
         uint8_t *cause_value, int family, const char *dnn, uint8_t *addr);
 void ogs_pfcp_ue_ip_free(ogs_pfcp_ue_ip_t *ip);

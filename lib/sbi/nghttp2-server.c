@@ -129,17 +129,21 @@ static void session_write_to_buffer(
 
 static OGS_POOL(session_pool, ogs_sbi_session_t);
 static OGS_POOL(stream_pool, ogs_sbi_stream_t);
+/* stream_find_by_id() is also called from SMF shard workers. */
+static ogs_thread_mutex_t stream_pool_mutex;
 
 static void server_init(int num_of_session_pool, int num_of_stream_pool)
 {
     ogs_pool_init(&session_pool, num_of_session_pool);
     ogs_pool_init(&stream_pool, num_of_stream_pool);
+    ogs_thread_mutex_init(&stream_pool_mutex);
 }
 
 static void server_final(void)
 {
     ogs_pool_final(&stream_pool);
     ogs_pool_final(&session_pool);
+    ogs_thread_mutex_destroy(&stream_pool_mutex);
 }
 
 #ifndef OPENSSL_NO_NEXTPROTONEG
@@ -768,7 +772,9 @@ static ogs_sbi_stream_t *stream_add(
 
     ogs_assert(sbi_sess);
 
+    ogs_thread_mutex_lock(&stream_pool_mutex);
     ogs_pool_id_calloc(&stream_pool, &stream);
+    ogs_thread_mutex_unlock(&stream_pool_mutex);
     if (!stream) {
         ogs_error("ogs_pool_id_calloc() failed");
         return NULL;
@@ -777,7 +783,9 @@ static ogs_sbi_stream_t *stream_add(
     stream->request = ogs_sbi_request_new();
     if (!stream->request) {
         ogs_error("ogs_sbi_request_new() failed");
+        ogs_thread_mutex_lock(&stream_pool_mutex);
         ogs_pool_id_free(&stream_pool, stream);
+        ogs_thread_mutex_unlock(&stream_pool_mutex);
         return NULL;
     }
 
@@ -884,7 +892,9 @@ static void stream_remove(ogs_sbi_stream_t *stream)
     ogs_assert(stream->request);
     ogs_sbi_request_free(stream->request);
 
+    ogs_thread_mutex_lock(&stream_pool_mutex);
     ogs_pool_id_free(&stream_pool, stream);
+    ogs_thread_mutex_unlock(&stream_pool_mutex);
 }
 
 static void stream_remove_all(ogs_sbi_session_t *sbi_sess)
@@ -905,7 +915,13 @@ static ogs_pool_id_t id_from_stream(ogs_sbi_stream_t *stream)
 
 static void *stream_find_by_id(ogs_pool_id_t id)
 {
-    return ogs_pool_find_by_id(&stream_pool, id);
+    void *stream;
+
+    ogs_thread_mutex_lock(&stream_pool_mutex);
+    stream = ogs_pool_find_by_id(&stream_pool, id);
+    ogs_thread_mutex_unlock(&stream_pool_mutex);
+
+    return stream;
 }
 
 static ogs_sbi_session_t *session_add(
