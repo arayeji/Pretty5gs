@@ -902,6 +902,7 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         ogs_assert(e);
         recvbuf = e->pkbuf;
         ogs_assert(recvbuf);
+        ogs_trace_packet_bind_rx("gtp", recvbuf->data, recvbuf->len);
 
         smf_gnode = e->gnode;
         if (!smf_gnode) {
@@ -944,6 +945,20 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
         }
         e->gtp_xact_id = gtp_xact ? gtp_xact->id : OGS_INVALID_POOL_ID;
 
+        /* Node Echo has no UE — never attribute via TEID / sticky on_imsi. */
+        if (gtp1_message.h.type == OGS_GTP1_ECHO_REQUEST_TYPE ||
+                gtp1_message.h.type == OGS_GTP1_ECHO_RESPONSE_TYPE) {
+            ogs_trace_packet_bind_rx(NULL, NULL, 0);
+        } else if (sess) {
+            smf_ue_t *trace_ue = smf_ue_find_by_id(sess->smf_ue_id);
+            if (trace_ue && trace_ue->imsi_bcd[0]) {
+                ogs_gtp_xact_set_imsi(gtp_xact, trace_ue->imsi_bcd);
+                ogs_trace_packet(trace_ue->imsi_bcd, "gtp", "rx",
+                        recvbuf->data, recvbuf->len);
+                ogs_trace_packet_bind_rx(NULL, NULL, 0);
+            }
+        }
+
         switch(gtp1_message.h.type) {
         case OGS_GTP1_ECHO_REQUEST_TYPE:
             smf_gn_handle_echo_request(gtp_xact, &gtp1_message.echo_request);
@@ -952,6 +967,8 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
             smf_gn_handle_echo_response(gtp_xact, &gtp1_message.echo_response);
             break;
         case OGS_GTP1_CREATE_PDP_CONTEXT_REQUEST_TYPE:
+            ogs_smf_trace_set_from_gtp1_create_pdp_context_request(
+                    &gtp1_message.create_pdp_context_request, "create-pdp");
             smf_metrics_inst_global_inc(SMF_METR_GLOB_CTR_GN_RX_CREATEPDPCTXREQ);
             smf_metrics_inst_gtp_node_inc(smf_gnode->metrics, SMF_METR_GTP_NODE_CTR_GN_RX_CREATEPDPCTXREQ);
             if (smf_self()->maintenance_mode && gtp1_message.h.teid == 0) {
@@ -986,6 +1003,18 @@ void smf_state_operational(ogs_fsm_t *s, smf_event_t *e)
                         OGS_GTP1_CAUSE_CONTEXT_NOT_FOUND);
                 break;
             }
+
+            /* Create PDP TEID=0: dump after sess/UE exist. */
+            {
+                smf_ue_t *trace_ue = smf_ue_find_by_id(sess->smf_ue_id);
+                if (trace_ue && trace_ue->imsi_bcd[0]) {
+                    ogs_gtp_xact_set_imsi(gtp_xact, trace_ue->imsi_bcd);
+                    ogs_trace_packet(trace_ue->imsi_bcd, "gtp", "rx",
+                            recvbuf->data, recvbuf->len);
+                    ogs_trace_packet_bind_rx(NULL, NULL, 0);
+                }
+            }
+
             e->sess_id = sess->id;
             ogs_fsm_dispatch(&sess->sm, e);
             break;

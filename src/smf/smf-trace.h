@@ -32,6 +32,8 @@ void ogs_smf_trace_set(
 
 void ogs_smf_trace_set_from_gtp2_create_session_request(
         ogs_gtp2_create_session_request_t *req, const char *proc);
+void ogs_smf_trace_set_from_gtp1_create_pdp_context_request(
+        ogs_gtp1_create_pdp_context_request_t *req, const char *proc);
 
 void smf_trace_bind_gtp(ogs_gtp_xact_t *xact, smf_ue_t *smf_ue);
 void smf_trace_bind_pfcp(ogs_pfcp_xact_t *xact, smf_sess_t *sess);
