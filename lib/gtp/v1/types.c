@@ -170,8 +170,10 @@ static uint32_t dec_mbr_kbps(uint8_t mbr_byte, const uint8_t *extended_mbr_byte,
         return 8600 + embr1 * 100;
     }
     if (mbr & 0x80) {
+        /* TS 24.008: 576 kbps + (bits 7..1) * 64. Use the masked value;
+         * mbr_byte still has bit 8 set (0x91 is 1664 kbps, not 9856). */
         mbr &= ~0x80;
-        return 576 + mbr_byte * 64;
+        return 576 + (uint32_t)mbr * 64;
     }
     if (mbr & 0x40) {
         mbr &= ~0x40;

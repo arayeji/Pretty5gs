@@ -330,14 +330,21 @@ ogs_pkbuf_t *smf_gn_build_create_pdp_context_response(
     rsp->ggsn_address_for_user_traffic.data = &pgw_gnu_gsnaddr;
     rsp->ggsn_address_for_user_traffic.len = gsn_len;
 
-    /* QoS Profile: if PCRF changes Bearer QoS, apply changes. */
-    if (sess->gtp.create_session_response_bearer_qos == true) {
+    /*
+     * QoS Profile. TS 29.060: a GGSN shall not upgrade QoS unless the SGSN
+     * set Upgrade QoS Supported. SGWC and Osmo GGSN return the requested
+     * profile. Rebuilding it from Gx changes ARP and lengthens the IE, which
+     * this class of SGSN rejects. PCRF limits stay on the PFCP QER.
+     * No QoS negotiation means the same: return the request bytes.
+     */
+    if (sess->gtp.v1.common_flags.upgrade_qos_supported &&
+        !sess->gtp.v1.common_flags.no_qos_negotiation &&
+        sess->gtp.create_session_response_bearer_qos == true) {
         build_qos_profile_from_session(&qos_pdec, sess, bearer);
         rsp->quality_of_service_profile.presence = 1;
         ogs_gtp1_build_qos_profile(&rsp->quality_of_service_profile,
                &qos_pdec, qos_pdec_buf, OGS_GTP1_QOS_PROFILE_MAX_LEN);
     } else {
-        /* Copy over received QoS Profile from originating Request: */
         memcpy(&rsp->quality_of_service_profile, &sess->gtp.v1.qos,
                sizeof(rsp->quality_of_service_profile));
     }
@@ -589,9 +596,10 @@ ogs_pkbuf_t *smf_gn_build_update_pdp_context_response(
     rsp->ggsn_address_for_user_traffic.data = &pgw_gnu_gsnaddr;
     rsp->ggsn_address_for_user_traffic.len = gsn_len;
 
-    /* QoS Profile: if SGSN supports QoS re-negotiation and PCRF changes Bearer
-     * QoS, apply changes: */
-    if (!sess->gtp.v1.common_flags.no_qos_negotiation &&
+    /* Same rule as Create PDP Context Response: echo the request unless the
+     * SGSN set Upgrade QoS Supported and did not forbid negotiation. */
+    if (sess->gtp.v1.common_flags.upgrade_qos_supported &&
+        !sess->gtp.v1.common_flags.no_qos_negotiation &&
         sess->gtp.create_session_response_bearer_qos == true) {
         build_qos_profile_from_session(&qos_pdec, sess, bearer);
         rsp->quality_of_service_profile.presence = 1;
