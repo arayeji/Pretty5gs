@@ -175,7 +175,12 @@ ogs_pkbuf_t *smf_gn_build_create_pdp_context_response(
    rsp->reordering_required.presence = 1;
    rsp->reordering_required.u8 = 0; /* No */
 
-    /* TODO: Recovery */
+    /*
+     * TS 29.060: Recovery shall be included when Cause is Request Accepted.
+     * Same counter as GTPv2 Create Session Response (smf.gtpc_recovery).
+     */
+    rsp->recovery.presence = 1;
+    rsp->recovery.u8 = smf_self()->gtpc_recovery;
 
     rsp->tunnel_endpoint_identifier_data_i.presence = 1;
     rsp->tunnel_endpoint_identifier_data_i.u32 = bearer->pgw_s5u_teid;
@@ -448,7 +453,9 @@ ogs_pkbuf_t *smf_gn_build_update_pdp_context_response(
     rsp->cause.presence = 1;
     rsp->cause.u8 = OGS_GTP1_CAUSE_REQUEST_ACCEPTED;
 
-    /* TODO: Recovery */
+    /* TS 29.060: Recovery shall be included when Cause is Request Accepted. */
+    rsp->recovery.presence = 1;
+    rsp->recovery.u8 = smf_self()->gtpc_recovery;
 
     /* Tunnel Endpoint Identifier Data I */
     rsp->tunnel_endpoint_identifier_data_i.presence = 1;
