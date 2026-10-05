@@ -595,6 +595,8 @@ typedef struct mme_pgw_s {
      * overriding HSS MIP6 and APN DNS. SIGHUP reloadable.
      */
     bool            force;
+    /* Claimed by one YAML entry in the current SIGHUP pass. */
+    bool            rule_seen;
 } mme_pgw_t;
 
 /*

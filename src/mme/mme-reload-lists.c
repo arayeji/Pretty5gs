@@ -503,6 +503,15 @@ static void reload_access_control_parse_uint32_list(
     } while (ogs_yaml_iter_type(&list_iter) == YAML_SEQUENCE_NODE);
 }
 
+/*
+ * One gtpc.client.smf line is one selection rule. Two lines may share an
+ * address (different apn / plmn / order) and must stay two nodes: folding
+ * them let the later line's order replace the earlier one, so /ue-info
+ * config_selected picked the wider rule.
+ *
+ * A node already claimed in this pass is skipped, so the next line at the
+ * same address takes another existing node or allocates one.
+ */
 static mme_pgw_t *reload_pgw_find_by_addr(const ogs_sockaddr_t *addr)
 {
     mme_pgw_t *pgw = NULL;
@@ -512,6 +521,9 @@ static mme_pgw_t *reload_pgw_find_by_addr(const ogs_sockaddr_t *addr)
     ogs_list_for_each(&mme_self()->pgw_list, pgw) {
         ogs_sockaddr_t *sa = NULL;
 
+        if (pgw->rule_seen)
+            continue;
+
         for (sa = pgw->sa_list; sa; sa = sa->next) {
             if (ogs_sockaddr_is_equal(sa, addr))
                 return pgw;
@@ -519,6 +531,42 @@ static mme_pgw_t *reload_pgw_find_by_addr(const ogs_sockaddr_t *addr)
     }
 
     return NULL;
+}
+
+/* Set when an smf line does not resolve; leave unclaimed nodes in place. */
+static bool reload_pgw_resolve_failed;
+
+static void reload_pgw_rules_start(void)
+{
+    mme_pgw_t *pgw = NULL;
+
+    reload_pgw_resolve_failed = false;
+    ogs_list_for_each(&mme_self()->pgw_list, pgw)
+        pgw->rule_seen = false;
+}
+
+/* Nodes no YAML line claimed were cleared and must not stay as a default. */
+static void reload_pgw_rules_finish(void)
+{
+    mme_pgw_t *pgw = NULL, *next = NULL;
+    char peer_buf[OGS_ADDRSTRLEN];
+
+    if (reload_pgw_resolve_failed) {
+        ogs_reload_audit_warn(
+                "smf/pgw rule removal skipped (address resolution failure)");
+        return;
+    }
+
+    ogs_list_for_each_safe(&mme_self()->pgw_list, next, pgw) {
+        if (pgw->rule_seen)
+            continue;
+
+        ogs_reload_audit_note(" smf/pgw rule removed [%s]:%d",
+                pgw->sa_list ? OGS_ADDR(pgw->sa_list, peer_buf) : "-",
+                pgw->sa_list ? OGS_PORT(pgw->sa_list) : 0);
+        mme_pgw_remove(pgw);
+        mme_reload_lists_changed++;
+    }
 }
 
 static bool reload_sgw_tac_has(mme_sgw_t *sgw, uint16_t tac)
@@ -582,13 +630,10 @@ static void reload_sgw_ecell_add(mme_sgw_t *sgw, uint32_t e_cell_id)
 }
 
 /*
- * The gtpc client reload merges YAML into the existing peers, so deleting a
- * selection rule (tac / e_cell_id / plmn_id / imsi_prefix) from an entry used
- * to have no effect: the peer kept matching on the rule that was no longer in
- * the file. Wipe the rules on every peer before the entries are re-applied so
- * a reload is a replace, not an append. Duplicate YAML entries for the same
- * address still accumulate, because the wipe happens once per reload pass and
- * not per entry.
+ * Wipe selection keys once per reload so deleting tac / e_cell_id / plmn_id /
+ * imsi_prefix from a YAML line takes effect. Each smf line is then applied to
+ * its own node (reload_pgw_find_by_addr skips a node already claimed in this
+ * pass). SGW lines with apn: are applied the same way by reload_sgw_rule_apply.
  */
 static void reload_sgw_clear_all_rules(void)
 {
@@ -2098,6 +2143,8 @@ static int reload_gtpc_client_entry_add_only(
                 ogs_global_conf()->parameter.prefer_ipv4);
 
         if (!addr) {
+            if (pgw)
+                reload_pgw_resolve_failed = true;
             ogs_free(tac);
             continue;
         }
@@ -2221,6 +2268,7 @@ static int reload_gtpc_client_entry_add_only(
                 ogs_reload_audit_note(" smf/pgw force=%s",
                         force_v ? "true" : "false");
             }
+            pgw_node->rule_seen = true;
         }
 
         if (mme_reload_lists_changed > before)
@@ -2268,8 +2316,10 @@ int mme_reload_gtpc_client_add_only(ogs_yaml_iter_t *gtpc_iter)
 
                     ogs_yaml_iter_recurse(&client_iter, &smf_array);
                     reload_pgw_clear_all_rules();
+                    reload_pgw_rules_start();
                     added += reload_gtpc_client_entry_add_only(
                             &smf_array, true, &entry_idx);
+                    reload_pgw_rules_finish();
                     reload_gtpc_resort_pgw_list();
                 }
             }
