@@ -1158,13 +1158,15 @@ int pcrf_gx_send_rar(
                     == OGS_DIAM_RX_MEDIA_TYPE_CONTROL)) {
                 /*
                  * Check for default bearer for IMS signalling
-                 * QCI 5 and ARP 1 only in case of 3GPP RAT.
+                 * QCI 5 only in case of 3GPP RAT.
+                 *
+                 * Upstream also required ARP priority level 1, but our eNBs
+                 * do not accept ARP 1, so the ims APN runs QCI 5 / ARP 2.
+                 * TS 23.203 does not mandate ARP 1 for IMS signalling.
                  */
                 if (sess_data->rat_type != OGS_DIAM_RAT_TYPE_WLAN &&
-                    (gx_message.session_data.
-                        session.qos.index != OGS_QOS_INDEX_5 ||
                     gx_message.session_data.
-                        session.qos.arp.priority_level != 1)) {
+                        session.qos.index != OGS_QOS_INDEX_5) {
                     ogs_error("CHECK WEBUI : Even the Default "
                         "Bearer(QCI:%d,ARP:%d) cannot support IMS signalling.",
                         gx_message.session_data.session.qos.index,
