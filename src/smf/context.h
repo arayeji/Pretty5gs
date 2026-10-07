@@ -698,8 +698,18 @@ typedef struct smf_sess_s {
     unsigned        metrics_session_counted : 1;
     unsigned        metrics_rat_labeled : 1;
     unsigned        metrics_visited_labeled : 1; /* outbound-roaming gauge held */
+    unsigned        metrics_apn_labeled : 1;
+    unsigned        metrics_ue_apn_held : 1; /* this session owns the UE-by-APN +1 */
+    unsigned        metrics_sgw_labeled : 1;
+    unsigned        metrics_rat_scope_labeled : 1;
+    unsigned        metrics_home_plmn_valid : 1;
     char            metrics_rat[16];
     char            metrics_gtp_if[8];
+    char            metrics_apn[OGS_MAX_APN_LEN+1];
+    char            metrics_sgw_addr[OGS_ADDRSTRLEN];
+    char            metrics_scope[8];          /* "home" or "visited" */
+    char            metrics_scope_plmn[OGS_PLMNIDSTRLEN];
+    ogs_plmn_id_t   metrics_home_plmn;
 
     ogs_pfcp_sess_t pfcp;           /* PFCP session context */
 

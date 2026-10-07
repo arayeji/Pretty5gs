@@ -4,6 +4,9 @@
 #include "metrics.h"
 #include "pdu-info.h"
 
+static void smf_metrics_session_labels_inc(smf_sess_t *sess);
+static void smf_metrics_session_labels_dec(smf_sess_t *sess);
+
 typedef struct smf_metrics_spec_def_s {
     unsigned int type;
     const char *name;
@@ -456,6 +459,8 @@ void smf_metrics_session_active_inc(smf_sess_t *sess)
         sess->metrics_visited_labeled = 1;
     }
 
+    smf_metrics_session_labels_inc(sess);
+
     sess->metrics_session_counted = 1;
 }
 
@@ -468,6 +473,8 @@ void smf_metrics_session_active_dec(smf_sess_t *sess)
 
     smf_metrics_inst_by_slice_add(&sess->serving_plmn_id, &sess->s_nssai,
             SMF_METR_GAUGE_SM_SESSIONNBR, -1);
+
+    smf_metrics_session_labels_dec(sess);
 
     if (sess->metrics_rat_labeled) {
         smf_metrics_inst_by_rat_add(sess->metrics_rat, sess->metrics_gtp_if,
@@ -916,6 +923,393 @@ void smf_metrics_inst_by_visited_add(
     ogs_metrics_dump_unlock();
 }
 
+/* BY IMSI PLMN and APN — same split SGWC publishes as sgwc_session_active_by_apn */
+const char *labels_plmn_apn[] = {
+    "plmnid",
+    "apn"
+};
+
+typedef enum smf_metric_type_by_plmn_apn_e {
+    SMF_METR_BY_PLMN_APN_GAUGE_SESSION = 0,
+    SMF_METR_BY_PLMN_APN_GAUGE_UE,
+    _SMF_METR_BY_PLMN_APN_MAX,
+} smf_metric_type_by_plmn_apn_t;
+
+#define SMF_METR_BY_PLMN_APN_GAUGE_ENTRY(_id, _name, _desc) \
+    [_id] = { \
+        .type = OGS_METRICS_METRIC_TYPE_GAUGE, \
+        .name = _name, \
+        .description = _desc, \
+        .num_labels = OGS_ARRAY_SIZE(labels_plmn_apn), \
+        .labels = labels_plmn_apn, \
+    },
+
+ogs_metrics_spec_t *smf_metrics_spec_by_plmn_apn[_SMF_METR_BY_PLMN_APN_MAX];
+static ogs_hash_t *metrics_hash_by_plmn_apn = NULL;
+static smf_metrics_spec_def_t
+smf_metrics_spec_def_by_plmn_apn[_SMF_METR_BY_PLMN_APN_MAX] = {
+SMF_METR_BY_PLMN_APN_GAUGE_ENTRY(
+    SMF_METR_BY_PLMN_APN_GAUGE_SESSION,
+    "smf_session_active_by_apn",
+    "Active sessions per IMSI PLMN and APN on SMF")
+SMF_METR_BY_PLMN_APN_GAUGE_ENTRY(
+    SMF_METR_BY_PLMN_APN_GAUGE_UE,
+    "smf_ue_active_by_apn",
+    "Active UEs per IMSI PLMN and APN on SMF "
+    "(a UE with several APNs is counted once per APN)")
+};
+typedef struct smf_metric_key_by_plmn_apn_s {
+    ogs_plmn_id_t                   plmn_id;
+    char                            apn[OGS_MAX_APN_LEN+1];
+    smf_metric_type_by_plmn_apn_t   t;
+} smf_metric_key_by_plmn_apn_t;
+
+/* BY IMSI PLMN and SGW-C — SGWC's sgwc_session_active{plmnid,pgw_addr} */
+const char *labels_plmn_sgw[] = {
+    "plmnid",
+    "sgw_addr"
+};
+
+typedef enum smf_metric_type_by_plmn_sgw_e {
+    SMF_METR_BY_PLMN_SGW_GAUGE_SESSION = 0,
+    _SMF_METR_BY_PLMN_SGW_MAX,
+} smf_metric_type_by_plmn_sgw_t;
+
+#define SMF_METR_BY_PLMN_SGW_GAUGE_ENTRY(_id, _name, _desc) \
+    [_id] = { \
+        .type = OGS_METRICS_METRIC_TYPE_GAUGE, \
+        .name = _name, \
+        .description = _desc, \
+        .num_labels = OGS_ARRAY_SIZE(labels_plmn_sgw), \
+        .labels = labels_plmn_sgw, \
+    },
+
+ogs_metrics_spec_t *smf_metrics_spec_by_plmn_sgw[_SMF_METR_BY_PLMN_SGW_MAX];
+static ogs_hash_t *metrics_hash_by_plmn_sgw = NULL;
+static smf_metrics_spec_def_t
+smf_metrics_spec_def_by_plmn_sgw[_SMF_METR_BY_PLMN_SGW_MAX] = {
+SMF_METR_BY_PLMN_SGW_GAUGE_ENTRY(
+    SMF_METR_BY_PLMN_SGW_GAUGE_SESSION,
+    "smf_session_active",
+    "Active sessions per IMSI PLMN and SGW-C address on SMF "
+    "(5GC sessions use sgw_addr=sbi)")
+};
+typedef struct smf_metric_key_by_plmn_sgw_s {
+    ogs_plmn_id_t                   plmn_id;
+    char                            sgw_addr[OGS_ADDRSTRLEN];
+    smf_metric_type_by_plmn_sgw_t   t;
+} smf_metric_key_by_plmn_sgw_t;
+
+/*
+ * RAT plus home or visited network. The existing
+ * fivegs_smffunction_sm_sessionnbr_by_rat series stays unlabeled by network.
+ */
+const char *labels_rat_scope[] = {
+    "rat",
+    "gtp_if",
+    "scope",
+    "plmnid"
+};
+
+typedef enum smf_metric_type_by_rat_scope_e {
+    SMF_METR_BY_RAT_SCOPE_GAUGE_SESSION = 0,
+    _SMF_METR_BY_RAT_SCOPE_MAX,
+} smf_metric_type_by_rat_scope_t;
+
+#define SMF_METR_BY_RAT_SCOPE_GAUGE_ENTRY(_id, _name, _desc) \
+    [_id] = { \
+        .type = OGS_METRICS_METRIC_TYPE_GAUGE, \
+        .name = _name, \
+        .description = _desc, \
+        .num_labels = OGS_ARRAY_SIZE(labels_rat_scope), \
+        .labels = labels_rat_scope, \
+    },
+
+ogs_metrics_spec_t *smf_metrics_spec_by_rat_scope[_SMF_METR_BY_RAT_SCOPE_MAX];
+static ogs_hash_t *metrics_hash_by_rat_scope = NULL;
+static smf_metrics_spec_def_t
+smf_metrics_spec_def_by_rat_scope[_SMF_METR_BY_RAT_SCOPE_MAX] = {
+SMF_METR_BY_RAT_SCOPE_GAUGE_ENTRY(
+    SMF_METR_BY_RAT_SCOPE_GAUGE_SESSION,
+    "smf_session_active_by_rat",
+    "Active sessions per RAT, GTP interface and home or visited network "
+    "(scope=home|visited, plmnid is the IMSI PLMN when home and the "
+    "serving PLMN when visited)")
+};
+typedef struct smf_metric_key_by_rat_scope_s {
+    char                            rat[16];
+    char                            gtp_if[8];
+    char                            scope[8];
+    char                            plmnid[OGS_PLMNIDSTRLEN];
+    smf_metric_type_by_rat_scope_t  t;
+} smf_metric_key_by_rat_scope_t;
+
+static void smf_metrics_inst_by_plmn_apn_add(
+        const ogs_plmn_id_t *plmn, const char *apn,
+        smf_metric_type_by_plmn_apn_t t, int val)
+{
+    ogs_metrics_inst_t *metrics = NULL;
+    smf_metric_key_by_plmn_apn_t *key;
+    char plmn_id[OGS_PLMNIDSTRLEN] = "";
+
+    if (!metrics_hash_by_plmn_apn || !plmn || !apn)
+        return;
+
+    key = ogs_calloc(1, sizeof(*key));
+    ogs_assert(key);
+    key->plmn_id = *plmn;
+    ogs_cpystrn(key->apn, apn, sizeof(key->apn));
+    key->t = t;
+
+    ogs_metrics_dump_lock();
+    metrics = ogs_hash_get(metrics_hash_by_plmn_apn, key, sizeof(*key));
+    if (!metrics) {
+        ogs_plmn_id_to_string(plmn, plmn_id);
+        metrics = ogs_metrics_inst_new(smf_metrics_spec_by_plmn_apn[t],
+                smf_metrics_spec_def_by_plmn_apn->num_labels,
+                (const char *[]){ plmn_id, key->apn });
+        ogs_assert(metrics);
+        ogs_hash_set(metrics_hash_by_plmn_apn, key, sizeof(*key), metrics);
+    } else {
+        ogs_free(key);
+    }
+    ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
+}
+
+static void smf_metrics_inst_by_plmn_sgw_add(
+        const ogs_plmn_id_t *plmn, const char *sgw_addr,
+        smf_metric_type_by_plmn_sgw_t t, int val)
+{
+    ogs_metrics_inst_t *metrics = NULL;
+    smf_metric_key_by_plmn_sgw_t *key;
+    char plmn_id[OGS_PLMNIDSTRLEN] = "";
+
+    if (!metrics_hash_by_plmn_sgw || !plmn || !sgw_addr)
+        return;
+
+    key = ogs_calloc(1, sizeof(*key));
+    ogs_assert(key);
+    key->plmn_id = *plmn;
+    ogs_cpystrn(key->sgw_addr, sgw_addr, sizeof(key->sgw_addr));
+    key->t = t;
+
+    ogs_metrics_dump_lock();
+    metrics = ogs_hash_get(metrics_hash_by_plmn_sgw, key, sizeof(*key));
+    if (!metrics) {
+        ogs_plmn_id_to_string(plmn, plmn_id);
+        metrics = ogs_metrics_inst_new(smf_metrics_spec_by_plmn_sgw[t],
+                smf_metrics_spec_def_by_plmn_sgw->num_labels,
+                (const char *[]){ plmn_id, key->sgw_addr });
+        ogs_assert(metrics);
+        ogs_hash_set(metrics_hash_by_plmn_sgw, key, sizeof(*key), metrics);
+    } else {
+        ogs_free(key);
+    }
+    ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
+}
+
+static void smf_metrics_inst_by_rat_scope_add(
+        const char *rat, const char *gtp_if,
+        const char *scope, const char *plmnid,
+        smf_metric_type_by_rat_scope_t t, int val)
+{
+    ogs_metrics_inst_t *metrics = NULL;
+    smf_metric_key_by_rat_scope_t *key;
+
+    if (!metrics_hash_by_rat_scope || !rat || !scope || !plmnid)
+        return;
+
+    key = ogs_calloc(1, sizeof(*key));
+    ogs_assert(key);
+    ogs_cpystrn(key->rat, rat, sizeof(key->rat));
+    ogs_cpystrn(key->gtp_if, gtp_if ? gtp_if : "", sizeof(key->gtp_if));
+    ogs_cpystrn(key->scope, scope, sizeof(key->scope));
+    ogs_cpystrn(key->plmnid, plmnid, sizeof(key->plmnid));
+    key->t = t;
+
+    ogs_metrics_dump_lock();
+    metrics = ogs_hash_get(metrics_hash_by_rat_scope, key, sizeof(*key));
+    if (!metrics) {
+        metrics = ogs_metrics_inst_new(smf_metrics_spec_by_rat_scope[t],
+                smf_metrics_spec_def_by_rat_scope->num_labels,
+                (const char *[]){ key->rat, key->gtp_if,
+                    key->scope, key->plmnid });
+        ogs_assert(metrics);
+        ogs_hash_set(metrics_hash_by_rat_scope, key, sizeof(*key), metrics);
+    } else {
+        ogs_free(key);
+    }
+    ogs_metrics_inst_add(metrics, val);
+    ogs_metrics_dump_unlock();
+}
+
+static void smf_metrics_sgw_addr(const smf_sess_t *sess,
+        char *buf, size_t buflen)
+{
+    char ipbuf[OGS_ADDRSTRLEN];
+
+    ogs_assert(buf);
+    ogs_assert(buflen > 0);
+    buf[0] = '\0';
+
+    if (!sess->epc) {
+        ogs_cpystrn(buf, "sbi", buflen);
+        return;
+    }
+    if (sess->sgw_s5c_ip.ipv4)
+        ogs_cpystrn(buf, OGS_INET_NTOP(&sess->sgw_s5c_ip.addr, ipbuf), buflen);
+    else if (sess->sgw_s5c_ip.ipv6)
+        ogs_cpystrn(buf, OGS_INET6_NTOP(sess->sgw_s5c_ip.addr6, ipbuf), buflen);
+    else
+        ogs_cpystrn(buf, "-", buflen);
+}
+
+static smf_sess_t *smf_metrics_other_apn_session(smf_sess_t *sess)
+{
+    smf_ue_t *ue = NULL;
+    smf_sess_t *other = NULL;
+
+    ue = smf_ue_find_by_id(sess->smf_ue_id);
+    if (!ue || !sess->metrics_apn[0])
+        return NULL;
+
+    ogs_list_for_each(&ue->sess_list, other) {
+        if (other == sess || !other->metrics_apn_labeled)
+            continue;
+        if (strcmp(other->metrics_apn, sess->metrics_apn) == 0)
+            return other;
+    }
+    return NULL;
+}
+
+static void smf_metrics_session_labels_inc(smf_sess_t *sess)
+{
+    smf_ue_t *ue = NULL;
+    ogs_plmn_id_t home;
+    char home_str[OGS_PLMNIDSTRLEN];
+    char scope_plmn[OGS_PLMNIDSTRLEN];
+    const char *scope = "home";
+    bool home_valid = false;
+    bool serving_set;
+
+    memset(&home, 0, sizeof(home));
+    home_str[0] = '\0';
+    scope_plmn[0] = '\0';
+
+    ue = smf_ue_find_by_id(sess->smf_ue_id);
+    if (ue && ue->imsi_len) {
+        smf_home_plmn_from_imsi_bcd(ue->imsi_bcd, &home);
+        home_valid = true;
+        sess->metrics_home_plmn = home;
+        sess->metrics_home_plmn_valid = 1;
+        ogs_plmn_id_to_string(&home, home_str);
+    }
+
+    if (home_valid) {
+        ogs_cpystrn(sess->metrics_apn,
+                (sess->session.name && sess->session.name[0]) ?
+                    sess->session.name : "-",
+                sizeof(sess->metrics_apn));
+        sess->metrics_apn_labeled = 1;
+        smf_metrics_inst_by_plmn_apn_add(&home, sess->metrics_apn,
+                SMF_METR_BY_PLMN_APN_GAUGE_SESSION, 1);
+        if (!smf_metrics_other_apn_session(sess)) {
+            sess->metrics_ue_apn_held = 1;
+            smf_metrics_inst_by_plmn_apn_add(&home, sess->metrics_apn,
+                    SMF_METR_BY_PLMN_APN_GAUGE_UE, 1);
+        }
+    }
+
+    if (home_valid) {
+        smf_metrics_sgw_addr(sess, sess->metrics_sgw_addr,
+                sizeof(sess->metrics_sgw_addr));
+        sess->metrics_sgw_labeled = 1;
+        smf_metrics_inst_by_plmn_sgw_add(&home, sess->metrics_sgw_addr,
+                SMF_METR_BY_PLMN_SGW_GAUGE_SESSION, 1);
+    }
+
+    serving_set = sess->serving_plmn_id.mcc1 || sess->serving_plmn_id.mcc2 ||
+            sess->serving_plmn_id.mcc3;
+    if (sess->metrics_visited_labeled && serving_set) {
+        scope = "visited";
+        ogs_plmn_id_to_string(&sess->serving_plmn_id, scope_plmn);
+    } else if (home_valid) {
+        ogs_cpystrn(scope_plmn, home_str, sizeof(scope_plmn));
+    } else if (serving_set) {
+        ogs_plmn_id_to_string(&sess->serving_plmn_id, scope_plmn);
+    }
+
+    if (sess->metrics_rat_labeled && scope_plmn[0]) {
+        ogs_cpystrn(sess->metrics_scope, scope, sizeof(sess->metrics_scope));
+        ogs_cpystrn(sess->metrics_scope_plmn, scope_plmn,
+                sizeof(sess->metrics_scope_plmn));
+        sess->metrics_rat_scope_labeled = 1;
+        smf_metrics_inst_by_rat_scope_add(sess->metrics_rat, sess->metrics_gtp_if,
+                sess->metrics_scope, sess->metrics_scope_plmn,
+                SMF_METR_BY_RAT_SCOPE_GAUGE_SESSION, 1);
+    }
+}
+
+static void smf_metrics_session_labels_dec(smf_sess_t *sess)
+{
+    if (sess->metrics_rat_scope_labeled) {
+        smf_metrics_inst_by_rat_scope_add(sess->metrics_rat, sess->metrics_gtp_if,
+                sess->metrics_scope, sess->metrics_scope_plmn,
+                SMF_METR_BY_RAT_SCOPE_GAUGE_SESSION, -1);
+        sess->metrics_rat_scope_labeled = 0;
+        sess->metrics_scope[0] = '\0';
+        sess->metrics_scope_plmn[0] = '\0';
+    }
+
+    if (sess->metrics_sgw_labeled && sess->metrics_home_plmn_valid) {
+        smf_metrics_inst_by_plmn_sgw_add(&sess->metrics_home_plmn,
+                sess->metrics_sgw_addr,
+                SMF_METR_BY_PLMN_SGW_GAUGE_SESSION, -1);
+        sess->metrics_sgw_labeled = 0;
+        sess->metrics_sgw_addr[0] = '\0';
+    }
+
+    if (sess->metrics_apn_labeled && sess->metrics_home_plmn_valid) {
+        if (sess->metrics_ue_apn_held) {
+            smf_sess_t *other = smf_metrics_other_apn_session(sess);
+
+            if (other)
+                other->metrics_ue_apn_held = 1;
+            else
+                smf_metrics_inst_by_plmn_apn_add(&sess->metrics_home_plmn,
+                        sess->metrics_apn,
+                        SMF_METR_BY_PLMN_APN_GAUGE_UE, -1);
+            sess->metrics_ue_apn_held = 0;
+        }
+        smf_metrics_inst_by_plmn_apn_add(&sess->metrics_home_plmn,
+                sess->metrics_apn,
+                SMF_METR_BY_PLMN_APN_GAUGE_SESSION, -1);
+        sess->metrics_apn_labeled = 0;
+        sess->metrics_apn[0] = '\0';
+    }
+
+    sess->metrics_home_plmn_valid = 0;
+}
+
+static void smf_metrics_hash_free(ogs_hash_t **hash, size_t keylen)
+{
+    ogs_hash_index_t *hi;
+
+    if (!hash || !*hash)
+        return;
+
+    for (hi = ogs_hash_first(*hash); hi; hi = ogs_hash_next(hi)) {
+        void *key = (void *)ogs_hash_this_key(hi);
+
+        ogs_hash_set(*hash, key, keylen, NULL);
+        ogs_free(key);
+    }
+    ogs_hash_destroy(*hash);
+    *hash = NULL;
+}
+
 void smf_metrics_init(void)
 {
     ogs_metrics_context_t *ctx = ogs_metrics_self();
@@ -941,6 +1335,12 @@ void smf_metrics_init(void)
             smf_metrics_spec_def_by_rat, _SMF_METR_BY_RAT_MAX);
     smf_metrics_init_spec(ctx, smf_metrics_spec_by_visited,
             smf_metrics_spec_def_by_visited, _SMF_METR_BY_VISITED_MAX);
+    smf_metrics_init_spec(ctx, smf_metrics_spec_by_plmn_apn,
+            smf_metrics_spec_def_by_plmn_apn, _SMF_METR_BY_PLMN_APN_MAX);
+    smf_metrics_init_spec(ctx, smf_metrics_spec_by_plmn_sgw,
+            smf_metrics_spec_def_by_plmn_sgw, _SMF_METR_BY_PLMN_SGW_MAX);
+    smf_metrics_init_spec(ctx, smf_metrics_spec_by_rat_scope,
+            smf_metrics_spec_def_by_rat_scope, _SMF_METR_BY_RAT_SCOPE_MAX);
 
     smf_metrics_init_inst_global();
     smf_metrics_init_by_pfcp_peer();
@@ -950,6 +1350,12 @@ void smf_metrics_init(void)
     smf_metrics_init_by_plmn();
     smf_metrics_init_by_rat();
     smf_metrics_init_by_visited();
+    metrics_hash_by_plmn_apn = ogs_hash_make();
+    ogs_assert(metrics_hash_by_plmn_apn);
+    metrics_hash_by_plmn_sgw = ogs_hash_make();
+    ogs_assert(metrics_hash_by_plmn_sgw);
+    metrics_hash_by_rat_scope = ogs_hash_make();
+    ogs_assert(metrics_hash_by_rat_scope);
 }
 
 void smf_metrics_final(void)
@@ -1053,6 +1459,12 @@ void smf_metrics_final(void)
         ogs_hash_destroy(metrics_hash_by_visited);
         metrics_hash_by_visited = NULL;
     }
+    smf_metrics_hash_free(&metrics_hash_by_plmn_apn,
+            sizeof(smf_metric_key_by_plmn_apn_t));
+    smf_metrics_hash_free(&metrics_hash_by_plmn_sgw,
+            sizeof(smf_metric_key_by_plmn_sgw_t));
+    smf_metrics_hash_free(&metrics_hash_by_rat_scope,
+            sizeof(smf_metric_key_by_rat_scope_t));
 
     ogs_metrics_context_final();
 }
