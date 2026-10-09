@@ -1543,16 +1543,31 @@ void smf_epc_n4_handle_session_modification_response(
     }
 
     if (flags & OGS_PFCP_MODIFY_REMOVE) {
-        ogs_assert(bearer);
+        if (!bearer) {
+            ogs_error("Bearer has already been removed");
+            return;
+        }
         smf_bearer_remove(bearer);
 
     } else if (flags & OGS_PFCP_MODIFY_CREATE) {
-        ogs_assert(bearer);
-        ogs_assert(OGS_OK == smf_gtp2_send_create_bearer_request(bearer));
-    
+        if (!bearer) {
+            ogs_error("Bearer has already been removed");
+            return;
+        }
+        if (smf_gtp2_send_create_bearer_request(bearer) != OGS_OK) {
+            ogs_error("smf_gtp2_send_create_bearer_request() failed");
+            return;
+        }
+
     } else if (flags & OGS_PFCP_MODIFY_NETWORK_REQUESTED) {
-        ogs_assert(bearer);
-        ogs_assert(OGS_OK == smf_gtp2_send_update_bearer_request(bearer));
+        if (!bearer) {
+            ogs_error("Bearer has already been removed");
+            return;
+        }
+        if (smf_gtp2_send_update_bearer_request(bearer) != OGS_OK) {
+            ogs_error("smf_gtp2_send_update_bearer_request() failed");
+            return;
+        }
 
     } else if (flags & OGS_PFCP_MODIFY_DEACTIVATE) {
         /*
@@ -1622,7 +1637,10 @@ void smf_epc_n4_handle_session_modification_response(
             ogs_pkbuf_t *pkbuf = NULL;
             int rv;
 
-            ogs_assert(bearer);
+            if (!bearer) {
+                ogs_error("Bearer has already been removed");
+                return;
+            }
 
             memset(&h, 0, sizeof(ogs_gtp2_header_t));
             h.teid = sess->sgw_s5c_teid;
@@ -1697,13 +1715,18 @@ void smf_epc_n4_handle_session_modification_response(
          * 12. SGW-C sends Delete Bearer Response(DECIATED BEARER) to SMF
          * 13. PFCP Session Modification Request/Response(Remove PDR/FAR)
          */
-                ogs_assert(bearer);
+                if (!bearer) {
+                    ogs_error("Bearer has already been removed");
+                    return;
+                }
 
-                ogs_assert(OGS_OK ==
-                    smf_gtp2_send_delete_bearer_request(
+                if (smf_gtp2_send_delete_bearer_request(
                         bearer,
                         OGS_NAS_PROCEDURE_TRANSACTION_IDENTITY_UNASSIGNED,
-                        gtp_cause));
+                        gtp_cause) != OGS_OK) {
+                    ogs_error("smf_gtp2_send_delete_bearer_request() failed");
+                    return;
+                }
             }
         }
 

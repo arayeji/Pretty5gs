@@ -53,9 +53,15 @@ static void pfcp_sess_timeout(ogs_pfcp_xact_t *xact, void *data)
     ogs_assert(xact);
     type = xact->seq[0].type;
 
-    ogs_assert(data);
+    if (!data) {
+        ogs_error("PFCP timeout: no session type[%u]", type);
+        return;
+    }
     sess_id = OGS_POINTER_TO_UINT(data);
-    ogs_assert(sess_id >= OGS_MIN_POOL_ID && sess_id <= OGS_MAX_POOL_ID);
+    if (sess_id < OGS_MIN_POOL_ID || sess_id > OGS_MAX_POOL_ID) {
+        ogs_error("PFCP timeout: invalid session id type[%u]", type);
+        return;
+    }
 
     sess = smf_sess_find_active_by_id(sess_id);
     if (!sess) {
@@ -1004,7 +1010,8 @@ void smf_s5c_handle_modify_bearer_request(
 
         /* Need to modify SGW-S5U */
         pfcp_xact = ogs_pfcp_xact_local_create(
-                        sess->pfcp_node, pfcp_sess_timeout, sess);
+                        sess->pfcp_node, pfcp_sess_timeout,
+                        OGS_UINT_TO_POINTER(sess->id));
         ogs_assert(pfcp_xact);
 
         pfcp_xact->epc = true; /* EPC PFCP transaction */
