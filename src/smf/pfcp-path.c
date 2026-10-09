@@ -499,6 +499,19 @@ static void sess_5gc_timeout(ogs_pfcp_xact_t *xact, void *data)
         ogs_error("Session has already been removed [%d]", type);
         return;
     }
+    /*
+     * Pool ids are recycled after the session is removed. The CP SEID
+     * captured in the transaction proves this id still belongs to the
+     * session that sent the request.
+     */
+    if (xact->local_seid && sess->smf_n4_seid != xact->local_seid) {
+        ogs_error("PFCP timeout [%d]: sess_id[%d] was recycled "
+                "(xact SEID[0x%llx] != sess SEID[0x%llx]); ignoring",
+                type, sess_id,
+                (unsigned long long)xact->local_seid,
+                (unsigned long long)sess->smf_n4_seid);
+        return;
+    }
     smf_ue = smf_ue_find_by_id(sess->smf_ue_id);
     ogs_assert(smf_ue);
 
@@ -691,10 +704,28 @@ static void sess_epc_timeout(ogs_pfcp_xact_t *xact, void *data)
         ogs_error("Session has already been removed [%d]", type);
         return;
     }
+    if (xact->local_seid && sess->smf_n4_seid != xact->local_seid) {
+        ogs_error("PFCP timeout [%d]: sess_id[%d] was recycled "
+                "(xact SEID[0x%llx] != sess SEID[0x%llx]); ignoring",
+                type, sess_id,
+                (unsigned long long)xact->local_seid,
+                (unsigned long long)sess->smf_n4_seid);
+        return;
+    }
 
     switch (type) {
     case OGS_PFCP_SESSION_ESTABLISHMENT_REQUEST_TYPE:
-        ogs_warn("No PFCP session establishment response");
+        if ((xact->create_flags & OGS_PFCP_CREATE_RESTORATION_INDICATION) ||
+                xact->assoc_xact_id == OGS_INVALID_POOL_ID) {
+            /* UPF slow to answer a restoration re-establish. Keep the
+             * PDN; the UE stays up and the next association restores it. */
+            ogs_warn("[%s] PFCP restoration timeout sess_id[%d] — "
+                    "keeping session pending UPF recovery",
+                    smf_log_id(smf_ue_find_by_id(sess->smf_ue_id)),
+                    sess->id);
+        } else {
+            ogs_warn("No PFCP session establishment response");
+        }
         break;
     case OGS_PFCP_SESSION_MODIFICATION_REQUEST_TYPE:
         ogs_error("No PFCP session modification response");

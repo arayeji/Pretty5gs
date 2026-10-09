@@ -181,6 +181,10 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
     case OGS_FSM_ENTRY_SIG:
         ogs_info("PFCP associated %s",
                 ogs_sockaddr_to_string_static(node->addr_list));
+        /* Association may already have a timer event queued; stop so it
+         * cannot keep retrying Association Setup against an up peer. */
+        if (node->t_association)
+            ogs_timer_stop(node->t_association);
         ogs_timer_start(node->t_no_heartbeat,
                 ogs_local_conf()->time.message.pfcp.no_heartbeat_duration);
         ogs_assert(OGS_OK ==
@@ -302,6 +306,19 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
             ogs_assert(OGS_OK ==
                 ogs_pfcp_send_heartbeat_request(node, node_timeout));
             break;
+        case SMF_TIMER_PFCP_ASSOCIATION:
+            /*
+             * Race: association succeeded while a retry timer event was
+             * already on the queue. Ignore — do not send another Setup.
+             */
+            node = e->pfcp_node;
+            ogs_assert(node);
+            if (node->t_association)
+                ogs_timer_stop(node->t_association);
+            ogs_warn("PFCP association retry timer ignored "
+                    "(already associated) peer %s",
+                    ogs_sockaddr_to_string_static(node->addr_list));
+            break;
         default:
             smf_pfcp_session_timer(e);
             break;
@@ -370,6 +387,18 @@ void smf_pfcp_session_dispatch(
          * originated the message, so try harder by using the SEID we
          * locally stored in xact when sending the original request: */
         sess = smf_sess_find_active_by_seid(xact->local_seid);
+    }
+
+    /* Session Establishment Request stores sess->id in xact->data. After
+     * PFCP restoration both CP-side and UP-side SEIDs in header/xact can
+     * be 0 until the response carries the new UP F-SEID; resolve session
+     * from the transaction in that case. Otherwise the response is treated
+     * as orphaned and the session just created on the UPF is deleted. */
+    if (!sess && message->h.type ==
+            OGS_PFCP_SESSION_ESTABLISHMENT_RESPONSE_TYPE) {
+        ogs_pool_id_t sess_id = OGS_POINTER_TO_UINT(xact->data);
+        if (sess_id >= OGS_MIN_POOL_ID && sess_id <= OGS_MAX_POOL_ID)
+            sess = smf_sess_find_active_by_id(sess_id);
     }
 
     if (sess && !smf_sess_owned_by_self(sess)) {
@@ -595,6 +624,25 @@ void smf_pfcp_state_exception(ogs_fsm_t *s, smf_event_t *e)
     }
 }
 
+/*
+ * Idle DL FARs were BUFF. Reinstalling that after a UPF restart fills the
+ * user-plane buffer before the UE is reachable again. Reinstall DROP;
+ * the next modify/activate restores FORW. Same as SGWC restoration.
+ */
+static void smf_sess_prepare_restoration_drop_idle(smf_sess_t *sess)
+{
+    smf_bearer_t *bearer = NULL;
+
+    ogs_assert(sess);
+
+    ogs_list_for_each(&sess->bearer_list, bearer) {
+        ogs_pfcp_far_t *far = bearer->dl_far;
+
+        if (far && (far->apply_action & OGS_PFCP_APPLY_ACTION_BUFF))
+            far->apply_action = OGS_PFCP_APPLY_ACTION_DROP;
+    }
+}
+
 static void restore_one(smf_ue_t *smf_ue, smf_sess_t *sess, void *arg)
 {
     ogs_pfcp_node_t *node = arg;
@@ -603,6 +651,8 @@ static void restore_one(smf_ue_t *smf_ue, smf_sess_t *sess, void *arg)
 
     if (node != sess->pfcp_node)
         return;
+
+    smf_sess_prepare_restoration_drop_idle(sess);
 
     if (sess->epc) {
         ogs_info("UE IMSI[%s] APN[%s] IPv4[%s] IPv6[%s]",
@@ -678,6 +728,21 @@ static void fanout_restore(ogs_pfcp_node_t *node, int kind)
 
 static void pfcp_restoration(ogs_pfcp_node_t *node)
 {
+    ogs_assert(node);
+
+    /*
+     * A drain is deleting PFCP sessions on the UPF while the local context
+     * is still here. Restoring those sessions puts them back on the UPF.
+     */
+    if (smf_self()->maintenance_mode ||
+            __atomic_load_n(&smf_self()->drain_shards_active,
+                __ATOMIC_RELAXED) > 0) {
+        ogs_warn("PFCP restoration skipped: SMF maintenance/drain active "
+                "(peer %s)",
+                ogs_sockaddr_to_string_static(node->addr_list));
+        return;
+    }
+
     fanout_restore(node, SMF_N4_RESTORE_REESTABLISH);
 }
 
