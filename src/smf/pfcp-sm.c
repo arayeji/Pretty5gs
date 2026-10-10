@@ -28,7 +28,6 @@
 #include "smf-workers.h"
 
 static void pfcp_restoration(ogs_pfcp_node_t *node);
-static void reselect_upf(ogs_pfcp_node_t *node);
 static void node_timeout(ogs_pfcp_xact_t *xact, void *data);
 
 void smf_pfcp_state_initial(ogs_fsm_t *s, smf_event_t *e)
@@ -125,11 +124,28 @@ void smf_pfcp_state_will_associate(ogs_fsm_t *s, smf_event_t *e)
             ogs_expect(true ==
                 ogs_pfcp_handle_heartbeat_request(node, xact,
                     &message->pfcp_heartbeat_request));
+            /*
+             * Peer is alive and its Recovery Time Stamp did not move.
+             * The association is still the one it holds; go back instead
+             * of waiting for an Association Setup it will ignore.
+             */
+            if (node->restoration_required == false) {
+                ogs_warn("PFCP heartbeat from %s while de-associated; "
+                        "association still valid",
+                        ogs_sockaddr_to_string_static(node->addr_list));
+                OGS_FSM_TRAN(s, smf_pfcp_state_associated);
+            }
             break;
         case OGS_PFCP_HEARTBEAT_RESPONSE_TYPE:
             ogs_expect(true ==
                 ogs_pfcp_handle_heartbeat_response(node, xact,
                     &message->pfcp_heartbeat_response));
+            if (node->restoration_required == false) {
+                ogs_warn("PFCP heartbeat from %s while de-associated; "
+                        "association still valid",
+                        ogs_sockaddr_to_string_static(node->addr_list));
+                OGS_FSM_TRAN(s, smf_pfcp_state_associated);
+            }
             break;
         case OGS_PFCP_ASSOCIATION_SETUP_REQUEST_TYPE:
             ogs_pfcp_cp_handle_association_setup_request(node, xact,
@@ -325,20 +341,24 @@ void smf_pfcp_state_associated(ogs_fsm_t *s, smf_event_t *e)
         }
         break;
     case SMF_EVT_N4_NO_HEARTBEAT:
-        ogs_warn("No Heartbeat from UPF %s",
-                ogs_sockaddr_to_string_static(node->addr_list));
-
         /*
-         * reselect_upf() should not be executed on node_timeout
-         * because the timer cannot be deleted in the timer expiration function.
-         *
-         * Note that reselct_upf contains SMF_SESS_CLEAR.
+         * A missed heartbeat is not a peer restart. Dropping associated
+         * makes every new session fail with "No UPFs are PFCP associated",
+         * and the UPF ignores a fresh Association Setup while it still
+         * holds the old one, so PFCP stays down until the UPF is restarted.
+         * Keep the association and probe again. A real restart is the
+         * Recovery Time Stamp change in lib/pfcp/handler.c.
          */
         node = e->pfcp_node;
         ogs_assert(node);
-        reselect_upf(node);
-
-        OGS_FSM_TRAN(s, smf_pfcp_state_will_associate);
+        ogs_warn("No Heartbeat from UPF %s; keeping the association",
+                ogs_sockaddr_to_string_static(node->addr_list));
+        if (node->t_no_heartbeat)
+            ogs_timer_start(node->t_no_heartbeat,
+                ogs_local_conf()->time.message.pfcp.no_heartbeat_duration);
+        if (ogs_pfcp_send_heartbeat_request(node, node_timeout) != OGS_OK)
+            ogs_error("PFCP heartbeat retry failed %s",
+                    ogs_sockaddr_to_string_static(node->addr_list));
         break;
     case SMF_EVT_N4_REASSOCIATE:
         ogs_warn("PFCP re-association required with UPF %s",
@@ -744,32 +764,6 @@ static void pfcp_restoration(ogs_pfcp_node_t *node)
     }
 
     fanout_restore(node, SMF_N4_RESTORE_REESTABLISH);
-}
-
-static void reselect_upf(ogs_pfcp_node_t *node)
-{
-    ogs_pfcp_node_t *iter = NULL;
-
-    ogs_assert(node);
-
-    if (node->restoration_required == true) {
-        ogs_error("UPF has already been restarted");
-        return;
-    }
-
-    ogs_list_for_each(&ogs_pfcp_self()->pfcp_peer_list, iter) {
-        if (iter == node)
-            continue;
-        if (OGS_FSM_CHECK(&iter->sm, smf_pfcp_state_associated))
-            break;
-    }
-
-    if (iter == NULL) {
-        ogs_error("No UPF available");
-        return;
-    }
-
-    fanout_restore(node, SMF_N4_RESTORE_RESELECT);
 }
 
 static void node_timeout(ogs_pfcp_xact_t *xact, void *data)
